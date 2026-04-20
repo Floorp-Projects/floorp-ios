@@ -440,24 +440,22 @@ echo ">>> Step 7: Disable all telemetry..."
 # TelemetryWrapper.swift — early return in setup() and initGlean()
 FILE="$PROJECT_ROOT/firefox-ios/Client/Telemetry/TelemetryWrapper.swift"
 if [[ -f "$FILE" ]]; then
-    # Disable setup() by adding early return after the opening brace
+    # Disable setup() by inserting return after the comment marker
     if ! grep -q 'Floorp: All telemetry is disabled' "$FILE"; then
-        run_cmd sed -i '' '/func setup(profile:/,/^{/{
-            /^{/a\
-\        // Floorp: All telemetry is disabled\
-\        return
+        run_cmd sed -i '' '/func setup(profile:/{
+            N
+            s/{\n/{\n        \/\/ Floorp: All telemetry is disabled. No data is sent to Mozilla or any server.\n        return\n/
         }' "$FILE"
         echo "  ✓ TelemetryWrapper.setup() disabled"
     else
         echo "  ≈ TelemetryWrapper.setup() already disabled"
     fi
 
-    # Disable initGlean() by adding early return
+    # Disable initGlean() by inserting return after the opening brace
     if ! grep -q 'Floorp: Glean telemetry initialization disabled' "$FILE"; then
-        run_cmd sed -i '' '/private func initGlean/,/^{/{
-            /^{/a\
-\        // Floorp: Glean telemetry initialization disabled\
-\        return
+        run_cmd sed -i '' '/func initGlean(/{
+            N;N;N;N
+            s/{\n/{\n        \/\/ Floorp: Glean telemetry initialization disabled\n        return\n/
         }' "$FILE"
         echo "  ✓ TelemetryWrapper.initGlean() disabled"
     else
@@ -471,11 +469,9 @@ fi
 FILE="$PROJECT_ROOT/firefox-ios/Client/Telemetry/MetricKit/MetricKitWrapper.swift"
 if [[ -f "$FILE" ]]; then
     if ! grep -q 'Floorp: MetricKit disabled' "$FILE"; then
-        run_cmd sed -i '' '/func beginObservingMXPayloads/,/^{/{
-            /^{/a\
-\        // Floorp: MetricKit disabled\
-\        return
-        }' "$FILE"
+        run_cmd sed -i '' 's/func beginObservingMXPayloads() {/func beginObservingMXPayloads() {\
+        \/\/ Floorp: MetricKit disabled\
+        return/' "$FILE"
         echo "  ✓ MetricKitWrapper.beginObservingMXPayloads() disabled"
     else
         echo "  ≈ MetricKitWrapper already disabled"
@@ -488,11 +484,9 @@ fi
 FILE="$PROJECT_ROOT/BrowserKit/Sources/Common/Logger/Wrapper/SentryWrapper.swift"
 if [[ -f "$FILE" ]]; then
     if ! grep -q 'Floorp: Sentry crash reporting disabled' "$FILE"; then
-        run_cmd sed -i '' '/public func startWithConfigureOptions/,/^{/{
-            /^{/a\
-\        // Floorp: Sentry crash reporting disabled\
-\        return
-        }' "$FILE"
+        run_cmd sed -i '' 's/public func startWithConfigureOptions(configure options: @escaping (Options) -> Void) {/public func startWithConfigureOptions(configure options: @escaping (Options) -> Void) {\
+        \/\/ Floorp: Sentry crash reporting disabled\
+        return/' "$FILE"
         echo "  ✓ SentryWrapper.startWithConfigureOptions() disabled"
     else
         echo "  ≈ SentryWrapper already disabled"

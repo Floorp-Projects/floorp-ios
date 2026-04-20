@@ -100,6 +100,7 @@ class TelemetryWrapper: TelemetryWrapperProtocol,
         sendUsageData: Bool
     ) {
         // Floorp: Glean telemetry initialization disabled
+        return
         // Record default search engine setting to avoid sending a `null` value.
         // If there's no default search engine, (there's not, at this point), we will
         // send "unavailable" in order not to send `null`, but still differentiate
