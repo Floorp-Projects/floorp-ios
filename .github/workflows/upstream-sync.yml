@@ -94,14 +94,14 @@ jobs:
           body: |
             ## 🔄 Upstream Sync (Firefox iOS → Floorp)
 
-            Mozilla Firefox iOS の最新変更を Floorp にマージする PR です。
+            This PR merges the latest changes from [mozilla-mobile/firefox-ios](https://github.com/mozilla-mobile/firefox-ios) into Floorp.
 
-            ### 📊 概要
-            - **アップストリームのコミット数**: ${{ steps.check.outputs.commit_count }} 件
-            - **リブランドの変更ファイル数**: ${{ steps.verify.outputs.file_count }} 件（`rebrand-to-floorp.sh` による）
-            - **コンフリクト**: ${{ steps.merge.outputs.merge_conflict == 'true' && '⚠️ **あり — 手動での解決が必要**' || 'なし ✅' }}
+            ### 📊 Summary
+            - **Upstream commits**: ${{ steps.check.outputs.commit_count }}
+            - **Rebrand changes**: ${{ steps.verify.outputs.file_count }} files modified by `rebrand-to-floorp.sh`
+            - **Conflicts**: ${{ steps.merge.outputs.merge_conflict == 'true' && '⚠️ **Yes — manual resolution required**' || 'None ✅' }}
 
-            ${{ steps.merge.outputs.merge_conflict == 'true' && '---\n\n## ⚠️ コンフリクトがあります — 以下の手順で解決してください\n\n### Step 1: ブランチをローカルに持ってくる\n\n```bash\ngit fetch origin\ngit checkout sync/upstream-$(date +%Y%m%d)\n# ブランチ名はこのPRのヘッドブランチを確認してください\n```\n\n### Step 2: コンフリクト箇所を確認する\n\nエディタで `<<<<<<<` / `=======` / `>>>>>>>` を検索し、各コンフリクトを解決します。\n\n- `<<<<<<< HEAD` 側 = Floorp の変更\n- `>>>>>>>` 側 = Firefox（upstream）の変更\n- 基本的には **upstream 側の変更を採用** し、その後の rebrand スクリプトで Floorp ブランディングを再適用します\n\n### Step 3: コンフリクトを解決してコミット\n\n```bash\n# コンフリクトを解決したファイルをステージング\ngit add <解決したファイル>\n\n# コンフリクト解決をコミット\ngit commit --no-edit\n```\n\n### Step 4: リブランドスクリプトを実行\n\n```bash\n# まずドライランで変更内容を確認\n./scripts/rebrand-to-floorp.sh --dry-run\n\n# 問題なければ実際に実行\n./scripts/rebrand-to-floorp.sh\n\n# 変更をコミット\ngit add -A\ngit commit -m "feat: re-apply Floorp branding after conflict resolution"\n```\n\n### Step 5: プッシュして PR を更新\n\n```bash\ngit push --no-verify origin HEAD\n```\n\n### Step 6: PR をマージ\n\nプッシュ後、CI が通ったことを確認してこの PR をマージしてください。\n\n---\n' || '' }}## ✅ マージ前のチェックリスト\n\n- [ ] 差分（diff）に予期しない変更がないか確認した\n- [ ] CI ビルドが成功した\n- [ ] 新しい Firefox ブランド素材が追加されていないか確認した\n  - もし追加されていたら `rebrand-to-floorp.sh` の対象リストに追加が必要かもしれません\n\n---\n*この PR は [Upstream Sync](.github/workflows/upstream-sync.yml) ワークフローによって自動生成されました。*
+            ${{ steps.merge.outputs.merge_conflict == 'true' && '---\n\n## ⚠️ Merge Conflicts Detected — Follow these steps to resolve\n\n### Step 1: Check out this branch locally\n\n```bash\ngit fetch origin\ngit checkout <this-PR-branch-name>\n```\n\n### Step 2: Find conflict markers\n\nSearch for `<<<<<<<` / `=======` / `>>>>>>>` in your editor and resolve each conflict:\n\n- `<<<<<<< HEAD` side = Floorp changes\n- `>>>>>>>` side = Firefox (upstream) changes\n- **Always adopt the upstream side** — the rebrand script will re-apply Floorp branding afterward\n\n### Step 3: Commit the resolution\n\n```bash\ngit add <resolved-files>\ngit commit --no-edit\n```\n\n### Step 4: Run the rebrand script\n\n```bash\n# Preview changes first\n./scripts/rebrand-to-floorp.sh --dry-run\n\n# Apply changes\n./scripts/rebrand-to-floorp.sh\n\n# Commit\ngit add -A\ngit commit -m "feat: re-apply Floorp branding after conflict resolution"\n```\n\n### Step 5: Push and update this PR\n\n```bash\ngit push --no-verify origin HEAD\n```\n\n### Step 6: Merge this PR\n\nAfter pushing, confirm CI passes, then merge this PR.\n\n---\n' || '' }}## ✅ Pre-merge Checklist\n\n- [ ] Reviewed the diff for unexpected changes\n- [ ] CI build passes\n- [ ] No new Firefox-branded assets were introduced\n  - If any were found, they may need to be added to `rebrand-to-floorp.sh`\n\n---\n*This PR was automatically created by the [Upstream Sync](.github/workflows/upstream-sync.yml) workflow.*
           branch: ${{ steps.merge.outputs.branch }}
           labels: upstream-sync, automated${{ steps.merge.outputs.merge_conflict == 'true' && ', merge-conflict' || '' }}
           token: ${{ secrets.GITHUB_TOKEN }}
