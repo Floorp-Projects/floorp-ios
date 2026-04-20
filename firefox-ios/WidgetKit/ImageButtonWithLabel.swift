@@ -136,12 +136,12 @@ struct ImageButtonWithLabel: View {
         return HStack(alignment: .bottom) {
             Spacer()
             if #available(iOSApplicationExtension 18.0, *) {
-                Image(decorative: "faviconFox")
+                Image(decorative: "floorpFavicon")
                     .widgetAccentedRenderingMode(.accentedDesaturated)
                     .scaledToFit()
                     .frame(height: 24.0)
             } else {
-                Image(decorative: "faviconFox")
+                Image(decorative: "floorpFavicon")
                     .scaledToFit()
                     .frame(height: 24.0)
             }

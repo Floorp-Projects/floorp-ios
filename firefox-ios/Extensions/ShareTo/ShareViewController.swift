@@ -152,7 +152,7 @@ class ShareViewController: UIViewController {
             makeActionRow(
                 addTo: stackView,
                 label: .ShareOpenInFirefox,
-                imageName: StandardImageIdentifiers.Large.logoFirefox,
+                imageName: StandardImageIdentifiers.Large.logoFloorp,
                 action: #selector(actionOpenInFirefoxNow),
                 hasNavigation: false
             )

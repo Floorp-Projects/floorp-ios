@@ -4,8 +4,8 @@
 
 import Foundation
 
-public protocol FirefoxURLBuilding {
-    func buildFirefoxURL(from shareItem: ExtractedShareItem) -> URL?
+public protocol FloorpURLBuilding {
+    func buildFloorpURL(from shareItem: ExtractedShareItem) -> URL?
     func findURLInItems(_ items: [NSExtensionItem], completion: @escaping (Result<ActionShareItem, Error>) -> Void)
     func findTextInItems(_ items: [NSExtensionItem], completion: @escaping (Result<ExtractedShareItem, Error>) -> Void)
     func convertTextToURL(_ text: String) -> URL?
@@ -16,20 +16,20 @@ public enum ShareExtensionError: Error {
     case noTextFound
 }
 
-public struct FirefoxURLBuilder: FirefoxURLBuilding, Sendable {
+public struct FloorpURLBuilder: FloorpURLBuilding, Sendable {
     public let mozInternalScheme: String = {
         guard let string = Bundle.main.object(
             forInfoDictionaryKey: "MozInternalURLScheme"
         ) as? String, !string.isEmpty else {
             // Something went wrong/weird, fallback to the public one.
-            return "firefox"
+            return "floorp"
         }
         return string
     }()
 
     public init() {}
 
-    public func buildFirefoxURL(from shareItem: ExtractedShareItem) -> URL? {
+    public func buildFloorpURL(from shareItem: ExtractedShareItem) -> URL? {
         let (content, isSearch) = switch shareItem {
         case .shareItem(let item):
             (item.url, false)
@@ -42,8 +42,8 @@ public struct FirefoxURLBuilder: FirefoxURLBuilding, Sendable {
         }
 
         let urlString = isSearch
-        ? "\(mozInternalScheme)://open-text?text=\(encodedContent)&openWithFirefox=true"
-        : "\(mozInternalScheme)://open-url?url=\(encodedContent)&openWithFirefox=true"
+        ? "\(mozInternalScheme)://open-text?text=\(encodedContent)&openWithFloorp=true"
+        : "\(mozInternalScheme)://open-url?url=\(encodedContent)&openWithFloorp=true"
 
         return URL(string: urlString)
     }

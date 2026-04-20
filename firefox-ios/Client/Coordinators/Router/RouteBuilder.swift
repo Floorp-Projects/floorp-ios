@@ -80,8 +80,8 @@ final class RouteBuilder: LegacyFeatureFlaggable, @unchecked Sendable {
                 )
 
             case .openUrl:
-                let isOpeningWithFirefoxExtension = Bool(urlScanner.value(query: "openWithFirefox") ?? "") ?? false
-                if isOpeningWithFirefoxExtension {
+                let isOpeningWithFloorpExtension = Bool(urlScanner.value(query: "openWithFloorp") ?? "") ?? false
+                if isOpeningWithFloorpExtension {
                     actionExtensionTelemetry.shareURL()
                 }
                 return .search(url: urlQuery, isPrivate: isPrivate)
@@ -90,8 +90,8 @@ final class RouteBuilder: LegacyFeatureFlaggable, @unchecked Sendable {
                 let queryValue = urlScanner.value(query: "text") ?? ""
                 let queryURL = URIFixup.getURL(queryValue)
                 let safeQuery = queryURL != nil ? queryValue.replacingOccurrences(of: "://", with: "%3A%2F%2F") : queryValue
-                let isOpeningWithFirefoxExtension = Bool(urlScanner.value(query: "openWithFirefox") ?? "") ?? false
-                if isOpeningWithFirefoxExtension {
+                let isOpeningWithFloorpExtension = Bool(urlScanner.value(query: "openWithFloorp") ?? "") ?? false
+                if isOpeningWithFloorpExtension {
                     actionExtensionTelemetry.shareText()
                 }
                 return .searchQuery(query: safeQuery, isPrivate: isPrivate)

@@ -136,7 +136,7 @@ open class DefaultSuggestedSites {
                 title: "Firefoxガイド",
                 trackingId: 804,
                 faviconResource: .bundleAsset(
-                    name: "firefox-jp",
+                    name: "floorp-jp",
                     forRemoteResource: URL(string: "https://www.firefox.com/media/img/favicons/firefox/browser/apple-touch-icon.79c2abeb4e35.png")!
                 )
             ),

@@ -70,8 +70,8 @@ final class TabTitleSupplementaryView: UICollectionReusableView, ThemeApplicable
     func configure(with tabModel: TabModel, theme: Theme?, newTabTitle: String?) {
         titleText.text = newTabTitle ?? tabModel.tabTitle
 
-        if let firefoxFavicon = UIImage(named: ImageIdentifiers.firefoxFavicon) {
-            favicon.manuallySetImage(firefoxFavicon)
+        if let floorpFavicon = UIImage(named: ImageIdentifiers.floorpFavicon) {
+            favicon.manuallySetImage(floorpFavicon)
         }
 
         if !tabModel.isFxHomeTab, let tabURL = tabModel.url?.absoluteString {

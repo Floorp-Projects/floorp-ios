@@ -98,7 +98,7 @@ class TopTabCell: UICollectionViewCell, ThemeApplicable, ReusableCell, LegacyFea
         let hideCloseButton = frame.width < UX.closeButtonThreshold && !selected
         closeButton.isHidden = hideCloseButton
 
-        favicon.manuallySetImage(UIImage(named: ImageIdentifiers.firefoxFavicon) ?? UIImage())
+        favicon.manuallySetImage(UIImage(named: ImageIdentifiers.floorpFavicon) ?? UIImage())
 
         favicon.backgroundColor = .clear
 

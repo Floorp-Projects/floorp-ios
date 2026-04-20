@@ -10,7 +10,7 @@ import Foundation
 /// Sing the song if you must.
 struct ImageIdentifiers {
     public static let badgeMask = "badge-mask"
-    public static let firefoxFavicon = "faviconFox"
+    public static let floorpFavicon = "floorpFavicon"
     public static let foxConfirmation = "foxConfirmation"
     public static let foxDefaultBrowser = "foxDefaultBrowser"
     public static let foxWithStars = "foxWithStars"

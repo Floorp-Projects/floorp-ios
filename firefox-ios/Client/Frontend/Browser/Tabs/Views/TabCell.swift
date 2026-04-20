@@ -126,8 +126,8 @@ final class TabCell: UICollectionViewCell,
         titleText.text = newTabTitle ?? tabModel.tabTitle
         accessibilityLabel = getA11yTitleLabel(tabModel: tabModel, newTabTitle: newTabTitle)
 
-        if let firefoxFavicon = UIImage(named: ImageIdentifiers.firefoxFavicon) {
-            favicon.manuallySetImage(firefoxFavicon)
+        if let floorpFavicon = UIImage(named: ImageIdentifiers.floorpFavicon) {
+            favicon.manuallySetImage(floorpFavicon)
         }
 
         isAccessibilityElement = true

@@ -30,7 +30,7 @@ extension MenuItemProvider where Self: MenuActionable {
     func openInFireFoxItem(for url: URL) -> MenuAction? {
         canOpenInFirefox
 
-        ? MenuAction(title: UIConstants.strings.shareOpenInFirefox, image: "open_in_firefox_icon") { [unowned self] in
+        ? MenuAction(title: UIConstants.strings.shareOpenInFirefox, image: "open_in_floorp_icon") { [unowned self] in
             self.openInFirefox(url: url)
         }
         : nil

@@ -6,12 +6,12 @@ import XCTest
 import UniformTypeIdentifiers
 @testable import ActionExtensionKit
 
-final class FirefoxURLBuilderTests: XCTestCase {
-    private var subject: FirefoxURLBuilder!
+final class FloorpURLBuilderTests: XCTestCase {
+    private var subject: FloorpURLBuilder!
 
     override func setUp() {
         super.setUp()
-        subject = FirefoxURLBuilder()
+        subject = FloorpURLBuilder()
     }
 
     override func tearDown() {
@@ -19,13 +19,13 @@ final class FirefoxURLBuilderTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - buildFirefoxURL Tests
+    // MARK: - buildFloorpURL Tests
 
-    func testBuildFirefoxURL_WithShareItem_ReturnsCorrectURL() throws {
+    func testBuildFloorpURL_WithShareItem_ReturnsCorrectURL() throws {
         let shareItem = ActionShareItem(url: "https://example.com", title: "Example")
         let extractedItem = ExtractedShareItem.shareItem(shareItem)
 
-        let result = try XCTUnwrap(subject.buildFirefoxURL(from: extractedItem))
+        let result = try XCTUnwrap(subject.buildFloorpURL(from: extractedItem))
         XCTAssertNotNil(result.scheme, "URL should have a scheme")
         XCTAssertTrue(result.absoluteString.contains("open-url"))
 
@@ -42,20 +42,20 @@ final class FirefoxURLBuilderTests: XCTestCase {
         XCTAssertEqual(decodedURL, "https://example.com")
     }
 
-    func testBuildFirefoxURL_WithRawText_ReturnsSearchURL() throws {
+    func testBuildFloorpURL_WithRawText_ReturnsSearchURL() throws {
         let text = "search query"
         let extractedItem = ExtractedShareItem.rawText(text)
 
-        let result = try XCTUnwrap(subject.buildFirefoxURL(from: extractedItem))
+        let result = try XCTUnwrap(subject.buildFloorpURL(from: extractedItem))
         XCTAssertTrue(result.absoluteString.contains("open-text"))
         XCTAssertTrue(result.absoluteString.contains("search%20query"))
     }
 
-    func testBuildFirefoxURL_WithSpecialCharacters_EncodesCorrectly() throws {
+    func testBuildFloorpURL_WithSpecialCharacters_EncodesCorrectly() throws {
         let shareItem = ActionShareItem(url: "https://example.com/path?query=test&value=hello world", title: nil)
         let extractedItem = ExtractedShareItem.shareItem(shareItem)
 
-        let result = try XCTUnwrap(subject.buildFirefoxURL(from: extractedItem))
+        let result = try XCTUnwrap(subject.buildFloorpURL(from: extractedItem))
         // URL should be properly encoded
         XCTAssertTrue(result.absoluteString.contains("open-url"))
     }

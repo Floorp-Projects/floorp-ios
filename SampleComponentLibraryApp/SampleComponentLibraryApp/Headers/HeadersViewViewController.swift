@@ -49,10 +49,10 @@ class HeadersViewViewController: UIViewController, Themeable {
 
         headerView.setupDetails(subtitle: headerSubtitle,
                                 title: headerTitle,
-                                icon: UIImage(named: StandardImageIdentifiers.Large.logoFirefox))
+                                icon: UIImage(named: StandardImageIdentifiers.Large.logoFloorp))
         errorHeaderView.setupDetails(subtitle: errorHeaderSubtitle,
                                      title: headerTitle,
-                                     icon: UIImage(named: StandardImageIdentifiers.Large.logoFirefox),
+                                     icon: UIImage(named: StandardImageIdentifiers.Large.logoFloorp),
                                      warningIcon: StandardImageIdentifiers.Large.criticalFill,
                                      theme: themeManager.currentTheme)
 

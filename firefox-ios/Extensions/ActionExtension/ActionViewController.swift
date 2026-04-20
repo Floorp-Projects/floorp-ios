@@ -7,15 +7,15 @@ import UniformTypeIdentifiers
 import ActionExtensionKit
 
 final class ActionViewController: UIViewController {
-    private let firefoxURLBuilder: FirefoxURLBuilding
+    private let floorpURLBuilder: FloorpURLBuilding
 
     override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
-        self.firefoxURLBuilder = FirefoxURLBuilder()
+        self.floorpURLBuilder = FloorpURLBuilder()
         super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
     }
 
-    init(firefoxURLBuilder: FirefoxURLBuilding) {
-        self.firefoxURLBuilder = firefoxURLBuilder
+    init(floorpURLBuilder: FloorpURLBuilding) {
+        self.floorpURLBuilder = floorpURLBuilder
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -41,18 +41,18 @@ final class ActionViewController: UIViewController {
             return
         }
 
-        firefoxURLBuilder.findURLInItems(inputItems) { [weak self] result in
+        floorpURLBuilder.findURLInItems(inputItems) { [weak self] result in
             guard let self else { return }
 
             switch result {
             case .success(let shareItem):
-                self.openFirefox(with: .shareItem(shareItem))
+                self.openFloorp(with: .shareItem(shareItem))
 
             case .failure:
-                self.firefoxURLBuilder.findTextInItems(inputItems) { textResult in
+                self.floorpURLBuilder.findTextInItems(inputItems) { textResult in
                     switch textResult {
                     case .success(let extractedItem):
-                        self.openFirefox(with: extractedItem)
+                        self.openFloorp(with: extractedItem)
                     case let .failure(error):
                         self.finishExtension(with: error)
                     }
@@ -61,13 +61,13 @@ final class ActionViewController: UIViewController {
         }
     }
 
-    private func openFirefox(with shareItem: ExtractedShareItem) {
-        guard let firefoxURL = firefoxURLBuilder.buildFirefoxURL(from: shareItem) else {
+    private func openFloorp(with shareItem: ExtractedShareItem) {
+        guard let floorpURL = floorpURLBuilder.buildFloorpURL(from: shareItem) else {
             finishExtension(with: nil)
             return
         }
 
-        openURL(firefoxURL)
+        openURL(floorpURL)
         finishExtension(with: nil)
     }
 

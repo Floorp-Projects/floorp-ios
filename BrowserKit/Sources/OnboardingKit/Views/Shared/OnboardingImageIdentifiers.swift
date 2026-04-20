@@ -7,7 +7,7 @@ import Foundation
 enum OnboardingImageIdentifiers {
     static let radioButtonSelected = "radioButtonSelected"
     static let radioButtonNotSelected = "radioButtonNotSelected"
-    static let firefoxLoader = "firefoxLoader"
+    static let floorpLoader = "floorpLoader"
     static let backgroundBrandRefreshLight = "backgroundBrandRefreshLight"
     static let backgroundBrandRefreshDark = "backgroundBrandRefreshDark"
 }

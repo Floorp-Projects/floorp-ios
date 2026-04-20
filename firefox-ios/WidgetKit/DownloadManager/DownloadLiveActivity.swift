@@ -74,7 +74,7 @@ struct DownloadLiveActivity: Widget {
         static let downloadRotationMinimal: Double = -90.0
         static let checkmarkIcon = StandardImageIdentifiers.Large.checkmark
         static let mediaStopIcon = "mediaStop"
-        static let firefoxIcon = "faviconFox"
+        static let floorpIcon = "floorpFavicon"
         struct LockScreen {
             static let horizontalSpacing: CGFloat = 16
             static let verticalSpacing: CGFloat = 4
@@ -98,7 +98,7 @@ struct DownloadLiveActivity: Widget {
             static let downloadPaddingLeading: CGFloat = 2
             static let downloadPaddingTrailing: CGFloat = 1
             static let iconFrameSize: CGFloat = 50
-            static let firefoxIconSize: CGFloat = 44
+            static let floorpIconSize: CGFloat = 44
             static let iconEdgeRounding: CGFloat = 15
             static let iconTopPadding: CGFloat = 10
             static let iconLeftPadding: CGFloat = 0
@@ -156,7 +156,7 @@ struct DownloadLiveActivity: Widget {
                         endPoint: .bottomTrailing))
                 HStack(spacing: UX.LockScreen.horizontalSpacing) {
                     ZStack {
-                        Image(UX.firefoxIcon)
+                        Image(UX.floorpIcon)
                             .resizable()
                             .scaledToFit()
                             .frame(width: UX.LockScreen.iconSize, height: UX.LockScreen.iconSize)
@@ -223,11 +223,11 @@ struct DownloadLiveActivity: Widget {
                     .fill(DownloadLiveActivity.UX.DynamicIsland.widgetColours)
                     .frame(width: DownloadLiveActivity.UX.DynamicIsland.iconFrameSize,
                            height: DownloadLiveActivity.UX.DynamicIsland.iconFrameSize)
-                Image(DownloadLiveActivity.UX.firefoxIcon)
+                Image(DownloadLiveActivity.UX.floorpIcon)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: DownloadLiveActivity.UX.DynamicIsland.firefoxIconSize,
-                           height: DownloadLiveActivity.UX.DynamicIsland.firefoxIconSize)
+                    .frame(width: DownloadLiveActivity.UX.DynamicIsland.floorpIconSize,
+                           height: DownloadLiveActivity.UX.DynamicIsland.floorpIconSize)
             }.padding(EdgeInsets(top: DownloadLiveActivity.UX.DynamicIsland.iconTopPadding,
                                  leading: DownloadLiveActivity.UX.DynamicIsland.iconLeftPadding,
                                  bottom: DownloadLiveActivity.UX.DynamicIsland.iconBottomPadding,

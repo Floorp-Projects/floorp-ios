@@ -216,7 +216,7 @@ final class OnboardingScreen {
             img = app.images["\(rootA11yId)ImageView"]
             BaseTestCase().waitForElementsToExist([img, title, desc, primaryButton])
         } else {
-            img = app.images["firefoxLoader"]
+            img = app.images["floorpLoader"]
             BaseTestCase().waitForElementsToExist([title, desc, primaryButton])
         }
 
