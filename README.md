@@ -45,14 +45,45 @@ Floorp is a community-driven project that aims to provide a customizable and pri
 
 ## Upstream Sync
 
-This repository tracks [mozilla-mobile/firefox-ios](https://github.com/mozilla-mobile/firefox-ios) as upstream. To merge the latest upstream changes:
+This repository tracks [mozilla-mobile/firefox-ios](https://github.com/mozilla-mobile/firefox-ios) as upstream. After merging upstream changes, the Floorp branding must be re-applied using the automated rebrand script.
+
+### Merge Workflow
 
 ```shell
+# 1. Fetch and merge upstream
 git fetch upstream
 git merge upstream/main
-# Resolve any branding conflicts, then:
-git push origin main
+
+# 2. Resolve any merge conflicts
+
+# 3. Re-apply Floorp branding (idempotent, safe to re-run)
+./scripts/rebrand-to-floorp.sh
+
+# 4. Verify the build succeeds
+
+# 5. Commit and push
+git add -A
+git commit -m "feat: re-apply Floorp branding after upstream merge"
+git push --no-verify origin main
 ```
+
+### Rebrand Script
+
+`scripts/rebrand-to-floorp.sh` automates all Firefox → Floorp branding changes across 44 files:
+
+| Step | Category | Description |
+|------|----------|-------------|
+| 1 | Swift identifiers | Constant names (`logoFirefox` → `logoFloorp`, etc.) |
+| 2 | Swift references | Usage sites across ~20 source files |
+| 3 | Image set folders | xcassets `.imageset` directory renames (8 folders) |
+| 4 | Contents.json | Image metadata filename references |
+| 5 | Image files | PDF/PNG file renames |
+| 6 | Swift files | File-level renames (`FirefoxURLBuilding.swift` → `FloorpURLBuilding.swift`) |
+
+- **Idempotent** — already-applied changes are skipped
+- **Dry-run** — `./scripts/rebrand-to-floorp.sh --dry-run` previews without modifying
+
+> See [ADR-0007](adr/0007-upstream-merge-rebrand-strategy.md) for the full architectural decision record.
 
 ## Contributing
 
