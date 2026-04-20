@@ -1,41 +1,28 @@
-# Firefox for iOS
+# Floorp for iOS — Application Source
 
-This is the subdirectory that contains the Firefox for iOS application.
+This directory contains the Floorp for iOS application source code.
 
-For details on compatible Xcode and Swift versions used to build this project, as well as the minimum iOS version, refer to the root [README](../README.md).
+For build prerequisites (Xcode, Swift, iOS versions) and project overview, see the root [README](../README.md).
 
-## Getting Involved
+## Quick Build
 
-For information on how to contribute to this project, including communication channels, coding style, PR naming guidelines and more, visit the [Contribution guidelines](https://github.com/mozilla-mobile/firefox-ios/blob/main/CONTRIBUTING.md).
+1. From the **project root**, install dependencies:
 
-## Building the code
-
-1. Install the version of [Xcode](https://developer.apple.com/download/applications/) from Apple that matches what this project uses, as listed in the root [README](../README.md).
-1. Node.js is required, e.g. installed via [Brew](https://brew.sh), with [n](https://github.com/tj/n#readme), or just [n-install](https://github.com/mklement0/n-install#readme) depending whether you want to use a package manager:
-   ```shell
-   brew install n  # or, skipping brew:  curl -L https://bit.ly/n-install | bash
-   n lts
-   ```
-1. Clone the repository:
-   ```shell
-   git clone https://github.com/mozilla-mobile/firefox-ios
-   ```
-1. Change directories to the project root:
-   ```shell
-   cd firefox-ios
-   ```
-1. From the project root, install Node.js dependencies, build user scripts and update content blocker:
    ```shell
    sh ./bootstrap.sh
    ```
-1. Open the `Client.xcodeproj` under the `firefox-ios` folder in Xcode.
-1. Make sure to select the `Fennec` [scheme](https://developer.apple.com/documentation/xcode/build-system?changes=_2) in Xcode.
-1. Select the destination device you want to build on.
-1. Run the app with `Cmd + R` or by pressing the `build and run` button.
 
-⚠️ Important: In case you have dependencies issues with SPM, please try the following:
+1. Open `Client.xcodeproj` in this folder with Xcode.
 
-- Xcode -> File -> Packages -> Reset Package Caches
+1. Select the **Fennec** scheme.
+
+1. Build and run with `Cmd + R`.
+
+> ⚠️ SPM issues? Try: Xcode → File → Packages → Reset Package Caches
+
+## Getting Involved
+
+Contributions are welcome! Visit the [Floorp iOS repository](https://github.com/Floorp-Projects/floorp-ios) to open issues or submit pull requests.
 
 ## Building User Scripts
 
@@ -79,6 +66,6 @@ npm run build
 
 ## Updating License Acknowledgements
 
-In the app, the Settings > Licenses screen credits open source packages we use to build Firefox for iOS. 
+In the app, the Settings > Licenses screen credits open source packages we use to build Firefox for iOS.
 
 If you add a new third party package or resource, please update the credits. Follow the instructions in our `license_plist_config.yml` file.
