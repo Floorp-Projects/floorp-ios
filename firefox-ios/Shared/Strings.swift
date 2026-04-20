@@ -2573,7 +2573,7 @@ extension String {
         public static let SuggestSectionTitle = MZLocalizedString(
             key: "Search.SuggestSectionTitle.v102",
             tableName: nil,
-            value: "Firefox Suggest",
+            value: "Floorp Suggest",
             comment: "When making a new search from the awesome bar, suggestions appear to the user as they write new letters in their search. Different types of suggestions can appear. This string will be used as a header to separate Firefox suggestions from normal suggestions.")
         public static let SponsoredSuggestionDescription = MZLocalizedString(
             key: "Search.SponsoredSuggestionDescription.v119",
@@ -3946,7 +3946,7 @@ extension String {
         public static let TabTrayPrivateBrowsingDescription =  MZLocalizedString(
             key: "Firefox won’t remember any of your history or cookies, but new bookmarks will be saved.",
             tableName: "PrivateBrowsing",
-            value: nil,
+            value: "Floorp won’t remember any of your history or cookies, but new bookmarks will be saved.",
             comment: "Description text displayed when there are no open tabs while in private mode")
         public static let TabTrayAddTabAccessibilityLabel = MZLocalizedString(
             key: "Add Tab",
@@ -4481,7 +4481,7 @@ extension String {
     public static let SettingsDisconnectSyncAlertBody = MZLocalizedString(
         key: "Settings.Disconnect.Body",
         tableName: nil,
-        value: "Firefox will stop syncing with your account, but won’t delete any of your browsing data on this device.",
+        value: "Floorp will stop syncing with your account, but won’t delete any of your browsing data on this device.",
         comment: "Body of the alert when prompting the user asking to disconnect.")
     public static let SettingsDisconnectSyncButton = MZLocalizedString(
         key: "Settings.Disconnect.Button",
@@ -4593,7 +4593,7 @@ extension String {
     public static let EmptySyncedTabsPanelStateTitle = MZLocalizedString(
         key: "HistoryPanel.EmptySyncedTabsState.Title",
         tableName: nil,
-        value: "Firefox Sync",
+        value: "Floorp Sync",
         comment: "Title for the empty synced tabs state in the History Panel")
     public static let EmptySyncedTabsPanelNotSignedInStateDescription = MZLocalizedString(
         key: "HistoryPanel.EmptySyncedTabsPanelNotSignedInState.Description",
@@ -4618,7 +4618,7 @@ extension String {
     public static let FirefoxHomePage = MZLocalizedString(
         key: "Firefox.HomePage.Title",
         tableName: nil,
-        value: "Firefox Home Page",
+        value: "Floorp Home Page",
         comment: "Title for firefox about:home page in tab history list")
     public static let HistoryPanelDelete = MZLocalizedString(
         key: "Delete",
@@ -4849,8 +4849,8 @@ extension String {
     public static let SettingsNewTabTopSites = MZLocalizedString(
         key: "Settings.NewTab.Option.FirefoxHome",
         tableName: nil,
-        value: "Firefox Home",
-        comment: "Option in settings to show Firefox Home when you open a new tab")
+        value: "Floorp Home",
+        comment: "Option in settings to show Floorp Home when you open a new tab")
     public static let SettingsNewTabBlankPage = MZLocalizedString(
         key: "Settings.NewTab.Option.BlankPage",
         tableName: nil,
@@ -5284,7 +5284,7 @@ extension String {
     public static let PhotoLibraryFirefoxWouldLikeAccessTitle = MZLocalizedString(
         key: "PhotoLibrary.FirefoxWouldLikeAccessTitle",
         tableName: nil,
-        value: "Firefox would like to access your Photos",
+        value: "Floorp would like to access your Photos",
         comment: "See http://mzl.la/1G7uHo7")
     public static let PhotoLibraryFirefoxWouldLikeAccessMessage = MZLocalizedString(
         key: "PhotoLibrary.FirefoxWouldLikeAccessMessage",
@@ -5300,7 +5300,7 @@ extension String {
     public static let SentTab_NoTabArrivingNotification_title = MZLocalizedString(
         key: "SentTab.NoTabArrivingNotification.title",
         tableName: nil,
-        value: "Firefox Sync",
+        value: "Floorp Sync",
         comment: "Title of notification received after a spurious message from FxA has been received.")
     public static let SentTab_NoTabArrivingNotification_body =
     MZLocalizedString(
@@ -5397,7 +5397,7 @@ extension String {
     public static let FxAPush_DeviceConnected_body = MZLocalizedString(
         key: "FxAPush_DeviceConnected_body",
         tableName: nil,
-        value: "Firefox Sync has connected to %@",
+        value: "Floorp Sync has connected to %@",
         comment: "Title of a notification displayed when another device has connected to FxA. %@ refers to the name of the newly connected device.")
 }
 
@@ -6962,8 +6962,8 @@ extension String {
     public static let QuickActionsGalleryTitlev2 = MZLocalizedString(
         key: "TodayWidget.QuickActionsGalleryTitleV2",
         tableName: "Today",
-        value: "Firefox Shortcuts",
-        comment: "Firefox shortcuts title when widget enters edit mode. Do not translate the word Firefox.")
+        value: "Floorp Shortcuts",
+        comment: "Floorp shortcuts title when widget enters edit mode. Do not translate the word Floorp.")
 
     // Quick Action - Medium Size Quick Action
     public static let GoToCopiedLinkLabel = MZLocalizedString(

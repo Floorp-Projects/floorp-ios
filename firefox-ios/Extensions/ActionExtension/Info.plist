@@ -7,7 +7,7 @@
 	<key>MozDevelopmentTeam</key>
 	<string>$(DEVELOPMENT_TEAM)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Open In Firefox</string>
+	<string>Open In Floorp</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(APP_VERSION)</string>
 	<key>CFBundleVersion</key>
@@ -23,7 +23,7 @@
 	<key>NSExtension</key>
 	<dict>
 		<key>CFBundleDisplayName</key>
-		<string>Open in Firefox</string>
+		<string>Open in Floorp</string>
 		<key>NSExtensionAttributes</key>
 		<dict>
 			<key>NSExtensionActivationRule</key>

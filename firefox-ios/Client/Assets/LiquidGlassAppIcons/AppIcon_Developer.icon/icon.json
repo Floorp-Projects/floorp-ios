@@ -10,7 +10,7 @@
   ],
   "groups" : [
     {
-      "blur-material" : 0.5,
+      "blur-material" : 0.2,
       "layers" : [
         {
           "image-name" : "nightly-1.svg",
@@ -19,10 +19,10 @@
       ],
       "name" : "Group",
       "position" : {
-        "scale" : 1.7,
+        "scale" : 1.25,
         "translation-in-points" : [
           0,
-          -11
+          0
         ]
       },
       "shadow-specializations" : [
@@ -42,7 +42,7 @@
       ],
       "translucency" : {
         "enabled" : true,
-        "value" : 0.7
+        "value" : 0.3
       }
     },
     {
@@ -55,10 +55,10 @@
         }
       ],
       "position" : {
-        "scale" : 1.7,
+        "scale" : 1.25,
         "translation-in-points" : [
           0,
-          -11
+          0
         ]
       },
       "shadow" : {
@@ -90,10 +90,10 @@
       ],
       "name" : "Group",
       "position" : {
-        "scale" : 1.7,
+        "scale" : 1.25,
         "translation-in-points" : [
           0,
-          -11
+          0
         ]
       },
       "shadow" : {
@@ -125,10 +125,10 @@
         }
       ],
       "position" : {
-        "scale" : 1.7,
+        "scale" : 1.25,
         "translation-in-points" : [
           0,
-          -11
+          0
         ]
       },
       "shadow" : {

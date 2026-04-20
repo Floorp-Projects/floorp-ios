@@ -25,10 +25,10 @@
 	<string>$(APP_IDENTIFIER_PREFIX)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>org.mozilla.ios.sync.part1</string>
-		<string>org.mozilla.ios.sync.part2</string>
-		<string>org.mozilla.ios.surface.notification.refresh</string>
-		<string>org.mozilla.ios.firefox.suggest.ingest</string>
+		<string>app.floorp.sync.part1</string>
+		<string>app.floorp.sync.part2</string>
+		<string>app.floorp.surface.notification.refresh</string>
+		<string>app.floorp.suggest.ingest</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -52,7 +52,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>org.mozilla.Client</string>
+			<string>app.floorp.Client</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>$(MOZ_PUBLIC_URL_SCHEME)</string>
@@ -112,15 +112,15 @@
 		<true/>
 	</dict>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Firefox uses speech recognition to convert your voice to text for voice search.</string>
+	<string>Floorp uses speech recognition to convert your voice to text for voice search.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Firefox uses your camera to scan QR codes and take photos and video.</string>
+	<string>Floorp uses your camera to scan QR codes and take photos and video.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Firefox requires Face ID to access your saved passwords and payment methods.</string>
+	<string>Floorp requires Face ID to access your saved passwords and payment methods.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Websites you visit may request your location.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Firefox uses your microphone to record and upload audio.</string>
+	<string>Floorp uses your microphone to record and upload audio.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>This lets you save photos.</string>
 	<key>NSSupportsLiveActivities</key>
@@ -128,7 +128,7 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>QuickActionIntent</string>
-		<string>org.mozilla.ios.firefox.browsing</string>
+		<string>app.floorp.ios.floorp.browsing</string>
 	</array>
 	<key>NimbusURL</key>
 	<string>$(NIMBUS_URL)</string>
