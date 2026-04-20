@@ -60,13 +60,14 @@ jobs:
           # Attempt merge
           if git merge upstream/main --no-edit; then
             echo "merge_conflict=false" >> "$GITHUB_OUTPUT"
-            echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
           else
-            echo "⚠️ Merge conflicts detected!"
+            echo "⚠️ Merge conflicts detected — committing partial merge state."
             echo "merge_conflict=true" >> "$GITHUB_OUTPUT"
-            git merge --abort
-            exit 1
+            # Commit the conflict markers so the PR shows the conflicted files
+            git add -A
+            git commit -m "merge: upstream sync (with conflicts — needs manual resolution)"
           fi
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
 
       - name: Run rebrand script
         if: steps.merge.outputs.merge_conflict == 'false'
@@ -84,7 +85,6 @@ jobs:
           echo "file_count=${FILE_COUNT}" >> "$GITHUB_OUTPUT"
 
       - name: Create Pull Request
-        if: steps.merge.outputs.merge_conflict == 'false'
         uses: peter-evans/create-pull-request@v6
         with:
           commit-message: "feat: sync upstream and re-apply Floorp branding"
@@ -99,11 +99,11 @@ jobs:
             ### Summary
             - **Upstream commits**: ${{ steps.check.outputs.commit_count }} new commits merged
             - **Rebrand changes**: ${{ steps.verify.outputs.file_count }} files modified by `rebrand-to-floorp.sh`
+            - **Conflicts**: ${{ steps.merge.outputs.merge_conflict == 'true' && '⚠️ **Yes — manual resolution required**' || 'None ✅' }}
 
-            ### Checklist
-            - [ ] Review the diff for unexpected changes
-            - [ ] Verify the build succeeds in CI
-            - [ ] Check for new Firefox-branded assets not covered by the script
+            ### ${{ steps.merge.outputs.merge_conflict == 'true' && '⚠️ Merge Conflicts Detected' || 'Checklist' }}
+
+            ${{ steps.merge.outputs.merge_conflict == 'true' && 'This PR contains merge conflict markers. Please resolve them on this branch:\n\n1. Check out this branch locally\n2. Look for `<<<<<<<` / `=======` / `>>>>>>>` conflict markers\n3. Resolve each conflict\n4. Run `./scripts/rebrand-to-floorp.sh` after resolving\n5. Push the fixes back to this branch\n\nOnce all conflicts are resolved, this PR will be ready for review and merge.' || '- [ ] Review the diff for unexpected changes\n- [ ] Verify the build succeeds in CI\n- [ ] Check for new Firefox-branded assets not covered by the script' }}
 
             ### Rebrand Script Steps
             1. Swift identifier constants
@@ -116,15 +116,5 @@ jobs:
             ---
             *This PR was automatically created by the [Upstream Sync](.github/workflows/upstream-sync.yml) workflow.*
           branch: ${{ steps.merge.outputs.branch }}
-          labels: upstream-sync, automated
+          labels: upstream-sync, automated${{ steps.merge.outputs.merge_conflict == 'true' && ', merge-conflict' || '' }}
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Notify on merge conflict
-        if: failure() && steps.merge.outputs.merge_conflict == 'true'
-        run: |
-          echo "::warning::Merge conflicts detected. Manual resolution required."
-          echo "To resolve:"
-          echo "  1. git fetch upstream"
-          echo "  2. git merge upstream/main"
-          echo "  3. Resolve conflicts"
-          echo "  4. ./scripts/rebrand-to-floorp.sh"
