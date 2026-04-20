@@ -85,6 +85,15 @@ git push --no-verify origin main
 
 > See [ADR-0007](adr/0007-upstream-merge-rebrand-strategy.md) for the full architectural decision record.
 
+### Automatic Sync (GitHub Actions)
+
+The [Upstream Sync](.github/workflows/upstream-sync.yml) workflow automates this process:
+
+- **Schedule**: Every Monday at 09:00 UTC (18:00 JST)
+- **Manual trigger**: Available via GitHub Actions → "Run workflow"
+- **Process**: Fetches upstream → merges → runs rebrand script → creates a PR
+- **Conflict handling**: If merge conflicts occur, the workflow fails and notifies maintainers
+
 ## Contributing
 
 We welcome contributions! Please feel free to submit Pull Requests or open Issues.

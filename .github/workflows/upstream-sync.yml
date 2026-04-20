@@ -1,0 +1,130 @@
+name: Upstream Sync
+
+on:
+  # Every Monday at 09:00 UTC (18:00 JST)
+  schedule:
+    - cron: '0 9 * * 1'
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-upstream:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/mozilla-mobile/firefox-ios.git || true
+          git fetch upstream main
+
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
+          MERGE_BASE=$(git merge-base HEAD upstream/main)
+
+          if [ "$MERGE_BASE" = "$UPSTREAM" ]; then
+            echo "Already up to date. No new upstream commits."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COMMIT_COUNT=$(git rev-list --count "${MERGE_BASE}..${UPSTREAM}")
+          echo "Found ${COMMIT_COUNT} new upstream commits."
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "commit_count=${COMMIT_COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream
+        if: steps.check.outputs.has_changes == 'true'
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Create a sync branch
+          BRANCH="sync/upstream-$(date +%Y%m%d)"
+          git checkout -b "$BRANCH"
+
+          # Attempt merge
+          if git merge upstream/main --no-edit; then
+            echo "merge_conflict=false" >> "$GITHUB_OUTPUT"
+            echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ Merge conflicts detected!"
+            echo "merge_conflict=true" >> "$GITHUB_OUTPUT"
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Run rebrand script
+        if: steps.merge.outputs.merge_conflict == 'false'
+        run: |
+          chmod +x ./scripts/rebrand-to-floorp.sh
+          ./scripts/rebrand-to-floorp.sh
+
+      - name: Verify changes
+        if: steps.merge.outputs.merge_conflict == 'false'
+        id: verify
+        run: |
+          CHANGED=$(git diff --stat HEAD | tail -1)
+          echo "Changes: ${CHANGED}"
+          FILE_COUNT=$(git diff --name-only HEAD | wc -l | tr -d ' ')
+          echo "file_count=${FILE_COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        if: steps.merge.outputs.merge_conflict == 'false'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "feat: sync upstream and re-apply Floorp branding"
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: GitHub <noreply@github.com>
+          title: "🔄 Sync upstream (Firefox iOS) — ${{ steps.check.outputs.commit_count }} new commits"
+          body: |
+            ## Upstream Sync
+
+            This PR merges the latest changes from [mozilla-mobile/firefox-ios](https://github.com/mozilla-mobile/firefox-ios) and re-applies Floorp branding.
+
+            ### Summary
+            - **Upstream commits**: ${{ steps.check.outputs.commit_count }} new commits merged
+            - **Rebrand changes**: ${{ steps.verify.outputs.file_count }} files modified by `rebrand-to-floorp.sh`
+
+            ### Checklist
+            - [ ] Review the diff for unexpected changes
+            - [ ] Verify the build succeeds in CI
+            - [ ] Check for new Firefox-branded assets not covered by the script
+
+            ### Rebrand Script Steps
+            1. Swift identifier constants
+            2. Swift source references (~20 files)
+            3. xcassets image set folder renames
+            4. Contents.json filename references
+            5. Image file renames
+            6. Swift file renames
+
+            ---
+            *This PR was automatically created by the [Upstream Sync](.github/workflows/upstream-sync.yml) workflow.*
+          branch: ${{ steps.merge.outputs.branch }}
+          labels: upstream-sync, automated
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify on merge conflict
+        if: failure() && steps.merge.outputs.merge_conflict == 'true'
+        run: |
+          echo "::warning::Merge conflicts detected. Manual resolution required."
+          echo "To resolve:"
+          echo "  1. git fetch upstream"
+          echo "  2. git merge upstream/main"
+          echo "  3. Resolve conflicts"
+          echo "  4. ./scripts/rebrand-to-floorp.sh"
