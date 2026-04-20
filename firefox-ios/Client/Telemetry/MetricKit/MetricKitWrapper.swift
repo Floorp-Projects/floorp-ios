@@ -22,7 +22,8 @@ class MetricKitWrapper: NSObject, MXMetricManagerSubscriber {
     // MARK: - Public API
 
     func beginObservingMXPayloads() {
-        MXMetricManager.shared.add(self)
+        // Floorp: MetricKit disabled
+        return
     }
 
     // MARK: - MXMetricManagerSubscriber

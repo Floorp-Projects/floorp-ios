@@ -432,7 +432,77 @@ rename_swift_file "$PROJECT_ROOT/BrowserKit/Sources/ActionExtensionKit" "Firefox
 # FirefoxURLBuilderTests.swift → FloorpURLBuilderTests.swift
 rename_swift_file "$PROJECT_ROOT/BrowserKit/Tests/ActionExtensionKitTests" "FirefoxURLBuilderTests.swift" "FloorpURLBuilderTests.swift"
 
+# ============================================================================
+# 7. Disable All Telemetry
+# ============================================================================
+echo ">>> Step 7: Disable all telemetry..."
+
+# TelemetryWrapper.swift — early return in setup() and initGlean()
+FILE="$PROJECT_ROOT/firefox-ios/Client/Telemetry/TelemetryWrapper.swift"
+if [[ -f "$FILE" ]]; then
+    # Disable setup() by adding early return after the opening brace
+    if ! grep -q 'Floorp: All telemetry is disabled' "$FILE"; then
+        run_cmd sed -i '' '/func setup(profile:/,/^{/{
+            /^{/a\
+\        // Floorp: All telemetry is disabled\
+\        return
+        }' "$FILE"
+        echo "  ✓ TelemetryWrapper.setup() disabled"
+    else
+        echo "  ≈ TelemetryWrapper.setup() already disabled"
+    fi
+
+    # Disable initGlean() by adding early return
+    if ! grep -q 'Floorp: Glean telemetry initialization disabled' "$FILE"; then
+        run_cmd sed -i '' '/private func initGlean/,/^{/{
+            /^{/a\
+\        // Floorp: Glean telemetry initialization disabled\
+\        return
+        }' "$FILE"
+        echo "  ✓ TelemetryWrapper.initGlean() disabled"
+    else
+        echo "  ≈ TelemetryWrapper.initGlean() already disabled"
+    fi
+else
+    echo "  ⚠ Not found: $FILE"
+fi
+
+# MetricKitWrapper.swift — early return in beginObservingMXPayloads()
+FILE="$PROJECT_ROOT/firefox-ios/Client/Telemetry/MetricKit/MetricKitWrapper.swift"
+if [[ -f "$FILE" ]]; then
+    if ! grep -q 'Floorp: MetricKit disabled' "$FILE"; then
+        run_cmd sed -i '' '/func beginObservingMXPayloads/,/^{/{
+            /^{/a\
+\        // Floorp: MetricKit disabled\
+\        return
+        }' "$FILE"
+        echo "  ✓ MetricKitWrapper.beginObservingMXPayloads() disabled"
+    else
+        echo "  ≈ MetricKitWrapper already disabled"
+    fi
+else
+    echo "  ⚠ Not found: $FILE"
+fi
+
+# SentryWrapper.swift — early return in startWithConfigureOptions()
+FILE="$PROJECT_ROOT/BrowserKit/Sources/Common/Logger/Wrapper/SentryWrapper.swift"
+if [[ -f "$FILE" ]]; then
+    if ! grep -q 'Floorp: Sentry crash reporting disabled' "$FILE"; then
+        run_cmd sed -i '' '/public func startWithConfigureOptions/,/^{/{
+            /^{/a\
+\        // Floorp: Sentry crash reporting disabled\
+\        return
+        }' "$FILE"
+        echo "  ✓ SentryWrapper.startWithConfigureOptions() disabled"
+    else
+        echo "  ≈ SentryWrapper already disabled"
+    fi
+else
+    echo "  ⚠ Not found: $FILE"
+fi
+
 echo ""
+
 echo "============================================="
 if $DRY_RUN; then
     echo " DRY RUN COMPLETE — no changes were made"

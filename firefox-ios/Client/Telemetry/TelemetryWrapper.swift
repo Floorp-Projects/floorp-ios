@@ -89,14 +89,8 @@ class TelemetryWrapper: TelemetryWrapperProtocol,
 
     @MainActor
     func setup(profile: Profile) {
-        migratePathComponentInDocumentsDirectory("MozTelemetry-Default-core", to: .cachesDirectory)
-        migratePathComponentInDocumentsDirectory("MozTelemetry-Default-mobile-event", to: .cachesDirectory)
-        migratePathComponentInDocumentsDirectory("eventArray-MozTelemetry-Default-mobile-event.json", to: .cachesDirectory)
-
-        let sendUsageData = profile.prefs.boolForKey(AppConstants.prefSendUsageData) ?? true
-
-        // Initialize Glean
-        initGlean(profile, sendUsageData: sendUsageData)
+        // Floorp: All telemetry is disabled. No data is sent to Mozilla or any server.
+        return
     }
 
     @MainActor
@@ -105,6 +99,7 @@ class TelemetryWrapper: TelemetryWrapperProtocol,
         searchEnginesManager: SearchEnginesManager = AppContainer.shared.resolve(),
         sendUsageData: Bool
     ) {
+        // Floorp: Glean telemetry initialization disabled
         // Record default search engine setting to avoid sending a `null` value.
         // If there's no default search engine, (there's not, at this point), we will
         // send "unavailable" in order not to send `null`, but still differentiate

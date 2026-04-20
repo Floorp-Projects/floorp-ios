@@ -34,7 +34,8 @@ public final class DefaultSentry: SentryWrapper {
     }
 
     public func startWithConfigureOptions(configure options: @escaping (Options) -> Void) {
-        SentrySDK.start(configureOptions: options)
+        // Floorp: Sentry crash reporting disabled
+        return
     }
 
     public func captureMessage(message: String, with scopeBlock: @escaping (Scope) -> Void) {
