@@ -22,8 +22,8 @@ class MetricKitWrapper: NSObject, MXMetricManagerSubscriber {
     // MARK: - Public API
 
     func beginObservingMXPayloads() {
-        // Floorp: MetricKit disabled
-        return
+        // Floorp hook: Check flag set by FloorpBootstrapper
+        if FloorpFlags.isTelemetryDisabled { return }
     }
 
     // MARK: - MXMetricManagerSubscriber

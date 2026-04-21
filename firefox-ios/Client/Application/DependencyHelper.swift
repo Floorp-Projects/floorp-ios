@@ -57,6 +57,9 @@ class DependencyHelper {
         let userFeaturePreferenceManager = UserFeaturePreferenceManager(prefs: profile.prefs)
         AppContainer.shared.register(service: userFeaturePreferenceManager as UserFeaturePreferring)
 
+        // Floorp hook: Apply all Floorp customizations via single entry point
+        FloorpBootstrapper.configure()
+
         // Tell the container we are done registering
         AppContainer.shared.bootstrap()
     }

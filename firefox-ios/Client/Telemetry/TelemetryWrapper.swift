@@ -89,8 +89,8 @@ class TelemetryWrapper: TelemetryWrapperProtocol,
 
     @MainActor
     func setup(profile: Profile) {
-        // Floorp: All telemetry is disabled. No data is sent to Mozilla or any server.
-        return
+        // Floorp hook: Check flag set by FloorpBootstrapper
+        if FloorpFlags.isTelemetryDisabled { return }
     }
 
     @MainActor
@@ -99,8 +99,8 @@ class TelemetryWrapper: TelemetryWrapperProtocol,
         searchEnginesManager: SearchEnginesManager = AppContainer.shared.resolve(),
         sendUsageData: Bool
     ) {
-        // Floorp: Glean telemetry initialization disabled
-        return
+        // Floorp hook: Check flag set by FloorpBootstrapper
+        if FloorpFlags.isTelemetryDisabled { return }
         // Record default search engine setting to avoid sending a `null` value.
         // If there's no default search engine, (there's not, at this point), we will
         // send "unavailable" in order not to send `null`, but still differentiate

@@ -1390,6 +1390,8 @@
 		96A5F73829928B3700234E5F /* GeneralizedImageFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96A5F73729928B3700234E5F /* GeneralizedImageFetcher.swift */; };
 		96AF8C1C29FC14F700EC2219 /* CreditCardInputFieldHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96AF8C1B29FC14F700EC2219 /* CreditCardInputFieldHelperTests.swift */; };
 		96C11E9B2864C2DD00840E7C /* DependencyHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C11E9A2864C2DD00840E7C /* DependencyHelper.swift */; };
+		CE2CA7F689494A6687C69685 /* FloorpFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B002F9719C500D67401 /* FloorpFlags.swift */; };
+		CEC2F0A7D99B4900BE2EC4DF /* FloorpBootstrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B012F971A1500D67401 /* FloorpBootstrapper.swift */; };
 		96D95016270238500079D39D /* MainThreadThrottler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96D95015270238500079D39D /* MainThreadThrottler.swift */; };
 		96EB6C3827D821B800A9D159 /* HistoryPanelViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3727D821B800A9D159 /* HistoryPanelViewModel.swift */; };
 		96EB6C3E27D9266500A9D159 /* HistoryActionables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3D27D9266500A9D159 /* HistoryActionables.swift */; };
@@ -10586,6 +10588,8 @@
 		CDB3BE8624746787009320EE /* FirefoxAccountSignInViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirefoxAccountSignInViewController.swift; sourceTree = "<group>"; };
 		CDF4403FBD53453987C9B8CB /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/ClearHistoryConfirm.strings; sourceTree = "<group>"; };
 		CE664A9AB0ACFC6960CD6E81 /* pt-PT */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-PT"; path = "pt-PT.lproj/HistoryPanel.strings"; sourceTree = "<group>"; };
+		CE903B002F9719C500D67401 /* FloorpFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpFlags.swift; sourceTree = "<group>"; };
+		CE903B012F971A1500D67401 /* FloorpBootstrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpBootstrapper.swift; sourceTree = "<group>"; };
 		CEEB4EC881354939F3402DAE /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Menu.strings; sourceTree = "<group>"; };
 		CEFA977D1FAA6B490016F365 /* SyncContentSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncContentSettingsViewController.swift; sourceTree = "<group>"; };
 		CF0B41FFA07D1B6CF873F714 /* ko */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ko; path = ko.lproj/Menu.strings; sourceTree = "<group>"; };
@@ -15545,6 +15549,15 @@
 			path = BrowserViewController;
 			sourceTree = "<group>";
 		};
+		CE903AFF2F9719B700D67401 /* Floorp */ = {
+			isa = PBXGroup;
+			children = (
+				CE903B002F9719C500D67401 /* FloorpFlags.swift */,
+				CE903B012F971A1500D67401 /* FloorpBootstrapper.swift */,
+			);
+			path = Floorp;
+			sourceTree = "<group>";
+		};
 		D03F8F11200EAB8C003C2224 /* AtDocumentStart */ = {
 			isa = PBXGroup;
 			children = (
@@ -16594,6 +16607,7 @@
 				28CE83B91A1D1D3200576538 /* Sync */,
 				28CE83EF1A1D246900576538 /* Third-Party Source */,
 				047F9B2A24E1FE1C00CD7DF7 /* WidgetKit */,
+				CE903AFF2F9719B700D67401 /* Floorp */,
 			);
 			sourceTree = "<group>";
 		};
@@ -19084,6 +19098,8 @@
 				C8CD80DC2A1E8C970097C3AE /* OnboardingTelemetryUtility.swift in Sources */,
 				8A8D277B2CBFFD710076AD3A /* BrowserNavigationType.swift in Sources */,
 				96C11E9B2864C2DD00840E7C /* DependencyHelper.swift in Sources */,
+				CE2CA7F689494A6687C69685 /* FloorpFlags.swift in Sources */,
+				CEC2F0A7D99B4900BE2EC4DF /* FloorpBootstrapper.swift in Sources */,
 				8CE1E4382B8C76C80026530B /* LoginListViewModel.swift in Sources */,
 				0B8BF3722CA2DA4600E9812D /* EditBookmarkViewController.swift in Sources */,
 				8AED23042D40002D000FF624 /* MessageCardState.swift in Sources */,

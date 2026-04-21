@@ -433,63 +433,139 @@ rename_swift_file "$PROJECT_ROOT/BrowserKit/Sources/ActionExtensionKit" "Firefox
 rename_swift_file "$PROJECT_ROOT/BrowserKit/Tests/ActionExtensionKitTests" "FirefoxURLBuilderTests.swift" "FloorpURLBuilderTests.swift"
 
 # ============================================================================
-# 7. Disable All Telemetry
+# 7. Inject Floorp Bootstrapper Hook Points
 # ============================================================================
-echo ">>> Step 7: Disable all telemetry..."
+echo ">>> Step 7: Inject Floorp bootstrapper hook points..."
 
-# TelemetryWrapper.swift — early return in setup() and initGlean()
+# --- 7a. Ensure Floorp/ directory exists (inside firefox-ios/ for Xcode project) ---
+FLOORP_DIR="$PROJECT_ROOT/firefox-ios/Floorp"
+if [[ ! -d "$FLOORP_DIR" ]]; then
+    mkdir -p "$FLOORP_DIR"
+    echo "  ✓ Created $FLOORP_DIR/"
+fi
+
+# --- 7b. Ensure FloorpFlags.swift exists ---
+if [[ ! -f "$FLOORP_DIR/FloorpFlags.swift" ]]; then
+    cat > "$FLOORP_DIR/FloorpFlags.swift" << 'FLOORPFLAGS_EOF'
+// Floorp Flags
+// Single source of truth for all Floorp feature flags.
+// These flags are set by FloorpBootstrapper and checked by Firefox hook points.
+
+import Foundation
+
+/// Centralized flags for Floorp customizations.
+public final class FloorpFlags {
+    /// When `true`, all telemetry (Glean, MetricKit, Sentry) is disabled.
+    public static var isTelemetryDisabled: Bool = false
+}
+FLOORPFLAGS_EOF
+    echo "  ✓ Created FloorpFlags.swift"
+else
+    echo "  ≈ FloorpFlags.swift already exists"
+fi
+
+# --- 7c. Ensure FloorpBootstrapper.swift exists ---
+if [[ ! -f "$FLOORP_DIR/FloorpBootstrapper.swift" ]]; then
+    cat > "$FLOORP_DIR/FloorpBootstrapper.swift" << 'BOOTSTRAPPER_EOF'
+// Floorp iOS Bootstrapper
+// Centralizes all Floorp-specific customizations into a single entry point.
+// Called once from DependencyHelper.bootstrapDependencies().
+
+import Foundation
+import Common
+
+public final class FloorpBootstrapper {
+    @MainActor
+    public static func configure() {
+        let logger = DefaultLogger.shared
+        disableTelemetry(logger: logger)
+        logger.log("Floorp: Bootstrapper configured successfully", level: .info, category: .setup)
+    }
+
+    @MainActor
+    private static func disableTelemetry(logger: Logger) {
+        FloorpFlags.isTelemetryDisabled = true
+        logger.log("Floorp: All telemetry disabled via FloorpFlags", level: .info, category: .setup)
+    }
+}
+BOOTSTRAPPER_EOF
+    echo "  ✓ Created FloorpBootstrapper.swift"
+else
+    echo "  ≈ FloorpBootstrapper.swift already exists"
+fi
+
+# --- 7d. Inject hook: DependencyHelper.swift ---
+FILE="$PROJECT_ROOT/firefox-ios/Client/Application/DependencyHelper.swift"
+if [[ -f "$FILE" ]]; then
+    if ! grep -q 'FloorpBootstrapper.configure()' "$FILE"; then
+        run_cmd sed -i '' '/AppContainer.shared.bootstrap()/i\
+        // Floorp hook: Apply all Floorp customizations via single entry point\
+        FloorpBootstrapper.configure()\
+' "$FILE"
+        echo "  ✓ DependencyHelper: FloorpBootstrapper.configure() hook injected"
+    else
+        echo "  ≈ DependencyHelper: hook already present"
+    fi
+else
+    echo "  ⚠ Not found: $FILE"
+fi
+
+# --- 7e. Inject hook: TelemetryWrapper.swift (setup + initGlean) ---
 FILE="$PROJECT_ROOT/firefox-ios/Client/Telemetry/TelemetryWrapper.swift"
 if [[ -f "$FILE" ]]; then
-    # Disable setup() by inserting return after the comment marker
-    if ! grep -q 'Floorp: All telemetry is disabled' "$FILE"; then
+    # setup() hook
+    if ! grep -q 'FloorpFlags.isTelemetryDisabled' "$FILE"; then
         run_cmd sed -i '' '/func setup(profile:/{
             N
-            s/{\n/{\n        \/\/ Floorp: All telemetry is disabled. No data is sent to Mozilla or any server.\n        return\n/
+            s/{\n/{\n        if FloorpFlags.isTelemetryDisabled { return }\n/
         }' "$FILE"
-        echo "  ✓ TelemetryWrapper.setup() disabled"
+        echo "  ✓ TelemetryWrapper.setup(): FloorpFlags hook injected"
     else
-        echo "  ≈ TelemetryWrapper.setup() already disabled"
+        echo "  ≈ TelemetryWrapper.setup(): hook already present"
     fi
 
-    # Disable initGlean() by inserting return after the opening brace
-    if ! grep -q 'Floorp: Glean telemetry initialization disabled' "$FILE"; then
-        run_cmd sed -i '' '/func initGlean(/{
-            N;N;N;N
-            s/{\n/{\n        \/\/ Floorp: Glean telemetry initialization disabled\n        return\n/
-        }' "$FILE"
-        echo "  ✓ TelemetryWrapper.initGlean() disabled"
-    else
-        echo "  ≈ TelemetryWrapper.initGlean() already disabled"
+    # initGlean() hook
+    if ! grep -q 'FloorpFlags.isTelemetryDisabled' "$FILE"; then
+        # Second occurrence (initGlean) — use awk for precision
+        run_cmd awk '
+        /func initGlean\(/ { found=1 }
+        found && /{/ && !done {
+            print "        if FloorpFlags.isTelemetryDisabled { return }"
+            done=1
+            found=0
+        }
+        { print }
+        ' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+        echo "  ✓ TelemetryWrapper.initGlean(): FloorpFlags hook injected"
     fi
 else
     echo "  ⚠ Not found: $FILE"
 fi
 
-# MetricKitWrapper.swift — early return in beginObservingMXPayloads()
+# --- 7f. Inject hook: MetricKitWrapper.swift ---
 FILE="$PROJECT_ROOT/firefox-ios/Client/Telemetry/MetricKit/MetricKitWrapper.swift"
 if [[ -f "$FILE" ]]; then
-    if ! grep -q 'Floorp: MetricKit disabled' "$FILE"; then
+    if ! grep -q 'FloorpFlags.isTelemetryDisabled' "$FILE"; then
         run_cmd sed -i '' 's/func beginObservingMXPayloads() {/func beginObservingMXPayloads() {\
-        \/\/ Floorp: MetricKit disabled\
-        return/' "$FILE"
-        echo "  ✓ MetricKitWrapper.beginObservingMXPayloads() disabled"
+        if FloorpFlags.isTelemetryDisabled { return }/' "$FILE"
+        echo "  ✓ MetricKitWrapper: FloorpFlags hook injected"
     else
-        echo "  ≈ MetricKitWrapper already disabled"
+        echo "  ≈ MetricKitWrapper: hook already present"
     fi
 else
     echo "  ⚠ Not found: $FILE"
 fi
 
-# SentryWrapper.swift — early return in startWithConfigureOptions()
+# --- 7g. Inject hook: SentryWrapper.swift (direct return — BrowserKit can't access FloorpFlags) ---
 FILE="$PROJECT_ROOT/BrowserKit/Sources/Common/Logger/Wrapper/SentryWrapper.swift"
 if [[ -f "$FILE" ]]; then
-    if ! grep -q 'Floorp: Sentry crash reporting disabled' "$FILE"; then
+    if ! grep -q 'Floorp hook' "$FILE"; then
         run_cmd sed -i '' 's/public func startWithConfigureOptions(configure options: @escaping (Options) -> Void) {/public func startWithConfigureOptions(configure options: @escaping (Options) -> Void) {\
-        \/\/ Floorp: Sentry crash reporting disabled\
+        \/\/ Floorp hook: SentryWrapper is in BrowserKit, cannot access FloorpFlags\
         return/' "$FILE"
-        echo "  ✓ SentryWrapper.startWithConfigureOptions() disabled"
+        echo "  ✓ SentryWrapper: direct return injected (BrowserKit module boundary)"
     else
-        echo "  ≈ SentryWrapper already disabled"
+        echo "  ≈ SentryWrapper: hook already present"
     fi
 else
     echo "  ⚠ Not found: $FILE"

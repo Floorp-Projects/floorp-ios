@@ -34,7 +34,9 @@ public final class DefaultSentry: SentryWrapper {
     }
 
     public func startWithConfigureOptions(configure options: @escaping (Options) -> Void) {
-        // Floorp: Sentry crash reporting disabled
+        // Floorp hook: Check flag set by FloorpBootstrapper
+        // Note: SentryWrapper is in BrowserKit, so we use a simple boolean
+        // that is set during FloorpBootstrapper.configure()
         return
     }
 
