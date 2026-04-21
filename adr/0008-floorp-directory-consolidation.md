@@ -45,9 +45,11 @@ Floorp/
 Instead of directly modifying Firefox method bodies, we use a two-part system:
 
 1. **FloorpBootstrapper** — Called from `DependencyHelper.bootstrapDependencies()` with a single line:
+
    ```swift
    FloorpBootstrapper.configure()
    ```
+
    This sets all Floorp feature flags before any Firefox code runs.
 
 2. **FloorpFlags** — Static boolean flags checked at Firefox hook points:
@@ -59,12 +61,12 @@ Instead of directly modifying Firefox method bodies, we use a two-part system:
 
 Only 4 Firefox files need minimal modifications (~2 lines each):
 
-| File | Hook | Purpose |
-|------|------|---------|
-| `DependencyHelper.swift` | `FloorpBootstrapper.configure()` | Entry point |
-| `TelemetryWrapper.swift` | `FloorpFlags.isTelemetryDisabled` (×2) | Glean telemetry |
-| `MetricKitWrapper.swift` | `FloorpFlags.isTelemetryDisabled` | Apple MetricKit |
-| `SentryWrapper.swift` | Direct `return` | Sentry (BrowserKit boundary) |
+| File                     | Hook                                   | Purpose                      |
+| ------------------------ | -------------------------------------- | ---------------------------- |
+| `DependencyHelper.swift` | `FloorpBootstrapper.configure()`       | Entry point                  |
+| `TelemetryWrapper.swift` | `FloorpFlags.isTelemetryDisabled` (×2) | Glean telemetry              |
+| `MetricKitWrapper.swift` | `FloorpFlags.isTelemetryDisabled`      | Apple MetricKit              |
+| `SentryWrapper.swift`    | Direct `return`                        | Sentry (BrowserKit boundary) |
 
 ### BrowserKit Constraint
 
@@ -73,6 +75,7 @@ Only 4 Firefox files need minimal modifications (~2 lines each):
 ### Rebrand Script Integration
 
 `scripts/rebrand-to-floorp.sh` Step 7 is updated to:
+
 1. Ensure `Floorp/` directory and files exist (idempotent creation)
 2. Inject hook comments into the 4 Firefox files (only if not already present)
 3. Use grep-based idempotency checks to prevent duplicate injection
@@ -96,8 +99,8 @@ Only 4 Firefox files need minimal modifications (~2 lines each):
 
 ### Risks and Mitigations
 
-| Risk | Mitigation |
-|------|-----------|
-| Upstream renames/removes a hooked method | Rebrand script grep checks will fail gracefully with warnings |
-| Floorp/ directory accidentally excluded from build | Document in rebrand script; verify in CI |
-| Flag name collision with upstream code | Use `Floorp` prefix consistently |
+| Risk                                               | Mitigation                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------- |
+| Upstream renames/removes a hooked method           | Rebrand script grep checks will fail gracefully with warnings |
+| Floorp/ directory accidentally excluded from build | Document in rebrand script; verify in CI                      |
+| Flag name collision with upstream code             | Use `Floorp` prefix consistently                              |

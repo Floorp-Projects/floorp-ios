@@ -454,9 +454,13 @@ if [[ ! -f "$FLOORP_DIR/FloorpFlags.swift" ]]; then
 import Foundation
 
 /// Centralized flags for Floorp customizations.
+/// Note: `nonisolated(unsafe)` is required for Swift 6 strict concurrency compliance,
+/// because flags are set once during bootstrap and then read-only.
+@MainActor
 public final class FloorpFlags {
     /// When `true`, all telemetry (Glean, MetricKit, Sentry) is disabled.
-    public static var isTelemetryDisabled: Bool = false
+    /// Set by FloorpBootstrapper.configure().
+    nonisolated(unsafe) public static var isTelemetryDisabled: Bool = false
 }
 FLOORPFLAGS_EOF
     echo "  ✓ Created FloorpFlags.swift"
@@ -474,8 +478,8 @@ if [[ ! -f "$FLOORP_DIR/FloorpBootstrapper.swift" ]]; then
 import Foundation
 import Common
 
+@MainActor
 public final class FloorpBootstrapper {
-    @MainActor
     public static func configure() {
         let logger = DefaultLogger.shared
         disableTelemetry(logger: logger)
@@ -524,9 +528,8 @@ if [[ -f "$FILE" ]]; then
         echo "  ≈ TelemetryWrapper.setup(): hook already present"
     fi
 
-    # initGlean() hook
-    if ! grep -q 'FloorpFlags.isTelemetryDisabled' "$FILE"; then
-        # Second occurrence (initGlean) — use awk for precision
+    # initGlean() hook — use function-scoped check to avoid false positive from setup() hook
+    if ! awk '/func initGlean\(/,/^    }/' "$FILE" | grep -q 'FloorpFlags.isTelemetryDisabled'; then
         run_cmd awk '
         /func initGlean\(/ { found=1 }
         found && /{/ && !done {
@@ -537,6 +540,8 @@ if [[ -f "$FILE" ]]; then
         { print }
         ' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
         echo "  ✓ TelemetryWrapper.initGlean(): FloorpFlags hook injected"
+    else
+        echo "  ≈ TelemetryWrapper.initGlean(): hook already present"
     fi
 else
     echo "  ⚠ Not found: $FILE"

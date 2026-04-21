@@ -3,7 +3,7 @@ name: Upstream Sync
 on:
   # Every Monday at 09:00 UTC (18:00 JST)
   schedule:
-    - cron: '0 9 * * 1'
+    - cron: "0 9 * * 1"
 
   # Allow manual trigger
   workflow_dispatch:

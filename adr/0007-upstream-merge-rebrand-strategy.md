@@ -64,14 +64,14 @@ git push --no-verify origin main
 
 ### What the Script Covers (6 Steps)
 
-| Step | Category | Files |
-|------|----------|-------|
-| 1 | Swift identifier constants | `StandardImageIdentifiers.swift`, `ImageIdentifiers.swift`, `OnboardingImageIdentifiers.swift` |
-| 2 | Swift source references | 19 source files across BrowserKit, firefox-ios, focus-ios, tests |
-| 3 | xcassets image set folder renames | 8 folders (faviconFox, logoFirefoxLarge, firefoxLoader, firefox-jp, open_in_firefox_icon) |
-| 4 | Contents.json filename references | 6 metadata files |
-| 5 | Image file renames | 6 PDF/PNG files |
-| 6 | Swift file renames | 2 files (FirefoxURLBuilding.swift, FirefoxURLBuilderTests.swift) |
+| Step | Category                          | Files                                                                                          |
+| ---- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 1    | Swift identifier constants        | `StandardImageIdentifiers.swift`, `ImageIdentifiers.swift`, `OnboardingImageIdentifiers.swift` |
+| 2    | Swift source references           | 19 source files across BrowserKit, firefox-ios, focus-ios, tests                               |
+| 3    | xcassets image set folder renames | 8 folders (faviconFox, logoFirefoxLarge, firefoxLoader, firefox-jp, open_in_firefox_icon)      |
+| 4    | Contents.json filename references | 6 metadata files                                                                               |
+| 5    | Image file renames                | 6 PDF/PNG files                                                                                |
+| 6    | Swift file renames                | 2 files (FirefoxURLBuilding.swift, FirefoxURLBuilderTests.swift)                               |
 
 ## Consequences
 

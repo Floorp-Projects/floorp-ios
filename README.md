@@ -71,14 +71,14 @@ git push --no-verify origin main
 
 `scripts/rebrand-to-floorp.sh` automates all Firefox → Floorp branding changes across 44 files:
 
-| Step | Category | Description |
-|------|----------|-------------|
-| 1 | Swift identifiers | Constant names (`logoFirefox` → `logoFloorp`, etc.) |
-| 2 | Swift references | Usage sites across ~20 source files |
-| 3 | Image set folders | xcassets `.imageset` directory renames (8 folders) |
-| 4 | Contents.json | Image metadata filename references |
-| 5 | Image files | PDF/PNG file renames |
-| 6 | Swift files | File-level renames (`FirefoxURLBuilding.swift` → `FloorpURLBuilding.swift`) |
+| Step | Category          | Description                                                                 |
+| ---- | ----------------- | --------------------------------------------------------------------------- |
+| 1    | Swift identifiers | Constant names (`logoFirefox` → `logoFloorp`, etc.)                         |
+| 2    | Swift references  | Usage sites across ~20 source files                                         |
+| 3    | Image set folders | xcassets `.imageset` directory renames (8 folders)                          |
+| 4    | Contents.json     | Image metadata filename references                                          |
+| 5    | Image files       | PDF/PNG file renames                                                        |
+| 6    | Swift files       | File-level renames (`FirefoxURLBuilding.swift` → `FloorpURLBuilding.swift`) |
 
 - **Idempotent** — already-applied changes are skipped
 - **Dry-run** — `./scripts/rebrand-to-floorp.sh --dry-run` previews without modifying
