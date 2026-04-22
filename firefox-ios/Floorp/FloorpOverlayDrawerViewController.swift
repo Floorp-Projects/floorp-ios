@@ -478,7 +478,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
                         title: bookmark.title ?? bookmark.url ?? "",
                         url: bookmark.url,
                         icon: UIImage(systemName: "bookmark.fill"),
-                        subtitle: bookmark.url
+                        subtitle: bookmark.url,
+                        bookmarkGUID: bookmark.guid
                     )
                 }
                 applySearchFilter()
@@ -559,6 +560,41 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         }
         retryButton.isHidden = true
         currentRetryAction = nil
+    }
+
+    /// Deletes an item from the underlying database (bookmarks/history).
+    /// Errors are logged but do not block UI removal.
+    private func deleteItemFromDatabase(_ item: DrawerItem) {
+        switch currentPanelType {
+        case .bookmarks:
+            guard let guid = item.bookmarkGUID else { return }
+            Task { @MainActor in
+                do {
+                    try await panelManager.dataProvider.deleteBookmark(guid: guid)
+                } catch {
+                    logger.log(
+                        "Floorp: Failed to delete bookmark: \(error.localizedDescription)",
+                        level: .warning,
+                        category: .setup
+                    )
+                }
+            }
+        case .history:
+            guard let url = item.url else { return }
+            Task { @MainActor in
+                do {
+                    try await panelManager.dataProvider.deleteHistory(url: url)
+                } catch {
+                    logger.log(
+                        "Floorp: Failed to delete history: \(error.localizedDescription)",
+                        level: .warning,
+                        category: .setup
+                    )
+                }
+            }
+        case .downloads, .web:
+            break
+        }
     }
 
     private func showEmptyState(message: String, retryAction: (() -> Void)? = nil) {
@@ -750,6 +786,10 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
             title: FloorpStrings.Drawer.deleteItem
         ) { [weak self] _, _, completionHandler in
             guard let self = self else { return }
+
+            // Persist deletion to database
+            self.deleteItemFromDatabase(item)
+
             if self.isSearching {
                 if let originalIndex = self.items.firstIndex(where: { $0.id == item.id }) {
                     self.items.remove(at: originalIndex)

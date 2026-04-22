@@ -120,12 +120,22 @@ struct DrawerItem: Identifiable {
     let icon: UIImage?
     let subtitle: String?
 
-    init(title: String, url: String? = nil, icon: UIImage? = nil, subtitle: String? = nil) {
+    /// Bookmark GUID for DB deletion. Only set for bookmark items.
+    let bookmarkGUID: String?
+
+    init(
+        title: String,
+        url: String? = nil,
+        icon: UIImage? = nil,
+        subtitle: String? = nil,
+        bookmarkGUID: String? = nil
+    ) {
         self.id = url ?? UUID().uuidString
         self.title = title
         self.url = url
         self.icon = icon
         self.subtitle = subtitle
+        self.bookmarkGUID = bookmarkGUID
     }
 }
 

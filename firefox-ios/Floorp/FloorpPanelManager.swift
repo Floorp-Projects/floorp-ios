@@ -147,6 +147,46 @@ final class FloorpPanelDataProvider {
         AppContainer.shared.resolve() as Profile
     }
 
+    // MARK: - Deletion
+
+    /// Deletes a bookmark from the database by its GUID.
+    /// - Parameter guid: The bookmark's unique identifier.
+    func deleteBookmark(guid: String) async throws {
+        guard let profile = getProfile() else {
+            throw FloorpPanelError.storageError("Failed to resolve Profile from AppContainer")
+        }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            profile.places.deleteBookmarkNode(guid: guid).uponQueue(.main) { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Deletes all visits for a given URL from browsing history.
+    /// - Parameter url: The URL whose visits should be removed.
+    func deleteHistory(url: String) async throws {
+        guard let profile = getProfile() else {
+            throw FloorpPanelError.storageError("Failed to resolve Profile from AppContainer")
+        }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            profile.places.deleteVisitsFor(url).uponQueue(.main) { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     // MARK: - Downloads
 
     /// Fetches recent downloads from the device's Downloads directory.
