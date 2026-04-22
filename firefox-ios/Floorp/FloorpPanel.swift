@@ -139,10 +139,6 @@ struct FloorpOverlayDrawerConfig: Codable, Equatable {
     /// Whether the drawer is enabled.
     var isEnabled = true
 
-    /// Width ratio of the drawer relative to screen width (0.0 - 1.0).
-    /// Desktop default widths: bookmarks/history=415px, downloads=415px
-    var widthRatio = 0.80
-
     /// The ID of the currently selected panel.
     var selectedPanelId: String?
 

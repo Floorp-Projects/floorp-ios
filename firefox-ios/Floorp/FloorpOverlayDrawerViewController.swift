@@ -526,21 +526,25 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     private func loadDownloads() {
-        let downloads = panelManager.dataProvider.getRecentDownloads(limit: 50)
-        self.items = downloads.map { file in
-            let fileIcon = UIImage(systemName: "doc.fill") ?? UIImage(systemName: "arrow.down.circle.fill")
-            return DrawerItem(
-                title: file.filename,
-                url: file.path.absoluteString,
-                icon: fileIcon,
-                subtitle: file.formattedSize
-            )
-        }
-        if items.isEmpty {
-            showEmptyState(message: FloorpStrings.Drawer.noDownloads)
-        } else {
-            applySearchFilter()
-            updateUI()
+        Task { @MainActor in
+            let downloads = panelManager.dataProvider.getRecentDownloads(limit: 50)
+            self.items = downloads.map { file in
+                let fileIcon = UIImage(
+                    systemName: "doc.fill"
+                ) ?? UIImage(systemName: "arrow.down.circle.fill")
+                return DrawerItem(
+                    title: file.filename,
+                    url: file.path.absoluteString,
+                    icon: fileIcon,
+                    subtitle: file.formattedSize
+                )
+            }
+            if items.isEmpty {
+                showEmptyState(message: FloorpStrings.Drawer.noDownloads)
+            } else {
+                applySearchFilter()
+                updateUI()
+            }
         }
     }
 

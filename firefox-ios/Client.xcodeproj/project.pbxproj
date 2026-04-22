@@ -1397,7 +1397,7 @@
 		CEC2F0AAE11D4F00BE2EC4DF /* FloorpOverlayDrawerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B042F971A3800D67401 /* FloorpOverlayDrawerViewController.swift */; };
 		CEC2F0ABE11D4F00BE2EC4DF /* BrowserViewController+Floorp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B052F971B0000D67401 /* BrowserViewController+Floorp.swift */; };
 		CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B062F971B0100D67401 /* FloorpNotifications.swift */; };
-		CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B072F971B0200D67401 /* FloorpStrings.swift */; };
+					CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B072F971B0200D67401 /* FloorpStrings.swift */; };
 		96D95016270238500079D39D /* MainThreadThrottler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96D95015270238500079D39D /* MainThreadThrottler.swift */; };
 		96EB6C3827D821B800A9D159 /* HistoryPanelViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3727D821B800A9D159 /* HistoryPanelViewModel.swift */; };
 		96EB6C3E27D9266500A9D159 /* HistoryActionables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3D27D9266500A9D159 /* HistoryActionables.swift */; };
@@ -19123,7 +19123,7 @@
 				CEC2F0AAE11D4F00BE2EC4DF /* FloorpOverlayDrawerViewController.swift in Sources */,
 				CEC2F0ABE11D4F00BE2EC4DF /* BrowserViewController+Floorp.swift in Sources */,
 				CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */,
-			CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */,
+				CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */,
 				8CE1E4382B8C76C80026530B /* LoginListViewModel.swift in Sources */,
 				0B8BF3722CA2DA4600E9812D /* EditBookmarkViewController.swift in Sources */,
 				8AED23042D40002D000FF624 /* MessageCardState.swift in Sources */,
