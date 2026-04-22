@@ -1392,6 +1392,12 @@
 		96C11E9B2864C2DD00840E7C /* DependencyHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C11E9A2864C2DD00840E7C /* DependencyHelper.swift */; };
 		CE2CA7F689494A6687C69685 /* FloorpFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B002F9719C500D67401 /* FloorpFlags.swift */; };
 		CEC2F0A7D99B4900BE2EC4DF /* FloorpBootstrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B012F971A1500D67401 /* FloorpBootstrapper.swift */; };
+		CEC2F0A8E11D4F00BE2EC4DF /* FloorpPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B022F971A2600D67401 /* FloorpPanel.swift */; };
+		CEC2F0A9F22E5000BE2EC4DF /* FloorpPanelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B032F971A3700D67401 /* FloorpPanelManager.swift */; };
+		CEC2F0AAE11D4F00BE2EC4DF /* FloorpOverlayDrawerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B042F971A3800D67401 /* FloorpOverlayDrawerViewController.swift */; };
+		CEC2F0ABE11D4F00BE2EC4DF /* BrowserViewController+Floorp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B052F971B0000D67401 /* BrowserViewController+Floorp.swift */; };
+		CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B062F971B0100D67401 /* FloorpNotifications.swift */; };
+		CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B072F971B0200D67401 /* FloorpStrings.swift */; };
 		96D95016270238500079D39D /* MainThreadThrottler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96D95015270238500079D39D /* MainThreadThrottler.swift */; };
 		96EB6C3827D821B800A9D159 /* HistoryPanelViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3727D821B800A9D159 /* HistoryPanelViewModel.swift */; };
 		96EB6C3E27D9266500A9D159 /* HistoryActionables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3D27D9266500A9D159 /* HistoryActionables.swift */; };
@@ -10590,6 +10596,12 @@
 		CE664A9AB0ACFC6960CD6E81 /* pt-PT */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-PT"; path = "pt-PT.lproj/HistoryPanel.strings"; sourceTree = "<group>"; };
 		CE903B002F9719C500D67401 /* FloorpFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpFlags.swift; sourceTree = "<group>"; };
 		CE903B012F971A1500D67401 /* FloorpBootstrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpBootstrapper.swift; sourceTree = "<group>"; };
+		CE903B022F971A2600D67401 /* FloorpPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanel.swift; sourceTree = "<group>"; };
+		CE903B032F971A3700D67401 /* FloorpPanelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanelManager.swift; sourceTree = "<group>"; };
+		CE903B042F971A3800D67401 /* FloorpOverlayDrawerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpOverlayDrawerViewController.swift; sourceTree = "<group>"; };
+		CE903B052F971B0000D67401 /* BrowserViewController+Floorp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserViewController+Floorp.swift"; sourceTree = "<group>"; };
+		CE903B062F971B0100D67401 /* FloorpNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotifications.swift; sourceTree = "<group>"; };
+		CE903B072F971B0200D67401 /* FloorpStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpStrings.swift; sourceTree = "<group>"; };
 		CEEB4EC881354939F3402DAE /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Menu.strings; sourceTree = "<group>"; };
 		CEFA977D1FAA6B490016F365 /* SyncContentSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncContentSettingsViewController.swift; sourceTree = "<group>"; };
 		CF0B41FFA07D1B6CF873F714 /* ko */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ko; path = ko.lproj/Menu.strings; sourceTree = "<group>"; };
@@ -15554,6 +15566,12 @@
 			children = (
 				CE903B002F9719C500D67401 /* FloorpFlags.swift */,
 				CE903B012F971A1500D67401 /* FloorpBootstrapper.swift */,
+				CE903B022F971A2600D67401 /* FloorpPanel.swift */,
+				CE903B032F971A3700D67401 /* FloorpPanelManager.swift */,
+				CE903B042F971A3800D67401 /* FloorpOverlayDrawerViewController.swift */,
+				CE903B052F971B0000D67401 /* BrowserViewController+Floorp.swift */,
+				CE903B062F971B0100D67401 /* FloorpNotifications.swift */,
+				CE903B072F971B0200D67401 /* FloorpStrings.swift */,
 			);
 			path = Floorp;
 			sourceTree = "<group>";
@@ -19100,6 +19118,12 @@
 				96C11E9B2864C2DD00840E7C /* DependencyHelper.swift in Sources */,
 				CE2CA7F689494A6687C69685 /* FloorpFlags.swift in Sources */,
 				CEC2F0A7D99B4900BE2EC4DF /* FloorpBootstrapper.swift in Sources */,
+				CEC2F0A8E11D4F00BE2EC4DF /* FloorpPanel.swift in Sources */,
+				CEC2F0A9F22E5000BE2EC4DF /* FloorpPanelManager.swift in Sources */,
+				CEC2F0AAE11D4F00BE2EC4DF /* FloorpOverlayDrawerViewController.swift in Sources */,
+				CEC2F0ABE11D4F00BE2EC4DF /* BrowserViewController+Floorp.swift in Sources */,
+				CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */,
+			CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */,
 				8CE1E4382B8C76C80026530B /* LoginListViewModel.swift in Sources */,
 				0B8BF3722CA2DA4600E9812D /* EditBookmarkViewController.swift in Sources */,
 				8AED23042D40002D000FF624 /* MessageCardState.swift in Sources */,

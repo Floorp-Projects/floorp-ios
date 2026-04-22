@@ -1,0 +1,12 @@
+diff --git a/firefox-ios/Client/Frontend/Browser/BrowserViewController/Extensions/BrowserViewController+KeyCommands.swift b/firefox-ios/Client/Frontend/Browser/BrowserViewController/Extensions/BrowserViewController+KeyCommands.swift
+index 19d82dcfc1..5ae03184a8 100644
+--- a/firefox-ios/Client/Frontend/Browser/BrowserViewController/Extensions/BrowserViewController+KeyCommands.swift
++++ b/firefox-ios/Client/Frontend/Browser/BrowserViewController/Extensions/BrowserViewController+KeyCommands.swift
+@@ -382,6 +382,7 @@ extension BrowserViewController {
+             UIKeyCommand(action: #selector(selectTabSix), input: "6", modifierFlags: .command),
+             UIKeyCommand(action: #selector(selectTabSeven), input: "7", modifierFlags: .command),
+             UIKeyCommand(action: #selector(selectTabEight), input: "8", modifierFlags: .command),
++            UIKeyCommand(action: #selector(toggleFloorpOverlayDrawerKeyCommand), input: "d", modifierFlags: [.command, .shift]),
+         ] + windowShortcuts
+ 
+         let isEditingText = tabManager.selectedTab?.isEditing ?? false

@@ -71,6 +71,9 @@ buildServer.json
 # Zed
 .zed
 
+# Floorp build-time patch state
+.floorp-patch-state/
+
 # Required for Glean
 firefox-ios/Client/Generated
 firefox-ios/Sync/Generated

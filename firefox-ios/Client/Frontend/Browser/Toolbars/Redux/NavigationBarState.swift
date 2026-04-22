@@ -273,6 +273,7 @@ struct NavigationBarState: StateType, Equatable {
         switch layout {
         case .version1, .none:
             actions.append(middleAction)
+            actions.append(floorpDrawerAction()) // Floorp: overlay drawer button
             actions.append(menuAction(iconName: StandardImageIdentifiers.Large.moreHorizontalRound,
                                       showWarningBadge: showWarningBadge))
             actions.append(tabsAction(iconName: iconName,
@@ -289,6 +290,7 @@ struct NavigationBarState: StateType, Equatable {
                                       previousTabScreenshot: previousTabScreenshot,
                                       nextTabScreenshot: nextTabScreenshot)
             )
+            actions.append(floorpDrawerAction()) // Floorp: overlay drawer button
             actions.append(menuAction(iconName: StandardImageIdentifiers.Large.moreHorizontalRound,
                                       showWarningBadge: showWarningBadge))
         }
@@ -365,5 +367,15 @@ struct NavigationBarState: StateType, Equatable {
             isEnabled: true,
             a11yLabel: .Toolbars.MenuButtonAccessibilityLabel,
             a11yId: AccessibilityIdentifiers.Toolbar.settingsMenuButton)
+    }
+
+    // Floorp: overlay drawer toolbar button
+    private static func floorpDrawerAction() -> ToolbarActionConfiguration {
+        return ToolbarActionConfiguration(
+            actionType: .floorpDrawer,
+            iconName: "sidebar.right",
+            isEnabled: true,
+            a11yLabel: "Floorp Drawer",
+            a11yId: "floorpDrawerToolbarButton")
     }
 }

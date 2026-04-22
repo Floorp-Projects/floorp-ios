@@ -1,0 +1,35 @@
+diff --git a/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/NavigationBarState.swift b/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/NavigationBarState.swift
+index ba8fae4201..aa0c24d10d 100644
+--- a/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/NavigationBarState.swift
++++ b/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/NavigationBarState.swift
+@@ -273,6 +273,7 @@ struct NavigationBarState: StateType, Equatable {
+         switch layout {
+         case .version1, .none:
+             actions.append(middleAction)
++            actions.append(floorpDrawerAction()) // Floorp: overlay drawer button
+             actions.append(menuAction(iconName: StandardImageIdentifiers.Large.moreHorizontalRound,
+                                       showWarningBadge: showWarningBadge))
+             actions.append(tabsAction(iconName: iconName,
+@@ -289,6 +290,7 @@ struct NavigationBarState: StateType, Equatable {
+                                       previousTabScreenshot: previousTabScreenshot,
+                                       nextTabScreenshot: nextTabScreenshot)
+             )
++            actions.append(floorpDrawerAction()) // Floorp: overlay drawer button
+             actions.append(menuAction(iconName: StandardImageIdentifiers.Large.moreHorizontalRound,
+                                       showWarningBadge: showWarningBadge))
+         }
+@@ -366,4 +368,14 @@ struct NavigationBarState: StateType, Equatable {
+             a11yLabel: .Toolbars.MenuButtonAccessibilityLabel,
+             a11yId: AccessibilityIdentifiers.Toolbar.settingsMenuButton)
+     }
++
++    // Floorp: overlay drawer toolbar button
++    private static func floorpDrawerAction() -> ToolbarActionConfiguration {
++        return ToolbarActionConfiguration(
++            actionType: .floorpDrawer,
++            iconName: "sidebar.right",
++            isEnabled: true,
++            a11yLabel: "Floorp Drawer",
++            a11yId: "floorpDrawerToolbarButton")
++    }
+ }

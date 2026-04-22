@@ -1,0 +1,14 @@
+diff --git a/firefox-ios/Client/Frontend/Browser/BrowserViewController/Views/BrowserViewController.swift b/firefox-ios/Client/Frontend/Browser/BrowserViewController/Views/BrowserViewController.swift
+index 972c68d64c..304d741007 100644
+--- a/firefox-ios/Client/Frontend/Browser/BrowserViewController/Views/BrowserViewController.swift
++++ b/firefox-ios/Client/Frontend/Browser/BrowserViewController/Views/BrowserViewController.swift
+@@ -1078,6 +1078,9 @@ class BrowserViewController: UIViewController,
+         // links into the view from other apps.
+         let dropInteraction = UIDropInteraction(delegate: self)
+         view.addInteraction(dropInteraction)
++
++        // Floorp: Setup overlay drawer integration
++        setupFloorp()
+     }
+ 
+     private func setupTopTabsViewController() {

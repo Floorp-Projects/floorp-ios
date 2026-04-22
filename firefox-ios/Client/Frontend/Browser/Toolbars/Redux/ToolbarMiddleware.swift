@@ -266,6 +266,13 @@ final class ToolbarMiddleware: LegacyFeatureFlaggable {
         case .cancelEdit:
             cancelEditMode(windowUUID: action.windowUUID)
 
+        case .floorpDrawer: // Floorp: toggle overlay drawer
+            NotificationCenter.default.post(
+                name: .FloorpToggleDrawer,
+                object: nil,
+                userInfo: ["windowUUID": action.windowUUID]
+            )
+
         case .readerMode, .readerModeWithSummarizer:
             recordReaderModeTelemetry(state: state, windowUUID: action.windowUUID)
             let action = GeneralBrowserAction(windowUUID: action.windowUUID,

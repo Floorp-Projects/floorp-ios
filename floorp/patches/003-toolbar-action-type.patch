@@ -1,0 +1,12 @@
+diff --git a/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarActionConfiguration.swift b/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarActionConfiguration.swift
+index 8f59fb3804..b09a8abafd 100644
+--- a/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarActionConfiguration.swift
++++ b/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarActionConfiguration.swift
+@@ -24,6 +24,7 @@ struct ToolbarActionConfiguration: Equatable, LegacyFeatureFlaggable {
+         case summarizer
+         case translate
+         case cancelEdit
++        case floorpDrawer // Floorp: overlay drawer button
+     }
+ 
+     var actionType: ActionType

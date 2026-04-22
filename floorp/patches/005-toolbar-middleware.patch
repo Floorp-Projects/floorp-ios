@@ -1,0 +1,18 @@
+diff --git a/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarMiddleware.swift b/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarMiddleware.swift
+index 3dbb02e5f3..0f8174c55b 100644
+--- a/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarMiddleware.swift
++++ b/firefox-ios/Client/Frontend/Browser/Toolbars/Redux/ToolbarMiddleware.swift
+@@ -266,6 +266,13 @@ final class ToolbarMiddleware: LegacyFeatureFlaggable {
+         case .cancelEdit:
+             cancelEditMode(windowUUID: action.windowUUID)
+ 
++        case .floorpDrawer: // Floorp: toggle overlay drawer
++            NotificationCenter.default.post(
++                name: .FloorpToggleDrawer,
++                object: nil,
++                userInfo: ["windowUUID": action.windowUUID]
++            )
++
+         case .readerMode, .readerModeWithSummarizer:
+             recordReaderModeTelemetry(state: state, windowUUID: action.windowUUID)
+             let action = GeneralBrowserAction(windowUUID: action.windowUUID,

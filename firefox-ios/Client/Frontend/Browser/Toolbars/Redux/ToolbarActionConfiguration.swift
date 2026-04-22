@@ -24,6 +24,7 @@ struct ToolbarActionConfiguration: Equatable, LegacyFeatureFlaggable {
         case summarizer
         case translate
         case cancelEdit
+        case floorpDrawer // Floorp: overlay drawer button
     }
 
     var actionType: ActionType

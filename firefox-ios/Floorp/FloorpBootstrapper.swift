@@ -1,9 +1,6 @@
-// Floorp iOS Bootstrapper
-// Centralizes all Floorp-specific customizations into a single entry point.
-// Called once from DependencyHelper.bootstrapDependencies().
-//
-// This file is part of the Floorp customization layer.
-// DO NOT modify Firefox source files directly — add hooks here instead.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
 import Common
@@ -19,7 +16,6 @@ import Common
 /// modifications to the upstream Firefox codebase and reduce
 /// merge conflict surface area.
 public final class FloorpBootstrapper {
-
     /// Apply all Floorp customizations.
     ///
     /// This method is called once during app startup, after
@@ -30,6 +26,9 @@ public final class FloorpBootstrapper {
 
         // Step 1: Disable all telemetry
         disableTelemetry(logger: logger)
+
+        // Step 2: Configure overlay drawer
+        configureOverlayDrawer(logger: logger)
 
         logger.log("Floorp: Bootstrapper configured successfully", level: .info, category: .setup)
     }
@@ -52,8 +51,25 @@ public final class FloorpBootstrapper {
         //
         // SentryWrapper is in BrowserKit (separate SPM package) and cannot
         // import FloorpFlags, so it uses a direct return instead.
-        FloorpFlags.isTelemetryDisabled = true
+        FloorpFlags.setTelemetryDisabled(true)
 
         logger.log("Floorp: All telemetry disabled via FloorpFlags", level: .info, category: .setup)
+    }
+
+    // MARK: - Overlay Drawer
+
+    /// Configures the overlay drawer feature.
+    ///
+    /// Initializes the panel manager which loads persisted panel data
+    /// and enables the overlay drawer flag.
+    @MainActor
+    private static func configureOverlayDrawer(logger: Logger) {
+        // Initialize the panel manager (loads persisted panels + config)
+        _ = FloorpPanelManager.shared
+
+        // Enable the overlay drawer
+        FloorpFlags.setOverlayDrawerEnabled(true)
+
+        logger.log("Floorp: Overlay drawer enabled", level: .info, category: .setup)
     }
 }

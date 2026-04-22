@@ -1078,6 +1078,9 @@ class BrowserViewController: UIViewController,
         // links into the view from other apps.
         let dropInteraction = UIDropInteraction(delegate: self)
         view.addInteraction(dropInteraction)
+
+        // Floorp: Setup overlay drawer integration
+        setupFloorp()
     }
 
     private func setupTopTabsViewController() {
