@@ -52,9 +52,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     // MARK: - Constants
     private enum UX {
-        static let drawerWidthRatio: CGFloat = 0.85
+        static let drawerWidthRatio: CGFloat = 1.0
         static let animationDuration: TimeInterval = 0.3
-        static let cornerRadius: CGFloat = 10
+        static let cornerRadius: CGFloat = 0
         static let headerHeight: CGFloat = 52
         static let searchBarHeight: CGFloat = 44
         static let rowHeight: CGFloat = 56
@@ -522,10 +522,6 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
                     retryAction: { [weak self] in self?.loadHistory() }
                 )
             }
-        }
-    }
-
-    private func loadDownloads() {
         }
     }
 
