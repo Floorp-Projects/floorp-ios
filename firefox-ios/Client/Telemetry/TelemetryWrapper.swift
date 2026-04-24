@@ -769,6 +769,8 @@ extension TelemetryWrapper {
     static func gleanRecordEvent(category: EventCategory, method: EventMethod, object: EventObject, value: EventValue? = nil, extras: [String: Any]? = nil) {
         // Disabled for unit tests so we're not calling telemetry events as a side-effect, see PR #29799
         guard !AppConstants.isRunningTest || hasTelemetryOverride else { return }
+        // Floorp: setup/initGlean may return early, but many call sites still invoke recordEvent directly.
+        if FloorpFlags.isTelemetryDisabled { return }
 
         switch (category, method, object, value, extras) {
         // MARK: Bookmarks
