@@ -765,10 +765,25 @@ extension TelemetryWrapper {
     // Use this override to unit tests TelemetryWrapper. Only use this for unit tests!
     nonisolated(unsafe) static var hasTelemetryOverride = false
 
+    private static func recordNimbusBehavioralTargetingEvent(category: EventCategory,
+                                                             method: EventMethod,
+                                                             object: EventObject) {
+        switch (category, method, object) {
+        case (.firefoxAccount, .view, .fxaLoginCompleteWebpage):
+            Experiments.events.recordEvent(BehavioralTargetingEvent.syncLoginCompletion)
+        case (.action, .foreground, .app):
+            Experiments.events.recordEvent(BehavioralTargetingEvent.appForeground)
+        default:
+            break
+        }
+    }
+
     // swiftlint:disable:next function_body_length
     static func gleanRecordEvent(category: EventCategory, method: EventMethod, object: EventObject, value: EventValue? = nil, extras: [String: Any]? = nil) {
         // Disabled for unit tests so we're not calling telemetry events as a side-effect, see PR #29799
         guard !AppConstants.isRunningTest || hasTelemetryOverride else { return }
+        // Keep Nimbus behavioral targeting events aligned with direct Experiments.events call sites.
+        recordNimbusBehavioralTargetingEvent(category: category, method: method, object: object)
         // Floorp hook: Check flag set by FloorpBootstrapper
         if FloorpFlags.isTelemetryDisabled { return }
 
@@ -1241,8 +1256,6 @@ extension TelemetryWrapper {
             GleanMetrics.Sync.loginView.record()
         case (.firefoxAccount, .view, .fxaLoginCompleteWebpage, _, _):
             GleanMetrics.Sync.loginCompletedView.record()
-            // record the same event for Nimbus' internal event store
-            Experiments.events.recordEvent(BehavioralTargetingEvent.syncLoginCompletion)
         case (.firefoxAccount, .view, .fxaConfirmSignUpCode, _, _):
             GleanMetrics.Sync.registrationCodeView.record()
         case (.firefoxAccount, .view, .fxaConfirmSignInToken, _, _):
@@ -1256,8 +1269,6 @@ extension TelemetryWrapper {
         // MARK: App cycle
         case(.action, .foreground, .app, _, _):
             GleanMetrics.AppCycle.foreground.record()
-            // record the same event for Nimbus' internal event store
-            Experiments.events.recordEvent(BehavioralTargetingEvent.appForeground)
         case(.action, .background, .app, _, _):
             GleanMetrics.AppCycle.background.record()
         // MARK: App icon
