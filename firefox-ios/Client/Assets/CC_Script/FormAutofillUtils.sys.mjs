@@ -27,19 +27,12 @@ ChromeUtils.defineLazyGetter(
     )
 );
 
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "Crypto",
-  "@mozilla.org/login-manager/crypto/SDR;1",
-  "nsILoginManagerCrypto"
-);
-
 export let FormAutofillUtils;
 
 const ADDRESSES_COLLECTION_NAME = "addresses";
 const CREDITCARDS_COLLECTION_NAME = "creditCards";
-const AUTOFILL_CREDITCARDS_REAUTH_PREF =
-  FormAutofill.AUTOFILL_CREDITCARDS_REAUTH_PREF;
+const AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF =
+  FormAutofill.AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF;
 const MANAGE_ADDRESSES_L10N_IDS = [
   "autofill-add-address-title",
   "autofill-manage-addresses-title",
@@ -88,6 +81,10 @@ const EDIT_CREDITCARD_L10N_IDS = [
   "autofill-card-expires-month",
   "autofill-card-expires-year",
   "autofill-card-network",
+
+  // This string isn't ever displayed, but is used to make the payment methods
+  // section easier to find via the search input in about:settings.
+  "autofill-card-search-term-credit-cards",
 ];
 const FIELD_STATES = {
   NORMAL: "",
@@ -122,7 +119,7 @@ FormAutofillUtils = {
 
   ADDRESSES_COLLECTION_NAME,
   CREDITCARDS_COLLECTION_NAME,
-  AUTOFILL_CREDITCARDS_REAUTH_PREF,
+  AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF,
   MANAGE_ADDRESSES_L10N_IDS,
   EDIT_ADDRESS_L10N_IDS,
   MANAGE_CREDITCARDS_L10N_IDS,
@@ -150,6 +147,9 @@ FormAutofillUtils = {
     // combined they form address-line1
     "address-streetname": "address",
     "address-housenumber": "address",
+    // NL forms often split the suffix from the house number;
+    // for example 35B becomes '35' as the number and 'B' as the suffix.
+    "address-extra-housesuffix": "address",
     "postal-code": "address",
     country: "address",
     "country-name": "address",
@@ -174,6 +174,13 @@ FormAutofillUtils = {
     "cc-csc": "creditCard",
   },
 
+  // This list includes autocomplete attributes that indicate that the field
+  // is an address or credit-card field, but the field name is not one we
+  // currently support for autofill. In these cases, we ignore the field
+  // name so that our heuristic can still classify the field using a
+  // supported field name.
+  _unsupportedFieldNameInfo: ["address-level4"],
+
   _collators: {},
   _reAlternativeCountryNames: {},
 
@@ -187,6 +194,12 @@ FormAutofillUtils = {
     return this._fieldNameInfo?.[fieldName] == "creditCard";
   },
 
+  // Returns true if the field is one we don't fill handle via the autocomplete
+  // attribute. It should be identified using heuristics.
+  isUnsupportedField(fieldName) {
+    return this._unsupportedFieldNameInfo.includes(fieldName);
+  },
+
   isCCNumber(ccNumber) {
     return ccNumber && lazy.CreditCard.isValidNumber(ccNumber);
   },
@@ -198,7 +211,18 @@ FormAutofillUtils = {
     );
   },
 
-  queryEligibleElements(element, includeIframe = false) {
+  isValidSection(fieldDetails) {
+    // If one of the fields has the autocomplete reason, the section is valid.
+    if (fieldDetails.some(f => f.reason == "autocomplete")) {
+      return true;
+    }
+
+    // Otherwise, there must be a minimum number of fields.
+    const fields = new Set(fieldDetails.map(f => f.fieldName));
+    return fields.size >= this.AUTOFILL_FIELDS_THRESHOLD;
+  },
+
+  queryEligibleElements(element, includeIframe = true) {
     const types = includeIframe
       ? [...ELIGIBLE_ELEMENT_TYPES, "iframe"]
       : ELIGIBLE_ELEMENT_TYPES;
@@ -206,65 +230,35 @@ FormAutofillUtils = {
   },
 
   /**
-   * Get the decrypted value for a string pref.
-   *
-   * @param {string} prefName -> The pref whose value is needed.
-   * @param {string} safeDefaultValue -> Value to be returned incase the pref is not yet set.
-   * @returns {string}
-   */
-  getSecurePref(prefName, safeDefaultValue) {
-    if (Services.prefs.getBoolPref("security.nocertdb", false)) {
-      return false;
-    }
-    try {
-      const encryptedValue = Services.prefs.getStringPref(prefName, "");
-      return encryptedValue === ""
-        ? safeDefaultValue
-        : lazy.Crypto.decrypt(encryptedValue);
-    } catch {
-      return safeDefaultValue;
-    }
-  },
-
-  /**
-   * Set the pref to the encrypted form of the value.
-   *
-   * @param {string} prefName -> The pref whose value is to be set.
-   * @param {string} value -> The value to be set in its encrypted form.
-   */
-  setSecurePref(prefName, value) {
-    if (Services.prefs.getBoolPref("security.nocertdb", false)) {
-      return;
-    }
-    if (value) {
-      const encryptedValue = lazy.Crypto.encrypt(value);
-      Services.prefs.setStringPref(prefName, encryptedValue);
-    } else {
-      Services.prefs.clearUserPref(prefName);
-    }
-  },
-
-  /**
    * Get whether the OSAuth is enabled or not.
    *
-   * @param {string} prefName -> The name of the pref (creditcards or addresses)
-   * @returns {boolean}
+   * @returns {boolean} Whether or not OS Auth is enabled.
    */
-  getOSAuthEnabled(prefName) {
-    return (
-      lazy.OSKeyStore.canReauth() &&
-      this.getSecurePref(prefName, "") !== "opt out"
-    );
+  getOSAuthEnabled() {
+    if (!lazy.OSKeyStore.canReauth()) {
+      return false;
+    }
+
+    // We need to unlock the pref here to retrieve it's true value, otherwise
+    // the default (false) will be returned.
+    const prefName = AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF;
+    Services.prefs.unlockPref(prefName);
+    const isEnabled = Services.prefs.getBoolPref(prefName, true);
+    Services.prefs.lockPref(prefName);
+
+    return isEnabled;
   },
 
   /**
    * Set whether the OSAuth is enabled or not.
    *
-   * @param {string} prefName -> The pref to encrypt.
    * @param {boolean} enable -> Whether the pref is to be enabled.
    */
-  setOSAuthEnabled(prefName, enable) {
-    this.setSecurePref(prefName, enable ? null : "opt out");
+  setOSAuthEnabled(enable) {
+    const prefName = AUTOFILL_CREDITCARDS_OS_AUTH_LOCKED_PREF;
+    Services.prefs.setBoolPref(prefName, enable);
+    Services.prefs.lockPref(prefName);
+    Services.obs.notifyObservers(null, "OSAuthEnabledChange");
   },
 
   async verifyUserOSAuth(
@@ -306,17 +300,6 @@ FormAutofillUtils = {
 
   getCategoryFromFieldName(fieldName) {
     return this._fieldNameInfo[fieldName];
-  },
-
-  getCategoriesFromFieldNames(fieldNames) {
-    let categories = new Set();
-    for (let fieldName of fieldNames) {
-      let info = this.getCategoryFromFieldName(fieldName);
-      if (info) {
-        categories.add(info);
-      }
-    }
-    return Array.from(categories);
   },
 
   getCollectionNameFromFieldName(fieldName) {
@@ -456,7 +439,9 @@ FormAutofillUtils = {
    * @returns {boolean} true if the element can be autofilled
    */
   isFieldAutofillable(element) {
-    return element && !element.readOnly && !element.disabled;
+    return (
+      element && !element.readOnly && !element.disabled && element.isConnected
+    );
   },
 
   /**
@@ -684,14 +669,24 @@ FormAutofillUtils = {
    */
   buildRegionMapIfAvailable(subKeys, subIsoids, subNames, subLnames) {
     // Not all regions have sub_keys. e.g. DE
-    if (
-      !subKeys ||
-      !subKeys.length ||
-      (!subNames && !subLnames) ||
-      (subNames && subKeys.length != subNames.length) ||
-      (subLnames && subKeys.length != subLnames.length)
-    ) {
+    if (!subKeys?.length) {
       return null;
+    }
+
+    let names;
+    if (!subNames && !subLnames) {
+      // Use the keys if sub_names does not exist
+      names = [...subKeys];
+    } else {
+      if (
+        (subNames && subKeys.length != subNames.length) ||
+        (subLnames && subKeys.length != subLnames.length)
+      ) {
+        return null;
+      }
+
+      // Apply sub_lnames if sub_names does not exist
+      names = subNames || subLnames;
     }
 
     // Overwrite subKeys with subIsoids, when available
@@ -703,8 +698,6 @@ FormAutofillUtils = {
       }
     }
 
-    // Apply sub_lnames if sub_names does not exist
-    let names = subNames || subLnames;
     return new Map(subKeys.map((key, index) => [key, names[index]]));
   },
 
@@ -796,9 +789,14 @@ FormAutofillUtils = {
     return null;
   },
 
-  findSelectOption(selectEl, record, fieldName) {
+  findSelectOption(selectEl, record, fieldName, value) {
     if (this.isAddressField(fieldName)) {
-      return this.findAddressSelectOption(selectEl.options, record, fieldName);
+      return this.findAddressSelectOption(
+        selectEl.options,
+        record,
+        fieldName,
+        value || record[fieldName]
+      );
     }
     if (this.isCreditCardField(fieldName)) {
       return this.findCreditCardSelectOption(selectEl, record, fieldName);
@@ -831,7 +829,7 @@ FormAutofillUtils = {
         continue;
       }
       // Apply sub_lnames if sub_names does not exist
-      subNames = subNames || subLnames;
+      subNames = subNames || subLnames || subKeys;
 
       let speculatedSubIndexes = [];
       for (const val of values) {
@@ -868,6 +866,53 @@ FormAutofillUtils = {
   },
 
   /**
+   * Attempts to find the full sub-region name from an abbreviated / ISO code,
+   * using the address metadata for the specified country.
+   *
+   * @param   {string} abbreviatedValue A short sub-region code (e.g. "B").
+   * @param   {string} country The country code (e.g. "AR").
+   * @returns {string|null} The full sub-region name (e.g. "Buenos Aires") or null.
+   */
+  getFullSubregionName(abbreviatedValue, country) {
+    if (!abbreviatedValue || !country) {
+      return null;
+    }
+
+    const collators = this.getSearchCollators(country);
+    for (const metadata of this.getCountryAddressDataWithLocales(country)) {
+      const {
+        sub_keys: subKeys,
+        sub_names: subNames,
+        sub_lnames: subLnames,
+        sub_isoids: subIsoids,
+      } = metadata;
+      if (!subKeys) {
+        continue;
+      }
+
+      // Use latin names if available, otherwise use native names.
+      const targetNames = subLnames || subNames || subKeys;
+
+      // Check if the abbreviatedValue matches an ISO ID (e.g. "B") or a key (which may also be an ISO ID).
+      let matchIndex = subKeys.findIndex(key =>
+        this.strCompare(abbreviatedValue, key, collators)
+      );
+
+      if (matchIndex === -1 && subIsoids) {
+        matchIndex = subIsoids.findIndex(isoid =>
+          this.strCompare(abbreviatedValue, isoid, collators)
+        );
+      }
+
+      if (matchIndex !== -1 && targetNames.length > matchIndex) {
+        // Return the full or latin name from the targetNames list at the matching index.
+        return targetNames[matchIndex];
+      }
+    }
+    return null;
+  },
+
+  /**
    * Find the option element from select element.
    * 1. Try to find the locale using the country from address.
    * 2. First pass try to find exact match.
@@ -877,16 +922,13 @@ FormAutofillUtils = {
    * @param   {Array<{text: string, value: string}>} options
    * @param   {object} address
    * @param   {string} fieldName
+   * @param   {string} value
    * @returns {DOMElement}
    */
-  findAddressSelectOption(options, address, fieldName) {
-    if (options.length > 512) {
+  findAddressSelectOption(options, address, fieldName, value) {
+    if (!value || options.length > 512) {
       // Allow enough space for all countries (roughly 300 distinct values) and all
       // timezones (roughly 400 distinct values), plus some extra wiggle room.
-      return null;
-    }
-    let value = address[fieldName];
-    if (!value) {
       return null;
     }
 
@@ -919,7 +961,8 @@ FormAutofillUtils = {
             continue;
           }
           // Apply sub_lnames if sub_names does not exist
-          let names = dataset.sub_names || dataset.sub_lnames;
+          let names =
+            dataset.sub_names || dataset.sub_lnames || dataset.sub_keys;
           let isoids = dataset.sub_isoids;
 
           // Go through options one by one to find a match.
@@ -955,6 +998,7 @@ FormAutofillUtils = {
         }
         break;
       }
+      case "tel-country-code":
       case "country": {
         if (this.getCountryAddressData(value)) {
           for (const option of options) {
@@ -963,6 +1007,20 @@ FormAutofillUtils = {
               this.identifyCountryCode(option.value, value)
             ) {
               return option;
+            }
+          }
+
+          // If the country name was not found, look for an option that
+          // matches the telephone country code next.
+          const countryCode = address["tel-country-code"];
+          if (fieldName == "tel-country-code" && countryCode) {
+            for (const option of options) {
+              if (
+                option.text.includes(countryCode) ||
+                option.value.includes(countryCode)
+              ) {
+                return option;
+              }
             }
           }
         }
@@ -996,7 +1054,12 @@ FormAutofillUtils = {
       menuitem,
     }));
 
-    return this.findAddressSelectOption(options, address, fieldName)?.menuitem;
+    return this.findAddressSelectOption(
+      options,
+      address,
+      fieldName,
+      address[fieldName]
+    )?.menuitem;
   },
 
   findCreditCardSelectOption(selectEl, creditCard, fieldName) {
@@ -1119,7 +1182,7 @@ FormAutofillUtils = {
         ? this.strInclude(value, name, collators)
         : this.strCompare(value, name, collators)
     );
-    if (index === -1) {
+    if (index === -1 && isoids) {
       index = isoids.findIndex(isoid =>
         inexactMatch
           ? this.strInclude(value, isoid, collators)
@@ -1271,7 +1334,8 @@ FormAutofillUtils = {
       ? this.findAddressSelectOption(
           addressLevel1Options,
           record,
-          "address-level1"
+          "address-level1",
+          record["address-level1"]
         )?.value
       : record["address-level1"];
 
@@ -1458,15 +1522,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
   FormAutofillUtils,
   "ccFathomConfidenceThreshold",
   "extensions.formautofill.creditCards.heuristics.fathom.confidenceThreshold",
-  null,
-  null,
-  pref => parseFloat(pref)
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  FormAutofillUtils,
-  "ccFathomHighConfidenceThreshold",
-  "extensions.formautofill.creditCards.heuristics.fathom.highConfidenceThreshold",
   null,
   null,
   pref => parseFloat(pref)
