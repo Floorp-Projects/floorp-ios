@@ -5,8 +5,6 @@
 import { IOSAppConstants } from "resource://gre/modules/shared/Constants.ios.mjs";
 import Overrides from "resource://gre/modules/Overrides.ios.js";
 
-const EMPTY_MODULE_PATH = "EmptyModule.sys.mjs";
-
 /* eslint mozilla/use-isInstance: 0 */
 HTMLSelectElement.isInstance = element => element instanceof HTMLSelectElement;
 HTMLInputElement.isInstance = element => element instanceof HTMLInputElement;
@@ -16,7 +14,7 @@ HTMLIFrameElement.isInstance = element => element instanceof HTMLIFrameElement;
 HTMLFormElement.isInstance = element => element instanceof HTMLFormElement;
 ShadowRoot.isInstance = element => element instanceof ShadowRoot;
 
-HTMLElement.prototype.ownerGlobal = window;
+HTMLElement.prototype.documentGlobal = window;
 
 // We cannot mock this in WebKit because we lack access to low-level APIs.
 // For completeness, we simply return true when the input type is "password".
@@ -26,13 +24,6 @@ HTMLElement.prototype.ownerGlobal = window;
 Object.defineProperty(HTMLInputElement.prototype, "hasBeenTypePassword", {
   get() {
     return this.type === "password";
-  },
-  configurable: true,
-});
-
-Object.defineProperty(HTMLInputElement.prototype, "nodePrincipal", {
-  get() {
-    return { isNullPrincipal: false };
   },
   configurable: true,
 });
@@ -60,7 +51,7 @@ HTMLTextAreaElement.prototype.setUserInput = setUserInput;
 
 // Mimic the behavior of .getAutocompleteInfo()
 // It should return an object with a fieldName property matching the autocomplete attribute
-// only if it's a valid value from this list https://searchfox.org/mozilla-central/source/dom/base/AutocompleteFieldList.h#89-149
+// only if it's a valid value from this list https://searchfox.org/firefox-main/source/dom/base/AutocompleteFieldList.h#89-149
 // Also found here: https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes/autocomplete
 HTMLElement.prototype.getAutocompleteInfo = function () {
   const autocomplete = this.getAttribute("autocomplete");
@@ -109,15 +100,13 @@ const internalModuleResolvers = {
     const moduleName = moduleURI.split("/").pop();
     const modulePath =
       "./" + (Overrides.ModuleOverrides[moduleName] ?? moduleName);
-    return { module: moduleResolver(modulePath), path: modulePath };
+    return moduleResolver(modulePath);
   },
 
   resolveModules(obj, modules) {
     for (const [exportName, moduleURI] of Object.entries(modules)) {
       const resolvedModule = this.resolveModule(moduleURI);
-      obj[exportName] = resolvedModule.path.includes(EMPTY_MODULE_PATH)
-        ? resolvedModule.module?.default
-        : resolvedModule.module?.[exportName];
+      obj[exportName] = resolvedModule?.[exportName];
     }
   },
 };
@@ -158,7 +147,7 @@ export const ChromeUtils = withNotImplementedError({
     internalModuleResolvers.resolveModules(obj, modules);
   },
   importESModule(moduleURI) {
-    return internalModuleResolvers.resolveModule(moduleURI)?.module;
+    return internalModuleResolvers.resolveModule(moduleURI);
   },
 });
 window.ChromeUtils = ChromeUtils;
