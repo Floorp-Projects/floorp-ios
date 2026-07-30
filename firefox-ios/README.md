@@ -9,7 +9,7 @@ For build prerequisites (Xcode, Swift, iOS versions) and project overview, see t
 1. From the **project root**, install dependencies:
 
    ```shell
-   sh ./bootstrap.sh
+   ./bootstrap.sh
    ```
 
 1. Open `Client.xcodeproj` in this folder with Xcode.
@@ -41,14 +41,14 @@ User Scripts (JavaScript injected into the `WKWebView`) are compiled, concatenat
                 |-- /AtDocumentStart
 ```
 
-This reduces the total possible number of User Scripts down to four. The compiled output from concatenating and minifying the User Scripts placed in these folders resides in `/Client/Assets` and is named accordingly:
+This reduces the total possible number of User Scripts down to four. Bootstrap generates the ignored compiled output in `/Client/Assets`, with names including:
 
 - `AllFramesAtDocumentEnd.js`
 - `AllFramesAtDocumentStart.js`
 - `MainFrameAtDocumentEnd.js`
 - `MainFrameAtDocumentStart.js`
 
-To simplify the build process, these compiled files are checked-in to this repository.
+These compiled files are build artifacts and are not committed. Run the root `bootstrap.sh` after a clean checkout; GitHub Actions and Xcode Cloud do this automatically.
 
 To start a watcher that will compile the User Scripts on save, run the following `npm` command in the root directory of the project:
 

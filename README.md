@@ -12,9 +12,10 @@ Floorp is a community-driven project that aims to provide a customizable and pri
 
 ### Prerequisites
 
-- **Xcode** (matching version used by upstream Firefox iOS)
-- **Node.js** (LTS version, e.g. via Homebrew)
-- **CocoaPods** or SPM (handled by Xcode)
+- **Xcode 26.3** (the canonical version is declared in `.xcode-version`)
+- **Node.js 24.18.1** (the canonical version is declared in `.nvmrc`)
+- **Swift Package Manager** (the pinned packages are resolved by Xcode)
+- **SwiftLint 0.62.2** for the pre-push check (`brew install swiftlint`)
 
 ### Quick Start
 
@@ -28,7 +29,7 @@ Floorp is a community-driven project that aims to provide a customizable and pri
 1. Install Node.js dependencies and bootstrap:
 
    ```shell
-   sh ./bootstrap.sh
+   ./bootstrap.sh
    ```
 
 1. Open `Client.xcodeproj` under the `firefox-ios` folder in Xcode.
@@ -41,7 +42,13 @@ Floorp is a community-driven project that aims to provide a customizable and pri
 
 - **SPM dependency issues**: Xcode → File → Packages → Reset Package Caches
 - **Build errors after upstream merge**: Clean build folder (`Cmd + Shift + K`) and rebuild
-- **SwiftLint not found on push**: Install via `brew install swiftlint` or push with `git push --no-verify`
+- **SwiftLint not found on push**: Install it with `brew install swiftlint`; do not bypass the hook for normal changes
+
+## CI/CD
+
+Pull requests and pushes to `main` are checked by the Floorp iOS GitHub Actions workflow. It uses the pinned Xcode and Node.js versions, builds the `Fennec` scheme without code signing, and runs the `FloorpCI` baseline test plan.
+
+The release and TestFlight foundation, current signing blockers, and Apple account setup checklist are documented in [docs/ci-cd.md](docs/ci-cd.md). Inherited Mozilla/Focus automation was removed from the active workflow directory; it remains recoverable from Git history if a Floorp-owned replacement is needed.
 
 ## Upstream Sync
 
@@ -61,10 +68,10 @@ git merge upstream/main
 
 # 4. Verify the build succeeds
 
-# 5. Commit and push
+# 5. Commit, push a branch, and open a pull request
 git add -A
 git commit -m "feat: re-apply Floorp branding after upstream merge"
-git push --no-verify origin main
+git push -u origin HEAD
 ```
 
 ### Rebrand Script

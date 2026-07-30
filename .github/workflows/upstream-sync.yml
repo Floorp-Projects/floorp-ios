@@ -1,50 +1,53 @@
 name: Upstream Sync
 
 on:
-  # Every Monday at 09:00 UTC (18:00 JST)
   schedule:
+    # Every Monday at 09:00 UTC (18:00 JST)
     - cron: "0 9 * * 1"
-
-  # Allow manual trigger
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
+concurrency:
+  group: floorp-upstream-sync
+  cancel-in-progress: false
+
 jobs:
   sync-upstream:
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Check out Floorp
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Add upstream remote
+      - name: Fetch upstream
         run: |
           git remote add upstream https://github.com/mozilla-mobile/firefox-ios.git || true
-          git fetch upstream main
+          git fetch --no-tags upstream main
 
-      - name: Check for new upstream commits
+      - name: Check for upstream commits
         id: check
         run: |
-          LOCAL=$(git rev-parse HEAD)
-          UPSTREAM=$(git rev-parse upstream/main)
-          MERGE_BASE=$(git merge-base HEAD upstream/main)
+          upstream_sha="$(git rev-parse upstream/main)"
+          merge_base="$(git merge-base HEAD upstream/main)"
 
-          if [ "$MERGE_BASE" = "$UPSTREAM" ]; then
-            echo "Already up to date. No new upstream commits."
+          if [[ "$merge_base" == "$upstream_sha" ]]; then
+            echo "Floorp already contains upstream/main."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          COMMIT_COUNT=$(git rev-list --count "${MERGE_BASE}..${UPSTREAM}")
-          echo "Found ${COMMIT_COUNT} new upstream commits."
+          commit_count="$(git rev-list --count "${merge_base}..${upstream_sha}")"
+          echo "Found ${commit_count} new upstream commits."
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          echo "commit_count=${COMMIT_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "commit_count=${commit_count}" >> "$GITHUB_OUTPUT"
 
       - name: Merge upstream
         if: steps.check.outputs.has_changes == 'true'
@@ -53,55 +56,107 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Create a sync branch
-          BRANCH="sync/upstream-$(date +%Y%m%d)"
-          git checkout -b "$BRANCH"
+          floorp_base="$(git rev-parse HEAD)"
+          sync_branch="automation/upstream-sync"
+          git checkout -B "$sync_branch"
 
-          # Attempt merge
-          if git merge upstream/main --no-edit; then
-            echo "merge_conflict=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "⚠️ Merge conflicts detected — committing partial merge state."
-            echo "merge_conflict=true" >> "$GITHUB_OUTPUT"
-            # Commit the conflict markers so the PR shows the conflicted files
-            git add -A
-            git commit -m "merge: upstream sync (with conflicts — needs manual resolution)"
+          if ! git merge upstream/main --no-edit; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            unexpected_conflict=false
+
+            while IFS= read -r file; do
+              case "$file" in
+                .github/workflows/*) ;;
+                *)
+                  echo "Unexpected merge conflict: $file" >> "$GITHUB_STEP_SUMMARY"
+                  unexpected_conflict=true
+                  ;;
+              esac
+            done <<< "$conflicts"
+
+            if [[ "$unexpected_conflict" == "true" ]]; then
+              git merge --abort
+              exit 1
+            fi
+
+            while IFS= read -r file; do
+              case "$file" in
+                .github/workflows/ci.yml|.github/workflows/upstream-sync.yml)
+                  git checkout --ours -- "$file"
+                  git add -- "$file"
+                  ;;
+                .github/workflows/*)
+                  git rm -- "$file"
+                  ;;
+              esac
+            done <<< "$conflicts"
+
+            git commit --no-edit
           fi
-          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
 
-      - name: Run rebrand script
-        if: steps.merge.outputs.merge_conflict == 'false'
-        run: |
-          chmod +x ./scripts/rebrand-to-floorp.sh
-          ./scripts/rebrand-to-floorp.sh
+          git checkout "$floorp_base" -- \
+            .github/workflows/ci.yml \
+            .github/workflows/upstream-sync.yml \
+            scripts/rebrand-to-floorp.sh
 
-      - name: Verify changes
-        if: steps.merge.outputs.merge_conflict == 'false'
+          while IFS= read -r -d '' workflow; do
+            case "$workflow" in
+              .github/workflows/ci.yml|.github/workflows/upstream-sync.yml) ;;
+              *) rm -f -- "$workflow" ;;
+            esac
+          done < <(find .github/workflows -type f -print0)
+
+          echo "branch=${sync_branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Reapply Floorp branding
+        if: steps.check.outputs.has_changes == 'true'
+        run: ./scripts/rebrand-to-floorp.sh
+
+      - name: Verify generated changes
+        if: steps.check.outputs.has_changes == 'true'
         id: verify
         run: |
-          CHANGED=$(git diff --stat HEAD | tail -1)
-          echo "Changes: ${CHANGED}"
-          FILE_COUNT=$(git diff --name-only HEAD | wc -l | tr -d ' ')
-          echo "file_count=${FILE_COUNT}" >> "$GITHUB_OUTPUT"
+          git diff --check
+          file_count="$(git diff --name-only HEAD | wc -l | tr -d ' ')"
+          echo "file_count=${file_count}" >> "$GITHUB_OUTPUT"
 
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
+      - name: Create pull request
+        if: steps.check.outputs.has_changes == 'true'
+        id: create-pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: main
+          branch: ${{ steps.merge.outputs.branch }}
+          delete-branch: true
           commit-message: "feat: sync upstream and re-apply Floorp branding"
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: GitHub <noreply@github.com>
-          title: "🔄 Sync upstream (Firefox iOS) — ${{ steps.check.outputs.commit_count }} new commits"
+          title: "Sync upstream Firefox iOS (${{ steps.check.outputs.commit_count }} commits)"
           body: |
-            ## 🔄 Upstream Sync (Firefox iOS → Floorp)
+            ## Upstream Sync
 
-            This PR merges the latest changes from [mozilla-mobile/firefox-ios](https://github.com/mozilla-mobile/firefox-ios) into Floorp.
+            This PR merges `mozilla-mobile/firefox-ios:main` into Floorp and reapplies the Floorp branding script.
 
-            ### 📊 Summary
-            - **Upstream commits**: ${{ steps.check.outputs.commit_count }}
-            - **Rebrand changes**: ${{ steps.verify.outputs.file_count }} files modified by `rebrand-to-floorp.sh`
-            - **Conflicts**: ${{ steps.merge.outputs.merge_conflict == 'true' && '⚠️ **Yes — manual resolution required**' || 'None ✅' }}
+            - Upstream commits: ${{ steps.check.outputs.commit_count }}
+            - Files changed by the rebrand step: ${{ steps.verify.outputs.file_count }}
+            - Merge conflicts: none (conflicted merges fail without committing conflict markers)
 
-            ${{ steps.merge.outputs.merge_conflict == 'true' && '---\n\n## ⚠️ Merge Conflicts Detected — Follow these steps to resolve\n\n### Step 1: Check out this branch locally\n\n```bash\ngit fetch origin\ngit checkout <this-PR-branch-name>\n```\n\n### Step 2: Find conflict markers\n\nSearch for `<<<<<<<` / `=======` / `>>>>>>>` in your editor and resolve each conflict:\n\n- `<<<<<<< HEAD` side = Floorp changes\n- `>>>>>>>` side = Firefox (upstream) changes\n- **Always adopt the upstream side** — the rebrand script will re-apply Floorp branding afterward\n\n### Step 3: Commit the resolution\n\n```bash\ngit add <resolved-files>\ngit commit --no-edit\n```\n\n### Step 4: Run the rebrand script\n\n```bash\n# Preview changes first\n./scripts/rebrand-to-floorp.sh --dry-run\n\n# Apply changes\n./scripts/rebrand-to-floorp.sh\n\n# Commit\ngit add -A\ngit commit -m "feat: re-apply Floorp branding after conflict resolution"\n```\n\n### Step 5: Push and update this PR\n\n```bash\ngit push --no-verify origin HEAD\n```\n\n### Step 6: Merge this PR\n\nAfter pushing, confirm CI passes, then merge this PR.\n\n---\n' || '' }}## ✅ Pre-merge Checklist\n\n- [ ] Reviewed the diff for unexpected changes\n- [ ] CI build passes\n- [ ] No new Firefox-branded assets were introduced\n  - If any were found, they may need to be added to `rebrand-to-floorp.sh`\n\n---\n*This PR was automatically created by the [Upstream Sync](.github/workflows/upstream-sync.yml) workflow.*
-          branch: ${{ steps.merge.outputs.branch }}
-          labels: upstream-sync, automated${{ steps.merge.outputs.merge_conflict == 'true' && ', merge-conflict' || '' }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+            Before merging:
+
+            - [ ] Review unexpected upstream changes.
+            - [ ] Confirm `Floorp iOS CI / Build and unit test` passes.
+            - [ ] Check for newly introduced Firefox branding.
+
+      - name: Dispatch CI for the sync branch
+        if: steps.create-pr.outputs.pull-request-operation == 'created' || steps.create-pr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" \
+            --data '{"ref":"automation/upstream-sync"}'

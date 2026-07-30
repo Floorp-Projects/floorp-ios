@@ -161,7 +161,6 @@ excluded: # paths to ignore during linting. Takes precedence over `included`.
   - firefoxios-l10n
 
 included:
-  - /Users/vagrant/git
   - .
 
 

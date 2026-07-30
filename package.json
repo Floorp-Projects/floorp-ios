@@ -1,14 +1,14 @@
 {
-  "name": "@mozilla/firefox-ios",
+  "name": "@floorp/floorp-ios",
   "version": "1.0.0",
-  "description": "Firefox for iOS",
+  "description": "Floorp for iOS",
   "scripts": {
     "build": "webpack --config webpack.config.js",
     "dev": "webpack --config webpack.config.js --mode development --watch"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mozilla-mobile/firefox-ios.git"
+    "url": "git+https://github.com/Floorp-Projects/Floorp-iOS.git"
   },
   "license": "MPL-2.0",
   "dependencies": {
@@ -21,7 +21,7 @@
     "@babel/core": "^7.28.6",
     "@babel/preset-env": "7.28.6",
     "babel-loader": "^8.4.1",
-    "glob": "^8.1.0",
+    "glob": "^13.0.6",
     "script-loader": "^0.7.2",
     "webpack": "^5.105.0",
     "webpack-cli": "^4.10.0"

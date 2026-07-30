@@ -74,6 +74,9 @@ buildServer.json
 # Floorp build-time patch state
 .floorp-patch-state/
 
+# Accidental nested checkout. Floorp iOS is already rooted at this repository.
+/firefox-ios/firefox-ios/
+
 # Required for Glean
 firefox-ios/Client/Generated
 firefox-ios/Sync/Generated

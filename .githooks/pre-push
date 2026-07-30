@@ -1,56 +1,31 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
-echo "Starting Swiftlint Check..."
-swiftlint --strict --quiet
-RESULT=$?
+set -euo pipefail
 
-if [ $RESULT -ne 0 ]; then
-    echo "Violations found. Please fix the issues before pushing."
+readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REMOTE_NAME="${1:-origin}"
+readonly ZERO_SHA="0000000000000000000000000000000000000000"
+
+swiftlint_bin="$(command -v swiftlint || true)"
+if [[ -z "${swiftlint_bin}" ]]; then
+    echo "SwiftLint is required. Install it with: brew install swiftlint" >&2
     exit 1
-else 
-    echo "🎉  Hooray. No violation. You may proceed."
 fi
 
-# get the URL of a remote
-get_remote_url() {
-  remote_name=$1
-  git remote get-url "$remote_name"
-}
-
-# remote name associated with the restricted URL
-find_remote_name_by_url() {
-  restricted_url="https://github.com/mozilla-mobile/firefox-ios.git"
-  for remote in $(git remote); do
-    remote_url=$(get_remote_url "$remote")
-    if [ "$remote_url" = "$restricted_url" ]; then
-      echo "$remote"
-      return
+while read -r local_ref local_sha remote_ref remote_sha; do
+    if [[ "${local_sha}" == "${ZERO_SHA}" ]]; then
+        continue
     fi
-  done
-  echo ""
-}
 
-# current tracked remote and branch for the current local branch
-upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u})
-current_tracked_remote=$(echo "$upstream" | cut -d'/' -f1)
-current_tracked_branch=$(echo "$upstream" | cut -d'/' -f2)
+    if [[ "${remote_ref}" == "refs/heads/main" ]]; then
+        echo "Direct pushes to main are disabled. Push a branch and open a pull request." >&2
+        exit 1
+    fi
 
-echo "Current tracked remote: $current_tracked_remote"
-echo "Current tracked branch: $current_tracked_branch"
+    base_sha="${remote_sha}"
+    if [[ "${base_sha}" == "${ZERO_SHA}" ]]; then
+        base_sha="$(git merge-base "${local_sha}" "refs/remotes/${REMOTE_NAME}/main" 2>/dev/null || true)"
+    fi
 
-restricted_remote=$(find_remote_name_by_url)
-echo "Restricted remote: $restricted_remote"
-
-# Special Case: remote being pushed to from the first argument of the pre-push hook
-push_remote_my=$1
-echo "Push remote: $restricted_remote"
-
-if [ "$current_tracked_branch" = "main" ]; then
-  # if the push remote is the restricted remote
-  if [ "$push_remote_my" = "$restricted_remote" ]; then
-    echo "Direct pushes to the 'main' branch on the specified remote are not allowed."
-    exit 1
-  fi
-fi
-
-exit 0
+    "${PROJECT_ROOT}/scripts/ci/lint-changed-swift.sh" "${swiftlint_bin}" "${base_sha}" "${local_sha}"
+done

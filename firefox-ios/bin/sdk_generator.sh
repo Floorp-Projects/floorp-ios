@@ -25,7 +25,7 @@
 
 set -e
 
-GLEAN_PARSER_VERSION=18.0
+GLEAN_PARSER_VERSION=18.2.0
 
 # CMDNAME is used in the usage text below.
 # shellcheck disable=SC2034
@@ -176,10 +176,7 @@ fi
 VENVDIR="${SOURCE_ROOT}/.venv"
 
 [ -x "${VENVDIR}/bin/python" ] || python3 -m venv "${VENVDIR}"
-# We need at least pip 20.3 for Big Sur support, see https://pip.pypa.io/en/stable/news/#id48
-# Latest pip is 21.0.1
-"${VENVDIR}"/bin/pip install "pip>=20.3"
-"${VENVDIR}"/bin/pip install --upgrade "glean_parser~=$GLEAN_PARSER_VERSION"
+"${VENVDIR}"/bin/pip install --disable-pip-version-check "glean_parser==$GLEAN_PARSER_VERSION"
 
 # Run the glinter
 # Turn its warnings into warnings visible in Xcode (but don't do for the success message)

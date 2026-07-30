@@ -1,0 +1,3 @@
+Floorp for iOS internal beta
+
+Please focus on app launch, browsing, tab management, settings, and sign-in or sync flows.
