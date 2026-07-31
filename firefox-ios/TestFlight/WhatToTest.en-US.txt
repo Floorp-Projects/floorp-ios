@@ -1,3 +1,7 @@
 Floorp for iOS internal beta
 
-Please focus on app launch, browsing, tab management, settings, and sign-in or sync flows.
+Please focus on Floorp Notes: create, edit, delete, and search notes; restart the app and confirm notes persist; and check the readability of saved page text and links. Notes are currently stored on this device and are not included in Sync.
+
+Also smoke-test launch, normal and private browsing, tabs, and settings. Do not use production account credentials until Floorp's account-service ownership is confirmed.
+
+Known limitations: Push is disabled, and Rate Floorp is hidden until the App Store listing is configured. Extension availability may change before the first beta.

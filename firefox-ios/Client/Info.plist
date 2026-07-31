@@ -63,7 +63,9 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>AppStoreID</key>
+	<string>$(APP_STORE_ID)</string>
 	<key>CHANNEL</key>
 	<string>$(CHANNEL)</string>
 	<key>INIntentsSupported</key>

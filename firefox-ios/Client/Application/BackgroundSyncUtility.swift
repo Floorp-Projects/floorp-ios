@@ -41,7 +41,7 @@ final class BackgroundSyncUtility: BackgroundUtilityProtocol, @unchecked Sendabl
             // Blocking call, however without sync running it should be instantaneous
             profile.shutdown()
 
-            let request = BGProcessingTaskRequest(identifier: "org.mozilla.ios.sync.part1")
+            let request = BGProcessingTaskRequest(identifier: "app.floorp.sync.part1")
             request.earliestBeginDate = Date(timeIntervalSinceNow: 1)
             request.requiresNetworkConnectivity = true
             do {
@@ -56,7 +56,7 @@ final class BackgroundSyncUtility: BackgroundUtilityProtocol, @unchecked Sendabl
 
     // MARK: Private
     private func setUpBackgroundSync() {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: "org.mozilla.ios.sync.part1",
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: "app.floorp.sync.part1",
                                         using: DispatchQueue.global()) { task in
             guard self.profile.hasSyncableAccount() else {
                 self.shutdownProfileWhenNotActive()
@@ -65,7 +65,7 @@ final class BackgroundSyncUtility: BackgroundUtilityProtocol, @unchecked Sendabl
             let collection = ["bookmarks", "history"]
             self.profile.syncManager?.syncNamedCollections(why: .backgrounded, names: collection).uponQueue(.main) { _ in
                 task.setTaskCompleted(success: true)
-                let request = BGProcessingTaskRequest(identifier: "org.mozilla.ios.sync.part2")
+                let request = BGProcessingTaskRequest(identifier: "app.floorp.sync.part2")
                 request.earliestBeginDate = Date(timeIntervalSinceNow: 1)
                 request.requiresNetworkConnectivity = true
                 do {
@@ -80,7 +80,7 @@ final class BackgroundSyncUtility: BackgroundUtilityProtocol, @unchecked Sendabl
 
         // Split up the sync tasks so each can get maximal time for a bg task.
         // This task runs after the bookmarks+history sync.
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: "org.mozilla.ios.sync.part2",
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: "app.floorp.sync.part2",
                                         using: DispatchQueue.global()) { task in
             let collection = ["tabs", "logins", "clients"]
             self.profile.syncManager?.syncNamedCollections(why: .backgrounded, names: collection).uponQueue(.main) { _ in

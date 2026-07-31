@@ -527,15 +527,16 @@ extension ShareViewController {
         let profile = BrowserProfile(localName: "profile")
         profile.prefs.setBool(true, forKey: PrefsKeys.AppExtensionTelemetryOpenUrl)
 
-        func firefoxUrl(_ url: String) -> String {
+        func floorpUrl(_ url: String) -> String {
+            let scheme = Bundle.main.object(forInfoDictionaryKey: "MozPublicURLScheme") as? String ?? "floorp"
             let encoded = url.addingPercentEncoding(withAllowedCharacters: NSCharacterSet.alphanumerics) ?? ""
             if isSearch {
-                return "firefox://open-text?text=\(encoded)"
+                return "\(scheme)://open-text?text=\(encoded)"
             }
-            return "firefox://open-url?url=\(encoded)"
+            return "\(scheme)://open-url?url=\(encoded)"
         }
 
-        guard let url = URL(string: firefoxUrl(url)) else { return }
+        guard let url = URL(string: floorpUrl(url)) else { return }
         var responder = self as UIResponder?
         let selectorOpenURL = sel_registerName("openURL:")
         while let current = responder {

@@ -1,6 +1,6 @@
 # Floorp for iOS CI/CD
 
-This document defines the initial delivery foundation for Floorp for iOS. The immediate goal is a reproducible, unsigned pull-request gate. TestFlight delivery follows after the Floorp release configuration and Apple capabilities are valid.
+This document defines the delivery foundation for Floorp for iOS. The repository now has a reproducible pull-request gate and a dedicated unsigned release-archive path. Signed delivery still requires the Floorp Apple account, capabilities, product scope, and service ownership to be finalized.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ This document defines the initial delivery foundation for Floorp for iOS. The im
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
 | Upstream Firefox synchronization | GitHub Actions | Weekly PR workflow with a workflow allowlist and explicit CI dispatch |
-| Signed archive and internal TestFlight | Xcode Cloud | Recommended; requires the release configuration below |
+| Signed archive and internal TestFlight | Xcode Cloud | Release scaffold implemented; workflow and signing not yet configured or validated |
 | App Store release | App Store Connect | Manual approval initially |
 | Mozilla/Focus maintenance automation | Git history | Removed pending a Floorp-owned replacement |
 
@@ -53,49 +53,55 @@ After the workflow passes once, configure these settings on GitHub:
 
 At the time this document was introduced, `main` was not protected. Repository settings are external state and are not stored in this repository.
 
-## Release blockers
+## Release readiness
 
-Do not create an App Store archive from the current `Fennec` configuration. The following items must be resolved first:
+Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented, but the external and product decisions below remain before TestFlight distribution.
 
 ### Release build configuration
 
-`Fennec.xcconfig` inherits the debug configuration, uses the developer Nimbus channel, keeps assertions enabled, and instruments the binary for profiling. The obsolete Archive pre-action that referenced a deleted script has been removed, but `Fennec` is still not a production archive configuration.
+`Fennec.xcconfig` inherits the debug configuration and is intentionally unsuitable for distribution. `FloorpRelease.xcconfig` instead uses release optimization and dSYMs, selects the release Nimbus channel, and disables assertions, testability, coverage instrumentation, and the Settings bundle. The shared `Floorp` scheme uses this configuration for Profile, Analyze, and Archive while retaining the existing development configuration for local Run and the `FloorpCI` plan for Test.
 
-Add a dedicated Floorp release build configuration and shared scheme that use release optimization and the release Nimbus channel. Do not copy the inherited Mozilla/Bitrise signing values from `Release.xcconfig` unchanged: the app and each retained extension must use automatic signing, the Floorp Team ID, and no manually selected provisioning profile.
+The release configuration uses automatic signing and leaves provisioning-profile selectors empty. An unsigned generic-device build is the repository-level validation baseline; a signed archive and Organizer validation remain required.
 
 ### Signing team
 
-The project still contains Mozilla development-team identifiers. Set the Floorp Apple Developer Team ID in the Floorp configurations for the app and every retained extension. Avoid a repository-wide replacement that makes upstream-only schemes harder to merge. The Team ID is not a secret and may be committed after the correct account is confirmed.
+Mozilla team identifiers remain in upstream-only configurations. `FloorpRelease` instead resolves `DEVELOPMENT_TEAM` from `FLOORP_DEVELOPMENT_TEAM`, which is intentionally blank until the owning Floorp team is confirmed. Supply the 10-character Team ID through the Floorp configuration or Xcode Cloud, then validate that the app and every retained extension are signed by that team. The Team ID is not a secret and may be committed after the correct account is confirmed.
+
+The `Floorp` scheme's Run and Test actions still use the inherited Fennec development configurations. Treat them as Simulator-only until a Floorp-owned debug signing configuration replaces the inherited Mozilla team.
 
 ### Bundle IDs and extensions
 
-The main bundle ID is `app.floorp.Floorp`. The app currently embeds six extensions: Widget, Notification Service, Credential Provider, Sticker, Action, and Share. Keep only extensions that are part of the first release, then register an explicit App ID for the app and each retained extension.
+The main release bundle ID is `app.floorp.Floorp`. The current scaffold can archive all six inherited extensions with explicit Floorp IDs: `WidgetKit`, `NotificationService`, `CredentialProvider`, `Sticker`, `ActionExtension`, and `ShareTo` below the main bundle ID. This is build-system capability, not a decision that all six must ship.
 
-Reducing the first release to required extensions lowers the number of identifiers, capabilities, and signing profiles that must be maintained.
+Approve the version 1 extension scope, remove excluded products from the release archive, then register an explicit App ID for the app and every retained extension. Reducing the first release to required extensions lowers the number of identifiers, capabilities, and signing profiles that must be maintained.
 
 ### App Group and Keychain groups
 
-The main app and Credential Provider use `group.app.floorp.Floorp`, while several Fennec extension entitlements still use `group.org.mozilla.ios.Fennec`. Before device or archive testing, grant the Floorp App Group and compatible keychain groups only to retained targets that actually share those data. Do not broaden entitlements for extensions such as Sticker that do not need them.
+The Floorp release entitlements use `group.app.floorp.Floorp` and the matching Floorp keychain group. Sticker has no shared-container entitlement. Register the App Group in Apple Developer and grant App Group and keychain access only to retained targets that actually share those data.
 
 ### Push notifications
 
-The current Fennec entitlement declares the development APNs environment. If version 1 uses Push, create production release entitlements, enable Push on the Floorp App ID, retain the Notification Service extension, and configure a Floorp-owned APNs key and backend. If Push is out of scope, remove the capability and Notification Service extension from the first release.
+The Floorp release entitlement intentionally omits APNs, and the current beta plan therefore has no Push support. Remove Notification Service from the first release unless Push becomes an approved version 1 feature. Adding it later requires production entitlements, the Floorp App ID capability, a Floorp-owned APNs key, and a Floorp-owned or explicitly authorized backend.
 
 ### Managed browser entitlements
 
 The app declares `com.apple.developer.web-browser`, which lets an approved app appear as a default browser. The Apple Account Holder must request and receive this managed capability.
 
-The app also declares `com.apple.developer.browser.app-installation`. This is specifically for installing alternative-distribution apps from a website. Remove it unless Floorp deliberately needs that feature and Apple approves the request.
+The Floorp release entitlement omits `com.apple.developer.browser.app-installation`, which is for installing alternative-distribution apps from a website. Add it only if Floorp deliberately adopts that distribution path and Apple approves the request.
 
 ### Versioning
 
-Define an independent Floorp marketing-version policy. CI/CD must inject one monotonically increasing build number into the main app and every extension. Xcode Cloud's build number is suitable for the initial TestFlight workflow.
+The checked-in release baseline is `0.1.0 (1)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign the monotonically increasing distribution build number for the initial TestFlight workflow.
 
 ### Floorp-owned services and App Store ID
 
-Decide which Adjust, Nimbus, Pocket, Sentry, LiteLLM, and related build settings Floorp owns before creating a release archive. Xcode Cloud secret variables prevent values from appearing in logs, but any value embedded in the app bundle remains extractable and must not be a privileged server secret.
+Decide which FxA/Sync, Remote Settings, sponsored-content/Merino, summarizer, Push, Nimbus, Sentry, LiteLLM, and related endpoints Floorp owns or is authorized to use before distributing a release archive. Where ownership is unresolved, disable the feature rather than silently using an inherited Mozilla production default. Xcode Cloud secret variables prevent values from appearing in logs, but any value embedded in the app bundle remains extractable and must not be a privileged server secret.
 
-`BrowserKit/Sources/Shared/AppInfo.swift` still contains Firefox's App Store ID. Replace it with the Floorp App Store Connect Apple ID after the Floorp app record exists so rating prompts cannot open Firefox's listing.
+Firefox's App Store ID has been removed. `FLOORP_APP_STORE_ID` is optional; while it is unset or invalid, Floorp hides the rating setting and does not open a review URL. Set it to Floorp's numeric Apple ID after the App Store Connect record exists.
+
+### Release branding
+
+The primary classic and Liquid Glass icon sources already render the Floorp logo, although `FloorpRelease` still selects the inherited `AppIcon_Developer` name and the Liquid Glass layer filenames still say `nightly`. Those internal names are cleanup work, not a TestFlight blocker. Before distribution, disable the inherited Firefox alternate icons and review the remaining main-app and extension names, artwork, localized strings, and product metadata.
 
 ## Apple account checklist
 
@@ -108,16 +114,18 @@ Complete these steps before enabling Xcode Cloud distribution:
 - [ ] Accept all current Apple Developer and App Store Connect agreements.
 - [ ] Create or confirm the `app.floorp.Floorp` App ID.
 - [ ] Decide whether development builds use a separate bundle ID such as `app.floorp.Floorp.Developer`.
-- [ ] Decide which of the six bundled extensions ship in version 1 and register their App IDs.
+- [ ] Decide which of the six bundled extensions ship in version 1, remove excluded products from the release archive, and register retained App IDs.
 - [ ] Register `group.app.floorp.Floorp` and assign it to every retained target that shares data.
 - [ ] Decide whether Push, AutoFill Credential Provider, App Attest, and Multipath are in version 1; enable only the required capabilities.
 - [ ] Request the default-browser managed entitlement.
-- [ ] Decide whether the browser app-installation entitlement is intentionally required.
+- [x] Omit the browser app-installation entitlement from the initial release configuration.
 - [ ] Choose the Floorp marketing-version policy and initial version.
 - [ ] Create the Floorp app record in App Store Connect.
-- [ ] Replace the Firefox App Store ID after App Store Connect assigns Floorp's Apple ID.
+- [ ] Set `FLOORP_APP_STORE_ID` after App Store Connect assigns Floorp's numeric Apple ID.
+- [ ] Replace inherited Liquid Glass and extension branding with approved Floorp release artwork and copy.
 - [ ] Create an internal TestFlight group.
 - [ ] Assign an owner and safe client-side value for each external service setting used by the release configuration.
+- [ ] Produce a signed `Floorp` archive and pass Organizer validation.
 
 Do not commit certificates, provisioning profiles, `.p8` API keys, `.p12` files, or passwords.
 
@@ -125,7 +133,7 @@ Do not commit certificates, provisioning profiles, `.p8` API keys, `.p12` files,
 
 The repository includes `firefox-ios/ci_scripts/ci_post_clone.sh`. Xcode Cloud discovers it next to `Client.xcodeproj`; it downloads the `.nvmrc` Node.js release with a pinned checksum and runs the root bootstrap in the clean clone. `.nvmrc` and `.xcode-version` are declarations for developers and GitHub Actions, not settings that Xcode Cloud applies automatically.
 
-After the Floorp release scheme archives locally and passes Organizer validation:
+After the shared `Floorp` scheme archives locally with `FloorpRelease` and passes Organizer validation:
 
 1. In Signing & Capabilities, explicitly set every app and extension bundle ID once before initial setup because the project derives IDs from `.xcconfig` files.
 2. Connect `Floorp-Projects/Floorp-iOS` to Xcode Cloud from Xcode's Report navigator. A GitHub organization owner must authorize the first connection.

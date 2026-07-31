@@ -46,8 +46,25 @@ extension AppInfo {
         return false
     }()
 
-    // The App Store page identifier for the Firefox iOS application
-    public static let appStoreId = "id989804926"
+    /// The numeric App Store identifier for the current application.
+    ///
+    /// Floorp does not receive this value until its App Store Connect record exists,
+    /// so callers must support an unset identifier.
+    public static var appStoreId: String? {
+        let value = applicationBundle.object(forInfoDictionaryKey: "AppStoreID") as? String
+        return normalizedAppStoreId(value)
+    }
+
+    public static func normalizedAppStoreId(_ value: String?) -> String? {
+        guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        if value.lowercased().hasPrefix("id") {
+            value.removeFirst(2)
+        }
+        guard !value.isEmpty, value.allSatisfy(\.isNumber) else { return nil }
+        return value
+    }
 
     /// Return the shared container identifier (also known as the app group) to be used with for example background
     /// http requests. It is the base bundle identifier with a "group." prefix.

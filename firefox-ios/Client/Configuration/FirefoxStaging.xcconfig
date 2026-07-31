@@ -8,6 +8,7 @@
 
 MOZ_BUNDLE_DISPLAY_NAME = Firefox Beta
 MOZ_BUNDLE_ID = org.mozilla.ios.FirefoxBeta
+APP_STORE_ID = 989804926
 CODE_SIGN_ENTITLEMENTS = Client/Entitlements/FirefoxBetaApplication.entitlements
 CHANNEL = beta
 OTHER_SWIFT_FLAGS = $(OTHER_SWIFT_FLAGS_common) -DMOZ_CHANNEL_$(CHANNEL)

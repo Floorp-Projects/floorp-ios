@@ -499,12 +499,15 @@ class AppSettingsTableViewController: SettingsTableViewController,
     }
 
     private func getAboutSettings() -> [SettingSection] {
-        let aboutSettings = [
-            AppStoreReviewSetting(settingsDelegate: parentCoordinator),
+        var aboutSettings: [Setting] = [
             VersionSetting(settingsDelegate: self),
             LicenseAndAcknowledgementsSetting(settingsDelegate: parentCoordinator),
             YourRightsSetting(settingsDelegate: parentCoordinator)
         ]
+
+        if AppInfo.appStoreId != nil {
+            aboutSettings.insert(AppStoreReviewSetting(settingsDelegate: parentCoordinator), at: 0)
+        }
 
         return [SettingSection(title: NSAttributedString(string: .AppSettingsAbout),
                                children: aboutSettings)]

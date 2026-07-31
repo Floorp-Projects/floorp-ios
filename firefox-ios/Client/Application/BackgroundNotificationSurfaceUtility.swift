@@ -10,7 +10,7 @@ import Shared
 
 // TODO: FXIOS-13582 - BackgroundNotificationSurfaceUtility should be concurrency safe
 class BackgroundNotificationSurfaceUtility: BackgroundUtilityProtocol, @unchecked Sendable {
-    let taskIdentifier = "org.mozilla.ios.surface.notification.refresh"
+    let taskIdentifier = "app.floorp.surface.notification.refresh"
     var surfaceManager: NotificationSurfaceManager
     var notificationManager: NotificationManagerProtocol
     private var logger: Logger

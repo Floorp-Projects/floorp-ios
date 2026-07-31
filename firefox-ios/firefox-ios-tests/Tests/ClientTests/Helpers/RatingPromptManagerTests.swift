@@ -146,13 +146,37 @@ class RatingPromptManagerTests: XCTestCase {
     // MARK: App Store
 
     func testGoToAppStoreReview() {
-        RatingPromptManager.goToAppStoreReview(with: urlOpenerSpy)
+        RatingPromptManager.goToAppStoreReview(with: urlOpenerSpy, appStoreId: "989804926")
 
         XCTAssertEqual(urlOpenerSpy.openURLCount, 1)
         XCTAssertEqual(
             urlOpenerSpy.capturedURL?.absoluteString,
-            "https://itunes.apple.com/app/id\(AppInfo.appStoreId)?action=write-review"
+            "https://apps.apple.com/app/id989804926?action=write-review"
         )
+    }
+
+    func testGoToAppStoreReview_acceptsPrefixedIdentifier() {
+        RatingPromptManager.goToAppStoreReview(with: urlOpenerSpy, appStoreId: "id989804926")
+
+        XCTAssertEqual(urlOpenerSpy.openURLCount, 1)
+        XCTAssertEqual(
+            urlOpenerSpy.capturedURL?.absoluteString,
+            "https://apps.apple.com/app/id989804926?action=write-review"
+        )
+    }
+
+    func testGoToAppStoreReview_withoutIdentifier_doesNotOpenURL() {
+        RatingPromptManager.goToAppStoreReview(with: urlOpenerSpy, appStoreId: nil)
+
+        XCTAssertEqual(urlOpenerSpy.openURLCount, 0)
+        XCTAssertNil(urlOpenerSpy.capturedURL)
+    }
+
+    func testGoToAppStoreReview_rejectsInvalidIdentifier() {
+        RatingPromptManager.goToAppStoreReview(with: urlOpenerSpy, appStoreId: "floorp-123")
+
+        XCTAssertEqual(urlOpenerSpy.openURLCount, 0)
+        XCTAssertNil(urlOpenerSpy.capturedURL)
     }
 
     // MARK: - Setup helpers
