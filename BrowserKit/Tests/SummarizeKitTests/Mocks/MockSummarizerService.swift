@@ -24,10 +24,12 @@ class MockSummarizerService: SummarizerService {
         return AsyncThrowingStream { continuation in
             Task {
                 for chunck in mockChunchedResponse {
-                    if #available(iOS 16.0, *) {
-                        try await Task.sleep(for: .seconds(delayStreamResultInSeconds))
-                    } else {
-                        try await Task.sleep(nanoseconds: UInt64(delayStreamResultInSeconds) * 1_000_000_000)
+                    if delayStreamResultInSeconds > 0 {
+                        if #available(iOS 16.0, *) {
+                            try await Task.sleep(for: .seconds(delayStreamResultInSeconds))
+                        } else {
+                            try await Task.sleep(nanoseconds: UInt64(delayStreamResultInSeconds) * 1_000_000_000)
+                        }
                     }
                     continuation.yield(chunck)
                 }
