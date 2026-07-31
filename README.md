@@ -50,6 +50,12 @@ Pull requests and pushes to `main` are checked by the Floorp iOS GitHub Actions 
 
 The release and TestFlight foundation, current signing blockers, and Apple account setup checklist are documented in [docs/ci-cd.md](docs/ci-cd.md). Inherited Mozilla/Focus automation was removed from the active workflow directory; it remains recoverable from Git history if a Floorp-owned replacement is needed.
 
+## Development Roadmap
+
+Product work proceeds through small, testable milestones beginning with
+Floorp Notes Local v1. See [docs/roadmap.md](docs/roadmap.md) for scope,
+ordering, and exit criteria.
+
 ## Upstream Sync
 
 This repository tracks [mozilla-mobile/firefox-ios](https://github.com/mozilla-mobile/firefox-ios) as upstream. After merging upstream changes, the Floorp branding must be re-applied using the automated rebrand script.
