@@ -6,9 +6,9 @@
 #include "Release.xcconfig"
 #include "version.xcconfig"
 
-// Floorp release identity. The Apple Team ID is intentionally supplied by
-// Xcode/Xcode Cloud until the owning Floorp team is confirmed.
-FLOORP_DEVELOPMENT_TEAM =
+// Floorp release identity. Xcode and Xcode Cloud use automatic signing for
+// this team; certificates and provisioning profiles are never stored here.
+FLOORP_DEVELOPMENT_TEAM = DV2U35YBHT
 FLOORP_MARKETING_VERSION = 0.1.0
 FLOORP_BUILD_NUMBER = 1
 FLOORP_APP_STORE_ID =
