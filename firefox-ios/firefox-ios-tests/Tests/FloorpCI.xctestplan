@@ -117,6 +117,9 @@
     },
     {
       "selectedTests" : [
+        "FloorpNoteEditorViewControllerTests\/testExplicitSaveDoesNotRewriteUntouchedExistingNote()",
+        "FloorpNoteEditorViewControllerTests\/testExplicitSavePersistsUntouchedNewDraftOnlyOnce()",
+        "FloorpNoteEditorViewControllerTests\/testFailedExplicitSaveOfUntouchedDraftCanRetry()",
         "FloorpNotePersistenceSessionTests\/testConcurrentFirstSavesCreateOneNote()",
         "FloorpNotePersistenceSessionTests\/testExistingNoteSessionPreservesConflictDetection()",
         "FloorpNotePersistenceSessionTests\/testFailedFirstSaveCanRetryWithoutDuplicate()",

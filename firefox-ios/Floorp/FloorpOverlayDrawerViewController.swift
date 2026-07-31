@@ -832,7 +832,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             note: note,
             windowUUID: windowUUID,
             themeManager: themeManager,
-            notificationCenter: notificationCenter
+            notificationCenter: notificationCenter,
+            isPersisted: isPersisted
         ) { updatedNote in
             try await persistenceSession.save(updatedNote)
         }
