@@ -77,7 +77,7 @@ Only the main App ID is required for the first build. Extension configurations r
 
 ### App Group and Keychain groups
 
-The Floorp release entitlements use `group.app.floorp.Floorp` and the matching Floorp keychain group. Sticker has no shared-container entitlement. Register the App Group in Apple Developer and grant App Group and keychain access only to retained targets that actually share those data.
+The Floorp release entitlements use the Team-owned `group.app.floorp.Floorp.DV2U35YBHT` App Group and the separate `$(AppIdentifierPrefix)app.floorp.Floorp` keychain access group. The shorter App Group was unavailable to Team `DV2U35YBHT`, so `FloorpReleaseInfo.plist` provides the Team-scoped value to runtime code through `MozSharedContainerIdentifier`; upstream configurations continue deriving their group from the bundle ID. This happened before the first production release, so there is no production shared-container migration. Sticker has no shared-container entitlement. Grant App Group and keychain access only to retained targets that actually share those data.
 
 Because the initial release excludes Credential Provider, the main app's AutoFill Credential Provider entitlement is also omitted.
 
@@ -118,10 +118,10 @@ Complete these steps before enabling Xcode Cloud distribution:
 - [ ] Confirm an App Store Connect Account Holder, Admin, App Manager, or Developer with Create Apps permission can perform setup.
 - [ ] Confirm a GitHub organization owner can authorize the initial Xcode Cloud connection.
 - [ ] Accept all current Apple Developer and App Store Connect agreements.
-- [ ] Create or confirm the `app.floorp.Floorp` App ID.
+- [x] Create or confirm the `app.floorp.Floorp` App ID.
 - [ ] Decide whether development builds use a separate bundle ID such as `app.floorp.Floorp.Developer`.
 - [x] Ship Client-only in the initial Internal TestFlight build; exclude all six inherited extensions from `FloorpRelease`.
-- [ ] Register `group.app.floorp.Floorp` and assign it to every retained target that shares data.
+- [x] Register `group.app.floorp.Floorp.DV2U35YBHT` and assign it to every retained target that shares data.
 - [x] Omit Push/APNs and AutoFill Credential Provider from the initial Client-only release.
 - [ ] Confirm Multipath remains a product requirement; it is currently retained because networking code uses `.handover`.
 - [x] Disable Hosted Summarizer and its App Attest path; retain Apple on-device summarization.

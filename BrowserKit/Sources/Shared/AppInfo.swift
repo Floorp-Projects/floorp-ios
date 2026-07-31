@@ -67,8 +67,27 @@ extension AppInfo {
     }
 
     /// Return the shared container identifier (also known as the app group) to be used with for example background
-    /// http requests. It is the base bundle identifier with a "group." prefix.
+    /// http requests. Release builds can override the derived identifier when the matching App Group is owned by a
+    /// different Apple Developer team.
     public static var sharedContainerIdentifier: String {
+        let configuredIdentifier = applicationBundle.object(
+            forInfoDictionaryKey: "MozSharedContainerIdentifier"
+        ) as? String
+        return resolvedSharedContainerIdentifier(
+            configuredIdentifier: configuredIdentifier,
+            baseBundleIdentifier: baseBundleIdentifier
+        )
+    }
+
+    public static func resolvedSharedContainerIdentifier(
+        configuredIdentifier: String?,
+        baseBundleIdentifier: String
+    ) -> String {
+        if let configuredIdentifier = configuredIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !configuredIdentifier.isEmpty {
+            return configuredIdentifier
+        }
+
         var bundleIdentifier = baseBundleIdentifier
         if bundleIdentifier == "org.mozilla.ios.FennecEnterprise" {
             // Bug 1373726 - Base bundle identifier incorrectly generated for Nightly builds

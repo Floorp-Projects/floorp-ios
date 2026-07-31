@@ -8,6 +8,33 @@ import Shared
 import XCTest
 
 class SupportUtilsTests: XCTestCase {
+    func testConfiguredSharedContainerIdentifierOverridesDerivedIdentifier() {
+        XCTAssertEqual(
+            AppInfo.resolvedSharedContainerIdentifier(
+                configuredIdentifier: " group.app.floorp.Floorp.DV2U35YBHT ",
+                baseBundleIdentifier: "app.floorp.Floorp"
+            ),
+            "group.app.floorp.Floorp.DV2U35YBHT"
+        )
+    }
+
+    func testSharedContainerIdentifierFallsBackToBundleIdentifier() {
+        XCTAssertEqual(
+            AppInfo.resolvedSharedContainerIdentifier(
+                configuredIdentifier: "  ",
+                baseBundleIdentifier: "app.floorp.Floorp"
+            ),
+            "group.app.floorp.Floorp"
+        )
+        XCTAssertEqual(
+            AppInfo.resolvedSharedContainerIdentifier(
+                configuredIdentifier: nil,
+                baseBundleIdentifier: "org.mozilla.ios.FennecEnterprise"
+            ),
+            "group.org.mozilla.ios.Fennec.enterprise"
+        )
+    }
+
     func testURLForTopic() {
         let appVersion = AppInfo.appVersion
         let languageIdentifier = Locale.preferredLanguages.first!
