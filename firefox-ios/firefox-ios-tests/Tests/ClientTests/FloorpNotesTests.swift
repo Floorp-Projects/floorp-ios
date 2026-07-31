@@ -358,9 +358,19 @@ final class FloorpNotePersistenceSessionTests: XCTestCase {
         let firstDraft = makeDraft(title: "First", content: "A")
         let secondDraft = makeDraft(title: "Second", content: "B")
 
-        async let firstSave = session.save(firstDraft)
-        async let secondSave = session.save(secondDraft)
-        let (firstSaved, secondSaved) = try await (firstSave, secondSave)
+        let firstSave = Task { @MainActor in
+            try await session.save(firstDraft)
+        }
+        let secondSave = Task { @MainActor in
+            try await session.save(secondDraft)
+        }
+        defer {
+            firstSave.cancel()
+            secondSave.cancel()
+        }
+
+        let firstSaved = try await firstSave.value
+        let secondSaved = try await secondSave.value
         let notes = try await store.loadNotes()
 
         XCTAssertEqual(firstSaved.id, secondSaved.id)
