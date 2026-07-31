@@ -1,6 +1,6 @@
 # Floorp for iOS CI/CD
 
-This document defines the delivery foundation for Floorp for iOS. The repository now has a reproducible pull-request gate and a dedicated unsigned release-archive path. Signed delivery still requires Apple account setup, retained main-app capabilities, and service ownership to be finalized.
+This document defines the delivery foundation for Floorp for iOS. The repository has a reproducible pull-request gate, a dedicated release configuration, and a validated signed Internal TestFlight baseline. Repeatable cloud delivery, retained main-app capabilities, and service ownership still need to be finalized before public distribution.
 
 ## Architecture
 
@@ -8,11 +8,18 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
 | Upstream Firefox synchronization | GitHub Actions | Weekly PR workflow with a workflow allowlist and explicit CI dispatch |
-| Signed archive and internal TestFlight | Xcode Cloud | Release scaffold implemented; workflow and signing not yet configured or validated |
+| Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (1)` signed, uploaded, and verified by the internal group |
+| Repeatable signed delivery | Xcode Cloud | Scaffold implemented; workflow not yet configured |
 | App Store release | App Store Connect | Manual approval initially |
 | Mozilla/Focus maintenance automation | Git history | Removed pending a Floorp-owned replacement |
 
-GitHub Actions never receives an Apple certificate or private key in this first stage. Xcode Cloud is the preferred first CD system because it supports cloud-managed signing and direct TestFlight distribution.
+GitHub Actions does not receive an Apple certificate or private key. The first build was uploaded manually from a locally signed archive. Xcode Cloud remains the preferred repeatable CD system because it supports cloud-managed signing and direct TestFlight distribution.
+
+### Validated Internal TestFlight baseline
+
+On August 1, 2026, Floorp `0.1.0 (1)` was signed by Team `DV2U35YBHT`, uploaded to App Store Connect app `6796708699`, processed successfully, assigned to the `Floorp Internal` group, and installed by an internal tester. App Store Connect read `ITSAppUsesNonExemptEncryption=false` as “Uses non-exempt encryption: No.”
+
+The upload reported a non-blocking missing dSYM warning for `Glean.framework`. Resolve that warning before relying on production crash symbolication.
 
 ## CI contract
 
@@ -111,11 +118,11 @@ The primary classic and Liquid Glass icon sources already render the Floorp logo
 
 ## Apple account checklist
 
-Complete these steps before enabling Xcode Cloud distribution:
+Complete the remaining unchecked steps before enabling repeatable Xcode Cloud distribution or public beta delivery:
 
 - [ ] Decide whether the Apple Developer account is permanently owned by a Floorp organization or an individual; avoid a later transfer if possible.
 - [x] Confirm the Apple Developer Team ID: `DV2U35YBHT`.
-- [ ] Confirm an App Store Connect Account Holder, Admin, App Manager, or Developer with Create Apps permission can perform setup.
+- [x] Confirm an App Store Connect Account Holder, Admin, App Manager, or Developer with Create Apps permission can perform setup.
 - [ ] Confirm a GitHub organization owner can authorize the initial Xcode Cloud connection.
 - [ ] Accept all current Apple Developer and App Store Connect agreements.
 - [x] Create or confirm the `app.floorp.Floorp` App ID.
@@ -128,12 +135,12 @@ Complete these steps before enabling Xcode Cloud distribution:
 - [ ] Request the default-browser managed entitlement.
 - [x] Omit the browser app-installation entitlement from the initial release configuration.
 - [ ] Choose the Floorp marketing-version policy and initial version.
-- [ ] Create the Floorp app record in App Store Connect.
+- [x] Create the Floorp app record in App Store Connect (`6796708699`).
 - [ ] Set `FLOORP_APP_STORE_ID` after App Store Connect assigns Floorp's numeric Apple ID.
 - [ ] Replace remaining inherited main-app branding; review extension branding before any extension is restored.
-- [ ] Create an internal TestFlight group.
+- [x] Create the `Floorp Internal` TestFlight group and add the initial tester.
 - [ ] Assign an owner and safe client-side value for each external service setting used by the release configuration.
-- [ ] Produce a signed `Floorp` archive and pass Organizer validation.
+- [x] Produce a signed `Floorp` archive, upload it, and install the processed build through Internal TestFlight.
 
 Do not commit certificates, provisioning profiles, `.p8` API keys, `.p12` files, or passwords.
 
