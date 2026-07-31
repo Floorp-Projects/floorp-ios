@@ -311,6 +311,145 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
 }
 
 @MainActor
+final class FloorpNotePersistenceSessionTests: XCTestCase {
+    func testNewDraftDoesNotPersistBeforeFirstSave() async throws {
+        let location = makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        _ = FloorpNotePersistenceSession(notesStore: store, persistedNote: nil)
+
+        let notes = try await store.loadNotes()
+        XCTAssertTrue(notes.isEmpty)
+    }
+
+    func testFirstSaveCreatesAndSubsequentSaveUpdatesSameNote() async throws {
+        let location = makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(
+            fileURL: location.archive,
+            now: { 1_000 },
+            makeID: { "persisted-id" }
+        )
+        let session = FloorpNotePersistenceSession(notesStore: store, persistedNote: nil)
+        var draft = makeDraft(title: "First", content: "Body")
+
+        let created = try await session.save(draft)
+        XCTAssertEqual(created.id, "persisted-id")
+
+        draft.title = "Updated"
+        draft.content = "New body"
+        let updated = try await session.save(draft)
+        let restartedStore = FloorpNotesStore(fileURL: location.archive)
+        let notes = try await restartedStore.loadNotes()
+
+        XCTAssertEqual(updated.id, created.id)
+        XCTAssertGreaterThan(updated.updatedAt, created.updatedAt)
+        XCTAssertEqual(notes, [updated])
+    }
+
+    func testConcurrentFirstSavesCreateOneNote() async throws {
+        let location = makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive, now: { 1_000 })
+        let session = FloorpNotePersistenceSession(notesStore: store, persistedNote: nil)
+        let firstDraft = makeDraft(title: "First", content: "A")
+        let secondDraft = makeDraft(title: "Second", content: "B")
+
+        async let firstSave = session.save(firstDraft)
+        async let secondSave = session.save(secondDraft)
+        let (firstSaved, secondSaved) = try await (firstSave, secondSave)
+        let notes = try await store.loadNotes()
+
+        XCTAssertEqual(firstSaved.id, secondSaved.id)
+        XCTAssertEqual(notes.count, 1)
+        let finalNote = try XCTUnwrap(notes.first)
+        XCTAssertTrue(finalNote == firstSaved || finalNote == secondSaved)
+    }
+
+    func testFailedFirstSaveCanRetryWithoutDuplicate() async throws {
+        let location = makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(
+            fileURL: location.archive,
+            makeID: { "persisted-id" }
+        )
+        let session = FloorpNotePersistenceSession(notesStore: store, persistedNote: nil)
+        var draft = makeDraft(
+            title: "Too large",
+            content: String(repeating: "x", count: FloorpNotesStore.maximumArchiveBytes)
+        )
+
+        do {
+            _ = try await session.save(draft)
+            XCTFail("Expected archiveTooLarge")
+        } catch FloorpNotesStoreError.archiveTooLarge {
+            // Expected.
+        }
+        let notesAfterFailure = try await store.loadNotes()
+        XCTAssertTrue(notesAfterFailure.isEmpty)
+
+        draft.title = "Retry"
+        draft.content = "Saved"
+        let saved = try await session.save(draft)
+        let notesAfterRetry = try await store.loadNotes()
+
+        XCTAssertEqual(saved.id, "persisted-id")
+        XCTAssertEqual(notesAfterRetry, [saved])
+    }
+
+    func testExistingNoteSessionPreservesConflictDetection() async throws {
+        let location = makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(
+            fileURL: location.archive,
+            now: { 1_000 },
+            makeID: { "persisted-id" }
+        )
+        let original = try await store.createNote(title: "Original")
+        let session = FloorpNotePersistenceSession(notesStore: store, persistedNote: original)
+        let otherWindowEdit = try await store.updateNote(
+            id: original.id,
+            title: "Other window",
+            content: "Keep this",
+            expectedUpdatedAt: original.updatedAt
+        )
+        var staleDraft = original
+        staleDraft.title = "Stale editor"
+
+        do {
+            _ = try await session.save(staleDraft)
+            XCTFail("Expected editConflict")
+        } catch FloorpNotesStoreError.editConflict(let id) {
+            XCTAssertEqual(id, original.id)
+        }
+
+        let notes = try await store.loadNotes()
+        XCTAssertEqual(notes, [otherWindowEdit])
+    }
+
+    private func makeDraft(title: String, content: String) -> FloorpNote {
+        FloorpNote(
+            id: "draft-id",
+            title: title,
+            content: content,
+            createdAt: 500,
+            updatedAt: 500
+        )
+    }
+
+    private func makeTemporaryArchiveLocation() -> (directory: URL, archive: URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpNoteSessionTests-\(UUID().uuidString)", isDirectory: true)
+        return (directory, directory.appendingPathComponent("notes.json"))
+    }
+}
+
+@MainActor
 final class FloorpPanelNotesMigrationTests: XCTestCase {
     func testLegacyPanelConfigurationReceivesNotesExactlyOnce() throws {
         let suiteName = "FloorpPanelNotesMigrationTests-\(UUID().uuidString)"

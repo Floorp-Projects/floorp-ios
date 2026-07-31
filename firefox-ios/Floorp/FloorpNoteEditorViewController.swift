@@ -6,6 +6,58 @@ import UIKit
 import Common
 import Shared
 
+/// Owns the persistence identity for one editor session.
+///
+/// New drafts stay in memory until the editor reports its first change. Once
+/// created, every later save uses the last persisted revision so concurrent
+/// edits continue to be rejected by `FloorpNotesStore`.
+@MainActor
+final class FloorpNotePersistenceSession {
+    private let notesStore: FloorpNotesStore
+    private var persistedNote: FloorpNote?
+    private var isSaving = false
+    private var saveWaiters = [CheckedContinuation<Void, Never>]()
+
+    init(notesStore: FloorpNotesStore, persistedNote: FloorpNote?) {
+        self.notesStore = notesStore
+        self.persistedNote = persistedNote
+    }
+
+    func save(_ draft: FloorpNote) async throws -> FloorpNote {
+        if isSaving {
+            await withCheckedContinuation { continuation in
+                saveWaiters.append(continuation)
+            }
+            return try await save(draft)
+        }
+
+        isSaving = true
+        defer {
+            isSaving = false
+            let waiters = saveWaiters
+            saveWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+
+        let savedNote: FloorpNote
+        if let persistedNote {
+            savedNote = try await notesStore.updateNote(
+                id: persistedNote.id,
+                title: draft.title,
+                content: draft.content,
+                expectedUpdatedAt: persistedNote.updatedAt
+            )
+        } else {
+            savedNote = try await notesStore.createNote(
+                title: draft.title,
+                content: draft.content
+            )
+        }
+        persistedNote = savedNote
+        return savedNote
+    }
+}
+
 /// Native, local-first editor for a single Floorp note.
 ///
 /// Plain text is fully editable. Rich TipTap/Lexical content remains byte-for-
@@ -288,7 +340,15 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             do {
                 let persistedNote = try await onSave(noteToSave)
                 savedVersion = versionToSave
-                draft.updatedAt = persistedNote.updatedAt
+                // Keep edits made while this save was in flight, but adopt the
+                // real identity assigned when a new draft is first persisted.
+                draft = FloorpNote(
+                    id: persistedNote.id,
+                    title: draft.title,
+                    content: draft.content,
+                    createdAt: persistedNote.createdAt,
+                    updatedAt: persistedNote.updatedAt
+                )
                 lastAttemptSucceeded = true
                 if savedVersion == changeVersion {
                     updateSaveState(.saved)

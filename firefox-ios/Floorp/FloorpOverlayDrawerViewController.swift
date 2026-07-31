@@ -786,19 +786,20 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         guard !isCreatingNote else { return }
         isCreatingNote = true
         addNoteButton.isEnabled = false
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                isCreatingNote = false
-                addNoteButton.isEnabled = currentPanelType == .notes && !isCreatingNote
-            }
-            do {
-                let note = try await notesStore.createNote(title: FloorpStrings.Notes.newNote)
-                presentNoteEditor(note)
-            } catch {
-                presentOperationError()
-            }
+        defer {
+            isCreatingNote = false
+            addNoteButton.isEnabled = currentPanelType == .notes && !isCreatingNote
         }
+
+        let timestamp = FloorpNotesStore.currentTimeInMilliseconds()
+        let draft = FloorpNote(
+            id: UUID().uuidString,
+            title: FloorpStrings.Notes.newNote,
+            content: "",
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+        presentNoteEditor(draft, isPersisted: false)
     }
 
     @objc private func notesDidChange() {
@@ -821,21 +822,19 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         }
     }
 
-    private func presentNoteEditor(_ note: FloorpNote) {
+    private func presentNoteEditor(_ note: FloorpNote, isPersisted: Bool = true) {
         guard presentedViewController == nil else { return }
-        let notesStore = notesStore
+        let persistenceSession = FloorpNotePersistenceSession(
+            notesStore: notesStore,
+            persistedNote: isPersisted ? note : nil
+        )
         let editor = FloorpNoteEditorViewController(
             note: note,
             windowUUID: windowUUID,
             themeManager: themeManager,
             notificationCenter: notificationCenter
         ) { updatedNote in
-            try await notesStore.updateNote(
-                id: updatedNote.id,
-                title: updatedNote.title,
-                content: updatedNote.content,
-                expectedUpdatedAt: updatedNote.updatedAt
-            )
+            try await persistenceSession.save(updatedNote)
         }
         editor.navigationItem.prompt = FloorpStrings.Notes.localOnly
         let navigationController = UINavigationController(rootViewController: editor)
