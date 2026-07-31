@@ -416,14 +416,17 @@ extension IntroViewController: OnboardingCardDelegate {
 
             DispatchQueue.main.async {
                 if granted {
-                    if self.userDefaults.object(forKey: PrefsKeys.Notifications.SyncNotifications) == nil {
+                    if AppServicesPolicy.allowsRemotePushNotifications,
+                       self.userDefaults.object(forKey: PrefsKeys.Notifications.SyncNotifications) == nil {
                         self.userDefaults.set(granted, forKey: PrefsKeys.Notifications.SyncNotifications)
                     }
                     if self.userDefaults.object(forKey: PrefsKeys.Notifications.TipsAndFeaturesNotifications) == nil {
                         self.userDefaults.set(granted, forKey: PrefsKeys.Notifications.TipsAndFeaturesNotifications)
                     }
 
-                    NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+                    if AppServicesPolicy.allowsRemotePushNotifications {
+                        NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+                    }
                 }
                 self.advance(numberOfPages: 1, from: cardName) {
                     self.showNextPageCompletionForLastCard()

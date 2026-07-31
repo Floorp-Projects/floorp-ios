@@ -132,7 +132,12 @@
         "FloorpNotesStoreTests\/testUnknownJSONRemainsVerbatimAndReadOnly()",
         "FloorpPanelNotesMigrationTests\/testLegacyPanelConfigurationReceivesNotesExactlyOnce()",
         "FloorpPanelNotesMigrationTests\/testNoteSearchUsesContentBeyondDisplayedPreview()",
-        "FloorpPanelNotesMigrationTests\/testReorderPreservesPanelsMissingFromOlderOrderList()"
+        "FloorpPanelNotesMigrationTests\/testReorderPreservesPanelsMissingFromOlderOrderList()",
+        "NimbusOnboardingFeatureLayerTests\/testLayer_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
+        "NimbusOnboardingKitFeatureLayerTests\/testGetOnboardingModel_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
+        "SummarizerNimbusUtilsTests\/test_isAppAuthAttestEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
+        "SummarizerNimbusUtilsTests\/test_isAppleSummarizerEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
+        "SummarizerNimbusUtilsTests\/test_isHostedSummarizerEnabled_whenDisallowedByAppPolicy()"
       ],
       "target" : {
         "containerPath" : "container:Client.xcodeproj",

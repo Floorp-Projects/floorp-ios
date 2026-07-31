@@ -11,16 +11,11 @@ import OnboardingKit
 class NimbusOnboardingFeatureLayerTests: XCTestCase {
     typealias CardElementNames = NimbusOnboardingTestingConfigUtility.CardElementNames
 
-    var configUtility: NimbusOnboardingTestingConfigUtility!
+    var configUtility = NimbusOnboardingTestingConfigUtility()
 
     override func setUp() {
         super.setUp()
         configUtility = NimbusOnboardingTestingConfigUtility()
-    }
-
-    override func tearDown() {
-        configUtility = nil
-        super.tearDown()
     }
 
     // MARK: - Test placeholder methods
@@ -142,6 +137,25 @@ class NimbusOnboardingFeatureLayerTests: XCTestCase {
         let subject = layer.getOnboardingModel(for: .freshInstall).cards
 
         XCTAssertEqual(expectedNumberOfCards, subject.count)
+    }
+
+    func testLayer_notificationCardIsExcludedWhenRemotePushIsDisallowed() {
+        configUtility.setupNimbusWith(
+            withPrimaryButtonAction: [
+                .forwardOneCard,
+                .syncSignIn,
+                .requestNotifications
+            ]
+        )
+        let layer = NimbusOnboardingFeatureLayer(
+            with: MockNimbusMessagingHelperUtility(),
+            allowsRemotePushNotifications: false
+        )
+
+        let subject = layer.getOnboardingModel(for: .freshInstall).cards
+
+        XCTAssertEqual(subject.count, 2)
+        XCTAssertFalse(subject.contains { $0.buttons.primary.action == .requestNotifications })
     }
 
     func testLayer_cardsAreReturned_InExpectedOrder() {

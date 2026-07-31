@@ -7,7 +7,7 @@ import Shared
 @testable import Client
 
 final class SummarizerNimbusUtilsTests: XCTestCase {
-    private var profile: MockProfile!
+    private var profile = MockProfile()
     private let itTestLocale = Locale(identifier: "it")
     private let userDefaults = UserDefaults.standard
 
@@ -20,11 +20,6 @@ final class SummarizerNimbusUtilsTests: XCTestCase {
         setLanguageExpansionFeature()
         setIsAppAttestAuthEnabled()
         LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: profile)
-    }
-
-    override func tearDown() {
-        profile = nil
-        super.tearDown()
     }
 
     // MARK: - isSummarizeFeatureToggledOn
@@ -165,6 +160,12 @@ final class SummarizerNimbusUtilsTests: XCTestCase {
         XCTAssertTrue(subject.isAppleSummarizerEnabled())
     }
 
+    func test_isAppleSummarizerEnabled_whenHostedSummarizerDisallowedByAppPolicy() {
+        let subject = createSubject(allowsHostedSummarizer: false)
+
+        XCTAssertTrue(subject.isAppleSummarizerEnabled())
+    }
+
     // MARK: - isHostedSummarizerEnabled
     func test_isHostedSummarizerEnabled_whenFeatureFlagEnabled() {
         let subject = createSubject()
@@ -180,6 +181,13 @@ final class SummarizerNimbusUtilsTests: XCTestCase {
         XCTAssertFalse(subject.isHostedSummarizerEnabled())
     }
 
+    func test_isHostedSummarizerEnabled_whenDisallowedByAppPolicy() {
+        let subject = createSubject(allowsHostedSummarizer: false)
+        setHostedSummarizerFeature(isEnabled: true)
+
+        XCTAssertFalse(subject.isHostedSummarizerEnabled())
+    }
+
     // MARK: - isAppAuthAttestEnabled
     func test_isAppAuthAttestEnabled_whenFeatureFlagEnabled() {
         let subject = createSubject()
@@ -190,6 +198,13 @@ final class SummarizerNimbusUtilsTests: XCTestCase {
     func test_isAppAuthAttestEnabled_whenFeatureFlagDisabled() {
         let subject = createSubject()
         setIsAppAttestAuthEnabled(isEnabled: false)
+
+        XCTAssertFalse(subject.isAppAttestAuthEnabled())
+    }
+
+    func test_isAppAuthAttestEnabled_whenHostedSummarizerDisallowedByAppPolicy() {
+        let subject = createSubject(allowsHostedSummarizer: false)
+        setIsAppAttestAuthEnabled(isEnabled: true)
 
         XCTAssertFalse(subject.isAppAttestAuthEnabled())
     }
@@ -227,14 +242,16 @@ final class SummarizerNimbusUtilsTests: XCTestCase {
 
     // MARK: - Helpers
     private func createSubject(
-        currentLocale: Locale = Locale(identifier: "en")
+        currentLocale: Locale = Locale(identifier: "en"),
+        allowsHostedSummarizer: Bool = true
     ) -> DefaultSummarizerNimbusUtils {
         return DefaultSummarizerNimbusUtils(
             profile: profile,
             localeProvider: MockLocaleProvider(current: currentLocale),
             appleIntelligenceUtil: AppleIntelligenceUtil(
                 userDefaults: userDefaults
-            )
+            ),
+            allowsHostedSummarizer: allowsHostedSummarizer
         )
     }
 

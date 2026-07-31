@@ -349,9 +349,11 @@ extension FxAWebViewModel {
                 }
                 """
         case .emailLoginFlow, .qrCode:
-            data = """
+                data = """
                     { capabilities:
-                        { choose_what_to_sync: true, engines: ["bookmarks", "history", "tabs", "passwords"\(creditCardCapability)\(addressAutofillCapability)] },
+                        { choose_what_to_sync: true,
+                          engines: ["bookmarks", "history", "tabs", "passwords"
+                                    \(creditCardCapability)\(addressAutofillCapability)] },
                     }
                 """
         }
@@ -381,7 +383,8 @@ extension FxAWebViewModel {
 
             // only ask for notification permission if it's not onboarding related (e.g. settings)
             // or if the onboarding flow is missing the notifications card
-            guard self.shouldAskForNotificationPermission else { return }
+            guard AppServicesPolicy.allowsRemotePushNotifications,
+                  self.shouldAskForNotificationPermission else { return }
 
             NotificationManager().requestAuthorization { granted, error in
                 guard error == nil else { return }
@@ -409,7 +412,9 @@ extension FxAWebViewModel {
         else { return }
 
         profile.rustFxA.accountManager?.handlePasswordChanged(newSessionToken: sessionToken) { [weak self] in
-            NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+            if AppServicesPolicy.allowsRemotePushNotifications {
+                NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+            }
             self?.profile.syncManager?.syncEverything(why: .enabledChange)
         }
     }

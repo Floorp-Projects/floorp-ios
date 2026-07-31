@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import Common
 import Shared
 import OnboardingKit
 
@@ -16,17 +17,20 @@ class NimbusOnboardingKitFeatureLayer: NimbusOnboardingFeatureLayerProtocol {
     var onboardingVariant: Client.OnboardingVariant
     private let isDefaultBrowser: Bool
     private let isIpad: Bool
+    private let allowsRemotePushNotifications: Bool
 
     init(
         onboardingVariant: OnboardingVariant,
         with helperUtility: NimbusMessagingHelperUtilityProtocol = NimbusMessagingHelperUtility(),
         isDefaultBrowser: Bool = false,
-        isIpad: Bool = UIDeviceDetails.userInterfaceIdiom == .pad
+        isIpad: Bool = UIDeviceDetails.userInterfaceIdiom == .pad,
+        allowsRemotePushNotifications: Bool = AppServicesPolicy.allowsRemotePushNotifications
     ) {
         self.helperUtility = helperUtility
         self.onboardingVariant = onboardingVariant
         self.isDefaultBrowser = isDefaultBrowser
         self.isIpad = isIpad
+        self.allowsRemotePushNotifications = allowsRemotePushNotifications
     }
 
     func getOnboardingModel(
@@ -98,6 +102,9 @@ class NimbusOnboardingKitFeatureLayer: NimbusOnboardingFeatureLayerProtocol {
         guard let helper = helperUtility.createNimbusMessagingHelper() else { return [] }
 
         return cardData.compactMap { cardName, cardData in
+            guard allowsRemotePushNotifications || !cardRequestsNotificationPermission(cardData) else {
+                return nil
+            }
             if cardIsValid(with: cardData, using: conditionTable, and: helper) {
                 return OnboardingKitCardInfoModel(
                     cardType: OnboardingKit.OnboardingCardType(rawValue: cardData.cardType.rawValue) ?? .basic,

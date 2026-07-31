@@ -98,7 +98,7 @@ public final class RustFirefoxAccounts: @unchecked Sendable {
             RustFirefoxAccounts.shared.accountManager = manager
 
            // After everything is setup, register for push notifications
-            if manager.hasAccount() {
+            if manager.hasAccount() && AppServicesPolicy.allowsRemotePushNotifications {
                 NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
             }
 

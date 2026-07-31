@@ -14,6 +14,11 @@ protocol NimbusOnboardingFeatureLayerProtocol {
 }
 
 extension NimbusOnboardingFeatureLayerProtocol {
+    func cardRequestsNotificationPermission(_ card: NimbusOnboardingCardData) -> Bool {
+        return card.buttons.primary.action == .requestNotifications
+            || card.buttons.secondary?.action == .requestNotifications
+    }
+
     func cardIsValid(
         with card: NimbusOnboardingCardData,
         using conditionTable: [String: String],

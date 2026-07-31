@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import UIKit
+import Common
 import Shared
 import UserNotifications
 import Account
@@ -34,11 +35,19 @@ enum SentTabAction: String {
 extension AppDelegate {
     func pushNotificationSetup() {
         UNUserNotificationCenter.current().delegate = self
-        let categories: Set<UNNotificationCategory> = [SentTabAction.notificationCategory,
-                                                       NotificationSurfaceManager.notificationCategory]
+        if !AppServicesPolicy.allowsRemotePushNotifications {
+            // Clear a token retained from an older policy-enabled build.
+            UIApplication.shared.unregisterForRemoteNotifications()
+        }
+
+        var categories: Set<UNNotificationCategory> = [NotificationSurfaceManager.notificationCategory]
+        if AppServicesPolicy.allowsRemotePushNotifications {
+            categories.insert(SentTabAction.notificationCategory)
+        }
         UNUserNotificationCenter.current().setNotificationCategories(categories)
 
         NotificationCenter.default.addObserver(forName: .RegisterForPushNotifications, object: nil, queue: .main) { _ in
+            guard AppServicesPolicy.allowsRemotePushNotifications else { return }
             Task { @MainActor in
                 let settings = await UNUserNotificationCenter.current().notificationSettings()
                 if settings.authorizationStatus != .denied {
@@ -57,7 +66,9 @@ extension AppDelegate {
             let remoteDevicesCount = newState.remoteDevices.count
             self.setPreferencesForSyncedAccount(for: profile, count: remoteDevicesCount)
             if newState.localDevice?.pushEndpointExpired ?? false {
-                NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+                if AppServicesPolicy.allowsRemotePushNotifications {
+                    NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+                }
                 // Our endpoint expired, we should check for missed messages
                 profile.pollCommands(forcePoll: true)
             }
@@ -79,6 +90,11 @@ extension AppDelegate: @MainActor UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        if !AppServicesPolicy.allowsRemotePushNotifications,
+           response.notification.request.trigger is UNPushNotificationTrigger {
+            return
+        }
+
         let content = response.notification.request.content
 
         if content.categoryIdentifier == NotificationSurfaceManager.Constant.notificationCategoryId {
@@ -110,6 +126,11 @@ extension AppDelegate: @MainActor UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
+        if !AppServicesPolicy.allowsRemotePushNotifications,
+           notification.request.trigger is UNPushNotificationTrigger {
+            return []
+        }
+
         if profile.prefs.boolForKey(PendingAccountDisconnectedKey) ?? false {
             profile.removeAccount()
 
@@ -125,6 +146,10 @@ extension AppDelegate: @MainActor UNUserNotificationCenterDelegate {
 extension AppDelegate {
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        guard AppServicesPolicy.allowsRemotePushNotifications else {
+            return
+        }
+
         var notificationAllowed = true
         if UserDefaults.standard.object(forKey: PrefsKeys.Notifications.SyncNotifications) != nil {
             notificationAllowed = UserDefaults.standard.bool(forKey: PrefsKeys.Notifications.SyncNotifications)

@@ -22,13 +22,20 @@ APP_VERSION = $(FLOORP_MARKETING_VERSION)
 CURRENT_PROJECT_VERSION = $(FLOORP_BUILD_NUMBER)
 APP_STORE_ID = $(FLOORP_APP_STORE_ID)
 
-INFOPLIST_FILE = Client/Info.plist
+// FloorpRelease omits the remote-notification background mode because APNs is disabled.
+INFOPLIST_FILE = Client/FloorpReleaseInfo.plist
 MOZ_BUNDLE_DISPLAY_NAME = Floorp
 MOZ_BUNDLE_ID = app.floorp.Floorp
 MOZ_PRODUCT_NAME = Floorp
 MOZ_PUBLIC_URL_SCHEME = floorp
 MOZ_INTERNAL_URL_SCHEME = floorp-internal
 MOZ_TODAY_WIDGET_SEARCH_DISPLAY_NAME = Floorp - Search
+
+// Keep cloud features disabled until Floorp owns or is explicitly authorized
+// to use their production services. Apple Intelligence summarization remains
+// available because it is evaluated independently at runtime.
+MOZ_ALLOW_HOSTED_SUMMARIZER = NO
+MOZ_ALLOW_REMOTE_PUSH_NOTIFICATIONS = NO
 
 CHANNEL = release
 OTHER_SWIFT_FLAGS = $(OTHER_SWIFT_FLAGS_common) -DMOZ_CHANNEL_release

@@ -236,13 +236,16 @@ final class OnboardingService: LegacyFeatureFlaggable {
 
             DispatchQueue.main.async {
                 if granted {
-                    if self.userDefaults.object(forKey: PrefsKeys.Notifications.SyncNotifications) == nil {
+                    if AppServicesPolicy.allowsRemotePushNotifications,
+                       self.userDefaults.object(forKey: PrefsKeys.Notifications.SyncNotifications) == nil {
                         self.userDefaults.set(granted, forKey: PrefsKeys.Notifications.SyncNotifications)
                     }
                     if self.userDefaults.object(forKey: PrefsKeys.Notifications.TipsAndFeaturesNotifications) == nil {
                         self.userDefaults.set(granted, forKey: PrefsKeys.Notifications.TipsAndFeaturesNotifications)
                     }
-                    self.notificationCenter.post(name: .RegisterForPushNotifications)
+                    if AppServicesPolicy.allowsRemotePushNotifications {
+                        self.notificationCenter.post(name: .RegisterForPushNotifications)
+                    }
                 }
             }
         }

@@ -25,16 +25,11 @@ final class MockSummarizerServiceLifecycle: SummarizerServiceLifecycle, @uncheck
 }
 
 final class SummarizeServiceFactoryTests: XCTestCase {
-    var serviceLifecycle: MockSummarizerServiceLifecycle!
+    var serviceLifecycle = MockSummarizerServiceLifecycle()
 
     override func setUp() {
         super.setUp()
         serviceLifecycle = MockSummarizerServiceLifecycle()
-    }
-
-    override func tearDown() {
-        serviceLifecycle = nil
-        super.tearDown()
     }
 
     #if canImport(FoundationModels)
@@ -54,6 +49,23 @@ final class SummarizeServiceFactoryTests: XCTestCase {
         let service = try XCTUnwrap(result as? DefaultSummarizerService)
 
         XCTAssertNotNil(service.summarizerLifecycle)
+    }
+
+    func test_make_whenHostedDisallowedAndAppleAvailable_returnsAppleService() throws {
+        guard #available(iOS 26, *) else {
+            throw XCTSkip("Skipping iOS 26-only test on earlier OS versions")
+        }
+        let subject = createSubject(allowsHostedSummarizer: false)
+
+        let result = subject.make(
+            isAppleSummarizerEnabled: true,
+            isHostedSummarizerEnabled: true,
+            isAppAttestAuthEnabled: true,
+            prefs: MockProfilePrefs(),
+            config: nil
+        )
+
+        XCTAssertNotNil(result as? DefaultSummarizerService)
     }
     #endif
 
@@ -99,8 +111,50 @@ final class SummarizeServiceFactoryTests: XCTestCase {
         XCTAssertNil(result)
     }
 
-    private func createSubject() -> DefaultSummarizerServiceFactory {
-        var service = DefaultSummarizerServiceFactory()
+    func test_make_whenHostedDisallowedByAppPolicy_returnsNil() {
+        let subject = createSubject(allowsHostedSummarizer: false)
+        let config = SummarizerConfig(
+            instructions: "Summarize this page",
+            options: ["model": "hosted-model"]
+        )
+
+        let result = subject.make(
+            isAppleSummarizerEnabled: false,
+            isHostedSummarizerEnabled: true,
+            isAppAttestAuthEnabled: true,
+            prefs: MockProfilePrefs(),
+            config: config
+        )
+
+        XCTAssertNil(result)
+    }
+
+    func test_maxWords_whenHostedSummarizerDisallowedByAppPolicy_returnsZero() {
+        let subject = createSubject(allowsHostedSummarizer: false)
+
+        let result = subject.maxWords(
+            isAppleSummarizerEnabled: false,
+            isHostedSummarizerEnabled: true
+        )
+
+        XCTAssertEqual(result, 0)
+    }
+
+    func test_maxWords_whenAppleSummarizerEnabledAndHostedDisallowed_returnsAppleLimit() {
+        let subject = createSubject(allowsHostedSummarizer: false)
+
+        let result = subject.maxWords(
+            isAppleSummarizerEnabled: true,
+            isHostedSummarizerEnabled: true
+        )
+
+        XCTAssertEqual(result, FoundationModelsConfig.maxWords)
+    }
+
+    private func createSubject(allowsHostedSummarizer: Bool = true) -> DefaultSummarizerServiceFactory {
+        var service = DefaultSummarizerServiceFactory(
+            allowsHostedSummarizer: allowsHostedSummarizer
+        )
         service.lifecycleDelegate = serviceLifecycle
         return service
     }

@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
+import Common
 import LLMKit
 import MLPAKit
 import Shared
@@ -24,8 +25,11 @@ public protocol SummarizerServiceFactory {
 
 public struct DefaultSummarizerServiceFactory: SummarizerServiceFactory {
     public weak var lifecycleDelegate: SummarizerServiceLifecycle?
+    private let allowsHostedSummarizer: Bool
 
-    public init() {}
+    public init(allowsHostedSummarizer: Bool = AppServicesPolicy.allowsHostedSummarizer) {
+        self.allowsHostedSummarizer = allowsHostedSummarizer
+    }
 
     public func make(isAppleSummarizerEnabled: Bool,
                      isHostedSummarizerEnabled: Bool,
@@ -33,6 +37,7 @@ public struct DefaultSummarizerServiceFactory: SummarizerServiceFactory {
                      usesPermissiveGuardrails: Bool = false,
                      prefs: Prefs,
                      config: SummarizerConfig?) -> SummarizerService? {
+        let isHostedSummarizerEnabled = isHostedSummarizerEnabled && allowsHostedSummarizer
         let maxWords = maxWords(isAppleSummarizerEnabled: isAppleSummarizerEnabled,
                                 isHostedSummarizerEnabled: isHostedSummarizerEnabled)
         let config = config ?? SummarizerConfig.defaultConfig
@@ -86,7 +91,7 @@ public struct DefaultSummarizerServiceFactory: SummarizerServiceFactory {
         if isAppleSummarizerEnabled {
             return FoundationModelsConfig.maxWords
         }
-        if isHostedSummarizerEnabled {
+        if isHostedSummarizerEnabled && allowsHostedSummarizer {
             return LiteLLMConfig.maxWords
         }
         return 0

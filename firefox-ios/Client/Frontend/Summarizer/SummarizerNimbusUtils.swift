@@ -39,6 +39,7 @@ struct DefaultSummarizerNimbusUtils: LegacyFeatureFlaggable, SummarizerNimbusUti
     private let prefs: Prefs
     private let localeProvider: LocaleProvider
     private let appleIntelligenceUtil: AppleIntelligenceUtil
+    private let allowsHostedSummarizer: Bool
 
     var isSummarizeFeatureToggledOn: Bool {
         return isSummarizeFeatureEnabled && didUserEnableSummarizeFeature
@@ -70,11 +71,13 @@ struct DefaultSummarizerNimbusUtils: LegacyFeatureFlaggable, SummarizerNimbusUti
     init(
         profile: Profile = AppContainer.shared.resolve(),
         localeProvider: LocaleProvider = SystemLocaleProvider(),
-        appleIntelligenceUtil: AppleIntelligenceUtil = AppleIntelligenceUtil()
+        appleIntelligenceUtil: AppleIntelligenceUtil = AppleIntelligenceUtil(),
+        allowsHostedSummarizer: Bool = AppServicesPolicy.allowsHostedSummarizer
     ) {
         self.prefs = profile.prefs
         self.localeProvider = localeProvider
         self.appleIntelligenceUtil = appleIntelligenceUtil
+        self.allowsHostedSummarizer = allowsHostedSummarizer
     }
 
     /// Retrieves user preference for enabling the summarize content feature from settings
@@ -101,11 +104,13 @@ struct DefaultSummarizerNimbusUtils: LegacyFeatureFlaggable, SummarizerNimbusUti
     }
 
     func isHostedSummarizerEnabled() -> Bool {
-        return featureFlags.isFeatureEnabled(.hostedSummarizer, checking: .buildOnly)
+        return allowsHostedSummarizer
+            && featureFlags.isFeatureEnabled(.hostedSummarizer, checking: .buildOnly)
     }
 
     func isAppAttestAuthEnabled() -> Bool {
-        return featureFlags.isFeatureEnabled(.summarizerAppAttestAuth, checking: .buildOnly)
+        return allowsHostedSummarizer
+            && featureFlags.isFeatureEnabled(.summarizerAppAttestAuth, checking: .buildOnly)
     }
 
     func usesPermissiveGuardrails() -> Bool {

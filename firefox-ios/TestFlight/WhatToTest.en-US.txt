@@ -4,4 +4,4 @@ Please focus on Floorp Notes: create, edit, delete, and search notes; restart th
 
 Also smoke-test launch, normal and private browsing, tabs, and settings. Do not use production account credentials until Floorp's account-service ownership is confirmed.
 
-Known limitations: Push is disabled, app extensions are not included in this build, and Rate Floorp is hidden until the App Store listing is configured.
+Known limitations: Push and cloud-hosted page summarization are disabled, app extensions are not included in this build, and Rate Floorp is hidden until the App Store listing is configured. On supported devices, Apple Intelligence page summarization remains available on-device.

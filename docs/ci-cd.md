@@ -27,7 +27,7 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 7. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
 8. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
 
-`FloorpCI.xctestplan` is an explicit baseline of 15 test targets: 14 currently reliable suites plus 16 selected Floorp Notes cases from `ClientTests` (812 tests relative to the initial 796-test local baseline). It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
+`FloorpCI.xctestplan` is an explicit baseline of 15 test targets: 14 currently reliable suites plus 16 selected Floorp Notes cases and five release-service-policy cases from `ClientTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
 SwiftPM checkouts and Derived Data use job-local directories. This avoids shared-cache corruption and keeps untrusted pull-request code out of persistent caches.
 
@@ -83,7 +83,9 @@ Because the initial release excludes Credential Provider, the main app's AutoFil
 
 ### Push notifications
 
-The Floorp release entitlement intentionally omits APNs, and the current beta plan therefore has no Push support. Notification Service is excluded from `FloorpRelease`. Adding Push later requires restoring that target where needed, production entitlements, the Floorp App ID capability, a Floorp-owned APNs key, and a Floorp-owned or explicitly authorized backend.
+The Floorp release entitlement intentionally omits APNs, and the current beta plan therefore has no Push support. Its dedicated Info.plist also omits the `remote-notification` background mode. `FloorpRelease` applies a fail-closed runtime policy before APNs registration and Mozilla Autopush construction, clears any APNs registration retained from an older build, ignores stale remote notification delivery, hides the Sync-notification setting, suppresses notification-permission onboarding that advertises Sync Push, and suppresses account-flow Push prompts. Notification Service is excluded from `FloorpRelease`. Local Tips and notification-surface delivery remain available through Settings.
+
+Adding Push later requires restoring that target where needed, production entitlements, the Floorp App ID capability, a Floorp-owned APNs key, and a Floorp-owned or explicitly authorized backend. Enabling a Nimbus feature or user preference alone cannot bypass the release policy.
 
 ### Managed browser entitlements
 
@@ -97,7 +99,9 @@ The checked-in release baseline is `0.1.0 (1)`. The main app and all extension I
 
 ### Floorp-owned services and App Store ID
 
-Decide which FxA/Sync, Remote Settings, sponsored-content/Merino, summarizer, Push, Nimbus, Sentry, LiteLLM, and related endpoints Floorp owns or is authorized to use before distributing a release archive. Where ownership is unresolved, disable the feature rather than silently using an inherited Mozilla production default. Xcode Cloud secret variables prevent values from appearing in logs, but any value embedded in the app bundle remains extractable and must not be a privileged server secret.
+The initial Floorp service policy keeps FxA/Sync, Remote Settings/Nimbus, and the existing Mozilla content services enabled. It disables remote Push and Hosted Summarizer, including its App Attest authentication path. Apple Intelligence summarization remains independently available on supported devices and executes on-device. Both disabled services are protected by `FloorpRelease` Info.plist policy values in addition to their normal feature flags, so a remote Nimbus rollout cannot re-enable them.
+
+Continue reviewing Sentry and every retained endpoint before public distribution. Where ownership is unresolved, disable the feature rather than silently using an inherited production default. Xcode Cloud secret variables prevent values from appearing in logs, but any value embedded in the app bundle remains extractable and must not be a privileged server secret.
 
 Firefox's App Store ID has been removed. `FLOORP_APP_STORE_ID` is optional; while it is unset or invalid, Floorp hides the rating setting and does not open a review URL. Set it to Floorp's numeric Apple ID after the App Store Connect record exists.
 
@@ -120,7 +124,7 @@ Complete these steps before enabling Xcode Cloud distribution:
 - [ ] Register `group.app.floorp.Floorp` and assign it to every retained target that shares data.
 - [x] Omit Push/APNs and AutoFill Credential Provider from the initial Client-only release.
 - [ ] Confirm Multipath remains a product requirement; it is currently retained because networking code uses `.handover`.
-- [ ] Decide whether App Attest is required after the hosted-service policy is finalized.
+- [x] Disable Hosted Summarizer and its App Attest path; retain Apple on-device summarization.
 - [ ] Request the default-browser managed entitlement.
 - [x] Omit the browser app-installation entitlement from the initial release configuration.
 - [ ] Choose the Floorp marketing-version policy and initial version.

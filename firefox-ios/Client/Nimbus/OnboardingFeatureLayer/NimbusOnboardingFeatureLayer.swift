@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import Common
 import Shared
 import OnboardingKit
 
@@ -15,9 +16,14 @@ import protocol MozillaAppServices.NimbusMessagingHelperProtocol
 /// because defaults are not provided herein, but in the fml.
 class NimbusOnboardingFeatureLayer: NimbusOnboardingFeatureLayerProtocol {
     private var helperUtility: NimbusMessagingHelperUtilityProtocol
+    private let allowsRemotePushNotifications: Bool
 
-    init(with helperUtility: NimbusMessagingHelperUtilityProtocol = NimbusMessagingHelperUtility()) {
+    init(
+        with helperUtility: NimbusMessagingHelperUtilityProtocol = NimbusMessagingHelperUtility(),
+        allowsRemotePushNotifications: Bool = AppServicesPolicy.allowsRemotePushNotifications
+    ) {
         self.helperUtility = helperUtility
+        self.allowsRemotePushNotifications = allowsRemotePushNotifications
     }
 
     func getOnboardingModel(
@@ -82,6 +88,9 @@ class NimbusOnboardingFeatureLayer: NimbusOnboardingFeatureLayerProtocol {
         guard let helper = helperUtility.createNimbusMessagingHelper() else { return [] }
 
         return cardData.compactMap { cardName, cardData in
+            guard allowsRemotePushNotifications || !cardRequestsNotificationPermission(cardData) else {
+                return nil
+            }
             if cardIsValid(with: cardData, using: conditionTable, and: helper) {
                 return OnboardingKitCardInfoModel(
                     cardType: OnboardingKit.OnboardingCardType(rawValue: cardData.cardType.rawValue) ?? .basic,

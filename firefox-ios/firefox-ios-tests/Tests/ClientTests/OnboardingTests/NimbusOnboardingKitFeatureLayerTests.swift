@@ -11,19 +11,13 @@ import OnboardingKit
 class NimbusOnboardingKitFeatureLayerTests: XCTestCase {
     typealias CardElementNames = NimbusOnboardingTestingConfigUtility.CardElementNames
 
-    var configUtility: NimbusOnboardingTestingConfigUtility!
-    var mockHelper: MockNimbusMessagingHelperUtility!
+    var configUtility = NimbusOnboardingTestingConfigUtility()
+    var mockHelper = MockNimbusMessagingHelperUtility()
 
     override func setUp() {
         super.setUp()
         configUtility = NimbusOnboardingTestingConfigUtility()
         mockHelper = MockNimbusMessagingHelperUtility()
-    }
-
-    override func tearDown() {
-        configUtility = nil
-        mockHelper = nil
-        super.tearDown()
     }
 
     // MARK: - Initialization Tests
@@ -348,6 +342,20 @@ class NimbusOnboardingKitFeatureLayerTests: XCTestCase {
         XCTAssertTrue(subject.cards[0].a11yIdRoot.hasSuffix("0"))
         XCTAssertTrue(subject.cards[1].a11yIdRoot.hasSuffix("1"))
         XCTAssertTrue(subject.cards[2].a11yIdRoot.hasSuffix("2"))
+    }
+
+    func testGetOnboardingModel_notificationCardIsExcludedWhenRemotePushIsDisallowed() {
+        setupNimbusCardsFromActions([.forwardOneCard, .syncSignIn, .requestNotifications], variant: .modern)
+        let layer = NimbusOnboardingKitFeatureLayer(
+            onboardingVariant: .modern,
+            with: mockHelper,
+            allowsRemotePushNotifications: false
+        )
+
+        let subject = layer.getOnboardingModel(for: .freshInstall)
+
+        XCTAssertEqual(subject.cards.count, 2)
+        XCTAssertFalse(subject.cards.contains { $0.buttons.primary.action == .requestNotifications })
     }
 
     // MARK: - Button Mapping Tests

@@ -11,6 +11,10 @@ import protocol MozillaAppServices.PushManagerProtocol
 import struct MozillaAppServices.DecryptResponse
 import struct MozillaAppServices.SubscriptionResponse
 
+enum AutopushInitializationError: Error {
+    case remotePushNotificationsDisabled
+}
+
 public protocol AutopushProtocol {
     /// Updates the APNS token `Autopush` is using to send notifications to the device
     ///
@@ -57,6 +61,10 @@ public actor Autopush {
     private let pushManager: PushManagerProtocol
 
     public init(files: FileAccessor) async throws {
+        guard AppServicesPolicy.allowsRemotePushNotifications else {
+            throw AutopushInitializationError.remotePushNotificationsDisabled
+        }
+
         let pushDB = URL(
             fileURLWithPath: try files.getAndEnsureDirectory(),
             isDirectory: true

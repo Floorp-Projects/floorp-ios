@@ -790,18 +790,20 @@ open class BrowserProfile: Profile,
         message: "UIApplication.shared is unavailable in application extensions"
     )
     private func unregisterRemoteNotifications() {
-        Task {
-            do {
-                let autopush = try await Autopush(files: files)
-                // unsubscribe returns a boolean telling the caller if the subscription was already
-                // unsubscribed, we ignore it because regardless the subscription is gone.
-                _ = try await autopush.unsubscribe(scope: RustFirefoxAccounts.pushScope)
-            } catch let error {
-                logger.log("Unable to unsubscribe account push subscription",
-                           level: .warning,
-                           category: .sync,
-                           description: error.localizedDescription
-                )
+        if AppServicesPolicy.allowsRemotePushNotifications {
+            Task {
+                do {
+                    let autopush = try await Autopush(files: files)
+                    // unsubscribe returns a boolean telling the caller if the subscription was already
+                    // unsubscribed, we ignore it because regardless the subscription is gone.
+                    _ = try await autopush.unsubscribe(scope: RustFirefoxAccounts.pushScope)
+                } catch let error {
+                    logger.log("Unable to unsubscribe account push subscription",
+                               level: .warning,
+                               category: .sync,
+                               description: error.localizedDescription
+                    )
+                }
             }
         }
 

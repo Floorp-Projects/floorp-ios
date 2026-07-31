@@ -25,7 +25,9 @@ final class NotificationsSettingsViewController: SettingsTableViewController, Le
                 }
 
                 // enable/disable sync notifications
-                NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+                if AppServicesPolicy.allowsRemotePushNotifications {
+                    NotificationCenter.default.post(name: .RegisterForPushNotifications, object: nil)
+                }
             }
         }
     }()
@@ -81,7 +83,7 @@ final class NotificationsSettingsViewController: SettingsTableViewController, Le
 
     override func generateSettings() -> [SettingSection] {
         let childrenSection: [Setting]
-        if hasAccount {
+        if hasAccount && AppServicesPolicy.allowsRemotePushNotifications {
             childrenSection = [syncNotifications, tipsAndFeaturesNotifications]
         } else {
             childrenSection = [tipsAndFeaturesNotifications]

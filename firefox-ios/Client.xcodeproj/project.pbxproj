@@ -29037,7 +29037,7 @@
 					"*.appex",
 				);
 				GCC_TREAT_WARNINGS_AS_ERRORS = NO;
-				INFOPLIST_FILE = Client/Info.plist;
+				INFOPLIST_FILE = Client/FloorpReleaseInfo.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
