@@ -1398,6 +1398,10 @@
 		CEC2F0ABE11D4F00BE2EC4DF /* BrowserViewController+Floorp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B052F971B0000D67401 /* BrowserViewController+Floorp.swift */; };
 		CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B062F971B0100D67401 /* FloorpNotifications.swift */; };
 					CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B072F971B0200D67401 /* FloorpStrings.swift */; };
+		CEC2F0AE2F98000100D67401 /* FloorpNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B082F98000100D67401 /* FloorpNotes.swift */; };
+		CEC2F0AF2F98000200D67401 /* FloorpNoteEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */; };
+		CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */; };
+		CEC2F0B12F98000400D67401 /* Floorp.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = CE903B0B2F98000400D67401 /* Floorp.xcstrings */; };
 		96D95016270238500079D39D /* MainThreadThrottler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96D95015270238500079D39D /* MainThreadThrottler.swift */; };
 		96EB6C3827D821B800A9D159 /* HistoryPanelViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3727D821B800A9D159 /* HistoryPanelViewModel.swift */; };
 		96EB6C3E27D9266500A9D159 /* HistoryActionables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3D27D9266500A9D159 /* HistoryActionables.swift */; };
@@ -10602,6 +10606,10 @@
 		CE903B052F971B0000D67401 /* BrowserViewController+Floorp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserViewController+Floorp.swift"; sourceTree = "<group>"; };
 		CE903B062F971B0100D67401 /* FloorpNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotifications.swift; sourceTree = "<group>"; };
 		CE903B072F971B0200D67401 /* FloorpStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpStrings.swift; sourceTree = "<group>"; };
+		CE903B082F98000100D67401 /* FloorpNotes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotes.swift; sourceTree = "<group>"; };
+		CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNoteEditorViewController.swift; sourceTree = "<group>"; };
+		CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesTests.swift; sourceTree = "<group>"; };
+		CE903B0B2F98000400D67401 /* Floorp.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Floorp.xcstrings; sourceTree = "<group>"; };
 		CEEB4EC881354939F3402DAE /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Menu.strings; sourceTree = "<group>"; };
 		CEFA977D1FAA6B490016F365 /* SyncContentSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncContentSettingsViewController.swift; sourceTree = "<group>"; };
 		CF0B41FFA07D1B6CF873F714 /* ko */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ko; path = ko.lproj/Menu.strings; sourceTree = "<group>"; };
@@ -15572,6 +15580,9 @@
 				CE903B052F971B0000D67401 /* BrowserViewController+Floorp.swift */,
 				CE903B062F971B0100D67401 /* FloorpNotifications.swift */,
 				CE903B072F971B0200D67401 /* FloorpStrings.swift */,
+				CE903B082F98000100D67401 /* FloorpNotes.swift */,
+				CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */,
+				CE903B0B2F98000400D67401 /* Floorp.xcstrings */,
 			);
 			path = Floorp;
 			sourceTree = "<group>";
@@ -16690,6 +16701,7 @@
 		F84B21D61A090F8100AAB793 /* ClientTests */ = {
 			isa = PBXGroup;
 			children = (
+				CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */,
 				C24A0D2E2F3A7E7200BF08B7 /* KeyChainAppAttestKeyIDStoreTests.swift */,
 				2151EF582F2AB962007B67A6 /* BrowserViewController */,
 				218457C42F22A3FA00B4FF23 /* Downloads */,
@@ -18015,6 +18027,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CEC2F0B12F98000400D67401 /* Floorp.xcstrings in Resources */,
 				C2F335372ECE339F0071588A /* TranslationsEngine.html in Resources */,
 				8A94DB962E0F16E80005FE69 /* homepageSearchBarOff.json in Resources */,
 				8A94DB972E0F16E80005FE69 /* homepageSearchBarOn.json in Resources */,
@@ -19124,6 +19137,8 @@
 				CEC2F0ABE11D4F00BE2EC4DF /* BrowserViewController+Floorp.swift in Sources */,
 				CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */,
 				CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */,
+				CEC2F0AE2F98000100D67401 /* FloorpNotes.swift in Sources */,
+				CEC2F0AF2F98000200D67401 /* FloorpNoteEditorViewController.swift in Sources */,
 				8CE1E4382B8C76C80026530B /* LoginListViewModel.swift in Sources */,
 				0B8BF3722CA2DA4600E9812D /* EditBookmarkViewController.swift in Sources */,
 				8AED23042D40002D000FF624 /* MessageCardState.swift in Sources */,
@@ -19917,6 +19932,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */,
 				2151EF572F2AB94A007B67A6 /* BrowserViewControllerConstraintTests.swift in Sources */,
 				8C50DD752F56E1D00020E5C4 /* PreferredTranslationLanguagesManagerTests.swift in Sources */,
 				E4CD9F1D1A6D9C2800318571 /* WebServerTests.swift in Sources */,

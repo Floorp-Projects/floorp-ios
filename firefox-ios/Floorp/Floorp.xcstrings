@@ -1,0 +1,240 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Floorp.Drawer.WebPanelUnavailable.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web panels are not available yet" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルはまだ利用できません" } }
+      }
+    },
+    "Floorp.Notes.ArchiveTooLargeMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The notes archive is too large to open on this device and was left unchanged." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモのデータが大きすぎるため、このデバイスでは開けません。元のデータは変更せずに保持しています。" } }
+      }
+    },
+    "Floorp.Notes.Cancel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャンセル" } }
+      }
+    },
+    "Floorp.Notes.Close.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "閉じる" } }
+      }
+    },
+    "Floorp.Notes.ContentAccessibilityHint.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edits are saved automatically" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "編集内容は自動的に保存されます" } }
+      }
+    },
+    "Floorp.Notes.ContentAccessibilityLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Note content" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモの内容" } }
+      }
+    },
+    "Floorp.Notes.Convert.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Convert and Edit" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変換して編集" } }
+      }
+    },
+    "Floorp.Notes.ConvertRichTextMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Editing this note on iOS will remove its rich formatting. The original is preserved unless you continue." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "iOS でこのメモを編集すると書式が削除されます。続行しない限り元の内容は保持されます。" } }
+      }
+    },
+    "Floorp.Notes.ConvertRichTextTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Convert to Plain Text?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プレーンテキストに変換しますか？" } }
+      }
+    },
+    "Floorp.Notes.DamagedDataMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The notes archive is damaged. A recovery copy was preserved. Reset it to continue." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモのデータが破損しています。復旧用コピーを保存しました。続行するにはリセットしてください。" } }
+      }
+    },
+    "Floorp.Notes.DamagedDataCouldNotBePreservedMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The notes archive is damaged and could not be copied for recovery. It was left unchanged." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモのデータが破損しており、復旧用コピーを作成できませんでした。元のデータは変更せずに保持しています。" } }
+      }
+    },
+    "Floorp.Notes.DiscardChanges.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Discard Changes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更を破棄" } }
+      }
+    },
+    "Floorp.Notes.DiscardChangesMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your latest changes could not be saved. You can keep editing or discard them and close." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最新の変更を保存できませんでした。編集を続けるか、変更を破棄して閉じることができます。" } }
+      }
+    },
+    "Floorp.Notes.DiscardChangesTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close Without Saving?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存せずに閉じますか？" } }
+      }
+    },
+    "Floorp.Notes.Delete.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } }
+      }
+    },
+    "Floorp.Notes.DeleteMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This note will be permanently deleted." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このメモは完全に削除されます。" } }
+      }
+    },
+    "Floorp.Notes.DeleteTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete Note?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモを削除しますか？" } }
+      }
+    },
+    "Floorp.Notes.EditorTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Floorp Notes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Floorp Notes" } }
+      }
+    },
+    "Floorp.Notes.LoadFailed.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to load notes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモを読み込めませんでした" } }
+      }
+    },
+    "Floorp.Notes.LocalOnly.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stored on this device" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスに保存" } }
+      }
+    },
+    "Floorp.Notes.KeepEditing.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep Editing" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "編集を続ける" } }
+      }
+    },
+    "Floorp.Notes.NewNote.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "New Note" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいメモ" } }
+      }
+    },
+    "Floorp.Notes.NewerDataReadOnlyMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "These notes were created by a newer version of Floorp and were left unchanged." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このメモは新しいバージョンの Floorp で作成されています。元のデータは変更せずに保持しています。" } }
+      }
+    },
+    "Floorp.Notes.NoNotes.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No notes yet. Tap + to create one." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "まだメモがありません。+ をタップして作成できます。" } }
+      }
+    },
+    "Floorp.Notes.NoSearchResults.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No notes match your search" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索条件に一致するメモはありません" } }
+      }
+    },
+    "Floorp.Notes.OperationFailedMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your notes were not changed. Please try again." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモは変更されていません。もう一度お試しください。" } }
+      }
+    },
+    "Floorp.Notes.OperationFailedTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t Update Notes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモを更新できませんでした" } }
+      }
+    },
+    "Floorp.Notes.PanelTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Notes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモ" } }
+      }
+    },
+    "Floorp.Notes.Reset.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset Notes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモをリセット" } }
+      }
+    },
+    "Floorp.Notes.RichTextReadOnlyNotice.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rich formatting is preserved until you edit the content." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "本文を編集するまではリッチテキストの書式を保持します。" } }
+      }
+    },
+    "Floorp.Notes.Save.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Save" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存" } }
+      }
+    },
+    "Floorp.Notes.SaveAccessibilityLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Save note" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモを保存" } }
+      }
+    },
+    "Floorp.Notes.SaveFailed.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Save failed — your changes are still here. Tap Save to retry." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存できませんでした。変更内容は保持されています。［保存］をタップして再試行してください。" } }
+      }
+    },
+    "Floorp.Notes.Saved.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存済み" } }
+      }
+    },
+    "Floorp.Notes.Saving.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Saving…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存中…" } }
+      }
+    },
+    "Floorp.Notes.SearchPlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search notes…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモを検索…" } }
+      }
+    },
+    "Floorp.Notes.TitlePlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Title" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "タイトル" } }
+      }
+    },
+    "Floorp.Notes.UnsupportedContentReadOnlyNotice.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This body contains images or unsupported content. It is read-only on iOS and remains preserved." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "本文に画像または未対応の内容が含まれています。iOS では読み取り専用で、元の内容は保持されます。" } }
+      }
+    },
+    "Floorp.Notes.Untitled.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Untitled" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "無題" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

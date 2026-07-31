@@ -9,4 +9,7 @@ extension Notification.Name {
     /// Posted when the Floorp overlay drawer toolbar button is tapped.
     /// userInfo contains "windowUUID" with the WindowUUID value.
     static let FloorpToggleDrawer = Notification.Name("FloorpToggleDrawer")
+
+    /// Posted after a local Floorp Notes transaction has been committed.
+    static let FloorpNotesDidChange = Notification.Name("FloorpNotesDidChange")
 }

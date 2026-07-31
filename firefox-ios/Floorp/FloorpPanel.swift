@@ -3,11 +3,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 // Floorp Overlay Drawer - Panel Data Model
-// Represents a single panel in the overlay drawer (bookmarks, history, downloads, web, etc.).
+// Represents a single panel in the overlay drawer (bookmarks, history, downloads, notes, web, etc.).
 //
 // Inspired by Floorp desktop's Panel Sidebar architecture:
 // - Vertical icon sidebar for panel switching (matching desktop layout)
-// - Multiple panel types: bookmarks, history, downloads, web
+// - Multiple panel types: bookmarks, history, downloads, notes, web
 // - Per-panel icon and title configuration
 // - Persistent panel order and selection state
 
@@ -25,6 +25,8 @@ enum FloorpPanelType: String, Codable, CaseIterable {
     case history
     /// Built-in downloads panel (desktop: `floorp//downloads`)
     case downloads
+    /// Built-in Floorp Notes panel (desktop: `floorp//notes`)
+    case notes
     /// Custom web panel loading an arbitrary URL (desktop: `web` type)
     case web
 }
@@ -38,7 +40,20 @@ extension FloorpPanelType {
         case .bookmarks: return "book"
         case .history: return "clock.arrow.circlepath"
         case .downloads: return "arrow.down.circle"
+        case .notes: return "note.text"
         case .web: return "globe"
+        }
+    }
+
+    /// Built-in labels are resolved at render time so an app language change
+    /// is not masked by the localized title persisted in an older session.
+    var localizedBuiltInTitle: String? {
+        switch self {
+        case .bookmarks: return FloorpStrings.Drawer.bookmarksTab
+        case .history: return FloorpStrings.Drawer.historyTab
+        case .downloads: return FloorpStrings.Drawer.downloadsTab
+        case .notes: return FloorpStrings.Notes.panelTitle
+        case .web: return nil
         }
     }
 }
@@ -76,7 +91,6 @@ struct FloorpPanel: Codable, Identifiable, Equatable {
     /// Creates the default set of static panels matching Floorp desktop defaults.
     ///
     /// Desktop default order: bookmarks, history, downloads, notes.
-    /// iOS omits notes (no built-in equivalent) but includes downloads.
     static func defaultPanels() -> [FloorpPanel] {
         return [
             FloorpPanel(
@@ -103,6 +117,14 @@ struct FloorpPanel: Codable, Identifiable, Equatable {
                 iconName: FloorpPanelType.downloads.systemIconName,
                 sortOrder: 2
             ),
+            FloorpPanel(
+                id: "floorp//notes",
+                type: .notes,
+                title: FloorpStrings.Notes.panelTitle,
+                url: nil,
+                iconName: FloorpPanelType.notes.systemIconName,
+                sortOrder: 3
+            ),
         ]
     }
 }
@@ -113,29 +135,47 @@ struct FloorpPanel: Codable, Identifiable, Equatable {
 ///
 /// Represents a bookmark, history entry, or download item with
 /// display metadata for the table view cell.
+enum DrawerItemSource {
+    case bookmark(guid: String)
+    case history(url: String)
+    case download(fileURL: URL)
+    case note(id: String)
+    case none
+}
+
 struct DrawerItem: Identifiable {
     let id: String
     let title: String
     let url: String?
     let icon: UIImage?
     let subtitle: String?
+    let searchText: String?
 
-    /// Bookmark GUID for DB deletion. Only set for bookmark items.
-    let bookmarkGUID: String?
+    /// Carries the item's identity and operation target independently of the
+    /// currently selected panel, preventing cross-panel deletion races.
+    let source: DrawerItemSource
 
     init(
+        id: String,
         title: String,
         url: String? = nil,
         icon: UIImage? = nil,
         subtitle: String? = nil,
-        bookmarkGUID: String? = nil
+        searchText: String? = nil,
+        source: DrawerItemSource = .none
     ) {
-        self.id = url ?? UUID().uuidString
+        self.id = id
         self.title = title
         self.url = url
         self.icon = icon
         self.subtitle = subtitle
-        self.bookmarkGUID = bookmarkGUID
+        self.searchText = searchText
+        self.source = source
+    }
+
+    func matchesSearchQuery(_ query: String) -> Bool {
+        title.localizedCaseInsensitiveContains(query) ||
+            (searchText ?? subtitle)?.localizedCaseInsensitiveContains(query) == true
     }
 }
 
@@ -154,7 +194,9 @@ struct FloorpOverlayDrawerConfig: Codable, Equatable {
 
     /// Ordered list of panel IDs.
     /// Desktop stores this in `floorp.panel.sidebar.data`.
-    var panelOrder: [String] = ["floorp//bookmarks", "floorp//history", "floorp//downloads"]
+    var panelOrder: [String] = [
+        "floorp//bookmarks", "floorp//history", "floorp//downloads", "floorp//notes"
+    ]
 
     /// Whether the drawer is currently visible.
     var isDisplayed = false

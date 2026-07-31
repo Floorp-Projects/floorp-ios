@@ -67,6 +67,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     // MARK: - Properties
     private let panelManager: FloorpPanelManager
+    private let notesStore: FloorpNotesStore
     private let logger: Logger
 
     /// Callback when user taps a bookmark/history item.
@@ -79,6 +80,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var items = [DrawerItem]()
     private var filteredItems = [DrawerItem]()
     private var isSearching = false
+    private var isCreatingNote = false
+    private var panelLoadTask: Task<Void, Never>?
 
     // MARK: - UI Components
 
@@ -128,6 +131,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private lazy var titleLabel: UILabel = {
         let label = UILabel()
         label.font = FXFontStyles.Bold.headline.scaledFont()
+        label.adjustsFontForContentSizeCategory = true
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.75
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -138,6 +144,18 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         button.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.accessibilityLabel = FloorpStrings.Drawer.closeAccessibilityLabel
+        button.accessibilityIdentifier = "Floorp.Drawer.Close"
+        return button
+    }()
+
+    private lazy var addNoteButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: "plus"), for: .normal)
+        button.addTarget(self, action: #selector(addNoteTapped), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = FloorpStrings.Notes.newNote
+        button.accessibilityIdentifier = "Floorp.Notes.Add"
+        button.isHidden = true
         return button
     }()
 
@@ -146,6 +164,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         let tf = UITextField()
         tf.placeholder = FloorpStrings.Drawer.searchPlaceholder
         tf.font = FXFontStyles.Regular.subheadline.scaledFont()
+        tf.adjustsFontForContentSizeCategory = true
         tf.clearButtonMode = .whileEditing
         tf.returnKeyType = .search
         tf.layer.cornerRadius = 10
@@ -166,6 +185,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         tv.delegate = self
         tv.separatorInset = UIEdgeInsets(top: 0, left: UX.horizontalPadding, bottom: 0, right: 0)
         tv.cellLayoutMarginsFollowReadableWidth = false
+        tv.rowHeight = UITableView.automaticDimension
+        tv.estimatedRowHeight = UX.rowHeight
         tv.translatesAutoresizingMaskIntoConstraints = false
         return tv
     }()
@@ -174,6 +195,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private lazy var emptyStateLabel: UILabel = {
         let label = UILabel()
         label.font = FXFontStyles.Regular.subheadline.scaledFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
         label.isHidden = true
         label.numberOfLines = 0
@@ -198,11 +220,13 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     // MARK: - Initialization
 
     init(panelManager: FloorpPanelManager = .shared,
+         notesStore: FloorpNotesStore = .shared,
          logger: Logger = DefaultLogger.shared,
          windowUUID: WindowUUID = WindowUUID.XCTestDefaultUUID,
          themeManager: ThemeManager = AppContainer.shared.resolve(),
          notificationCenter: NotificationProtocol = NotificationCenter.default) {
         self.panelManager = panelManager
+        self.notesStore = notesStore
         self.logger = logger
         self.windowUUID = windowUUID
         self.themeManager = themeManager
@@ -223,8 +247,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         setupView()
         setupConstraints()
         buildSidebarButtons()
-        selectPanel(panelManager.config.selectedPanelId ?? panelManager.panels.first?.id ?? "floorp//bookmarks")
+        selectPanel(panelManager.selectedPanel?.id ?? panelManager.panels.first?.id ?? "floorp//bookmarks")
         loadCurrentPanel()
+        notificationCenter.addObserver(
+            self,
+            selector: #selector(notesDidChange),
+            name: .FloorpNotesDidChange,
+            object: nil
+        )
         listenForThemeChanges(withNotificationCenter: notificationCenter)
         applyTheme()
         logger.log("Floorp: OverlayDrawer loaded", level: .info, category: .setup)
@@ -248,6 +278,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         containerView.addSubview(retryButton)
 
         headerView.addSubview(titleLabel)
+        headerView.addSubview(addNoteButton)
         headerView.addSubview(closeButton)
 
         sidebarView.addSubview(sidebarStackView)
@@ -292,12 +323,19 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             // Title
             titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: UX.horizontalPadding),
             titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: addNoteButton.leadingAnchor, constant: -8),
+
+            // Notes action
+            addNoteButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
+            addNoteButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            addNoteButton.widthAnchor.constraint(equalToConstant: 44),
+            addNoteButton.heightAnchor.constraint(equalToConstant: 44),
 
             // Close button
             closeButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -UX.horizontalPadding),
             closeButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            closeButton.widthAnchor.constraint(equalToConstant: 44),
+            closeButton.heightAnchor.constraint(equalToConstant: 44),
 
             // Search bar
             searchTextField.topAnchor.constraint(
@@ -365,12 +403,13 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         headerView.backgroundColor = colors.layer1
         titleLabel.textColor = colors.textPrimary
         closeButton.tintColor = colors.iconSecondary
+        addNoteButton.tintColor = colors.actionPrimary
 
         // Search bar
         searchTextField.backgroundColor = colors.layer3
         searchTextField.textColor = colors.textPrimary
         searchTextField.attributedPlaceholder = NSAttributedString(
-            string: FloorpStrings.Drawer.searchPlaceholder,
+            string: searchTextField.placeholder ?? FloorpStrings.Drawer.searchPlaceholder,
             attributes: [.foregroundColor: colors.textSecondary]
         )
 
@@ -409,14 +448,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         button.backgroundColor = .clear
         button.layer.cornerRadius = 8
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.accessibilityLabel = panel.title
+        button.accessibilityLabel = panel.type.localizedBuiltInTitle ?? panel.title
         button.accessibilityHint = FloorpStrings.Drawer.panelSidebarAccessibility
 
         button.addTarget(self, action: #selector(sidebarButtonTapped(_:)), for: .touchUpInside)
 
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: UX.sidebarWidth - 12),
-            button.heightAnchor.constraint(equalToConstant: UX.sidebarWidth - 12),
+            button.widthAnchor.constraint(equalToConstant: 44),
+            button.heightAnchor.constraint(equalToConstant: 44),
         ])
 
         // Store panel ID in accessibility identifier for retrieval
@@ -433,6 +472,11 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             let isSelected = panelId == (panelManager.config.selectedPanelId ?? "")
             button.tintColor = isSelected ? colors.iconAccent : colors.iconSecondary
             button.backgroundColor = isSelected ? colors.actionPrimary.withAlphaComponent(0.12) : .clear
+            if isSelected {
+                button.accessibilityTraits.insert(.selected)
+            } else {
+                button.accessibilityTraits.remove(.selected)
+            }
         }
     }
 
@@ -446,16 +490,32 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         guard let panel = panelManager.panel(for: panelId) else { return }
         currentPanelType = panel.type
         panelManager.selectPanel(id: panelId)
-        titleLabel.text = panel.title
+        let panelTitle = panel.type.localizedBuiltInTitle ?? panel.title
+        titleLabel.text = panel.type == .notes
+            ? "\(panelTitle) · \(FloorpStrings.Notes.localOnly)"
+            : panelTitle
+        titleLabel.accessibilityValue = panel.type == .notes ? FloorpStrings.Notes.localOnly : nil
+        addNoteButton.isHidden = panel.type != .notes
+        searchTextField.placeholder = panel.type == .notes
+            ? FloorpStrings.Notes.searchPlaceholder
+            : FloorpStrings.Drawer.searchPlaceholder
         updateSidebarSelection()
     }
 
     // MARK: - Data Loading
 
     private func loadCurrentPanel() {
+        panelLoadTask?.cancel()
         items = []
+        filteredItems = []
         searchTextField.text = nil
+        searchTextField.isEnabled = true
+        addNoteButton.isEnabled = currentPanelType == .notes && !isCreatingNote
         isSearching = false
+        emptyStateLabel.isHidden = true
+        retryButton.isHidden = true
+        currentRetryAction = nil
+        tableView.reloadData()
 
         switch currentPanelType {
         case .bookmarks:
@@ -464,27 +524,33 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             loadHistory()
         case .downloads:
             loadDownloads()
+        case .notes:
+            loadNotes()
         case .web:
-            break
+            showEmptyState(message: FloorpStrings.Drawer.webPanelUnavailable)
         }
     }
 
     private func loadBookmarks() {
-        Task { @MainActor in
+        panelLoadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
                 let bookmarks = try await panelManager.dataProvider.getRecentBookmarks(limit: 50)
-                self.items = bookmarks.map { bookmark in
+                guard !Task.isCancelled, currentPanelType == .bookmarks else { return }
+                items = bookmarks.map { bookmark in
                     DrawerItem(
-                        title: bookmark.title ?? bookmark.url ?? "",
+                        id: "bookmark:\(bookmark.guid)",
+                        title: bookmark.title.isEmpty ? bookmark.url : bookmark.title,
                         url: bookmark.url,
                         icon: UIImage(systemName: "bookmark.fill"),
                         subtitle: bookmark.url,
-                        bookmarkGUID: bookmark.guid
+                        source: .bookmark(guid: bookmark.guid)
                     )
                 }
                 applySearchFilter()
                 updateUI()
             } catch {
+                guard !Task.isCancelled, currentPanelType == .bookmarks else { return }
                 logger.log(
                     "Floorp: Failed to load bookmarks: \(error.localizedDescription)",
                     level: .warning,
@@ -499,20 +565,25 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     private func loadHistory() {
-        Task { @MainActor in
+        panelLoadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
                 let history = try await panelManager.dataProvider.getRecentHistory(limit: 50)
-                self.items = history.infos.map { info in
+                guard !Task.isCancelled, currentPanelType == .history else { return }
+                items = history.infos.map { info in
                     DrawerItem(
+                        id: "history:\(info.url)",
                         title: info.title ?? info.url,
                         url: info.url,
                         icon: UIImage(systemName: "clock.arrow.circlepath"),
-                        subtitle: info.url
+                        subtitle: info.url,
+                        source: .history(url: info.url)
                     )
                 }
                 applySearchFilter()
                 updateUI()
             } catch {
+                guard !Task.isCancelled, currentPanelType == .history else { return }
                 logger.log(
                     "Floorp: Failed to load history: \(error.localizedDescription)",
                     level: .warning,
@@ -527,17 +598,20 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     private func loadDownloads() {
-        Task { @MainActor in
+        panelLoadTask = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled, currentPanelType == .downloads else { return }
             let downloads = panelManager.dataProvider.getRecentDownloads(limit: 50)
-            self.items = downloads.map { file in
+            items = downloads.map { file in
                 let fileIcon = UIImage(
                     systemName: "doc.fill"
                 ) ?? UIImage(systemName: "arrow.down.circle.fill")
                 return DrawerItem(
+                    id: "download:\(file.path.path)",
                     title: file.filename,
-                    url: file.path.absoluteString,
+                    url: nil,
                     icon: fileIcon,
-                    subtitle: file.formattedSize
+                    subtitle: file.formattedSize,
+                    source: .download(fileURL: file.path)
                 )
             }
             if items.isEmpty {
@@ -549,63 +623,132 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         }
     }
 
+    private func loadNotes() {
+        panelLoadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let notes = try await notesStore.loadNotes()
+                guard !Task.isCancelled, currentPanelType == .notes else { return }
+                items = makeNoteItems(notes)
+                applySearchFilter()
+                updateUI()
+            } catch let error as FloorpNotesStoreError {
+                guard !Task.isCancelled, currentPanelType == .notes else { return }
+                handleNotesLoadError(error)
+            } catch {
+                guard !Task.isCancelled, currentPanelType == .notes else { return }
+                showGenericNotesLoadError()
+            }
+        }
+    }
+
+    private func makeNoteItems(_ notes: [FloorpNote]) -> [DrawerItem] {
+        notes.map { note in
+            let preview = FloorpNoteContent.plainText(from: note.content)
+            let subtitle = preview.isEmpty ? nil : String(preview.prefix(160))
+            return DrawerItem(
+                id: note.id,
+                title: note.title.isEmpty ? FloorpStrings.Notes.untitled : note.title,
+                icon: UIImage(systemName: "note.text"),
+                subtitle: subtitle,
+                searchText: preview,
+                source: .note(id: note.id)
+            )
+        }
+    }
+
+    private func handleNotesLoadError(_ error: FloorpNotesStoreError) {
+        logNotesLoadError()
+        switch error {
+        case .corruptArchive, .writesBlockedByCorruption:
+            showEmptyState(
+                message: FloorpStrings.Notes.damagedDataMessage,
+                retryTitle: FloorpStrings.Notes.reset,
+                retryAction: { [weak self] in self?.confirmResetNotes() }
+            )
+        case .corruptArchiveCouldNotBePreserved:
+            showEmptyState(message: FloorpStrings.Notes.damagedDataCouldNotBePreservedMessage)
+        case .unsupportedSchema:
+            showEmptyState(message: FloorpStrings.Notes.newerDataReadOnlyMessage)
+        case .archiveTooLarge:
+            showEmptyState(message: FloorpStrings.Notes.archiveTooLargeMessage)
+        default:
+            showEmptyState(
+                message: FloorpStrings.Notes.loadFailed,
+                retryAction: { [weak self] in self?.loadNotes() }
+            )
+        }
+    }
+
+    private func showGenericNotesLoadError() {
+        logNotesLoadError()
+        showEmptyState(
+            message: FloorpStrings.Notes.loadFailed,
+            retryAction: { [weak self] in self?.loadNotes() }
+        )
+    }
+
+    private func logNotesLoadError() {
+        logger.log(
+            "Floorp: Failed to load notes storage",
+            level: .warning,
+            category: .setup
+        )
+    }
+
     private func updateUI() {
+        searchTextField.isEnabled = true
+        addNoteButton.isEnabled = currentPanelType == .notes && !isCreatingNote
         tableView.reloadData()
         let displayItems = isSearching ? filteredItems : items
         let isEmpty = displayItems.isEmpty
         emptyStateLabel.isHidden = !isEmpty
 
-        if isEmpty && !isSearching {
-            emptyStateLabel.text = FloorpStrings.Drawer.noItemsFound
+        if isEmpty {
+            if isSearching {
+                emptyStateLabel.text = currentPanelType == .notes
+                    ? FloorpStrings.Notes.noSearchResults
+                    : FloorpStrings.Drawer.noItemsFound
+            } else {
+                emptyStateLabel.text = currentPanelType == .notes
+                    ? FloorpStrings.Notes.noNotes
+                    : FloorpStrings.Drawer.noItemsFound
+            }
         }
         retryButton.isHidden = true
+        retryButton.setTitle(FloorpStrings.Drawer.retryButton, for: .normal)
         currentRetryAction = nil
     }
 
-    /// Deletes an item from the underlying database (bookmarks/history).
-    /// Errors are logged but do not block UI removal.
-    private func deleteItemFromDatabase(_ item: DrawerItem) {
-        switch currentPanelType {
-        case .bookmarks:
-            guard let guid = item.bookmarkGUID else { return }
-            Task { @MainActor in
-                do {
-                    try await panelManager.dataProvider.deleteBookmark(guid: guid)
-                } catch {
-                    logger.log(
-                        "Floorp: Failed to delete bookmark: \(error.localizedDescription)",
-                        level: .warning,
-                        category: .setup
-                    )
-                }
-            }
-        case .history:
-            guard let url = item.url else { return }
-            Task { @MainActor in
-                do {
-                    try await panelManager.dataProvider.deleteHistory(url: url)
-                } catch {
-                    logger.log(
-                        "Floorp: Failed to delete history: \(error.localizedDescription)",
-                        level: .warning,
-                        category: .setup
-                    )
-                }
-            }
-        case .downloads, .web:
-            break
+    private func deleteItem(_ item: DrawerItem) async throws {
+        switch item.source {
+        case .bookmark(let guid):
+            try await panelManager.dataProvider.deleteBookmark(guid: guid)
+        case .history(let url):
+            try await panelManager.dataProvider.deleteHistory(url: url)
+        case .note(let id):
+            try await notesStore.deleteNote(id: id)
+        case .download, .none:
+            return
         }
     }
 
-    private func showEmptyState(message: String, retryAction: (() -> Void)? = nil) {
+    private func showEmptyState(
+        message: String,
+        retryTitle: String = FloorpStrings.Drawer.retryButton,
+        retryAction: (() -> Void)? = nil
+    ) {
         items = []
         filteredItems = []
+        searchTextField.isEnabled = false
+        addNoteButton.isEnabled = false
         emptyStateLabel.text = message
         emptyStateLabel.isHidden = false
 
         if let retryAction = retryAction {
             currentRetryAction = retryAction
             retryButton.isHidden = false
+            retryButton.setTitle(retryTitle, for: .normal)
             retryButton.removeTarget(nil, action: nil, for: .allEvents)
             retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         } else {
@@ -620,7 +763,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     @objc private func searchTextChanged() {
         applySearchFilter()
-        tableView.reloadData()
+        updateUI()
     }
 
     private func applySearchFilter() {
@@ -630,11 +773,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             return
         }
         isSearching = true
-        let lowerQuery = query.lowercased()
-        filteredItems = items.filter { item in
-            item.title.lowercased().contains(lowerQuery) ||
-            (item.subtitle?.lowercased().contains(lowerQuery) ?? false)
-        }
+        filteredItems = items.filter { $0.matchesSearchQuery(query) }
     }
 
     @objc private func retryTapped() {
@@ -642,6 +781,101 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     // MARK: - Actions
+
+    @objc private func addNoteTapped() {
+        guard !isCreatingNote else { return }
+        isCreatingNote = true
+        addNoteButton.isEnabled = false
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                isCreatingNote = false
+                addNoteButton.isEnabled = currentPanelType == .notes && !isCreatingNote
+            }
+            do {
+                let note = try await notesStore.createNote(title: FloorpStrings.Notes.newNote)
+                presentNoteEditor(note)
+            } catch {
+                presentOperationError()
+            }
+        }
+    }
+
+    @objc private func notesDidChange() {
+        guard currentPanelType == .notes else { return }
+        loadNotes()
+    }
+
+    private func openNote(id: String) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                guard let note = try await notesStore.loadNotes().first(where: { $0.id == id }) else {
+                    loadNotes()
+                    return
+                }
+                presentNoteEditor(note)
+            } catch {
+                presentOperationError()
+            }
+        }
+    }
+
+    private func presentNoteEditor(_ note: FloorpNote) {
+        guard presentedViewController == nil else { return }
+        let notesStore = notesStore
+        let editor = FloorpNoteEditorViewController(
+            note: note,
+            windowUUID: windowUUID,
+            themeManager: themeManager,
+            notificationCenter: notificationCenter
+        ) { updatedNote in
+            try await notesStore.updateNote(
+                id: updatedNote.id,
+                title: updatedNote.title,
+                content: updatedNote.content,
+                expectedUpdatedAt: updatedNote.updatedAt
+            )
+        }
+        editor.navigationItem.prompt = FloorpStrings.Notes.localOnly
+        let navigationController = UINavigationController(rootViewController: editor)
+        navigationController.modalPresentationStyle = .pageSheet
+        present(navigationController, animated: true)
+    }
+
+    private func confirmResetNotes() {
+        let alert = UIAlertController(
+            title: FloorpStrings.Notes.reset,
+            message: FloorpStrings.Notes.damagedDataMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: FloorpStrings.Notes.cancel, style: .cancel))
+        alert.addAction(
+            UIAlertAction(title: FloorpStrings.Notes.reset, style: .destructive) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await notesStore.resetAfterCorruption()
+                        loadNotes()
+                    } catch {
+                        presentOperationError()
+                    }
+                }
+            }
+        )
+        present(alert, animated: true)
+    }
+
+    private func presentOperationError() {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: FloorpStrings.Notes.operationFailedTitle,
+            message: FloorpStrings.Notes.operationFailedMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: FloorpStrings.Notes.close, style: .default))
+        present(alert, animated: true)
+    }
 
     @objc private func closeTapped() {
         dismissDrawer()
@@ -668,20 +902,27 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         )
         parentVC.view.addSubview(view)
         didMove(toParent: parentVC)
+        view.accessibilityViewIsModal = true
 
         // Animate slide in + dim
-        UIView.animate(withDuration: UX.animationDuration, delay: 0, options: .curveEaseOut) {
+        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
+        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut) {
             self.dimmingView.alpha = 1
             self.view.frame = parentVC.view.bounds
+        } completion: { _ in
+            UIAccessibility.post(notification: .screenChanged, argument: self.titleLabel)
         }
     }
 
     /// Dismisses the drawer with animation.
     func dismissDrawer() {
-        guard let parentVC = parent else { return }
+        // An editor or confirmation alert owns its own save/destructive gate.
+        // Do not let an external toolbar toggle tear down that presentation.
+        guard presentedViewController == nil, let parentVC = parent else { return }
 
+        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
         UIView.animate(
-            withDuration: UX.animationDuration,
+            withDuration: duration,
             delay: 0,
             options: .curveEaseIn,
             animations: {
@@ -705,7 +946,7 @@ extension FloorpOverlayDrawerViewController: UITextFieldDelegate {
         searchTextField.text = nil
         isSearching = false
         filteredItems = items
-        tableView.reloadData()
+        updateUI()
         return true
     }
 
@@ -730,7 +971,9 @@ extension FloorpOverlayDrawerViewController: UITableViewDataSource {
             return UITableViewCell()
         }
 
-        let item = isSearching ? filteredItems[indexPath.row] : items[indexPath.row]
+        let displayedItems = isSearching ? filteredItems : items
+        guard displayedItems.indices.contains(indexPath.row) else { return UITableViewCell() }
+        let item = displayedItems[indexPath.row]
         cell.configure(title: item.title, subtitle: item.subtitle, icon: item.icon)
         cell.applyTheme(themeManager.getCurrentTheme(for: windowUUID))
         return cell
@@ -743,27 +986,35 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
 
-        let item = isSearching ? filteredItems[indexPath.row] : items[indexPath.row]
+        let displayedItems = isSearching ? filteredItems : items
+        guard displayedItems.indices.contains(indexPath.row) else { return }
+        let item = displayedItems[indexPath.row]
 
-        // For downloads, share or open the file
-        if currentPanelType == .downloads {
-            if let urlString = item.url {
-                let fileURL = URL(fileURLWithPath: urlString)
-                let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-                present(activityVC, animated: true)
+        switch item.source {
+        case .download(let fileURL):
+            let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+            if let popover = activityVC.popoverPresentationController,
+               let cell = tableView.cellForRow(at: indexPath) {
+                popover.sourceView = cell
+                popover.sourceRect = cell.bounds
             }
+            present(activityVC, animated: true)
             return
+        case .note(let id):
+            openNote(id: id)
+        case .history(let urlString):
+            guard let url = URL(string: urlString) else { return }
+            onItemSelected?(url)
+            dismissDrawer()
+        case .bookmark, .none:
+            guard let urlString = item.url, let url = URL(string: urlString) else { return }
+            onItemSelected?(url)
+            dismissDrawer()
         }
-
-        guard let urlString = item.url,
-              let url = URL(string: urlString) else { return }
-
-        onItemSelected?(url)
-        dismissDrawer()
     }
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        return UX.rowHeight
+        return UITableView.automaticDimension
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
@@ -776,33 +1027,78 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
-        let item = isSearching ? filteredItems[indexPath.row] : items[indexPath.row]
+        let displayedItems = isSearching ? filteredItems : items
+        guard displayedItems.indices.contains(indexPath.row) else { return nil }
+        let item = displayedItems[indexPath.row]
 
-        // Only allow delete for bookmarks and history
-        guard currentPanelType != .downloads else { return nil }
+        switch item.source {
+        case .bookmark, .history, .note:
+            break
+        case .download, .none:
+            return nil
+        }
 
         let deleteAction = UIContextualAction(
             style: .destructive,
-            title: FloorpStrings.Drawer.deleteItem
+            title: itemIsNote(item) ? FloorpStrings.Notes.delete : FloorpStrings.Drawer.deleteItem
         ) { [weak self] _, _, completionHandler in
-            guard let self = self else { return }
-
-            // Persist deletion to database
-            self.deleteItemFromDatabase(item)
-
-            if self.isSearching {
-                if let originalIndex = self.items.firstIndex(where: { $0.id == item.id }) {
-                    self.items.remove(at: originalIndex)
-                }
-                self.filteredItems.removeAll { $0.id == item.id }
-            } else {
-                self.items.remove(at: indexPath.row)
+            guard let self else {
+                completionHandler(false)
+                return
             }
-            tableView.deleteRows(at: [indexPath], with: .automatic)
-            completionHandler(true)
+            if self.itemIsNote(item) {
+                completionHandler(false)
+                self.confirmNoteDeletion(item)
+                return
+            }
+
+            Task { @MainActor in
+                do {
+                    try await self.deleteItem(item)
+                    self.removeItemFromUI(id: item.id)
+                    completionHandler(true)
+                } catch {
+                    completionHandler(false)
+                    self.presentOperationError()
+                }
+            }
         }
 
         return UISwipeActionsConfiguration(actions: [deleteAction])
+    }
+
+    private func itemIsNote(_ item: DrawerItem) -> Bool {
+        if case .note = item.source { return true }
+        return false
+    }
+
+    private func confirmNoteDeletion(_ item: DrawerItem) {
+        let alert = UIAlertController(
+            title: FloorpStrings.Notes.deleteTitle,
+            message: FloorpStrings.Notes.deleteMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: FloorpStrings.Notes.cancel, style: .cancel))
+        alert.addAction(
+            UIAlertAction(title: FloorpStrings.Notes.delete, style: .destructive) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.deleteItem(item)
+                        self.removeItemFromUI(id: item.id)
+                    } catch {
+                        self.presentOperationError()
+                    }
+                }
+            }
+        )
+        present(alert, animated: true)
+    }
+
+    private func removeItemFromUI(id: String) {
+        items.removeAll { $0.id == id }
+        filteredItems.removeAll { $0.id == id }
+        updateUI()
     }
 }
 
@@ -821,7 +1117,8 @@ private final class DrawerItemCell: UITableViewCell {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.font = FXFontStyles.Regular.body.scaledFont()
-        label.numberOfLines = 1
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 2
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -829,7 +1126,8 @@ private final class DrawerItemCell: UITableViewCell {
     private let subtitleLabel: UILabel = {
         let label = UILabel()
         label.font = FXFontStyles.Regular.caption1.scaledFont()
-        label.numberOfLines = 1
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 2
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -846,6 +1144,8 @@ private final class DrawerItemCell: UITableViewCell {
     }
 
     private func setupCell() {
+        isAccessibilityElement = true
+        accessibilityTraits = .button
         contentView.addSubview(iconImageView)
         contentView.addSubview(titleLabel)
         contentView.addSubview(subtitleLabel)
@@ -872,6 +1172,17 @@ private final class DrawerItemCell: UITableViewCell {
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle == nil
         iconImageView.image = icon
+        accessibilityLabel = title
+        accessibilityValue = subtitle
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        titleLabel.text = nil
+        subtitleLabel.text = nil
+        iconImageView.image = nil
+        accessibilityLabel = nil
+        accessibilityValue = nil
     }
 
     func applyTheme(_ theme: Theme) {

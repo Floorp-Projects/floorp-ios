@@ -3,13 +3,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import UIKit
+import Common
 
 // MARK: - Floorp Overlay Drawer Integration
 extension BrowserViewController {
     // MARK: - Properties
 
     private struct FloorpAssociatedKeys {
-        nonisolated(unsafe) static var overlayDrawer = "floorpOverlayDrawer"
+        nonisolated(unsafe) static var overlayDrawer: UInt8 = 0
     }
 
     var floorpOverlayDrawer: FloorpOverlayDrawerViewController? {
@@ -44,7 +45,9 @@ extension BrowserViewController {
     // MARK: - Notification Handler
 
     @objc private func floorpToggleDrawerNotification(_ notification: Notification) {
-        guard FloorpFlags.isOverlayDrawerEnabled else { return }
+        guard FloorpFlags.isOverlayDrawerEnabled,
+              let notificationWindowUUID = notification.userInfo?["windowUUID"] as? WindowUUID,
+              notificationWindowUUID == windowUUID else { return }
         toggleFloorpOverlayDrawer()
     }
 

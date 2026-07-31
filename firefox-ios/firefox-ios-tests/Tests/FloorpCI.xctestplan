@@ -114,6 +114,31 @@
         "identifier" : "TabDataStoreTests",
         "name" : "TabDataStoreTests"
       }
+    },
+    {
+      "selectedTests" : [
+        "FloorpNotesStoreTests\/testCRUDPersistsAcrossStoreInstancesIncludingEmptyArchive()",
+        "FloorpNotesStoreTests\/testConcurrentUpdatesToDifferentNotesDoNotOverwriteEachOther()",
+        "FloorpNotesStoreTests\/testCorruptArchiveIsPreservedAndRequiresExplicitReset()",
+        "FloorpNotesStoreTests\/testCorruptArchiveStaysUntouchedWhenRecoveryCopyFails()",
+        "FloorpNotesStoreTests\/testDesktopLegacyPayloadNormalizesMissingMetadataAndDuplicateIDs()",
+        "FloorpNotesStoreTests\/testIncompleteRichProjectionIsReadOnly()",
+        "FloorpNotesStoreTests\/testOversizedUpdateFailsWithoutReplacingLastGoodArchive()",
+        "FloorpNotesStoreTests\/testLexicalProjectionPreservesLineAndBlockBoundaries()",
+        "FloorpNotesStoreTests\/testRichContentWithImageIsReadOnlyAndDoesNotExposeSource()",
+        "FloorpNotesStoreTests\/testRichEditorProjectionPreservesMeaningfulWhitespace()",
+        "FloorpNotesStoreTests\/testStaleEditIsRejectedAndTimestampAdvancesWhenClockDoesNot()",
+        "FloorpNotesStoreTests\/testTipTapProjectionSupportsParagraphs()",
+        "FloorpNotesStoreTests\/testUnknownJSONRemainsVerbatimAndReadOnly()",
+        "FloorpPanelNotesMigrationTests\/testLegacyPanelConfigurationReceivesNotesExactlyOnce()",
+        "FloorpPanelNotesMigrationTests\/testNoteSearchUsesContentBeyondDisplayedPreview()",
+        "FloorpPanelNotesMigrationTests\/testReorderPreservesPanelsMissingFromOlderOrderList()"
+      ],
+      "target" : {
+        "containerPath" : "container:Client.xcodeproj",
+        "identifier" : "F84B21D21A090F8100AAB793",
+        "name" : "ClientTests"
+      }
     }
   ],
   "version" : 1

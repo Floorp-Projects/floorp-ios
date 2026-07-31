@@ -213,7 +213,10 @@ final class FloorpPanelManager {
     private enum StorageKey {
         static let panels = "floorp.overlayDrawer.panels"
         static let config = "floorp.overlayDrawer.config"
+        static let schemaVersion = "floorp.overlayDrawer.schemaVersion"
     }
+
+    private static let currentSchemaVersion = 1
 
     // MARK: - Properties
     private let logger: Logger
@@ -242,11 +245,33 @@ final class FloorpPanelManager {
         self.decoder = JSONDecoder()
         self.dataProvider = FloorpPanelDataProvider(logger: logger)
 
-        // Load persisted data or use defaults
-        self.panels = Self.loadPanels(from: defaults, decoder: decoder) ?? FloorpPanel.defaultPanels()
-        self.config = Self.loadConfig(from: defaults, decoder: decoder) ?? FloorpOverlayDrawerConfig()
+        // Load persisted data or use defaults. Schema v1 introduces Notes and
+        // must explicitly merge it for users who already stored the old three-
+        // panel configuration.
+        let storedPanels = Self.loadPanels(from: defaults, decoder: decoder)
+        var loadedPanels = storedPanels ?? FloorpPanel.defaultPanels()
+        var loadedConfig = Self.loadConfig(from: defaults, decoder: decoder) ?? FloorpOverlayDrawerConfig()
+        let storedSchemaVersion = defaults.integer(forKey: StorageKey.schemaVersion)
+        let needsMigration = storedSchemaVersion < Self.currentSchemaVersion
+
+        if needsMigration {
+            Self.migrateNotesPanelIfNeeded(panels: &loadedPanels, config: &loadedConfig)
+        }
+        Self.normalizeSortOrder(&loadedPanels)
+        if !loadedPanels.contains(where: { $0.id == loadedConfig.selectedPanelId }) {
+            loadedConfig.selectedPanelId = loadedPanels.first?.id
+        }
+
+        self.panels = loadedPanels
+        self.config = loadedConfig
 
         logger.log("Floorp: PanelManager initialized with \(panels.count) panels", level: .info, category: .setup)
+
+        if needsMigration {
+            persistPanels()
+            persistConfig()
+            defaults.set(Self.currentSchemaVersion, forKey: StorageKey.schemaVersion)
+        }
     }
 
     // MARK: - Panel CRUD
@@ -258,7 +283,10 @@ final class FloorpPanelManager {
         }
         panels.append(panel)
         panels.sort { $0.sortOrder < $1.sortOrder }
+        Self.normalizeSortOrder(&panels)
+        config.panelOrder = panels.map(\.id)
         persistPanels()
+        persistConfig()
         logger.log("Floorp: Added panel '\(panel.title)' (\(panel.id))", level: .info, category: .setup)
     }
 
@@ -268,7 +296,13 @@ final class FloorpPanelManager {
             throw FloorpPanelError.panelNotFound(id: id)
         }
         let removed = panels.remove(at: index)
+        Self.normalizeSortOrder(&panels)
+        config.panelOrder = panels.map(\.id)
+        if config.selectedPanelId == id {
+            config.selectedPanelId = panels.first?.id
+        }
         persistPanels()
+        persistConfig()
         logger.log("Floorp: Removed panel '\(removed.title)' (\(id))", level: .info, category: .setup)
     }
 
@@ -284,15 +318,19 @@ final class FloorpPanelManager {
 
     /// Reorders panels based on the given array of IDs.
     func reorderPanels(orderedIds: [String]) {
-        var reordered: [FloorpPanel] = []
-        for (index, id) in orderedIds.enumerated() {
-            if var panel = panels.first(where: { $0.id == id }) {
-                panel.sortOrder = index
-                reordered.append(panel)
-            }
+        let panelsByID = Dictionary(uniqueKeysWithValues: panels.map { ($0.id, $0) })
+        var seen = Set<String>()
+        var reordered = orderedIds.compactMap { id -> FloorpPanel? in
+            guard seen.insert(id).inserted else { return nil }
+            return panelsByID[id]
         }
+        // Preserve panels unknown to an older order list, including Notes.
+        reordered.append(contentsOf: panels.filter { !seen.contains($0.id) })
+        Self.normalizeSortOrder(&reordered)
         panels = reordered
+        config.panelOrder = panels.map(\.id)
         persistPanels()
+        persistConfig()
     }
 
     /// Gets a panel by ID.
@@ -357,6 +395,32 @@ final class FloorpPanelManager {
             return try decoder.decode(FloorpOverlayDrawerConfig.self, from: data)
         } catch {
             return nil
+        }
+    }
+
+    private static func migrateNotesPanelIfNeeded(
+        panels: inout [FloorpPanel],
+        config: inout FloorpOverlayDrawerConfig
+    ) {
+        let notesID = "floorp//notes"
+        if !panels.contains(where: { $0.id == notesID }),
+           let notesPanel = FloorpPanel.defaultPanels().first(where: { $0.id == notesID }) {
+            let insertionIndex = panels.firstIndex(where: { $0.id == "floorp//downloads" })
+                .map { panels.index(after: $0) } ?? panels.endIndex
+            panels.insert(notesPanel, at: insertionIndex)
+        }
+
+        if !config.panelOrder.contains(notesID) {
+            let insertionIndex = config.panelOrder.firstIndex(of: "floorp//downloads")
+                .map { config.panelOrder.index(after: $0) } ?? config.panelOrder.endIndex
+            config.panelOrder.insert(notesID, at: insertionIndex)
+        }
+    }
+
+    private static func normalizeSortOrder(_ panels: inout [FloorpPanel]) {
+        panels.sort { $0.sortOrder < $1.sortOrder }
+        for index in panels.indices {
+            panels[index].sortOrder = index
         }
     }
 }
