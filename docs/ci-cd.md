@@ -115,7 +115,7 @@ Firefox's App Store ID has been removed. `FLOORP_APP_STORE_ID` is optional; whil
 
 ### Release branding
 
-The primary classic and Liquid Glass icon sources already render the Floorp logo, although `FloorpRelease` still selects the inherited `AppIcon_Developer` name and the Liquid Glass layer filenames still say `nightly`. Those internal names are cleanup work, not a TestFlight blocker. `FloorpRelease` excludes the inherited Firefox alternate icons. Review the remaining main-app names, artwork, localized strings, and product metadata; repeat that review before restoring any extension.
+The primary classic and Liquid Glass icon sources render the Floorp logo, and `FloorpRelease` selects the canonical `AppIcon` set. The classic default/marketing PNG is full-bleed and opaque; its Dark and Tinted variants follow Apple's appearance-specific asset rules. The Liquid Glass layer filenames still say `nightly`; those internal filenames are cleanup work, not a TestFlight blocker. `FloorpRelease` excludes the inherited Firefox alternate icons. Review the remaining main-app names, artwork, localized strings, and product metadata; repeat that review before restoring any extension.
 
 ## Apple account checklist
 

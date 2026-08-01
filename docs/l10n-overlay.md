@@ -36,7 +36,7 @@ node scripts/l10n/floorp-l10n-overlay.mjs verify \
 node --test scripts/l10n/__tests__/*.test.mjs
 ```
 
-`extract --check` proves that the canonical JSON still represents the reviewed Git diff. Extraction also reapplies the resulting policy in memory and verifies all 4,032 reviewed values and their hashes. `apply` first validates all inputs, then writes only covered value spans. `verify` fails if any tracked generated output is stale. Running `apply --write` twice must produce zero changes on the second run.
+`extract --check` proves that the canonical JSON still represents the reviewed Git diff. Extraction also reapplies the resulting policy in memory and verifies all 4,074 reviewed values and their hashes. `apply` first validates all inputs, then writes only covered value spans. `verify` fails if any tracked generated output is stale. Running `apply --write` twice must produce zero changes on the second run.
 
 Policy loading also rejects duplicate or inconsistent path rules, malformed digests, mismatched exact overrides, and non-canonical repository paths. Covered resources may not traverse a symbolic link. CI must run the pinned `extract --check --check-counts` command before any `apply --write`; tests or `verify` alone do not authorize a changed manifest.
 

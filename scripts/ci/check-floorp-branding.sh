@@ -312,6 +312,37 @@ require_grayscale_png() {
     esac
 }
 
+require_opaque_rgb_png() {
+    local file="$1"
+    local description="$2"
+    local png_header
+    local color_type
+
+    if ! require_file "$file"; then
+        return
+    fi
+
+    if ! command -v od >/dev/null 2>&1 || ! command -v tr >/dev/null 2>&1; then
+        fail "Standard od and tr utilities are required to inspect PNG metadata."
+        return
+    fi
+
+    png_header="$(od -An -tx1 -N 16 "$file" | tr -d '[:space:]')"
+    if [[ "$png_header" != "89504e470d0a1a0a0000000d49484452" ]]; then
+        fail "$description ($file does not start with a valid PNG IHDR chunk)"
+        return
+    fi
+
+    # In a PNG IHDR chunk, byte offset 25 is the color type. Value 2 is
+    # truecolor RGB without an alpha channel, as required for the default icon.
+    color_type="$(od -An -tu1 -j 25 -N 1 "$file" | tr -d '[:space:]')"
+    if [[ "$color_type" == "2" ]]; then
+        pass "$description"
+    else
+        fail "$description ($file has PNG color type ${color_type:-unknown}; expected 2)"
+    fi
+}
+
 APP_NAME_FILE="BrowserKit/Sources/Shared/AppName.swift"
 PROJECT_FILE="firefox-ios/Client.xcodeproj/project.pbxproj"
 FLOORP_SCHEME_FILE="firefox-ios/Client.xcodeproj/xcshareddata/xcschemes/Floorp.xcscheme"
@@ -869,8 +900,11 @@ require_hash \
 
 require_hash \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore.png" \
-    "fad7b09c98584c346cf58a9c14332888be09ede6ca2f188fb36577e922d80f29" \
+    "a16249a3edf1accb968c40a0680f07889dbe99572bbe191edae9d8383d06ed8f" \
     "Primary app icon uses the approved Floorp artwork"
+require_opaque_rgb_png \
+    "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore.png" \
+    "Primary default app icon uses an RGB PNG without an alpha channel"
 require_hash \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore-dark.png" \
     "10df560e6b2ddc405a7add6957e97b49cdcd2abe2a1b78297b4a56b578208095" \
