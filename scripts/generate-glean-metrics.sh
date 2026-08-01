@@ -20,7 +20,7 @@ definitions=(
     "${FIREFOX_ROOT}/Client/Glean/tags.yaml"
 )
 while IFS= read -r line; do
-    [[ "${line}" == '$(PROJECT_DIR)/Client/Glean/probes/'* ]] || continue
+    [[ "${line}" == "\$(PROJECT_DIR)/Client/Glean/probes/"* ]] || continue
     relative_path="${line#\$\(PROJECT_DIR\)/}"
     definition="${FIREFOX_ROOT}/${relative_path}"
     if [[ ! -f "${definition}" ]]; then
