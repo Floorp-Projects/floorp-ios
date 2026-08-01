@@ -5,6 +5,12 @@ on:
     # Every Monday at 09:00 UTC (18:00 JST)
     - cron: "0 9 * * 1"
   workflow_dispatch:
+    inputs:
+      force_ci:
+        description: Dispatch CI even when the sync pull request branch is unchanged
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: write
@@ -15,6 +21,11 @@ concurrency:
   group: floorp-upstream-sync
   cancel-in-progress: false
 
+env:
+  FLOORP_BASE_BRANCH: main
+  UPSTREAM_BRANCH: main
+  SYNC_BRANCH: automation/upstream-sync
+
 jobs:
   sync-upstream:
     runs-on: macos-26
@@ -24,19 +35,21 @@ jobs:
       - name: Check out Floorp
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ env.FLOORP_BASE_BRANCH }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Fetch upstream
         run: |
           git remote add upstream https://github.com/mozilla-mobile/firefox-ios.git || true
-          git fetch --no-tags upstream main
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
 
       - name: Check for upstream commits
         id: check
         run: |
-          upstream_sha="$(git rev-parse upstream/main)"
-          merge_base="$(git merge-base HEAD upstream/main)"
+          upstream_ref="upstream/$UPSTREAM_BRANCH"
+          upstream_sha="$(git rev-parse "$upstream_ref")"
+          merge_base="$(git merge-base HEAD "$upstream_ref")"
 
           if [[ "$merge_base" == "$upstream_sha" ]]; then
             echo "Floorp already contains upstream/main."
@@ -48,6 +61,8 @@ jobs:
           echo "Found ${commit_count} new upstream commits."
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
           echo "commit_count=${commit_count}" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
+          echo "merge_base=${merge_base}" >> "$GITHUB_OUTPUT"
 
       - name: Merge upstream
         if: steps.check.outputs.has_changes == 'true'
@@ -56,17 +71,26 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # create-pull-request resets its working base to origin/<branch>.
+          git checkout -B "$FLOORP_BASE_BRANCH" "origin/$FLOORP_BASE_BRANCH"
           floorp_base="$(git rev-parse HEAD)"
-          sync_branch="automation/upstream-sync"
-          git checkout -B "$sync_branch"
+          upstream_ref="upstream/$UPSTREAM_BRANCH"
+          workflow_conflict_count=0
 
-          if ! git merge upstream/main --no-edit; then
+          restore_floorp_automation() {
+            git rm -r -f --ignore-unmatch -- .github/workflows
+            git checkout "$floorp_base" -- .github/workflows scripts/rebrand-to-floorp.sh
+          }
+
+          if ! git merge "$upstream_ref" --no-edit; then
             conflicts="$(git diff --name-only --diff-filter=U)"
             unexpected_conflict=false
 
             while IFS= read -r file; do
               case "$file" in
-                .github/workflows/*) ;;
+                .github/workflows/*)
+                  workflow_conflict_count=$((workflow_conflict_count + 1))
+                  ;;
                 *)
                   echo "Unexpected merge conflict: $file" >> "$GITHUB_STEP_SUMMARY"
                   unexpected_conflict=true
@@ -75,38 +99,38 @@ jobs:
             done <<< "$conflicts"
 
             if [[ "$unexpected_conflict" == "true" ]]; then
+              diagnostics="$RUNNER_TEMP/upstream-sync-diagnostics"
+              mkdir -p "$diagnostics"
+              {
+                echo "floorp_base=$floorp_base"
+                echo "upstream_ref=$upstream_ref"
+                echo "upstream_sha=$(git rev-parse "$upstream_ref")"
+                echo "merge_base=$(git merge-base "$floorp_base" "$upstream_ref")"
+              } > "$diagnostics/metadata.txt"
+              git status --short > "$diagnostics/status.txt"
+              git ls-files -u > "$diagnostics/unmerged-index.txt"
+              git diff --cc > "$diagnostics/conflicts.diff"
               git merge --abort
               exit 1
             fi
 
-            while IFS= read -r file; do
-              case "$file" in
-                .github/workflows/ci.yml|.github/workflows/upstream-sync.yml)
-                  git checkout --ours -- "$file"
-                  git add -- "$file"
-                  ;;
-                .github/workflows/*)
-                  git rm -- "$file"
-                  ;;
-              esac
-            done <<< "$conflicts"
-
+            restore_floorp_automation
             git commit --no-edit
           fi
 
-          git checkout "$floorp_base" -- \
-            .github/workflows/ci.yml \
-            .github/workflows/upstream-sync.yml \
-            scripts/rebrand-to-floorp.sh
+          restore_floorp_automation
 
-          while IFS= read -r -d '' workflow; do
-            case "$workflow" in
-              .github/workflows/ci.yml|.github/workflows/upstream-sync.yml) ;;
-              *) rm -f -- "$workflow" ;;
-            esac
-          done < <(find .github/workflows -type f -print0)
+          echo "branch=${SYNC_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "workflow_conflict_count=${workflow_conflict_count}" >> "$GITHUB_OUTPUT"
 
-          echo "branch=${sync_branch}" >> "$GITHUB_OUTPUT"
+      - name: Upload merge diagnostics
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: upstream-sync-conflicts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/upstream-sync-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Reapply Floorp branding
         if: steps.check.outputs.has_changes == 'true'
@@ -116,8 +140,10 @@ jobs:
         if: steps.check.outputs.has_changes == 'true'
         id: verify
         run: |
-          git diff --check
-          file_count="$(git diff --name-only HEAD | wc -l | tr -d ' ')"
+          # Include newly generated, untracked files in validation and in the PR.
+          git add -A
+          git diff --cached --check
+          file_count="$(git diff --cached --name-only | wc -l | tr -d ' ')"
           echo "file_count=${file_count}" >> "$GITHUB_OUTPUT"
 
       - name: Create pull request
@@ -126,9 +152,10 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          base: main
+          base: ${{ env.FLOORP_BASE_BRANCH }}
           branch: ${{ steps.merge.outputs.branch }}
           delete-branch: true
+          draft: always-true
           commit-message: "feat: sync upstream and re-apply Floorp branding"
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: GitHub <noreply@github.com>
@@ -139,8 +166,13 @@ jobs:
             This PR merges `mozilla-mobile/firefox-ios:main` into Floorp and reapplies the Floorp branding script.
 
             - Upstream commits: ${{ steps.check.outputs.commit_count }}
-            - Files changed by the rebrand step: ${{ steps.verify.outputs.file_count }}
-            - Merge conflicts: none (conflicted merges fail without committing conflict markers)
+            - Upstream SHA: `${{ steps.check.outputs.upstream_sha }}`
+            - Previous merge base: `${{ steps.check.outputs.merge_base }}`
+            - Files changed by Floorp restoration and branding: ${{ steps.verify.outputs.file_count }}
+            - Workflow conflicts restored from Floorp: ${{ steps.merge.outputs.workflow_conflict_count }}
+            - Other merge conflicts: none (unexpected conflicts abort with a diagnostics artifact)
+
+            The `automation/upstream-sync` branch is generated. Manual edits will be replaced by the next sync run.
 
             Before merging:
 
@@ -149,14 +181,21 @@ jobs:
             - [ ] Check for newly introduced Firefox branding.
 
       - name: Dispatch CI for the sync branch
-        if: steps.create-pr.outputs.pull-request-operation == 'created' || steps.create-pr.outputs.pull-request-operation == 'updated'
+        if: >-
+          steps.check.outputs.has_changes == 'true' &&
+          (steps.create-pr.outputs.pull-request-operation == 'created' ||
+          steps.create-pr.outputs.pull-request-operation == 'updated' ||
+          (github.event_name == 'workflow_dispatch' && inputs.force_ci))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl --proto '=https' --tlsv1.2 --fail-with-body --silent --show-error \
+            --retry 3 \
+            --retry-all-errors \
+            --retry-delay 2 \
             --request POST \
             --header "Authorization: Bearer $GH_TOKEN" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" \
-            --data '{"ref":"automation/upstream-sync"}'
+            --data "{\"ref\":\"${SYNC_BRANCH}\"}"
