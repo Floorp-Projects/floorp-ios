@@ -14,8 +14,8 @@ public struct SupportUtils {
     }
 
     public static var URLForGetHelp: URL? {
-        // Returns the predefined URL associated to the menu's Get Help button action.
-        return FloorpBrand.supportURL
+        // Floorp's desktop feature docs do not describe the iOS app.
+        return FloorpBrand.iOSHelpURL
     }
 
     public static var URLForPocketLearnMore: URL? {
@@ -25,6 +25,10 @@ public struct SupportUtils {
 
     public static var URLForTermsOfUse: URL? {
         return FloorpBrand.termsOfUseURL
+    }
+
+    public static var URLForTermsOfUseLearnMore: URL? {
+        return FloorpBrand.termsOfUseLearnMoreURL
     }
 
     public static var URLForPrivacyNotice: URL? {

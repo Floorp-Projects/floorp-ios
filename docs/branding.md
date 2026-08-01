@@ -41,11 +41,12 @@ Top-level Floorp UI must use the Floorp-owned links below.
 | --- | --- |
 | Official site | `https://floorp.app` |
 | Terms of Service | `https://floorp.app/terms` |
+| Terms prompt Learn more/Here | `https://floorp.app/terms?utm_source=floorp-ios&utm_medium=in-product&utm_campaign=terms-of-use` |
 | Privacy Policy | `https://floorp.app/privacy` |
-| Floorp user support | `https://docs.floorp.app/docs/features/` |
-| Documentation | `https://docs.floorp.app` |
+| Floorp iOS Settings Help | `https://github.com/Floorp-Projects/floorp-ios#readme` |
+| Desktop documentation (not iOS Help) | `https://docs.floorp.app` |
 | Blog | `https://blog.floorp.app` |
-| Release notes index | `https://blog.floorp.app/categories/release` |
+| Release notes index | `https://blog.floorp.app/en/categories/release/` |
 | Source and issue tracker | `https://github.com/Floorp-Projects/floorp-ios` |
 
 Do not copy the desktop About dialog's legacy `ja.floorp.app` links or the old
@@ -55,6 +56,21 @@ Firefox Privacy Notice.
 
 If a localized website route is introduced later, resolve it centrally and
 keep the URLs in this table as the locale-neutral fallback.
+
+Floorp does not yet publish a dedicated iOS support site or legal-update FAQ.
+The iOS project page is therefore the current Settings Help hub, while the
+Terms prompt uses the canonical legal document with a distinct in-product
+campaign URL. Replace only the corresponding `FloorpBrand` constants when
+dedicated pages become available; do not point either surface at the desktop
+feature documentation.
+
+Acceptance of inherited Mozilla terms is not acceptance of Floorp's legal
+documents. A versioned, one-time migration clears the legacy Terms of Service
+and Terms of Use acceptance, dismissal, reminder, experiment, and link-event
+preferences before launch code checks consent. Once that migration marker is
+stored, a user's subsequent Floorp acceptance and prompt state are preserved.
+Increase the migration version only when a reviewed legal-document change
+requires existing users to consent again.
 
 ## Names and links that remain Mozilla- or Firefox-specific
 

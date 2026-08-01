@@ -30,7 +30,7 @@ enum RemoteTabsPanelEmptyStateReason {
         switch self {
         case .notLoggedIn: return .EmptySyncedTabsPanelNotSignedInStateDescription
         case .noClients: return .EmptySyncedTabsPanelNullStateDescription
-        case .noTabs: return .RemoteTabErrorNoTabs
+        case .noTabs: return .EmptySyncedTabsPanelNullStateDescription
         case .failedToSync: return .RemoteTabErrorFailedToSync
         case .syncDisabledByUser: return .TabsTray.Sync.SyncTabsDisabled
         }

@@ -109,8 +109,12 @@ final class TermsOfUseCoordinator: BaseCoordinator, TermsOfUseCoordinatorDelegat
     }
 
     func shouldShowTermsOfUse(context: TriggerContext = .appLaunch) -> Bool {
-        // 1. Feature must be enabled
-        guard featureFlags.isFeatureEnabled(.touFeature, checking: .buildOnly) else { return false }
+        // Floorp's versioned legal migration is a product policy, not a Nimbus
+        // rollout. Existing users must still see the prompt when studies and
+        // rollouts are disabled and the inherited feature defaults to off.
+        let isFloorpTermsPolicyActive = TermsOfUseMigration(prefs: prefs).isCurrentFloorpTermsPolicyActive
+        guard isFloorpTermsPolicyActive
+                || featureFlags.isFeatureEnabled(.touFeature, checking: .buildOnly) else { return false }
 
         // 2. If user has already accepted, never show again
         let hasAcceptedTermsOfUse = prefs.boolForKey(PrefsKeys.TermsOfUseAccepted) ?? false

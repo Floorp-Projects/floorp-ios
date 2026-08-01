@@ -53,7 +53,7 @@ enum TermsOfUseLinkType: CaseIterable {
         case .privacyNotice:
             return SupportUtils.URLForPrivacyNotice
         case .learnMore, .here:
-            return SupportUtils.URLForGetHelp
+            return SupportUtils.URLForTermsOfUseLearnMore
         }
     }
 

@@ -26,8 +26,23 @@ public enum FloorpBrand {
     public static let officialWebsiteURL = URL(string: "https://floorp.app")
     public static let termsOfUseURL = URL(string: "https://floorp.app/terms")
     public static let privacyNoticeURL = URL(string: "https://floorp.app/privacy")
-    public static let supportURL = URL(string: "https://docs.floorp.app/docs/features/")
-    public static let releaseNotesURL = URL(string: "https://blog.floorp.app/categories/release")
+
+    /// Settings > Help destination for the iOS app. Replace this central value
+    /// when a dedicated Floorp iOS support site is published.
+    public static let iOSHelpURL = URL(
+        string: "https://github.com/Floorp-Projects/floorp-ios#readme"
+    )
+
+    /// Supplemental information linked from the Terms of Use prompt. Floorp
+    /// currently has no separate legal-update FAQ, so the canonical Terms page
+    /// is used with an in-product campaign URL that remains distinct for link classification.
+    public static let termsOfUseLearnMoreURL = URL(
+        string: "https://floorp.app/terms?utm_source=floorp-ios&utm_medium=in-product&utm_campaign=terms-of-use"
+    )
+
+    public static let releaseNotesURL = URL(
+        string: "https://blog.floorp.app/en/categories/release/"
+    )
     public static let feedbackURL = URL(
         string: "https://github.com/Floorp-Projects/floorp-ios/issues/new/choose"
     )

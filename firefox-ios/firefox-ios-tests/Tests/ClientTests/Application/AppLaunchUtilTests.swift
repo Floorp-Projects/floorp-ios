@@ -10,10 +10,13 @@ import XCTest
 
 @MainActor
 final class AppLaunchUtilTests: XCTestCase {
-    var profile: MockProfile!
+    private var profile = MockProfile()
 
     override func setUp() async throws {
         try await super.setUp()
+        FloorpFlags.setTelemetryDisabled(false)
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
+        FloorpFlags.setAdAttributionDisabled(false)
         DependencyHelperMock().bootstrapDependencies()
         TelemetryContextualIdentifier.clearUserDefaults()
         profile = MockProfile()
@@ -26,7 +29,6 @@ final class AppLaunchUtilTests: XCTestCase {
         FloorpFlags.setAdAttributionDisabled(false)
         DependencyHelperMock().reset()
         TelemetryContextualIdentifier.clearUserDefaults()
-        profile = nil
         try await super.tearDown()
     }
 
@@ -58,6 +60,15 @@ final class AppLaunchUtilTests: XCTestCase {
         XCTAssertNotNil(TelemetryContextualIdentifier.contextId)
     }
 
+    func testGivenTelemetryDisabledAndTosDisabled_ThenContextIdIsNotSet() {
+        FloorpFlags.setTelemetryDisabled(true)
+        setupNimbusToSForTesting(isEnabled: false)
+
+        createSubject().setUpPreLaunchDependencies()
+
+        XCTAssertNil(TelemetryContextualIdentifier.contextId)
+    }
+
     func testGivenFloorpSponsoredContentDisabled_WhenTosNotAccepted_ThenContextIdIsNotSet() {
         FloorpFlags.setSponsoredShortcutsDisabled(true)
         profile.prefs.setInt(0, forKey: PrefsKeys.TermsOfServiceAccepted)
@@ -85,6 +96,19 @@ final class AppLaunchUtilTests: XCTestCase {
         ].forEach {
             XCTAssertEqual(profile.prefs.boolForKey($0), false, "\($0) should be disabled")
         }
+    }
+
+    func testPreLaunchMigrationMakesInheritedAcceptanceEligibleForFloorpTerms() {
+        profile.prefs.setInt(1, forKey: PrefsKeys.TermsOfServiceAccepted)
+        profile.prefs.setBool(true, forKey: PrefsKeys.TermsOfUseAccepted)
+        profile.prefs.setBool(true, forKey: PrefsKeys.TermsOfUseFirstShown)
+        setupNimbusToSForTesting(isEnabled: true)
+
+        createSubject().setUpPreLaunchDependencies()
+
+        let manager = TermsOfServiceManager(prefs: profile.prefs)
+        XCTAssertNil(profile.prefs.boolForKey(PrefsKeys.TermsOfUseAccepted))
+        XCTAssertTrue(manager.shouldShowScreen)
     }
 
     // MARK: Helper methods

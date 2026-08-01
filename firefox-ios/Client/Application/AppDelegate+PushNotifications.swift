@@ -40,7 +40,7 @@ extension AppDelegate {
             UIApplication.shared.unregisterForRemoteNotifications()
         }
 
-        var categories: Set<UNNotificationCategory> = [NotificationSurfaceManager.notificationCategory]
+        var categories = NotificationSurfaceManager.notificationCategories
         if AppServicesPolicy.allowsRemotePushNotifications {
             categories.insert(SentTabAction.notificationCategory)
         }
@@ -97,14 +97,17 @@ extension AppDelegate: @MainActor UNUserNotificationCenterDelegate {
 
         let content = response.notification.request.content
 
-        if content.categoryIdentifier == NotificationSurfaceManager.Constant.notificationCategoryId {
+        if let responseAction = NotificationSurfaceManager.responseAction(
+            forCategoryIdentifier: content.categoryIdentifier,
+            actionIdentifier: response.actionIdentifier
+        ) {
             guard let messageId = content.userInfo[NotificationSurfaceManager.Constant.messageIdKey] as? String
             else { return }
 
-            switch response.actionIdentifier {
-            case UNNotificationDismissActionIdentifier:
+            switch responseAction {
+            case .dismiss:
                 notificationSurfaceManager.didDismissNotification(messageId)
-            default:
+            case .tap:
                 notificationSurfaceManager.didTapNotification(messageId)
             }
         } else if content.categoryIdentifier == NotificationCloseTabs.notificationCategoryId {

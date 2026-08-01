@@ -10,8 +10,8 @@ import XCTest
 @testable import Client
 
 class AutopushTests: XCTestCase {
-    private var mockPushManager: MockPushManager!
-    private var autopushClient: Autopush!
+    private var mockPushManager = MockPushManager()
+    private lazy var autopushClient = Autopush(withPushManager: mockPushManager)
 
     override func setUp() {
         super.setUp()
@@ -19,21 +19,15 @@ class AutopushTests: XCTestCase {
         autopushClient = Autopush(withPushManager: mockPushManager)
     }
 
-    override func tearDown() {
-        autopushClient = nil
-        mockPushManager = nil
-        super.tearDown()
-    }
-
     func testSubscribeCallsPushManager() async throws {
         XCTAssertNil(mockPushManager.subscribeCalledWith)
-        _ = try await autopushClient?.subscribe(scope: "scope")
+        _ = try await autopushClient.subscribe(scope: "scope")
         XCTAssertEqual("scope", mockPushManager.subscribeCalledWith)
     }
 
     func testUnsubscribeCallsPushManager() async throws {
         XCTAssertNil(mockPushManager.unsubscribeCalledWith)
-        _ = try await autopushClient?.unsubscribe(scope: "scope")
+        _ = try await autopushClient.unsubscribe(scope: "scope")
         XCTAssertEqual("scope", mockPushManager.unsubscribeCalledWith)
     }
 
@@ -42,20 +36,87 @@ class AutopushTests: XCTestCase {
         // `updateToken` will get the hex values of the `Data` and pass
         // it to the native client
         let registrationToken = "123efa"
-        _ = try await autopushClient?.updateToken(withDeviceToken: registrationToken.hexDecodedData)
+        _ = try await autopushClient.updateToken(withDeviceToken: registrationToken.hexDecodedData)
         XCTAssertEqual(registrationToken, mockPushManager.updateCalledWith)
     }
 
     func testUnsubscribeAllCallsPushManager() async throws {
         XCTAssertFalse(mockPushManager.unsubscribeAllCalled)
-        _ = try await autopushClient?.unsubscribeAll()
+        _ = try await autopushClient.unsubscribeAll()
         XCTAssert(mockPushManager.unsubscribeAllCalled)
     }
 
     func testDecryptCallsPushManager() async throws {
         XCTAssertNil(mockPushManager.decryptCalledWith)
-        _ = try await autopushClient?.decrypt(payload: ["key": "value"])
+        _ = try await autopushClient.decrypt(payload: ["key": "value"])
         XCTAssertEqual(["key": "value"], mockPushManager.decryptCalledWith)
+    }
+
+    func testPushConfigurationLabelMapsSupportedApplicationBundleIdentifiers() throws {
+        let expectedLabels: [String: PushConfigurationLabel] = [
+            "org.mozilla.ios.Fennec": .fennec,
+            "org.mozilla.ios.FennecEnterprise": .fennecEnterprise,
+            "org.mozilla.ios.FirefoxBeta": .firefoxBeta,
+            "org.mozilla.ios.Firefox": .firefox
+        ]
+
+        for (bundleIdentifier, expectedLabel) in expectedLabels {
+            XCTAssertEqual(
+                try PushConfigurationLabel.fromBundleIdentifier(bundleIdentifier),
+                expectedLabel
+            )
+        }
+    }
+
+    func testPushConfigurationLabelMapsSupportedExtensionBundleIdentifiers() throws {
+        let expectedLabels: [String: PushConfigurationLabel] = [
+            "org.mozilla.ios.Fennec.NotificationService": .fennec,
+            "org.mozilla.ios.FennecEnterprise.Notification-Service": .fennecEnterprise,
+            "org.mozilla.ios.FirefoxBeta.NotificationService": .firefoxBeta,
+            "org.mozilla.ios.Firefox.NotificationService": .firefox
+        ]
+
+        for (bundleIdentifier, expectedLabel) in expectedLabels {
+            XCTAssertEqual(
+                try PushConfigurationLabel.fromBundleIdentifier(bundleIdentifier),
+                expectedLabel
+            )
+        }
+    }
+
+    func testPushConfigurationLabelRejectsPublicURLSchemes() {
+        for publicURLScheme in ["floorp", "firefox"] {
+            XCTAssertThrowsError(try PushConfigurationLabel.fromBundleIdentifier(publicURLScheme))
+        }
+    }
+
+    func testFloorpBundleIdentifierHasNoMozillaPushConfigurationLabel() {
+        XCTAssertThrowsError(try PushConfigurationLabel.fromBundleIdentifier("app.floorp.Floorp")) { error in
+            guard case let PushConfigurationError.unsupportedBundleIdentifier(bundleIdentifier) = error else {
+                XCTFail("Expected an unsupported bundle identifier error, got \(error)")
+                return
+            }
+
+            XCTAssertEqual(bundleIdentifier, "app.floorp.Floorp")
+        }
+
+        XCTAssertThrowsError(
+            try PushConfigurationLabel.fromBundleIdentifier("app.floorp.Floorp.NotificationService")
+        )
+    }
+
+    func testFloorpPushPolicyStopsInitializationBeforeBundleIdentifierMapping() {
+        XCTAssertThrowsError(
+            try Autopush.configurationLabel(
+                bundleIdentifier: "app.floorp.Floorp",
+                allowsRemotePushNotifications: false
+            )
+        ) { error in
+            guard case AutopushInitializationError.remotePushNotificationsDisabled = error else {
+                XCTFail("Expected remote push to be disabled, got \(error)")
+                return
+            }
+        }
     }
 }
 

@@ -2,50 +2,65 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import Common
 import Shared
 
 struct TermsOfUseMigration {
+    private enum FloorpTerms {
+        /// Bump this value whenever an existing acceptance must not carry over
+        /// to a new set of Floorp legal documents.
+        static let currentMigrationVersion: Int32 = 1
+        static let migrationVersionKey = "app.floorp.terms.acceptanceMigrationVersion"
+    }
+
     private let prefs: Prefs
 
     init(prefs: Prefs) {
         self.prefs = prefs
     }
 
-    /// Migrate TermsOfService prefs to TermsOfUse
-    /// and add missing ToU date if needed
-    func migrateTermsOfService() {
-        let hasAcceptedToS = prefs.intForKey(PrefsKeys.TermsOfServiceAccepted) == 1
-
-        // Only migrate if TermsOfServiceAccepted exists and is true
-        guard hasAcceptedToS else { return }
-
-        migrateTermsOfServicePrefs()
-        migrateLegacyToSAcceptance()
+    var isCurrentFloorpTermsPolicyActive: Bool {
+        let migratedVersion = prefs.intForKey(FloorpTerms.migrationVersionKey) ?? 0
+        return migratedVersion >= FloorpTerms.currentMigrationVersion
     }
 
-    private func migrateTermsOfServicePrefs() {
-        // Migrate TermsOfServiceAccepted
-        prefs.setBool(true, forKey: PrefsKeys.TermsOfUseAccepted)
-        prefs.removeObjectForKey(PrefsKeys.TermsOfServiceAccepted)
+    /// Invalidates inherited Mozilla acceptance and prompt state exactly once.
+    ///
+    /// The migration marker is written after the reset. A subsequent launch
+    /// therefore preserves any Floorp acceptance or dismissal recorded after
+    /// this migration ran.
+    func migrateToFloorpTermsIfNeeded() {
+        let migratedVersion = prefs.intForKey(FloorpTerms.migrationVersionKey) ?? 0
+        guard migratedVersion < FloorpTerms.currentMigrationVersion else { return }
 
-        // Migrate TermsOfServiceAcceptedDate
-        if let acceptedDate = prefs.timestampForKey(PrefsKeys.TermsOfServiceAcceptedDate) {
-            prefs.setTimestamp(acceptedDate, forKey: PrefsKeys.TermsOfUseAcceptedDate)
-            prefs.removeObjectForKey(PrefsKeys.TermsOfServiceAcceptedDate)
-        }
+        inheritedAcceptanceKeys.forEach { prefs.removeObjectForKey($0) }
+        inheritedPromptStateKeys.forEach { prefs.removeObjectForKey($0) }
+        prefs.setInt(FloorpTerms.currentMigrationVersion, forKey: FloorpTerms.migrationVersionKey)
     }
 
-    private func migrateLegacyToSAcceptance() {
-        let hasDate = prefs.timestampForKey(PrefsKeys.TermsOfUseAcceptedDate)
+    private var inheritedAcceptanceKeys: [String] {
+        [
+            PrefsKeys.TermsOfServiceAccepted,
+            PrefsKeys.TermsOfServiceAcceptedDate,
+            PrefsKeys.TermsOfUseAccepted,
+            PrefsKeys.TermsOfUseAcceptedDate
+        ]
+    }
 
-        guard hasDate == nil else { return }
-
-        // Use installation date as accepted date
-        let installationDate = InstallationUtils.inferredDateInstalledOn ?? Date()
-        prefs.setTimestamp(installationDate.toTimestamp(), forKey: PrefsKeys.TermsOfUseAcceptedDate)
-
-        // Record date metric for legacy users who just got migrated
-        TermsOfServiceTelemetry().recordToUAcceptDate(acceptedDate: installationDate)
+    private var inheritedPromptStateKeys: [String] {
+        [
+            PrefsKeys.TermsOfUseFirstShown,
+            PrefsKeys.TermsOfUseShownRecorded,
+            PrefsKeys.TermsOfUseDismissedDate,
+            PrefsKeys.TermsOfUseImpressionCount,
+            PrefsKeys.TermsOfUseRemindMeLaterCount,
+            PrefsKeys.TermsOfUseDismissCount,
+            PrefsKeys.TermsOfUseRemindersCount,
+            PrefsKeys.TermsOfUseRemindMeLaterTapDate,
+            PrefsKeys.TermsOfUseLearnMoreTapDate,
+            PrefsKeys.TermsOfUsePrivacyNoticeTapDate,
+            PrefsKeys.TermsOfUseTermsLinkTapDate,
+            PrefsKeys.TermsOfUseExperimentKey,
+            PrefsKeys.TermsOfUseExperimentTrackingInitialized
+        ]
     }
 }

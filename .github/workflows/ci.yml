@@ -32,6 +32,9 @@ jobs:
 
       - name: Check Floorp branding contracts
         run: ./scripts/ci/check-floorp-branding.sh
+        env:
+          # ubuntu runners don't guarantee ripgrep; exercise the portable path.
+          FLOORP_BRANDING_SEARCH_BACKEND: grep
 
       - name: Run actionlint
         env:

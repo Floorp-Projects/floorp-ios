@@ -5,10 +5,136 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-if ! command -v rg >/dev/null 2>&1; then
-    echo "[FAIL] ripgrep (rg) is required for the Floorp branding check." >&2
-    exit 2
-fi
+SEARCH_BACKEND="${FLOORP_BRANDING_SEARCH_BACKEND:-auto}"
+case "$SEARCH_BACKEND" in
+    auto)
+        if command -v rg >/dev/null 2>&1; then
+            SEARCH_BACKEND="rg"
+        else
+            SEARCH_BACKEND="grep"
+        fi
+        ;;
+    rg)
+        if ! command -v rg >/dev/null 2>&1; then
+            echo "[FAIL] FLOORP_BRANDING_SEARCH_BACKEND=rg, but rg is unavailable." >&2
+            exit 2
+        fi
+        ;;
+    grep)
+        if ! command -v grep >/dev/null 2>&1; then
+            echo "[FAIL] The portable grep search backend is unavailable." >&2
+            exit 2
+        fi
+        ;;
+    *)
+        echo "[FAIL] Unknown Floorp branding search backend: $SEARCH_BACKEND" >&2
+        exit 2
+        ;;
+esac
+
+search_fixed_quiet() {
+    local expected="$1"
+    shift
+
+    if [[ "$SEARCH_BACKEND" == "rg" ]]; then
+        command rg --quiet --fixed-strings -- "$expected" "$@"
+    else
+        grep -Fq -- "$expected" "$@"
+    fi
+}
+
+search_fixed_lines() {
+    local expected="$1"
+    shift
+
+    if [[ "$SEARCH_BACKEND" == "rg" ]]; then
+        command rg --line-number --fixed-strings -- "$expected" "$@"
+    else
+        grep -FnH -- "$expected" "$@"
+    fi
+}
+
+search_regex_quiet() {
+    local pattern="$1"
+    shift
+
+    if [[ "$SEARCH_BACKEND" == "rg" ]]; then
+        command rg --quiet -- "$pattern" "$@"
+    else
+        grep -Eq -- "$pattern" "$@"
+    fi
+}
+
+search_regex_ignore_case_quiet() {
+    local pattern="$1"
+    shift
+
+    if [[ "$SEARCH_BACKEND" == "rg" ]]; then
+        command rg --quiet --ignore-case -- "$pattern" "$@"
+    else
+        grep -Eiq -- "$pattern" "$@"
+    fi
+}
+
+search_regex_ignore_case_lines() {
+    local pattern="$1"
+    shift
+
+    if [[ "$SEARCH_BACKEND" == "rg" ]]; then
+        command rg --line-number --ignore-case -- "$pattern" "$@"
+    else
+        grep -EinH -- "$pattern" "$@"
+    fi
+}
+
+search_strings_regex_ignore_case_lines() {
+    local pattern="$1"
+    local search_path="$2"
+
+    if [[ "$SEARCH_BACKEND" == "rg" ]]; then
+        command rg --line-number --ignore-case --glob '**/*.strings' -- \
+            "$pattern" "$search_path"
+    else
+        find "$search_path" -type f -name '*.strings' \
+            -exec grep -EinH -- "$pattern" {} +
+    fi
+}
+
+find_permission_description_matches() {
+    local file="$1"
+
+    if [[ "$SEARCH_BACKEND" == "rg" ]]; then
+        command rg --line-number --ignore-case --multiline \
+            '<key>NS[A-Za-z]+UsageDescription</key>[[:space:]]*<string>[^<]*firefox[^<]*</string>' \
+            "$file"
+        return
+    fi
+
+    # Info.plist is line-oriented in this repository. This state machine keeps
+    # the fallback portable instead of relying on GNU-only multiline grep.
+    awk '
+        {
+            lower_line = tolower($0)
+        }
+        lower_line ~ /<key>ns[a-z]+usagedescription<\/key>/ {
+            key_line = $0
+            key_line_number = NR
+            next
+        }
+        key_line != "" && lower_line ~ /<string>[^<]*firefox[^<]*<\/string>/ {
+            printf "%s:%d:%s\n%s:%d:%s\n", FILENAME, key_line_number, key_line, FILENAME, NR, $0
+            found = 1
+            key_line = ""
+            next
+        }
+        key_line != "" && (lower_line ~ /<string>/ || lower_line ~ /<key>/) {
+            key_line = ""
+        }
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$file"
+}
 
 failures=0
 
@@ -40,7 +166,7 @@ require_fixed() {
         return
     fi
 
-    if rg --quiet --fixed-strings -- "$expected" "$file"; then
+    if search_fixed_quiet "$expected" "$file"; then
         pass "$description"
     else
         fail "$description (expected '$expected' in $file)"
@@ -52,9 +178,9 @@ forbid_fixed_in_files() {
     local description="$2"
     shift 2
 
-    if rg --quiet --fixed-strings -- "$forbidden" "$@"; then
+    if search_fixed_quiet "$forbidden" "$@"; then
         fail "$description"
-        rg --line-number --fixed-strings -- "$forbidden" "$@" >&2 || true
+        search_fixed_lines "$forbidden" "$@" >&2 || true
     else
         pass "$description"
     fi
@@ -87,21 +213,57 @@ require_hash() {
     fi
 }
 
+require_grayscale_png() {
+    local file="$1"
+    local description="$2"
+    local png_header
+    local color_type
+
+    if ! require_file "$file"; then
+        return
+    fi
+
+    if ! command -v od >/dev/null 2>&1 || ! command -v tr >/dev/null 2>&1; then
+        fail "Standard od and tr utilities are required to inspect PNG metadata."
+        return
+    fi
+
+    png_header="$(od -An -tx1 -N 16 "$file" | tr -d '[:space:]')"
+    if [[ "$png_header" != "89504e470d0a1a0a0000000d49484452" ]]; then
+        fail "$description ($file does not start with a valid PNG IHDR chunk)"
+        return
+    fi
+
+    # In a PNG IHDR chunk, byte offset 25 is the color type. Values 0 and 4
+    # represent grayscale without and with alpha, respectively.
+    color_type="$(od -An -tu1 -j 25 -N 1 "$file" | tr -d '[:space:]')"
+    case "$color_type" in
+        0|4)
+            pass "$description"
+            ;;
+        *)
+            fail "$description ($file has PNG color type ${color_type:-unknown}; expected 0 or 4)"
+            ;;
+    esac
+}
+
 APP_NAME_FILE="BrowserKit/Sources/Shared/AppName.swift"
 PROJECT_FILE="firefox-ios/Client.xcodeproj/project.pbxproj"
 RELEASE_CONFIG="firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
 RELEASE_PLIST="firefox-ios/Client/FloorpReleaseInfo.plist"
 RELEASE_ENTITLEMENTS="firefox-ios/Client/Entitlements/FloorpReleaseApplication.entitlements"
+TERMS_LINK_FILE="firefox-ios/Client/Frontend/Browser/TermsOfUse/TermsOfUseStrings.swift"
+CREDENTIAL_STORYBOARD="firefox-ios/CredentialProvider/CredentialList.storyboard"
 
 echo "Checking Floorp product name..."
 if require_file "$APP_NAME_FILE"; then
-    if rg --quiet 'case[[:space:]]+shortName[[:space:]]*=[[:space:]]*"Floorp"' "$APP_NAME_FILE"; then
+    if search_regex_quiet 'case[[:space:]]+shortName[[:space:]]*=[[:space:]]*"Floorp"' "$APP_NAME_FILE"; then
         pass "AppName.shortName is Floorp"
     else
         fail "AppName.shortName must be exactly 'Floorp' in $APP_NAME_FILE"
     fi
 
-    if rg --quiet 'case[[:space:]]+shortName[[:space:]]*=[[:space:]]*"Firefox"' "$APP_NAME_FILE"; then
+    if search_regex_quiet 'case[[:space:]]+shortName[[:space:]]*=[[:space:]]*"Firefox"' "$APP_NAME_FILE"; then
         fail "AppName.shortName still identifies the installed app as Firefox"
     else
         pass "AppName.shortName no longer identifies the app as Firefox"
@@ -125,17 +287,43 @@ for file in "${LEGAL_FILES[@]}"; do
 done
 
 if $legal_files_available; then
-    if rg --quiet --fixed-strings -- "https://floorp.app/terms" "${LEGAL_FILES[@]}"; then
+    if search_fixed_quiet "https://floorp.app/terms" "${LEGAL_FILES[@]}"; then
         pass "Floorp Terms of Service URL is present in production UI code"
     else
         fail "Production UI code must reference https://floorp.app/terms"
     fi
 
-    if rg --quiet --fixed-strings -- "https://floorp.app/privacy" "${LEGAL_FILES[@]}"; then
+    if search_fixed_quiet "https://floorp.app/privacy" "${LEGAL_FILES[@]}"; then
         pass "Floorp Privacy Policy URL is present in production UI code"
     else
         fail "Production UI code must reference https://floorp.app/privacy"
     fi
+
+    require_fixed \
+        "$APP_NAME_FILE" \
+        "https://github.com/Floorp-Projects/floorp-ios#readme" \
+        "Settings Help uses the official Floorp iOS project hub"
+    require_fixed \
+        "$APP_NAME_FILE" \
+        "https://floorp.app/terms?utm_source=floorp-ios&utm_medium=in-product&utm_campaign=terms-of-use" \
+        "Terms Learn more uses the canonical Floorp legal document"
+    require_fixed \
+        "$TERMS_LINK_FILE" \
+        "return SupportUtils.URLForTermsOfUseLearnMore" \
+        "Terms Learn more is separate from general Settings Help"
+    require_fixed \
+        "$APP_NAME_FILE" \
+        "https://blog.floorp.app/en/categories/release/" \
+        "Floorp release notes use the current published index"
+    forbid_fixed_in_files \
+        "https://docs.floorp.app/docs/features/" \
+        "Floorp iOS Help does not use the desktop feature index" \
+        "$APP_NAME_FILE" \
+        "$TERMS_LINK_FILE"
+    forbid_fixed_in_files \
+        "https://blog.floorp.app/categories/release" \
+        "Floorp release notes do not use the removed unlocalized route" \
+        "$APP_NAME_FILE"
 
     forbid_fixed_in_files \
         "https://www.mozilla.org/about/legal/terms/firefox" \
@@ -192,6 +380,18 @@ require_fixed \
     "firefox-ios/firefox-ios-tests/Tests/FloorpCI.xctestplan" \
     "test_floorpSponsoredContentPolicyHidesPartnerAndSponsoredTiles()" \
     "Floorp CI runs the sponsored-content policy test"
+require_fixed \
+    "firefox-ios/firefox-ios-tests/Tests/FloorpCI.xctestplan" \
+    "testURLs_UseSeparateFloorpDestinationsForHelpAndTermsInformation()" \
+    "Floorp CI checks the iOS Help and Terms link boundary"
+require_fixed \
+    "firefox-ios/firefox-ios-tests/Tests/FloorpCI.xctestplan" \
+    "testShouldShowTermsOfUse_ReturnsTrue_WhenFloorpPolicyIsActiveAndNimbusIsDisabled()" \
+    "Floorp CI checks legal re-consent without Nimbus rollout"
+require_fixed \
+    "firefox-ios/firefox-ios-tests/Tests/FloorpCI.xctestplan" \
+    "testGivenTosDisabled_ThenContextIdIsSet()" \
+    "Floorp CI covers the non-Floorp telemetry initialization path"
 forbid_fixed_in_files \
     "SKAdNetworkItems" \
     "FloorpRelease contains no SKAdNetwork identifiers" \
@@ -208,13 +408,44 @@ require_fixed \
     "$RELEASE_CONFIG" \
     "MOZ_ALLOW_HOSTED_SUMMARIZER = NO" \
     "Floorp hosted summarizer remains disabled"
+require_fixed \
+    "$CREDENTIAL_STORYBOARD" \
+    "sync your passwords with Firefox Sync" \
+    "Credential Provider retains the Firefox Sync service name"
+require_fixed \
+    "$CREDENTIAL_STORYBOARD" \
+    "save them in Floorp or sync them with Firefox Sync" \
+    "Credential Provider attributes additional synced logins correctly"
+forbid_fixed_in_files \
+    "passwords you’ve already saved to Floorp" \
+    "Credential Provider does not claim synced passwords originated in Floorp" \
+    "$CREDENTIAL_STORYBOARD"
+forbid_fixed_in_files \
+    "save them to Floorp" \
+    "Credential Provider does not claim all additional logins must originate in Floorp" \
+    "$CREDENTIAL_STORYBOARD"
+forbid_fixed_in_files \
+    "sync with Floorp" \
+    "Credential Provider does not rename Firefox Sync as Floorp" \
+    "$CREDENTIAL_STORYBOARD"
+forbid_fixed_in_files \
+    "account Floorp" \
+    "Localized disconnect copy does not invent a Floorp account service" \
+    "firefox-ios/Shared/it.lproj/Localizable.strings"
 
 echo "Checking localized permission descriptions..."
-if rg --files firefox-ios/Client --glob '**/*.lproj/InfoPlist.strings' | rg --quiet '.'; then
-    if rg --quiet --ignore-case 'firefox' firefox-ios/Client --glob '**/*.lproj/InfoPlist.strings'; then
+info_plist_files="$(find firefox-ios/Client -type f -path '*.lproj/InfoPlist.strings' -print)"
+if [[ -n "$info_plist_files" ]]; then
+    info_plist_matches=""
+    while IFS= read -r file; do
+        if search_regex_ignore_case_quiet 'firefox' "$file"; then
+            info_plist_matches+="${file}"$'\n'
+        fi
+    done <<< "$info_plist_files"
+
+    if [[ -n "$info_plist_matches" ]]; then
         fail "Client InfoPlist permission/localized values still name the app Firefox"
-        rg --files-with-matches --ignore-case 'firefox' firefox-ios/Client \
-            --glob '**/*.lproj/InfoPlist.strings' >&2 || true
+        printf '%s' "$info_plist_matches" >&2
     else
         pass "Client InfoPlist localized values do not name the app Firefox"
     fi
@@ -223,10 +454,10 @@ else
 fi
 
 if require_file "$RELEASE_PLIST"; then
-    permission_pattern='<key>NS[A-Za-z]+UsageDescription</key>[[:space:]]*<string>[^<]*firefox[^<]*</string>'
-    if rg --quiet --ignore-case --multiline "$permission_pattern" "$RELEASE_PLIST"; then
+    permission_matches="$(find_permission_description_matches "$RELEASE_PLIST" || true)"
+    if [[ -n "$permission_matches" ]]; then
         fail "FloorpReleaseInfo.plist contains a Firefox permission description"
-        rg --line-number --ignore-case --multiline "$permission_pattern" "$RELEASE_PLIST" >&2 || true
+        printf '%s\n' "$permission_matches" >&2
     else
         pass "FloorpReleaseInfo.plist contains no Firefox permission description"
     fi
@@ -235,14 +466,14 @@ fi
 # Product names are not translated or transliterated. Keep this pattern scoped
 # to user-facing product values so Firefox Account, Sync, and Suggest remain
 # correctly attributed to Mozilla services.
-LEGACY_PRODUCT_NAME_PATTERN='(?:firefox|firefok[[:alpha:]]*|Фаерфокс|Файрфокс|Фајерфокс|ファイアフォックス|火狐|فایرفاکس|فايرفوكس|ෆයර්ෆොක්ස්|ഫയർ.?ഫോക്സ്|ফায়ারফক্স|ফায়ারফক্স|फायरफॉक्स|फ़ायरफ़ॉक्स|ਫਾਇਰਫਾਕਸ|ਫਾਇਰਫੌਕਸ|ಫೈರ್ಫಾಕ್ಸ್|ఫైర్ఫాక్స్|பயர்பாக்ஸ்|பயர்பாஃசு|ไฟร์ฟอกซ์|파이어[[:space:]]*폭스|ଫାୟାରଫକ୍ସ|ⴼⴰⵢⵔⴼⵓⴽⵙ)'
+LEGACY_PRODUCT_NAME_PATTERN='(firefox|firefok[[:alpha:]]*|Фаерфокс|Файрфокс|Фајерфокс|ファイアフォックス|火狐|فایرفاکس|فايرفوكس|ෆයර්ෆොක්ස්|ഫയർ.?ഫോക്സ്|ফায়ারফক্স|ফায়ারফক্স|फायरफॉक्स|फ़ायरफ़ॉक्स|ਫਾਇਰਫਾਕਸ|ਫਾਇਰਫੌਕਸ|ಫೈರ್ಫಾಕ್ಸ್|ఫైర్ఫాక్స్|பயர்பாக்ஸ்|பயர்பாஃசு|ไฟร์ฟอกซ์|파이어[[:space:]]*폭스|ଫାୟାରଫକ୍ସ|ⴼⴰⵢⵔⴼⵓⴽⵙ)'
 
-LEGACY_PRODUCT_VALUE_PATTERN='=\s*"[^"\n]*(?:'"$LEGACY_PRODUCT_NAME_PATTERN"')'
+LEGACY_PRODUCT_VALUE_PATTERN='=[[:space:]]*"[^"]*'"$LEGACY_PRODUCT_NAME_PATTERN"
 
 # Keep the guard itself honest: a quoting/escaping regression here would make
 # every localization check below pass without inspecting any real value.
 if printf '%s\n' '"Synthetic" = "Open Firefox";' \
-    | rg --quiet --ignore-case --pcre2 "$LEGACY_PRODUCT_VALUE_PATTERN"; then
+    | search_regex_ignore_case_quiet "$LEGACY_PRODUCT_VALUE_PATTERN"; then
     pass "Legacy product-name value matcher detects a synthetic Firefox value"
 else
     fail "Legacy product-name value matcher is not matching localization values"
@@ -253,9 +484,9 @@ check_no_legacy_product_value() {
     local description="$2"
     local matches
 
-    matches="$(rg --line-number --ignore-case --pcre2 \
+    matches="$(search_strings_regex_ignore_case_lines \
         "$LEGACY_PRODUCT_VALUE_PATTERN" \
-        "$search_path" --glob '**/*.strings' || true)"
+        "$search_path" || true)"
     if [[ -n "$matches" ]]; then
         fail "$description"
         printf '%s\n' "$matches" >&2
@@ -325,23 +556,35 @@ PRODUCT_STRING_KEYS=(
 )
 
 product_string_failures=""
-product_key_pattern='^"\QAbout\E"\s*=\s*"[^"\n]*(?:'"$LEGACY_PRODUCT_NAME_PATTERN"')'
-if printf '%s\n' '"About" = "About Firefox";' \
-    | rg --quiet --ignore-case --pcre2 "$product_key_pattern"; then
+line_has_legacy_product_for_key() {
+    local line="$1"
+    local key="$2"
+
+    [[ "$line" == "\"$key\""* ]] \
+        && printf '%s\n' "$line" \
+            | search_regex_ignore_case_quiet "$LEGACY_PRODUCT_VALUE_PATTERN"
+}
+
+if line_has_legacy_product_for_key '"About" = "About Firefox";' "About"; then
     pass "Product-key matcher detects a synthetic Firefox value"
 else
     fail "Product-key matcher is not matching allowlisted localization values"
 fi
 
-for key in "${PRODUCT_STRING_KEYS[@]}"; do
-    product_key_pattern='^"\Q'"$key"'\E"\s*=\s*"[^"\n]*(?:'"$LEGACY_PRODUCT_NAME_PATTERN"')'
-    matches="$(rg --line-number --ignore-case --pcre2 \
-        "$product_key_pattern" \
-        firefox-ios/Shared --glob '**/*.strings' || true)"
-    if [[ -n "$matches" ]]; then
-        product_string_failures+="${matches}"$'\n'
-    fi
-done
+product_value_candidates="$(search_strings_regex_ignore_case_lines \
+    "$LEGACY_PRODUCT_VALUE_PATTERN" \
+    firefox-ios/Shared || true)"
+while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    line_content="${candidate#*:}"
+    line_content="${line_content#*:}"
+    for key in "${PRODUCT_STRING_KEYS[@]}"; do
+        if [[ "$line_content" == "\"$key\""* ]]; then
+            product_string_failures+="${candidate}"$'\n'
+            break
+        fi
+    done
+done <<< "$product_value_candidates"
 
 if [[ -n "$product_string_failures" ]]; then
     fail "Floorp product localization values contain a translated Firefox name"
@@ -379,16 +622,13 @@ RELEASE_IDENTITY_FILES=(
     "$RELEASE_PLIST"
     "$RELEASE_ENTITLEMENTS"
 )
-if rg --quiet --ignore-case \
-    --regexp 'org\.mozilla\.' \
-    --regexp 'group\.org\.mozilla' \
-    --regexp '43AQ936H96' \
+release_identity_pattern='(org\.mozilla\.|group\.org\.mozilla|43AQ936H96)'
+if search_regex_ignore_case_quiet \
+    "$release_identity_pattern" \
     "${RELEASE_IDENTITY_FILES[@]}"; then
     fail "FloorpRelease contains a concrete Mozilla bundle, App Group, or Team identifier"
-    rg --line-number --ignore-case \
-        --regexp 'org\.mozilla\.' \
-        --regexp 'group\.org\.mozilla' \
-        --regexp '43AQ936H96' \
+    search_regex_ignore_case_lines \
+        "$release_identity_pattern" \
         "${RELEASE_IDENTITY_FILES[@]}" >&2 || true
 else
     pass "FloorpRelease contains no concrete Mozilla release identifier"
@@ -400,7 +640,7 @@ FLOORP_WORDMARK_HASH="3f0bbca9e6418b692521c7ef550e37271364c7acb84e8c697376b3e261
 
 if require_file "$PROJECT_FILE"; then
     if sed -n '/57E51B7531BD23BED254B3D5 \/\* FloorpRelease \*\//,/^[[:space:]]*};/p' "$PROJECT_FILE" \
-        | rg --quiet 'ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;'; then
+        | search_regex_quiet 'ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;'; then
         pass "FloorpRelease selects the canonical stable AppIcon"
     else
         fail "FloorpRelease must select the canonical stable AppIcon"
@@ -438,8 +678,11 @@ require_hash \
     "Primary dark app icon uses the approved Floorp artwork"
 require_hash \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore-tinted.png" \
-    "1dbd6a739340ae92b5d51820d99070ea4f47778ff7186894e3646a25b744b11e" \
+    "f3a3166d1781e877fd7e1522530e40655d6507807117be011625a325a38b2ef6" \
     "Primary tinted app icon uses the approved Floorp artwork"
+require_grayscale_png \
+    "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore-tinted.png" \
+    "Primary tinted app icon uses a grayscale PNG color model"
 require_hash \
     "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/icon.json" \
     "048fb4219d24727a2fa77bc0874e710226eba344e166cae9df7765e61066b778" \

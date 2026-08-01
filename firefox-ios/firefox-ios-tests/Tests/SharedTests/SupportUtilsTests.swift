@@ -14,9 +14,20 @@ class SupportUtilsTests: XCTestCase {
         XCTAssertEqual(FloorpBrand.fullName, "Ablaze Floorp")
         XCTAssertEqual(FloorpBrand.vendorName, "Ablaze")
         XCTAssertEqual(FloorpBrand.projectName, "Floorp Projects")
-        XCTAssertEqual(SupportUtils.URLForGetHelp?.absoluteString, "https://docs.floorp.app/docs/features/")
+        XCTAssertEqual(
+            SupportUtils.URLForGetHelp?.absoluteString,
+            "https://github.com/Floorp-Projects/floorp-ios#readme"
+        )
         XCTAssertEqual(SupportUtils.URLForTermsOfUse?.absoluteString, "https://floorp.app/terms")
+        XCTAssertEqual(
+            SupportUtils.URLForTermsOfUseLearnMore?.absoluteString,
+            "https://floorp.app/terms?utm_source=floorp-ios&utm_medium=in-product&utm_campaign=terms-of-use"
+        )
         XCTAssertEqual(SupportUtils.URLForPrivacyNotice?.absoluteString, "https://floorp.app/privacy")
+        XCTAssertEqual(
+            FloorpBrand.releaseNotesURL?.absoluteString,
+            "https://blog.floorp.app/en/categories/release/"
+        )
         XCTAssertNil(SupportUtils.URLForUpdatedPrivacyNotice)
         XCTAssertNil(SupportUtils.URLForUpdatedPrivacyNoticeDiff)
     }

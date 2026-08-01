@@ -9,10 +9,10 @@ import Shared
 
 @MainActor
 final class TermsOfUseCoordinatorTests: XCTestCase {
-    private var profile: MockProfile!
-    private var router: MockRouter!
-    private var notificationCenter: MockNotificationCenter!
-    private var coordinator: TermsOfUseCoordinator!
+    private var profile = MockProfile()
+    private var router = MockRouter(navigationController: MockNavigationController())
+    private var notificationCenter = MockNotificationCenter()
+    private lazy var coordinator = makeCoordinator()
     private let windowUUID = WindowUUID.XCTestDefaultUUID
 
     private enum TimeConstants {
@@ -41,10 +41,6 @@ final class TermsOfUseCoordinatorTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        coordinator = nil
-        router = nil
-        notificationCenter = nil
-        profile = nil
         // Reset timeout override to ensure clean state
         UserDefaults.standard.removeObject(forKey: PrefsKeys.FasterTermsOfUseTimeoutOverride)
         DependencyHelperMock().reset()
@@ -59,18 +55,34 @@ final class TermsOfUseCoordinatorTests: XCTestCase {
         XCTAssertFalse(result)
     }
 
-    func testShouldShowTermsOfUse_ReturnsFalse_WhenTermsOfServiceAccepted() {
-        // Test that legacy TermsOfServiceAccepted is migrated and recognized
+    func testShouldShowTermsOfUse_ReturnsTrue_WhenInheritedTermsOfServiceWasAccepted() {
         profile.prefs.setInt(1, forKey: PrefsKeys.TermsOfServiceAccepted)
 
-        // Trigger migration explicitly (as it would happen in AppLaunchUtil)
-        TermsOfUseMigration(prefs: profile.prefs).migrateTermsOfService()
+        TermsOfUseMigration(prefs: profile.prefs).migrateToFloorpTermsIfNeeded()
+
+        let result = coordinator.shouldShowTermsOfUse(context: .appLaunch)
+
+        XCTAssertTrue(result)
+        XCTAssertNil(profile.prefs.boolForKey(PrefsKeys.TermsOfUseAccepted))
+    }
+
+    func testShouldShowTermsOfUse_ReturnsTrue_WhenFloorpPolicyIsActiveAndNimbusIsDisabled() {
+        setupNimbusTouFeatureForTesting(isEnabled: false)
+        profile.prefs.setInt(1, forKey: PrefsKeys.TermsOfServiceAccepted)
+        TermsOfUseMigration(prefs: profile.prefs).migrateToFloorpTermsIfNeeded()
+
+        let result = coordinator.shouldShowTermsOfUse(context: .appLaunch)
+
+        XCTAssertTrue(result)
+        XCTAssertNil(profile.prefs.boolForKey(PrefsKeys.TermsOfUseAccepted))
+    }
+
+    func testShouldShowTermsOfUse_ReturnsFalse_WhenNimbusAndFloorpPolicyAreDisabled() {
+        setupNimbusTouFeatureForTesting(isEnabled: false)
 
         let result = coordinator.shouldShowTermsOfUse(context: .appLaunch)
 
         XCTAssertFalse(result)
-        // Verify migration happened - TermsOfUseAccepted should be set
-        XCTAssertTrue(profile.prefs.boolForKey(PrefsKeys.TermsOfUseAccepted) ?? false)
     }
 
     func testShouldShowTermsOfUse_ReturnsFalse_WhenTimeoutPeriodNotElapsed() {
@@ -150,6 +162,17 @@ final class TermsOfUseCoordinatorTests: XCTestCase {
         UserDefaults.standard.set(
             TermsOfUseTimeoutOption.normal.rawValue,
             forKey: PrefsKeys.FasterTermsOfUseTimeoutOverride
+        )
+    }
+
+    private func makeCoordinator() -> TermsOfUseCoordinator {
+        TermsOfUseCoordinator(
+            windowUUID: windowUUID,
+            router: router,
+            themeManager: AppContainer.shared.resolve(),
+            notificationCenter: notificationCenter,
+            prefs: profile.prefs,
+            experimentsTracking: ToUExperimentsTracking(prefs: profile.prefs)
         )
     }
 }

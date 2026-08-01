@@ -18,8 +18,14 @@ class NotificationSurfaceManager: NotificationSurfaceDelegate, @unchecked Sendab
     struct Constant {
         static let notificationBaseId = "\(AppInfo.bundleIdentifier).notification"
         static let notificationCategoryId = "\(AppInfo.bundleIdentifier).notification.category"
+        static let legacyNotificationCategoryId = "org.mozilla.ios.notification.category"
         static let messageDelay: CGFloat = 3 // seconds
         static let messageIdKey = "messageId"
+    }
+
+    enum ResponseAction: Equatable {
+        case tap
+        case dismiss
     }
 
     // MARK: - Properties
@@ -34,8 +40,32 @@ class NotificationSurfaceManager: NotificationSurfaceDelegate, @unchecked Sendab
     }
 
     static var notificationCategory: UNNotificationCategory {
+        return notificationCategory(identifier: Constant.notificationCategoryId)
+    }
+
+    static var notificationCategories: Set<UNNotificationCategory> {
+        return [
+            notificationCategory,
+            notificationCategory(identifier: Constant.legacyNotificationCategoryId)
+        ]
+    }
+
+    static func responseAction(
+        forCategoryIdentifier categoryIdentifier: String,
+        actionIdentifier: String
+    ) -> ResponseAction? {
+        let supportedCategoryIdentifiers = [
+            Constant.notificationCategoryId,
+            Constant.legacyNotificationCategoryId
+        ]
+        guard supportedCategoryIdentifiers.contains(categoryIdentifier) else { return nil }
+
+        return actionIdentifier == UNNotificationDismissActionIdentifier ? .dismiss : .tap
+    }
+
+    private static func notificationCategory(identifier: String) -> UNNotificationCategory {
         return UNNotificationCategory(
-            identifier: Constant.notificationCategoryId,
+            identifier: identifier,
             actions: [],
             intentIdentifiers: [],
             options: .customDismissAction)

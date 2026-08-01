@@ -32,9 +32,12 @@ final class AppLaunchUtil: Sendable {
 
     @MainActor
     func setUpPreLaunchDependencies() {
-        // Existing TestFlight installs may have accepted the inherited terms
-        // before Floorp's policy was applied. Reset all related preferences on
-        // every launch, before any service reads their default-true values.
+        // Mozilla acceptance must not be treated as consent to Floorp's legal
+        // documents. This versioned migration runs before any acceptance check.
+        TermsOfUseMigration(prefs: profile.prefs).migrateToFloorpTermsIfNeeded()
+
+        // Persist Floorp's data-collection policy on every launch before any
+        // service reads the inherited default-true preferences.
         termsOfServiceManager.enforceFloorpDataCollectionPreferences()
         enforceFloorpSponsoredContentPolicy()
 
@@ -89,11 +92,6 @@ final class AppLaunchUtil: Sendable {
 
         // Initialize app services ( including NSS ). Must be called before any other calls to rust components.
         MozillaAppServices.initialize()
-
-        /// Migrate TermsOfService prefs to TermsOfUse prefs
-        /// before Nimbus is initialized (should be available for experiments)
-        /// and backfill accept date/version if needed - after telemetry set up
-        TermsOfUseMigration(prefs: profile.prefs).migrateTermsOfService()
 
         // Enable cache_not_ready_for_feature metric (disabled by default in application-services)
         Glean.shared.applyServerKnobsConfig(

@@ -117,6 +117,20 @@
     },
     {
       "selectedTests" : [
+        "AutopushTests\/testFloorpBundleIdentifierHasNoMozillaPushConfigurationLabel()",
+        "AutopushTests\/testFloorpPushPolicyStopsInitializationBeforeBundleIdentifierMapping()",
+        "AutopushTests\/testPushConfigurationLabelMapsSupportedApplicationBundleIdentifiers()",
+        "AutopushTests\/testPushConfigurationLabelMapsSupportedExtensionBundleIdentifiers()",
+        "AutopushTests\/testPushConfigurationLabelRejectsPublicURLSchemes()"
+      ],
+      "target" : {
+        "containerPath" : "container:Client.xcodeproj",
+        "identifier" : "2FA436041ABB83B4008031D1",
+        "name" : "AccountTests"
+      }
+    },
+    {
+      "selectedTests" : [
         "FloorpNoteEditorViewControllerTests\/testExplicitSaveDoesNotRewriteUntouchedExistingNote()",
         "FloorpNoteEditorViewControllerTests\/testExplicitSavePersistsUntouchedNewDraftOnlyOnce()",
         "FloorpNoteEditorViewControllerTests\/testFailedExplicitSaveOfUntouchedDraftCanRetry()",
@@ -127,6 +141,9 @@
         "FloorpNotePersistenceSessionTests\/testNewDraftDoesNotPersistBeforeFirstSave()",
         "AppLaunchUtilTests\/testFloorpDataCollectionPolicyPersistsAllDisabledPreferences()",
         "AppLaunchUtilTests\/testGivenFloorpSponsoredContentDisabled_WhenTosNotAccepted_ThenContextIdIsNotSet()",
+        "AppLaunchUtilTests\/testGivenTelemetryDisabledAndTosDisabled_ThenContextIdIsNotSet()",
+        "AppLaunchUtilTests\/testGivenTosDisabled_ThenContextIdIsSet()",
+        "AppLaunchUtilTests\/testPreLaunchMigrationMakesInheritedAcceptanceEligibleForFloorpTerms()",
         "FloorpNotesStoreTests\/testCRUDPersistsAcrossStoreInstancesIncludingEmptyArchive()",
         "FloorpNotesStoreTests\/testConcurrentUpdatesToDifferentNotesDoNotOverwriteEachOther()",
         "FloorpNotesStoreTests\/testCorruptArchiveIsPreservedAndRequiresExplicitReset()",
@@ -145,11 +162,30 @@
         "FloorpPanelNotesMigrationTests\/testReorderPreservesPanelsMissingFromOlderOrderList()",
         "NimbusOnboardingFeatureLayerTests\/testLayer_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
         "NimbusOnboardingKitFeatureLayerTests\/testGetOnboardingModel_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
+        "NotificationSurfaceManagerTests\/testDidDismissNotification()",
+        "NotificationSurfaceManagerTests\/testLegacyNotificationCategoryHandlesTapAndDismissResponses()",
+        "NotificationSurfaceManagerTests\/testNotificationCategoriesIncludeCurrentAndLegacyIdentifiers()",
+        "NotificationSurfaceManagerTests\/testUnknownNotificationCategoryIsNotHandledAsNotificationSurface()",
+        "RemoteTabsPanelTests\/testNoTabsEmptyStateUsesCrossClientSyncCopy()",
         "SummarizerNimbusUtilsTests\/test_isAppAuthAttestEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
         "SummarizerNimbusUtilsTests\/test_isAppleSummarizerEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
         "SummarizerNimbusUtilsTests\/test_isHostedSummarizerEnabled_whenDisallowedByAppPolicy()",
+        "TermsOfUseCoordinatorTests\/testShouldShowTermsOfUse_ReturnsFalse_WhenNimbusAndFloorpPolicyAreDisabled()",
+        "TermsOfUseCoordinatorTests\/testShouldShowTermsOfUse_ReturnsTrue_WhenFloorpPolicyIsActiveAndNimbusIsDisabled()",
+        "TermsOfUseCoordinatorTests\/testShouldShowTermsOfUse_ReturnsTrue_WhenInheritedTermsOfServiceWasAccepted()",
         "TermsOfUseLinkTypeTests\/testLinkType_ForURL_ReturnsCorrectType()",
+        "TermsOfUseLinkTypeTests\/testURLs_UseSeparateFloorpDestinationsForHelpAndTermsInformation()",
+        "TermsOfUseMigrationTests\/testMigrationClearsInheritedMozillaAcceptanceAndPromptState()",
+        "TermsOfUseMigrationTests\/testMigrationActivatesCurrentFloorpTermsPolicy()",
+        "TermsOfUseMigrationTests\/testMigrationLeavesAcceptanceNilSoFloorpTermsAreEligibleForPresentation()",
+        "TermsOfUseMigrationTests\/testMigrationOnFreshInstallLeavesFloorpPromptStateUnset()",
+        "TermsOfUseMigrationTests\/testRepeatedMigrationPreservesFloorpAcceptance()",
+        "TermsOfUseMigrationTests\/testRepeatedMigrationPreservesFloorpPromptStateBeforeAcceptance()",
         "TopSitesManagerTests\/test_floorpSponsoredContentPolicyHidesPartnerAndSponsoredTiles()",
+        "UserActivityRouteTests\/testCurrentAndLegacySiriActivitiesShareDuplicateSuppression()",
+        "UserActivityRouteTests\/testLegacySiriShortcutMatchesExistingShortcutLookup()",
+        "UserActivityRouteTests\/testLegacySiriShortcutUserActivity()",
+        "UserActivityRouteTests\/testSiriShortcutUserActivity()",
         "VersionSettingTests\/testCopyAppVersion()"
       ],
       "target" : {

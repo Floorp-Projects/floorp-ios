@@ -8,10 +8,10 @@ import UIKit
 import ComponentLibrary
 
 class TermsOfServiceViewController: UIViewController, Themeable {
-	enum LinkType: Int {
-		case termsOfService
-		case privacyNotice
-	}
+    enum LinkType: Int {
+        case termsOfService
+        case privacyNotice
+    }
 
     struct UX {
         static let horizontalMargin: CGFloat = 24
@@ -130,7 +130,6 @@ class TermsOfServiceViewController: UIViewController, Themeable {
                                linkTitle: privacyNoticeLink,
                                linkType: .privacyNotice,
                                and: AccessibilityIdentifiers.TermsOfService.privacyNoticeAgreement)
-
     }
 
     private func setupLayout() {

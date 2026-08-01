@@ -91,6 +91,18 @@ class TelemetryWrapper: TelemetryWrapperProtocol,
     func setup(profile: Profile) {
         // Floorp hook: Check flag set by FloorpBootstrapper
         if FloorpFlags.isTelemetryDisabled { return }
+
+        migratePathComponentInDocumentsDirectory("MozTelemetry-Default-core", to: .cachesDirectory)
+        migratePathComponentInDocumentsDirectory("MozTelemetry-Default-mobile-event", to: .cachesDirectory)
+        migratePathComponentInDocumentsDirectory(
+            "eventArray-MozTelemetry-Default-mobile-event.json",
+            to: .cachesDirectory
+        )
+
+        let sendUsageData = profile.prefs.boolForKey(AppConstants.prefSendUsageData) ?? true
+
+        // Initialize Glean
+        initGlean(profile, sendUsageData: sendUsageData)
     }
 
     @MainActor

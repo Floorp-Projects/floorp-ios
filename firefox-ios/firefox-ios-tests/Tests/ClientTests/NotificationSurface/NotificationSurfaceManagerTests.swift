@@ -3,24 +3,19 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import XCTest
+import UserNotifications
 @testable import Client
 
 @MainActor
 final class NotificationSurfaceManagerTests: XCTestCase {
-    private var messageManager: MockGleanPlumbMessageManagerProtocol!
-    private var notificationManager: MockNotificationManager!
+    private var messageManager = MockGleanPlumbMessageManagerProtocol()
+    private var notificationManager = MockNotificationManager()
 
     override func setUp() async throws {
         try await super.setUp()
         DependencyHelperMock().bootstrapDependencies()
         notificationManager = MockNotificationManager()
         messageManager = MockGleanPlumbMessageManagerProtocol()
-    }
-
-    override func tearDown() async throws {
-        messageManager = nil
-        notificationManager = nil
-        try await super.tearDown()
     }
 
     func testShouldShowSurface_noMessage() {
@@ -97,6 +92,57 @@ final class NotificationSurfaceManagerTests: XCTestCase {
         subject.didTapNotification("test-notification")
 
         XCTAssertEqual(messageManager.onMessagePressedCalled, 1)
+    }
+
+    func testDidDismissNotification() {
+        let subject = createSubject()
+        messageManager.message = createMessage()
+
+        subject.didDismissNotification("test-notification")
+
+        XCTAssertEqual(messageManager.onMessageDismissedCalled, 1)
+    }
+
+    func testNotificationCategoriesIncludeCurrentAndLegacyIdentifiers() {
+        let categories = NotificationSurfaceManager.notificationCategories
+        let identifiers = Set(categories.map(\.identifier))
+
+        XCTAssertEqual(
+            identifiers,
+            [
+                NotificationSurfaceManager.Constant.notificationCategoryId,
+                NotificationSurfaceManager.Constant.legacyNotificationCategoryId
+            ]
+        )
+        XCTAssertTrue(categories.allSatisfy { $0.options.contains(.customDismissAction) })
+    }
+
+    func testLegacyNotificationCategoryHandlesTapAndDismissResponses() {
+        let legacyCategory = NotificationSurfaceManager.Constant.legacyNotificationCategoryId
+
+        XCTAssertEqual(
+            NotificationSurfaceManager.responseAction(
+                forCategoryIdentifier: legacyCategory,
+                actionIdentifier: UNNotificationDefaultActionIdentifier
+            ),
+            .tap
+        )
+        XCTAssertEqual(
+            NotificationSurfaceManager.responseAction(
+                forCategoryIdentifier: legacyCategory,
+                actionIdentifier: UNNotificationDismissActionIdentifier
+            ),
+            .dismiss
+        )
+    }
+
+    func testUnknownNotificationCategoryIsNotHandledAsNotificationSurface() {
+        XCTAssertNil(
+            NotificationSurfaceManager.responseAction(
+                forCategoryIdentifier: "unsupported.notification.category",
+                actionIdentifier: UNNotificationDefaultActionIdentifier
+            )
+        )
     }
 
     // MARK: Helpers

@@ -8,6 +8,8 @@ import Intents
 import IntentsUI
 
 class SiriShortcuts {
+    static let legacyOpenURLActivityIdentifier = "org.mozilla.ios.Firefox.newTab"
+
     enum activityType {
         case openURL
 
@@ -15,6 +17,13 @@ class SiriShortcuts {
             switch self {
             case .openURL:
                 return "\(AppInfo.bundleIdentifier).newTab"
+            }
+        }
+
+        func matches(_ identifier: String) -> Bool {
+            switch self {
+            case .openURL:
+                return identifier == rawValue || identifier == SiriShortcuts.legacyOpenURLActivityIdentifier
             }
         }
     }
@@ -60,7 +69,8 @@ class SiriShortcuts {
         do {
             let voiceShortcuts = try await INVoiceShortcutCenter.shared.allVoiceShortcuts()
             let foundShortcut = voiceShortcuts.first(where: { (attempt) in
-                attempt.shortcut.userActivity?.activityType == activityType.rawValue
+                guard let identifier = attempt.shortcut.userActivity?.activityType else { return false }
+                return activityType.matches(identifier)
             })
 
             if let foundShortcut = foundShortcut {
