@@ -1,0 +1,5 @@
+/* Translator note stays exactly where it is. */
+"Welcome.Title" = "Welcome to Firefox";
+"Protected.Sync" = "Firefox Sync works with Firefox.";
+"Escaped\"Key" = "Firefox says: \"hello\".
+Second line.";

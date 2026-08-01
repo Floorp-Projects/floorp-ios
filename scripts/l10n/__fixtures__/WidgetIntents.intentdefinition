@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>INIntentDescription</key>
+    <string>Open Firefox from the widget</string>
+    <key>INIntentDescriptionID</key>
+    <string>ctDNmu</string>
+    <key>Unrelated</key>
+    <string>Keep this byte-for-byte</string>
+</dict>
+</plist>

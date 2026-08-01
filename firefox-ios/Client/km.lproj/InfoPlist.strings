@@ -8,22 +8,22 @@
 "New Tab" = "ផ្ទាំងថ្មី";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Firefox អាចប្រើប្រាស់កាមេរ៉ារបស់អ្នក ដើម្បីស្គែនកូដឃ្យូអ៝ ឬក៏ថតរូបនិងវីដេអូ។";
+"NSCameraUsageDescription" = "Floorp អាចប្រើប្រាស់កាមេរ៉ារបស់អ្នក ដើម្បីស្គែនកូដឃ្យូអ៝ ឬក៏ថតរូបនិងវីដេអូ។";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "Firefox តម្រូវឱ្យមាន Face ID ដើម្បីអាក់សេសពាក្យសម្ងាត់ និងវិធីបង់ប្រាក់ដែលអ្នកបានរក្សាទុក។";
+"NSFaceIDUsageDescription" = "Floorp តម្រូវឱ្យមាន Face ID ដើម្បីអាក់សេសពាក្យសម្ងាត់ និងវិធីបង់ប្រាក់ដែលអ្នកបានរក្សាទុក។";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "វេបសាយដែលអ្នកទស្សនាប្រហែលជាស្នើសុំទីតាំងរបស់អ្នក។";
 
 /* Privacy - Microphone Usage Description */
-"NSMicrophoneUsageDescription" = "Firefox ប្រើប្រាស់ម៉ាយក្រូផូនរបស់អ្នក ដើម្បីថតនិងអាប់ឡូដនូវអូឌីយោ។";
+"NSMicrophoneUsageDescription" = "Floorp ប្រើប្រាស់ម៉ាយក្រូផូនរបស់អ្នក ដើម្បីថតនិងអាប់ឡូដនូវអូឌីយោ។";
 
 /* Privacy - Photo Library Additions Usage Description */
 "NSPhotoLibraryAddUsageDescription" = "វាអនុញ្ញាតឱ្យអ្នករក្សាទុករូបថតបាន។";
 
 /* Privacy - Speech Recognition Usage Description */
-"NSSpeechRecognitionUsageDescription" = "Firefox ប្រើ​ការ​សម្គាល់​សំឡេង ដើម្បី​បម្លែង​សំឡេង​របស់​អ្នក​ទៅ​ជា​អត្ថបទ ​សម្រាប់​ការ​ស្វែងរក​ដោយ​សំឡេង។";
+"NSSpeechRecognitionUsageDescription" = "Floorp ប្រើ​ការ​សម្គាល់​សំឡេង ដើម្បី​បម្លែង​សំឡេង​របស់​អ្នក​ទៅ​ជា​អត្ថបទ ​សម្រាប់​ការ​ស្វែងរក​ដោយ​សំឡេង។";
 
 /* (No Comment) */
 "Scan QR Code" = "ស្គែនឃ្យូអ៝កូដ";

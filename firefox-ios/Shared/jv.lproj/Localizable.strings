@@ -224,7 +224,7 @@
 "ErrorPages.AdvancedWarning2.Text" = "Mungkin ana ralat konfigurasi utawa rusak déning panyerang. Bacutaké yèn sampéyan nrima risikoné.";
 
 /* Warning text on the certificate error page. %@ is the domain of the website. */
-"ErrorPages.CertWarning.Description" = "Wong sing duwèni %@ bar ngatur situsé kang ora bener. Kanggo ngamanaké informasi sampéyan bèn ora dicolong, Firefox medhot konèksi menyang situs iki.";
+"ErrorPages.CertWarning.Description" = "Wong sing duwèni %@ bar ngatur situsé kang ora bener. Kanggo ngamanaké informasi sampéyan bèn ora dicolong, Floorp medhot konèksi menyang situs iki.";
 
 /* Title on the certificate error page */
 "ErrorPages.CertWarning.Title" = "Sambungan Iki ora Dipercaya";
@@ -245,7 +245,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Tepas Firefox";
+"Firefox.HomePage.Title" = "Tepas Floorp";
 
 /* Accessibility Label for the tab toolbar Forward button */
 "Forward" = "Bacutaké";
@@ -425,7 +425,7 @@
 "LoginsList.Title" = "LOG MLEBU KASIMPEN";
 
 /* Restore Tabs Prompt Description */
-"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Firefox kayané bar mandheg. Apa sampéyan arep mbalèni ngemot tab sampéyan?";
+"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Floorp kayané bar mandheg. Apa sampéyan arep mbalèni ngemot tab sampéyan?";
 
 /* Title for the button that marks a reading list item as read */
 "Mark as Read" = "Tengeri minangka Wis Diwaca";
@@ -506,7 +506,7 @@
 "Okay" = "Oké";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "Dhuh! Firefoxé mogok";
+"Oops! Firefox crashed" = "Dhuh! Floorpé mogok";
 
 /* See http://mzl.la/1G7uHo7 */
 "Open Settings" = "Bukak Setélan";
@@ -680,7 +680,7 @@
 "Settings.HomePage.SectionName" = "Kaca Utama";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Firefox Home";
+"Settings.NewTab.Option.FirefoxHome" = "Floorp Home";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "Kaca Utama";
@@ -695,7 +695,7 @@
 "Settings.NewTab.TopSectionName" = "Tuduhaké";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "Nalika Mbukak Firefox";
+"Settings.OfferClipboardBar.Status" = "Nalika Mbukak Floorp";
 
 /* Label used as an item in Settings. When touched it will open a dialog to configure the open with (mail links) behavior. */
 "Settings.OpenWith.SectionName" = "Aplikasi Mail";
@@ -734,13 +734,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "Amot ing Latar";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Ngamot ing Firefox";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Ngamot ing Floorp";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Bukak ing Firefox";
+"ShareExtension.OpenInFirefoxAction.Title" = "Bukak ing Floorp";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Golèk ing Firefox";
+"ShareExtension.SeachInFirefoxAction.Title" = "Golèk ing Floorp";
 
 /* Accessibility Label for the tab toolbar Stop button */
 "Stop" = "Lèrèn";

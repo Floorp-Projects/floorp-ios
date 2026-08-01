@@ -1,0 +1,3 @@
+# Legacy plist syntax
+NSCameraUsageDescription = "Firefox uses the camera.";
+BareKey="firefox private mode";

@@ -8,10 +8,10 @@
 "New Tab" = "Pestanya nova";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "El Firefox pot usar la càmera per a escanejar codis QR o fer fotos i vídeos.";
+"NSCameraUsageDescription" = "El Floorp pot usar la càmera per a escanejar codis QR o fer fotos i vídeos.";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "El Firefox necessita el Face ID per accedir a les contrasenyes i formes de pagament que heu desat.";
+"NSFaceIDUsageDescription" = "El Floorp necessita el Face ID per accedir a les contrasenyes i formes de pagament que heu desat.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "Els llocs web que visiteu poden sol·licitar la vostra ubicació.";

@@ -1,0 +1,3 @@
+# Legacy plist syntax
+NSCameraUsageDescription = "Floorp uses the camera.";
+BareKey="Floorp private mode";

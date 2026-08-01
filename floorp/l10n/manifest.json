@@ -1,0 +1,330 @@
+{
+  "schemaVersion": 1,
+  "productName": "Floorp",
+  "generatedFrom": {
+    "base": "b1f6991d551fe072abd975fed9330b205a317802",
+    "reviewed": "rebranding-reviewed-2026-08-01"
+  },
+  "summary": {
+    "paths": 794,
+    "stringsFiles": 793,
+    "intentFiles": 1,
+    "semanticValues": 3982,
+    "rawKeyForms": 56,
+    "normalizedKeys": 54,
+    "brandTokens": 21,
+    "exactOverrides": 19
+  },
+  "protectedTerms": [
+    "Firefox Accounts",
+    "Firefox Account",
+    "Firefox Suggest",
+    "Firefox Relay",
+    "Firefox Focus",
+    "Firefox Klar",
+    "Firefox Sync",
+    "Mozilla Autopush",
+    "Mozilla Account",
+    "Remote Settings",
+    "Mozilla",
+    "Pocket",
+    "Nimbus"
+  ],
+  "forbiddenOutputTerms": [
+    "Floorp Accounts",
+    "Floorp Account",
+    "Floorp Suggest",
+    "Floorp Relay",
+    "Floorp Focus",
+    "Floorp Klar",
+    "Floorp Sync"
+  ],
+  "brandTokens": [
+    "பயர்பாக்சுக்கு",
+    "பயர்பாக்சில்",
+    "பயர்பாக்சைத்",
+    "Firefoksach",
+    "பயர்பாஃசில்",
+    "பயர்பாஃசைத்",
+    "Firefoksie",
+    "பயர்பாக்சு",
+    "பயர்பாக்ஸ்",
+    "ಫೈರ್ಫಾಕ್ಸ್",
+    "ഫയർഫോക്സു്",
+    "ෆයර්ෆොක්ස්",
+    "Firefoksa",
+    "ଫାୟାରଫକ୍ସ",
+    "பயர்பாஃசு",
+    "ഫയർഫോക്സ്",
+    "فایرفاکس",
+    "ⴼⴰⵢⵔⴼⵓⴽⵙ",
+    "firefox",
+    "Firefox",
+    "파이어 폭스"
+  ],
+  "additionalBrandTokens": [
+    "فايرفوكس"
+  ],
+  "pathRules": [
+    {
+      "id": "client-info-plist",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Client/[A-Za-z0-9-]+\\.lproj/InfoPlist\\.strings$",
+      "keys": [
+        "NSCameraUsageDescription",
+        "NSFaceIDUsageDescription",
+        "NSMicrophoneUsageDescription",
+        "NSSpeechRecognitionUsageDescription"
+      ]
+    },
+    {
+      "id": "action-extension-info-plist",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Extensions/ActionExtension/[A-Za-z0-9-]+\\.lproj/InfoPlist\\.strings$",
+      "keys": [
+        "CFBundleDisplayName"
+      ]
+    },
+    {
+      "id": "shared-default-browser",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Shared/[A-Za-z0-9-]+\\.lproj/Default Browser\\.strings$",
+      "keys": [
+        "DefaultBrowserCard.BetterInternet.Description.v108",
+        "DefaultBrowserCard.BetterInternet.Title.v108",
+        "DefaultBrowserCard.Description",
+        "DefaultBrowserCard.NextLevel.Description.v108",
+        "DefaultBrowserCard.PeaceOfMind.Description.v108",
+        "DefaultBrowserCard.PeaceOfMind.Title.v108",
+        "DefaultBrowserOnboarding.Description3"
+      ]
+    },
+    {
+      "id": "shared-intro",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Shared/[A-Za-z0-9-]+\\.lproj/Intro\\.strings$",
+      "keys": [
+        "Intro.Slides.Welcome.Title.v2"
+      ]
+    },
+    {
+      "id": "shared-localizable",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Shared/[A-Za-z0-9-]+\\.lproj/Localizable\\.strings$",
+      "keys": [
+        "About",
+        "CoverSheet.v24.ETP.Description",
+        "ErrorPages.CertWarning.Description",
+        "Firefox.HomePage.Title",
+        "FxHomepage.Wallpaper.ButtonLabel.v99",
+        "Logins.PasscodeRequirement.Warning",
+        "Logins.WelcomeView.Title2",
+        "Looks like Firefox crashed previously. Would you like to restore your tabs?",
+        "Oops! Firefox crashed",
+        "OpenURL.Error.Message",
+        "PhotoLibrary.FirefoxWouldLikeAccessTitle",
+        "ScanQRCode.PermissionError.Message.v100",
+        "SendTo.NotSignedIn.Message",
+        "Settings.Disconnect.Body",
+        "Settings.Home.Option.Description.v101",
+        "Settings.Home.Option.StartAtHome.Description",
+        "Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99",
+        "Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100",
+        "Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99",
+        "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99",
+        "Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99",
+        "Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100",
+        "Settings.Home.Option.Wallpaper.SwitchTitle.v99",
+        "Settings.NewTab.Option.FirefoxHome",
+        "Settings.OfferClipboardBar.Status",
+        "Settings.Siri.SectionDescription",
+        "ShareExtension.LoadInBackgroundActionDone.Title",
+        "ShareExtension.OpenInFirefoxAction.Title",
+        "ShareExtension.SeachInFirefoxAction.Title",
+        "UIMenuItem.SearchWithFirefox",
+        "You don’t have any tabs open in Firefox on your other devices."
+      ]
+    },
+    {
+      "id": "shared-private-browsing",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Shared/[A-Za-z0-9-]+\\.lproj/PrivateBrowsing\\.strings$",
+      "keys": [
+        "Firefox won’t remember any of your history or cookies, but new bookmarks will be saved."
+      ]
+    },
+    {
+      "id": "shared-today",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Shared/[A-Za-z0-9-]+\\.lproj/Today\\.strings$",
+      "keys": [
+        "TodayWidget.FirefoxShortcutGalleryDescription",
+        "TodayWidget.NewSearchButtonLabelV1",
+        "TodayWidget.OpenFirefoxLabel",
+        "TodayWidget.QuickActionGalleryDescription",
+        "TodayWidget.QuickActionsGalleryTitleV2",
+        "TodayWidget.SearchInFirefoxTitle",
+        "TodayWidget.SearchInFirefoxV2"
+      ]
+    },
+    {
+      "id": "widget-localizable",
+      "kind": "strings",
+      "pattern": "^firefox-ios/WidgetKit/[A-Za-z0-9-]+\\.lproj/Localizable\\.strings$",
+      "keys": [
+        "Open Firefox"
+      ]
+    },
+    {
+      "id": "widget-intents-strings",
+      "kind": "strings",
+      "pattern": "^firefox-ios/WidgetKit/[A-Za-z0-9-]+\\.lproj/WidgetIntents\\.strings$",
+      "keys": [
+        "ctDNmu"
+      ]
+    },
+    {
+      "id": "widget-intents-definition",
+      "kind": "intentdefinition",
+      "pattern": "^firefox-ios/WidgetKit/Base\\.lproj/WidgetIntents\\.intentdefinition$",
+      "keys": [
+        "ctDNmu"
+      ]
+    }
+  ],
+  "exactOverrides": [
+    {
+      "path": "firefox-ios/Client/ml.lproj/InfoPlist.strings",
+      "key": "NSFaceIDUsageDescription",
+      "sourceSha256": "3daf52a4069aab32b38fae334412796786c531e8af1a8849866e40d6890d844a",
+      "resultSha256": "b26a6f58b37aaa3782e1326e8f3f342f8cf55f7aacc39d2c3da04c197b40b7dd",
+      "resultValue": "താങ്ങളുടെ കരുതിവച്ച പ്രവേശിക്കലുകൾ ഉപയോഗിക്കാൻ Floorp-ന് മുഖതിരിച്ചറിയൽരേഖ ആവശ്യമാണ്."
+    },
+    {
+      "path": "firefox-ios/Extensions/ActionExtension/ml.lproj/InfoPlist.strings",
+      "key": "CFBundleDisplayName",
+      "sourceSha256": "8f34b700defb09ec7c62fe0c73521c673a566459f29b3197380cd2aa8df9cb2f",
+      "resultSha256": "035b1d90862c6b72dfa6bea94d48bbf52a25f28f3cccf3bfb9a257298226304d",
+      "resultValue": "Floorp-ൽ തുറക്കുക"
+    },
+    {
+      "path": "firefox-ios/Shared/ab.lproj/Localizable.strings",
+      "key": "ScanQRCode.PermissionError.Message.v100",
+      "sourceSha256": "51332a667c999297166f276fad0caf1084c2f45c952c7d5f30ea8420c86711c3",
+      "resultSha256": "cf312b44623b7ee67bc4b6cf59f5bcbaddba9885b5a27b5c8d36c786cf87961b",
+      "resultValue": "Шәхыхәҭа Аиқәыршәарақәа рахь шәца > Floorp. Азин аҭ Floorp укамера анеиразы."
+    },
+    {
+      "path": "firefox-ios/Shared/bn.lproj/Default Browser.strings",
+      "key": "DefaultBrowserCard.BetterInternet.Description.v108",
+      "sourceSha256": "af2447c8c01ad9955f8dc1a143a4f647dda7caaea412c89d41263fa2a66f2973",
+      "resultSha256": "2318726ed8fbeada381ab693513d70b15c39c3ee0bffbc53bd60a105d9c23b5e",
+      "resultValue": "Floorp-কে আপনার ডিফল্ট ব্রাউজার বানানোর অর্থ হল একটি উন্মুক্ত, অ্যাক্সেসযোগ্য ইন্টারনেটের পক্ষে ভোট দেওয়া।"
+    },
+    {
+      "path": "firefox-ios/Shared/it.lproj/Localizable.strings",
+      "key": "Settings.Disconnect.Body",
+      "sourceSha256": "b57bdbebccbdb2afbe6860bd29d244630a63aa8378aa91cb29a9d8c0aa64e8cc",
+      "resultSha256": "d1caa9217a92de2ca7221041cdabf4c5cb598131a8ffe3b077a07b83ea5d81d4",
+      "resultValue": "Floorp non sincronizzerà più i dati di navigazione con il tuo account, ma non li rimuoverà da questo dispositivo."
+    },
+    {
+      "path": "firefox-ios/Shared/kn.lproj/Localizable.strings",
+      "key": "ShareExtension.LoadInBackgroundActionDone.Title",
+      "sourceSha256": "fd1f955d63766dabe097329af7ff635c408a66da1d9e7cefe366a27ddea84f4c",
+      "resultSha256": "94378ce66cfdccdc38eab24178a93a4adbf827b5266dbb5cdc1bf39f7e83f047",
+      "resultValue": "Floorp ನಲ್ಲಿ ಲೋಡ್ ಆಗುತ್ತಿದೆ"
+    },
+    {
+      "path": "firefox-ios/Shared/kn.lproj/Localizable.strings",
+      "key": "ShareExtension.OpenInFirefoxAction.Title",
+      "sourceSha256": "5bd1a78d708060c379d73b4aab6df2fb332ff69549590a07b316dff5ce2fb048",
+      "resultSha256": "00dffd80324c71bc34ac94dac77c2680b4ffc278b626310dd33282ffd0653bbf",
+      "resultValue": "Floorp ನಲ್ಲಿ ತೆರೆಯಿರಿ"
+    },
+    {
+      "path": "firefox-ios/Shared/kn.lproj/Localizable.strings",
+      "key": "ShareExtension.SeachInFirefoxAction.Title",
+      "sourceSha256": "f2d305490a009b7e305f8235cc7236c44176f7fa707ddbf3fdc268fde00a07ad",
+      "resultSha256": "fcbede6535e75c23929ad9ed7a5866be4815c5d0d6e98b2e3b69fe8fa097d7b3",
+      "resultValue": "Floorp ನಲ್ಲಿ ಹುಡುಕಿ"
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Default Browser.strings",
+      "key": "DefaultBrowserCard.Description",
+      "sourceSha256": "9ee050f8be944387e243d4ad923c8573ad413b7ea2aa2875084330d6955eca16",
+      "resultSha256": "6be262635dc3f834e00fc797726caa667573b512f454cdf193843a5e788b5d0b",
+      "resultValue": "Floorp-ൽ‌ തന്നെതാനെ തുറക്കുന്നതിന് വെബ്‌സൈറ്റുകൾ‌, ഇ-തപാലുകൾ, സന്ദേശങ്ങൾ‌ എന്നിവയിൽ‌ നിന്നും കണ്ണികൾ സജ്ജമാക്കുക."
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Default Browser.strings",
+      "key": "DefaultBrowserCard.PeaceOfMind.Title.v108",
+      "sourceSha256": "08c9a78a0afc79b38c8ba57822757e472e7226657cd9d040b0f2ec8666dd89c7",
+      "resultSha256": "a6dfb910589c9ddf1aba0e123b593c6196384f35f6d374c6b9fca8eab68ba9c4",
+      "resultValue": "Floorp-ൽ സ്വകാര്യതൊരു എളുപ്പമുള്ളകാര്യമാണു്"
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Intro.strings",
+      "key": "Intro.Slides.Welcome.Title.v2",
+      "sourceSha256": "42cbaec955541d9c12c9e50b776a74ab96e334364d844309c5126a57b96bbe6d",
+      "resultSha256": "a4f589f9f2c6df6072571511492298d3ff977d62c0f1d79789a8aac65c22b241",
+      "resultValue": "Floorp-ലേക്ക് സ്വാഗതം"
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Localizable.strings",
+      "key": "OpenURL.Error.Message",
+      "sourceSha256": "007e4f7b1eaf746cfe8b8cc9978fddd7590ae543ad241456e9220876029324c2",
+      "resultSha256": "1a9afbdfee0b253a4fa3d621c097b25577622df055f7d4694f65c8fb86b2bffd",
+      "resultValue": "അത് അസാധുവായ ഒരു വിലാസമാതിനാൽ Floorp-ന് താള് തുറക്കാൻ കഴിയില്ല."
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Localizable.strings",
+      "key": "Settings.Home.Option.StartAtHome.Description",
+      "sourceSha256": "448833d6f71683adffd3f73ee0aebb1d00b3b709839a8e84411f83a141c047db",
+      "resultSha256": "270a287158e35d19175ba4d45ab424452d2d24c729cab98ebb86b78aa2fcd3f5",
+      "resultValue": "താങ്ങൾ Floorp-ലേക്കു് തിരിച്ചു വരുമ്പോൾ എന്തു് കാണിക്കണം എന്നു് തീരുമാനിക്കുക."
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Localizable.strings",
+      "key": "ShareExtension.LoadInBackgroundActionDone.Title",
+      "sourceSha256": "456a4a925c1b5b9c48acfbd9ed3087650cf26c72e4702945834e4f5d47e7951b",
+      "resultSha256": "f6700492ebb00c8fe595bed0d48069be287565cca2218530385c15ed79b6aaf8",
+      "resultValue": "Floorp-ൽ ലോഡ് ചെയ്യുന്നു"
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Localizable.strings",
+      "key": "ShareExtension.OpenInFirefoxAction.Title",
+      "sourceSha256": "8f34b700defb09ec7c62fe0c73521c673a566459f29b3197380cd2aa8df9cb2f",
+      "resultSha256": "035b1d90862c6b72dfa6bea94d48bbf52a25f28f3cccf3bfb9a257298226304d",
+      "resultValue": "Floorp-ൽ തുറക്കുക"
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Localizable.strings",
+      "key": "ShareExtension.SeachInFirefoxAction.Title",
+      "sourceSha256": "d042886f807f27cbe8fc51470259bae46a6bb3de8e03233c4664ee628522e1d9",
+      "resultSha256": "c2f1cb762a417fe9b32777ef979b54e9a79e29a4c99b26a04b9a90c6bb94a97e",
+      "resultValue": "Floorp-ൽ തിരയുക"
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Localizable.strings",
+      "key": "UIMenuItem.SearchWithFirefox",
+      "sourceSha256": "c876b1c3417a1ea006e14fe521106d6693b50f67374d03bd517833f02448c43a",
+      "resultSha256": "423ea4a3723d43becc459efae2f382da110650708ac069097fa070206b686d18",
+      "resultValue": "Floorp ഉപയോഗിച്ച് തിരയുക"
+    },
+    {
+      "path": "firefox-ios/Shared/ml.lproj/Today.strings",
+      "key": "TodayWidget.SearchInFirefoxV2",
+      "sourceSha256": "cb0c3656a0055460da009631d9a3f9de5b9fa7d127628528327851c7bf6e7059",
+      "resultSha256": "2995dc524b6fe6350ebdbf6b312bc0afb3aa5063a2d4b7d70035e0b1faaf9466",
+      "resultValue": "Floorp-ൽ\\nതിരയുക"
+    },
+    {
+      "path": "firefox-ios/Shared/pl.lproj/Localizable.strings",
+      "key": "ScanQRCode.PermissionError.Message.v100",
+      "sourceSha256": "babaeeceb167f2550801ef90d7d0f628aa2822dc147ea0fefbf8d06d4043528b",
+      "resultSha256": "9903e344a08641928c4204832cd421d1ebdcd68ee53a7522b60ec735685667db",
+      "resultValue": "Otwórz „Ustawienia” urządzenia → „Floorp” i zezwól Floorp na dostęp do aparatu."
+    }
+  ]
+}
