@@ -7,7 +7,7 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | Concern | System | Current state |
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
-| Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow that restores the trusted Floorp workflow tree and explicitly dispatches CI |
+| Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow with trusted automation restoration, reviewed localization conflict resolution, and explicit CI dispatch |
 | Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (1)` signed, uploaded, and verified by the internal group |
 | Repeatable signed delivery | Xcode Cloud | Scaffold implemented; workflow not yet configured |
 | App Store release | App Store Connect | Manual approval initially |
@@ -27,12 +27,13 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 
 1. Validate active workflow files with a checksum-pinned Actionlint binary.
 2. Select the Xcode version in `.xcode-version` and Node.js version in `.nvmrc`.
-3. Install Node dependencies with `npm ci`, generate web assets, and reject high-severity npm advisories.
-4. Download the pinned Nimbus helper and SwiftLint binary, verifying downloads with SHA-256 checksums.
-5. For normal pull requests, run SwiftLint in strict mode for added or modified Swift files outside the inherited Focus tree. Existing inherited lint debt does not make the initial gate permanently red. Pushes and the explicitly dispatched upstream-sync build skip this step.
-6. Resolve only the Swift package versions in `Package.resolved`.
-7. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
-8. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
+3. Re-extract the localization policy from immutable reviewed commits, run its tests, and verify generated resources against the newest upstream commit already contained by the branch.
+4. Install Node dependencies with `npm ci`, generate web assets, and reject high-severity npm advisories.
+5. Download the pinned Nimbus helper and SwiftLint binary, verifying downloads with SHA-256 checksums.
+6. For normal pull requests, run SwiftLint in strict mode for added or modified Swift files outside the inherited Focus tree. Existing inherited lint debt does not make the initial gate permanently red. Pushes and the explicitly dispatched upstream-sync build skip this step.
+7. Resolve only the Swift package versions in `Package.resolved`.
+8. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
+9. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
 
 `FloorpCI.xctestplan` is an explicit baseline of 15 test targets: 14 currently reliable suites plus 16 selected Floorp Notes cases and five release-service-policy cases from `ClientTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
@@ -40,7 +41,7 @@ SwiftPM checkouts and Derived Data use job-local directories. This avoids shared
 
 Dependabot checks GitHub Actions and npm dependencies monthly. External actions remain pinned to immutable commit SHAs.
 
-The upstream workflow restores the complete trusted Floorp workflow tree and rebrand script after merging, so upstream-only automation cannot become active accidentally. Workflow-only conflicts are resolved from the Floorp base; every conflict outside that tree aborts without publishing a branch and retains a short-lived diagnostic artifact. It explicitly dispatches `ci.yml` for `automation/upstream-sync` after creating or updating the draft PR, instead of relying on the approval state and trigger behavior of events produced by `GITHUB_TOKEN`. The generated branch is disposable and must not receive manual fixes.
+The upstream workflow validates and restores the complete trusted Floorp workflow, rebrand, and localization-policy trees before executing them, so upstream-only automation cannot become active accidentally. Protected automation conflicts are resolved from the Floorp base. Localization conflicts are accepted only when the reviewed overlay proves that `ours` is generated from the merge base and can safely regenerate the complete upstream resource; every other conflict aborts without publishing a branch and retains a short-lived diagnostic artifact. It explicitly dispatches `ci.yml` for `automation/upstream-sync` after creating or updating the draft PR, instead of relying on the approval state and trigger behavior of events produced by `GITHUB_TOKEN`. The generated branch is disposable and must not receive manual fixes.
 
 ## GitHub repository settings
 

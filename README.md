@@ -71,10 +71,14 @@ This repository tracks [mozilla-mobile/firefox-ios](https://github.com/mozilla-m
 git fetch upstream
 git merge upstream/main
 
-# 2. Resolve any merge conflicts
+# 2. Resolve ordinary conflicts. The reviewed localization resolver may handle
+#    covered .strings conflicts; it refuses every path outside its policy.
+node scripts/l10n/floorp-l10n-overlay.mjs resolve-merge --write --stage
 
-# 3. Re-apply Floorp branding (idempotent, safe to re-run)
+# 3. Re-apply code, asset, and reviewed localization branding
 ./scripts/rebrand-to-floorp.sh
+node scripts/l10n/floorp-l10n-overlay.mjs apply --source-ref upstream/main --write
+node scripts/l10n/floorp-l10n-overlay.mjs verify --source-ref upstream/main
 
 # 4. Verify the build succeeds
 
@@ -102,14 +106,16 @@ git push -u origin HEAD
 
 > See [ADR-0007](adr/0007-upstream-merge-rebrand-strategy.md) for the full architectural decision record.
 
+Localized product names use a separate, reviewed overlay. It changes only 3,982 allowlisted semantic values in 794 resources, protects Mozilla service names, and fails closed when upstream text no longer matches the approved transformation. See [docs/l10n-overlay.md](docs/l10n-overlay.md) for extraction, verification, and merge-resolution commands. Generated localization resources remain tracked so Xcode and translation tooling continue to see ordinary Apple resources.
+
 ### Automatic Sync (GitHub Actions)
 
 The [Upstream Sync](.github/workflows/upstream-sync.yml) workflow automates this process:
 
 - **Schedule**: Every Monday at 09:00 UTC (18:00 JST)
 - **Manual trigger**: Available via GitHub Actions → "Run workflow"
-- **Process**: Fetches upstream → merges → restores Floorp-owned automation → runs the rebrand script → opens a draft PR → dispatches CI
-- **Conflict handling**: Workflow-only conflicts restore the trusted Floorp workflow tree; every other conflict aborts with a diagnostic artifact
+- **Process**: Fetches upstream → validates the reviewed localization policy → merges → restores Floorp-owned automation → reapplies both branding layers → opens a draft PR → dispatches CI
+- **Conflict handling**: Protected automation is restored from Floorp; covered localization conflicts are regenerated from upstream; every other conflict aborts with a diagnostic artifact
 - **Generated branch**: `automation/upstream-sync` is replaced by each run, so fixes belong on a normal branch or in the sync tooling—not directly on the generated branch
 
 ## Contributing

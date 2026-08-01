@@ -15,10 +15,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  L10N_REVIEW_BASE: b1f6991d551fe072abd975fed9330b205a317802
+  L10N_REVIEWED: 6f58b2578825f74394fe16bb1c15aa17a17ad91d
   PROJECT_PATH: firefox-ios/Client.xcodeproj
   SCHEME: Fennec
   CONFIGURATION: Fennec_Testing
   DESTINATION: platform=iOS Simulator,name=iPhone 17,OS=26.2
+  UPSTREAM_REPOSITORY: https://github.com/mozilla-mobile/firefox-ios.git
 
 jobs:
   workflow-lint:
@@ -59,6 +62,20 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      - name: Verify Floorp localization overlay
+        run: |
+          node scripts/l10n/floorp-l10n-overlay.mjs extract \
+            --base "$L10N_REVIEW_BASE" \
+            --reviewed "$L10N_REVIEWED" \
+            --check-counts \
+            --check
+          node --test scripts/l10n/__tests__/*.test.mjs
+
+          git remote add upstream "$UPSTREAM_REPOSITORY" || git remote set-url upstream "$UPSTREAM_REPOSITORY"
+          git fetch --no-tags upstream main
+          upstream_source="$(git merge-base HEAD upstream/main)"
+          node scripts/l10n/floorp-l10n-overlay.mjs verify --source-ref "$upstream_source"
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
