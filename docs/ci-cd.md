@@ -103,7 +103,7 @@ The Floorp release entitlement omits `com.apple.developer.browser.app-installati
 
 ### Versioning
 
-The checked-in release baseline is `0.1.0 (1)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign the monotonically increasing distribution build number for the initial TestFlight workflow.
+The last validated Internal TestFlight baseline is `0.1.0 (1)`, and the checked-in post-rebrand release candidate is `0.1.0 (2)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
 
 ### Floorp-owned services and App Store ID
 
