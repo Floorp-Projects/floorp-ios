@@ -83,6 +83,7 @@ jobs:
             --check-counts \
             --check
           node --test scripts/l10n/__tests__/*.test.mjs
+          ./scripts/ci/test-rebrand-dry-run.sh
 
       - name: Merge upstream
         if: steps.check.outputs.has_changes == 'true'

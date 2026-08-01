@@ -76,6 +76,7 @@ jobs:
           git fetch --no-tags upstream main
           upstream_source="$(git merge-base HEAD upstream/main)"
           node scripts/l10n/floorp-l10n-overlay.mjs verify --source-ref "$upstream_source"
+          ./scripts/ci/test-rebrand-dry-run.sh
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6

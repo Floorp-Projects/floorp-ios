@@ -440,13 +440,20 @@ echo ">>> Step 7: Inject Floorp bootstrapper hook points..."
 # --- 7a. Ensure Floorp/ directory exists (inside firefox-ios/ for Xcode project) ---
 FLOORP_DIR="$PROJECT_ROOT/firefox-ios/Floorp"
 if [[ ! -d "$FLOORP_DIR" ]]; then
-    mkdir -p "$FLOORP_DIR"
-    echo "  ✓ Created $FLOORP_DIR/"
+    if $DRY_RUN; then
+        echo "  [DRY] mkdir -p $FLOORP_DIR"
+    else
+        mkdir -p "$FLOORP_DIR"
+        echo "  ✓ Created $FLOORP_DIR/"
+    fi
 fi
 
 # --- 7b. Ensure FloorpFlags.swift exists ---
 if [[ ! -f "$FLOORP_DIR/FloorpFlags.swift" ]]; then
-    cat > "$FLOORP_DIR/FloorpFlags.swift" << 'FLOORPFLAGS_EOF'
+    if $DRY_RUN; then
+        echo "  [DRY] create $FLOORP_DIR/FloorpFlags.swift"
+    else
+        cat > "$FLOORP_DIR/FloorpFlags.swift" << 'FLOORPFLAGS_EOF'
 // Floorp Flags
 // Single source of truth for all Floorp feature flags.
 // These flags are set by FloorpBootstrapper and checked by Firefox hook points.
@@ -463,14 +470,18 @@ public final class FloorpFlags {
     nonisolated(unsafe) public static var isTelemetryDisabled: Bool = false
 }
 FLOORPFLAGS_EOF
-    echo "  ✓ Created FloorpFlags.swift"
+        echo "  ✓ Created FloorpFlags.swift"
+    fi
 else
     echo "  ≈ FloorpFlags.swift already exists"
 fi
 
 # --- 7c. Ensure FloorpBootstrapper.swift exists ---
 if [[ ! -f "$FLOORP_DIR/FloorpBootstrapper.swift" ]]; then
-    cat > "$FLOORP_DIR/FloorpBootstrapper.swift" << 'BOOTSTRAPPER_EOF'
+    if $DRY_RUN; then
+        echo "  [DRY] create $FLOORP_DIR/FloorpBootstrapper.swift"
+    else
+        cat > "$FLOORP_DIR/FloorpBootstrapper.swift" << 'BOOTSTRAPPER_EOF'
 // Floorp iOS Bootstrapper
 // Centralizes all Floorp-specific customizations into a single entry point.
 // Called once from DependencyHelper.bootstrapDependencies().
@@ -493,7 +504,8 @@ public final class FloorpBootstrapper {
     }
 }
 BOOTSTRAPPER_EOF
-    echo "  ✓ Created FloorpBootstrapper.swift"
+        echo "  ✓ Created FloorpBootstrapper.swift"
+    fi
 else
     echo "  ≈ FloorpBootstrapper.swift already exists"
 fi
@@ -530,7 +542,11 @@ if [[ -f "$FILE" ]]; then
 
     # initGlean() hook — use function-scoped check to avoid false positive from setup() hook
     if ! awk '/func initGlean\(/,/^    }/' "$FILE" | grep -q 'FloorpFlags.isTelemetryDisabled'; then
-        run_cmd awk '
+        if $DRY_RUN; then
+            echo "  [DRY] inject FloorpFlags hook into TelemetryWrapper.initGlean()"
+        else
+            TEMPORARY_FILE="$(mktemp "${FILE}.floorp.XXXXXX")"
+            if awk '
         /func initGlean\(/ { found=1 }
         found && /{/ && !done {
             print "        if FloorpFlags.isTelemetryDisabled { return }"
@@ -538,7 +554,14 @@ if [[ -f "$FILE" ]]; then
             found=0
         }
         { print }
-        ' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+            ' "$FILE" > "$TEMPORARY_FILE"; then
+                chmod 0644 "$TEMPORARY_FILE"
+                mv "$TEMPORARY_FILE" "$FILE"
+            else
+                rm -f "$TEMPORARY_FILE"
+                exit 1
+            fi
+        fi
         echo "  ✓ TelemetryWrapper.initGlean(): FloorpFlags hook injected"
     else
         echo "  ≈ TelemetryWrapper.initGlean(): hook already present"
