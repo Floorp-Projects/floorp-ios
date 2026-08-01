@@ -12,12 +12,78 @@ import Foundation
 /// either plain text, legacy Lexical JSON, or TipTap JSON in this field. Keeping
 /// the original value avoids destroying editor nodes that this client does not
 /// understand yet.
+enum FloorpNoteContentFormat: String, Codable, Equatable, Sendable {
+    /// Content created by the native iOS editor. JSON-looking text remains
+    /// editable instead of being mistaken for an unsupported rich document.
+    case plainText
+
+    /// Content whose shape must be detected without changing its source. This
+    /// is used for desktop payloads and archives written before format metadata
+    /// was introduced.
+    case automatic
+}
+
 struct FloorpNote: Codable, Equatable, Identifiable, Sendable {
     let id: String
     var title: String
     var content: String
     let createdAt: Int64
     var updatedAt: Int64
+    var contentFormat: FloorpNoteContentFormat
+
+    init(
+        id: String,
+        title: String,
+        content: String,
+        createdAt: Int64,
+        updatedAt: Int64,
+        contentFormat: FloorpNoteContentFormat = .automatic
+    ) {
+        self.id = id
+        self.title = title
+        self.content = content
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.contentFormat = contentFormat
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case content
+        case createdAt
+        case updatedAt
+        case contentFormat
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        content = try container.decode(String.self, forKey: .content)
+        createdAt = try container.decode(Int64.self, forKey: .createdAt)
+        updatedAt = try container.decode(Int64.self, forKey: .updatedAt)
+        contentFormat = try container.decodeIfPresent(
+            FloorpNoteContentFormat.self,
+            forKey: .contentFormat
+        ) ?? .plainText
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(content, forKey: .content)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        // Plain text is the native iOS/default representation. Omitting that
+        // common value keeps a boundary-sized v1 archive migratable without
+        // adding metadata for every note; rich desktop content explicitly
+        // carries `.automatic` so its source remains opaque.
+        if contentFormat != .plainText {
+            try container.encode(contentFormat, forKey: .contentFormat)
+        }
+    }
 }
 
 // MARK: - Desktop wire format
@@ -92,7 +158,8 @@ struct FloorpNotesDesktopPayload: Codable, Equatable, Sendable {
                     title: value(at: index, in: titles) ?? "",
                     content: value(at: index, in: contents) ?? "",
                     createdAt: createdAt,
-                    updatedAt: updatedAt
+                    updatedAt: updatedAt,
+                    contentFormat: .automatic
                 )
             )
         }
@@ -174,7 +241,20 @@ enum FloorpNoteContent {
     /// Parses the content once so preview and edit safety cannot disagree.
     /// Unknown JSON is deliberately preserved as its original string, matching
     /// Floorp desktop's migration behavior.
-    static func analyze(_ content: String) -> Analysis {
+    static func analyze(
+        _ content: String,
+        contentFormat: FloorpNoteContentFormat = .automatic
+    ) -> Analysis {
+        if contentFormat == .plainText {
+            return Analysis(
+                format: .plainText,
+                previewText: content,
+                editorText: content,
+                losses: [],
+                isComplete: true
+            )
+        }
+
         guard content.utf8.count <= maximumInputBytes,
               let data = content.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
@@ -221,8 +301,11 @@ enum FloorpNoteContent {
         return projection.analyze(root)
     }
 
-    static func isRichText(_ content: String) -> Bool {
-        switch analyze(content).format {
+    static func isRichText(
+        _ content: String,
+        contentFormat: FloorpNoteContentFormat = .automatic
+    ) -> Bool {
+        switch analyze(content, contentFormat: contentFormat).format {
         case .tipTap, .lexical:
             return true
         case .plainText, .unknownJSON:
@@ -230,8 +313,11 @@ enum FloorpNoteContent {
         }
     }
 
-    static func plainText(from content: String) -> String {
-        analyze(content).previewText
+    static func plainText(
+        from content: String,
+        contentFormat: FloorpNoteContentFormat = .automatic
+    ) -> String {
+        analyze(content, contentFormat: contentFormat).previewText
     }
 
     private struct Projection {
@@ -402,14 +488,37 @@ enum FloorpNotesStoreError: Error, LocalizedError {
 actor FloorpNotesStore {
     static let shared = FloorpNotesStore(fileURL: defaultArchiveURL())
 
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
     static let maximumNoteCount = 1_000
-    static let maximumArchiveBytes = 1_000_000
+    static let legacyMaximumArchiveBytes = 1_000_000
+    // v2 explicitly marks rich/desktop notes as `automatic`. It also writes
+    // decoded timestamps in canonical decimal form. Reserve both worst-case
+    // per-note expansions plus the archive-level revision so a boundary-sized
+    // v1 archive can migrate atomically without becoming unreadable.
+    static let maximumArchiveBytes = legacyMaximumArchiveBytes + (maximumNoteCount * 60) + 64
 
     private struct Archive: Codable, Equatable, Sendable {
         let schemaVersion: Int
         let revision: UInt64
         let notes: [FloorpNote]
+    }
+
+    private struct ArchiveHeader: Decodable {
+        let schemaVersion: Int
+    }
+
+    private struct LegacyArchiveV1: Decodable {
+        struct Note: Decodable {
+            let id: String
+            let title: String
+            let content: String
+            let createdAt: Int64
+            let updatedAt: Int64
+        }
+
+        let schemaVersion: Int
+        let revision: UInt64
+        let notes: [Note]
     }
 
     private enum CorruptionState: Sendable {
@@ -443,7 +552,11 @@ actor FloorpNotesStore {
     }
 
     @discardableResult
-    func createNote(title: String, content: String = "") throws -> FloorpNote {
+    func createNote(
+        title: String,
+        content: String = "",
+        contentFormat: FloorpNoteContentFormat = .plainText
+    ) throws -> FloorpNote {
         let archive = try loadArchiveForWriting()
         let timestamp = now()
         var id = makeID()
@@ -457,7 +570,8 @@ actor FloorpNotesStore {
             title: title,
             content: content,
             createdAt: timestamp,
-            updatedAt: timestamp
+            updatedAt: timestamp,
+            contentFormat: contentFormat
         )
         var notes = archive.notes
         notes.insert(note, at: 0)
@@ -470,6 +584,7 @@ actor FloorpNotesStore {
         id: String,
         title: String,
         content: String,
+        contentFormat: FloorpNoteContentFormat? = nil,
         expectedUpdatedAt: Int64? = nil
     ) throws -> FloorpNote {
         let archive = try loadArchiveForWriting()
@@ -487,6 +602,7 @@ actor FloorpNotesStore {
         }
         note.title = title
         note.content = content
+        note.contentFormat = contentFormat ?? note.contentFormat
         note.updatedAt = [now(), note.createdAt, note.updatedAt + 1].max() ?? note.updatedAt + 1
         notes[index] = note
         try commit(notes: notes, replacing: archive)
@@ -524,7 +640,7 @@ actor FloorpNotesStore {
     func desktopPayloadData() throws -> Data {
         let notes = try loadArchive().notes
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(FloorpNotesDesktopPayload(notes: notes))
         try validateSize(data)
         return data
@@ -574,23 +690,87 @@ actor FloorpNotesStore {
             return archive
         }
 
+        let data = try readArchiveData()
+        let header: ArchiveHeader
         do {
-            let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-            try validateSize(data)
-            let archive = try JSONDecoder().decode(Archive.self, from: data)
-            guard archive.schemaVersion == Self.currentSchemaVersion else {
-                throw FloorpNotesStoreError.unsupportedSchema(archive.schemaVersion)
+            header = try JSONDecoder().decode(ArchiveHeader.self, from: data)
+        } catch {
+            throw preserveCorruptArchive()
+        }
+        if header.schemaVersion == 1, data.count > Self.legacyMaximumArchiveBytes {
+            throw FloorpNotesStoreError.archiveTooLarge(
+                actualBytes: data.count,
+                maximumBytes: Self.legacyMaximumArchiveBytes
+            )
+        }
+
+        let archive: Archive
+        do {
+            switch header.schemaVersion {
+            case Self.currentSchemaVersion:
+                archive = try JSONDecoder().decode(Archive.self, from: data)
+            case 1:
+                let legacy = try JSONDecoder().decode(LegacyArchiveV1.self, from: data)
+                archive = Archive(
+                    schemaVersion: Self.currentSchemaVersion,
+                    revision: legacy.revision,
+                    notes: legacy.notes.map {
+                        let analysis = FloorpNoteContent.analyze(
+                            $0.content,
+                            contentFormat: .automatic
+                        )
+                        let migratedFormat: FloorpNoteContentFormat
+                        switch analysis.format {
+                        case .tipTap, .lexical:
+                            migratedFormat = .automatic
+                        case .plainText, .unknownJSON:
+                            // v1 was written by the native plain-text editor.
+                            // Unknown JSON must stay editable rather than being
+                            // reinterpreted as an unsupported rich document.
+                            migratedFormat = .plainText
+                        }
+                        return FloorpNote(
+                            id: $0.id,
+                            title: $0.title,
+                            content: $0.content,
+                            createdAt: $0.createdAt,
+                            updatedAt: $0.updatedAt,
+                            contentFormat: migratedFormat
+                        )
+                    }
+                )
+            default:
+                throw FloorpNotesStoreError.unsupportedSchema(header.schemaVersion)
             }
             try validate(archive.notes)
-            cachedArchive = archive
-            return archive
         } catch let error as FloorpNotesStoreError {
             if case .unsupportedSchema = error { throw error }
-            if case .archiveTooLarge = error { throw error }
             throw preserveCorruptArchive()
         } catch {
             throw preserveCorruptArchive()
         }
+
+        if header.schemaVersion != Self.currentSchemaVersion {
+            // Atomic persistence means a failed migration leaves the v1 source
+            // intact and retryable on the next launch.
+            try persist(archive)
+        }
+        cachedArchive = archive
+        return archive
+    }
+
+    private func readArchiveData() throws -> Data {
+        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+        if let fileSize = resourceValues.fileSize,
+           fileSize > Self.maximumArchiveBytes {
+            throw FloorpNotesStoreError.archiveTooLarge(
+                actualBytes: fileSize,
+                maximumBytes: Self.maximumArchiveBytes
+            )
+        }
+        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+        try validateSize(data)
+        return data
     }
 
     private func commit(notes: [FloorpNote], replacing archive: Archive) throws {
@@ -608,7 +788,9 @@ actor FloorpNotesStore {
 
     private func persist(_ archive: Archive) throws {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        // Escaping every solidus can nearly double a valid legacy archive and
+        // make an otherwise lossless migration exceed the v2 size limit.
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(archive)
         try validateSize(data)
 
@@ -670,6 +852,19 @@ actor FloorpNotesStore {
             // Copy first and leave the source untouched. An explicit reset can
             // then replace the source while this recovery copy remains intact.
             try copyItem(fileURL, recoveryURL)
+            let recoveryValues = try recoveryURL.resourceValues(
+                forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+            )
+            guard recoveryValues.isRegularFile == true,
+                  recoveryValues.isSymbolicLink != true,
+                  FileManager.default.contentsEqual(
+                atPath: fileURL.path,
+                andPath: recoveryURL.path
+                  ) else {
+                try? FileManager.default.removeItem(at: recoveryURL)
+                corruptionState = .couldNotPreserve
+                return .corruptArchiveCouldNotBePreserved
+            }
             corruptionState = .preserved(recoveryURL: recoveryURL)
             return .corruptArchive(recoveryURL: recoveryURL)
         } catch {

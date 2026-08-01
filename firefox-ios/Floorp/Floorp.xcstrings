@@ -1,6 +1,96 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Floorp.Notes.ArchiveTooLargeSaveMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Shorten this note or remove another note, then try again. Your changes are still here." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このメモを短くするか、別のメモを削除してから再試行してください。変更内容は保持されています。" } }
+      }
+    },
+    "Floorp.Notes.ArchiveTooLargeSaveTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Notes Storage Is Full" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモの保存容量が上限です" } }
+      }
+    },
+    "Floorp.Notes.ConflictMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reload the latest version, save your changes as a copy, or keep editing." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最新の内容を再読み込みするか、変更をコピーとして保存するか、編集を続けてください。" } }
+      }
+    },
+    "Floorp.Notes.ConflictTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This Note Changed Elsewhere" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このメモは別の場所で変更されました" } }
+      }
+    },
+    "Floorp.Notes.DamagedSaveMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close this editor and use the recovery action in the Notes panel. Your changes remain on screen." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "エディタを閉じ、メモパネルの復旧操作を使用してください。変更内容は画面上に保持されています。" } }
+      }
+    },
+    "Floorp.Notes.DamagedSaveTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Notes Data Needs Recovery" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモデータの復旧が必要です" } }
+      }
+    },
+    "Floorp.Notes.NewerSchemaSaveMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This version cannot change the newer Notes data. The archive was left untouched." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このバージョンでは新しい形式のメモを変更できません。元のデータは変更せずに保持しています。" } }
+      }
+    },
+    "Floorp.Notes.NewerSchemaSaveTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "A Newer Floorp Version Is Required" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいバージョンの Floorp が必要です" } }
+      }
+    },
+    "Floorp.Notes.NoteDeletedMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your changes are still here. Save them as a new note or keep editing." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更内容は保持されています。新しいメモとして保存するか、編集を続けてください。" } }
+      }
+    },
+    "Floorp.Notes.NoteDeletedTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This Note Was Deleted" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このメモは削除されました" } }
+      }
+    },
+    "Floorp.Notes.Reload.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reload Latest" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最新の内容を再読み込み" } }
+      }
+    },
+    "Floorp.Notes.Retry.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry Save" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存を再試行" } }
+      }
+    },
+    "Floorp.Notes.SaveCopy.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Save as Copy" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コピーとして保存" } }
+      }
+    },
+    "Floorp.Notes.SaveErrorMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your changes are still here. Check available storage and try again." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更内容は保持されています。空き容量を確認して、もう一度お試しください。" } }
+      }
+    },
+    "Floorp.Notes.SaveErrorTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t Save This Note" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このメモを保存できませんでした" } }
+      }
+    },
     "Floorp.Drawer.WebPanelUnavailable.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Web panels are not available yet" } },
