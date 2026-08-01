@@ -282,7 +282,8 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.createDirectory(at: location.directory, withIntermediateDirectories: true)
 
         let prefix = "{\"notes\":[{\"content\":\""
-        let suffix = "\",\"createdAt\":1,\"id\":\"legacy\",\"title\":\"Boundary\",\"updatedAt\":1}],\"revision\":1,\"schemaVersion\":1}"
+        let suffix = "\",\"createdAt\":1,\"id\":\"legacy\",\"title\":\"Boundary\","
+            + "\"updatedAt\":1}],\"revision\":1,\"schemaVersion\":1}"
         let contentByteCount = FloorpNotesStore.legacyMaximumArchiveBytes
             - prefix.utf8.count
             - suffix.utf8.count
@@ -306,8 +307,12 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: location.directory) }
         try FileManager.default.createDirectory(at: location.directory, withIntermediateDirectories: true)
 
-        let prefix = "{\"notes\":[{\"content\":\"{\\\"type\\\":\\\"doc\\\",\\\"content\\\":[{\\\"type\\\":\\\"paragraph\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\""
-        let suffix = "\\\"}]}]}\",\"createdAt\":1,\"id\":\"rich-boundary\",\"title\":\"Rich Boundary\",\"updatedAt\":1}],\"revision\":1,\"schemaVersion\":1}"
+        let prefix = "{\"notes\":[{\"content\":\"{\\\"type\\\":\\\"doc\\\","
+            + "\\\"content\\\":[{\\\"type\\\":\\\"paragraph\\\","
+            + "\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\""
+        let suffix = "\\\"}]}]}\",\"createdAt\":1,\"id\":\"rich-boundary\","
+            + "\"title\":\"Rich Boundary\",\"updatedAt\":1}],"
+            + "\"revision\":1,\"schemaVersion\":1}"
         let textLength = FloorpNotesStore.legacyMaximumArchiveBytes
             - prefix.utf8.count
             - suffix.utf8.count
@@ -336,7 +341,9 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: location.directory) }
         try FileManager.default.createDirectory(at: location.directory, withIntermediateDirectories: true)
 
-        let richPrefix = "{\\\"type\\\":\\\"doc\\\",\\\"content\\\":[{\\\"type\\\":\\\"paragraph\\\",\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\""
+        let richPrefix = "{\\\"type\\\":\\\"doc\\\","
+            + "\\\"content\\\":[{\\\"type\\\":\\\"paragraph\\\","
+            + "\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\""
         let richSuffix = "\\\"}]}]}"
         func encodedNote(index: Int, filler: String = "") -> String {
             "{\"content\":\"\(richPrefix)\(filler)\(richSuffix)\",\"createdAt\":9e18,\"id\":\"note-\(index)\",\"title\":\"\",\"updatedAt\":9e18}"

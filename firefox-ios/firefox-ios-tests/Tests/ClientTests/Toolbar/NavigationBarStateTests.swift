@@ -12,7 +12,6 @@ import Common
 final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
     let storeUtilityHelper = StoreTestUtilityHelper()
     let windowUUID: WindowUUID = .XCTestDefaultUUID
-    var mockStore: MockStoreForMiddleware<AppState>!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -293,7 +292,7 @@ final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
     }
 
     func setupStore() {
-        mockStore = MockStoreForMiddleware(state: setupAppState())
+        let mockStore = MockStoreForMiddleware(state: setupAppState())
         StoreTestUtilityHelper.setupStore(with: mockStore)
     }
 
