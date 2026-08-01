@@ -131,6 +131,7 @@ const FORBIDDEN_OUTPUT_TERMS = [
 // supplied a localized Arabic spelling, so keep that new source spelling in a
 // separate, explicit allowlist instead of weakening token recognition.
 const ADDITIONAL_BRAND_TOKENS = ["فايرفوكس"];
+const BOOLEAN_OPTIONS = new Set(["check", "check-counts", "help", "stage", "write"]);
 
 function parseArguments(arguments_) {
   const options = { _: [] };
@@ -149,8 +150,10 @@ function parseArguments(arguments_) {
     if (arguments_[index + 1] && !arguments_[index + 1].startsWith("--")) {
       options[name] = arguments_[index + 1];
       index += 1;
-    } else {
+    } else if (BOOLEAN_OPTIONS.has(name)) {
       options[name] = true;
+    } else {
+      throw new Error(`--${name} requires a value`);
     }
   }
   return options;

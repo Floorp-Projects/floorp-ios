@@ -112,6 +112,14 @@ function runResolver(root) {
   ], { cwd: root, encoding: "utf8" });
 }
 
+test("CLI rejects a missing option value", () => {
+  const result = spawnSync(process.execPath, [cli, "extract", "--base", "--check"], {
+    encoding: "utf8"
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--base requires a value/u);
+});
+
 test("resolve-merge reapplies the overlay to upstream and stages only a proven conflict", () => {
   const root = initializeRepository();
   const result = runResolver(root);

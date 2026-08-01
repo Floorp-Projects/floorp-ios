@@ -7,7 +7,7 @@ Floorp's localized product-name changes are generated from a narrow, reviewed ov
 `floorp/l10n/manifest.json` is reproducibly extracted from:
 
 - reviewed base: `b1f6991d551fe072abd975fed9330b205a317802`
-- reviewed result: `rebranding-reviewed-2026-08-01`
+- reviewed result: `6f58b2578825f74394fe16bb1c15aa17a17ad91d` (preserved by tag `rebranding-reviewed-2026-08-01`)
 
 The extracted scope is 794 localization resources (793 Apple `.strings` files and one intent definition), containing 3,982 changed semantic values. The parser normalizes 56 source key spellings to 54 keys. Twenty-one localized brand spellings are inferred from the reviewed change, and 19 values that cannot be represented as a token substitution are kept as exact overrides.
 
@@ -24,7 +24,7 @@ Use the Node version declared by `.nvmrc` (currently Node 24):
 ```sh
 node scripts/l10n/floorp-l10n-overlay.mjs extract \
   --base b1f6991d551fe072abd975fed9330b205a317802 \
-  --reviewed rebranding-reviewed-2026-08-01 \
+  --reviewed 6f58b2578825f74394fe16bb1c15aa17a17ad91d \
   --check-counts --check
 
 node scripts/l10n/floorp-l10n-overlay.mjs apply \
