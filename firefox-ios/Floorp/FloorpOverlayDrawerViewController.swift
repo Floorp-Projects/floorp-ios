@@ -25,6 +25,99 @@ import Storage
 import MozillaAppServices
 import Shared
 
+@MainActor
+final class FloorpPanelPresentationState {
+    let windowUUID: WindowUUID
+    private(set) var selectedPanelId: String?
+    private(set) weak var activeDrawer: FloorpOverlayDrawerViewController?
+
+    var hasActivePresentation: Bool {
+        activeDrawer != nil
+    }
+
+    init(windowUUID: WindowUUID, selectedPanelId: String? = nil) {
+        self.windowUUID = windowUUID
+        self.selectedPanelId = selectedPanelId
+    }
+
+    func selectedPanel(in panels: [FloorpPanel]) -> FloorpPanel? {
+        if let selectedPanelId,
+           let selectedPanel = panels.first(where: { $0.id == selectedPanelId }) {
+            return selectedPanel
+        }
+        selectedPanelId = panels.first?.id
+        return panels.first
+    }
+
+    func select(_ panel: FloorpPanel) {
+        selectedPanelId = panel.id
+    }
+
+    func attach(_ drawer: FloorpOverlayDrawerViewController) -> Bool {
+        guard activeDrawer == nil || activeDrawer === drawer else { return false }
+        activeDrawer = drawer
+        return true
+    }
+
+    func detach(_ drawer: FloorpOverlayDrawerViewController) {
+        guard activeDrawer === drawer else { return }
+        activeDrawer = nil
+    }
+}
+
+struct FloorpDrawerLayoutMetrics {
+    static let outsideDismissWidth: CGFloat = 44
+    static let compactMaximumWidth: CGFloat = 420
+    static let regularMinimumWidth: CGFloat = 360
+    static let regularMaximumWidth: CGFloat = 480
+
+    static func drawerWidth(
+        availableWidth: CGFloat,
+        horizontalSizeClass: UIUserInterfaceSizeClass
+    ) -> CGFloat {
+        let availableDrawerWidth = max(0, availableWidth - outsideDismissWidth)
+        let preferredWidth: CGFloat
+        switch horizontalSizeClass {
+        case .regular:
+            preferredWidth = min(
+                max(availableWidth * 0.42, regularMinimumWidth),
+                regularMaximumWidth
+            )
+        case .compact, .unspecified:
+            preferredWidth = min(availableDrawerWidth, compactMaximumWidth)
+        @unknown default:
+            preferredWidth = min(availableDrawerWidth, compactMaximumWidth)
+        }
+        return min(preferredWidth, availableDrawerWidth)
+    }
+
+    static func dismissalTranslation(
+        drawerWidth: CGFloat,
+        layoutDirection: UIUserInterfaceLayoutDirection
+    ) -> CGFloat {
+        layoutDirection == .rightToLeft ? -drawerWidth : drawerWidth
+    }
+
+    static func dismissalSwipeDirection(
+        layoutDirection: UIUserInterfaceLayoutDirection
+    ) -> UISwipeGestureRecognizer.Direction {
+        layoutDirection == .rightToLeft ? .left : .right
+    }
+
+    static func exposedCornerMask(
+        layoutDirection: UIUserInterfaceLayoutDirection
+    ) -> CACornerMask {
+        if layoutDirection == .rightToLeft {
+            return [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+        }
+        return [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+    }
+
+    static func sidebarWidth(configuredWidth: Int) -> CGFloat {
+        CGFloat(min(max(configuredWidth, 44), 72))
+    }
+}
+
 // MARK: - Drawer View Controller
 
 /// A side drawer that slides in from the right, with a vertical icon sidebar
@@ -52,14 +145,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     // MARK: - Constants
     private enum UX {
-        static let drawerWidthRatio: CGFloat = 1.0
         static let animationDuration: TimeInterval = 0.3
-        static let cornerRadius: CGFloat = 0
+        static let cornerRadius: CGFloat = 16
         static let headerHeight: CGFloat = 52
         static let searchBarHeight: CGFloat = 44
         static let rowHeight: CGFloat = 56
         static let iconSize: CGFloat = 28
-        static let sidebarWidth: CGFloat = 50
         static let sidebarIconSize: CGFloat = 22
         static let horizontalPadding: CGFloat = 16
         static let separatorHeight: CGFloat = 0.5
@@ -67,6 +158,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     // MARK: - Properties
     private let panelManager: FloorpPanelManager
+    private let presentationState: FloorpPanelPresentationState
     private let notesStore: FloorpNotesStore
     private let logger: Logger
 
@@ -89,12 +181,13 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     // MARK: - UI Components
 
     // Background dimming overlay
-    private lazy var dimmingView: UIView = {
-        let view = UIView()
+    private lazy var dimmingView: UIControl = {
+        let view = UIControl()
         view.alpha = 0
         view.translatesAutoresizingMaskIntoConstraints = false
-        let tap = UITapGestureRecognizer(target: self, action: #selector(dimmingViewTapped))
-        view.addGestureRecognizer(tap)
+        view.addTarget(self, action: #selector(dimmingViewTapped), for: .touchUpInside)
+        view.isAccessibilityElement = false
+        view.accessibilityIdentifier = "Floorp.Drawer.Dimming"
         return view
     }()
 
@@ -105,8 +198,18 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         view.layer.cornerRadius = UX.cornerRadius
         view.clipsToBounds = true
         view.translatesAutoresizingMaskIntoConstraints = false
+        view.accessibilityIdentifier = "Floorp.Drawer.Container"
         return view
     }()
+
+    private lazy var dismissSwipeGesture: UISwipeGestureRecognizer = {
+        let gesture = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
+        return gesture
+    }()
+
+    private var containerWidthConstraint: NSLayoutConstraint?
+    private var sidebarWidthConstraint: NSLayoutConstraint?
+    private var sidebarStackWidthConstraint: NSLayoutConstraint?
 
     // Sidebar (icon column)
     private lazy var sidebarView: UIView = {
@@ -190,7 +293,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         tv.cellLayoutMarginsFollowReadableWidth = false
         tv.rowHeight = UITableView.automaticDimension
         tv.estimatedRowHeight = UX.rowHeight
+        tv.keyboardDismissMode = .interactive
         tv.translatesAutoresizingMaskIntoConstraints = false
+        tv.accessibilityIdentifier = "Floorp.Drawer.Content"
         return tv
     }()
 
@@ -225,13 +330,17 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     init(panelManager: FloorpPanelManager = .shared,
          notesStore: FloorpNotesStore = .shared,
          logger: Logger = DefaultLogger.shared,
-         windowUUID: WindowUUID = WindowUUID.XCTestDefaultUUID,
+         presentationState: FloorpPanelPresentationState? = nil,
          themeManager: ThemeManager = AppContainer.shared.resolve(),
          notificationCenter: NotificationProtocol = NotificationCenter.default) {
+        let presentationState = presentationState ?? FloorpPanelPresentationState(
+            windowUUID: WindowUUID.XCTestDefaultUUID
+        )
         self.panelManager = panelManager
+        self.presentationState = presentationState
         self.notesStore = notesStore
         self.logger = logger
-        self.windowUUID = windowUUID
+        self.windowUUID = presentationState.windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
         super.init(nibName: nil, bundle: nil)
@@ -255,7 +364,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         setupView()
         setupConstraints()
         buildSidebarButtons()
-        selectPanel(panelManager.selectedPanel?.id ?? panelManager.panels.first?.id ?? "floorp//bookmarks")
+        if let selectedPanel = presentationState.selectedPanel(in: panelManager.panels) {
+            selectPanel(selectedPanel.id)
+        }
         loadCurrentPanel()
         notificationCenter.addObserver(
             self,
@@ -276,6 +387,23 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         // drawer dismissal.
         if isBeingDismissed || presentingViewController == nil {
             finishDismissal()
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateDrawerGeometry(availableWidth: view.bounds.width)
+    }
+
+    override func viewWillTransition(
+        to size: CGSize,
+        with coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate { [weak self] _ in
+            guard let self else { return }
+            self.updateDrawerGeometry(availableWidth: size.width)
+            self.view.layoutIfNeeded()
         }
     }
 
@@ -324,13 +452,30 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
         sidebarView.addSubview(sidebarStackView)
 
-        // Swipe gesture to dismiss
-        let swipeGesture = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
-        swipeGesture.direction = .right
-        containerView.addGestureRecognizer(swipeGesture)
+        containerView.addGestureRecognizer(dismissSwipeGesture)
     }
 
     private func setupConstraints() {
+        let initialWidth = FloorpDrawerLayoutMetrics.drawerWidth(
+            availableWidth: view.bounds.width,
+            horizontalSizeClass: traitCollection.horizontalSizeClass
+        )
+        let containerWidthConstraint = containerView.widthAnchor.constraint(equalToConstant: initialWidth)
+        let sidebarWidth = FloorpDrawerLayoutMetrics.sidebarWidth(
+            configuredWidth: panelManager.config.sidebarWidth
+        )
+        let sidebarWidthConstraint = sidebarView.widthAnchor.constraint(equalToConstant: sidebarWidth)
+        let sidebarStackWidthConstraint = sidebarStackView.widthAnchor.constraint(
+            equalToConstant: max(0, sidebarWidth - 8)
+        )
+        let tableSafeAreaBottomConstraint = tableView.bottomAnchor.constraint(
+            equalTo: containerView.safeAreaLayoutGuide.bottomAnchor
+        )
+        tableSafeAreaBottomConstraint.priority = .defaultHigh
+        self.containerWidthConstraint = containerWidthConstraint
+        self.sidebarWidthConstraint = sidebarWidthConstraint
+        self.sidebarStackWidthConstraint = sidebarStackWidthConstraint
+
         NSLayoutConstraint.activate([
             // Dimming view fills entire screen
             dimmingView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -342,23 +487,33 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             containerView.topAnchor.constraint(equalTo: view.topAnchor),
             containerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            containerView.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: UX.drawerWidthRatio),
+            containerView.leadingAnchor.constraint(
+                greaterThanOrEqualTo: view.leadingAnchor,
+                constant: FloorpDrawerLayoutMetrics.outsideDismissWidth
+            ),
+            containerWidthConstraint,
 
             // Sidebar
             sidebarView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             sidebarView.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
             sidebarView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            sidebarView.widthAnchor.constraint(equalToConstant: UX.sidebarWidth),
+            sidebarWidthConstraint,
 
             // Sidebar stack view
             sidebarStackView.topAnchor.constraint(equalTo: sidebarView.topAnchor, constant: 12),
             sidebarStackView.centerXAnchor.constraint(equalTo: sidebarView.centerXAnchor),
-            sidebarStackView.widthAnchor.constraint(equalToConstant: UX.sidebarWidth - 8),
+            sidebarStackView.bottomAnchor.constraint(
+                lessThanOrEqualTo: containerView.safeAreaLayoutGuide.bottomAnchor,
+                constant: -12
+            ),
+            sidebarStackWidthConstraint,
 
             // Header
             headerView.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
             headerView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            headerView.trailingAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.trailingAnchor
+            ),
             headerView.heightAnchor.constraint(equalToConstant: UX.headerHeight),
 
             // Title
@@ -387,7 +542,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
                 constant: UX.horizontalPadding
             ),
             searchTextField.trailingAnchor.constraint(
-                equalTo: containerView.trailingAnchor,
+                equalTo: containerView.safeAreaLayoutGuide.trailingAnchor,
                 constant: -UX.horizontalPadding
             ),
             searchTextField.heightAnchor.constraint(
@@ -399,8 +554,13 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
                 equalTo: searchTextField.bottomAnchor, constant: 8
             ),
             tableView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            tableView.trailingAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.trailingAnchor
+            ),
+            tableView.bottomAnchor.constraint(
+                lessThanOrEqualTo: view.keyboardLayoutGuide.topAnchor
+            ),
+            tableSafeAreaBottomConstraint,
 
             // Empty state
             emptyStateLabel.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
@@ -420,14 +580,32 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         ])
     }
 
+    private func updateDrawerGeometry(availableWidth: CGFloat) {
+        let layoutDirection = view.effectiveUserInterfaceLayoutDirection
+        containerWidthConstraint?.constant = FloorpDrawerLayoutMetrics.drawerWidth(
+            availableWidth: availableWidth,
+            horizontalSizeClass: traitCollection.horizontalSizeClass
+        )
+        let sidebarWidth = FloorpDrawerLayoutMetrics.sidebarWidth(
+            configuredWidth: panelManager.config.sidebarWidth
+        )
+        sidebarWidthConstraint?.constant = sidebarWidth
+        sidebarStackWidthConstraint?.constant = max(0, sidebarWidth - 8)
+        dismissSwipeGesture.direction = FloorpDrawerLayoutMetrics.dismissalSwipeDirection(
+            layoutDirection: layoutDirection
+        )
+        containerView.layer.maskedCorners = FloorpDrawerLayoutMetrics.exposedCornerMask(
+            layoutDirection: layoutDirection
+        )
+    }
+
     // MARK: - Themeable
 
     func applyTheme() {
         let theme = themeManager.getCurrentTheme(for: windowUUID)
         let colors = theme.colors
 
-        // Main view background (behind dimming)
-        view.backgroundColor = colors.layerScrim.withAlphaComponent(0.4)
+        view.backgroundColor = .clear
 
         // Dimming overlay
         dimmingView.backgroundColor = colors.layerScrim.withAlphaComponent(0.4)
@@ -510,7 +688,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         let colors = theme.colors
         for button in sidebarButtons {
             let panelId = button.accessibilityIdentifier ?? ""
-            let isSelected = panelId == (panelManager.config.selectedPanelId ?? "")
+            let isSelected = panelId == presentationState.selectedPanelId
             button.tintColor = isSelected ? colors.iconAccent : colors.iconSecondary
             button.backgroundColor = isSelected ? colors.actionPrimary.withAlphaComponent(0.12) : .clear
             if isSelected {
@@ -530,7 +708,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private func selectPanel(_ panelId: String) {
         guard let panel = panelManager.panel(for: panelId) else { return }
         currentPanelType = panel.type
-        panelManager.selectPanel(id: panelId)
+        presentationState.select(panel)
         let panelTitle = panel.type.localizedBuiltInTitle ?? panel.title
         titleLabel.text = panel.type == .notes
             ? "\(panelTitle) · \(FloorpStrings.Notes.localOnly)"
@@ -947,10 +1125,19 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
               parentVC.presentedViewController == nil else { return false }
 
         parentVC.loadViewIfNeeded()
-        guard parentVC.view.window != nil else { return false }
+        guard parentVC.view.window != nil,
+              presentationState.attach(self) else { return false }
 
         loadViewIfNeeded()
-        view.transform = CGAffineTransform(translationX: parentVC.view.bounds.width, y: 0)
+        updateDrawerGeometry(availableWidth: parentVC.view.bounds.width)
+        view.layoutIfNeeded()
+        containerView.transform = CGAffineTransform(
+            translationX: FloorpDrawerLayoutMetrics.dismissalTranslation(
+                drawerWidth: containerWidthConstraint?.constant ?? parentVC.view.bounds.width,
+                layoutDirection: view.effectiveUserInterfaceLayoutDirection
+            ),
+            y: 0
+        )
         view.accessibilityViewIsModal = true
         isTransitioningDrawer = true
 
@@ -959,7 +1146,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
             UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut) {
                 self.dimmingView.alpha = 1
-                self.view.transform = .identity
+                self.containerView.transform = .identity
             } completion: { _ in
                 self.isTransitioningDrawer = false
                 onPresented?()
@@ -974,6 +1161,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         let didPresent = presentingViewController === parentVC
         if !didPresent {
             isTransitioningDrawer = false
+            presentationState.detach(self)
         }
         return didPresent
     }
@@ -998,7 +1186,13 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             options: .curveEaseIn,
             animations: {
                 self.dimmingView.alpha = 0
-                self.view.transform = CGAffineTransform(translationX: self.view.bounds.width, y: 0)
+                self.containerView.transform = CGAffineTransform(
+                    translationX: FloorpDrawerLayoutMetrics.dismissalTranslation(
+                        drawerWidth: self.containerView.bounds.width,
+                        layoutDirection: self.view.effectiveUserInterfaceLayoutDirection
+                    ),
+                    y: 0
+                )
             },
             completion: { _ in
                 self.dismiss(animated: false) { [weak self] in
@@ -1012,6 +1206,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         guard !didFinishDismissal else { return }
         didFinishDismissal = true
         isTransitioningDrawer = false
+        presentationState.detach(self)
         onDismissed?()
     }
 }

@@ -188,25 +188,29 @@ struct DrawerItem: Identifiable {
 
 /// Global configuration for the overlay drawer.
 ///
-/// Mirrors Floorp desktop's `floorp.panel.sidebar.config` preferences,
-/// adapted for iOS (no floating mode, no position_start toggle).
+/// Mirrors the profile-wide portion of Floorp desktop's
+/// `floorp.panel.sidebar.config` preferences.
 struct FloorpOverlayDrawerConfig: Codable, Equatable {
     /// Whether the drawer is enabled.
     var isEnabled = true
 
-    /// The ID of the currently selected panel.
-    var selectedPanelId: String?
-
-    /// Ordered list of panel IDs.
-    /// Desktop stores this in `floorp.panel.sidebar.data`.
-    var panelOrder: [String] = [
-        "floorp//bookmarks", "floorp//history", "floorp//downloads", "floorp//notes"
-    ]
-
-    /// Whether the drawer is currently visible.
-    var isDisplayed = false
-
     /// Width of the icon sidebar column in points.
     /// Desktop: 42px (compact), 60px (touch). iOS uses 50px.
     var sidebarWidth = 50
+
+    init(isEnabled: Bool = true, sidebarWidth: Int = 50) {
+        self.isEnabled = isEnabled
+        self.sidebarWidth = sidebarWidth
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case sidebarWidth
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        sidebarWidth = try container.decodeIfPresent(Int.self, forKey: .sidebarWidth) ?? 50
+    }
 }
