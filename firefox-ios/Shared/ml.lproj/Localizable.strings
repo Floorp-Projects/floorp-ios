@@ -329,7 +329,7 @@
 "Facebook" = "ഫേസ്ബുക്ക്";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "ഫയർഫോക്സ് പൂമുഖം";
+"Firefox.HomePage.Title" = "Floorp പൂമുഖം";
 
 /* A button at bottom of the Firefox homepage that, when clicked, takes users straight to the settings options, where they can customize the Firefox Home page */
 "FirefoxHome.CustomizeHomeButton.Title" = "ആമുഖം ഇഷ്ടാനുസൃതമാക്കുക";
@@ -425,7 +425,7 @@
 "FxAPush_DeviceDisconnected_UnknownDevice_body" = "ഫയർഫോക്സ് സമന്വയത്തിൽ നിന്നും ഒരു ഉപകരണം വിച്ഛേദിച്ചിരിക്കുന്നു";
 
 /* On the firefox homepage, the string read by the voice over prompt for accessibility, for the button which changes the wallpaper */
-"FxHomepage.Wallpaper.ButtonLabel.v99" = "ഫയർഫോക്സു് അടയാളം, ചുവർകടലാസു് മാറ്റുക.";
+"FxHomepage.Wallpaper.ButtonLabel.v99" = "Floorp അടയാളം, ചുവർകടലാസു് മാറ്റുക.";
 
 /* Show the SUMO support page from the Support section in the settings. see http://mzl.la/1dmM8tZ */
 "Help" = "തുണ";
@@ -662,7 +662,7 @@
 "Logins.WelcomeView.Tagline" = "നിങ്ങളുടെ ഒളിവാക്കുകൾ എല്ലായിടത്തും കൊണ്ടപോവുക";
 
 /* Label displaying welcome view title */
-"Logins.WelcomeView.Title2" = "ഫയർഫോക്സു് ഒളിവാക്കുകൾ തനുപൂരിക്കുക";
+"Logins.WelcomeView.Title2" = "Floorp ഒളിവാക്കുകൾ തനുപൂരിക്കുക";
 
 /* Title of the big blue button to enable AutoFill */
 "Logins.WelcomeView.TurnOnAutoFill" = "താനെപ്പൂരിക്കൽ തുടങ്ങി വയ്ക്കുക";
@@ -896,7 +896,7 @@
 "Open Tabs" = "തുറന്ന ടാബുകള്‍";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "അത് അസാധുവായ ഒരു വിലാസമാതിനാൽ ഫയർഫോക്സിന് താള് തുറക്കാൻ കഴിയില്ല.";
+"OpenURL.Error.Message" = "അത് അസാധുവായ ഒരു വിലാസമാതിനാൽ Floorp-ന് താള് തുറക്കാൻ കഴിയില്ല.";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "താൾ തുറക്കാനാവുന്നില്ല";
@@ -995,7 +995,7 @@
 "ScanQRCode.InvalidDataError.Message" = "ഈ ഡാറ്റ അസാധുവാണ്";
 
 /* Text of the prompt to setup the camera authorization for the Scan QR Code feature. */
-"ScanQRCode.PermissionError.Message.v100" = "ഉപകരണ 'ക്രമീകരണങ്ങൾ' > 'ഫയർഫോക്സ്' എന്നതിലേക്ക് പോകുക. ക്യാമറ ഉപയോഗിക്കാൻ Firefox-നെ അനുവാദം കൊടുക്കുക.";
+"ScanQRCode.PermissionError.Message.v100" = "ഉപകരണ 'ക്രമീകരണങ്ങൾ' > 'Floorp' എന്നതിലേക്ക് പോകുക. ക്യാമറ ഉപയോഗിക്കാൻ Floorp-നെ അനുവാദം കൊടുക്കുക.";
 
 /* Title for the QR code scanner view. */
 "ScanQRCode.View.Title" = "QR സങ്കേതം പരിശോധിക്കുക";
@@ -1292,7 +1292,7 @@
 "Settings.Home.Option.StartAtHome.Always" = "ആമുഖതാൾ";
 
 /* In the settings menu, in the Start at Home customization options, this is text that appears below the section, describing what the section settings do. */
-"Settings.Home.Option.StartAtHome.Description" = "താങ്ങൾ ഫയർഫോക്സിലേക്കു് തിരിച്ചു വരുമ്പോൾ എന്തു് കാണിക്കണം എന്നു് തീരുമാനിക്കുക.";
+"Settings.Home.Option.StartAtHome.Description" = "താങ്ങൾ Floorp-ലേക്കു് തിരിച്ചു വരുമ്പോൾ എന്തു് കാണിക്കണം എന്നു് തീരുമാനിക്കുക.";
 
 /* In the settings menu, on the Start at Home homepage customization option, this allows users to set this setting to return to the last tab they were on, every time they open up Firefox */
 "Settings.Home.Option.StartAtHome.Never" = "അവസാന ടാബു്";
@@ -1307,22 +1307,22 @@
 "Settings.Home.Option.Wallpaper" = "ചുവർകടലാസു്";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the amethyst firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "ഫയർഫോക്സു് ചുവർക്കടലാസു്, കുപ്പിക്കല്ലു് രചന.";
+"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Floorp ചുവർക്കടലാസു്, കുപ്പിക്കല്ലു് രചന.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the beach hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "ഫയർഫോക്സു് ചുവർക്കടലാസു്, കടല്ത്തീരക്കുന്നുകളുള്ള രചന.";
+"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Floorp ചുവർക്കടലാസു്, കടല്ത്തീരക്കുന്നുകളുള്ള രചന.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the cerulean firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "ഫയർഫോക്സു് ചുവർക്കടലാസു്, ആകാശനീല രചന.";
+"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Floorp ചുവർക്കടലാസു്, ആകാശനീല രചന.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the default wallpaper. */
 "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99" = "തനതു തെളിഞ്ഞ ചുവർകടലാസു്.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the sunrise firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "ഫയർഫോക്സു് ചുവർക്കടലാസു്, കിഴക്കരചന.";
+"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Floorp ചുവർക്കടലാസു്, കിഴക്കരചന.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the twilight hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "ഫയർഫോക്സു് ചുവർക്കടലാസു്, സന്ധ്യക്കുന്നരചന.";
+"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Floorp ചുവർക്കടലാസു്, സന്ധ്യക്കുന്നരചന.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of the group of wallpapers that are always available to the user. The %@ will be replaced by the app name and thus doesn't need translation. */
 "Settings.Home.Option.Wallpaper.Classic.Title.v106" = "ക്ലാസിക് %@";
@@ -1340,7 +1340,7 @@
 "Settings.Home.Option.Wallpaper.LimitedEdition.Title.v106" = "പരിമിത പതിപ്പു്";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off. */
-"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "ഫയർഫോക്സു് ആമുഖയടയാളത്തിൽ അമർത്തി താങ്ങളുടെ ചുവൎക്കടലാസു് മാറ്റുക";
+"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Floorp ആമുഖയടയാളത്തിൽ അമർത്തി താങ്ങളുടെ ചുവൎക്കടലാസു് മാറ്റുക";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of that screen, which allows users to change the wallpaper settings for the application. */
 "Settings.Home.Option.Wallpaper.Title" = "ചുവർകടലാസു്";
@@ -1394,7 +1394,7 @@
 "Settings.NewTab.Option.Custom" = "ഇഷ്ടാനുസൃതം";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "ഫയർഫോക്സ് പൂമുഖം";
+"Settings.NewTab.Option.FirefoxHome" = "Floorp പൂമുഖം";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "ആസ്ഥാനതാള്‍";
@@ -1415,7 +1415,7 @@
 "Settings.NoImageModeBlockImages.Label.v99" = "ചിത്രങ്ങള്‍ തടയുക";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "ഫയർഫോക്സ് തുറക്കുമ്പോൾ";
+"Settings.OfferClipboardBar.Status" = "Floorp തുറക്കുമ്പോൾ";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349. %@ is for the app name. */
 "Settings.OfferClipboardBar.Status.v128" = "%@ തുറക്കുമ്പോൾ";
@@ -1472,7 +1472,7 @@
 "Settings.Siri.OpenTabShortcut" = "പുതിയ റ്റാബ് തുറക്കുക";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "സിരി വഴി ഫയർഫോക്സ് വേഗത്തിൽ തുറക്കാൻ സിരി കുറുക്കുവഴികൾ ഉപയോഗിക്കുക";
+"Settings.Siri.SectionDescription" = "സിരി വഴി Floorp വേഗത്തിൽ തുറക്കാൻ സിരി കുറുക്കുവഴികൾ ഉപയോഗിക്കുക";
 
 /* The option that takes you to the siri shortcuts settings page */
 "Settings.Siri.SectionName" = "സിരി കുറുക്കുവഴികൾ";
@@ -1598,13 +1598,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "പശ്ചാത്തലത്തിൽ ലോഡുചെയ്യുക";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "ഫയർഫോക്സിൽ ലോഡ് ചെയ്യുന്നു";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Floorp-ൽ ലോഡ് ചെയ്യുന്നു";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "ഫയർഫോക്സിൽ തുറക്കുക";
+"ShareExtension.OpenInFirefoxAction.Title" = "Floorp-ൽ തുറക്കുക";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "ഫയർഫോക്സിൽ തിരയുക";
+"ShareExtension.SeachInFirefoxAction.Title" = "Floorp-ൽ തിരയുക";
 
 /* Button in share sheet to copy the url of the current tab. */
 "ShareSheet.Copy.Title.v108" = "പകര്‍ത്തുക";
@@ -1748,7 +1748,7 @@
 "UIMenuItem.PasteGo" = "ഒട്ടിച്ചു് തുടരുക";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "ഫയർഫോക്സുപയോഗിച്ച് തിരയുക";
+"UIMenuItem.SearchWithFirefox" = "Floorp ഉപയോഗിച്ച് തിരയുക";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "വായിക്കാത്തത്";

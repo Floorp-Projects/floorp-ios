@@ -329,7 +329,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Domovská stránka prehliadača Firefox";
+"Firefox.HomePage.Title" = "Domovská stránka prehliadača Floorp";
 
 /* A button at bottom of the Firefox homepage that, when clicked, takes users straight to the settings options, where they can customize the Firefox Home page */
 "FirefoxHome.CustomizeHomeButton.Title" = "Prispôsobiť domovskú stránku";
@@ -425,7 +425,7 @@
 "FxAPush_DeviceDisconnected_UnknownDevice_body" = "Zariadenie bolo odpojené od služby Firefox Sync";
 
 /* On the firefox homepage, the string read by the voice over prompt for accessibility, for the button which changes the wallpaper */
-"FxHomepage.Wallpaper.ButtonLabel.v99" = "Logo Firefoxu, zmena tapety";
+"FxHomepage.Wallpaper.ButtonLabel.v99" = "Logo Floorpu, zmena tapety";
 
 /* Show the SUMO support page from the Support section in the settings. see http://mzl.la/1dmM8tZ */
 "Help" = "Pomocník";
@@ -656,13 +656,13 @@
 "Logins.Onboarding.LearnMoreButtonTitle" = "Ďalšie informácie";
 
 /* Warning message shown when you try to enable or use native AutoFill without a device passcode setup */
-"Logins.PasscodeRequirement.Warning" = "Ak chcete použiť funkciu Automatické dopĺňanie pre Firefox, musíte mať povolený prístupový kód zariadenia.";
+"Logins.PasscodeRequirement.Warning" = "Ak chcete použiť funkciu Automatické dopĺňanie pre Floorp, musíte mať povolený prístupový kód zariadenia.";
 
 /* Label displaying welcome view tagline under the title */
 "Logins.WelcomeView.Tagline" = "Vezmite si svoje heslá so sebou";
 
 /* Label displaying welcome view title */
-"Logins.WelcomeView.Title2" = "Automatické dopĺňanie hesiel Firefoxu";
+"Logins.WelcomeView.Title2" = "Automatické dopĺňanie hesiel Floorpu";
 
 /* Title of the big blue button to enable AutoFill */
 "Logins.WelcomeView.TurnOnAutoFill" = "Zapnite Automatické dopĺňanie";
@@ -695,7 +695,7 @@
 "LoginsList.Title" = "ULOŽENÉ PRIHLASOVACIE ÚDAJE";
 
 /* Restore Tabs Prompt Description */
-"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Zdá sa, že Firefox naposledy zlyhal. Chcete obnoviť svoje karty?";
+"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Zdá sa, že Floorp naposledy zlyhal. Chcete obnoviť svoje karty?";
 
 /* Title for the button that marks a reading list item as read */
 "Mark as Read" = "Označiť ako prečítané";
@@ -884,7 +884,7 @@
 "Onboarding.WhatsNew.Button.Title" = "Začať prehliadanie";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "Ups! Firefox zlyhal";
+"Oops! Firefox crashed" = "Ups! Floorp zlyhal";
 
 /* See http://mzl.la/1LXbDOL */
 "Open articles in Reader View by tapping the book icon when it appears in the title bar." = "Ťuknutím na ikonu knihy, keď sa objaví v paneli s titulkom, otvoríte stránku v zobrazení Čítačka.";
@@ -908,7 +908,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "Toto vám umožní uložiť obrázok v albume Fotoaparát.";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Firefox žiada o prístup k vašim fotkám";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Floorp žiada o prístup k vašim fotkám";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "Zavrieť";
@@ -995,7 +995,7 @@
 "ScanQRCode.InvalidDataError.Message" = "Údaje sú neplatné";
 
 /* Text of the prompt to setup the camera authorization for the Scan QR Code feature. */
-"ScanQRCode.PermissionError.Message.v100" = "V zariadení prejdite na ‘Nastavenia’ > ‘Firefox’. Povoľte prehliadaču Firefox prístup k fotoaparátu.";
+"ScanQRCode.PermissionError.Message.v100" = "V zariadení prejdite na ‘Nastavenia’ > ‘Floorp’. Povoľte prehliadaču Floorp prístup k fotoaparátu.";
 
 /* Title for the QR code scanner view. */
 "ScanQRCode.View.Title" = "Skenovanie QR kódu";
@@ -1079,7 +1079,7 @@
 "SendTo.NoDevicesFound.Message" = "K svojmu účtu Firefox nemáte pripojené žiadne zariadenia dostupné na synchronizáciu.";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "Spustite Firefox, prejdite do Nastavení a prihláste sa.";
+"SendTo.NotSignedIn.Message" = "Spustite Floorp, prejdite do Nastavení a prihláste sa.";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "Nie ste prihlásený k svojmu účtu Firefox.";
@@ -1193,7 +1193,7 @@
 "Settings.DataManagement.Title" = "Správa údajov";
 
 /* Body of the alert when prompting the user asking to disconnect. */
-"Settings.Disconnect.Body" = "Firefox sa už viac nebude synchronizovať s vašim účtom, ale neodstráni z toho zariadenia žiadne z údajov prehliadania.";
+"Settings.Disconnect.Body" = "Floorp sa už viac nebude synchronizovať s vašim účtom, ale neodstráni z toho zariadenia žiadne z údajov prehliadania.";
 
 /* Button displayed at the bottom of settings page allowing users to Disconnect from FxA */
 "Settings.Disconnect.Button" = "Odpojiť Sync";
@@ -1268,7 +1268,7 @@
 "Settings.Home.Current.Description.v101" = "Vyberte, čo sa zobrazí ako domovská stránka.";
 
 /* In the settings menu, on the Firefox homepage customization section, this is the description below the section, describing what the options in the section are for. */
-"Settings.Home.Option.Description.v101" = "Vyberte, čo je zahrnuté na domovskej stránke Firefoxu.";
+"Settings.Home.Option.Description.v101" = "Vyberte, čo je zahrnuté na domovskej stránke Floorpu.";
 
 /* In the settings menu, in the Firefox homepage customization section, this is the title for the option that allows users to toggle the Jump Back In section on homepage on or off */
 "Settings.Home.Option.JumpBackIn" = "Návrat späť";
@@ -1292,7 +1292,7 @@
 "Settings.Home.Option.StartAtHome.Always" = "Domovská stránka";
 
 /* In the settings menu, in the Start at Home customization options, this is text that appears below the section, describing what the section settings do. */
-"Settings.Home.Option.StartAtHome.Description" = "Vyberte si, čo chcete vidieť, keď sa vrátite do Firefoxu.";
+"Settings.Home.Option.StartAtHome.Description" = "Vyberte si, čo chcete vidieť, keď sa vrátite do Floorpu.";
 
 /* In the settings menu, on the Start at Home homepage customization option, this allows users to set this setting to return to the last tab they were on, every time they open up Firefox */
 "Settings.Home.Option.StartAtHome.Never" = "Posledná karta";
@@ -1307,25 +1307,25 @@
 "Settings.Home.Option.Wallpaper" = "Tapeta";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the amethyst firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Tapeta Firefoxu, vzor ametystu";
+"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Tapeta Floorpu, vzor ametystu";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the beach hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Tapeta Firefoxu, vzor plážových kopcov";
+"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Tapeta Floorpu, vzor plážových kopcov";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the cerulean firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Tapeta Firefoxu, blankytný vzor";
+"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Tapeta Floorpu, blankytný vzor";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the default wallpaper. */
 "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99" = "Predvolená čistá tapeta";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the sunrise firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Tapeta Firefoxu, vzor východu slnka";
+"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Tapeta Floorpu, vzor východu slnka";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string of the toggle for turning wallpaper cycling shortcut on or off on the homepage. */
 "Settings.Home.Option.Wallpaper.Accessibility.ToggleButton" = "Prepínač automatického prepínania tapety domovskej stránky";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the twilight hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Tapeta Firefoxu, vzor Twilight Hills";
+"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Tapeta Floorpu, vzor Twilight Hills";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of the group of wallpapers that are always available to the user. The %@ will be replaced by the app name and thus doesn't need translation. */
 "Settings.Home.Option.Wallpaper.Classic.Title.v106" = "Klasický %@";
@@ -1346,7 +1346,7 @@
 "Settings.Home.Option.Wallpaper.LimitedEdition.Title.v106" = "Limitovaná edícia";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off. */
-"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Tapetu domovskej stránky zmeniť ťuknutím na logo Firefoxu";
+"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Tapetu domovskej stránky zmeniť ťuknutím na logo Floorpu";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of that screen, which allows users to change the wallpaper settings for the application. */
 "Settings.Home.Option.Wallpaper.Title" = "Tapeta";
@@ -1400,7 +1400,7 @@
 "Settings.NewTab.Option.Custom" = "Vlastná";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Domovská stránka Firefoxu";
+"Settings.NewTab.Option.FirefoxHome" = "Domovská stránka Floorpu";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "Zobraziť vašu domovskú stránku";
@@ -1421,7 +1421,7 @@
 "Settings.NoImageModeBlockImages.Label.v99" = "Blokovať obrázky";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "Pri otvorení Firefoxu";
+"Settings.OfferClipboardBar.Status" = "Pri otvorení Floorpu";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349. %@ is for the app name. */
 "Settings.OfferClipboardBar.Status.v128" = "Pri otváraní aplikácie %@";
@@ -1481,7 +1481,7 @@
 "Settings.Siri.OpenTabShortcut" = "Otvoriť novú kartu";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "Použite skratku na otvorenie Firefoxu pomocou Siri";
+"Settings.Siri.SectionDescription" = "Použite skratku na otvorenie Floorpu pomocou Siri";
 
 /* The option that takes you to the siri shortcuts settings page */
 "Settings.Siri.SectionName" = "Siri - skratky";
@@ -1607,13 +1607,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "Načítať na pozadí";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Načítavanie vo Firefoxe";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Načítavanie vo Floorpe";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Otvoriť vo Firefoxe";
+"ShareExtension.OpenInFirefoxAction.Title" = "Otvoriť vo Floorpe";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Hľadať vo Firefoxe";
+"ShareExtension.SeachInFirefoxAction.Title" = "Hľadať vo Floorpe";
 
 /* Button in share sheet to copy the url of the current tab. */
 "ShareSheet.Copy.Title.v108" = "Kopírovať";
@@ -1757,7 +1757,7 @@
 "UIMenuItem.PasteGo" = "Prilepiť a prejsť";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Hľadať vo Firefoxe";
+"UIMenuItem.SearchWithFirefox" = "Hľadať vo Floorpe";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "neprečítané";
@@ -1805,7 +1805,7 @@
 "Yesterday" = "Včera";
 
 /* Error message in the remote tabs panel */
-"You don’t have any tabs open in Firefox on your other devices." = "Vo Firefoxe na svojich ďalších zariadeniach nemáte otvorené žiadne karty.";
+"You don’t have any tabs open in Firefox on your other devices." = "Vo Floorpe na svojich ďalších zariadeniach nemáte otvorené žiadne karty.";
 
 /* Your Rights settings section title */
 "Your Rights" = "Vaše práva";

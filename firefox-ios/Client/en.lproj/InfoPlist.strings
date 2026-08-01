@@ -1,8 +1,8 @@
 
 NSLocationWhenInUseUsageDescription = "Websites you visit may request your location.";
 NSPhotoLibraryAddUsageDescription = "This lets you save photos.";
-NSCameraUsageDescription = "Firefox can use your camera to scan QR codes or take photos and video.";
-NSMicrophoneUsageDescription = "Firefox uses your microphone to record and upload audio.";
+NSCameraUsageDescription = "Floorp can use your camera to scan QR codes or take photos and video.";
+NSMicrophoneUsageDescription = "Floorp uses your microphone to record and upload audio.";
 "New Tab" = "New Tab";
 "New Private Tab" = "New Private Tab";
 "Scan QR Code" = "Scan QR Code";

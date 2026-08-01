@@ -260,7 +260,7 @@
 "ErrorPages.AdvancedWarning2.Text" = "It may be a misconfiguration or tampering by an attacker. Proceed if you accept the potential risk.";
 
 /* Warning text on the certificate error page */
-"ErrorPages.CertWarning.Description" = "The owner of %@ has configured their website improperly. To protect your information from being stolen, Firefox has not connected to this website.";
+"ErrorPages.CertWarning.Description" = "The owner of %@ has configured their website improperly. To protect your information from being stolen, Floorp has not connected to this website.";
 
 /* Title on the certificate error page */
 "ErrorPages.CertWarning.Title" = "This Connection is Untrusted";
@@ -281,7 +281,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Firefox Home Page";
+"Firefox.HomePage.Title" = "Floorp Home Page";
 
 /* Accessibility Label for the tab toolbar Forward button */
 "Forward" = "Forward";
@@ -458,7 +458,7 @@
 "LoginsList.Title" = "SAVED LOGINS";
 
 /* Restore Tabs Prompt Description */
-"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Looks like Firefox crashed previously. Would you like to restore your tabs?";
+"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Looks like Floorp crashed previously. Would you like to restore your tabs?";
 
 /* Title for the button that marks a reading list item as read */
 "Mark as Read" = "Mark as Read";
@@ -554,7 +554,7 @@
 "Okay" = "Okay";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "Oops! Firefox crashed";
+"Oops! Firefox crashed" = "Oops! Floorp crashed";
 
 /* See http://mzl.la/1G7uHo7 */
 "Open Settings" = "Open Settings";
@@ -566,7 +566,7 @@
 "Open articles in Reader View by tapping the book icon when it appears in the title bar." = "Open articles in Reader View by tapping the book icon when it appears in the title bar.";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "Firefox cannot open the page because it has an invalid address.";
+"OpenURL.Error.Message" = "Floorp cannot open the page because it has an invalid address.";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "Cannot Open Page";
@@ -578,7 +578,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "This allows you to save the image to your Camera Roll.";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Firefox would like to access your Photos";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Floorp would like to access your Photos";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "Close";
@@ -716,7 +716,7 @@
 "SendTo.NoDevicesFound.Message" = "You don’t have any other devices connected to this Firefox Account available to sync.";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "Please open Firefox, go to Settings and sign in to continue.";
+"SendTo.NotSignedIn.Message" = "Please open Floorp, go to Settings and sign in to continue.";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "You are not signed in to your Firefox Account.";
@@ -797,7 +797,7 @@
 "Settings.DataManagement.Title" = "Data Management";
 
 /* Body of the alert when prompting the user asking to disconnect. */
-"Settings.Disconnect.Body" = "Firefox will stop syncing with your account, but won’t delete any of your browsing data on this device.";
+"Settings.Disconnect.Body" = "Floorp will stop syncing with your account, but won’t delete any of your browsing data on this device.";
 
 /* Button displayed at the bottom of settings page allowing users to Disconnect from FxA */
 "Settings.Disconnect.Button" = "Disconnect Sync";
@@ -884,7 +884,7 @@
 "Settings.NewTab.Option.BlankPage" = "Blank Page";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Firefox Home";
+"Settings.NewTab.Option.FirefoxHome" = "Floorp Home";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "Homepage";
@@ -902,7 +902,7 @@
 "Settings.NewTab.TopSectionNameFooter" = "Choose what to load when opening a new tab";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "When Opening Firefox";
+"Settings.OfferClipboardBar.Status" = "When Opening Floorp";
 
 /* Title of setting to enable the Go to Copied URL feature. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
 "Settings.OfferClipboardBar.Title" = "Offer to Open Copied Links";
@@ -944,7 +944,7 @@
 "Settings.Siri.OpenTabShortcut" = "Open New Tab";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "Use Siri shortcuts to quickly open Firefox via Siri";
+"Settings.Siri.SectionDescription" = "Use Siri shortcuts to quickly open Floorp via Siri";
 
 /* The option that takes you to the siri shortcuts settings page */
 "Settings.Siri.SectionName" = "Siri Shortcuts";
@@ -1019,13 +1019,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "Load in Background";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Loading in Firefox";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Loading in Floorp";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Open in Firefox";
+"ShareExtension.OpenInFirefoxAction.Title" = "Open in Floorp";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Search in Firefox";
+"ShareExtension.SeachInFirefoxAction.Title" = "Search in Floorp";
 
 /* Label for show search suggestions setting. */
 "Show Search Suggestions" = "Show Search Suggestions";
@@ -1124,7 +1124,7 @@
 "UIMenuItem.PasteGo" = "Paste & Go";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Search with Firefox";
+"UIMenuItem.SearchWithFirefox" = "Search with Floorp";
 
 /* Debug option */
 "Use stage servers" = "Use stage servers";
@@ -1148,7 +1148,7 @@
 "Yesterday" = "Yesterday";
 
 /* Error message in the remote tabs panel */
-"You don’t have any tabs open in Firefox on your other devices." = "You don’t have any tabs open in Firefox on your other devices.";
+"You don’t have any tabs open in Firefox on your other devices." = "You don’t have any tabs open in Floorp on your other devices.";
 
 /* Tile title for YouTube */
 "YouTube" = "YouTube";
