@@ -323,6 +323,81 @@ enum FloorpStrings {
             value: "Save failed — your changes are still here. Tap Save to retry.",
             comment: "Floorp note save failure status"
         )
+        static let conflictTitle = string(
+            "Floorp.Notes.ConflictTitle.v1",
+            value: "This Note Changed Elsewhere",
+            comment: "Title shown when a Floorp note has a concurrent edit conflict"
+        )
+        static let conflictMessage = string(
+            "Floorp.Notes.ConflictMessage.v1",
+            value: "Reload the latest version, save your changes as a copy, or keep editing.",
+            comment: "Recovery choices for a Floorp note edit conflict"
+        )
+        static let noteDeletedTitle = string(
+            "Floorp.Notes.NoteDeletedTitle.v1",
+            value: "This Note Was Deleted",
+            comment: "Title shown when saving a Floorp note that was deleted elsewhere"
+        )
+        static let noteDeletedMessage = string(
+            "Floorp.Notes.NoteDeletedMessage.v1",
+            value: "Your changes are still here. Save them as a new note or keep editing.",
+            comment: "Recovery choices when a Floorp note was deleted elsewhere"
+        )
+        static let archiveTooLargeSaveTitle = string(
+            "Floorp.Notes.ArchiveTooLargeSaveTitle.v1",
+            value: "Notes Storage Is Full",
+            comment: "Title shown when a Floorp note would exceed the local archive limit"
+        )
+        static let archiveTooLargeSaveMessage = string(
+            "Floorp.Notes.ArchiveTooLargeSaveMessage.v1",
+            value: "Shorten this note or remove another note, then try again. Your changes are still here.",
+            comment: "Recovery guidance when the Floorp Notes archive is too large"
+        )
+        static let damagedSaveTitle = string(
+            "Floorp.Notes.DamagedSaveTitle.v1",
+            value: "Notes Data Needs Recovery",
+            comment: "Title shown when saving is blocked by a damaged notes archive"
+        )
+        static let damagedSaveMessage = string(
+            "Floorp.Notes.DamagedSaveMessage.v1",
+            value: "Close this editor and use the recovery action in the Notes panel. Your changes remain on screen.",
+            comment: "Recovery guidance when saving is blocked by archive corruption"
+        )
+        static let newerSchemaSaveTitle = string(
+            "Floorp.Notes.NewerSchemaSaveTitle.v1",
+            value: "A Newer Floorp Version Is Required",
+            comment: "Title shown when the notes archive uses a newer schema"
+        )
+        static let newerSchemaSaveMessage = string(
+            "Floorp.Notes.NewerSchemaSaveMessage.v1",
+            value: "This version cannot change the newer Notes data. The archive was left untouched.",
+            comment: "Message shown when saving to a newer notes schema is blocked"
+        )
+        static let saveErrorTitle = string(
+            "Floorp.Notes.SaveErrorTitle.v1",
+            value: "Couldn’t Save This Note",
+            comment: "Title shown for a retryable Floorp note persistence error"
+        )
+        static let saveErrorMessage = string(
+            "Floorp.Notes.SaveErrorMessage.v1",
+            value: "Your changes are still here. Check available storage and try again.",
+            comment: "Message shown for a retryable Floorp note persistence error"
+        )
+        static let reload = string(
+            "Floorp.Notes.Reload.v1",
+            value: "Reload Latest",
+            comment: "Action that reloads the latest persisted Floorp note"
+        )
+        static let saveCopy = string(
+            "Floorp.Notes.SaveCopy.v1",
+            value: "Save as Copy",
+            comment: "Action that saves conflicting Floorp note changes as a new note"
+        )
+        static let retry = string(
+            "Floorp.Notes.Retry.v1",
+            value: "Retry Save",
+            comment: "Action that retries saving a Floorp note"
+        )
         static let richTextReadOnlyNotice = string(
             "Floorp.Notes.RichTextReadOnlyNotice.v1",
             value: "Rich formatting is preserved until you edit the content.",

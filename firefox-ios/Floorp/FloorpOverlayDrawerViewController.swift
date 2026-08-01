@@ -82,6 +82,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var isSearching = false
     private var isCreatingNote = false
     private var panelLoadTask: Task<Void, Never>?
+    private var isTransitioningDrawer = false
+    private var didFinishDismissal = false
+    private var dismissWhenPresentationFinishes = false
 
     // MARK: - UI Components
 
@@ -232,12 +235,17 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .overCurrentContext
+        modalPresentationStyle = .overFullScreen
         modalTransitionStyle = .crossDissolve
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        panelLoadTask?.cancel()
+        notificationCenter.removeObserver(self)
     }
 
     // MARK: - Lifecycle
@@ -258,6 +266,39 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         listenForThemeChanges(withNotificationCenter: notificationCenter)
         applyTheme()
         logger.log("Floorp: OverlayDrawer loaded", level: .info, category: .setup)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // BrowserViewController has upstream paths that dismiss whichever
+        // modal is presented. Release its associated drawer in those paths as
+        // well as in dismissDrawer(), without treating a child editor as a
+        // drawer dismissal.
+        if isBeingDismissed || presentingViewController == nil {
+            finishDismissal()
+        }
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [
+            UIKeyCommand(
+                title: FloorpStrings.Drawer.closeAccessibilityLabel,
+                action: #selector(closeTapped),
+                input: "d",
+                modifierFlags: [.command, .shift]
+            ),
+            UIKeyCommand(
+                title: FloorpStrings.Drawer.closeAccessibilityLabel,
+                action: #selector(closeTapped),
+                input: UIKeyCommand.inputEscape,
+                modifierFlags: []
+            ),
+        ]
+    }
+
+    override func accessibilityPerformEscape() -> Bool {
+        dismissDrawer()
+        return true
     }
 
     // MARK: - Setup
@@ -644,7 +685,10 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     private func makeNoteItems(_ notes: [FloorpNote]) -> [DrawerItem] {
         notes.map { note in
-            let preview = FloorpNoteContent.plainText(from: note.content)
+            let preview = FloorpNoteContent.plainText(
+                from: note.content,
+                contentFormat: note.contentFormat
+            )
             let subtitle = preview.isEmpty ? nil : String(preview.prefix(160))
             return DrawerItem(
                 id: note.id,
@@ -797,7 +841,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             title: FloorpStrings.Notes.newNote,
             content: "",
             createdAt: timestamp,
-            updatedAt: timestamp
+            updatedAt: timestamp,
+            contentFormat: .plainText
         )
         presentNoteEditor(draft, isPersisted: false)
     }
@@ -833,10 +878,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             windowUUID: windowUUID,
             themeManager: themeManager,
             notificationCenter: notificationCenter,
-            isPersisted: isPersisted
-        ) { updatedNote in
-            try await persistenceSession.save(updatedNote)
-        }
+            isPersisted: isPersisted,
+            persistence: persistenceSession
+        )
         editor.navigationItem.prompt = FloorpStrings.Notes.localOnly
         let navigationController = UINavigationController(rootViewController: editor)
         navigationController.modalPresentationStyle = .pageSheet
@@ -891,35 +935,62 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     // MARK: - Present / Dismiss
 
-    /// Presents the drawer by adding it as a child of the given parent VC.
-    func show(from parentVC: UIViewController) {
-        parentVC.addChild(self)
-        view.frame = CGRect(
-            x: parentVC.view.bounds.width,
-            y: 0,
-            width: parentVC.view.bounds.width,
-            height: parentVC.view.bounds.height
-        )
-        parentVC.view.addSubview(view)
-        didMove(toParent: parentVC)
-        view.accessibilityViewIsModal = true
+    /// Presents above the browser chrome so later toolbar z-order updates
+    /// cannot move the address bar in front of the drawer.
+    @discardableResult
+    func show(
+        from parentVC: UIViewController,
+        onPresented: (() -> Void)? = nil
+    ) -> Bool {
+        guard presentingViewController == nil,
+              !isTransitioningDrawer,
+              parentVC.presentedViewController == nil else { return false }
 
-        // Animate slide in + dim
-        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut) {
-            self.dimmingView.alpha = 1
-            self.view.frame = parentVC.view.bounds
-        } completion: { _ in
-            UIAccessibility.post(notification: .screenChanged, argument: self.titleLabel)
+        parentVC.loadViewIfNeeded()
+        guard parentVC.view.window != nil else { return false }
+
+        loadViewIfNeeded()
+        view.transform = CGAffineTransform(translationX: parentVC.view.bounds.width, y: 0)
+        view.accessibilityViewIsModal = true
+        isTransitioningDrawer = true
+
+        parentVC.present(self, animated: false) { [weak self] in
+            guard let self else { return }
+            let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
+            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut) {
+                self.dimmingView.alpha = 1
+                self.view.transform = .identity
+            } completion: { _ in
+                self.isTransitioningDrawer = false
+                onPresented?()
+                if self.dismissWhenPresentationFinishes {
+                    self.dismissWhenPresentationFinishes = false
+                    self.dismissDrawer()
+                    return
+                }
+                UIAccessibility.post(notification: .screenChanged, argument: self.titleLabel)
+            }
         }
+        let didPresent = presentingViewController === parentVC
+        if !didPresent {
+            isTransitioningDrawer = false
+        }
+        return didPresent
     }
 
     /// Dismisses the drawer with animation.
     func dismissDrawer() {
         // An editor or confirmation alert owns its own save/destructive gate.
         // Do not let an external toolbar toggle tear down that presentation.
-        guard presentedViewController == nil, let parentVC = parent else { return }
+        guard presentedViewController == nil,
+              presentingViewController != nil,
+              !didFinishDismissal else { return }
+        if isTransitioningDrawer {
+            dismissWhenPresentationFinishes = true
+            return
+        }
 
+        isTransitioningDrawer = true
         let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
         UIView.animate(
             withDuration: duration,
@@ -927,15 +998,21 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             options: .curveEaseIn,
             animations: {
                 self.dimmingView.alpha = 0
-                self.view.frame.origin.x = parentVC.view.bounds.width
+                self.view.transform = CGAffineTransform(translationX: self.view.bounds.width, y: 0)
             },
             completion: { _ in
-                self.willMove(toParent: nil)
-                self.view.removeFromSuperview()
-                self.removeFromParent()
-                self.onDismissed?()
+                self.dismiss(animated: false) { [weak self] in
+                    self?.finishDismissal()
+                }
             }
         )
+    }
+
+    private func finishDismissal() {
+        guard !didFinishDismissal else { return }
+        didFinishDismissal = true
+        isTransitioningDrawer = false
+        onDismissed?()
     }
 }
 

@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Redux
+import UIKit
 import XCTest
 import Common
 
@@ -11,7 +12,6 @@ import Common
 final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
     let storeUtilityHelper = StoreTestUtilityHelper()
     let windowUUID: WindowUUID = .XCTestDefaultUUID
-    var mockStore: MockStoreForMiddleware<AppState>!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -56,14 +56,17 @@ final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
         XCTAssertEqual(newState.windowUUID, windowUUID)
         XCTAssertEqual(newState.displayBorder, true)
 
-        XCTAssertEqual(newState.actions.count, 5)
+        XCTAssertEqual(newState.actions.count, 6)
         XCTAssertEqual(newState.actions[0].actionType, .back)
         XCTAssertEqual(newState.actions[0].isEnabled, false)
         XCTAssertEqual(newState.actions[1].actionType, .forward)
         XCTAssertEqual(newState.actions[1].isEnabled, false)
         XCTAssertEqual(newState.actions[2].actionType, .search)
-        XCTAssertEqual(newState.actions[3].actionType, .menu)
-        XCTAssertEqual(newState.actions[4].actionType, .tabs)
+        XCTAssertEqual(newState.actions[3].actionType, .floorpDrawer)
+        XCTAssertEqual(newState.actions[3].iconName, ImageIdentifiers.floorpDrawer)
+        XCTAssertNotNil(UIImage(named: ImageIdentifiers.floorpDrawer))
+        XCTAssertEqual(newState.actions[4].actionType, .menu)
+        XCTAssertEqual(newState.actions[5].actionType, .tabs)
     }
 
     func test_urlDidChangeAction_returnsExpectedState() {
@@ -74,14 +77,15 @@ final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
 
         XCTAssertEqual(newState.windowUUID, windowUUID)
 
-        XCTAssertEqual(newState.actions.count, 5)
+        XCTAssertEqual(newState.actions.count, 6)
         XCTAssertEqual(newState.actions[0].actionType, .back)
         XCTAssertEqual(newState.actions[0].isEnabled, true)
         XCTAssertEqual(newState.actions[1].actionType, .forward)
         XCTAssertEqual(newState.actions[1].isEnabled, false)
         XCTAssertEqual(newState.actions[2].actionType, .newTab)
-        XCTAssertEqual(newState.actions[3].actionType, .menu)
-        XCTAssertEqual(newState.actions[4].actionType, .tabs)
+        XCTAssertEqual(newState.actions[3].actionType, .floorpDrawer)
+        XCTAssertEqual(newState.actions[4].actionType, .menu)
+        XCTAssertEqual(newState.actions[5].actionType, .tabs)
     }
 
     func test_numberOfTabsChangedAction_returnsExpectedState() {
@@ -99,13 +103,14 @@ final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
         )
 
         XCTAssertEqual(newState.windowUUID, windowUUID)
-        XCTAssertEqual(newState.actions.count, 5)
+        XCTAssertEqual(newState.actions.count, 6)
         XCTAssertEqual(newState.actions[0].actionType, .back)
         XCTAssertEqual(newState.actions[1].actionType, .forward)
         XCTAssertEqual(newState.actions[2].actionType, .search)
-        XCTAssertEqual(newState.actions[3].actionType, .menu)
-        XCTAssertEqual(newState.actions[4].actionType, .tabs)
-        XCTAssertEqual(newState.actions[4].numberOfTabs, 2)
+        XCTAssertEqual(newState.actions[3].actionType, .floorpDrawer)
+        XCTAssertEqual(newState.actions[4].actionType, .menu)
+        XCTAssertEqual(newState.actions[5].actionType, .tabs)
+        XCTAssertEqual(newState.actions[5].numberOfTabs, 2)
     }
 
     func test_backForwardButtonStateChangedAction_returnsExpectedState() {
@@ -145,9 +150,9 @@ final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
 
         XCTAssertEqual(newState.windowUUID, windowUUID)
 
-        XCTAssertEqual(newState.actions[3].actionType, .menu)
-        XCTAssertNotNil(newState.actions[3].badgeImageName)
-        XCTAssertNotNil(newState.actions[3].maskImageName)
+        XCTAssertEqual(newState.actions[4].actionType, .menu)
+        XCTAssertNotNil(newState.actions[4].badgeImageName)
+        XCTAssertNotNil(newState.actions[4].maskImageName)
     }
 
     func test_borderPositionChangedAction_returnsExpectedState() {
@@ -287,7 +292,7 @@ final class NavigationBarStateTests: XCTestCase, StoreTestUtility {
     }
 
     func setupStore() {
-        mockStore = MockStoreForMiddleware(state: setupAppState())
+        let mockStore = MockStoreForMiddleware(state: setupAppState())
         StoreTestUtilityHelper.setupStore(with: mockStore)
     }
 

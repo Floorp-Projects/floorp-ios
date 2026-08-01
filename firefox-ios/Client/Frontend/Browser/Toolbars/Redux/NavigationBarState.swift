@@ -347,7 +347,7 @@ struct NavigationBarState: StateType, Equatable {
     private static func floorpDrawerAction() -> ToolbarActionConfiguration {
         return ToolbarActionConfiguration(
             actionType: .floorpDrawer,
-            iconName: "sidebar.right",
+            iconName: ImageIdentifiers.floorpDrawer,
             isEnabled: true,
             a11yLabel: "Floorp Drawer",
             a11yId: "floorpDrawerToolbarButton")

@@ -64,7 +64,9 @@ extension BrowserViewController {
             self?.floorpOverlayDrawer = nil
         }
         self.floorpOverlayDrawer = drawer
-        drawer.show(from: self)
+        if !drawer.show(from: self) {
+            floorpOverlayDrawer = nil
+        }
     }
 
     private func toggleFloorpOverlayDrawer() {

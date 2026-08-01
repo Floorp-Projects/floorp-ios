@@ -6,17 +6,25 @@ import UIKit
 import Common
 import Shared
 
+@MainActor
+protocol FloorpNotePersistence: AnyObject {
+    func save(_ draft: FloorpNote) async throws -> FloorpNote
+    func reload() async throws -> FloorpNote?
+    func acceptReloaded(_ note: FloorpNote)
+    func saveAsCopy(_ draft: FloorpNote) async throws -> FloorpNote
+}
+
 /// Owns the persistence identity for one editor session.
 ///
 /// New drafts stay in memory until the editor reports its first change. Once
 /// created, every later save uses the last persisted revision so concurrent
 /// edits continue to be rejected by `FloorpNotesStore`.
 @MainActor
-final class FloorpNotePersistenceSession {
+final class FloorpNotePersistenceSession: FloorpNotePersistence {
     private let notesStore: FloorpNotesStore
     private var persistedNote: FloorpNote?
-    private var isSaving = false
-    private var saveWaiters = [CheckedContinuation<Void, Never>]()
+    private var isOperating = false
+    private var operationWaiters = [CheckedContinuation<Void, Never>]()
 
     init(notesStore: FloorpNotesStore, persistedNote: FloorpNote?) {
         self.notesStore = notesStore
@@ -24,20 +32,8 @@ final class FloorpNotePersistenceSession {
     }
 
     func save(_ draft: FloorpNote) async throws -> FloorpNote {
-        if isSaving {
-            await withCheckedContinuation { continuation in
-                saveWaiters.append(continuation)
-            }
-            return try await save(draft)
-        }
-
-        isSaving = true
-        defer {
-            isSaving = false
-            let waiters = saveWaiters
-            saveWaiters.removeAll()
-            waiters.forEach { $0.resume() }
-        }
+        await beginOperation()
+        defer { finishOperation() }
 
         let savedNote: FloorpNote
         if let persistedNote {
@@ -45,16 +41,304 @@ final class FloorpNotePersistenceSession {
                 id: persistedNote.id,
                 title: draft.title,
                 content: draft.content,
+                contentFormat: draft.contentFormat,
                 expectedUpdatedAt: persistedNote.updatedAt
             )
         } else {
             savedNote = try await notesStore.createNote(
                 title: draft.title,
-                content: draft.content
+                content: draft.content,
+                contentFormat: draft.contentFormat
             )
         }
         persistedNote = savedNote
         return savedNote
+    }
+
+    func reload() async throws -> FloorpNote? {
+        await beginOperation()
+        defer { finishOperation() }
+        guard let persistedNote else { return nil }
+        return try await notesStore.loadNotes().first { $0.id == persistedNote.id }
+    }
+
+    func acceptReloaded(_ note: FloorpNote) {
+        persistedNote = note
+    }
+
+    func saveAsCopy(_ draft: FloorpNote) async throws -> FloorpNote {
+        await beginOperation()
+        defer { finishOperation() }
+        let savedNote = try await notesStore.createNote(
+            title: draft.title,
+            content: draft.content,
+            contentFormat: draft.contentFormat
+        )
+        persistedNote = savedNote
+        return savedNote
+    }
+
+    private func beginOperation() async {
+        if isOperating {
+            await withCheckedContinuation { continuation in
+                operationWaiters.append(continuation)
+            }
+            await beginOperation()
+            return
+        }
+        isOperating = true
+    }
+
+    private func finishOperation() {
+        isOperating = false
+        let waiters = operationWaiters
+        operationWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
+@MainActor
+final class FloorpNoteSaveCoordinator {
+    enum FailureKind: Equatable, Hashable {
+        case conflict
+        case noteDeleted
+        case archiveTooLarge
+        case damagedArchive
+        case newerSchema
+        case storage
+    }
+
+    struct Failure {
+        let kind: FailureKind
+        let underlyingError: Error
+    }
+
+    enum SaveOutcome {
+        case noChanges
+        case saved(FloorpNote)
+        case failed(Failure)
+    }
+
+    private let persistence: FloorpNotePersistence
+    private(set) var draft: FloorpNote
+    private(set) var changeVersion = 0
+    private(set) var savedVersion = 0
+    private(set) var hasPersistedNote: Bool
+    private(set) var lastFailure: Failure?
+    private var isSaving = false
+    private var saveWaiters = [CheckedContinuation<Void, Never>]()
+
+    var hasUnsavedChanges: Bool { savedVersion != changeVersion }
+
+    init(draft: FloorpNote, isPersisted: Bool, persistence: FloorpNotePersistence) {
+        self.draft = draft
+        self.hasPersistedNote = isPersisted
+        self.persistence = persistence
+    }
+
+    @discardableResult
+    func updateTitle(_ title: String) -> Bool {
+        guard draft.title != title else { return false }
+        draft.title = title
+        markChanged()
+        return true
+    }
+
+    @discardableResult
+    func updateContent(
+        _ content: String,
+        contentFormat: FloorpNoteContentFormat? = nil
+    ) -> Bool {
+        let nextFormat = contentFormat ?? draft.contentFormat
+        guard draft.content != content || draft.contentFormat != nextFormat else { return false }
+        draft.content = content
+        draft.contentFormat = nextFormat
+        markChanged()
+        return true
+    }
+
+    func requestExplicitSave() {
+        if !hasPersistedNote && !hasUnsavedChanges {
+            markChanged()
+        }
+    }
+
+    func saveLatest() async -> SaveOutcome {
+        if isSaving {
+            await withCheckedContinuation { continuation in
+                saveWaiters.append(continuation)
+            }
+            if let lastFailure { return .failed(lastFailure) }
+            return hasUnsavedChanges ? await saveLatest() : .noChanges
+        }
+        guard hasUnsavedChanges else { return .noChanges }
+
+        isSaving = true
+        var lastSavedNote: FloorpNote?
+
+        repeat {
+            let versionToSave = changeVersion
+            let noteToSave = draft
+            do {
+                let persistedNote = try await persistence.save(noteToSave)
+                savedVersion = versionToSave
+                hasPersistedNote = true
+                lastFailure = nil
+                adoptPersistenceIdentity(from: persistedNote)
+                lastSavedNote = persistedNote
+            } catch {
+                let failure = Failure(kind: Self.failureKind(for: error), underlyingError: error)
+                lastFailure = failure
+                finishSaving()
+                return .failed(failure)
+            }
+        } while hasUnsavedChanges
+
+        finishSaving()
+        return lastSavedNote.map(SaveOutcome.saved) ?? .noChanges
+    }
+
+    func reload() async throws -> FloorpNote {
+        let requestedVersion = changeVersion
+        let requestedNoteID = draft.id
+        await waitUntilIdle()
+        isSaving = true
+        defer { finishSaving() }
+        guard changeVersion == requestedVersion, draft.id == requestedNoteID else {
+            throw FloorpNotesStoreError.editConflict(requestedNoteID)
+        }
+        guard let note = try await persistence.reload() else {
+            throw FloorpNotesStoreError.noteNotFound(draft.id)
+        }
+        guard changeVersion == requestedVersion, draft.id == requestedNoteID else {
+            throw FloorpNotesStoreError.editConflict(requestedNoteID)
+        }
+        persistence.acceptReloaded(note)
+        draft = note
+        changeVersion = 0
+        savedVersion = 0
+        hasPersistedNote = true
+        lastFailure = nil
+        return note
+    }
+
+    func saveAsCopy() async -> SaveOutcome {
+        await waitUntilIdle()
+        isSaving = true
+        let versionToSave = changeVersion
+        let noteToSave = draft
+        do {
+            let persistedNote = try await persistence.saveAsCopy(noteToSave)
+            savedVersion = versionToSave
+            hasPersistedNote = true
+            lastFailure = nil
+            adoptPersistenceIdentity(from: persistedNote)
+            finishSaving()
+            if hasUnsavedChanges {
+                return await saveLatest()
+            }
+            return .saved(persistedNote)
+        } catch {
+            let failure = Failure(kind: Self.failureKind(for: error), underlyingError: error)
+            lastFailure = failure
+            finishSaving()
+            return .failed(failure)
+        }
+    }
+
+    private func markChanged() {
+        changeVersion += 1
+        lastFailure = nil
+    }
+
+    private func adoptPersistenceIdentity(from persistedNote: FloorpNote) {
+        draft = FloorpNote(
+            id: persistedNote.id,
+            title: draft.title,
+            content: draft.content,
+            createdAt: persistedNote.createdAt,
+            updatedAt: persistedNote.updatedAt,
+            contentFormat: draft.contentFormat
+        )
+    }
+
+    private func finishSaving() {
+        isSaving = false
+        let waiters = saveWaiters
+        saveWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitUntilIdle() async {
+        if isSaving {
+            await withCheckedContinuation { continuation in
+                saveWaiters.append(continuation)
+            }
+            await waitUntilIdle()
+        }
+    }
+
+    private static func failureKind(for error: Error) -> FailureKind {
+        switch error {
+        case FloorpNotesStoreError.editConflict:
+            return .conflict
+        case FloorpNotesStoreError.noteNotFound:
+            return .noteDeleted
+        case FloorpNotesStoreError.archiveTooLarge, FloorpNotesStoreError.tooManyNotes:
+            return .archiveTooLarge
+        case FloorpNotesStoreError.corruptArchive,
+             FloorpNotesStoreError.corruptArchiveCouldNotBePreserved,
+             FloorpNotesStoreError.writesBlockedByCorruption:
+            return .damagedArchive
+        case FloorpNotesStoreError.unsupportedSchema:
+            return .newerSchema
+        default:
+            return .storage
+        }
+    }
+}
+
+@MainActor
+private final class FloorpNoteClosurePersistence: FloorpNotePersistence {
+    private let onSave: @MainActor (FloorpNote) async throws -> FloorpNote
+
+    init(onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote) {
+        self.onSave = onSave
+    }
+
+    func save(_ draft: FloorpNote) async throws -> FloorpNote {
+        try await onSave(draft)
+    }
+
+    func reload() async throws -> FloorpNote? { nil }
+
+    func acceptReloaded(_ note: FloorpNote) {}
+
+    func saveAsCopy(_ draft: FloorpNote) async throws -> FloorpNote {
+        try await onSave(draft)
+    }
+}
+
+@MainActor
+private final class FloorpBackgroundSaveLease {
+    private var identifier = UIBackgroundTaskIdentifier.invalid
+
+    func begin() {
+        guard identifier == .invalid else { return }
+        // UIApplication retains the expiration handler. Capturing this lease
+        // keeps the identifier available even if the editor disappears while
+        // iOS is suspending the app.
+        identifier = UIApplication.shared.beginBackgroundTask(
+            withName: "Floorp Notes Save"
+        ) { [self] in
+            end()
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
     }
 }
 
@@ -83,18 +367,13 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private let notificationCenter: NotificationProtocol
-    private let onSave: @MainActor (FloorpNote) async throws -> FloorpNote
-    private var draft: FloorpNote
-    private let contentAnalysis: FloorpNoteContent.Analysis
+    private let saveCoordinator: FloorpNoteSaveCoordinator
+    private var contentAnalysis: FloorpNoteContent.Analysis
     private var didApprovePlainTextConversion: Bool
-    private var changeVersion = 0
-    private var savedVersion = 0
-    private var hasPersistedNote: Bool
-    private var isSaving = false
-    private var saveWaiters = [CheckedContinuation<Void, Never>]()
     private var autosaveTask: Task<Void, Never>?
     private var savedStatusResetTask: Task<Void, Never>?
     private var isApplyingPendingEdit = false
+    private let backgroundSaveLease = FloorpBackgroundSaveLease()
 
     private lazy var titleField: UITextField = {
         let field = UITextField()
@@ -143,18 +422,41 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default,
         isPersisted: Bool = true,
-        onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote
+        persistence: FloorpNotePersistence
     ) {
-        let contentAnalysis = FloorpNoteContent.analyze(note.content)
-        self.draft = note
+        let contentAnalysis = FloorpNoteContent.analyze(
+            note.content,
+            contentFormat: note.contentFormat
+        )
         self.contentAnalysis = contentAnalysis
         self.didApprovePlainTextConversion = contentAnalysis.editPolicy == .direct
         self.windowUUID = windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
-        self.hasPersistedNote = isPersisted
-        self.onSave = onSave
+        self.saveCoordinator = FloorpNoteSaveCoordinator(
+            draft: note,
+            isPersisted: isPersisted,
+            persistence: persistence
+        )
         super.init(nibName: nil, bundle: nil)
+    }
+
+    convenience init(
+        note: FloorpNote,
+        windowUUID: WindowUUID,
+        themeManager: ThemeManager = AppContainer.shared.resolve(),
+        notificationCenter: NotificationProtocol = NotificationCenter.default,
+        isPersisted: Bool = true,
+        onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote
+    ) {
+        self.init(
+            note: note,
+            windowUUID: windowUUID,
+            themeManager: themeManager,
+            notificationCenter: notificationCenter,
+            isPersisted: isPersisted,
+            persistence: FloorpNoteClosurePersistence(onSave: onSave)
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -206,7 +508,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             ).withPriority(.defaultLow),
         ])
 
-        titleField.text = draft.title
+        titleField.text = saveCoordinator.draft.title
         textView.text = contentAnalysis.editorText
         textView.isEditable = contentAnalysis.editPolicy != .readOnly
         if contentAnalysis.editPolicy == .readOnly {
@@ -228,6 +530,13 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         autosaveTask?.cancel()
         savedStatusResetTask?.cancel()
         notificationCenter.removeObserver(self)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || navigationController?.isBeingDismissed == true {
+            endBackgroundSaveTask()
+        }
     }
 
     override var keyCommands: [UIKeyCommand]? {
@@ -271,8 +580,9 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @objc private func titleChanged() {
-        draft.title = titleField.text ?? ""
-        markChanged()
+        if saveCoordinator.updateTitle(titleField.text ?? "") {
+            draftDidChange()
+        }
     }
 
     @objc private func saveTapped() {
@@ -289,19 +599,23 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     @discardableResult
     func saveForExplicitRequest() async -> Bool {
         autosaveTask?.cancel()
-        if !hasPersistedNote && savedVersion == changeVersion {
-            changeVersion += 1
-            setInteractiveDismissalBlocked(true)
+        saveCoordinator.requestExplicitSave()
+        setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
+        let outcome = await saveLatestDraft()
+        if case .failed(let failure) = outcome {
+            presentSaveFailure(failure)
+            return false
         }
-        return await saveLatestDraft()
+        return true
     }
 
     @objc private func closeTapped() {
         Task { @MainActor in
             autosaveTask?.cancel()
-            if savedVersion != changeVersion {
-                guard await saveLatestDraft() else {
-                    presentDiscardChangesConfirmation()
+            if saveCoordinator.hasUnsavedChanges {
+                let outcome = await saveLatestDraft()
+                if case .failed(let failure) = outcome {
+                    presentSaveFailure(failure)
                     return
                 }
             }
@@ -310,15 +624,16 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @objc private func applicationWillResignActive() {
-        guard savedVersion != changeVersion else { return }
+        guard saveCoordinator.hasUnsavedChanges else { return }
         autosaveTask?.cancel()
+        beginBackgroundSaveTask()
         Task { @MainActor [weak self] in
             _ = await self?.saveLatestDraft()
+            self?.endBackgroundSaveTask()
         }
     }
 
-    private func markChanged() {
-        changeVersion += 1
+    private func draftDidChange() {
         setInteractiveDismissalBlocked(true)
         scheduleAutosave()
     }
@@ -337,58 +652,33 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @discardableResult
-    private func saveLatestDraft() async -> Bool {
-        if isSaving {
-            await withCheckedContinuation { continuation in
-                saveWaiters.append(continuation)
-            }
-            return savedVersion == changeVersion
+    private func saveLatestDraft() async -> FloorpNoteSaveCoordinator.SaveOutcome {
+        guard saveCoordinator.hasUnsavedChanges else { return .noChanges }
+        updateSaveState(.saving)
+        let outcome = await saveCoordinator.saveLatest()
+        setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
+        switch outcome {
+        case .noChanges:
+            updateSaveState(.idle)
+        case .saved:
+            updateSaveState(.saved)
+        case .failed:
+            updateSaveState(.failed)
         }
-        guard savedVersion != changeVersion else { return true }
-
-        isSaving = true
-        var lastAttemptSucceeded = true
-
-        repeat {
-            let versionToSave = changeVersion
-            let noteToSave = draft
-            updateSaveState(.saving)
-
-            do {
-                let persistedNote = try await onSave(noteToSave)
-                savedVersion = versionToSave
-                hasPersistedNote = true
-                // Keep edits made while this save was in flight, but adopt the
-                // real identity assigned when a new draft is first persisted.
-                draft = FloorpNote(
-                    id: persistedNote.id,
-                    title: draft.title,
-                    content: draft.content,
-                    createdAt: persistedNote.createdAt,
-                    updatedAt: persistedNote.updatedAt
-                )
-                lastAttemptSucceeded = true
-                if savedVersion == changeVersion {
-                    updateSaveState(.saved)
-                }
-            } catch {
-                lastAttemptSucceeded = false
-                updateSaveState(.failed)
-                break
-            }
-        } while savedVersion != changeVersion
-
-        isSaving = false
-        setInteractiveDismissalBlocked(savedVersion != changeVersion)
-        let waiters = saveWaiters
-        saveWaiters.removeAll()
-        waiters.forEach { $0.resume() }
-        return lastAttemptSucceeded && savedVersion == changeVersion
+        return outcome
     }
 
     private func setInteractiveDismissalBlocked(_ isBlocked: Bool) {
         isModalInPresentation = isBlocked
         navigationController?.isModalInPresentation = isBlocked
+    }
+
+    private func beginBackgroundSaveTask() {
+        backgroundSaveLease.begin()
+    }
+
+    private func endBackgroundSaveTask() {
+        backgroundSaveLease.end()
     }
 
     private func updateSaveState(_ state: SaveState) {
@@ -412,7 +702,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             navigationItem.rightBarButtonItem?.isEnabled = true
             savedStatusResetTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard !Task.isCancelled, self?.savedVersion == self?.changeVersion else { return }
+                guard !Task.isCancelled, self?.saveCoordinator.hasUnsavedChanges == false else { return }
                 self?.updateSaveState(.idle)
             }
         case .failed:
@@ -421,23 +711,157 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         }
     }
 
-    private func presentDiscardChangesConfirmation() {
+    private func presentSaveFailure(_ failure: FloorpNoteSaveCoordinator.Failure) {
         guard presentedViewController == nil else { return }
+
+        let copyActionKinds: Set<FloorpNoteSaveCoordinator.FailureKind> = [.conflict, .noteDeleted]
         let alert = UIAlertController(
-            title: FloorpStrings.Notes.discardChangesTitle,
-            message: FloorpStrings.Notes.discardChangesMessage,
+            title: saveFailureTitle(for: failure.kind),
+            message: saveFailureMessage(for: failure.kind),
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: FloorpStrings.Notes.keepEditing, style: .cancel))
-        alert.addAction(
-            UIAlertAction(title: FloorpStrings.Notes.discardChanges, style: .destructive) { [weak self] _ in
-                guard let self else { return }
-                autosaveTask?.cancel()
-                setInteractiveDismissalBlocked(false)
-                navigationController?.dismiss(animated: true)
-            }
-        )
+
+        if failure.kind == .conflict {
+            alert.addAction(
+                UIAlertAction(title: FloorpStrings.Notes.reload, style: .destructive) { [weak self] _ in
+                    self?.reloadAfterConflict()
+                }
+            )
+        }
+        if copyActionKinds.contains(failure.kind) {
+            alert.addAction(
+                UIAlertAction(title: FloorpStrings.Notes.saveCopy, style: .default) { [weak self] _ in
+                    self?.saveCurrentDraftAsCopy()
+                }
+            )
+        }
+        if failure.kind == .storage {
+            alert.addAction(
+                UIAlertAction(title: FloorpStrings.Notes.retry, style: .default) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        _ = await self?.saveForExplicitRequest()
+                    }
+                }
+            )
+        }
+        if failure.kind != .conflict {
+            alert.addAction(
+                UIAlertAction(title: FloorpStrings.Notes.discardChanges, style: .destructive) { [weak self] _ in
+                    self?.dismissDiscardingChanges()
+                }
+            )
+        }
         present(alert, animated: true)
+    }
+
+    private func saveFailureTitle(
+        for kind: FloorpNoteSaveCoordinator.FailureKind
+    ) -> String {
+        switch kind {
+        case .conflict:
+            return FloorpStrings.Notes.conflictTitle
+        case .noteDeleted:
+            return FloorpStrings.Notes.noteDeletedTitle
+        case .archiveTooLarge:
+            return FloorpStrings.Notes.archiveTooLargeSaveTitle
+        case .damagedArchive:
+            return FloorpStrings.Notes.damagedSaveTitle
+        case .newerSchema:
+            return FloorpStrings.Notes.newerSchemaSaveTitle
+        case .storage:
+            return FloorpStrings.Notes.saveErrorTitle
+        }
+    }
+
+    private func saveFailureMessage(
+        for kind: FloorpNoteSaveCoordinator.FailureKind
+    ) -> String {
+        switch kind {
+        case .conflict:
+            return FloorpStrings.Notes.conflictMessage
+        case .noteDeleted:
+            return FloorpStrings.Notes.noteDeletedMessage
+        case .archiveTooLarge:
+            return FloorpStrings.Notes.archiveTooLargeSaveMessage
+        case .damagedArchive:
+            return FloorpStrings.Notes.damagedSaveMessage
+        case .newerSchema:
+            return FloorpStrings.Notes.newerSchemaSaveMessage
+        case .storage:
+            return FloorpStrings.Notes.saveErrorMessage
+        }
+    }
+
+    private func reloadAfterConflict() {
+        setReloadInteractionEnabled(false)
+        updateSaveState(.saving)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { setReloadInteractionEnabled(true) }
+            do {
+                let note = try await saveCoordinator.reload()
+                applyReloadedNote(note)
+            } catch FloorpNotesStoreError.editConflict(let id) {
+                updateSaveState(.failed)
+                presentSaveFailure(
+                    FloorpNoteSaveCoordinator.Failure(
+                        kind: .conflict,
+                        underlyingError: FloorpNotesStoreError.editConflict(id)
+                    )
+                )
+            } catch {
+                updateSaveState(.failed)
+                presentSaveFailure(
+                    FloorpNoteSaveCoordinator.Failure(kind: .storage, underlyingError: error)
+                )
+            }
+        }
+    }
+
+    private func setReloadInteractionEnabled(_ isEnabled: Bool) {
+        titleField.isEnabled = isEnabled
+        textView.isEditable = isEnabled && contentAnalysis.editPolicy != .readOnly
+        navigationItem.rightBarButtonItem?.isEnabled = isEnabled
+    }
+
+    private func saveCurrentDraftAsCopy() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            updateSaveState(.saving)
+            let outcome = await saveCoordinator.saveAsCopy()
+            switch outcome {
+            case .noChanges, .saved:
+                setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
+                updateSaveState(.saved)
+            case .failed(let failure):
+                updateSaveState(.failed)
+                presentSaveFailure(failure)
+            }
+        }
+    }
+
+    private func applyReloadedNote(_ note: FloorpNote) {
+        autosaveTask?.cancel()
+        contentAnalysis = FloorpNoteContent.analyze(
+            note.content,
+            contentFormat: note.contentFormat
+        )
+        didApprovePlainTextConversion = contentAnalysis.editPolicy == .direct
+        titleField.text = note.title
+        textView.text = contentAnalysis.editorText
+        textView.isEditable = contentAnalysis.editPolicy != .readOnly
+        textView.accessibilityHint = contentAnalysis.editPolicy == .readOnly
+            ? FloorpStrings.Notes.unsupportedContentReadOnlyNotice
+            : FloorpStrings.Notes.contentAccessibilityHint
+        setInteractiveDismissalBlocked(false)
+        updateSaveState(.idle)
+    }
+
+    private func dismissDiscardingChanges() {
+        autosaveTask?.cancel()
+        setInteractiveDismissalBlocked(false)
+        navigationController?.dismiss(animated: true)
     }
 
     private func requestPlainTextConversion(
@@ -470,8 +894,9 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         textView.text = updatedText
         textView.selectedRange = NSRange(location: cursorOffset, length: 0)
         isApplyingPendingEdit = false
-        draft.content = updatedText
-        markChanged()
+        if saveCoordinator.updateContent(updatedText, contentFormat: .plainText) {
+            draftDidChange()
+        }
     }
 }
 
@@ -502,8 +927,9 @@ extension FloorpNoteEditorViewController: UITextViewDelegate {
 
     func textViewDidChange(_ textView: UITextView) {
         guard !isApplyingPendingEdit else { return }
-        draft.content = textView.text
-        markChanged()
+        if saveCoordinator.updateContent(textView.text, contentFormat: .plainText) {
+            draftDidChange()
+        }
     }
 }
 

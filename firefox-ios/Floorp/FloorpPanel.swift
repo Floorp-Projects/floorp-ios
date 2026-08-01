@@ -174,8 +174,13 @@ struct DrawerItem: Identifiable {
     }
 
     func matchesSearchQuery(_ query: String) -> Bool {
-        title.localizedCaseInsensitiveContains(query) ||
-            (searchText ?? subtitle)?.localizedCaseInsensitiveContains(query) == true
+        let tokens = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !tokens.isEmpty else { return true }
+        let searchableText = [title, searchText ?? subtitle ?? ""].joined(separator: "\n")
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]
+        return tokens.allSatisfy {
+            searchableText.range(of: $0, options: options, locale: .current) != nil
+        }
     }
 }
 
