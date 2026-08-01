@@ -20,6 +20,7 @@ final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         DependencyHelperMock().bootstrapDependencies()
         logger = MockLogger()
         gleanWrapper = MockGleanWrapper()
@@ -28,6 +29,7 @@ final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         logger = nil
         gleanWrapper = nil
         mockAdsClient = nil
@@ -118,6 +120,20 @@ final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
         XCTAssertEqual(adsClientCallbackQueue.asyncCalled, 1)
         XCTAssertEqual(mockAdsClient.recordClickCalledWith, siteInfo.clickURL)
         XCTAssertNil(mockAdsClient.recordImpressionCalledWith)
+    }
+
+    func testFloorpSponsoredContentPolicy_blocksCallbacksAndGlean() {
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        let subject = createSubject()
+
+        subject.sendImpressionTelemetry(tileSite: tileSite, position: 1)
+        subject.sendClickTelemetry(tileSite: tileSite, position: 1)
+
+        XCTAssertEqual(adsClientCallbackQueue.asyncCalled, 0)
+        XCTAssertNil(mockAdsClient.recordImpressionCalledWith)
+        XCTAssertNil(mockAdsClient.recordClickCalledWith)
+        XCTAssertEqual(gleanWrapper.recordEventCalled, 0)
+        XCTAssertEqual(gleanWrapper.submitPingCalled, 0)
     }
 
     // MARK: - Helper functions

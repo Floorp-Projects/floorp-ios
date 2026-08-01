@@ -16,15 +16,23 @@ protocol ResultsServiceFactory {
 // MARK: - Default Implementation
 public struct DefaultResultsServiceFactory: ResultsServiceFactory {
     let liteLLMCreator: LiteLLMCreating
+    let allowsQuickAnswers: Bool
 
-    public init(liteLLMCreator: LiteLLMCreating) {
+    public init(
+        liteLLMCreator: LiteLLMCreating,
+        allowsQuickAnswers: Bool = AppServicesPolicy.allowsQuickAnswers
+    ) {
         self.liteLLMCreator = liteLLMCreator
+        self.allowsQuickAnswers = allowsQuickAnswers
     }
 
     func make(
         prefs: Prefs,
         configFetcher: QuickAnswersConfigFetcher
     ) throws -> ResultsService {
+        guard allowsQuickAnswers else {
+            throw ResultsServiceError.unableToCreateService
+        }
         guard let client = makeLiteLLMClient(prefs: prefs) else {
             throw ResultsServiceError.unableToCreateService
         }

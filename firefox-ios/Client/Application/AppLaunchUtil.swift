@@ -10,6 +10,11 @@ import Glean
 import MozillaAppServices
 
 final class AppLaunchUtil: FeatureFlaggable, Sendable {
+    private enum FloorpPolicyKey {
+        static let pendingUnifiedAdsDeletionContextID =
+            "app.floorp.pendingUnifiedAdsDeletionContextID"
+    }
+
     private let logger: Logger
     private let profile: Profile
     private let introScreenManager: IntroScreenManager
@@ -27,6 +32,15 @@ final class AppLaunchUtil: FeatureFlaggable, Sendable {
 
     @MainActor
     func setUpPreLaunchDependencies() {
+        // Mozilla acceptance must not be treated as consent to Floorp's legal
+        // documents. This versioned migration runs before any acceptance check.
+        TermsOfUseMigration(prefs: profile.prefs).migrateToFloorpTermsIfNeeded()
+
+        // Persist Floorp's data-collection policy on every launch before any
+        // service reads the inherited default-true preferences.
+        termsOfServiceManager.enforceFloorpDataCollectionPreferences()
+        enforceFloorpSponsoredContentPolicy()
+
         // If the 'Save logs to Files app on next launch' toggle
         // is turned on in the Settings app, copy over old logs.
         if DebugSettingsBundleOptions.saveLogsToDocuments {
@@ -40,7 +54,8 @@ final class AppLaunchUtil: FeatureFlaggable, Sendable {
         }
 
         // Need to get "settings.sendCrashReports" this way so that Sentry can be initialized before getting the Profile.
-        let sendCrashReports = NSUserDefaultsPrefs(prefix: "profile").boolForKey(AppConstants.prefSendCrashReports) ?? true
+        let sendCrashReports = !FloorpFlags.isTelemetryDisabled
+            && (NSUserDefaultsPrefs(prefix: "profile").boolForKey(AppConstants.prefSendCrashReports) ?? true)
 
         if termsOfServiceManager.isFeatureEnabled {
             // Two cases:
@@ -51,7 +66,7 @@ final class AppLaunchUtil: FeatureFlaggable, Sendable {
             if isTermsOfServiceAccepted {
                 TelemetryWrapper.shared.setup(profile: profile)
                 TelemetryWrapper.shared.recordStartUpTelemetry()
-            } else {
+            } else if !FloorpFlags.isSponsoredShortcutsDisabled {
                 // If ToS are not accepted, we still need to setup the Contextual Identifier for
                 // the Unified Ads Sponsored tiles
                 TelemetryContextualIdentifier.setupContextId(isGleanMetricsAllowed: false)
@@ -88,6 +103,12 @@ final class AppLaunchUtil: FeatureFlaggable, Sendable {
         Glean.shared.applyServerKnobsConfig(
             "{\"metrics_enabled\":{\"nimbus_health.cache_not_ready_for_feature\":true}}"
         )
+
+        // Participation must be disabled before Nimbus opens its database and
+        // fetches recipes. This also covers users who accepted terms earlier.
+        if FloorpFlags.isTelemetryDisabled {
+            termsOfServiceManager.shouldSendTechnicalData(telemetryValue: false, studiesValue: false)
+        }
 
         // Start initializing the Nimbus SDK. This should be done after Glean
         // has been started.
@@ -177,6 +198,39 @@ final class AppLaunchUtil: FeatureFlaggable, Sendable {
     private func setUserAgent() {
         // Record the user agent for use by search suggestion clients.
         SearchViewModel.userAgent = UserAgent.getUserAgent()
+    }
+
+    @MainActor
+    private func enforceFloorpSponsoredContentPolicy() {
+        guard FloorpFlags.isSponsoredShortcutsDisabled else { return }
+
+        let defaults = UserDefaults.standard
+        let pendingContextID = defaults.string(
+            forKey: FloorpPolicyKey.pendingUnifiedAdsDeletionContextID
+        )
+        let contextID = pendingContextID ?? TelemetryContextualIdentifier.contextId
+
+        // Stop all future use locally before performing the best-effort remote
+        // deletion for identifiers created by earlier Internal TestFlight builds.
+        TelemetryContextualIdentifier.clearUserDefaults()
+        guard let contextID else { return }
+        defaults.set(contextID, forKey: FloorpPolicyKey.pendingUnifiedAdsDeletionContextID)
+
+        Task { [logger] in
+            do {
+                try await UnifiedAdsUserDataRemover(logger: logger).deleteUserData(contextID: contextID)
+                if defaults.string(forKey: FloorpPolicyKey.pendingUnifiedAdsDeletionContextID) == contextID {
+                    defaults.removeObject(forKey: FloorpPolicyKey.pendingUnifiedAdsDeletionContextID)
+                }
+            } catch {
+                // Keep the pending identifier so deletion is retried on the next launch.
+                logger.log(
+                    "Floorp: Failed to delete legacy Unified Ads data: \(error)",
+                    level: .warning,
+                    category: .homepage
+                )
+            }
+        }
     }
 
     private func initializeExperiments() {

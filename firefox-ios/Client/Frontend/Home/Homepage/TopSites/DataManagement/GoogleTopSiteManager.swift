@@ -72,6 +72,7 @@ final class GoogleTopSiteManager: GoogleTopSiteManagerProvider {
     }
 
     var pinnedSiteData: Site? {
+        guard !FloorpFlags.isSponsoredShortcutsDisabled else { return nil }
         guard let url = self.url else { return nil }
 
         let pinnedSite = Site.createPinnedSite(
@@ -87,6 +88,7 @@ final class GoogleTopSiteManager: GoogleTopSiteManagerProvider {
     // Once Google top site is added, we don't remove unless it's explicitly unpinned
     // Add it when pinned websites are less than max pinned sites
     func shouldAddGoogleTopSite(hasSpace: Bool) -> Bool {
+        guard !FloorpFlags.isSponsoredShortcutsDisabled else { return false }
         let shouldShow = !isHidden && pinnedSiteData != nil
         return shouldShow && (hasAdded || hasSpace)
     }

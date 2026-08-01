@@ -17,6 +17,8 @@ struct NotificationSentTabs {
 
 struct NotificationCloseTabs {
     static let closeTabsKey = "closeRemoteTabs"
-    static let notificationCategoryId = "org.mozilla.ios.fxa.notification.category"
+    // This file is compiled into both the app and its service extension, so use
+    // the canonical main-app namespace rather than Bundle.main at runtime.
+    static let notificationCategoryId = "app.floorp.Floorp.fxa.notification.category"
     static let messageIdKey = "messageId"
 }

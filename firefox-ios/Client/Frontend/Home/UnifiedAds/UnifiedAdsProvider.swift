@@ -56,6 +56,11 @@ final class UnifiedAdsProvider: UnifiedAdsProviderInterface, Sendable {
 
     func fetchTiles(timestamp: Shared.Timestamp = Date.now(),
                     completion: @escaping @Sendable (UnifiedTileResult) -> Void) {
+        guard !FloorpFlags.isSponsoredShortcutsDisabled else {
+            completion(.failure(Error.noDataAvailable))
+            return
+        }
+
         logger.log("Fetching tiles with ads client", level: .debug, category: .homepage)
         let mozAdRequests = TileOrder.placementOrder.map {
             MozAdsPlacementRequest(iabContent: nil, placementId: $0)

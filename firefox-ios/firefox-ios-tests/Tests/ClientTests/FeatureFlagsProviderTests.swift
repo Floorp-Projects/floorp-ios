@@ -17,7 +17,11 @@ final class FeatureFlagsProviderTests: XCTestCase {
         super.setUp()
         prefs = MockProfilePrefs()
         mockLayer = MockNimbusFeatureFlagLayer()
-        subject = FeatureFlagsProvider(prefs: prefs, backendLayer: mockLayer)
+        subject = FeatureFlagsProvider(
+            prefs: prefs,
+            backendLayer: mockLayer,
+            allowsQuickAnswers: true
+        )
     }
 
     override func tearDown() {
@@ -50,6 +54,18 @@ final class FeatureFlagsProviderTests: XCTestCase {
             return
         }
         XCTAssertTrue(receivedPrefs === prefs)
+    }
+
+    func testIsEnabled_quickAnswersDisallowedByAppPolicy_returnsFalseWithoutConsultingNimbus() {
+        mockLayer.enabledFlags = [.quickAnswers]
+        let subject = FeatureFlagsProvider(
+            prefs: prefs,
+            backendLayer: mockLayer,
+            allowsQuickAnswers: false
+        )
+
+        XCTAssertFalse(subject.isEnabled(.quickAnswers))
+        XCTAssertTrue(mockLayer.checkedFlags.isEmpty)
     }
 
     // MARK: - Debug override behavior

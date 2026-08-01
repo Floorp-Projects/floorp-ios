@@ -9,13 +9,18 @@
 INFOPLIST_FILE = Client/Info.plist
 MOZ_BUNDLE_DISPLAY_NAME = Floorp
 MOZ_BUNDLE_ID = app.floorp.Floorp
+MOZ_PRODUCT_NAME = Floorp
 // Flag to indicate if we want to include the debug settings bundle or not
 INCLUDE_SETTINGS_BUNDLE = YES
 MOZ_TODAY_WIDGET_SEARCH_DISPLAY_NAME = Floorp - Search
 CODE_SIGN_ENTITLEMENTS = Client/Entitlements/FennecApplication.entitlements
 CHANNEL = developer
 OTHER_SWIFT_FLAGS = $(OTHER_SWIFT_FLAGS_common) -DMOZ_CHANNEL_$(CHANNEL)
-MOZ_INTERNAL_URL_SCHEME = floorp
+MOZ_INTERNAL_URL_SCHEME = floorp-internal
+// Keep developer behavior aligned with FloorpRelease until Floorp owns these services.
+MOZ_ALLOW_HOSTED_SUMMARIZER = NO
+MOZ_ALLOW_QUICK_ANSWERS = NO
+MOZ_ALLOW_REMOTE_PUSH_NOTIFICATIONS = NO
 OTHER_LDFLAGS = -ObjC -fprofile-instr-generate -Xlinker -no_application_extension
 SWIFT_OPTIMIZATION_LEVEL = -Onone
 ENABLE_NS_ASSERTIONS = YES

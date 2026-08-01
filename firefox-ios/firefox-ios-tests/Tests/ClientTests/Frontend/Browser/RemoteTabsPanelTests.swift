@@ -15,7 +15,7 @@ final class RemoteTabsPanelTests: XCTestCase, StoreTestUtility {
     }
 
     private let windowUUID: WindowUUID = .XCTestDefaultUUID
-    private var mockStore: MockStoreForMiddleware<AppState>!
+    private var mockStore = MockStoreForMiddleware(state: AppState())
 
     override func setUp() async throws {
         try await super.setUp()
@@ -117,6 +117,13 @@ final class RemoteTabsPanelTests: XCTestCase, StoreTestUtility {
         let actionType = try XCTUnwrap(action.actionType as? RemoteTabsPanelActionType)
 
         XCTAssertEqual(actionType, RemoteTabsPanelActionType.flushTabCommands)
+    }
+
+    func testNoTabsEmptyStateUsesCrossClientSyncCopy() {
+        let message = RemoteTabsPanelEmptyStateReason.noTabs.localizedString()
+
+        XCTAssertEqual(message, String.EmptySyncedTabsPanelNullStateDescription)
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("Floorp"))
     }
 
     // MARK: - RemotePanelDelegate

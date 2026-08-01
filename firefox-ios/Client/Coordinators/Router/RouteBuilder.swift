@@ -180,7 +180,7 @@ final class RouteBuilder: @unchecked Sendable {
     func makeRoute(userActivity: NSUserActivity) -> Route? {
         // If the user activity is a Siri shortcut to open the app, show a new search tab.
         // By using shouldOpenNewTab we avoid duplicated user activities, from Siri, for new tab.
-        if userActivity.activityType == SiriShortcuts.activityType.openURL.rawValue && shouldOpenNewTab {
+        if SiriShortcuts.activityType.openURL.matches(userActivity.activityType) && shouldOpenNewTab {
             shouldOpenNewTab = false
             mainQueue.asyncAfter(deadline: .now() + 1) { [weak self] in
                 self?.shouldOpenNewTab = true

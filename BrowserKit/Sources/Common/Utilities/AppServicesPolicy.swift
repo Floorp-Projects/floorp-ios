@@ -12,11 +12,16 @@ import Foundation
 public enum AppServicesPolicy {
     private enum Key {
         static let hostedSummarizer = "MozAllowHostedSummarizer"
+        static let quickAnswers = "MozAllowQuickAnswers"
         static let remotePushNotifications = "MozAllowRemotePushNotifications"
     }
 
     public static var allowsHostedSummarizer: Bool {
         return isExplicitlyEnabled(applicationInfoDictionary[Key.hostedSummarizer])
+    }
+
+    public static var allowsQuickAnswers: Bool {
+        return isExplicitlyEnabled(applicationInfoDictionary[Key.quickAnswers])
     }
 
     public static var allowsRemotePushNotifications: Bool {

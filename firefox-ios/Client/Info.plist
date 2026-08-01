@@ -74,7 +74,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>app.floorp.Client</string>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>$(MOZ_PUBLIC_URL_SCHEME)</string>
@@ -128,6 +128,8 @@
 	<string>$(MOZ_INTERNAL_URL_SCHEME)</string>
 	<key>MozAllowHostedSummarizer</key>
 	<string>$(MOZ_ALLOW_HOSTED_SUMMARIZER)</string>
+	<key>MozAllowQuickAnswers</key>
+	<string>$(MOZ_ALLOW_QUICK_ANSWERS)</string>
 	<key>MozAllowRemotePushNotifications</key>
 	<string>$(MOZ_ALLOW_REMOTE_PUSH_NOTIFICATIONS)</string>
 	<key>MozPublicURLScheme</key>
@@ -156,7 +158,8 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>QuickActionIntent</string>
-		<string>app.floorp.ios.floorp.browsing</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).browsing</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).newTab</string>
 	</array>
 	<key>NimbusURL</key>
 	<string>$(NIMBUS_URL)</string>

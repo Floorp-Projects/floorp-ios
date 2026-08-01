@@ -2,16 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import Common
 import Foundation
 import Shared
 import Glean
 import MozillaAppServices
 import OnboardingKit
-
-struct Links {
-    static let termsOfService = "https://www.mozilla.org/about/legal/terms/firefox/"
-    static let privacyNotice = "https://www.mozilla.org/privacy/firefox/"
-}
 
 struct TermsOfServiceManager: FeatureFlaggable, Sendable {
     var prefs: Prefs
@@ -38,7 +34,33 @@ struct TermsOfServiceManager: FeatureFlaggable, Sendable {
         prefs.setTimestamp(acceptedDate.toTimestamp(), forKey: PrefsKeys.TermsOfUseAcceptedDate)
     }
 
+    /// Persist Floorp's no-data-collection policy before any launch-time
+    /// telemetry or experiment service reads the inherited Firefox defaults.
+    func enforceFloorpDataCollectionPreferences() {
+        if FloorpFlags.isTelemetryDisabled {
+            [
+                AppConstants.prefSendUsageData,
+                AppConstants.prefSendDailyUsagePing,
+                AppConstants.prefStudiesToggle,
+                AppConstants.prefRolloutsToggle,
+                AppConstants.prefSendCrashReports
+            ].forEach { prefs.setBool(false, forKey: $0) }
+        }
+
+        if FloorpFlags.isSponsoredShortcutsDisabled {
+            prefs.setBool(false, forKey: PrefsKeys.FeatureFlags.SponsoredShortcuts)
+            prefs.setBool(true, forKey: PrefsKeys.GoogleTopSiteHideKey)
+        }
+    }
+
     func shouldSendTechnicalData(telemetryValue: Bool, studiesValue: Bool) {
+        guard !FloorpFlags.isTelemetryDisabled else {
+            DefaultGleanWrapper().setUpload(isEnabled: false)
+            Experiments.setStudiesSetting(false)
+            Experiments.setTelemetrySetting(false)
+            Experiments.setRolloutsSetting(false)
+            return
+        }
         DefaultGleanWrapper().setUpload(isEnabled: telemetryValue)
         Experiments.setStudiesSetting(studiesValue)
         Experiments.setTelemetrySetting(telemetryValue)
@@ -61,14 +83,6 @@ struct TermsOfServiceManager: FeatureFlaggable, Sendable {
             AppName.shortName.rawValue,
             privacyNoticeLink
         )
-        let manageLink = String.Onboarding.TermsOfService.ManageLink
-        let manageAgreement = String(
-            format: String.Onboarding.Modern.TermsOfService.ManagePreferenceAgreement,
-            AppName.shortName.rawValue,
-            MozillaName.shortName.rawValue,
-            manageLink
-        )
-
         return OnboardingKitCardInfoModel(
             cardType: .basic,
             name: "tos",
@@ -97,12 +111,6 @@ struct TermsOfServiceManager: FeatureFlaggable, Sendable {
                     linkText: privacyNoticeLink,
                     action: .openPrivacyNotice,
                     accessibilityIdentifier: AccessibilityIdentifiers.TermsOfService.privacyNoticeAgreement
-                ),
-                EmbeddedLink(
-                    fullText: manageAgreement,
-                    linkText: manageLink,
-                    action: .openManageSettings,
-                    accessibilityIdentifier: AccessibilityIdentifiers.TermsOfService.manageDataCollectionAgreement
                 )
             ]
         )

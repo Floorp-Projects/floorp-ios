@@ -90,21 +90,12 @@ final class LaunchCoordinator: BaseCoordinator,
             onTermsOfUseTap: { [weak self] in
                 guard let self = self else { return }
                 TermsOfServiceTelemetry().termsOfServiceLinkTapped()
-                presentLink(with: URL(string: Links.termsOfService))
+                presentLink(with: SupportUtils.URLForTermsOfUse)
             },
             onPrivacyNoticeTap: { [weak self] in
                 guard let self = self else { return }
                 TermsOfServiceTelemetry().termsOfServicePrivacyNoticeLinkTapped()
-                presentLink(with: URL(string: Links.privacyNotice))
-            },
-            onManageSettingsTap: { [weak self] in
-                guard let self = self else { return }
-                TermsOfServiceTelemetry().termsOfServiceManageLinkTapped()
-                let managePreferencesVC = PrivacyPreferencesViewController(profile: profile, windowUUID: windowUUID)
-                if UIDevice.current.userInterfaceIdiom != .phone {
-                    managePreferencesVC.modalPresentationStyle = .formSheet
-                }
-                router.navigationController.presentedViewController?.present(managePreferencesVC, animated: true)
+                presentLink(with: SupportUtils.URLForPrivacyNotice)
             },
             onComplete: { [weak self] in
                 guard let self = self else { return }
@@ -112,12 +103,19 @@ final class LaunchCoordinator: BaseCoordinator,
                 manager.setAccepted(acceptedDate: acceptedDate)
                 TermsOfServiceTelemetry().termsOfServiceAcceptButtonTapped(acceptedDate: acceptedDate)
 
-                let sendTechnicalData = profile.prefs.boolForKey(AppConstants.prefSendUsageData) ?? true
-                let sendStudies = profile.prefs.boolForKey(AppConstants.prefStudiesToggle) ?? true
+                let sendTechnicalData = FloorpFlags.isTelemetryDisabled
+                    ? false
+                    : profile.prefs.boolForKey(AppConstants.prefSendUsageData) ?? true
+                let sendStudies = FloorpFlags.isTelemetryDisabled
+                    ? false
+                    : profile.prefs.boolForKey(AppConstants.prefStudiesToggle) ?? true
                 manager.shouldSendTechnicalData(telemetryValue: sendTechnicalData, studiesValue: sendStudies)
                 self.profile.prefs.setBool(sendTechnicalData, forKey: AppConstants.prefSendUsageData)
+                self.profile.prefs.setBool(sendStudies, forKey: AppConstants.prefStudiesToggle)
 
-                let sendCrashReports = profile.prefs.boolForKey(AppConstants.prefSendCrashReports) ?? true
+                let sendCrashReports = FloorpFlags.isTelemetryDisabled
+                    ? false
+                    : profile.prefs.boolForKey(AppConstants.prefSendCrashReports) ?? true
                 self.profile.prefs.setBool(sendCrashReports, forKey: AppConstants.prefSendCrashReports)
                 self.logger.setup(sendCrashReports: sendCrashReports)
 

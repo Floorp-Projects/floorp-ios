@@ -12,7 +12,7 @@ import SiteImageView
 import Common
 import WebEngine
 
-let browsingActivityType = "org.mozilla.ios.firefox.browsing"
+let browsingActivityType = "\(AppInfo.bundleIdentifier).browsing"
 
 // TODO: FXIOS-14175 - SearchableIndex is not thread safe
 nonisolated(unsafe) private let searchableIndex = CSSearchableIndex.default()
@@ -147,7 +147,7 @@ extension UserActivityHandler {
 
         let item = CSSearchableItem(
             uniqueIdentifier: identifier,
-            domainIdentifier: "org.mozilla.ios.firefox",
+            domainIdentifier: AppInfo.bundleIdentifier,
             attributeSet: attributeSet
         )
 

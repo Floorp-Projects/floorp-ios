@@ -16,12 +16,14 @@ final class ConversionEventTrackerTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
+        FloorpFlags.setAdAttributionDisabled(false)
         userDefaults = MockUserDefaults()
         dataManager = ConversionDataManager(defaults: userDefaults)
         mockUpdater = MockConversionValueUpdater()
     }
 
     override func tearDown() {
+        FloorpFlags.setAdAttributionDisabled(false)
         userDefaults = nil
         dataManager = nil
         mockUpdater = nil
@@ -37,6 +39,15 @@ final class ConversionEventTrackerTests: XCTestCase {
         XCTAssertEqual(mockUpdater.receivedConversionValues.first?.fine, 5)
         XCTAssertEqual(mockUpdater.receivedConversionValues.first?.coarse, .low)
         XCTAssertEqual(mockUpdater.receivedConversionValues.first?.lockWindow, false)
+    }
+
+    func testRecord_floorpAttributionPolicyDisabled_doesNotEmitConversionValue() {
+        FloorpFlags.setAdAttributionDisabled(true)
+        let subject = createSubject()
+
+        subject.record(.activeFirstDay)
+
+        XCTAssertTrue(mockUpdater.receivedConversionValues.isEmpty)
     }
 
     func testRecord_setAsDefault_emitsExpectedConversionValue() {

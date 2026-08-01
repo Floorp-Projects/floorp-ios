@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
+import Shared
 import XCTest
 
 @testable import Client
@@ -52,27 +53,31 @@ final class MicrosurveyCoordinatorTests: XCTestCase {
     @MainActor
     func testMicrosurveyDelegate_showPrivacy_callsRouterDismiss_andCreatesNewTab() throws {
         let subject = createSubject()
-        let languageIdentifier = Locale.preferredLanguages.first ?? ""
+        let expectedURL = try XCTUnwrap(
+            SupportUtils.URLForPrivacyNotice(source: "modal", campaign: "microsurvey", content: nil)
+        )
 
         subject.start()
         subject.showPrivacy(with: nil)
 
         XCTAssertEqual(mockRouter.dismissCalled, 1)
         XCTAssertEqual(mockTabManager.addTabsForURLsCalled, 1)
-        XCTAssertEqual(mockTabManager.addTabsURLs, [URL(string: "https://www.mozilla.org/\(languageIdentifier)/privacy/firefox/?utm_medium=firefox-mobile&utm_source=modal&utm_campaign=microsurvey")])
+        XCTAssertEqual(mockTabManager.addTabsURLs, [expectedURL])
     }
 
     @MainActor
     func testMicrosurveyDelegate_showPrivacyWithContentParams_callsRouterDismiss_andCreatesNewTab() throws {
         let subject = createSubject()
-        let languageIdentifier = Locale.preferredLanguages.first ?? ""
+        let expectedURL = try XCTUnwrap(
+            SupportUtils.URLForPrivacyNotice(source: "modal", campaign: "microsurvey", content: "homepage")
+        )
 
         subject.start()
         subject.showPrivacy(with: "homepage")
 
         XCTAssertEqual(mockRouter.dismissCalled, 1)
         XCTAssertEqual(mockTabManager.addTabsForURLsCalled, 1)
-        XCTAssertEqual(mockTabManager.addTabsURLs, [URL(string: "https://www.mozilla.org/\(languageIdentifier)/privacy/firefox/?utm_medium=firefox-mobile&utm_source=modal&utm_campaign=microsurvey&utm_content=homepage")])
+        XCTAssertEqual(mockTabManager.addTabsURLs, [expectedURL])
     }
 
     private func createSubject(file: StaticString = #filePath,
