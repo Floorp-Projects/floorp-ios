@@ -13,10 +13,10 @@ import XCTest
 
 @MainActor
 final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
-    private var logger: MockLogger!
-    private var gleanWrapper: MockGleanWrapper!
-    private var mockAdsClient: MockMozAdsClient!
-    private var adsClientCallbackQueue: MockDispatchQueue!
+    private var logger = MockLogger()
+    private var gleanWrapper = MockGleanWrapper()
+    private var mockAdsClient = MockMozAdsClient()
+    private var adsClientCallbackQueue = MockDispatchQueue()
 
     override func setUp() async throws {
         try await super.setUp()
@@ -30,10 +30,6 @@ final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
 
     override func tearDown() async throws {
         FloorpFlags.setSponsoredShortcutsDisabled(false)
-        logger = nil
-        gleanWrapper = nil
-        mockAdsClient = nil
-        adsClientCallbackQueue = nil
         DependencyHelperMock().reset()
         try await super.tearDown()
     }

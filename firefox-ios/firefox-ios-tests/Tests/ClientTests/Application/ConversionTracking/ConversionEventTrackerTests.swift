@@ -10,23 +10,31 @@ import XCTest
 final class ConversionEventTrackerTests: XCTestCase {
     private let installTimestamp: Timestamp = 1_700_000_000_000
 
-    private var userDefaults: MockUserDefaults!
-    private var dataManager: ConversionDataManager!
-    private var mockUpdater: MockConversionValueUpdater!
+    private struct TestState {
+        var dataManager: ConversionDataManager
+        let mockUpdater: MockConversionValueUpdater
+
+        init() {
+            self.dataManager = ConversionDataManager(defaults: MockUserDefaults())
+            self.mockUpdater = MockConversionValueUpdater()
+        }
+    }
+
+    private var state = TestState()
+    private var dataManager: ConversionDataManager {
+        get { state.dataManager }
+        set { state.dataManager = newValue }
+    }
+    private var mockUpdater: MockConversionValueUpdater { state.mockUpdater }
 
     override func setUp() {
         super.setUp()
         FloorpFlags.setAdAttributionDisabled(false)
-        userDefaults = MockUserDefaults()
-        dataManager = ConversionDataManager(defaults: userDefaults)
-        mockUpdater = MockConversionValueUpdater()
+        state = TestState()
     }
 
     override func tearDown() {
         FloorpFlags.setAdAttributionDisabled(false)
-        userDefaults = nil
-        dataManager = nil
-        mockUpdater = nil
         super.tearDown()
     }
 

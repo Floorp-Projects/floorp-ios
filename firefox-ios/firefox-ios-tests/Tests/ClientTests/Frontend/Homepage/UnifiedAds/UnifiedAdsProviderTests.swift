@@ -64,7 +64,7 @@ class MockMozAdsClient: MozAdsClient, @unchecked Sendable {
 
 @MainActor
 class UnifiedAdsProviderTests: XCTestCase {
-    private var mockAdsClient: MockMozAdsClient!
+    private var mockAdsClient = MockMozAdsClient()
 
     override func setUp() async throws {
         try await super.setUp()
@@ -76,7 +76,6 @@ class UnifiedAdsProviderTests: XCTestCase {
 
     override func tearDown() async throws {
         FloorpFlags.setSponsoredShortcutsDisabled(false)
-        mockAdsClient = nil
         DependencyHelperMock().reset()
         try await super.tearDown()
     }

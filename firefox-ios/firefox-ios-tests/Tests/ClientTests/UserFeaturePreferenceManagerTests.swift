@@ -9,20 +9,23 @@ import XCTest
 @testable import Client
 
 final class UserFeaturePreferenceManagerTests: XCTestCase {
-    private var prefs: MockProfilePrefs!
-    private var mockLayer: MockNimbusFeatureFlagLayer!
+    private struct TestState {
+        let prefs = MockProfilePrefs()
+        let mockLayer = MockNimbusFeatureFlagLayer()
+    }
+
+    private var state = TestState()
+    private var prefs: MockProfilePrefs { state.prefs }
+    private var mockLayer: MockNimbusFeatureFlagLayer { state.mockLayer }
 
     override func setUp() {
         super.setUp()
         FloorpFlags.setSponsoredShortcutsDisabled(false)
-        prefs = MockProfilePrefs()
-        mockLayer = MockNimbusFeatureFlagLayer()
+        state = TestState()
     }
 
     override func tearDown() {
         FloorpFlags.setSponsoredShortcutsDisabled(false)
-        mockLayer = nil
-        prefs = nil
         super.tearDown()
     }
 

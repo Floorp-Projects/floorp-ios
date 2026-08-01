@@ -10,8 +10,8 @@ import XCTest
 
 @MainActor
 final class MicrosurveyCoordinatorTests: XCTestCase {
-    private var mockRouter: MockRouter!
-    private var mockTabManager: MockTabManager!
+    private var mockRouter = MockRouter(navigationController: MockNavigationController())
+    private var mockTabManager = MockTabManager()
 
     override func setUp() async throws {
         try await super.setUp()
