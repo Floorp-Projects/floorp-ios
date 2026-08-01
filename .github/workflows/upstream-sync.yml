@@ -59,10 +59,12 @@ jobs:
 
           commit_count="$(git rev-list --count "${merge_base}..${upstream_sha}")"
           echo "Found ${commit_count} new upstream commits."
-          echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          echo "commit_count=${commit_count}" >> "$GITHUB_OUTPUT"
-          echo "upstream_sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
-          echo "merge_base=${merge_base}" >> "$GITHUB_OUTPUT"
+          {
+            echo "has_changes=true"
+            echo "commit_count=${commit_count}"
+            echo "upstream_sha=${upstream_sha}"
+            echo "merge_base=${merge_base}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Merge upstream
         if: steps.check.outputs.has_changes == 'true'
