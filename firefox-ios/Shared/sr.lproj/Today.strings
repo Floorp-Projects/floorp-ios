@@ -5,7 +5,7 @@
 "TodayWidget.ClosePrivateTabsLabelV2" = "Затвори\nприватне језичке";
 
 /* Description for medium size widget to add Firefox Shortcut to home screen */
-"TodayWidget.FirefoxShortcutGalleryDescription" = "Додајте пречице за Firefox на почетни екран.";
+"TodayWidget.FirefoxShortcutGalleryDescription" = "Додајте пречице за Floorp на почетни екран.";
 
 /* Go to link pasted on the clipboard */
 "TodayWidget.GoToCopiedLinkLabelV1" = "Иди на умножену везу";
@@ -23,19 +23,19 @@
 "TodayWidget.NoOpenTabsLabel" = "Нема отворених језичака.";
 
 /* Open Firefox when there are no tabs opened in tab tray i.e. Empty State */
-"TodayWidget.OpenFirefoxLabel" = "Отвори Firefox";
+"TodayWidget.OpenFirefoxLabel" = "Отвори Floorp";
 
 /* Open New Private Tab button label */
 "TodayWidget.PrivateTabButtonLabelV1" = "Приватна претрага";
 
 /* Description for small size widget to add it to home screen */
-"TodayWidget.QuickActionGalleryDescription" = "Додајте Firefox пречицу на почетни екран. Након додавања виџета, додирните га и задржите да бисте га уредили и изабрали другу пречицу.";
+"TodayWidget.QuickActionGalleryDescription" = "Додајте Floorp пречицу на почетни екран. Након додавања виџета, додирните га и задржите да бисте га уредили и изабрали другу пречицу.";
 
 /* Quick Actions title when widget enters edit mode */
 "TodayWidget.QuickActionsGalleryTitle" = "Брзе радње";
 
 /* Firefox shortcuts title when widget enters edit mode. Do not translate the word Firefox. */
-"TodayWidget.QuickActionsGalleryTitleV2" = "Firefox пречице";
+"TodayWidget.QuickActionsGalleryTitleV2" = "Floorp пречице";
 
 /* Description for Quick View widget in Gallery View where user can add it to home screen */
 "TodayWidget.QuickViewGalleryDescriptionV2" = "Додајте пречице до својих отворених језичака.";
@@ -44,7 +44,7 @@
 "TodayWidget.QuickViewGalleryTitle" = "Брзи преглед";
 
 /* Search in Firefox. Do not translate the word Firefox */
-"TodayWidget.SearchInFirefoxV2" = "Тражи у\nFirefox-у";
+"TodayWidget.SearchInFirefoxV2" = "Тражи у\nFloorp-у";
 
 /* Search in private tab */
 "TodayWidget.SearchInPrivateTabLabelV2" = "Тражи у\nприватном језичку";

@@ -5,22 +5,22 @@
 "New Tab" = "يېڭى بەتكۈچ";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Firefox كامېرا ئارقىلىق QR كودىنى تارايدۇ ھەمدە سۈرەت تارتىپ ۋە سىنغا ئالىدۇ.";
+"NSCameraUsageDescription" = "Floorp كامېرا ئارقىلىق QR كودىنى تارايدۇ ھەمدە سۈرەت تارتىپ ۋە سىنغا ئالىدۇ.";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "Firefox ساقلانغان ئىم ۋە پۇل تۆلەش ئۇسۇلىڭىزنى زىيارەت قىلىش ئۈچۈن چىراي كىملىكىنى تەلەپ قىلىدۇ.";
+"NSFaceIDUsageDescription" = "Floorp ساقلانغان ئىم ۋە پۇل تۆلەش ئۇسۇلىڭىزنى زىيارەت قىلىش ئۈچۈن چىراي كىملىكىنى تەلەپ قىلىدۇ.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "سىز زىيارەت قىلغان تور بېكەتلەر ئورنىڭىزنى تەلەپ قىلىشى مۇمكىن.";
 
 /* Privacy - Microphone Usage Description */
-"NSMicrophoneUsageDescription" = "Firefox مىكروفونىڭىزنى ئىشلىتىپ ئۈنگە ئالىدۇ ۋە يۈكلەيدۇ.";
+"NSMicrophoneUsageDescription" = "Floorp مىكروفونىڭىزنى ئىشلىتىپ ئۈنگە ئالىدۇ ۋە يۈكلەيدۇ.";
 
 /* Privacy - Photo Library Additions Usage Description */
 "NSPhotoLibraryAddUsageDescription" = "بۇ ئارقىلىق سۈرەتلەرنى ساقلىغىلى بولىدۇ.";
 
 /* Privacy - Speech Recognition Usage Description */
-"NSSpeechRecognitionUsageDescription" = "ئاۋازلىق ئىزدەش ئۈچۈن Firefox ئاۋاز پەرقلەندۈرۈش ئىقتىدارىنى ئىشلىتىپ ئاۋازىڭىزنى تېكىستكە ئايلاندۇرىدۇ.";
+"NSSpeechRecognitionUsageDescription" = "ئاۋازلىق ئىزدەش ئۈچۈن Floorp ئاۋاز پەرقلەندۈرۈش ئىقتىدارىنى ئىشلىتىپ ئاۋازىڭىزنى تېكىستكە ئايلاندۇرىدۇ.";
 
 /* (No Comment) */
 "Scan QR Code" = "QR كودىنى تارا";

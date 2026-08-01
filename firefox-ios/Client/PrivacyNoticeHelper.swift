@@ -29,6 +29,11 @@ struct PrivacyNoticeHelper: PrivacyNoticeHelperProtocol {
     }
 
     func shouldShowPrivacyNotice() -> Bool {
+        // Do not show Mozilla's privacy-update card until Floorp publishes both
+        // a dedicated updated notice and a comparison page.
+        guard SupportUtils.URLForUpdatedPrivacyNotice != nil,
+              SupportUtils.URLForUpdatedPrivacyNoticeDiff != nil else { return false }
+
         // 1. User has already accepted ToU (via onboarding or bottom sheet)
         // Use TermsOfUseAcceptedDate (migrated from TermsOfServiceAcceptedDate)
         guard let acceptedDate = prefs.timestampForKey(PrefsKeys.TermsOfUseAcceptedDate) else { return false }

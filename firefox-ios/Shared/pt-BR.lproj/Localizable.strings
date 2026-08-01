@@ -308,7 +308,7 @@
 "ErrorPages.AdvancedWarning2.Text" = "Pode ser um erro de configuração ou uma adulteração feita por um invasor. Só prossiga se aceitar o risco em potencial.";
 
 /* Warning text on the certificate error page. %@ is the domain of the website. */
-"ErrorPages.CertWarning.Description" = "O proprietário de %@ configurou este site de forma inadequada. Para proteger suas informações de ser roubadas, o Firefox não se conectou a este site.";
+"ErrorPages.CertWarning.Description" = "O proprietário de %@ configurou este site de forma inadequada. Para proteger suas informações de ser roubadas, o Floorp não se conectou a este site.";
 
 /* Title on the certificate error page */
 "ErrorPages.CertWarning.Title" = "Esta conexão não é confiável";
@@ -329,7 +329,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Tela inicial do Firefox";
+"Firefox.HomePage.Title" = "Tela inicial do Floorp";
 
 /* A button at bottom of the Firefox homepage that, when clicked, takes users straight to the settings options, where they can customize the Firefox Home page */
 "FirefoxHome.CustomizeHomeButton.Title" = "Personalizar tela inicial";
@@ -425,7 +425,7 @@
 "FxAPush_DeviceDisconnected_UnknownDevice_body" = "Um dispositivo foi desconectado do Firefox Sync";
 
 /* On the firefox homepage, the string read by the voice over prompt for accessibility, for the button which changes the wallpaper */
-"FxHomepage.Wallpaper.ButtonLabel.v99" = "Logotipo do Firefox, alterar fundo de tela.";
+"FxHomepage.Wallpaper.ButtonLabel.v99" = "Logotipo do Floorp, alterar fundo de tela.";
 
 /* Show the SUMO support page from the Support section in the settings. see http://mzl.la/1dmM8tZ */
 "Help" = "Ajuda";
@@ -656,13 +656,13 @@
 "Logins.Onboarding.LearnMoreButtonTitle" = "Saiba mais";
 
 /* Warning message shown when you try to enable or use native AutoFill without a device passcode setup */
-"Logins.PasscodeRequirement.Warning" = "Para usar o recurso de preenchimento automático do Firefox, você deve ter ativado um código de acesso do dispositivo.";
+"Logins.PasscodeRequirement.Warning" = "Para usar o recurso de preenchimento automático do Floorp, você deve ter ativado um código de acesso do dispositivo.";
 
 /* Label displaying welcome view tagline under the title */
 "Logins.WelcomeView.Tagline" = "Tenha suas senhas em qualquer lugar";
 
 /* Label displaying welcome view title */
-"Logins.WelcomeView.Title2" = "Preencher automaticamente senhas do Firefox";
+"Logins.WelcomeView.Title2" = "Preencher automaticamente senhas do Floorp";
 
 /* Title of the big blue button to enable AutoFill */
 "Logins.WelcomeView.TurnOnAutoFill" = "Ativar preenchimento automático";
@@ -695,7 +695,7 @@
 "LoginsList.Title" = "LOGINS SALVOS";
 
 /* Restore Tabs Prompt Description */
-"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Parece que o Firefox falhou anteriormente. Quer restaurar suas abas?";
+"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Parece que o Floorp falhou anteriormente. Quer restaurar suas abas?";
 
 /* Title for the button that marks a reading list item as read */
 "Mark as Read" = "Marcar como lido";
@@ -884,7 +884,7 @@
 "Onboarding.WhatsNew.Button.Title" = "Iniciar navegação";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "Ops! O Firefox falhou";
+"Oops! Firefox crashed" = "Ops! O Floorp falhou";
 
 /* See http://mzl.la/1LXbDOL */
 "Open articles in Reader View by tapping the book icon when it appears in the title bar." = "Abra artigos no modo de leitura tocando no ícone de livro quando ele aparecer na barra de título.";
@@ -896,7 +896,7 @@
 "Open Tabs" = "Abas abertas";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "O Firefox não pode abrir a página porque o endereço é inválido.";
+"OpenURL.Error.Message" = "O Floorp não pode abrir a página porque o endereço é inválido.";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "Não é possível abrir a página";
@@ -908,7 +908,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "Permite salvar a imagem no seu Rolo de Câmera.";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "O Firefox quer acessar suas Fotos";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "O Floorp quer acessar suas Fotos";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "Fechar";
@@ -995,7 +995,7 @@
 "ScanQRCode.InvalidDataError.Message" = "Os dados são inválidos";
 
 /* Text of the prompt to setup the camera authorization for the Scan QR Code feature. */
-"ScanQRCode.PermissionError.Message.v100" = "Vá em ‘Configurações’ do dispositivo > ‘Firefox’. Dê permissão ao Firefox para acessar a câmera.";
+"ScanQRCode.PermissionError.Message.v100" = "Vá em ‘Configurações’ do dispositivo > ‘Floorp’. Dê permissão ao Floorp para acessar a câmera.";
 
 /* Title for the QR code scanner view. */
 "ScanQRCode.View.Title" = "Digitalizar código QR";
@@ -1079,7 +1079,7 @@
 "SendTo.NoDevicesFound.Message" = "Você não tem nenhum outro dispositivo conectado a esta conta Firefox, disponível para sincronizar.";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "Abra o Firefox, vá em Configurações e identifique-se para continuar.";
+"SendTo.NotSignedIn.Message" = "Abra o Floorp, vá em Configurações e identifique-se para continuar.";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "Você não entrou na sua conta Firefox.";
@@ -1193,7 +1193,7 @@
 "Settings.DataManagement.Title" = "Gerenciamento de dados";
 
 /* Body of the alert when prompting the user asking to disconnect. */
-"Settings.Disconnect.Body" = "O Firefox deixará de sincronizar com a sua conta, mas não excluirá seus dados de navegação neste dispositivo.";
+"Settings.Disconnect.Body" = "O Floorp deixará de sincronizar com a sua conta, mas não excluirá seus dados de navegação neste dispositivo.";
 
 /* Button displayed at the bottom of settings page allowing users to Disconnect from FxA */
 "Settings.Disconnect.Button" = "Desconectar sincronização";
@@ -1268,7 +1268,7 @@
 "Settings.Home.Current.Description.v101" = "Escolha o que exibir como tela inicial.";
 
 /* In the settings menu, on the Firefox homepage customization section, this is the description below the section, describing what the options in the section are for. */
-"Settings.Home.Option.Description.v101" = "Escolha o que incluir na tela inicial do Firefox.";
+"Settings.Home.Option.Description.v101" = "Escolha o que incluir na tela inicial do Floorp.";
 
 /* In the settings menu, in the Firefox homepage customization section, this is the title for the option that allows users to toggle the Jump Back In section on homepage on or off */
 "Settings.Home.Option.JumpBackIn" = "Voltar direto para";
@@ -1292,7 +1292,7 @@
 "Settings.Home.Option.StartAtHome.Always" = "Tela inicial";
 
 /* In the settings menu, in the Start at Home customization options, this is text that appears below the section, describing what the section settings do. */
-"Settings.Home.Option.StartAtHome.Description" = "Escolha o que ver quando voltar ao Firefox.";
+"Settings.Home.Option.StartAtHome.Description" = "Escolha o que ver quando voltar ao Floorp.";
 
 /* In the settings menu, on the Start at Home homepage customization option, this allows users to set this setting to return to the last tab they were on, every time they open up Firefox */
 "Settings.Home.Option.StartAtHome.Never" = "Aba mais recente";
@@ -1307,25 +1307,25 @@
 "Settings.Home.Option.Wallpaper" = "Fundo de tela";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the amethyst firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Fundo de tela do Firefox, padrão de ametista.";
+"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Fundo de tela do Floorp, padrão de ametista.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the beach hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Fundo de tela do Firefox, padrão de colinas de praia.";
+"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Fundo de tela do Floorp, padrão de colinas de praia.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the cerulean firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Fundo de tela do Firefox, padrão azul celeste.";
+"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Fundo de tela do Floorp, padrão azul celeste.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the default wallpaper. */
 "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99" = "Fundo de tela limpo padrão.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the sunrise firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Fundo de tela do Firefox, padrão nascer do sol.";
+"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Fundo de tela do Floorp, padrão nascer do sol.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string of the toggle for turning wallpaper cycling shortcut on or off on the homepage. */
 "Settings.Home.Option.Wallpaper.Accessibility.ToggleButton" = "Alternar fundo da tela inicial";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the twilight hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Fundo de tela do Firefox, padrão de montes ao anoitecer.";
+"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Fundo de tela do Floorp, padrão de montes ao anoitecer.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of the group of wallpapers that are always available to the user. The %@ will be replaced by the app name and thus doesn't need translation. */
 "Settings.Home.Option.Wallpaper.Classic.Title.v106" = "%@ clássico";
@@ -1346,7 +1346,7 @@
 "Settings.Home.Option.Wallpaper.LimitedEdition.Title.v106" = "Edição limitada";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off. */
-"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Mudar o fundo de tela tocando no logotipo do Firefox na tela inicial";
+"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Mudar o fundo de tela tocando no logotipo do Floorp na tela inicial";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of that screen, which allows users to change the wallpaper settings for the application. */
 "Settings.Home.Option.Wallpaper.Title" = "Fundo de tela";
@@ -1400,7 +1400,7 @@
 "Settings.NewTab.Option.Custom" = "Personalizado";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Página inicial do Firefox";
+"Settings.NewTab.Option.FirefoxHome" = "Página inicial do Floorp";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "Tela inicial";
@@ -1421,7 +1421,7 @@
 "Settings.NoImageModeBlockImages.Label.v99" = "Bloquear imagens";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "Ao abrir o Firefox";
+"Settings.OfferClipboardBar.Status" = "Ao abrir o Floorp";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349. %@ is for the app name. */
 "Settings.OfferClipboardBar.Status.v128" = "Ao abrir o %@";
@@ -1481,7 +1481,7 @@
 "Settings.Siri.OpenTabShortcut" = "Abrir nova aba";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "Use atalhos da Siri para abrir o Firefox rapidamente";
+"Settings.Siri.SectionDescription" = "Use atalhos da Siri para abrir o Floorp rapidamente";
 
 /* The option that takes you to the siri shortcuts settings page */
 "Settings.Siri.SectionName" = "Atalhos da Siri";
@@ -1607,13 +1607,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "Carregar em segundo plano";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Carregando no Firefox";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Carregando no Floorp";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Abrir no Firefox";
+"ShareExtension.OpenInFirefoxAction.Title" = "Abrir no Floorp";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Pesquisar no Firefox";
+"ShareExtension.SeachInFirefoxAction.Title" = "Pesquisar no Floorp";
 
 /* Button in share sheet to copy the url of the current tab. */
 "ShareSheet.Copy.Title.v108" = "Copiar";
@@ -1757,7 +1757,7 @@
 "UIMenuItem.PasteGo" = "Colar e abrir";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Pesquisar com o Firefox";
+"UIMenuItem.SearchWithFirefox" = "Pesquisar com o Floorp";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "não lido";
@@ -1805,7 +1805,7 @@
 "Yesterday" = "Ontem";
 
 /* Error message in the remote tabs panel */
-"You don’t have any tabs open in Firefox on your other devices." = "Não tem nenhuma aba aberta no Firefox em outros dispositivos.";
+"You don’t have any tabs open in Firefox on your other devices." = "Não tem nenhuma aba aberta no Floorp em outros dispositivos.";
 
 /* Your Rights settings section title */
 "Your Rights" = "Seus direitos";

@@ -5,22 +5,22 @@
 "New Tab" = "Uusi välilehti";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Firefox käyttää kameraasi skannatakseen QR-koodeja ja ottaakseen valokuvia ja videoita.";
+"NSCameraUsageDescription" = "Floorp käyttää kameraasi skannatakseen QR-koodeja ja ottaakseen valokuvia ja videoita.";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "Firefox vaatii Face ID:n käyttääkseen tallennettuja salasanoja ja maksutapoja.";
+"NSFaceIDUsageDescription" = "Floorp vaatii Face ID:n käyttääkseen tallennettuja salasanoja ja maksutapoja.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "Vierailemasi sivustot voivat kysyä lupaa sijaintiisi.";
 
 /* Privacy - Microphone Usage Description */
-"NSMicrophoneUsageDescription" = "Firefox käyttää mikrofoniasi tallentamaan ja lähettämään ääntä.";
+"NSMicrophoneUsageDescription" = "Floorp käyttää mikrofoniasi tallentamaan ja lähettämään ääntä.";
 
 /* Privacy - Photo Library Additions Usage Description */
 "NSPhotoLibraryAddUsageDescription" = "Näin voit tallentaa kuvia.";
 
 /* Privacy - Speech Recognition Usage Description */
-"NSSpeechRecognitionUsageDescription" = "Firefox käyttää puheentunnistusta muuntaakseen äänesi tekstiksi äänihakua varten.";
+"NSSpeechRecognitionUsageDescription" = "Floorp käyttää puheentunnistusta muuntaakseen äänesi tekstiksi äänihakua varten.";
 
 /* (No Comment) */
 "Scan QR Code" = "Skannaa QR-koodi";

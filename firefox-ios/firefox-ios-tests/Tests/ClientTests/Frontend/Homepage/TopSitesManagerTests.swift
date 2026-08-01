@@ -21,6 +21,7 @@ final class TopSitesManagerTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         profile = nil
         mockNotificationCenter = nil
         try await super.tearDown()
@@ -56,6 +57,22 @@ final class TopSitesManagerTests: XCTestCase {
         XCTAssertEqual(topSites.first?.isPinned, true)
         XCTAssertEqual(topSites.first?.isGoogleURL, true)
         XCTAssertEqual(topSites.first?.title, "Google Test")
+    }
+
+    func test_floorpSponsoredContentPolicyHidesPartnerAndSponsoredTiles() async throws {
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        let googleManager = GoogleTopSiteManager(prefs: profile.prefs)
+        let subject = try createSubject(googleTopSiteManager: googleManager)
+
+        let fetchedSponsoredSites = await subject.fetchSponsoredSites()
+        let topSites = subject.recalculateTopSites(
+            otherSites: [],
+            sponsoredSites: createSponsoredSites()
+        )
+
+        XCTAssertNil(googleManager.pinnedSiteData)
+        XCTAssertTrue(fetchedSponsoredSites.isEmpty)
+        XCTAssertTrue(topSites.isEmpty)
     }
 
      func test_recalculateTopSites_withOtherSitesAndNoGoogleSite_returnNoGoogleTopSite() throws {

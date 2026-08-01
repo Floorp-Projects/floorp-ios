@@ -67,6 +67,11 @@ final class UnifiedAdsProvider: URLCaching, UnifiedAdsProviderInterface, LegacyF
 
     func fetchTiles(timestamp: Shared.Timestamp = Date.now(),
                     completion: @escaping @Sendable (UnifiedTileResult) -> Void) {
+        guard !FloorpFlags.isSponsoredShortcutsDisabled else {
+            completion(.failure(Error.noDataAvailable))
+            return
+        }
+
         if featureFlags.isFeatureEnabled(.adsClient, checking: .buildOnly) {
             fetchTilesWithAdsClient(completion: completion)
         } else {

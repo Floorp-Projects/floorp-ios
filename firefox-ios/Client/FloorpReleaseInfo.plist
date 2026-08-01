@@ -8,19 +8,6 @@
 	<string>$(LITE_LLM_API_ENDPOINT)</string>
 	<key>LiteLLMAPIModel</key>
 	<string>$(LITE_LLM_API_MODEL)</string>
-	<key>SKAdNetworkItems</key>
-	<array>
-		<dict>
-			<key>SKAdNetworkIdentifier</key>
-			<string>4fzdc2evr5.skadnetwork</string>
-		</dict>
-		<dict>
-			<key>SKAdNetworkIdentifier</key>
-			<string>cstr6suwn9.skadnetwork</string>
-		</dict>
-	</array>
-	<key>AdjustAppToken</key>
-	<string>$(ADJUST_APP_TOKEN)</string>
 	<key>AppIdentifierPrefix</key>
 	<string>$(APP_IDENTIFIER_PREFIX)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
@@ -52,7 +39,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>app.floorp.Client</string>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>$(MOZ_PUBLIC_URL_SCHEME)</string>
@@ -136,7 +123,8 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>QuickActionIntent</string>
-		<string>app.floorp.ios.floorp.browsing</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).browsing</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).newTab</string>
 	</array>
 	<key>NimbusURL</key>
 	<string>$(NIMBUS_URL)</string>

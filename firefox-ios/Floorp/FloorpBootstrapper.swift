@@ -27,7 +27,13 @@ public final class FloorpBootstrapper {
         // Step 1: Disable all telemetry
         disableTelemetry(logger: logger)
 
-        // Step 2: Configure overlay drawer
+        // Step 2: Disable Mozilla Unified Ads and sponsored shortcuts
+        disableSponsoredShortcuts(logger: logger)
+
+        // Step 3: Disable Apple advertising attribution postbacks
+        disableAdAttribution(logger: logger)
+
+        // Step 4: Configure overlay drawer
         configureOverlayDrawer(logger: logger)
 
         logger.log("Floorp: Bootstrapper configured successfully", level: .info, category: .setup)
@@ -54,6 +60,20 @@ public final class FloorpBootstrapper {
         FloorpFlags.setTelemetryDisabled(true)
 
         logger.log("Floorp: All telemetry disabled via FloorpFlags", level: .info, category: .setup)
+    }
+
+    // MARK: - Sponsored Content
+
+    @MainActor
+    private static func disableSponsoredShortcuts(logger: Logger) {
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        logger.log("Floorp: Mozilla sponsored and partner tiles disabled", level: .info, category: .setup)
+    }
+
+    @MainActor
+    private static func disableAdAttribution(logger: Logger) {
+        FloorpFlags.setAdAttributionDisabled(true)
+        logger.log("Floorp: SKAdNetwork attribution disabled", level: .info, category: .setup)
     }
 
     // MARK: - Overlay Drawer

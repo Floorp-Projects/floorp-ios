@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import Common
 import Shared
 import XCTest
 
@@ -20,6 +21,9 @@ final class AppLaunchUtilTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        FloorpFlags.setTelemetryDisabled(false)
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
+        FloorpFlags.setAdAttributionDisabled(false)
         DependencyHelperMock().reset()
         TelemetryContextualIdentifier.clearUserDefaults()
         profile = nil
@@ -52,6 +56,35 @@ final class AppLaunchUtilTests: XCTestCase {
         subject.setUpPreLaunchDependencies()
 
         XCTAssertNotNil(TelemetryContextualIdentifier.contextId)
+    }
+
+    func testGivenFloorpSponsoredContentDisabled_WhenTosNotAccepted_ThenContextIdIsNotSet() {
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        profile.prefs.setInt(0, forKey: PrefsKeys.TermsOfServiceAccepted)
+        setupNimbusToSForTesting(isEnabled: true)
+
+        createSubject().setUpPreLaunchDependencies()
+
+        XCTAssertNil(TelemetryContextualIdentifier.contextId)
+        XCTAssertEqual(profile.prefs.boolForKey(PrefsKeys.FeatureFlags.SponsoredShortcuts), false)
+        XCTAssertEqual(profile.prefs.boolForKey(PrefsKeys.GoogleTopSiteHideKey), true)
+    }
+
+    func testFloorpDataCollectionPolicyPersistsAllDisabledPreferences() {
+        FloorpFlags.setTelemetryDisabled(true)
+        let manager = TermsOfServiceManager(prefs: profile.prefs)
+
+        manager.enforceFloorpDataCollectionPreferences()
+
+        [
+            AppConstants.prefSendUsageData,
+            AppConstants.prefSendDailyUsagePing,
+            AppConstants.prefStudiesToggle,
+            AppConstants.prefRolloutsToggle,
+            AppConstants.prefSendCrashReports
+        ].forEach {
+            XCTAssertEqual(profile.prefs.boolForKey($0), false, "\($0) should be disabled")
+        }
     }
 
     // MARK: Helper methods

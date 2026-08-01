@@ -8,6 +8,19 @@ import Shared
 import XCTest
 
 class SupportUtilsTests: XCTestCase {
+    func testFloorpBrandConfiguration() {
+        XCTAssertEqual(AppName.shortName.rawValue, "Floorp")
+        XCTAssertEqual(FloorpBrand.marketingName, "Floorp Browser")
+        XCTAssertEqual(FloorpBrand.fullName, "Ablaze Floorp")
+        XCTAssertEqual(FloorpBrand.vendorName, "Ablaze")
+        XCTAssertEqual(FloorpBrand.projectName, "Floorp Projects")
+        XCTAssertEqual(SupportUtils.URLForGetHelp?.absoluteString, "https://docs.floorp.app/docs/features/")
+        XCTAssertEqual(SupportUtils.URLForTermsOfUse?.absoluteString, "https://floorp.app/terms")
+        XCTAssertEqual(SupportUtils.URLForPrivacyNotice?.absoluteString, "https://floorp.app/privacy")
+        XCTAssertNil(SupportUtils.URLForUpdatedPrivacyNotice)
+        XCTAssertNil(SupportUtils.URLForUpdatedPrivacyNoticeDiff)
+    }
+
     func testConfiguredSharedContainerIdentifierOverridesDerivedIdentifier() {
         XCTAssertEqual(
             AppInfo.resolvedSharedContainerIdentifier(
@@ -44,8 +57,6 @@ class SupportUtilsTests: XCTestCase {
     }
 
     func testURLForPrivacyNotice_withoutContentParam() {
-        let languageIdentifier = Locale.preferredLanguages.first!
-
         let urlString = SupportUtils.URLForPrivacyNotice(
             source: "modal",
             campaign: "microsurvey",
@@ -54,13 +65,11 @@ class SupportUtilsTests: XCTestCase {
 
         XCTAssertEqual(
             urlString,
-            "https://www.mozilla.org/\(languageIdentifier)/privacy/firefox/?utm_medium=firefox-mobile&utm_source=modal&utm_campaign=microsurvey"
+            "https://floorp.app/privacy?utm_medium=floorp-mobile&utm_source=modal&utm_campaign=microsurvey"
         )
     }
 
     func testURLForPrivacyNotice_withContentParam() {
-        let languageIdentifier = Locale.preferredLanguages.first!
-
         let urlString = SupportUtils.URLForPrivacyNotice(
             source: "modal",
             campaign: "microsurvey",
@@ -69,7 +78,7 @@ class SupportUtilsTests: XCTestCase {
 
         XCTAssertEqual(
             urlString,
-            "https://www.mozilla.org/\(languageIdentifier)/privacy/firefox/?utm_medium=firefox-mobile&utm_source=modal&utm_campaign=microsurvey&utm_content=homepage"
+            "https://floorp.app/privacy?utm_medium=floorp-mobile&utm_source=modal&utm_campaign=microsurvey&utm_content=homepage"
         )
     }
 }

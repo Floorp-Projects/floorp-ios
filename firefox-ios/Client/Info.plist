@@ -52,7 +52,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>app.floorp.Client</string>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>$(MOZ_PUBLIC_URL_SCHEME)</string>
@@ -134,7 +134,8 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>QuickActionIntent</string>
-		<string>app.floorp.ios.floorp.browsing</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).browsing</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).newTab</string>
 	</array>
 	<key>NimbusURL</key>
 	<string>$(NIMBUS_URL)</string>

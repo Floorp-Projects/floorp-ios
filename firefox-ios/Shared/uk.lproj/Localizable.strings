@@ -308,7 +308,7 @@
 "ErrorPages.AdvancedWarning2.Text" = "Це може бути через неправильну конфігурацію або атаку зловмисника. Продовжуйте, якщо ви усвідомлюєте потенційний ризик.";
 
 /* Warning text on the certificate error page. %@ is the domain of the website. */
-"ErrorPages.CertWarning.Description" = "Власник %@ налаштував свій вебсайт неналежним чином. Для захисту вашої інформації від викрадання, Firefox не з'єднався з цим вебсайтом.";
+"ErrorPages.CertWarning.Description" = "Власник %@ налаштував свій вебсайт неналежним чином. Для захисту вашої інформації від викрадання, Floorp не з'єднався з цим вебсайтом.";
 
 /* Title on the certificate error page */
 "ErrorPages.CertWarning.Title" = "Це недовірене з'єднання";
@@ -329,7 +329,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Домівка Firefox";
+"Firefox.HomePage.Title" = "Домівка Floorp";
 
 /* A button at bottom of the Firefox homepage that, when clicked, takes users straight to the settings options, where they can customize the Firefox Home page */
 "FirefoxHome.CustomizeHomeButton.Title" = "Налаштувати домівку";
@@ -425,7 +425,7 @@
 "FxAPush_DeviceDisconnected_UnknownDevice_body" = "Пристрій від'єднано від синхронізації Firefox";
 
 /* On the firefox homepage, the string read by the voice over prompt for accessibility, for the button which changes the wallpaper */
-"FxHomepage.Wallpaper.ButtonLabel.v99" = "Логотип Firefox, змінити шпалери.";
+"FxHomepage.Wallpaper.ButtonLabel.v99" = "Логотип Floorp, змінити шпалери.";
 
 /* Show the SUMO support page from the Support section in the settings. see http://mzl.la/1dmM8tZ */
 "Help" = "Довідка";
@@ -656,13 +656,13 @@
 "Logins.Onboarding.LearnMoreButtonTitle" = "Докладніше";
 
 /* Warning message shown when you try to enable or use native AutoFill without a device passcode setup */
-"Logins.PasscodeRequirement.Warning" = "Щоб використовувати функцію автозаповнення Firefox, увімкніть пароль пристрою.";
+"Logins.PasscodeRequirement.Warning" = "Щоб використовувати функцію автозаповнення Floorp, увімкніть пароль пристрою.";
 
 /* Label displaying welcome view tagline under the title */
 "Logins.WelcomeView.Tagline" = "Майте доступ до своїх паролів всюди";
 
 /* Label displaying welcome view title */
-"Logins.WelcomeView.Title2" = "Автозаповнення паролів Firefox";
+"Logins.WelcomeView.Title2" = "Автозаповнення паролів Floorp";
 
 /* Title of the big blue button to enable AutoFill */
 "Logins.WelcomeView.TurnOnAutoFill" = "Увімкнути автозаповнення";
@@ -695,7 +695,7 @@
 "LoginsList.Title" = "ЗБЕРЕЖЕНІ ПАРОЛІ";
 
 /* Restore Tabs Prompt Description */
-"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Схоже, минулого разу Firefox аварійно завершив роботу. Бажаєте відновити свої вкладки?";
+"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Схоже, минулого разу Floorp аварійно завершив роботу. Бажаєте відновити свої вкладки?";
 
 /* Title for the button that marks a reading list item as read */
 "Mark as Read" = "Позначити прочитаним";
@@ -884,7 +884,7 @@
 "Onboarding.WhatsNew.Button.Title" = "Почати перегляд";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "Отакої! Стався збій Firefox";
+"Oops! Firefox crashed" = "Отакої! Стався збій Floorp";
 
 /* See http://mzl.la/1LXbDOL */
 "Open articles in Reader View by tapping the book icon when it appears in the title bar." = "Відкривайте статті в режимі читання дотиком до піктограми книги, коли вона з'являється в панелі заголовка.";
@@ -896,7 +896,7 @@
 "Open Tabs" = "Відкриті вкладки";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "Firefox не може відкрити сторінку, тому що її адреса неправильна.";
+"OpenURL.Error.Message" = "Floorp не може відкрити сторінку, тому що її адреса неправильна.";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "Не вдалося відкрити сторінку";
@@ -908,7 +908,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "Це дозволяє вам зберігати зображення до своєї фотоплівки.";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Firefox бажає отримати доступ до ваших фотографій";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Floorp бажає отримати доступ до ваших фотографій";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "Закрити";
@@ -995,7 +995,7 @@
 "ScanQRCode.InvalidDataError.Message" = "Неприпустимі дані";
 
 /* Text of the prompt to setup the camera authorization for the Scan QR Code feature. */
-"ScanQRCode.PermissionError.Message.v100" = "Відкрийте «Параметри» пристрою > «Firefox». Дозвольте Firefox отримати доступ до камери.";
+"ScanQRCode.PermissionError.Message.v100" = "Відкрийте «Параметри» пристрою > «Floorp». Дозвольте Floorp отримати доступ до камери.";
 
 /* Title for the QR code scanner view. */
 "ScanQRCode.View.Title" = "Сканувати QR-код";
@@ -1079,7 +1079,7 @@
 "SendTo.NoDevicesFound.Message" = "У вас немає інших доступних для синхронізації пристроїв, підключених до цього облікового запису Firefox.";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "Щоб продовжити, відкрийте Firefox, перейдіть в Параметри та виконайте вхід.";
+"SendTo.NotSignedIn.Message" = "Щоб продовжити, відкрийте Floorp, перейдіть в Параметри та виконайте вхід.";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "Ви не увійшли в свій обліковий запис Firefox.";
@@ -1193,7 +1193,7 @@
 "Settings.DataManagement.Title" = "Керування даними";
 
 /* Body of the alert when prompting the user asking to disconnect. */
-"Settings.Disconnect.Body" = "Firefox припинить синхронізацію з вашим обліковим записом, але не вилучить жодних даних перегляду на цьому пристрої.";
+"Settings.Disconnect.Body" = "Floorp припинить синхронізацію з вашим обліковим записом, але не вилучить жодних даних перегляду на цьому пристрої.";
 
 /* Button displayed at the bottom of settings page allowing users to Disconnect from FxA */
 "Settings.Disconnect.Button" = "Від'єднатися";
@@ -1268,7 +1268,7 @@
 "Settings.Home.Current.Description.v101" = "Виберіть, що показується у домівці.";
 
 /* In the settings menu, on the Firefox homepage customization section, this is the description below the section, describing what the options in the section are for. */
-"Settings.Home.Option.Description.v101" = "Виберіть, що включатиме домівка Firefox.";
+"Settings.Home.Option.Description.v101" = "Виберіть, що включатиме домівка Floorp.";
 
 /* In the settings menu, in the Firefox homepage customization section, this is the title for the option that allows users to toggle the Jump Back In section on homepage on or off */
 "Settings.Home.Option.JumpBackIn" = "Відкрити знову";
@@ -1292,7 +1292,7 @@
 "Settings.Home.Option.StartAtHome.Always" = "Домівка";
 
 /* In the settings menu, in the Start at Home customization options, this is text that appears below the section, describing what the section settings do. */
-"Settings.Home.Option.StartAtHome.Description" = "Оберіть, що показувати при поверненні в Firefox.";
+"Settings.Home.Option.StartAtHome.Description" = "Оберіть, що показувати при поверненні в Floorp.";
 
 /* In the settings menu, on the Start at Home homepage customization option, this allows users to set this setting to return to the last tab they were on, every time they open up Firefox */
 "Settings.Home.Option.StartAtHome.Never" = "Остання вкладка";
@@ -1307,25 +1307,25 @@
 "Settings.Home.Option.Wallpaper" = "Шпалери";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the amethyst firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Шпалери Firefox, аметистовий візерунок.";
+"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Шпалери Floorp, аметистовий візерунок.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the beach hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Шпалери Firefox, візерунок з пляжними пагорбами.";
+"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Шпалери Floorp, візерунок з пляжними пагорбами.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the cerulean firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Шпалери Firefox, блакитний візерунок.";
+"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Шпалери Floorp, блакитний візерунок.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the default wallpaper. */
 "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99" = "Типові шпалери.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the sunrise firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Шпалери Firefox, візерунок світанку.";
+"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Шпалери Floorp, візерунок світанку.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string of the toggle for turning wallpaper cycling shortcut on or off on the homepage. */
 "Settings.Home.Option.Wallpaper.Accessibility.ToggleButton" = "Перемикач циклу шпалер домівки";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the twilight hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Шпалери Firefox, візерунок пагорбів у сутінках.";
+"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Шпалери Floorp, візерунок пагорбів у сутінках.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of the group of wallpapers that are always available to the user. The %@ will be replaced by the app name and thus doesn't need translation. */
 "Settings.Home.Option.Wallpaper.Classic.Title.v106" = "Класичний %@";
@@ -1346,7 +1346,7 @@
 "Settings.Home.Option.Wallpaper.LimitedEdition.Title.v106" = "Обмежений випуск";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off. */
-"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Змінювати шпалери торканням логотипу домівки Firefox";
+"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Змінювати шпалери торканням логотипу домівки Floorp";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of that screen, which allows users to change the wallpaper settings for the application. */
 "Settings.Home.Option.Wallpaper.Title" = "Шпалери";
@@ -1400,7 +1400,7 @@
 "Settings.NewTab.Option.Custom" = "Власна";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Домівка Firefox";
+"Settings.NewTab.Option.FirefoxHome" = "Домівка Floorp";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "Домівка";
@@ -1421,7 +1421,7 @@
 "Settings.NoImageModeBlockImages.Label.v99" = "Блокувати зображення";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "При запуску Firefox";
+"Settings.OfferClipboardBar.Status" = "При запуску Floorp";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349. %@ is for the app name. */
 "Settings.OfferClipboardBar.Status.v128" = "Під час відкриття %@";
@@ -1481,7 +1481,7 @@
 "Settings.Siri.OpenTabShortcut" = "Нова вкладка";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "Використовуйте команди Siri, щоб швидко відкривати Firefox через Siri";
+"Settings.Siri.SectionDescription" = "Використовуйте команди Siri, щоб швидко відкривати Floorp через Siri";
 
 /* The option that takes you to the siri shortcuts settings page */
 "Settings.Siri.SectionName" = "Команди Siri";
@@ -1607,13 +1607,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "Завантажити на задньому плані";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Завантаження в Firefox";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Завантаження в Floorp";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Відкрити в Firefox";
+"ShareExtension.OpenInFirefoxAction.Title" = "Відкрити в Floorp";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Шукати в Firefox";
+"ShareExtension.SeachInFirefoxAction.Title" = "Шукати в Floorp";
 
 /* Button in share sheet to copy the url of the current tab. */
 "ShareSheet.Copy.Title.v108" = "Копіювати";
@@ -1757,7 +1757,7 @@
 "UIMenuItem.PasteGo" = "Вставити і перейти";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Шукати з Firefox";
+"UIMenuItem.SearchWithFirefox" = "Шукати з Floorp";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "непрочитане";
@@ -1805,7 +1805,7 @@
 "Yesterday" = "Вчора";
 
 /* Error message in the remote tabs panel */
-"You don’t have any tabs open in Firefox on your other devices." = "У вас немає вкладок, відкритих в Firefox на інших пристроях.";
+"You don’t have any tabs open in Firefox on your other devices." = "У вас немає вкладок, відкритих в Floorp на інших пристроях.";
 
 /* Your Rights settings section title */
 "Your Rights" = "Ваші права";

@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
+import Shared
 
 class SendFeedbackSetting: Setting {
     private weak var settingsDelegate: SupportSettingsDelegate?
@@ -14,7 +15,7 @@ class SendFeedbackSetting: Setting {
     }
 
     override var url: URL? {
-        return URL(string: "https://connect.mozilla.org/")
+        return SupportUtils.URLForFeedback
     }
 
     override var accessibilityIdentifier: String? {

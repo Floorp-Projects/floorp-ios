@@ -2,14 +2,35 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import Foundation
 import UIKit
 
 public enum AppName: String, CustomStringConvertible {
-    case shortName = "Firefox"
+    case shortName = "Floorp"
 
     public var description: String {
         return self.rawValue
     }
+}
+
+/// Canonical Floorp names and public endpoints.
+///
+/// Keep these values aligned with the desktop `floorp-official` branding.
+/// Mozilla service names (for example Firefox Sync and Pocket) remain separate.
+public enum FloorpBrand {
+    public static let marketingName = "Floorp Browser"
+    public static let fullName = "Ablaze Floorp"
+    public static let vendorName = "Ablaze"
+    public static let projectName = "Floorp Projects"
+
+    public static let officialWebsiteURL = URL(string: "https://floorp.app")
+    public static let termsOfUseURL = URL(string: "https://floorp.app/terms")
+    public static let privacyNoticeURL = URL(string: "https://floorp.app/privacy")
+    public static let supportURL = URL(string: "https://docs.floorp.app/docs/features/")
+    public static let releaseNotesURL = URL(string: "https://blog.floorp.app/categories/release")
+    public static let feedbackURL = URL(
+        string: "https://github.com/Floorp-Projects/floorp-ios/issues/new/choose"
+    )
 }
 
 public enum PocketAppName: String, CustomStringConvertible {

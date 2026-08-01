@@ -38,6 +38,8 @@ final class DefaultUnifiedAdsCallbackTelemetry: UnifiedAdsCallbackTelemetry, Leg
 
     /// Impression telemetry can only be sent for `Site`s with `SiteType` `.sponsoredSite`.
     func sendImpressionTelemetry(tileSite: Site, position: Int) {
+        guard !FloorpFlags.isSponsoredShortcutsDisabled else { return }
+
         guard case let SiteType.sponsoredSite(siteInfo) = tileSite.type else {
             assertionFailure("Only .sponsoredSite telemetry is supported right now")
             return
@@ -60,6 +62,8 @@ final class DefaultUnifiedAdsCallbackTelemetry: UnifiedAdsCallbackTelemetry, Leg
 
     /// Click telemetry can only be sent for `Site`s with `SiteType` `.sponsoredSite`.
     func sendClickTelemetry(tileSite: Site, position: Int) {
+        guard !FloorpFlags.isSponsoredShortcutsDisabled else { return }
+
         guard case let SiteType.sponsoredSite(siteInfo) = tileSite.type else {
             assertionFailure("Only .sponsoredSite telemetry is supported right now")
             return

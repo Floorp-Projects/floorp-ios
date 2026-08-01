@@ -122,7 +122,8 @@ final class TopSitesManager: TopSitesManagerInterface, LegacyFeatureFlaggable {
     }
 
     private var shouldLoadSponsoredTiles: Bool {
-        return featureFlags.isFeatureEnabled(.hntSponsoredShortcuts, checking: .userOnly)
+        return !FloorpFlags.isSponsoredShortcutsDisabled
+            && featureFlags.isFeatureEnabled(.hntSponsoredShortcuts, checking: .userOnly)
     }
 
     @MainActor

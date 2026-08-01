@@ -5,22 +5,22 @@
 "New Tab" = "Ny fane";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Firefox bruker kameraet ditt til å skanne QR-koder og ta bilder og video.";
+"NSCameraUsageDescription" = "Floorp bruker kameraet ditt til å skanne QR-koder og ta bilder og video.";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "Firefox krever Face ID for å få tilgang til dine lagrede passord og betalingsmåter.";
+"NSFaceIDUsageDescription" = "Floorp krever Face ID for å få tilgang til dine lagrede passord og betalingsmåter.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "Nettsider du besøker kan be om din plassering.";
 
 /* Privacy - Microphone Usage Description */
-"NSMicrophoneUsageDescription" = "Firefox bruker mikrofonen din til å ta opp og laste opp lyd.";
+"NSMicrophoneUsageDescription" = "Floorp bruker mikrofonen din til å ta opp og laste opp lyd.";
 
 /* Privacy - Photo Library Additions Usage Description */
 "NSPhotoLibraryAddUsageDescription" = "Dette gjør det mulig å lagre bilder.";
 
 /* Privacy - Speech Recognition Usage Description */
-"NSSpeechRecognitionUsageDescription" = "Firefox bruker talegjenkjenning for å gjøre stemmen din om til tekst ved talesøk.";
+"NSSpeechRecognitionUsageDescription" = "Floorp bruker talegjenkjenning for å gjøre stemmen din om til tekst ved talesøk.";
 
 /* (No Comment) */
 "Scan QR Code" = "Skann QR-kode";

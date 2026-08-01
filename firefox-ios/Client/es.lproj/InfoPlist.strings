@@ -5,7 +5,7 @@
 "New Tab" = "Nueva pestaña";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Firefox usa tu cámara para escanear códigos QR y tomar fotos y videos.";
+"NSCameraUsageDescription" = "Floorp usa tu cámara para escanear códigos QR y tomar fotos y videos.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "Los sitios web que visites pueden solicitar conocer tu ubicación.";

@@ -5,22 +5,22 @@
 "New Tab" = "Варақаи нав";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Браузери «Firefox» барои тасвирбардорӣ кардани рамзҳои «QR», гирифтани акс ва видео камераи шуморо истифода мебарад.";
+"NSCameraUsageDescription" = "Браузери «Floorp» барои тасвирбардорӣ кардани рамзҳои «QR», гирифтани акс ва видео камераи шуморо истифода мебарад.";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "Браузери «Firefox» барои пайдо кардани дастрасӣ ба ниҳонвожаҳои нигоҳдошташуда ва тарзҳои пардохт, низоми «Face ID»-ро талаб мекунад.";
+"NSFaceIDUsageDescription" = "Браузери «Floorp» барои пайдо кардани дастрасӣ ба ниҳонвожаҳои нигоҳдошташуда ва тарзҳои пардохт, низоми «Face ID»-ро талаб мекунад.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "Сомонаҳое, ки шумо тамошо мекунед, метавонанд ҷойгиршавии шуморо талаб кунанд.";
 
 /* Privacy - Microphone Usage Description */
-"NSMicrophoneUsageDescription" = "Браузери «Firefox» барои сабт ва бор кардани аудио микрофони шуморо истифода мебарад.";
+"NSMicrophoneUsageDescription" = "Браузери «Floorp» барои сабт ва бор кардани аудио микрофони шуморо истифода мебарад.";
 
 /* Privacy - Photo Library Additions Usage Description */
 "NSPhotoLibraryAddUsageDescription" = "Ин ба шумо барои нигоҳдории аксҳо имкон медиҳад.";
 
 /* Privacy - Speech Recognition Usage Description */
-"NSSpeechRecognitionUsageDescription" = "Браузери «Firefox» барои ҷустуҷӯи овозӣ аз шинохти нутқ истифода мебарад, то тавонад овози шуморо ба матн табдил диҳад.";
+"NSSpeechRecognitionUsageDescription" = "Браузери «Floorp» барои ҷустуҷӯи овозӣ аз шинохти нутқ истифода мебарад, то тавонад овози шуморо ба матн табдил диҳад.";
 
 /* (No Comment) */
 "Scan QR Code" = "Рамзи QR-ро аксбардорӣ намоед";

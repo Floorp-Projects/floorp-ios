@@ -125,6 +125,8 @@
         "FloorpNotePersistenceSessionTests\/testFailedFirstSaveCanRetryWithoutDuplicate()",
         "FloorpNotePersistenceSessionTests\/testFirstSaveCreatesAndSubsequentSaveUpdatesSameNote()",
         "FloorpNotePersistenceSessionTests\/testNewDraftDoesNotPersistBeforeFirstSave()",
+        "AppLaunchUtilTests\/testFloorpDataCollectionPolicyPersistsAllDisabledPreferences()",
+        "AppLaunchUtilTests\/testGivenFloorpSponsoredContentDisabled_WhenTosNotAccepted_ThenContextIdIsNotSet()",
         "FloorpNotesStoreTests\/testCRUDPersistsAcrossStoreInstancesIncludingEmptyArchive()",
         "FloorpNotesStoreTests\/testConcurrentUpdatesToDifferentNotesDoNotOverwriteEachOther()",
         "FloorpNotesStoreTests\/testCorruptArchiveIsPreservedAndRequiresExplicitReset()",
@@ -145,7 +147,10 @@
         "NimbusOnboardingKitFeatureLayerTests\/testGetOnboardingModel_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
         "SummarizerNimbusUtilsTests\/test_isAppAuthAttestEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
         "SummarizerNimbusUtilsTests\/test_isAppleSummarizerEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
-        "SummarizerNimbusUtilsTests\/test_isHostedSummarizerEnabled_whenDisallowedByAppPolicy()"
+        "SummarizerNimbusUtilsTests\/test_isHostedSummarizerEnabled_whenDisallowedByAppPolicy()",
+        "TermsOfUseLinkTypeTests\/testLinkType_ForURL_ReturnsCorrectType()",
+        "TopSitesManagerTests\/test_floorpSponsoredContentPolicyHidesPartnerAndSponsoredTiles()",
+        "VersionSettingTests\/testCopyAppVersion()"
       ],
       "target" : {
         "containerPath" : "container:Client.xcodeproj",

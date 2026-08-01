@@ -6,7 +6,7 @@ import Common
 import Foundation
 import UIKit
 
-/// Utility functions related to SUMO and Webcompat
+/// Utility functions for Floorp support and inherited Mozilla services.
 public struct SupportUtils {
     public static var URLForPrivateBrowsingLearnMore: URL? {
         // Returns the predefined URL associated to private homepage message card learn more action.
@@ -15,7 +15,7 @@ public struct SupportUtils {
 
     public static var URLForGetHelp: URL? {
         // Returns the predefined URL associated to the menu's Get Help button action.
-        return URL(string: "https://support.mozilla.org/products/ios")
+        return FloorpBrand.supportURL
     }
 
     public static var URLForPocketLearnMore: URL? {
@@ -24,19 +24,25 @@ public struct SupportUtils {
     }
 
     public static var URLForTermsOfUse: URL? {
-        return URL(string: "https://www.mozilla.org/about/legal/terms/firefox/")
+        return FloorpBrand.termsOfUseURL
     }
 
     public static var URLForPrivacyNotice: URL? {
-        return URL(string: "https://www.mozilla.org/privacy/firefox/")
+        return FloorpBrand.privacyNoticeURL
     }
 
     public static var URLForUpdatedPrivacyNotice: URL? {
-        return URL(string: "https://www.mozilla.org/privacy/firefox/next/")
+        // Floorp does not currently publish a separate preview notice.
+        return nil
     }
 
     public static var URLForUpdatedPrivacyNoticeDiff: URL? {
-        return URL(string: "https://www.mozilla.org/privacy/firefox/update/")
+        // Floorp does not currently publish a privacy-notice diff page.
+        return nil
+    }
+
+    public static var URLForFeedback: URL? {
+        return FloorpBrand.feedbackURL
     }
 
     public static var URLForRelayAccountManagement: URL? {
@@ -67,20 +73,21 @@ public struct SupportUtils {
     }
 
     public static func URLForPrivacyNotice(source: String, campaign: String, content: String?) -> URL? {
-        let defaultURL = URL(string: "https://www.mozilla.org/privacy/firefox")
-
-        guard let languageIdentifier = Locale.preferredLanguages.first else {
-            return defaultURL
+        guard let privacyNoticeURL = FloorpBrand.privacyNoticeURL,
+              var components = URLComponents(url: privacyNoticeURL, resolvingAgainstBaseURL: false) else {
+            return FloorpBrand.privacyNoticeURL
         }
 
-        var privacyNoticeString =
-                    "https://www.mozilla.org/\(languageIdentifier)/privacy/firefox/?utm_medium=firefox-mobile&utm_source=\(source)&utm_campaign=\(campaign)"
-
+        var queryItems = [
+            URLQueryItem(name: "utm_medium", value: "floorp-mobile"),
+            URLQueryItem(name: "utm_source", value: source),
+            URLQueryItem(name: "utm_campaign", value: campaign)
+        ]
         if let content {
-            privacyNoticeString.append("&utm_content=\(content)")
+            queryItems.append(URLQueryItem(name: "utm_content", value: content))
         }
-
-        return URL(string: privacyNoticeString) ?? defaultURL
+        components.queryItems = queryItems
+        return components.url ?? privacyNoticeURL
     }
 
     public static func URLForReportSiteIssue(_ siteUrl: String?) -> URL? {

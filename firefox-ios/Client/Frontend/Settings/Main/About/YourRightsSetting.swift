@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
+import Shared
 
 /// Opens about:rights page in the content view controller
 class YourRightsSetting: Setting {
@@ -13,7 +14,7 @@ class YourRightsSetting: Setting {
     }
 
     override var url: URL? {
-        return URL(string: "https://www.mozilla.org/about/legal/terms/firefox/")
+        return SupportUtils.URLForTermsOfUse
     }
 
     override var accessibilityIdentifier: String? {

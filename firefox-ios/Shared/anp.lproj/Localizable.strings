@@ -281,7 +281,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Firefox होम पेज";
+"Firefox.HomePage.Title" = "Floorp होम पेज";
 
 /* When a user taps and holds on an item from the Recently Visited section, this label will appear indicating the option to remove that item. */
 "FirefoxHome.RecentHistory.Remove" = "हटैइयै";
@@ -671,7 +671,7 @@
 "Settings.NewTab.Option.BlankPage" = "खाली पेज";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Firefox होम";
+"Settings.NewTab.Option.FirefoxHome" = "Floorp होम";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "होमपेज";
@@ -740,13 +740,13 @@
 "ShareExtension.BookmarkThisPageActionDone.Title" = "बुकमार्कड";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Firefox में लोड भे रहलो छै";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Floorp में लोड भे रहलो छै";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Firefox में खोलियै";
+"ShareExtension.OpenInFirefoxAction.Title" = "Floorp में खोलियै";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Firefox में खोजियै";
+"ShareExtension.SeachInFirefoxAction.Title" = "Floorp में खोजियै";
 
 /* Label for show search suggestions setting. */
 "Show Search Suggestions" = "खोज सुझाव दिखाबियै";
@@ -806,7 +806,7 @@
 "UIMenuItem.PasteGo" = "पेस्ट आरु गो";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Firefox सेॅ खोजोॅ";
+"UIMenuItem.SearchWithFirefox" = "Floorp सेॅ खोजोॅ";
 
 /* Username textbox in Authentication prompt */
 "Username" = "यूजरनाम";

@@ -278,7 +278,7 @@
 "Facebook" = "ఫేస్‌బుక్";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Firefox ముంగిలి పేజీ";
+"Firefox.HomePage.Title" = "Floorp ముంగిలి పేజీ";
 
 /* At the end of the Pocket section on the Firefox Homepage, this button appears and indicates tapping it will navigate the user to more Pocket Stories. */
 "FirefoxHome.Pocket.DiscoverMore" = "ఇంకా కనుగొనండి";
@@ -710,7 +710,7 @@
 "Okay" = "సరే";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "అయ్యో! Firefox క్రాష్ అయింది";
+"Oops! Firefox crashed" = "అయ్యో! Floorp క్రాష్ అయింది";
 
 /* See http://mzl.la/1LXbDOL */
 "Open articles in Reader View by tapping the book icon when it appears in the title bar." = "టైటిల్ బార్ లో కనిపించినపుడు పుస్తకం చిహ్నాన్ని నొక్కడం ద్వారా రీడర్ లో వ్యాసాలు చూడండి.";
@@ -722,7 +722,7 @@
 "Open Tabs" = "తెరిచివున్న ట్యాబులు";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "అది ఒక చెల్లని చిరునామాను కలిగి ఉండటం వలన Firefox పేజీని తెరవలేదు.";
+"OpenURL.Error.Message" = "అది ఒక చెల్లని చిరునామాను కలిగి ఉండటం వలన Floorp పేజీని తెరవలేదు.";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "పేజీలను తెరవలేదు";
@@ -734,7 +734,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "ఇది బొమ్మను మీ కేమెరా రోల్‌కు భద్రపరుచుకోనిస్తుంది.";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Firefox మీ ఫోటోలను యాక్సెస్ చేయాలనుకుంటుంది";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Floorp మీ ఫోటోలను యాక్సెస్ చేయాలనుకుంటుంది";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "మూసివేయి";
@@ -878,7 +878,7 @@
 "SendTo.NoDevicesFound.Message" = "సింక్రనించడానికి ఈ Firefox ఖాతాకు అనుసంధానించబడిన పరికరాలు ఏమీ మీకు లేవు.";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "కొనసాగించడానికి, దయచేసి Firefoxను తెరిచి, అమరికలకు వెళ్లి, ప్రవేశించండి.";
+"SendTo.NotSignedIn.Message" = "కొనసాగించడానికి, దయచేసి Floorpను తెరిచి, అమరికలకు వెళ్లి, ప్రవేశించండి.";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "మీరు మీ Firefox ఖాతా లోనికి ప్రవేశించిలేరు.";
@@ -1070,7 +1070,7 @@
 "Settings.NewTab.Option.BlankPage" = "ఖాళీ పేజీ";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Firefox ముంగిలి";
+"Settings.NewTab.Option.FirefoxHome" = "Floorp ముంగిలి";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "ముంగిలిపేజీ";
@@ -1091,7 +1091,7 @@
 "Settings.NoImageModeBlockImages.Label.v99" = "బొమ్మలను నిరోధించు";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "Firefox తెరుస్తున్నపుడు";
+"Settings.OfferClipboardBar.Status" = "Floorp తెరుస్తున్నపుడు";
 
 /* Title of setting to enable the Go to Copied URL feature. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
 "Settings.OfferClipboardBar.Title" = "నకలు చేసిన లంకెలను తెరవడానికి సిద్దపడండి";
@@ -1139,7 +1139,7 @@
 "Settings.Siri.OpenTabShortcut" = "కొత్త ట్యాబును తెరువు";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "సిరి ద్వారా Firefoxను త్వరగా తెరవడానికి సిరి షార్టుకట్లను వాడుకోండి";
+"Settings.Siri.SectionDescription" = "సిరి ద్వారా Floorpను త్వరగా తెరవడానికి సిరి షార్టుకట్లను వాడుకోండి";
 
 /* Title for a link that explains what Mozilla means by Studies */
 "Settings.Studies.Toggle.Link" = "ఇంకా తెలుసుకోండి.";
@@ -1205,13 +1205,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "వెనుతలంలో తెరువు";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Firefox లో లోడ్ అవుతోంది";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Floorp లో లోడ్ అవుతోంది";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Firefox లో తెరవండి";
+"ShareExtension.OpenInFirefoxAction.Title" = "Floorp లో తెరవండి";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Firefox లో శోధించండి";
+"ShareExtension.SeachInFirefoxAction.Title" = "Floorp లో శోధించండి";
 
 /* Label for show search suggestions setting. */
 "Show Search Suggestions" = "శోధన సలహాలను చూపించు";
@@ -1325,7 +1325,7 @@
 "UIMenuItem.PasteGo" = "అతికించి వెళ్ళు";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Firefox‌తో వెతుకు";
+"UIMenuItem.SearchWithFirefox" = "Floorp‌తో వెతుకు";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "చదవ లేదు";
@@ -1358,7 +1358,7 @@
 "Yesterday" = "నిన్నటి రోజు";
 
 /* Error message in the remote tabs panel */
-"You don’t have any tabs open in Firefox on your other devices." = "మీరు మీ ఇతర పరికరాల్లో Firefoxలో ఏ ట్యాబులు తెరిచి లేదు.";
+"You don’t have any tabs open in Firefox on your other devices." = "మీరు మీ ఇతర పరికరాల్లో Floorpలో ఏ ట్యాబులు తెరిచి లేదు.";
 
 /* Your Rights settings section title */
 "Your Rights" = "మీ హక్కులు";

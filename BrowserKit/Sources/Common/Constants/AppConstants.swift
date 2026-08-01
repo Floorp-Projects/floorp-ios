@@ -25,6 +25,11 @@ public final class AppConstants {
     public static let isRunningPerfTests = ProcessInfo.processInfo.arguments.contains(LaunchArguments.PerformanceTest)
 
     public static let scheme: String = {
+        if let publicURLScheme = Bundle.main.object(forInfoDictionaryKey: "MozPublicURLScheme") as? String,
+           !publicURLScheme.isEmpty {
+            return publicURLScheme
+        }
+
         guard let identifier = Bundle.main.bundleIdentifier else {
             return "unknown"
         }

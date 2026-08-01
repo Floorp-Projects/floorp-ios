@@ -31,7 +31,7 @@ final class TopSitesSettingsViewController: SettingsTableViewController, LegacyF
         var sections: [SettingSection] = []
 
         if let profile {
-            let toggleSettings = [
+            var toggleSettings = [
                 BoolSetting(
                     prefs: profile.prefs,
                     theme: themeManager.getCurrentTheme(for: windowUUID),
@@ -46,31 +46,36 @@ final class TopSitesSettingsViewController: SettingsTableViewController, LegacyF
                             actionType: TopSitesActionType.toggleShowSectionSetting
                         )
                     )
-                },
-                BoolSetting(
-                    prefs: profile.prefs,
-                    theme: themeManager.getCurrentTheme(for: windowUUID),
-                    prefKey: PrefsKeys.FeatureFlags.SponsoredShortcuts,
-                    defaultValue: featureFlags.isFeatureEnabled(.hntSponsoredShortcuts, checking: .userOnly),
-                    titleText: .Settings.Homepage.Shortcuts.SponsoredShortcutsToggle
-                ) { _ in
-                    store.dispatch(
-                        TopSitesAction(
-                            windowUUID: self.windowUUID,
-                            actionType: TopSitesActionType.toggleShowSponsoredSettings
-                        )
-                    )
-
-                    // If sponsored shortcuts are turned off, request to delete the user data
-                    let isSponsoredShortcutsEnabled = profile.prefs.boolForKey(
-                        PrefsKeys.FeatureFlags.SponsoredShortcuts
-                    ) ?? true
-                    if !isSponsoredShortcutsEnabled,
-                       let contextId = TelemetryContextualIdentifier.contextId {
-                        self.deleteUserRequest(contextId: contextId)
-                    }
                 }
             ]
+
+            if !FloorpFlags.isSponsoredShortcutsDisabled {
+                toggleSettings.append(
+                    BoolSetting(
+                        prefs: profile.prefs,
+                        theme: themeManager.getCurrentTheme(for: windowUUID),
+                        prefKey: PrefsKeys.FeatureFlags.SponsoredShortcuts,
+                        defaultValue: featureFlags.isFeatureEnabled(.hntSponsoredShortcuts, checking: .userOnly),
+                        titleText: .Settings.Homepage.Shortcuts.SponsoredShortcutsToggle
+                    ) { _ in
+                        store.dispatch(
+                            TopSitesAction(
+                                windowUUID: self.windowUUID,
+                                actionType: TopSitesActionType.toggleShowSponsoredSettings
+                            )
+                        )
+
+                        // If sponsored shortcuts are turned off, request to delete the user data
+                        let isSponsoredShortcutsEnabled = profile.prefs.boolForKey(
+                            PrefsKeys.FeatureFlags.SponsoredShortcuts
+                        ) ?? true
+                        if !isSponsoredShortcutsEnabled,
+                           let contextId = TelemetryContextualIdentifier.contextId {
+                            self.deleteUserRequest(contextId: contextId)
+                        }
+                    }
+                )
+            }
             let toggleSection = SettingSection(title: nil, children: toggleSettings)
             sections.append(toggleSection)
         }

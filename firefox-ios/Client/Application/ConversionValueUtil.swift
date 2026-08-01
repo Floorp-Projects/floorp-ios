@@ -35,6 +35,8 @@ struct ConversionValueUtil {
     }
 
     func adNetworkAttributionUpdateConversionEvent() {
+        guard !FloorpFlags.isAdAttributionDisabled else { return }
+
         if #available(iOS 16.1, *) {
             SKAdNetwork.updatePostbackConversionValue(fineValue, coarseValue: coarseValue.value) { error in
                 handleUpdateConversionInstallEvent(error: error)

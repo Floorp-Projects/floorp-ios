@@ -287,7 +287,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = " Firefox ပင်မစာမျက်နှာ";
+"Firefox.HomePage.Title" = " Floorp ပင်မစာမျက်နှာ";
 
 /* Accessibility Label for the tab toolbar Forward button */
 "Forward" = "လွှဲပြောင်းပို့ရန်";
@@ -593,7 +593,7 @@
 "Open Tabs" = "တပ်ဗ်များကို ဖွင့်";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "လိပ်စာ မှားယွင်းနေသောကြောင့် Firefox သည် စာမျက်နှာကို မဖွင့်နိုင်ပါ။";
+"OpenURL.Error.Message" = "လိပ်စာ မှားယွင်းနေသောကြောင့် Floorp သည် စာမျက်နှာကို မဖွင့်နိုင်ပါ။";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "စာမျက်နှာကို မဖွင့်နိုင်ပါ";
@@ -605,7 +605,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "ရုပ်ပုံများကို သင့် Camera Roll တွင် သိမ်းနိုင်စေမည်။";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "သင့် Photos များကို Firefox က ရယူအသုံးပြုခွင့် ရှိချင်သည်";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "သင့် Photos များကို Floorp က ရယူအသုံးပြုခွင့် ရှိချင်သည်";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "ပိတ်";
@@ -746,7 +746,7 @@
 "SendTo.NoDevicesFound.Message" = "Firefox Account ကို Sync ရန် သင့်တွင် ချိတ်ဆက်ထားသော အခြား ကိရိယာများ မရှိပါ။";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "Firefox ကို ကျေးဇူးပြု၍ ဖွင့်ပါ၊ အပြင်အဆင်များသို့ သွားပါ၊ ပြီးနောက် ဆက်လက်ဆောင်ရွက်ရန် ဝင်ရောက်ပါ။";
+"SendTo.NotSignedIn.Message" = "Floorp ကို ကျေးဇူးပြု၍ ဖွင့်ပါ၊ အပြင်အဆင်များသို့ သွားပါ၊ ပြီးနောက် ဆက်လက်ဆောင်ရွက်ရန် ဝင်ရောက်ပါ။";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "သင့် Firefox Account သို့ ဝင်ရောက်ထားခြင်း မရှိပါ။";
@@ -827,7 +827,7 @@
 "Settings.DataManagement.Title" = "အချက်အလက် စီမံခန့်ခွဲမှု";
 
 /* Body of the alert when prompting the user asking to disconnect. */
-"Settings.Disconnect.Body" = "Firefox သည် အကောင့်နှင့် အချက်အလက်များ ထပ်တူပြုခြင်းကို ရပ်တန့်ပါမည်။ သို့သော် ယခုကိရိယာရှိ သင်၏ မည်သည့်အချက်အလက်ကိုမျှ ဖျက်ပစ်မည် မဟုတ်ပါ။";
+"Settings.Disconnect.Body" = "Floorp သည် အကောင့်နှင့် အချက်အလက်များ ထပ်တူပြုခြင်းကို ရပ်တန့်ပါမည်။ သို့သော် ယခုကိရိယာရှိ သင်၏ မည်သည့်အချက်အလက်ကိုမျှ ဖျက်ပစ်မည် မဟုတ်ပါ။";
 
 /* Button displayed at the bottom of settings page allowing users to Disconnect from FxA */
 "Settings.Disconnect.Button" = "Sync နှင့် ချိတ်ဆက်ဖြုတ်ရန်";
@@ -914,7 +914,7 @@
 "Settings.NewTab.Option.BlankPage" = "စာမျက်နှာအလွတ်";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Firefox အဖွင့်စာမျက်နှာ";
+"Settings.NewTab.Option.FirefoxHome" = "Floorp အဖွင့်စာမျက်နှာ";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "အဖွင့်စာမျက်နှာ";
@@ -932,7 +932,7 @@
 "Settings.NewTab.TopSectionNameFooter" = "တက်ပ်အသစ်ဖွင့်သည့်အခါတက်လာမည့်အရာကိုရွေးချယ်ပါ";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "Firefox ကို ဖွင့်သည့်အခါ";
+"Settings.OfferClipboardBar.Status" = "Floorp ကို ဖွင့်သည့်အခါ";
 
 /* Title of setting to enable the Go to Copied URL feature. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
 "Settings.OfferClipboardBar.Title" = "ကူးယူထားသော လင့်ခ်များကို ဖွင့်ရန် မေးမြန်းပါ";
@@ -977,7 +977,7 @@
 "Settings.Siri.OpenTabShortcut" = "တပ်ဗ်အသစ် ဖွင့်ပါ";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "Siri မှတဆင့် Firefox ကို မြန်မြန်ဆန်ဆန် ဖွင့်ရန် Siri နည်းလမ်းတိုများကို အသုံးပြုပါ";
+"Settings.Siri.SectionDescription" = "Siri မှတဆင့် Floorp ကို မြန်မြန်ဆန်ဆန် ဖွင့်ရန် Siri နည်းလမ်းတိုများကို အသုံးပြုပါ";
 
 /* The option that takes you to the siri shortcuts settings page */
 "Settings.Siri.SectionName" = "Siri နည်းလမ်းတိုများ";
@@ -1046,13 +1046,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "နောက်ကွယ်တွင် ဆောင်ရွက်ပါ";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Firefox တွင် ဆောင်ရွက်နေသည်";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Floorp တွင် ဆောင်ရွက်နေသည်";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Firefox နှင့် ဖွင့်ပါ";
+"ShareExtension.OpenInFirefoxAction.Title" = "Floorp နှင့် ဖွင့်ပါ";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Firefox တွင် ရှာပါ";
+"ShareExtension.SeachInFirefoxAction.Title" = "Floorp တွင် ရှာပါ";
 
 /* Label for show search suggestions setting. */
 "Show Search Suggestions" = "ရှာဖွေရေး အကြံပြုချက်များကို ပြပါ";
@@ -1157,7 +1157,7 @@
 "UIMenuItem.PasteGo" = "ကူးယူပြီးနောက်သွားမည်";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Firefox ဖြင့် ရှာပါ";
+"UIMenuItem.SearchWithFirefox" = "Floorp ဖြင့် ရှာပါ";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "မဖတ်";

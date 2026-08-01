@@ -64,8 +64,9 @@ final class UserFeaturePreferenceManager: UserFeaturePreferring, @unchecked Send
     }
 
     var isSponsoredShortcutsEnabled: Bool {
-        prefs.boolForKey(PrefsKeys.FeatureFlags.SponsoredShortcuts)
-        ?? nimbusLayer.checkNimbusConfigFor(.hntSponsoredShortcuts)
+        return !FloorpFlags.isSponsoredShortcutsDisabled
+            && (prefs.boolForKey(PrefsKeys.FeatureFlags.SponsoredShortcuts)
+                ?? nimbusLayer.checkNimbusConfigFor(.hntSponsoredShortcuts))
     }
 
     var isHomepageBookmarksSectionEnabled: Bool {

@@ -25,7 +25,7 @@ enum SentTabAction: String {
 
         // Register ourselves to handle the notification category set by NotificationService for APNS notifications
         return UNNotificationCategory(
-            identifier: "org.mozilla.ios.SentTab.placeholder",
+            identifier: "\(AppInfo.bundleIdentifier).SentTab.placeholder",
             actions: [viewAction],
             intentIdentifiers: [],
             options: UNNotificationCategoryOptions(rawValue: 0))

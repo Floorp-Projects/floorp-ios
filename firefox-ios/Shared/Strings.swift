@@ -986,7 +986,7 @@ extension String {
                 public static let HomeTabBannerDescription = MZLocalizedString(
                     key: "DefaultBrowserCard.Description",
                     tableName: "Default Browser",
-                    value: "Set links from websites, emails, and Messages to open automatically in Firefox.",
+                    value: "Set links from websites, emails, and Messages to open automatically in Floorp.",
                     comment: "Description for small home tab banner that allows the user to switch their default browser to Firefox.")
                 public static let HomeTabBannerCloseAccessibility = MZLocalizedString(
                     key: "DefaultBrowserCloseButtonAccessibility.v102",
@@ -2573,7 +2573,7 @@ extension String {
         public static let SuggestSectionTitle = MZLocalizedString(
             key: "Search.SuggestSectionTitle.v102",
             tableName: nil,
-            value: "Floorp Suggest",
+            value: "Firefox Suggest",
             comment: "When making a new search from the awesome bar, suggestions appear to the user as they write new letters in their search. Different types of suggestions can appear. This string will be used as a header to separate Firefox suggestions from normal suggestions.")
         public static let SponsoredSuggestionDescription = MZLocalizedString(
             key: "Search.SponsoredSuggestionDescription.v119",
@@ -2817,7 +2817,7 @@ extension String {
                 public static let Description = MZLocalizedString(
                     key: "Settings.Home.Option.Description.v101",
                     tableName: nil,
-                    value: "Choose what’s included on the Firefox homepage.",
+                    value: "Choose what’s included on the Floorp homepage.",
                     comment: "In the settings menu, on the Firefox homepage customization section, this is the description below the section, describing what the options in the section are for.")
                 public static let Wallpaper = MZLocalizedString(
                     key: "Settings.Home.Option.Wallpaper",
@@ -2878,7 +2878,7 @@ extension String {
                 public static let SectionDescription = MZLocalizedString(
                     key: "Settings.Home.Option.StartAtHome.Description",
                     tableName: nil,
-                    value: "Choose what you see when you return to Firefox.",
+                    value: "Choose what you see when you return to Floorp.",
                     comment: "In the settings menu, in the Start at Home customization options, this is text that appears below the section, describing what the section settings do.")
                 public static let AfterFourHours = MZLocalizedString(
                     key: "Settings.Home.Option.StartAtHome.AfterFourHours",
@@ -2901,7 +2901,7 @@ extension String {
                 public static let SwitchTitle = MZLocalizedString(
                     key: "Settings.Home.Option.Wallpaper.SwitchTitle.v99",
                     tableName: nil,
-                    value: "Change wallpaper by tapping Firefox homepage logo",
+                    value: "Change wallpaper by tapping Floorp homepage logo",
                     comment: "In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off.")
                 public static let WallpaperUpdatedToastLabel = MZLocalizedString(
                     key: "Settings.Home.Option.Wallpaper.UpdatedToast",
@@ -4545,7 +4545,7 @@ extension String {
     public static let ErrorPagesCertWarningDescription = MZLocalizedString(
         key: "ErrorPages.CertWarning.Description",
         tableName: nil,
-        value: "The owner of %@ has configured their website improperly. To protect your information from being stolen, Firefox has not connected to this website.",
+        value: "The owner of %@ has configured their website improperly. To protect your information from being stolen, Floorp has not connected to this website.",
         comment: "Warning text on the certificate error page. %@ is the domain of the website.")
     public static let ErrorPagesCertWarningTitle = MZLocalizedString(
         key: "ErrorPages.CertWarning.Title",
@@ -4593,7 +4593,7 @@ extension String {
     public static let EmptySyncedTabsPanelStateTitle = MZLocalizedString(
         key: "HistoryPanel.EmptySyncedTabsState.Title",
         tableName: nil,
-        value: "Floorp Sync",
+        value: "Firefox Sync",
         comment: "Title for the empty synced tabs state in the History Panel")
     public static let EmptySyncedTabsPanelNotSignedInStateDescription = MZLocalizedString(
         key: "HistoryPanel.EmptySyncedTabsPanelNotSignedInState.Description",
@@ -5300,7 +5300,7 @@ extension String {
     public static let SentTab_NoTabArrivingNotification_title = MZLocalizedString(
         key: "SentTab.NoTabArrivingNotification.title",
         tableName: nil,
-        value: "Floorp Sync",
+        value: "Firefox Sync",
         comment: "Title of notification received after a spurious message from FxA has been received.")
     public static let SentTab_NoTabArrivingNotification_body =
     MZLocalizedString(
@@ -5397,7 +5397,7 @@ extension String {
     public static let FxAPush_DeviceConnected_body = MZLocalizedString(
         key: "FxAPush_DeviceConnected_body",
         tableName: nil,
-        value: "Floorp Sync has connected to %@",
+        value: "Firefox Sync has connected to %@",
         comment: "Title of a notification displayed when another device has connected to FxA. %@ refers to the name of the newly connected device.")
 }
 
@@ -5430,7 +5430,7 @@ extension String {
     public static let ScanQRCodePermissionErrorMessage = MZLocalizedString(
         key: "ScanQRCode.PermissionError.Message.v100",
         tableName: nil,
-        value: "Go to device ‘Settings’ > ‘Firefox’. Allow Firefox to access camera.",
+        value: "Go to device ‘Settings’ > ‘Floorp’. Allow Floorp to access camera.",
         comment: "Text of the prompt to setup the camera authorization for the Scan QR Code feature.")
     public static let ScanQRCodeErrorOKButton = MZLocalizedString(
         key: "ScanQRCode.Error.OK.Button",
@@ -6681,7 +6681,7 @@ extension String {
     public static let SettingsSiriSectionDescription = MZLocalizedString(
         key: "Settings.Siri.SectionDescription",
         tableName: nil,
-        value: "Use Siri shortcuts to quickly open Firefox via Siri",
+        value: "Use Siri shortcuts to quickly open Floorp via Siri",
         comment: "The description that describes what siri shortcuts are")
     public static let SettingsSiriOpenURL = MZLocalizedString(
         key: "Settings.Siri.OpenTabShortcut",
@@ -6720,7 +6720,7 @@ extension String {
     public static let SendToNotSignedInMessage = MZLocalizedString(
         key: "SendTo.NotSignedIn.Message",
         tableName: nil,
-        value: "Please open Firefox, go to Settings and sign in to continue.",
+        value: "Please open Floorp, go to Settings and sign in to continue.",
         comment: "See http://mzl.la/1ISlXnU")
     public static let SendToNoDevicesFound = MZLocalizedString(
         key: "SendTo.NoDevicesFound.Message.v119",
@@ -6775,12 +6775,12 @@ extension String {
     public static let ShareOpenInFirefox = MZLocalizedString(
         key: "ShareExtension.OpenInFirefoxAction.Title",
         tableName: nil,
-        value: "Open in Firefox",
+        value: "Open in Floorp",
         comment: "Action label on share extension to immediately open page in Firefox.")
     public static let ShareSearchInFirefox = MZLocalizedString(
         key: "ShareExtension.SeachInFirefoxAction.Title",
         tableName: nil,
-        value: "Search in Firefox",
+        value: "Search in Floorp",
         comment: "Action label on share extension to search for the selected text in Firefox.")
 
     public static let ShareLoadInBackground = MZLocalizedString(
@@ -6791,7 +6791,7 @@ extension String {
     public static let ShareLoadInBackgroundDone = MZLocalizedString(
         key: "ShareExtension.LoadInBackgroundActionDone.Title",
         tableName: nil,
-        value: "Loading in Firefox",
+        value: "Loading in Floorp",
         comment: "Share extension label shown after user has performed 'Load in Background' action.")
 }
 
@@ -6986,7 +6986,7 @@ extension String {
     public static let FirefoxShortcutGalleryDescription = MZLocalizedString(
         key: "TodayWidget.FirefoxShortcutGalleryDescription",
         tableName: "Today",
-        value: "Add Firefox shortcuts to your Home screen.",
+        value: "Add Floorp shortcuts to your Home screen.",
         comment: "Description for medium size widget to add Firefox Shortcut to home screen")
 
     // Quick Action - Small Size Widget
@@ -6998,7 +6998,7 @@ extension String {
     public static let SearchInFirefoxV2 = MZLocalizedString(
         key: "TodayWidget.SearchInFirefoxV2",
         tableName: "Today",
-        value: "Search in\nFirefox",
+        value: "Search in\nFloorp",
         comment: "Search in Firefox. Do not translate the word Firefox")
     public static let ClosePrivateTabsLabelV2 = MZLocalizedString(
         key: "TodayWidget.ClosePrivateTabsLabelV2",
@@ -7010,7 +7010,7 @@ extension String {
     public static let QuickActionGalleryDescription = MZLocalizedString(
         key: "TodayWidget.QuickActionGalleryDescription",
         tableName: "Today",
-        value: "Add a Firefox shortcut to your Home screen. After adding the widget, touch and hold to edit it and select a different shortcut.",
+        value: "Add a Floorp shortcut to your Home screen. After adding the widget, touch and hold to edit it and select a different shortcut.",
         comment: "Description for small size widget to add it to home screen")
 
     // Top Sites - Medium Size - Gallery View
@@ -7039,7 +7039,7 @@ extension String {
     public static let OpenFirefoxLabel = MZLocalizedString(
         key: "TodayWidget.OpenFirefoxLabel",
         tableName: "Today",
-        value: "Open Firefox",
+        value: "Open Floorp",
         comment: "Open Firefox when there are no tabs opened in tab tray i.e. Empty State")
     public static let NoOpenTabsLabel = MZLocalizedString(
         key: "TodayWidget.NoOpenTabsLabel",
@@ -7085,7 +7085,7 @@ extension String {
     public static let DefaultBrowserOnboardingDescriptionStep3 = MZLocalizedString(
         key: "DefaultBrowserOnboarding.Description3",
         tableName: "Default Browser",
-        value: "3. Select Firefox",
+        value: "3. Select Floorp",
         comment: "Description for default browser onboarding card.")
     public static let DefaultBrowserOnboardingButton = MZLocalizedString(
         key: "DefaultBrowserOnboarding.Button",
@@ -7998,7 +7998,7 @@ extension String {
     public static let MenuHelperSearchWithFirefox = MZLocalizedString(
         key: "UIMenuItem.SearchWithFirefox",
         tableName: nil,
-        value: "Search with Firefox",
+        value: "Search with Floorp",
         comment: "Search in New Tab Text selection menu item")
 }
 
@@ -8079,7 +8079,7 @@ extension String {
     public static let LoginsWelcomeViewTitle2 = MZLocalizedString(
         key: "Logins.WelcomeView.Title2",
         tableName: nil,
-        value: "AutoFill Firefox Passwords",
+        value: "AutoFill Floorp Passwords",
         comment: "Label displaying welcome view title")
     public static let LoginsWelcomeViewTagline = MZLocalizedString(
         key: "Logins.WelcomeView.Tagline",
@@ -8129,7 +8129,7 @@ extension String {
     public static let LoginsPasscodeRequirementWarning = MZLocalizedString(
         key: "Logins.PasscodeRequirement.Warning",
         tableName: nil,
-        value: "To use the AutoFill feature for Firefox, you must have a device passcode enabled.",
+        value: "To use the AutoFill feature for Floorp, you must have a device passcode enabled.",
         comment: "Warning message shown when you try to enable or use native AutoFill without a device passcode setup")
     public static let CredentialProviderRetryAlertTitle = MZLocalizedString(
         key: "CredentialProvider.RetryAllert.Title.v137",

@@ -7,16 +7,10 @@ import Shared
 import UIKit
 import ComponentLibrary
 
-struct Links {
-    static let termsOfService = "https://www.mozilla.org/about/legal/terms/firefox/"
-    static let privacyNotice = "https://www.mozilla.org/privacy/firefox/"
-}
-
 class TermsOfServiceViewController: UIViewController, Themeable {
 	enum LinkType: Int {
 		case termsOfService
 		case privacyNotice
-		case manage
 	}
 
     struct UX {
@@ -28,7 +22,6 @@ class TermsOfServiceViewController: UIViewController, Themeable {
     }
 
     // MARK: - Properties
-    private let profile: Profile
     var windowUUID: WindowUUID
     var themeManager: ThemeManager
     var themeListenerCancellable: Any?
@@ -81,12 +74,10 @@ class TermsOfServiceViewController: UIViewController, Themeable {
 
     // MARK: - Initializers
     init(
-        profile: Profile,
         windowUUID: WindowUUID,
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default
     ) {
-        self.profile = profile
         self.windowUUID = windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
@@ -140,16 +131,6 @@ class TermsOfServiceViewController: UIViewController, Themeable {
                                linkType: .privacyNotice,
                                and: AccessibilityIdentifiers.TermsOfService.privacyNoticeAgreement)
 
-        let manageLink = String.Onboarding.TermsOfService.ManageLink
-        let manageText = String.Onboarding.TermsOfService.ManagePreferenceAgreement
-        let manageAgreement = String(format: manageText,
-                                     AppName.shortName.rawValue,
-                                     MozillaName.shortName.rawValue,
-                                     manageLink)
-        setupAgreementTextView(with: manageAgreement,
-                               linkTitle: manageLink,
-                               linkType: .manage,
-                               and: AccessibilityIdentifiers.TermsOfService.manageDataCollectionAgreement)
     }
 
     private func setupLayout() {
@@ -237,9 +218,6 @@ class TermsOfServiceViewController: UIViewController, Themeable {
         case .privacyNotice:
             let gesture = UITapGestureRecognizer(target: self, action: #selector(presentPrivacyNotice))
             agreementLabel.addGestureRecognizer(gesture)
-        case .manage:
-            let gesture = UITapGestureRecognizer(target: self, action: #selector(presentManagePreferences))
-            agreementLabel.addGestureRecognizer(gesture)
         }
 
         agreementLabel.attributedText = linkedAgreementDescription
@@ -265,23 +243,13 @@ class TermsOfServiceViewController: UIViewController, Themeable {
     @objc
     private func presentTermsOfService(_ gesture: UIGestureRecognizer) {
         TermsOfServiceTelemetry().termsOfServiceLinkTapped()
-        presentLink(with: URL(string: Links.termsOfService))
+        presentLink(with: SupportUtils.URLForTermsOfUse)
     }
 
     @objc
     private func presentPrivacyNotice(_ gesture: UIGestureRecognizer) {
         TermsOfServiceTelemetry().termsOfServicePrivacyNoticeLinkTapped()
-        presentLink(with: URL(string: Links.privacyNotice))
-    }
-
-    @objc
-    private func presentManagePreferences(_ gesture: UIGestureRecognizer) {
-        TermsOfServiceTelemetry().termsOfServiceManageLinkTapped()
-        let managePreferencesVC = PrivacyPreferencesViewController(profile: profile, windowUUID: windowUUID)
-        if UIDevice.current.userInterfaceIdiom != .phone {
-            managePreferencesVC.modalPresentationStyle = .formSheet
-        }
-        present(managePreferencesVC, animated: true)
+        presentLink(with: SupportUtils.URLForPrivacyNotice)
     }
 
     @objc

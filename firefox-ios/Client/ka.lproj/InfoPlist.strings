@@ -8,7 +8,7 @@
 "NSCameraUsageDescription" = "საშუალებას გაძლევთ, სურათის გადაღებისა და ატვირთვის.";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "Firefox-ს ესაჭიროება Face ID შენახულ პაროლებსა და გადახდის საშუალებებთან წდვომისთვის.";
+"NSFaceIDUsageDescription" = "Floorp-ს ესაჭიროება Face ID შენახულ პაროლებსა და გადახდის საშუალებებთან წდვომისთვის.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "ვებსაიტებმა, შესაძლოა მოითხოვოს თქვენი მდებარეობის მონაცემები.";
@@ -20,7 +20,7 @@
 "NSPhotoLibraryAddUsageDescription" = "სურათების შენახვის საშუალებას იძლევა.";
 
 /* Privacy - Speech Recognition Usage Description */
-"NSSpeechRecognitionUsageDescription" = "Firefox მეტყველების ამომცნობს იყენებს თქვენი ხმის საძიებო ტექსტად ქცევისთვის.";
+"NSSpeechRecognitionUsageDescription" = "Floorp მეტყველების ამომცნობს იყენებს თქვენი ხმის საძიებო ტექსტად ქცევისთვის.";
 
 /* (No Comment) */
 "Scan QR Code" = "QR კოდის წაკითხვა";

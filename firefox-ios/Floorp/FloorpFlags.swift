@@ -23,6 +23,8 @@ import Foundation
 /// - `TelemetryWrapper.swift` — checks `isTelemetryDisabled`
 /// - `MetricKitWrapper.swift` — checks `isTelemetryDisabled`
 /// - `SentryWrapper.swift` — checks `isTelemetryDisabled`
+/// - Unified Ads call sites — check `isSponsoredShortcutsDisabled`
+/// - `ConversionValueUtil.swift` — checks `isAdAttributionDisabled`
 /// - `DependencyHelper.swift` — calls `FloorpBootstrapper.configure()`
 ///
 /// ## Overlay Drawer (Floorp feature):
@@ -34,6 +36,8 @@ public final class FloorpFlags: Sendable {
     // nonisolated(unsafe) is required to satisfy Swift Concurrency's global
     // actor isolation checks. Thread safety is guaranteed by NSLock above.
     nonisolated(unsafe) private static var _isTelemetryDisabled = false
+    nonisolated(unsafe) private static var _isSponsoredShortcutsDisabled = false
+    nonisolated(unsafe) private static var _isAdAttributionDisabled = false
     nonisolated(unsafe) private static var _isOverlayDrawerEnabled = false
 
     /// When `true`, all telemetry (Glean, MetricKit, Sentry) is disabled.
@@ -45,6 +49,27 @@ public final class FloorpFlags: Sendable {
     /// Sets the telemetry disabled flag. Called once during app startup.
     public static func setTelemetryDisabled(_ value: Bool) {
         _lock.withLock { _isTelemetryDisabled = value }
+    }
+
+    /// When `true`, Mozilla Unified Ads, sponsored shortcuts, and the
+    /// inherited partner-attributed pinned tile are disabled.
+    public static var isSponsoredShortcutsDisabled: Bool {
+        _lock.withLock { _isSponsoredShortcutsDisabled }
+    }
+
+    /// Sets the sponsored-shortcuts policy. Called once during app startup.
+    public static func setSponsoredShortcutsDisabled(_ value: Bool) {
+        _lock.withLock { _isSponsoredShortcutsDisabled = value }
+    }
+
+    /// When `true`, SKAdNetwork conversion postbacks are disabled.
+    public static var isAdAttributionDisabled: Bool {
+        _lock.withLock { _isAdAttributionDisabled }
+    }
+
+    /// Sets the ad-attribution policy. Called once during app startup.
+    public static func setAdAttributionDisabled(_ value: Bool) {
+        _lock.withLock { _isAdAttributionDisabled = value }
     }
 
     /// When `true`, the overlay drawer feature is enabled.

@@ -37,6 +37,13 @@ final class TermsOfUseLinkTypeTests: XCTestCase {
         }
         XCTAssertEqual(TermsOfUseLinkType.linkType(for: termsURL), .termsOfUse)
 
+        guard let learnMoreURL = TermsOfUseLinkType.learnMore.url else {
+            XCTFail("Learn more URL should not be nil")
+            return
+        }
+        XCTAssertNotEqual(termsURL, learnMoreURL)
+        XCTAssertEqual(TermsOfUseLinkType.linkType(for: learnMoreURL), .learnMore)
+
         let unknownURL = URL(string: "https://example.com/unknown")!
         XCTAssertNil(TermsOfUseLinkType.linkType(for: unknownURL))
     }
