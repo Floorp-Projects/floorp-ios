@@ -815,6 +815,10 @@ require_fixed "$RELEASE_CONFIG" "MOZ_PUBLIC_URL_SCHEME = floorp" "Public URL sch
 require_fixed "$RELEASE_CONFIG" "MOZ_INTERNAL_URL_SCHEME = floorp-internal" "Internal URL scheme is fixed"
 
 require_fixed "$RELEASE_ENTITLEMENTS" "\$(AppIdentifierPrefix)app.floorp.Floorp" "Floorp keychain group is fixed"
+forbid_fixed_in_files \
+    "com.apple.developer.web-browser" \
+    "FloorpRelease omits the unapproved default-browser entitlement" \
+    "$RELEASE_ENTITLEMENTS"
 require_fixed "$RELEASE_PLIST" "\$(FLOORP_APP_GROUP_IDENTIFIER)" "Release plist uses the Floorp App Group setting"
 require_fixed "$RELEASE_PLIST" "app.floorp.sync.part1" "Background sync task 1 is fixed"
 require_fixed "$RELEASE_PLIST" "app.floorp.sync.part2" "Background sync task 2 is fixed"
