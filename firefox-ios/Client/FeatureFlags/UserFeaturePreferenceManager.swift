@@ -39,6 +39,11 @@ final class UserFeaturePreferenceManager: UserFeaturePreferring, @unchecked Send
     // MARK: - Generic bool preferences
 
     func getPreferenceFor(_ flag: FeatureFlagID) -> Bool {
+        // Product policy wins over both a persisted user preference and the
+        // inherited Nimbus default, so every consumer observes the same value.
+        if flag == .hntSponsoredShortcuts, FloorpFlags.isSponsoredShortcutsDisabled {
+            return false
+        }
         guard let key = flag.userPrefsKey else {
             return checkDefaultValue(for: flag)
         }

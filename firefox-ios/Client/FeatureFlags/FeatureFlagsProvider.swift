@@ -16,17 +16,25 @@ protocol FeatureFlagProviding: Sendable {
 final class FeatureFlagsProvider: FeatureFlagProviding, @unchecked Sendable {
     private let prefs: Prefs
     private let backendLayer: NimbusFeatureFlagLayerProviding
+    private let allowsQuickAnswers: Bool
 
     init(
         prefs: Prefs,
-        backendLayer: NimbusFeatureFlagLayerProviding = NimbusManager.shared.featureFlagLayer
+        backendLayer: NimbusFeatureFlagLayerProviding = NimbusManager.shared.featureFlagLayer,
+        allowsQuickAnswers: Bool = AppServicesPolicy.allowsQuickAnswers
     ) {
         self.prefs = prefs
         self.backendLayer = backendLayer
+        self.allowsQuickAnswers = allowsQuickAnswers
     }
 
     /// Used for checking the status of a feature flag from the feature flag backend
     func isEnabled(_ flag: FeatureFlagID) -> Bool {
+        // A Nimbus enrollment or debug override cannot enable a Mozilla-hosted
+        // App Attest service when the selected app configuration disallows it.
+        if flag == .quickAnswers, !allowsQuickAnswers {
+            return false
+        }
         return backendLayer.checkNimbusConfigFor(flag, with: prefs)
     }
 

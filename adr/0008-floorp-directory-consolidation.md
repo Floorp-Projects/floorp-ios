@@ -4,7 +4,7 @@ Date: 2026-04-21
 
 ## Status
 
-Accepted
+Accepted; amended 2026-08-01 to make tracked source plus tests the only hook implementation.
 
 ## Context
 
@@ -32,10 +32,10 @@ We adopt a **consolidated Floorp directory** architecture with flag-based hooks.
 
 ### Directory Structure
 
-All Floorp-specific code resides in a single `Floorp/` directory at the project root:
+All Floorp-specific application code resides in `firefox-ios/Floorp/`:
 
 ```
-Floorp/
+firefox-ios/Floorp/
 ├── FloorpFlags.swift         # Feature flags checked at hook points
 └── FloorpBootstrapper.swift  # Single entry point called at startup
 ```
@@ -79,6 +79,8 @@ Only 4 Firefox files need minimal modifications (~2 lines each):
 1. Ensure `Floorp/` directory and files exist (idempotent creation)
 2. Inject hook comments into the 4 Firefox files (only if not already present)
 3. Use grep-based idempotency checks to prevent duplicate injection
+
+The hook points are tracked directly and verified by CI. The former `floorp/patches/` copies and `scripts/apply-floorp-patches.sh` were never invoked by a build or workflow and duplicated the same edits, so they were removed. Build-time patch mutation is not an accepted second implementation path.
 
 ## Consequences
 

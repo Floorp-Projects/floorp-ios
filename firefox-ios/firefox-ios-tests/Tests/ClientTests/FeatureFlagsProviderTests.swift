@@ -9,22 +9,33 @@ import XCTest
 @testable import Client
 
 final class FeatureFlagsProviderTests: XCTestCase {
-    private var prefs: MockProfilePrefs!
-    private var mockLayer: MockNimbusFeatureFlagLayer!
-    private var subject: FeatureFlagsProvider!
+    private struct TestState {
+        let prefs: MockProfilePrefs
+        let mockLayer: MockNimbusFeatureFlagLayer
+        let subject: FeatureFlagsProvider
+
+        init() {
+            let prefs = MockProfilePrefs()
+            let mockLayer = MockNimbusFeatureFlagLayer()
+
+            self.prefs = prefs
+            self.mockLayer = mockLayer
+            self.subject = FeatureFlagsProvider(
+                prefs: prefs,
+                backendLayer: mockLayer,
+                allowsQuickAnswers: true
+            )
+        }
+    }
+
+    private var state = TestState()
+    private var prefs: MockProfilePrefs { state.prefs }
+    private var mockLayer: MockNimbusFeatureFlagLayer { state.mockLayer }
+    private var subject: FeatureFlagsProvider { state.subject }
 
     override func setUp() {
         super.setUp()
-        prefs = MockProfilePrefs()
-        mockLayer = MockNimbusFeatureFlagLayer()
-        subject = FeatureFlagsProvider(prefs: prefs, backendLayer: mockLayer)
-    }
-
-    override func tearDown() {
-        prefs = nil
-        mockLayer = nil
-        subject = nil
-        super.tearDown()
+        state = TestState()
     }
 
     // MARK: - isEnabled with mock layer
@@ -50,6 +61,18 @@ final class FeatureFlagsProviderTests: XCTestCase {
             return
         }
         XCTAssertTrue(receivedPrefs === prefs)
+    }
+
+    func testIsEnabled_quickAnswersDisallowedByAppPolicy_returnsFalseWithoutConsultingNimbus() {
+        mockLayer.enabledFlags = [.quickAnswers]
+        let subject = FeatureFlagsProvider(
+            prefs: prefs,
+            backendLayer: mockLayer,
+            allowsQuickAnswers: false
+        )
+
+        XCTAssertFalse(subject.isEnabled(.quickAnswers))
+        XCTAssertTrue(mockLayer.checkedFlags.isEmpty)
     }
 
     // MARK: - Debug override behavior

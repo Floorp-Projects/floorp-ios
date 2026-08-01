@@ -1,0 +1,5 @@
+/* Translator note stays exactly where it is. */
+"Welcome.Title" = "Welcome to Floorp";
+"Protected.Sync" = "Firefox Sync works with Floorp.";
+"Escaped\"Key" = "Floorp says: \"hello\".
+Second line.";

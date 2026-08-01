@@ -8,6 +8,30 @@ import Shared
 import XCTest
 
 class SupportUtilsTests: XCTestCase {
+    func testFloorpBrandConfiguration() {
+        XCTAssertEqual(AppName.shortName.rawValue, "Floorp")
+        XCTAssertEqual(FloorpBrand.marketingName, "Floorp Browser")
+        XCTAssertEqual(FloorpBrand.fullName, "Ablaze Floorp")
+        XCTAssertEqual(FloorpBrand.vendorName, "Ablaze")
+        XCTAssertEqual(FloorpBrand.projectName, "Floorp Projects")
+        XCTAssertEqual(
+            SupportUtils.URLForGetHelp?.absoluteString,
+            "https://github.com/Floorp-Projects/floorp-ios#readme"
+        )
+        XCTAssertEqual(SupportUtils.URLForTermsOfUse?.absoluteString, "https://floorp.app/terms")
+        XCTAssertEqual(
+            SupportUtils.URLForTermsOfUseLearnMore?.absoluteString,
+            "https://floorp.app/terms?utm_source=floorp-ios&utm_medium=in-product&utm_campaign=terms-of-use"
+        )
+        XCTAssertEqual(SupportUtils.URLForPrivacyNotice?.absoluteString, "https://floorp.app/privacy")
+        XCTAssertEqual(
+            FloorpBrand.releaseNotesURL?.absoluteString,
+            "https://blog.floorp.app/en/categories/release/"
+        )
+        XCTAssertNil(SupportUtils.URLForUpdatedPrivacyNotice)
+        XCTAssertNil(SupportUtils.URLForUpdatedPrivacyNoticeDiff)
+    }
+
     func testConfiguredSharedContainerIdentifierOverridesDerivedIdentifier() {
         XCTAssertEqual(
             AppInfo.resolvedSharedContainerIdentifier(
@@ -44,8 +68,6 @@ class SupportUtilsTests: XCTestCase {
     }
 
     func testURLForPrivacyNotice_withoutContentParam() {
-        let languageIdentifier = Locale.preferredLanguages.first!
-
         let urlString = SupportUtils.URLForPrivacyNotice(
             source: "modal",
             campaign: "microsurvey",
@@ -54,13 +76,11 @@ class SupportUtilsTests: XCTestCase {
 
         XCTAssertEqual(
             urlString,
-            "https://www.mozilla.org/\(languageIdentifier)/privacy/firefox/?utm_medium=firefox-mobile&utm_source=modal&utm_campaign=microsurvey"
+            "https://floorp.app/privacy?utm_medium=floorp-mobile&utm_source=modal&utm_campaign=microsurvey"
         )
     }
 
     func testURLForPrivacyNotice_withContentParam() {
-        let languageIdentifier = Locale.preferredLanguages.first!
-
         let urlString = SupportUtils.URLForPrivacyNotice(
             source: "modal",
             campaign: "microsurvey",
@@ -69,7 +89,7 @@ class SupportUtilsTests: XCTestCase {
 
         XCTAssertEqual(
             urlString,
-            "https://www.mozilla.org/\(languageIdentifier)/privacy/firefox/?utm_medium=firefox-mobile&utm_source=modal&utm_campaign=microsurvey&utm_content=homepage"
+            "https://floorp.app/privacy?utm_medium=floorp-mobile&utm_source=modal&utm_campaign=microsurvey&utm_content=homepage"
         )
     }
 }

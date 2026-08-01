@@ -9,7 +9,7 @@ import Common
 
 @MainActor
 class VersionSettingTests: XCTestCase {
-    private var delegate: MockDebugSettingsDelegate!
+    private var delegate: MockDebugSettingsDelegate?
     let windowUUID: WindowUUID = .XCTestDefaultUUID
 
     override func setUp() async throws {
@@ -24,8 +24,9 @@ class VersionSettingTests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testCopyAppVersion() {
+    func testCopyAppVersion() throws {
         // Given
+        let delegate = try XCTUnwrap(delegate)
         let settingsTable = SettingsTableViewController(style: .grouped, windowUUID: windowUUID)
         let navigationController = UINavigationController(rootViewController: settingsTable)
         let versionSetting = VersionSetting(settingsDelegate: delegate)
@@ -38,13 +39,14 @@ class VersionSettingTests: XCTestCase {
 
         // Then
         let appVersionString = UIPasteboard.general.string
-        let appVersionPredicate = (appVersionString?.contains("Firefox") ?? false) == true
+        let appVersionPredicate = appVersionString?.contains(AppName.shortName.rawValue) ?? false
         XCTAssertNotNil(appVersionString, "App version not copied")
         XCTAssert(appVersionPredicate, "Pasteboard doesn't contain app version")
     }
 
-    func testAppVersionClick() {
+    func testAppVersionClick() throws {
         // Given
+        let delegate = try XCTUnwrap(delegate)
         let settingsTable = SettingsTableViewController(style: .grouped, windowUUID: windowUUID)
         let navigationController = UINavigationController(rootViewController: settingsTable)
         let versionSetting = VersionSetting(settingsDelegate: delegate)

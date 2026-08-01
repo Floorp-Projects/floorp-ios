@@ -59,6 +59,8 @@ struct ConversionEventTracker {
     }
 
     func record(_ event: ConversionEvent) {
+        guard !FloorpFlags.isAdAttributionDisabled else { return }
+
         let cv = event.conversionValue
         conversionValueUpdater.update(conversionValue: cv)
     }

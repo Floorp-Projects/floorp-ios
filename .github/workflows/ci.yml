@@ -15,10 +15,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
+  L10N_REVIEWED: 9e46feb476739c508bb6d23a8ec92508d72adae0
   PROJECT_PATH: firefox-ios/Client.xcodeproj
   SCHEME: Fennec
   CONFIGURATION: Fennec_Testing
   DESTINATION: platform=iOS Simulator,name=iPhone 17,OS=26.2
+  UPSTREAM_REPOSITORY: https://github.com/mozilla-mobile/firefox-ios.git
 
 jobs:
   workflow-lint:
@@ -29,6 +32,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Check Floorp branding contracts
+        run: ./scripts/ci/check-floorp-branding.sh
+        env:
+          # ubuntu runners don't guarantee ripgrep; exercise the portable path.
+          FLOORP_BRANDING_SEARCH_BACKEND: grep
 
       - name: Run actionlint
         env:
@@ -59,6 +68,21 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      - name: Verify Floorp localization overlay
+        run: |
+          node scripts/l10n/floorp-l10n-overlay.mjs extract \
+            --base "$L10N_REVIEW_BASE" \
+            --reviewed "$L10N_REVIEWED" \
+            --check-counts \
+            --check
+          node --test scripts/l10n/__tests__/*.test.mjs
+
+          git remote add upstream "$UPSTREAM_REPOSITORY" || git remote set-url upstream "$UPSTREAM_REPOSITORY"
+          git fetch --no-tags upstream main
+          upstream_source="$(git merge-base HEAD upstream/main)"
+          node scripts/l10n/floorp-l10n-overlay.mjs verify --source-ref "$upstream_source"
+          ./scripts/ci/test-rebrand-dry-run.sh
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6

@@ -15,6 +15,7 @@ class MockMozAdsClient: MozAdsClient, @unchecked Sendable {
 
     var recordClickCalledWith: String?
     var recordImpressionCalledWith: String?
+    var requestTileAdsCalledCount = 0
 
     init() {
         super.init(noHandle: MozAdsClient.NoHandle())
@@ -55,6 +56,7 @@ class MockMozAdsClient: MozAdsClient, @unchecked Sendable {
         mozAdRequests: [MozAdsPlacementRequest],
         options: MozAdsRequestOptions?
     ) throws -> [String: MozillaAppServices.MozAdsTile] {
+        requestTileAdsCalledCount += 1
         if let error = mockError { throw error }
         return mockAdsTiles ?? [:]
     }
@@ -62,17 +64,18 @@ class MockMozAdsClient: MozAdsClient, @unchecked Sendable {
 
 @MainActor
 class UnifiedAdsProviderTests: XCTestCase {
-    private var mockAdsClient: MockMozAdsClient!
+    private var mockAdsClient = MockMozAdsClient()
 
     override func setUp() async throws {
         try await super.setUp()
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         DependencyHelperMock().bootstrapDependencies()
         TelemetryContextualIdentifier.setupContextId()
         mockAdsClient = MockMozAdsClient()
     }
 
     override func tearDown() async throws {
-        mockAdsClient = nil
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         DependencyHelperMock().reset()
         try await super.tearDown()
     }
@@ -213,6 +216,22 @@ class UnifiedAdsProviderTests: XCTestCase {
                 XCTFail("Expected failure, got \(result) instead")
             }
         }
+    }
+
+    func testFetchTiles_whenFloorpDisablesSponsoredContent_doesNotRequestAds() {
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        let subject = createSubject()
+
+        subject.fetchTiles { result in
+            switch result {
+            case let .failure(error as UnifiedAdsProvider.Error):
+                XCTAssertEqual(error, .noDataAvailable)
+            default:
+                XCTFail("Expected the Floorp policy to stop the request, got \(result)")
+            }
+        }
+
+        XCTAssertEqual(mockAdsClient.requestTileAdsCalledCount, 0)
     }
 
     // MARK: - Helper functions

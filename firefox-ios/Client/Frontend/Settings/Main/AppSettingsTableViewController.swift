@@ -109,7 +109,9 @@ class AppSettingsTableViewController: SettingsTableViewController,
         self.settingsDelegate = settingsDelegate
         self.parentCoordinator = parentCoordinator
         setupNavigationBar()
-        setupDataSettings()
+        if !FloorpFlags.isTelemetryDisabled {
+            setupDataSettings()
+        }
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -320,7 +322,9 @@ class AppSettingsTableViewController: SettingsTableViewController,
     // MARK: - Generate Settings
 
     override func generateSettings() -> [SettingSection] {
-        setupDataSettings()
+        if !FloorpFlags.isTelemetryDisabled {
+            setupDataSettings()
+        }
         var settings = [SettingSection]()
         settings += getDefaultBrowserSetting()
         settings += getAccountSetting()
@@ -478,21 +482,20 @@ class AppSettingsTableViewController: SettingsTableViewController,
             )
         }
 
-        guard let sendTechnicalDataSetting,
-              let sendDailyUsagePingSetting,
-              let studiesToggleSetting,
-              let rolloutsToggleSetting,
-              let sendCrashReportsSetting else {
-            return []
+        if !FloorpFlags.isTelemetryDisabled,
+           let sendTechnicalDataSetting,
+           let sendDailyUsagePingSetting,
+           let studiesToggleSetting,
+           let rolloutsToggleSetting,
+           let sendCrashReportsSetting {
+            supportSettings.append(contentsOf: [
+                sendTechnicalDataSetting,
+                studiesToggleSetting,
+                rolloutsToggleSetting,
+                sendDailyUsagePingSetting,
+                sendCrashReportsSetting
+            ])
         }
-
-        supportSettings.append(contentsOf: [
-            sendTechnicalDataSetting,
-            studiesToggleSetting,
-            rolloutsToggleSetting,
-            sendDailyUsagePingSetting,
-            sendCrashReportsSetting
-        ])
 
         supportSettings.append(contentsOf: [
             OpenSupportPageSetting(delegate: settingsDelegate,

@@ -224,7 +224,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Páxina d'aniciu de Firefox";
+"Firefox.HomePage.Title" = "Páxina d'aniciu de Floorp";
 
 /* Accessibility Label for the tab toolbar Forward button */
 "Forward" = "Avanzar";
@@ -431,7 +431,7 @@
 "LoginsList.Title" = "ANICIOS DE SESIÓN GUARDAOS";
 
 /* Restore Tabs Prompt Description */
-"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Paez que Firefox cascó enantes. ¿Quies restaurar les llingüetes?";
+"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Paez que Floorp cascó enantes. ¿Quies restaurar les llingüetes?";
 
 /* Toast displayed to the user after a bookmark has been added. */
 "Menu.AddBookmark.Confirm" = "Amestóse'l marcador";
@@ -530,7 +530,7 @@
 "Okay" = "Val";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "¡Meca! Firefox cascó";
+"Oops! Firefox crashed" = "¡Meca! Floorp cascó";
 
 /* See http://mzl.la/1LXbDOL */
 "Open articles in Reader View by tapping the book icon when it appears in the title bar." = "Abri artículos na Vista de Llectora calcando l'iconu del llibru cuando apaeza na barra de títulos.";
@@ -542,7 +542,7 @@
 "Open Tabs" = "Llingüetes abiertes";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "Firefox nun pue abrir la páxina porque tien una direición que nun ye válida.";
+"OpenURL.Error.Message" = "Floorp nun pue abrir la páxina porque tien una direición que nun ye válida.";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "Nun se pue abrir la páxina";
@@ -554,7 +554,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "Esto permítete guardar la imaxe nel Carrete.";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Firefox quier acceder a les tos semeyes";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Floorp quier acceder a les tos semeyes";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "Zarrar";
@@ -689,7 +689,7 @@
 "SendTo.NoDevicesFound.Message" = "Nun tienes más preseos conectaos a esta cuenta de Firefox disponible pa sincronizar.";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "Abri Firefox, vete p'Axustes y anicia sesión pa siguir.";
+"SendTo.NotSignedIn.Message" = "Abri Floorp, vete p'Axustes y anicia sesión pa siguir.";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "Nun aniciesti sesión na to cuenta de Firefox.";
@@ -755,7 +755,7 @@
 "Settings.DataManagement.Title" = "Xestión de datos";
 
 /* Body of the alert when prompting the user asking to disconnect. */
-"Settings.Disconnect.Body" = "Firefox va dexar de sincronizase cola cuenta, mas nun va desaniciar nengún datu de restolar d'esti preséu.";
+"Settings.Disconnect.Body" = "Floorp va dexar de sincronizase cola cuenta, mas nun va desaniciar nengún datu de restolar d'esti preséu.";
 
 /* Button displayed at the bottom of settings page allowing users to Disconnect from FxA */
 "Settings.Disconnect.Button" = "Desconectar Sync";
@@ -839,7 +839,7 @@
 "Settings.NewTab.TopSectionNameFooter" = "Escueyi lo que se carga al abrir una llingüeta nueva";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "Al abrir Firefox";
+"Settings.OfferClipboardBar.Status" = "Al abrir Floorp";
 
 /* Title of setting to enable the Go to Copied URL feature. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
 "Settings.OfferClipboardBar.Title" = "Ufrir l'apertura d'enllaces copiaos";
@@ -1010,7 +1010,7 @@
 "UIMenuItem.PasteGo" = "Apegar y dir";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Buscar con Firefox";
+"UIMenuItem.SearchWithFirefox" = "Buscar con Floorp";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "ensin lleer";
@@ -1037,7 +1037,7 @@
 "Yesterday" = "Ayeri";
 
 /* Error message in the remote tabs panel */
-"You don’t have any tabs open in Firefox on your other devices." = "Nun tienes llingüetes abiertes nel Firefox d'otros preseos.";
+"You don’t have any tabs open in Firefox on your other devices." = "Nun tienes llingüetes abiertes nel Floorp d'otros preseos.";
 
 /* Your Rights settings section title */
 "Your Rights" = "Los tos derechos";

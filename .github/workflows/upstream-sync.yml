@@ -23,7 +23,10 @@ concurrency:
 
 env:
   FLOORP_BASE_BRANCH: main
+  L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
+  L10N_REVIEWED: 9e46feb476739c508bb6d23a8ec92508d72adae0
   UPSTREAM_BRANCH: main
+  UPSTREAM_REPOSITORY: https://github.com/mozilla-mobile/firefox-ios.git
   SYNC_BRANCH: automation/upstream-sync
 
 jobs:
@@ -39,9 +42,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+
       - name: Fetch upstream
         run: |
-          git remote add upstream https://github.com/mozilla-mobile/firefox-ios.git || true
+          git remote add upstream "$UPSTREAM_REPOSITORY" || git remote set-url upstream "$UPSTREAM_REPOSITORY"
           git fetch --no-tags upstream "$UPSTREAM_BRANCH"
 
       - name: Check for upstream commits
@@ -66,6 +74,17 @@ jobs:
             echo "merge_base=${merge_base}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate Floorp localization policy
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          node scripts/l10n/floorp-l10n-overlay.mjs extract \
+            --base "$L10N_REVIEW_BASE" \
+            --reviewed "$L10N_REVIEWED" \
+            --check-counts \
+            --check
+          node --test scripts/l10n/__tests__/*.test.mjs
+          ./scripts/ci/test-rebrand-dry-run.sh
+
       - name: Merge upstream
         if: steps.check.outputs.has_changes == 'true'
         id: merge
@@ -77,53 +96,76 @@ jobs:
           git checkout -B "$FLOORP_BASE_BRANCH" "origin/$FLOORP_BASE_BRANCH"
           floorp_base="$(git rev-parse HEAD)"
           upstream_ref="upstream/$UPSTREAM_BRANCH"
-          workflow_conflict_count=0
+          protected_conflict_count=0
+          l10n_conflict_count=0
 
           restore_floorp_automation() {
-            git rm -r -f --ignore-unmatch -- .github/workflows
-            git checkout "$floorp_base" -- .github/workflows scripts/rebrand-to-floorp.sh
+            git rm -r -f --ignore-unmatch -- .github/workflows floorp/l10n scripts/l10n
+            git checkout "$floorp_base" -- \
+              .github/workflows \
+              floorp/l10n \
+              scripts/l10n \
+              scripts/rebrand-to-floorp.sh
+          }
+
+          write_merge_diagnostics() {
+            diagnostics="$RUNNER_TEMP/upstream-sync-diagnostics"
+            mkdir -p "$diagnostics"
+            {
+              echo "floorp_base=$floorp_base"
+              echo "upstream_ref=$upstream_ref"
+              echo "upstream_sha=$(git rev-parse "$upstream_ref")"
+              echo "merge_base=$(git merge-base "$floorp_base" "$upstream_ref")"
+            } > "$diagnostics/metadata.txt"
+            git status --short > "$diagnostics/status.txt"
+            git ls-files -u > "$diagnostics/unmerged-index.txt"
+            git diff --cc > "$diagnostics/conflicts.diff"
+          }
+
+          abort_merge() {
+            write_merge_diagnostics
+            git merge --abort
+            exit 1
           }
 
           if ! git merge "$upstream_ref" --no-edit; then
-            conflicts="$(git diff --name-only --diff-filter=U)"
-            unexpected_conflict=false
-
-            while IFS= read -r file; do
+            while IFS= read -r -d '' file; do
               case "$file" in
-                .github/workflows/*)
-                  workflow_conflict_count=$((workflow_conflict_count + 1))
-                  ;;
-                *)
-                  echo "Unexpected merge conflict: $file" >> "$GITHUB_STEP_SUMMARY"
-                  unexpected_conflict=true
+                .github/workflows/*|floorp/l10n/*|scripts/l10n/*|scripts/rebrand-to-floorp.sh)
+                  protected_conflict_count=$((protected_conflict_count + 1))
                   ;;
               esac
-            done <<< "$conflicts"
-
-            if [[ "$unexpected_conflict" == "true" ]]; then
-              diagnostics="$RUNNER_TEMP/upstream-sync-diagnostics"
-              mkdir -p "$diagnostics"
-              {
-                echo "floorp_base=$floorp_base"
-                echo "upstream_ref=$upstream_ref"
-                echo "upstream_sha=$(git rev-parse "$upstream_ref")"
-                echo "merge_base=$(git merge-base "$floorp_base" "$upstream_ref")"
-              } > "$diagnostics/metadata.txt"
-              git status --short > "$diagnostics/status.txt"
-              git ls-files -u > "$diagnostics/unmerged-index.txt"
-              git diff --cc > "$diagnostics/conflicts.diff"
-              git merge --abort
-              exit 1
-            fi
+            done < <(git diff --name-only --diff-filter=U -z)
 
             restore_floorp_automation
+
+            while IFS= read -r -d '' _; do
+              l10n_conflict_count=$((l10n_conflict_count + 1))
+            done < <(git diff --name-only --diff-filter=U -z)
+
+            if (( l10n_conflict_count > 0 )); then
+              if ! node scripts/l10n/floorp-l10n-overlay.mjs resolve-merge --write --stage; then
+                echo "Localization resolver rejected the merge; inspect the diagnostics artifact." \
+                  >> "$GITHUB_STEP_SUMMARY"
+                abort_merge
+              fi
+            fi
+
+            if git ls-files -u | grep -q .; then
+              echo "Unresolved merge entries remain after Floorp conflict handling." \
+                >> "$GITHUB_STEP_SUMMARY"
+              abort_merge
+            fi
             git commit --no-edit
           fi
 
           restore_floorp_automation
 
-          echo "branch=${SYNC_BRANCH}" >> "$GITHUB_OUTPUT"
-          echo "workflow_conflict_count=${workflow_conflict_count}" >> "$GITHUB_OUTPUT"
+          {
+            echo "branch=${SYNC_BRANCH}"
+            echo "protected_conflict_count=${protected_conflict_count}"
+            echo "l10n_conflict_count=${l10n_conflict_count}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload merge diagnostics
         if: failure()
@@ -136,7 +178,13 @@ jobs:
 
       - name: Reapply Floorp branding
         if: steps.check.outputs.has_changes == 'true'
-        run: ./scripts/rebrand-to-floorp.sh
+        run: |
+          ./scripts/rebrand-to-floorp.sh
+          node scripts/l10n/floorp-l10n-overlay.mjs apply \
+            --source-ref "upstream/$UPSTREAM_BRANCH" \
+            --write
+          node scripts/l10n/floorp-l10n-overlay.mjs verify \
+            --source-ref "upstream/$UPSTREAM_BRANCH"
 
       - name: Verify generated changes
         if: steps.check.outputs.has_changes == 'true'
@@ -171,7 +219,8 @@ jobs:
             - Upstream SHA: `${{ steps.check.outputs.upstream_sha }}`
             - Previous merge base: `${{ steps.check.outputs.merge_base }}`
             - Files changed by Floorp restoration and branding: ${{ steps.verify.outputs.file_count }}
-            - Workflow conflicts restored from Floorp: ${{ steps.merge.outputs.workflow_conflict_count }}
+            - Protected Floorp automation conflicts restored: ${{ steps.merge.outputs.protected_conflict_count }}
+            - Localization conflicts resolved from the reviewed overlay: ${{ steps.merge.outputs.l10n_conflict_count }}
             - Other merge conflicts: none (unexpected conflicts abort with a diagnostics artifact)
 
             The `automation/upstream-sync` branch is generated. Manual edits will be replaced by the next sync run.

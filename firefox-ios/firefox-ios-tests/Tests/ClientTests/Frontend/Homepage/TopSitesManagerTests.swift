@@ -11,17 +11,20 @@ import Common
 
 @MainActor
 final class TopSitesManagerTests: XCTestCase {
-    private var profile: MockProfile!
-    private var mockNotificationCenter: MockNotificationCenter!
+    private var profile: MockProfile?
+    private var mockNotificationCenter: MockNotificationCenter?
     override func setUp() async throws {
         try await super.setUp()
-        profile = MockProfile()
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
+        let profile = MockProfile()
+        self.profile = profile
         mockNotificationCenter = MockNotificationCenter()
         DependencyHelperMock().bootstrapDependencies(injectedProfile: profile)
     }
 
     override func tearDown() async throws {
         DependencyHelperMock().reset()
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         profile = nil
         mockNotificationCenter = nil
         try await super.tearDown()
@@ -57,6 +60,23 @@ final class TopSitesManagerTests: XCTestCase {
         XCTAssertEqual(topSites.first?.isPinned, true)
         XCTAssertEqual(topSites.first?.isGoogleURL, true)
         XCTAssertEqual(topSites.first?.title, "Google Test")
+    }
+
+    func test_floorpSponsoredContentPolicyHidesPartnerAndSponsoredTiles() async throws {
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        let profile = try XCTUnwrap(profile)
+        let googleManager = GoogleTopSiteManager(prefs: profile.prefs)
+        let subject = try createSubject(googleTopSiteManager: googleManager)
+
+        let fetchedSponsoredSites = await subject.fetchSponsoredSites()
+        let topSites = subject.recalculateTopSites(
+            otherSites: [],
+            sponsoredSites: createSponsoredSites()
+        )
+
+        XCTAssertNil(googleManager.pinnedSiteData)
+        XCTAssertTrue(fetchedSponsoredSites.isEmpty)
+        XCTAssertTrue(topSites.isEmpty)
     }
 
      func test_recalculateTopSites_withOtherSitesAndNoGoogleSite_returnNoGoogleTopSite() throws {
@@ -147,7 +167,8 @@ final class TopSitesManagerTests: XCTestCase {
     }
 
     func test_recalculateTopSites_shouldNotShowSponsoredSites_returnNoSponsoredSites() throws {
-        profile?.prefs.setBool(false, forKey: PrefsKeys.FeatureFlags.SponsoredShortcuts)
+        let profile = try XCTUnwrap(profile)
+        profile.prefs.setBool(false, forKey: PrefsKeys.FeatureFlags.SponsoredShortcuts)
 
         let subject = try createSubject()
 
@@ -353,6 +374,7 @@ final class TopSitesManagerTests: XCTestCase {
     func test_removeTopSite_callsProperMethods() async throws {
         let mockGoogleTopSiteManager = MockGoogleTopSiteManager()
         let mockTopSiteHistoryManager = MockTopSiteHistoryManager()
+        let mockNotificationCenter = try XCTUnwrap(mockNotificationCenter)
         let subject = try createSubject(
             googleTopSiteManager: mockGoogleTopSiteManager,
             topSiteHistoryManager: mockTopSiteHistoryManager
@@ -409,7 +431,8 @@ final class TopSitesManagerTests: XCTestCase {
     }
 
     func test_sponsoredShortcutsFlagEnabled_withUserPref_returnsNoSponsoredSites() throws {
-        profile?.prefs.setBool(false, forKey: PrefsKeys.FeatureFlags.SponsoredShortcuts)
+        let profile = try XCTUnwrap(profile)
+        profile.prefs.setBool(false, forKey: PrefsKeys.FeatureFlags.SponsoredShortcuts)
 
         let subject = try createSubject()
 

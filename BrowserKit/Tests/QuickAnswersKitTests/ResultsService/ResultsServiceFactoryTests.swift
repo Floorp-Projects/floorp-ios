@@ -39,10 +39,32 @@ struct ResultsServiceFactoryTests {
         #expect(mockLLMCreator.createAppAttestLiteLLMCallCount == 1, "Should attempt to create LLM client")
     }
 
+    @Test
+    func test_make_whenQuickAnswersDisallowed_doesNotCreateAppAttestClient() {
+        let mockLLMCreator = MockLLMClientCreator()
+        mockLLMCreator.clientToReturn = MockLiteLLMClient()
+        let subject = createSubject(
+            liteLLMCreator: mockLLMCreator,
+            allowsQuickAnswers: false
+        )
+
+        #expect(throws: ResultsServiceError.unableToCreateService) {
+            try subject.make(
+                prefs: MockProfilePrefs(),
+                configFetcher: MockQuickAnswersConfigFetcher()
+            )
+        }
+        #expect(mockLLMCreator.createAppAttestLiteLLMCallCount == 0)
+    }
+
     // MARK: - Helper
     private func createSubject(
         liteLLMCreator: LiteLLMCreating = MockLLMClientCreator(),
+        allowsQuickAnswers: Bool = true
     ) -> DefaultResultsServiceFactory {
-        return DefaultResultsServiceFactory(liteLLMCreator: liteLLMCreator)
+        return DefaultResultsServiceFactory(
+            liteLLMCreator: liteLLMCreator,
+            allowsQuickAnswers: allowsQuickAnswers
+        )
     }
 }

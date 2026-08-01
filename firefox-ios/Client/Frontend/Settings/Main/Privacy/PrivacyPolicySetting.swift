@@ -4,12 +4,13 @@
 
 import Common
 import Foundation
+import Shared
 
 class PrivacyPolicySetting: Setting {
     private weak var settingsDelegate: PrivacySettingsDelegate?
 
     override var url: URL? {
-        return URL(string: "https://www.mozilla.org/privacy/firefox/")
+        return SupportUtils.URLForPrivacyNotice
     }
 
     override var accessibilityIdentifier: String? {

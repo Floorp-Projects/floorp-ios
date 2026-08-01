@@ -25,6 +25,36 @@ final class UserActivityRouteTests: XCTestCase {
         }
     }
 
+    func testLegacySiriShortcutUserActivity() {
+        let subject = createSubject()
+        let userActivity = NSUserActivity(activityType: SiriShortcuts.legacyOpenURLActivityIdentifier)
+
+        let route = subject.makeRoute(userActivity: userActivity)
+
+        switch route {
+        case .search(let url, let isPrivate, _):
+            XCTAssertFalse(isPrivate)
+            XCTAssertNil(url)
+        default:
+            XCTFail("route was not of expected type")
+        }
+    }
+
+    func testLegacySiriShortcutMatchesExistingShortcutLookup() {
+        XCTAssertTrue(
+            SiriShortcuts.activityType.openURL.matches(SiriShortcuts.legacyOpenURLActivityIdentifier)
+        )
+    }
+
+    func testCurrentAndLegacySiriActivitiesShareDuplicateSuppression() {
+        let subject = createSubject()
+        let currentActivity = NSUserActivity(activityType: SiriShortcuts.activityType.openURL.rawValue)
+        let legacyActivity = NSUserActivity(activityType: SiriShortcuts.legacyOpenURLActivityIdentifier)
+
+        XCTAssertNotNil(subject.makeRoute(userActivity: currentActivity))
+        XCTAssertNil(subject.makeRoute(userActivity: legacyActivity))
+    }
+
     // Test the Route initializer with a deep link user activity.
     func testDeepLinkUserActivity() {
         let subject = createSubject()

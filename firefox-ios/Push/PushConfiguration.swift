@@ -13,8 +13,8 @@ public struct KnownPushHost {
     public static let stage = "updates-autopush.stage.mozaws.net"
 }
 
-enum InvalidSchemeError: Error {
-    case InvalidScheme(String)
+enum PushConfigurationError: Error {
+    case unsupportedBundleIdentifier(String)
 }
 
 public enum PushConfigurationLabel: String {
@@ -23,14 +23,24 @@ public enum PushConfigurationLabel: String {
     case firefoxBeta = "firefoxbeta"
     case firefox = "firefox"
 
-    static func fromScheme(scheme: String) throws -> PushConfigurationLabel {
-        switch scheme {
-        case "Fennec": return .fennec
-        case "FennecEnterprise": return .fennecEnterprise
-        case "FirefoxBeta": return .firefoxBeta
-        case "Firefox": return .firefox
-        default: throw InvalidSchemeError.InvalidScheme(scheme)
+    static func fromBundleIdentifier(_ bundleIdentifier: String) throws -> PushConfigurationLabel {
+        let applicationBundleLabels: [(bundleIdentifier: String, label: PushConfigurationLabel)] = [
+            ("org.mozilla.ios.Fennec", .fennec),
+            ("org.mozilla.ios.FennecEnterprise", .fennecEnterprise),
+            ("org.mozilla.ios.FirefoxBeta", .firefoxBeta),
+            ("org.mozilla.ios.Firefox", .firefox)
+        ]
+
+        let applicationBundleLabel = applicationBundleLabels.first { applicationBundleLabel in
+            let applicationBundleIdentifier = applicationBundleLabel.bundleIdentifier
+            return bundleIdentifier == applicationBundleIdentifier
+                || bundleIdentifier.hasPrefix("\(applicationBundleIdentifier).")
         }
+        guard let applicationBundleLabel else {
+            throw PushConfigurationError.unsupportedBundleIdentifier(bundleIdentifier)
+        }
+
+        return applicationBundleLabel.label
     }
 
     public func toConfiguration(dbPath: String) -> PushConfiguration {

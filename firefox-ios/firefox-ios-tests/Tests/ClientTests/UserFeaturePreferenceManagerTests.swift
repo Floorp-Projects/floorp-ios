@@ -9,18 +9,23 @@ import XCTest
 @testable import Client
 
 final class UserFeaturePreferenceManagerTests: XCTestCase {
-    private var prefs: MockProfilePrefs!
-    private var mockLayer: MockNimbusFeatureFlagLayer!
+    private struct TestState {
+        let prefs = MockProfilePrefs()
+        let mockLayer = MockNimbusFeatureFlagLayer()
+    }
+
+    private var state = TestState()
+    private var prefs: MockProfilePrefs { state.prefs }
+    private var mockLayer: MockNimbusFeatureFlagLayer { state.mockLayer }
 
     override func setUp() {
         super.setUp()
-        prefs = MockProfilePrefs()
-        mockLayer = MockNimbusFeatureFlagLayer()
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
+        state = TestState()
     }
 
     override func tearDown() {
-        mockLayer = nil
-        prefs = nil
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         super.tearDown()
     }
 
@@ -67,6 +72,15 @@ final class UserFeaturePreferenceManagerTests: XCTestCase {
         let subject = createSubject(prefs: prefs, backendLayer: mockLayer, userInterfaceIdiom: .phone)
 
         prefs.setBool(false, forKey: PrefsKeys.FeatureFlags.SponsoredShortcuts)
+        XCTAssertFalse(subject.getPreferenceFor(.hntSponsoredShortcuts))
+    }
+
+    @MainActor
+    func testSponsoredShortcuts_floorpPolicyOverridesPersistedOptIn() {
+        prefs.setBool(true, forKey: PrefsKeys.FeatureFlags.SponsoredShortcuts)
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        let subject = createSubject(prefs: prefs, backendLayer: mockLayer, userInterfaceIdiom: .phone)
+
         XCTAssertFalse(subject.getPreferenceFor(.hntSponsoredShortcuts))
     }
 

@@ -1,5 +1,5 @@
 /* Description for small home tab banner that allows the user to switch their default browser to Firefox. */
-"DefaultBrowserCard.BetterInternet.Description.v108" = "ফায়ারফক্সকে আপনার ডিফল্ট ব্রাউজার বানানোর অর্থ হল একটি উন্মুক্ত, অ্যাক্সেসযোগ্য ইন্টারনেটের পক্ষে ভোট দেওয়া।";
+"DefaultBrowserCard.BetterInternet.Description.v108" = "Floorp-কে আপনার ডিফল্ট ব্রাউজার বানানোর অর্থ হল একটি উন্মুক্ত, অ্যাক্সেসযোগ্য ইন্টারনেটের পক্ষে ভোট দেওয়া।";
 
 /* Title for small home tab banner that allows the user to switch their default browser to Firefox. */
 "DefaultBrowserCard.BetterInternet.Title.v108" = "আরও উন্নত মানের ইন্টারনেট এর জন্য ডিফল্ট";
@@ -8,19 +8,19 @@
 "DefaultBrowserCard.Button.v2" = "শিখুন কিভাবে হয়";
 
 /* Description for small home tab banner that allows the user to switch their default browser to Firefox. */
-"DefaultBrowserCard.Description" = "Firefox এ স্বয়ংক্রিয়ভাবে খোলার জন্য ওয়েবসাইট, ইমেল এবং বার্তাগুলি থেকে লিঙ্ক সেট করুন।";
+"DefaultBrowserCard.Description" = "Floorp এ স্বয়ংক্রিয়ভাবে খোলার জন্য ওয়েবসাইট, ইমেল এবং বার্তাগুলি থেকে লিঙ্ক সেট করুন।";
 
 /* Description for small home tab banner that allows the user to switch their default browser to Firefox. */
-"DefaultBrowserCard.NextLevel.Description.v108" = "গতি, নিরাপত্তা এবং গোপনীয়তা স্বয়ংক্রিয় করতে আপনার ডিফল্ট ব্রাউজার হিসেবে Firefox বেছে নিন।";
+"DefaultBrowserCard.NextLevel.Description.v108" = "গতি, নিরাপত্তা এবং গোপনীয়তা স্বয়ংক্রিয় করতে আপনার ডিফল্ট ব্রাউজার হিসেবে Floorp বেছে নিন।";
 
 /* Title for small home tab banner that allows the user to switch their default browser to Firefox. */
 "DefaultBrowserCard.NextLevel.Title.v108" = "প্রতিদিনের ব্রাউজিং উন্নত করুন";
 
 /* Description for small home tab banner that allows the user to switch their default browser to Firefox. */
-"DefaultBrowserCard.PeaceOfMind.Description.v108" = "Firefox প্রতি মাসে গড়ে ৩,০০০+ ট্র্যাকার ব্লক করে। গোপনীয়তার জন্য আমাদের আপনার ডিফল্ট ব্রাউজার হিসেবে রাখুন।";
+"DefaultBrowserCard.PeaceOfMind.Description.v108" = "Floorp প্রতি মাসে গড়ে ৩,০০০+ ট্র্যাকার ব্লক করে। গোপনীয়তার জন্য আমাদের আপনার ডিফল্ট ব্রাউজার হিসেবে রাখুন।";
 
 /* Title for small home tab banner that allows the user to switch their default browser to Firefox. */
-"DefaultBrowserCard.PeaceOfMind.Title.v108" = "Firefox গোপনীয়তা নিশ্চিত করে";
+"DefaultBrowserCard.PeaceOfMind.Title.v108" = "Floorp গোপনীয়তা নিশ্চিত করে";
 
 /* Title for small home tab banner that allows the user to switch their default browser to Firefox. */
 "DefaultBrowserCard.Title" = "আপনার ডিফল্ট ব্রাউজারটিতে স্যুইচ করুন";
@@ -35,7 +35,7 @@
 "DefaultBrowserOnboarding.Description2" = "2. ডিফল্ট ব্রাউজার অ্যাপ এ ট্যাপ করুন";
 
 /* Description for default browser onboarding card. */
-"DefaultBrowserOnboarding.Description3" = "3. Firefox নির্বাচন করুন";
+"DefaultBrowserOnboarding.Description3" = "3. Floorp নির্বাচন করুন";
 
 /* Text for the screenshot of the iOS system settings page for Firefox. */
 "DefaultBrowserOnboarding.Screenshot" = "ডিফল্ট ব্রাউজার অ্যাপ";

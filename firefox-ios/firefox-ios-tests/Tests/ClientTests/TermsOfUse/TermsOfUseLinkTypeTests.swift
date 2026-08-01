@@ -23,6 +23,15 @@ final class TermsOfUseLinkTypeTests: XCTestCase {
         XCTAssertNotNil(TermsOfUseLinkType.here.url)
     }
 
+    func testURLs_UseSeparateFloorpDestinationsForHelpAndTermsInformation() {
+        XCTAssertEqual(TermsOfUseLinkType.termsOfUse.url, SupportUtils.URLForTermsOfUse)
+        XCTAssertEqual(TermsOfUseLinkType.privacyNotice.url, SupportUtils.URLForPrivacyNotice)
+        XCTAssertEqual(TermsOfUseLinkType.learnMore.url, SupportUtils.URLForTermsOfUseLearnMore)
+        XCTAssertEqual(TermsOfUseLinkType.here.url, SupportUtils.URLForTermsOfUseLearnMore)
+        XCTAssertNotEqual(TermsOfUseLinkType.learnMore.url, SupportUtils.URLForGetHelp)
+        XCTAssertNotEqual(TermsOfUseLinkType.learnMore.url, TermsOfUseLinkType.termsOfUse.url)
+    }
+
     func testActionTypes_AreCorrect() {
         XCTAssertEqual(TermsOfUseLinkType.termsOfUse.actionType, .termsLinkTapped)
         XCTAssertEqual(TermsOfUseLinkType.privacyNotice.actionType, .privacyLinkTapped)
@@ -36,6 +45,13 @@ final class TermsOfUseLinkTypeTests: XCTestCase {
             return
         }
         XCTAssertEqual(TermsOfUseLinkType.linkType(for: termsURL), .termsOfUse)
+
+        guard let learnMoreURL = TermsOfUseLinkType.learnMore.url else {
+            XCTFail("Learn more URL should not be nil")
+            return
+        }
+        XCTAssertNotEqual(termsURL, learnMoreURL)
+        XCTAssertEqual(TermsOfUseLinkType.linkType(for: learnMoreURL), .learnMore)
 
         let unknownURL = URL(string: "https://example.com/unknown")!
         XCTAssertNil(TermsOfUseLinkType.linkType(for: unknownURL))

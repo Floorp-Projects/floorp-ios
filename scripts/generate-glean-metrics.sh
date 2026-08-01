@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly SCRIPT_DIR PROJECT_ROOT
 readonly FIREFOX_ROOT="${PROJECT_ROOT}/firefox-ios"
 readonly GLEAN_FILE_LIST="${FIREFOX_ROOT}/Client/Glean/gleanProbes.xcfilelist"
 readonly GENERATOR="${FIREFOX_ROOT}/bin/sdk_generator.sh"
@@ -19,7 +20,7 @@ definitions=(
     "${FIREFOX_ROOT}/Client/Glean/tags.yaml"
 )
 while IFS= read -r line; do
-    [[ "${line}" == '$(PROJECT_DIR)/Client/Glean/probes/'* ]] || continue
+    [[ "${line}" == "\$(PROJECT_DIR)/Client/Glean/probes/"* ]] || continue
     relative_path="${line#\$\(PROJECT_DIR\)/}"
     definition="${FIREFOX_ROOT}/${relative_path}"
     if [[ ! -f "${definition}" ]]; then

@@ -8,22 +8,22 @@
 "New Tab" = "تبويب جديد";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "يمكن لفايرفوكس استخدام كاميرتك لمسح رموز الاستجابة السريعة أو التقاط الصور وتسجيل الفيديو.";
+"NSCameraUsageDescription" = "يمكن لFloorp استخدام كاميرتك لمسح رموز الاستجابة السريعة أو التقاط الصور وتسجيل الفيديو.";
 
 /* Privacy - Face ID Usage Description */
-"NSFaceIDUsageDescription" = "يتطلب فايرفوكس معرف الوجه للوصول إلى كلمات المرور المحفوظة لديك وطرق الدفع.";
+"NSFaceIDUsageDescription" = "يتطلب Floorp معرف الوجه للوصول إلى كلمات المرور المحفوظة لديك وطرق الدفع.";
 
 /* Privacy - Location When In Use Usage Description */
 "NSLocationWhenInUseUsageDescription" = "قد تطلب مواقع الويب التي تزورها موقعك.";
 
 /* Privacy - Microphone Usage Description */
-"NSMicrophoneUsageDescription" = "يستخدم فايرفوكس ميكروفونك لتسجيل الصوت ورفعه.";
+"NSMicrophoneUsageDescription" = "يستخدم Floorp ميكروفونك لتسجيل الصوت ورفعه.";
 
 /* Privacy - Photo Library Additions Usage Description */
 "NSPhotoLibraryAddUsageDescription" = "يتيح لك هذا حفظ الصور.";
 
 /* Privacy - Speech Recognition Usage Description */
-"NSSpeechRecognitionUsageDescription" = "يستخدم فايرفوكس التعرف على الصوت لتحويل صوتك إلى نص للبحث الصوتي.";
+"NSSpeechRecognitionUsageDescription" = "يستخدم Floorp التعرف على الصوت لتحويل صوتك إلى نص للبحث الصوتي.";
 
 /* (No Comment) */
 "Scan QR Code" = "مسح رمز الاستجابة السريعة";

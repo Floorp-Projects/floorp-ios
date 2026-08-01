@@ -27,13 +27,13 @@ final class ErrorHandler {
             handlePermissionDenied(
                 isFirstTime: isFirstTime,
                 title: "Change Settings to Use Quick Answers",
-                message: "Allow Firefox to access the Microphone."
+                message: "Allow Floorp to access the Microphone."
             )
         case .speechRecognitionPermissionDenied(let isFirstTime):
             handlePermissionDenied(
                 isFirstTime: isFirstTime,
                 title: "Change Settings to Use Quick Answers",
-                message: "Allow Firefox to access Speech Recognition."
+                message: "Allow Floorp to access Speech Recognition."
             )
         default:
             showCatchAllErrorAlert()

@@ -13,13 +13,14 @@ import XCTest
 
 @MainActor
 final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
-    private var logger: MockLogger!
-    private var gleanWrapper: MockGleanWrapper!
-    private var mockAdsClient: MockMozAdsClient!
-    private var adsClientCallbackQueue: MockDispatchQueue!
+    private var logger = MockLogger()
+    private var gleanWrapper = MockGleanWrapper()
+    private var mockAdsClient = MockMozAdsClient()
+    private var adsClientCallbackQueue = MockDispatchQueue()
 
     override func setUp() async throws {
         try await super.setUp()
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         DependencyHelperMock().bootstrapDependencies()
         logger = MockLogger()
         gleanWrapper = MockGleanWrapper()
@@ -28,10 +29,7 @@ final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        logger = nil
-        gleanWrapper = nil
-        mockAdsClient = nil
-        adsClientCallbackQueue = nil
+        FloorpFlags.setSponsoredShortcutsDisabled(false)
         DependencyHelperMock().reset()
         try await super.tearDown()
     }
@@ -118,6 +116,20 @@ final class UnifiedAdsCallbackTelemetryTests: XCTestCase {
         XCTAssertEqual(adsClientCallbackQueue.asyncCalled, 1)
         XCTAssertEqual(mockAdsClient.recordClickCalledWith, siteInfo.clickURL)
         XCTAssertNil(mockAdsClient.recordImpressionCalledWith)
+    }
+
+    func testFloorpSponsoredContentPolicy_blocksCallbacksAndGlean() {
+        FloorpFlags.setSponsoredShortcutsDisabled(true)
+        let subject = createSubject()
+
+        subject.sendImpressionTelemetry(tileSite: tileSite, position: 1)
+        subject.sendClickTelemetry(tileSite: tileSite, position: 1)
+
+        XCTAssertEqual(adsClientCallbackQueue.asyncCalled, 0)
+        XCTAssertNil(mockAdsClient.recordImpressionCalledWith)
+        XCTAssertNil(mockAdsClient.recordClickCalledWith)
+        XCTAssertEqual(gleanWrapper.recordEventCalled, 0)
+        XCTAssertEqual(gleanWrapper.submitPingCalled, 0)
     }
 
     // MARK: - Helper functions

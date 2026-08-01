@@ -308,7 +308,7 @@
 "ErrorPages.AdvancedWarning2.Text" = "Mund të jetë një keqformësim ose futje hundësh nga dikush që po sulmon. Vazhdoni, nëse e pranoni rrezikun potencial.";
 
 /* Warning text on the certificate error page. %@ is the domain of the website. */
-"ErrorPages.CertWarning.Description" = "I zoti i %@ e ka formësuar keq sajtin e tij. Që të mbrohen nga vjedhjet të dhënat tuaja, Firefox-i nuk u lidh me këtë sajt.";
+"ErrorPages.CertWarning.Description" = "I zoti i %@ e ka formësuar keq sajtin e tij. Që të mbrohen nga vjedhjet të dhënat tuaja, Floorp-i nuk u lidh me këtë sajt.";
 
 /* Title on the certificate error page */
 "ErrorPages.CertWarning.Title" = "Kjo Lidhje Nuk Besohet";
@@ -329,7 +329,7 @@
 "Facebook" = "Facebook";
 
 /* Title for firefox about:home page in tab history list */
-"Firefox.HomePage.Title" = "Faqja Hyrëse e Firefox-it";
+"Firefox.HomePage.Title" = "Faqja Hyrëse e Floorp-it";
 
 /* A button at bottom of the Firefox homepage that, when clicked, takes users straight to the settings options, where they can customize the Firefox Home page */
 "FirefoxHome.CustomizeHomeButton.Title" = "Përshtatni Faqe Hyrëse";
@@ -425,7 +425,7 @@
 "FxAPush_DeviceDisconnected_UnknownDevice_body" = "Është shkëputur një pajisje nga Firefox Sync-u";
 
 /* On the firefox homepage, the string read by the voice over prompt for accessibility, for the button which changes the wallpaper */
-"FxHomepage.Wallpaper.ButtonLabel.v99" = "Stemë Firefox-i, ndryshoni sfondin.";
+"FxHomepage.Wallpaper.ButtonLabel.v99" = "Stemë Floorp-i, ndryshoni sfondin.";
 
 /* Show the SUMO support page from the Support section in the settings. see http://mzl.la/1dmM8tZ */
 "Help" = "Ndihmë";
@@ -656,13 +656,13 @@
 "Logins.Onboarding.LearnMoreButtonTitle" = "Mësoni Më Tepër";
 
 /* Warning message shown when you try to enable or use native AutoFill without a device passcode setup */
-"Logins.PasscodeRequirement.Warning" = "Që të përdorni veçorinë Vetëplotësim për Firefox, duhet të keni të aktivizuar një kodkalim pajisjeje.";
+"Logins.PasscodeRequirement.Warning" = "Që të përdorni veçorinë Vetëplotësim për Floorp, duhet të keni të aktivizuar një kodkalim pajisjeje.";
 
 /* Label displaying welcome view tagline under the title */
 "Logins.WelcomeView.Tagline" = "Merrini fjalëkalimet tuaja kudo";
 
 /* Label displaying welcome view title */
-"Logins.WelcomeView.Title2" = "Vetëplotësim Fjalëkalimesh Firefox-i";
+"Logins.WelcomeView.Title2" = "Vetëplotësim Fjalëkalimesh Floorp-i";
 
 /* Title of the big blue button to enable AutoFill */
 "Logins.WelcomeView.TurnOnAutoFill" = "Aktivizo Vetëplotësim";
@@ -695,7 +695,7 @@
 "LoginsList.Title" = "KREDENCIALE HYRJESH TË RUAJTURA";
 
 /* Restore Tabs Prompt Description */
-"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Duket se Firefox-i, më herët, u vithis. Do të donit të rikthehen skedat tuaja?";
+"Looks like Firefox crashed previously. Would you like to restore your tabs?" = "Duket se Floorp-i, më herët, u vithis. Do të donit të rikthehen skedat tuaja?";
 
 /* Title for the button that marks a reading list item as read */
 "Mark as Read" = "Shënoje si të Lexuar";
@@ -884,7 +884,7 @@
 "Onboarding.WhatsNew.Button.Title" = "Filloni të Shfletoni";
 
 /* Title for prompt displayed to user after the app crashes */
-"Oops! Firefox crashed" = "Hëm! Firefox-i u vithis";
+"Oops! Firefox crashed" = "Hëm! Floorp-i u vithis";
 
 /* See http://mzl.la/1LXbDOL */
 "Open articles in Reader View by tapping the book icon when it appears in the title bar." = "Artikujt nën Pamjen Lexues i hapni duke prekur ikonën libër, kur shfaqet te shtylla e titullit.";
@@ -896,7 +896,7 @@
 "Open Tabs" = "Hapi Skedat";
 
 /* The message displayed to a user when they try to open a URL that cannot be handled by Firefox, or any external app. */
-"OpenURL.Error.Message" = "Firefox-i s’e hap dot faqen, ngaqë ajo ka një adresë të pavlefshme.";
+"OpenURL.Error.Message" = "Floorp-i s’e hap dot faqen, ngaqë ajo ka një adresë të pavlefshme.";
 
 /* Title of the message shown when the user attempts to navigate to an invalid link. */
 "OpenURL.Error.Title" = "S’hap Dot Faqen";
@@ -908,7 +908,7 @@
 "PhotoLibrary.FirefoxWouldLikeAccessMessage" = "Kjo ju lejon të ruani figurën te Camera Roll juaj.";
 
 /* See http://mzl.la/1G7uHo7 */
-"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Firefox-i do të donte të hynte te Fotot tuaja";
+"PhotoLibrary.FirefoxWouldLikeAccessTitle" = "Floorp-i do të donte të hynte te Fotot tuaja";
 
 /* Button for closing the menu action sheet */
 "PhotonMenu.close" = "Mbylle";
@@ -995,7 +995,7 @@
 "ScanQRCode.InvalidDataError.Message" = "Të dhënat janë të pavlefshme";
 
 /* Text of the prompt to setup the camera authorization for the Scan QR Code feature. */
-"ScanQRCode.PermissionError.Message.v100" = "Kaloni te ‘Rregullime’ pajisjeje > ‘Firefox’. Lejoni Firefox-in të përdorë kamerën.";
+"ScanQRCode.PermissionError.Message.v100" = "Kaloni te ‘Rregullime’ pajisjeje > ‘Floorp’. Lejoni Floorp-in të përdorë kamerën.";
 
 /* Title for the QR code scanner view. */
 "ScanQRCode.View.Title" = "Skanonin Kodin QR";
@@ -1079,7 +1079,7 @@
 "SendTo.NoDevicesFound.Message" = "S’keni ndonjë pajisje tjetër të lidhur te kjo Llogari Firefox-i të gatshme për njëkohësim.";
 
 /* See http://mzl.la/1ISlXnU */
-"SendTo.NotSignedIn.Message" = "Ju lutemi, që të vazhdohet, hapni Firefox-in, shkoni te Rregullimet dhe bëni hyrjen.";
+"SendTo.NotSignedIn.Message" = "Ju lutemi, që të vazhdohet, hapni Floorp-in, shkoni te Rregullimet dhe bëni hyrjen.";
 
 /* See http://mzl.la/1ISlXnU */
 "SendTo.NotSignedIn.Title" = "S’keni bërë hyrjen te Llogaria juaj Firefox.";
@@ -1193,7 +1193,7 @@
 "Settings.DataManagement.Title" = "Administrim të Dhënash";
 
 /* Body of the alert when prompting the user asking to disconnect. */
-"Settings.Disconnect.Body" = "Firefox-i do të reshtë së njëkohësuari me llogarinë tuaj, por nuk do të fshihet ndonjë nga të dhënat e shfletimeve tuaja në këtë pajisje.";
+"Settings.Disconnect.Body" = "Floorp-i do të reshtë së njëkohësuari me llogarinë tuaj, por nuk do të fshihet ndonjë nga të dhënat e shfletimeve tuaja në këtë pajisje.";
 
 /* Button displayed at the bottom of settings page allowing users to Disconnect from FxA */
 "Settings.Disconnect.Button" = "Shkëputeni Sync-un";
@@ -1268,7 +1268,7 @@
 "Settings.Home.Current.Description.v101" = "Zgjidhni ç’të shfaqe te faqja hyrëse.";
 
 /* In the settings menu, on the Firefox homepage customization section, this is the description below the section, describing what the options in the section are for. */
-"Settings.Home.Option.Description.v101" = "Zgjidhni ç’të përfshihet te faqja hyrëse e Firefox-it.";
+"Settings.Home.Option.Description.v101" = "Zgjidhni ç’të përfshihet te faqja hyrëse e Floorp-it.";
 
 /* In the settings menu, in the Firefox homepage customization section, this is the title for the option that allows users to toggle the Jump Back In section on homepage on or off */
 "Settings.Home.Option.JumpBackIn" = "Hidhu Mbrapa Te";
@@ -1292,7 +1292,7 @@
 "Settings.Home.Option.StartAtHome.Always" = "Kreu";
 
 /* In the settings menu, in the Start at Home customization options, this is text that appears below the section, describing what the section settings do. */
-"Settings.Home.Option.StartAtHome.Description" = "Zgjidhni çtë shihni, kur ktheheni te Firefox-i.";
+"Settings.Home.Option.StartAtHome.Description" = "Zgjidhni çtë shihni, kur ktheheni te Floorp-i.";
 
 /* In the settings menu, on the Start at Home homepage customization option, this allows users to set this setting to return to the last tab they were on, every time they open up Firefox */
 "Settings.Home.Option.StartAtHome.Never" = "Skedën e fundit";
@@ -1307,25 +1307,25 @@
 "Settings.Home.Option.Wallpaper" = "Sfond";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the amethyst firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Sfond Firefox-i, mostër ametisti.";
+"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Sfond Floorp-i, mostër ametisti.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the beach hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Sfond Firefox-i, model me duna plazhi.";
+"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Sfond Floorp-i, model me duna plazhi.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the cerulean firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Sfond Firefox-i, mostër në blu të thellë.";
+"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Sfond Floorp-i, mostër në blu të thellë.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the default wallpaper. */
 "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99" = "Sfond parazgjedhje i qëruar.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the sunrise firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Sfond Firefox-i, mostër agu.";
+"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Sfond Floorp-i, mostër agu.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string of the toggle for turning wallpaper cycling shortcut on or off on the homepage. */
 "Settings.Home.Option.Wallpaper.Accessibility.ToggleButton" = "Aktivizim/Çaktivizim cikli sfondesh faqeje hyrëse";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the twilight hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Sfond Firefox-i, model me kodra në muzg.";
+"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Sfond Floorp-i, model me kodra në muzg.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of the group of wallpapers that are always available to the user. The %@ will be replaced by the app name and thus doesn't need translation. */
 "Settings.Home.Option.Wallpaper.Classic.Title.v106" = "%@ Klasik";
@@ -1346,7 +1346,7 @@
 "Settings.Home.Option.Wallpaper.LimitedEdition.Title.v106" = "Edicion i Kufizuar";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off. */
-"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Ndryshoni sfond duke prekur stemë faqeje hyrëse Firefox";
+"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Ndryshoni sfond duke prekur stemë faqeje hyrëse Floorp";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of that screen, which allows users to change the wallpaper settings for the application. */
 "Settings.Home.Option.Wallpaper.Title" = "Sfond";
@@ -1400,7 +1400,7 @@
 "Settings.NewTab.Option.Custom" = "Vetjake";
 
 /* Option in settings to show Firefox Home when you open a new tab */
-"Settings.NewTab.Option.FirefoxHome" = "Kreun e Firefox-it";
+"Settings.NewTab.Option.FirefoxHome" = "Kreun e Floorp-it";
 
 /* Option in settings to show your homepage when you open a new tab */
 "Settings.NewTab.Option.HomePage" = "Kreu";
@@ -1421,7 +1421,7 @@
 "Settings.NoImageModeBlockImages.Label.v99" = "Blloko Figura";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349 */
-"Settings.OfferClipboardBar.Status" = "Kur Hapet Firefox-i";
+"Settings.OfferClipboardBar.Status" = "Kur Hapet Floorp-i";
 
 /* Description displayed under the ”Offer to Open Copied Link” option. See https://bug1223660.bmoattachments.org/attachment.cgi?id=8898349. %@ is for the app name. */
 "Settings.OfferClipboardBar.Status.v128" = "Kur hapet %@";
@@ -1481,7 +1481,7 @@
 "Settings.Siri.OpenTabShortcut" = "Hap Skedë të Re";
 
 /* The description that describes what siri shortcuts are */
-"Settings.Siri.SectionDescription" = "Përdorni shkurtore Siri për ta hapur shpejt e shpejt Firefox-in përmes Siri-t";
+"Settings.Siri.SectionDescription" = "Përdorni shkurtore Siri për ta hapur shpejt e shpejt Floorp-in përmes Siri-t";
 
 /* The option that takes you to the siri shortcuts settings page */
 "Settings.Siri.SectionName" = "Shkurtore Siri";
@@ -1607,13 +1607,13 @@
 "ShareExtension.LoadInBackgroundAction.Title" = "Ngarkoje në Prapaskenë";
 
 /* Share extension label shown after user has performed 'Load in Background' action. */
-"ShareExtension.LoadInBackgroundActionDone.Title" = "Po ngarkohet në Firefox";
+"ShareExtension.LoadInBackgroundActionDone.Title" = "Po ngarkohet në Floorp";
 
 /* Action label on share extension to immediately open page in Firefox. */
-"ShareExtension.OpenInFirefoxAction.Title" = "Hape në Firefox";
+"ShareExtension.OpenInFirefoxAction.Title" = "Hape në Floorp";
 
 /* Action label on share extension to search for the selected text in Firefox. */
-"ShareExtension.SeachInFirefoxAction.Title" = "Kërko në Firefox";
+"ShareExtension.SeachInFirefoxAction.Title" = "Kërko në Floorp";
 
 /* Button in share sheet to copy the url of the current tab. */
 "ShareSheet.Copy.Title.v108" = "Kopjoje";
@@ -1757,7 +1757,7 @@
 "UIMenuItem.PasteGo" = "Ngjite & Shko";
 
 /* Search in New Tab Text selection menu item */
-"UIMenuItem.SearchWithFirefox" = "Kërko me Firefox";
+"UIMenuItem.SearchWithFirefox" = "Kërko me Floorp";
 
 /* Accessibility label for unread article in reading list. It's a past participle - functions as an adjective. */
 "unread" = "të palexuara";
@@ -1805,7 +1805,7 @@
 "Yesterday" = "Dje";
 
 /* Error message in the remote tabs panel */
-"You don’t have any tabs open in Firefox on your other devices." = "S’keni ndonjë skedë të hapur te Firefox-i në pajisje tuajat të tjera.";
+"You don’t have any tabs open in Firefox on your other devices." = "S’keni ndonjë skedë të hapur te Floorp-i në pajisje tuajat të tjera.";
 
 /* Your Rights settings section title */
 "Your Rights" = "Të drejtat Tuaja";

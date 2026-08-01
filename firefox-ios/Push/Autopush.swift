@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
+import Foundation
 import Shared
 import Storage
 
@@ -61,24 +62,34 @@ public actor Autopush {
     private let pushManager: PushManagerProtocol
 
     public init(files: FileAccessor) async throws {
-        guard AppServicesPolicy.allowsRemotePushNotifications else {
-            throw AutopushInitializationError.remotePushNotificationsDisabled
-        }
+        let configurationLabel = try Self.configurationLabel(
+            bundleIdentifier: Bundle.main.bundleIdentifier ?? "unknown",
+            allowsRemotePushNotifications: AppServicesPolicy.allowsRemotePushNotifications
+        )
 
         let pushDB = URL(
             fileURLWithPath: try files.getAndEnsureDirectory(),
             isDirectory: true
         ).appendingPathComponent("push.db").path
 
-        let pushManagerConfig = try PushConfigurationLabel
-            .fromScheme(scheme: AppConstants.scheme)
-            .toConfiguration(dbPath: pushDB)
+        let pushManagerConfig = configurationLabel.toConfiguration(dbPath: pushDB)
         self.pushManager = try PushManager(config: pushManagerConfig)
     }
 
     /// Initializer for tests that want to inject a mock push manager
     public init(withPushManager pushManager: PushManagerProtocol) {
         self.pushManager = pushManager
+    }
+
+    static func configurationLabel(
+        bundleIdentifier: String,
+        allowsRemotePushNotifications: Bool
+    ) throws -> PushConfigurationLabel {
+        guard allowsRemotePushNotifications else {
+            throw AutopushInitializationError.remotePushNotificationsDisabled
+        }
+
+        return try PushConfigurationLabel.fromBundleIdentifier(bundleIdentifier)
     }
 }
 

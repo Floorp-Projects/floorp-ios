@@ -10,21 +10,31 @@ import XCTest
 final class ConversionEventTrackerTests: XCTestCase {
     private let installTimestamp: Timestamp = 1_700_000_000_000
 
-    private var userDefaults: MockUserDefaults!
-    private var dataManager: ConversionDataManager!
-    private var mockUpdater: MockConversionValueUpdater!
+    private struct TestState {
+        var dataManager: ConversionDataManager
+        let mockUpdater: MockConversionValueUpdater
+
+        init() {
+            self.dataManager = ConversionDataManager(defaults: MockUserDefaults())
+            self.mockUpdater = MockConversionValueUpdater()
+        }
+    }
+
+    private var state = TestState()
+    private var dataManager: ConversionDataManager {
+        get { state.dataManager }
+        set { state.dataManager = newValue }
+    }
+    private var mockUpdater: MockConversionValueUpdater { state.mockUpdater }
 
     override func setUp() {
         super.setUp()
-        userDefaults = MockUserDefaults()
-        dataManager = ConversionDataManager(defaults: userDefaults)
-        mockUpdater = MockConversionValueUpdater()
+        FloorpFlags.setAdAttributionDisabled(false)
+        state = TestState()
     }
 
     override func tearDown() {
-        userDefaults = nil
-        dataManager = nil
-        mockUpdater = nil
+        FloorpFlags.setAdAttributionDisabled(false)
         super.tearDown()
     }
 
@@ -37,6 +47,15 @@ final class ConversionEventTrackerTests: XCTestCase {
         XCTAssertEqual(mockUpdater.receivedConversionValues.first?.fine, 5)
         XCTAssertEqual(mockUpdater.receivedConversionValues.first?.coarse, .low)
         XCTAssertEqual(mockUpdater.receivedConversionValues.first?.lockWindow, false)
+    }
+
+    func testRecord_floorpAttributionPolicyDisabled_doesNotEmitConversionValue() {
+        FloorpFlags.setAdAttributionDisabled(true)
+        let subject = createSubject()
+
+        subject.record(.activeFirstDay)
+
+        XCTAssertTrue(mockUpdater.receivedConversionValues.isEmpty)
     }
 
     func testRecord_setAsDefault_emitsExpectedConversionValue() {
