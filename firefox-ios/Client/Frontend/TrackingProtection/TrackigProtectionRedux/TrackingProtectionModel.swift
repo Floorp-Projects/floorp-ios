@@ -73,7 +73,13 @@ class TrackingProtectionModel {
     let subtitleLabelA11yId = A11y.subtitleLabel
 
     var websiteTitle: String {
-        return url.baseDomain ?? ""
+        let websiteTitle: String?
+        if let internalURL = InternalURL(url), internalURL.isCertificateErrorURL {
+            websiteTitle = internalURL.originalURLFromErrorPage?.baseDomain
+        } else {
+            websiteTitle = url.baseDomain
+        }
+        return websiteTitle ?? ""
     }
 
     let secureStatusString = String.Menu.EnhancedTrackingProtection.connectionSecureLabel
@@ -229,7 +235,10 @@ class TrackingProtectionModel {
 
     @MainActor
     func clearCookiesAndSiteData() {
-        _ = CookiesClearable().clear()
-        _ = SiteDataClearable().clear()
+        guard let domain = url.baseDomain else { return }
+        Task {
+            await CookiesClearable().clear(forDomain: domain)
+            await SiteDataClearable().clear(forDomain: domain)
+        }
     }
 }

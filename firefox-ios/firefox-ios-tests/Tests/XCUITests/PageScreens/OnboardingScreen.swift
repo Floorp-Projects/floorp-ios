@@ -49,6 +49,38 @@ final class OnboardingScreen {
         case bottom = "Bottom"
     }
 
+    /// A tappable legal link on the Terms of Service card. Each opens an overlay dismissed via a Done
+    /// button: a web pop up for Terms of Use / Privacy Notice, a bottom sheet for Manage.
+    enum ToSLink {
+        case termsOfUse
+        case privacyNotice
+        case manage
+
+        var name: String {
+            switch self {
+            case .termsOfUse: return "Terms of Use"
+            case .privacyNotice: return "Privacy Notice"
+            case .manage: return "Manage"
+            }
+        }
+
+        /// Accessibility identifier applied to the rendered link, matching the ids set in `TermsOfServiceManager`.
+        var identifier: String {
+            switch self {
+            case .termsOfUse: return AccessibilityIdentifiers.TermsOfService.termsOfServiceAgreement
+            case .privacyNotice: return AccessibilityIdentifiers.TermsOfService.privacyNoticeAgreement
+            case .manage: return AccessibilityIdentifiers.TermsOfService.manageDataCollectionAgreement
+            }
+        }
+
+        var overlayName: String {
+            switch self {
+            case .termsOfUse, .privacyNotice: return "link pop up"
+            case .manage: return "Manage bottom sheet"
+            }
+        }
+    }
+
     private let app: XCUIApplication
     private let sel: OnboardingSelectorsSet
     private let flowType: OnboardingFlowType
@@ -104,8 +136,16 @@ final class OnboardingScreen {
     /// Handles the initial ToS screen based on app channel (Firefox Beta, Firefox, Fennec). ToS must be accepted before the
     /// onboarding flow begins.
     func handleTermsOfService() {
-        BaseTestCase().mozWaitForElementToExist(tosContinueButton, timeout: TIMEOUT_LONG)
-        tosContinueButton.tap()
+        let continueButton = tosContinueButton
+        BaseTestCase().mozWaitForElementToExist(continueButton, timeout: TIMEOUT_LONG)
+        // The ToS is presented over full screen with a cross-dissolve transition, so the button
+        // can exist before it is hittable and an early tap gets absorbed. Wait for it to be
+        // hittable, then tap again if the screen has not advanced past the button.
+        BaseTestCase().mozWaitElementHittable(element: continueButton, timeout: TIMEOUT)
+        continueButton.tap()
+        if continueButton.exists {
+            continueButton.tap()
+        }
     }
 
     func assertContinueButtonIsOnTheBottom() {
@@ -177,8 +217,14 @@ final class OnboardingScreen {
 
         // The "System Auto" / "Automatic" label is different between the flows
         switch flowType {
-        case .legacy, .modernOrangeAndBlue:
+        case .legacy:
             themes.append("System Auto")
+        case .modernOrangeAndBlue:
+            if BaseTestCase().isFennec {
+                themes.append("System Auto")
+            } else {
+                themes.append("Automatic")
+            }
         case .modernKit:
             themes.append("Automatic")
         }
@@ -355,6 +401,51 @@ final class OnboardingScreen {
         XCTAssertEqual(button.label, "Continue", "Should show Continue button")
     }
 
+    /// Asserts the given link is displayed on the ToS card.
+    func assertLinkIsDisplayed(_ link: ToSLink) {
+        let element = linkElement(link)
+        BaseTestCase().mozWaitForElementToExist(element)
+        XCTAssertTrue(element.exists, "The \(link.name) link should be displayed on the ToS card")
+    }
+
+    /// Taps the given link to open its overlay. The link is a single hittable control, so a plain tap
+    /// on its accessibility identifier is reliable.
+    func tapLink(_ link: ToSLink) {
+        linkElement(link).waitAndTap()
+    }
+
+    /// Asserts the overlay opened by the given link (web pop up or bottom sheet) is displayed.
+    func assertOverlayIsDisplayed(for link: ToSLink) {
+        let doneButton = overlayDoneButton(link).element(in: app)
+        BaseTestCase().mozWaitForElementToExist(doneButton, timeout: TIMEOUT_LONG)
+        XCTAssertTrue(doneButton.exists, "The \(link.overlayName) should be displayed")
+    }
+
+    /// Asserts the overlay opened by the given link is no longer displayed.
+    func assertOverlayIsClosed(for link: ToSLink) {
+        let doneButton = overlayDoneButton(link).element(in: app)
+        BaseTestCase().mozWaitForElementToNotExist(doneButton)
+        XCTAssertFalse(doneButton.exists, "The \(link.overlayName) should be closed")
+    }
+
+    /// Dismisses the overlay opened by the given link via its Done button, returning to the ToS card.
+    func dismissOverlay(for link: ToSLink) {
+        overlayDoneButton(link).element(in: app).waitAndTap()
+    }
+
+    /// Locates the embedded ToS link by its accessibility identifier. Matched across any element type
+    /// since the link carries both button and link traits.
+    private func linkElement(_ link: ToSLink) -> XCUIElement {
+        return app.descendants(matching: .any).matching(identifier: link.identifier).firstMatch
+    }
+
+    private func overlayDoneButton(_ link: ToSLink) -> Selector {
+        switch link {
+        case .termsOfUse, .privacyNotice: return sel.TOS_PAGE_DONE_BUTTON
+        case .manage: return sel.MANAGE_SHEET_DONE_BUTTON
+        }
+    }
+
     /// Verifies the welcome screen (shown after ToS acceptance)
     func assertModernWelcomeScreen() {
         let title = sel.titleLabel(rootId: rootA11yId).element(in: app)
@@ -391,15 +482,30 @@ final class OnboardingScreen {
         XCTAssertTrue(primary.exists, "Primary button should exist")
         XCTAssertTrue(lightButton.exists, "Light theme option should exist")
         XCTAssertTrue(darkButton.exists, "Dark theme option should exist")
+        XCTAssertTrue(systemThemeButton.exists, "System Auto theme option should exist")
+    }
 
-        // The "System Auto" / "Automatic" label is different between the two modern flows
-        var systemButton: XCUIElement?
-        if case .modernOrangeAndBlue = flowType {
-            systemButton = app.buttons["\(rootA11yId)SegmentedButton.System Auto"]
-        } else if case .modernKit = flowType {
-            systemButton = app.buttons["\(rootA11yId)SegmentedButton.Automatic"]
+    /// Asserts the theme card defaults to the System Auto / Automatic option, with Light and Dark
+    /// unselected. Selection is read from the button's accessibility selected state.
+    func assertDefaultThemeIsSystemAuto() {
+        let lightButton = app.buttons["\(rootA11yId)SegmentedButton.Light"]
+        let darkButton = app.buttons["\(rootA11yId)SegmentedButton.Dark"]
+
+        BaseTestCase().waitForElementsToExist([systemThemeButton, lightButton, darkButton])
+        XCTAssertTrue(systemThemeButton.isSelected, "System Auto should be the default selected theme")
+        XCTAssertFalse(lightButton.isSelected, "Light theme should not be selected by default")
+        XCTAssertFalse(darkButton.isSelected, "Dark theme should not be selected by default")
+    }
+
+    /// The System Auto / Automatic segmented button. Its label differs between the modern flows.
+    private var systemThemeButton: XCUIElement {
+        let label: String
+        if BaseTestCase().isFennec, case .modernOrangeAndBlue = flowType {
+            label = "System Auto"
+        } else {
+            label = "Automatic"
         }
-        XCTAssertEqual(systemButton?.exists, true, "System Auto theme option should exist")
+        return app.buttons["\(rootA11yId)SegmentedButton.\(label)"]
     }
 
     func assertSyncScreen() {
@@ -416,15 +522,23 @@ final class OnboardingScreen {
             // There are textual differences between the flows for the description
             let expectedDescription: String
             let expectedSecondary: String
+            let longerDescription = "Grab bookmarks, passwords, and more on any device in a snap." +
+            " Your personal data stays safe and secure with encryption."
+            let shorterDescription = "Get your bookmarks, history, and passwords on any device."
             switch flowType {
-            case .modernOrangeAndBlue:
-                expectedDescription = "Get your bookmarks, history, and passwords on any device."
-                expectedSecondary = "Not now"
             case .modernKit:
                 // swiftlint:disable line_length
-                expectedDescription = "Grab bookmarks, passwords, and more on any device in a snap. Your personal data stays safe and secure with encryption."
+                expectedDescription = longerDescription
                 expectedSecondary = "Not Now"
                 // swiftlint:enable line_length
+            case .modernOrangeAndBlue:
+                if BaseTestCase().isFennec {
+                    expectedDescription = shorterDescription
+                    expectedSecondary = "Not now"
+                } else {
+                    expectedDescription = longerDescription
+                    expectedSecondary = "Not Now"
+                }
             case .legacy:
                 expectedDescription = "" // Unexpected path; should not happen
                 expectedSecondary = ""

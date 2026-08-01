@@ -14,7 +14,7 @@ protocol BrowsingSettingsDelegate: AnyObject {
     func pressedAutoPlay()
 }
 
-class BrowsingSettingsViewController: SettingsTableViewController, LegacyFeatureFlaggable {
+class BrowsingSettingsViewController: SettingsTableViewController, FeatureFlaggable {
     weak var parentCoordinator: BrowsingSettingsDelegate?
 
     init(profile: Profile,
@@ -26,6 +26,11 @@ class BrowsingSettingsViewController: SettingsTableViewController, LegacyFeature
 
     required init?(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        tableView.register(cellType: ThemedLearnMoreTableViewCell.self)
     }
 
     private func getDefaultBrowserSetting() -> [SettingSection] {
@@ -40,7 +45,7 @@ class BrowsingSettingsViewController: SettingsTableViewController, LegacyFeature
         var settings = [SettingSection]()
 
         var linksSettings: [Setting] = [OpenWithSetting(settings: self, settingsDelegate: parentCoordinator)]
-        var mediaSection = [Setting]()
+        var contentSection = [Setting]()
         if let profile {
             let theme = themeManager.getCurrentTheme(for: windowUUID)
             let offerToOpenCopiedLinksSettings = BoolSetting(
@@ -76,18 +81,38 @@ class BrowsingSettingsViewController: SettingsTableViewController, LegacyFeature
                                                   prefs: profile.prefs,
                                                   settingsDelegate: parentCoordinator)
 
-            mediaSection += [
-                autoplaySetting,
+            contentSection.append(autoplaySetting)
+            if featureFlagsProvider.isEnabled(.adBlocker) {
+                contentSection.append(AdBlockerSetting(
+                    prefs: profile.prefs,
+                    supportDelegate: parentCoordinator as? SupportSettingsDelegate,
+                    settingDidChange: { isEnabled in
+                        if isEnabled {
+                            Task {
+                                await ContentBlocker.shared.reloadAdBlockerList()
+                                ContentBlocker.shared.prefsChanged()
+                            }
+                        } else {
+                            ContentBlocker.shared.prefsChanged()
+                        }
+                    }
+                ))
+            }
+            contentSection += [
                 BlockPopupSetting(prefs: profile.prefs),
                 NoImageModeSetting(profile: profile),
                 blockOpeningExternalAppsSettings
             ]
         }
 
+        let contentSectionTitle = featureFlagsProvider.isEnabled(.adBlocker)
+            ? String.Settings.Browsing.Content
+            : String.Settings.Browsing.Media
+
         settings += [SettingSection(title: NSAttributedString(string: .Settings.Browsing.Links),
                                     children: linksSettings),
-                     SettingSection(title: NSAttributedString(string: .Settings.Browsing.Media),
-                                    children: mediaSection)]
+                     SettingSection(title: NSAttributedString(string: contentSectionTitle),
+                                    children: contentSection)]
 
         return settings
     }

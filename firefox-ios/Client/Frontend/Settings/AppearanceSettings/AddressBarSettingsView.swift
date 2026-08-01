@@ -7,7 +7,7 @@ import Common
 import Shared
 
 /// The main view displaying the settings for the address bar position menu.
-struct AddressBarSettingsView: View, LegacyFeatureFlaggable {
+struct AddressBarSettingsView: View, UserFeaturePreferenceProvider {
     let windowUUID: WindowUUID
     /// NOTE: To avoid duplication, the old view model is reused in the new address bar setting menu.
     /// TODO(FXIOS-12000): Once the experiment is done, we can remove the old viewmodel and move it to here.
@@ -30,7 +30,7 @@ struct AddressBarSettingsView: View, LegacyFeatureFlaggable {
     }
 
     private var addressBarPosition: SearchBarPosition {
-        LegacyFeatureFlagsManager.shared.getCustomState(for: .searchBarPosition) ?? .bottom
+        userPreferences.searchBarPosition
     }
 
     private var viewBackground: Color {
@@ -43,22 +43,24 @@ struct AddressBarSettingsView: View, LegacyFeatureFlaggable {
     }
 
     var body: some View {
-        VStack {
-            GenericSectionView(theme: currentTheme,
-                               title: .Settings.AddressBar.AddressBarSectionTitle,
-                               identifier: AccessibilityIdentifiers.Settings.SearchBar.searchBarSetting) {
-                AddressBarSelectionView(
-                    theme: currentTheme,
-                    selectedAddressBarPosition: addressBarPosition,
-                    onSelected: viewModel.saveSearchBarPosition)
-                .modifier(SectionStyle(theme: currentTheme, cornerRadius: UX.cornerRadius))
-            }
+        ScrollView {
+            VStack {
+                GenericSectionView(theme: currentTheme,
+                                   title: .Settings.AddressBar.AddressBarSectionTitle,
+                                   identifier: AccessibilityIdentifiers.Settings.SearchBar.searchBarSetting) {
+                    AddressBarSelectionView(
+                        theme: currentTheme,
+                        selectedAddressBarPosition: addressBarPosition,
+                        onSelected: viewModel.saveSearchBarPosition)
+                    .modifier(SectionStyle(theme: currentTheme, cornerRadius: UX.cornerRadius))
+                }
 
-            NavigationToolbarSection(theme: currentTheme,
-                                     selectedOption: selectedMiddleButtonType,
-                                     onChange: updateMiddleNavigationToolbarButton,
-                                     cornerRadius: UX.cornerRadius)
-            Spacer()
+                NavigationToolbarSection(theme: currentTheme,
+                                         selectedOption: selectedMiddleButtonType,
+                                         onChange: updateMiddleNavigationToolbarButton,
+                                         cornerRadius: UX.cornerRadius)
+                Spacer()
+            }
         }
         .modifier(PaddingStyle(theme: currentTheme, spacing: UX.spacing))
         .background(viewBackground)

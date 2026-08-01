@@ -36,7 +36,7 @@ class PhotonActionSheetTests: BaseTestCase {
         app.launch()
         navigator.nowAt(HomePanelsScreen)
         navigator.goto(URLBarOpen)
-        navigator.openURL(path(forTestPage: "test-example.html"))
+        navigator.openURL(path(forTestPage: TestPages.exampleHTML))
         mozWaitForElementToExist(app.webViews.firstMatch)
 
         // Open Page Action Menu Sheet and Pin the site
@@ -50,14 +50,14 @@ class PhotonActionSheetTests: BaseTestCase {
         browserScreen.tapCancelButtonIfExist()
 
         // Verify that the site is pinned to top
-        topSitesScreen.assertTopSiteExists(named: "Example Domain")
-        topSitesScreen.assertTopSitePinned(named: "Example Domain")
+        topSitesScreen.assertTopSiteExists(named: TestLabels.exampleDomain)
+        topSitesScreen.assertTopSitePinned(named: TestLabels.exampleDomain)
 
         // Remove pin
-        topSitesScreen.longPressOnPinnedSite(named: "Example Domain")
+        topSitesScreen.longPressOnPinnedSite(named: TestLabels.exampleDomain)
         topSitesScreen.tapPinSlashIcon()
-        topSitesScreen.assertTopSiteNotPinned(named: "Example Domain")
-        topSitesScreen.assertTopSiteDoesNotExist(named: "Example Domain")
+        topSitesScreen.assertTopSiteNotPinned(named: TestLabels.exampleDomain)
+        topSitesScreen.assertTopSiteDoesNotExist(named: TestLabels.exampleDomain)
     }
 
     // https://mozilla.testrail.io/index.php?/cases/view/2306841
@@ -73,13 +73,17 @@ class PhotonActionSheetTests: BaseTestCase {
     }
 
     // https://mozilla.testrail.io/index.php?/cases/view/2323203
-    func testShareSheetSendToDevice() {
+    func testShareSheetSendToDevice() throws {
+        try XCTSkipIf(
+            isFirefoxBeta || isFirefox,
+            "Skipping test because Firefox and FirefoxBeta are not yet supported"
+        )
         openNewShareSheet()
         var attempts = 2
         let sendToDeviceButton = app.staticTexts["Send to Device"]
         while sendToDeviceButton.isVisible() && attempts > 0 {
             sendToDeviceButton.waitAndTap()
-            waitForNoExistence(sendToDeviceButton)
+            mozWaitForElementToNotExist(sendToDeviceButton)
             attempts -= 1
         }
         waitForElementsToExist(
@@ -92,7 +96,11 @@ class PhotonActionSheetTests: BaseTestCase {
     }
 
     // https://mozilla.testrail.io/index.php?/cases/view/2323204
-    func testShareSheetOpenAndCancel() {
+    func testShareSheetOpenAndCancel() throws {
+        try XCTSkipIf(
+            isFirefoxBeta || isFirefox,
+            "Skipping test because Firefox and FirefoxBeta are not yet supported"
+        )
         openNewShareSheet()
         app.buttons["Cancel"].waitAndTap()
         // User is back to the BrowserTab where the sharesheet was launched

@@ -15,8 +15,7 @@ class MainMenuViewController: UIViewController,
                               UIScrollViewDelegate,
                               Themeable,
                               Notifiable,
-                              StoreSubscriber,
-                              LegacyFeatureFlaggable {
+                              StoreSubscriber {
     private struct UX {
         static let hintViewCornerRadius: CGFloat = 20
         static let hintViewHeight: CGFloat = 140
@@ -225,13 +224,9 @@ class MainMenuViewController: UIViewController,
         let shouldShowBlur = !mainMenuHelper.isReduceTransparencyEnabled
 
         if shouldShowBlur {
-#if canImport(FoundationModels)
             if #unavailable(iOS 26.0) {
                 view.addBlurEffectWithClearBackgroundAndClipping(using: .regular)
             }
-#else
-            view.addBlurEffectWithClearBackgroundAndClipping(using: .regular)
-#endif
         } else {
             view.removeVisualEffectView()
         }
@@ -292,13 +287,9 @@ class MainMenuViewController: UIViewController,
     }
 
     private func setupView() {
-        #if canImport(FoundationModels)
         if #unavailable(iOS 26.0) {
             view.addBlurEffectWithClearBackgroundAndClipping(using: .regular)
         }
-        #else
-            view.addBlurEffectWithClearBackgroundAndClipping(using: .regular)
-        #endif
         view.addSubview(menuContent)
 
         NSLayoutConstraint.activate([

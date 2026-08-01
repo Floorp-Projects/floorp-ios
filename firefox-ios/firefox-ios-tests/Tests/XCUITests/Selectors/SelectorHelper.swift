@@ -26,6 +26,7 @@ enum SelectorStrategy {
     case otherElementsButtonStaticTextByLabel(String)
     case collectionViewLinkById(String)
     case cellButtonById(String)
+    case navigationBarButtonById(String)
 }
 
 // Selector model (with metadata)
@@ -97,6 +98,8 @@ extension Selector {
             return app.collectionViews.links[id]
         case .cellButtonById(let id):
             return app.cells.buttons[id]
+        case .navigationBarButtonById(let id):
+            return app.navigationBars.buttons[id]
         }
     }
 
@@ -148,6 +151,8 @@ extension Selector {
             return app.collectionViews.links.matching(identifier: id)
         case .cellButtonById(let id):
             return app.cells.buttons.matching(identifier: id)
+        case .navigationBarButtonById(let id):
+            return app.navigationBars.buttons.matching(identifier: id)
         }
     }
 
@@ -163,6 +168,13 @@ extension Selector {
 
     static func linkByLabel(_ label: String, description: String, groups: [String] = []) -> Selector {
         let p = NSPredicate(format: "elementType == %d AND label == %@", XCUIElement.ElementType.link.rawValue, label)
+        return Selector(strategy: .predicate(p), value: label, description: description, groups: groups)
+    }
+
+    /// Matches a `link` element whose label contains the fragment. The embedded onboarding links are
+    /// discrete link elements, so this targets the link glyphs (not the surrounding sentence text).
+    static func linkContainingLabel(_ label: String, description: String, groups: [String] = []) -> Selector {
+        let p = NSPredicate(format: "elementType == %d AND label CONTAINS %@", XCUIElement.ElementType.link.rawValue, label)
         return Selector(strategy: .predicate(p), value: label, description: description, groups: groups)
     }
 }

@@ -10,12 +10,9 @@ import OnboardingKit
 class SceneCoordinator: BaseCoordinator,
                         LaunchCoordinatorDelegate,
                         LaunchFinishedLoadingDelegate,
-                        LegacyFeatureFlaggable {
+                        FeatureFlaggable {
     var window: UIWindow?
     var windowUUID: WindowUUID { reservedWindowUUID.uuid }
-    private var isDeeplinkOptimizationRefactorEnabled: Bool {
-        return featureFlags.isFeatureEnabled(.deeplinkOptimizationRefactor, checking: .buildOnly)
-    }
     private let screenshotService: ScreenshotService
     private let sceneContainer: SceneContainer
     private let windowManager: WindowManager
@@ -57,16 +54,16 @@ class SceneCoordinator: BaseCoordinator,
         router.setRootViewController(sceneContainer, hideBar: true)
 
         let launchScreenVC: UIViewController
-        if introManager.isModernOnboardingEnabled && introManager.shouldShowIntroScreen {
-            // Show modern launch screen only for first-time users when modern onboarding is enabled
+        if introManager.shouldShowIntroScreen {
+            // Show the launch screen for first-time users
             let onboardingKitVariant = introManager.onboardingKitVariant
-            launchScreenVC = ModernLaunchScreenViewController(
+            launchScreenVC = OnboardingLaunchScreenViewController(
                 windowUUID: windowUUID,
                 coordinator: self,
                 variant: onboardingKitVariant
             )
         } else {
-            // Use legacy launch screen for returning users or when modern onboarding is disabled
+            // Use the standard launch screen for returning users
             launchScreenVC = LaunchScreenViewController(windowUUID: windowUUID, coordinator: self)
         }
         launchScreenViewController = launchScreenVC
@@ -93,14 +90,12 @@ class SceneCoordinator: BaseCoordinator,
 
     private func canShowIntroOnboarding() -> Bool {
         let launchType = LaunchType.intro(manager: introManager)
-        let isIphone = UIDevice.current.userInterfaceIdiom == .phone
-        return launchType.canLaunch(fromType: .SceneCoordinator, isIphone: isIphone)
+        return launchType.canLaunch(fromType: .SceneCoordinator)
     }
 
     private func showIntroOnboardingIfNeeded() {
         let launchType = LaunchType.intro(manager: introManager)
-        let isIphone = UIDevice.current.userInterfaceIdiom == .phone
-        if launchType.canLaunch(fromType: .SceneCoordinator, isIphone: isIphone) {
+        if launchType.canLaunch(fromType: .SceneCoordinator) {
             startLaunch(with: launchType)
         }
     }
@@ -108,8 +103,7 @@ class SceneCoordinator: BaseCoordinator,
     // MARK: - LaunchFinishedLoadingDelegate
 
     func launchWith(launchType: LaunchType) {
-        let isIphone = UIDevice.current.userInterfaceIdiom == .phone
-        guard launchType.canLaunch(fromType: .SceneCoordinator, isIphone: isIphone) else {
+        guard launchType.canLaunch(fromType: .SceneCoordinator) else {
             startBrowser(with: launchType)
             return
         }
@@ -158,13 +152,6 @@ class SceneCoordinator: BaseCoordinator,
 
         if let savedRoute {
             browserCoordinator.findAndHandle(route: savedRoute)
-            // In the case we have saved route it means we are starting the browser with a deeplink.
-            // A saved route is present when findAndHandle is called on the SceneCoordinator and BrowserCoordinator
-            // is not in the hierarchy yet.
-            guard isDeeplinkOptimizationRefactorEnabled,
-                  !AppEventQueue.hasSignalled(.recordStartupTimeOpenDeeplinkComplete),
-                  !AppEventQueue.hasSignalled(.recordStartupTimeOpenDeeplinkCancelled) else { return }
-            AppEventQueue.signal(event: .recordStartupTimeOpenDeeplinkComplete)
         }
     }
 
@@ -174,7 +161,7 @@ class SceneCoordinator: BaseCoordinator,
         remove(child: coordinator)
         // TODO: FXIOS-13434 Refactor the `LaunchScreenViewModel` to enhance the presentation logic
         // This workaround is needed since .overFullScreen presentation doesn't call UIViewController lifecycle methods.
-        guard let launchScreenViewController = launchScreenViewController as? ModernLaunchScreenViewController else {
+        guard let launchScreenViewController = launchScreenViewController as? OnboardingLaunchScreenViewController else {
             return
         }
         launchScreenViewController.loadNextLaunchType()

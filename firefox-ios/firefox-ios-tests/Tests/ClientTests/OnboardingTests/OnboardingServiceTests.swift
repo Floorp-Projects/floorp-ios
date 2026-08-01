@@ -54,7 +54,7 @@ final class MockIntroScreenManager: IntroScreenManagerProtocol {
     init(
         shouldShowIntro: Bool = false,
         isModernEnabled: Bool = false,
-        onboardingVariant: Client.OnboardingVariant = .legacy
+        onboardingVariant: Client.OnboardingVariant = .modern
     ) {
         self.stubShouldShowIntroScreen = shouldShowIntro
         self.stubIsModernOnboardingEnabled = isModernEnabled
@@ -72,7 +72,7 @@ final class MockIntroScreenManager: IntroScreenManagerProtocol {
     var shouldShowVideoIntro: Bool { return false }
 
     var onboardingKitVariant: OnboardingKit.OnboardingVariant {
-        return OnboardingKit.OnboardingVariant(rawValue: onboardingVariant.rawValue) ?? .modern
+        return OnboardingKit.OnboardingVariant(rawValue: onboardingVariant.rawValue) ?? .base
     }
 
     func didSeeIntroScreen() {
@@ -84,52 +84,25 @@ class MockSearchBarLocationSaver: SearchBarLocationSaverProtocol {
     var saveUserSearchBarLocationCalled = false
     var savedProfile: Profile?
 
-    func saveUserSearchBarLocation(profile: Profile, userInterfaceIdiom: UIUserInterfaceIdiom) {
+    func saveUserSearchBarLocation(
+        profile: Profile,
+        userInterfaceIdiom: UIUserInterfaceIdiom
+    ) {
         saveUserSearchBarLocationCalled = true
         savedProfile = profile
+    }
+
+    func migrateBottomBarPositionToTopOnIPad(
+        profile: Profile,
+        userInterfaceIdiom: UIUserInterfaceIdiom
+    ) {
+        // no-op for now
     }
 }
 
 class MockOnboardingTelemetryUtility: OnboardingTelemetryProtocol {
-    var sendCardViewTelemetryCalled = false
-    var sendButtonActionTelemetryCalled = false
-    var sendMultipleChoiceButtonActionTelemetryCalled = false
-    var sendDismissOnboardingTelemetryCalled = false
     var sendGoToSettingsButtonTappedTelemetryCalled = false
     var sendDismissButtonTappedTelemetryCalled = false
-
-    var cardName: String?
-    var action: OnboardingActions?
-    var primaryButton: Bool?
-    var multipleChoiceAction: OnboardingMultipleChoiceAction?
-
-    func sendCardViewTelemetry(from cardName: String) {
-        sendCardViewTelemetryCalled = true
-        self.cardName = cardName
-    }
-
-    func sendButtonActionTelemetry(from cardName: String,
-                                   with action: OnboardingActions,
-                                   and primaryButton: Bool) {
-        sendButtonActionTelemetryCalled = true
-        self.cardName = cardName
-        self.action = action
-        self.primaryButton = primaryButton
-    }
-
-    func sendMultipleChoiceButtonActionTelemetry(
-        from cardName: String,
-        with action: OnboardingMultipleChoiceAction
-    ) {
-        sendMultipleChoiceButtonActionTelemetryCalled = true
-        self.cardName = cardName
-        self.multipleChoiceAction = action
-    }
-
-    func sendDismissOnboardingTelemetry(from cardName: String) {
-        sendDismissOnboardingTelemetryCalled = true
-        self.cardName = cardName
-    }
 
     func sendGoToSettingsButtonTappedTelemetry() {
         sendGoToSettingsButtonTappedTelemetryCalled = true
@@ -139,28 +112,13 @@ class MockOnboardingTelemetryUtility: OnboardingTelemetryProtocol {
         sendDismissButtonTappedTelemetryCalled = true
     }
 
-    var sendOnboardingShownTelemetryCalled = false
-    func sendOnboardingShownTelemetry() {
-        sendOnboardingShownTelemetryCalled = true
-    }
-
-    var sendOnboardingDismissedTelemetryCalled = false
-    var lastDismissedOutcome: OnboardingFlowOutcome?
-    func sendOnboardingDismissedTelemetry(outcome: OnboardingFlowOutcome) {
-        sendOnboardingDismissedTelemetryCalled = true
-        lastDismissedOutcome = outcome
-    }
-
     func sendWallpaperSelectorViewTelemetry() {}
     func sendWallpaperSelectorCloseTelemetry() {}
     func sendWallpaperSelectorSelectedTelemetry(wallpaperName: String, wallpaperType: String) {}
-    func sendWallpaperSelectedTelemetry(wallpaperName: String, wallpaperType: String) {}
-    func sendEngagementNotificationTappedTelemetry() {}
-    func sendEngagementNotificationCancelTelemetry() {}
 }
 
 class MockActivityEventHelper: ActivityEventHelper {
-    var chosenOption: [IntroViewModel.OnboardingOptions] = []
+    var chosenOption: [ActivityEventHelper.OnboardingOptions] = []
     var updateOnboardingUserActivationEventCalled = false
 
     override func updateOnboardingUserActivationEvent() {
@@ -251,7 +209,6 @@ final class OnboardingServiceTests: XCTestCase {
         // Then
         XCTAssertTrue(mockNotificationManager.requestAuthorizationCalled)
         XCTAssertTrue(activityEventHelper.chosenOptions.contains(.askForNotificationPermission))
-        XCTAssertTrue(activityEventHelper.updateOnboardingUserActivationEventCalled)
 
         wait(for: [expectation], timeout: 1.0)
     }
@@ -424,7 +381,6 @@ final class OnboardingServiceTests: XCTestCase {
 
         // Then
         XCTAssertTrue(activityEventHelper.chosenOptions.contains(.syncSignIn))
-        XCTAssertTrue(activityEventHelper.updateOnboardingUserActivationEventCalled)
         XCTAssertTrue(mockDelegate.presentCalled)
         XCTAssertNotNil(mockDelegate.presentedViewController)
         XCTAssertEqual(mockDelegate.animatedValue, true)

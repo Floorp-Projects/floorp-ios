@@ -6,6 +6,7 @@ import Common
 import Foundation
 import Shared
 import Kingfisher
+import WebKit
 
 import class MozillaAppServices.HardcodedNimbusFeatures
 
@@ -96,16 +97,21 @@ class UITestAppDelegate: AppDelegate {
             profile.prefs.setInt(1, forKey: PrefsKeys.UseStageServer)
         }
 
+        // Point the FxA account manager at a custom content server (e.g. a local
+        // FxA stack) so pairing/sign-in can run against it. Set before the
+        // account manager initializes. Used by the pairing E2E test.
+        if let customFxA = ProcessInfo.processInfo.environment["CUSTOM_FXA_SERVER"],
+           !customFxA.isEmpty {
+            profile.prefs.setBool(true, forKey: PrefsKeys.KeyUseCustomFxAContentServer)
+            profile.prefs.setString(customFxA, forKey: PrefsKeys.KeyCustomFxAContentServer)
+        }
+
         if launchArguments.contains(LaunchArguments.FxAChinaServer) {
             profile.prefs.setInt(1, forKey: PrefsKeys.KeyEnableChinaSyncService)
         }
 
         if launchArguments.contains(LaunchArguments.DisableAnimations) {
             UIView.setAnimationsEnabled(false)
-        }
-
-        if launchArguments.contains(LaunchArguments.SkipSplashScreenExperiment) {
-            profile.prefs.setBool(true, forKey: PrefsKeys.splashScreenShownKey)
         }
 
         if launchArguments.contains(LaunchArguments.ResetMicrosurveyExpirationCount) {
@@ -227,6 +233,15 @@ class UITestAppDelegate: AppDelegate {
         // If the app is running from a XCUITest reset all settings in the app
         if ProcessInfo.processInfo.arguments.contains(LaunchArguments.ClearProfile) {
             resetApplication()
+        }
+
+        // Opt-in: WKWebView cookies/site data live in WKWebsiteDataStore, which ClearProfile does not
+        // clear. Only cleared when this argument is present so it doesn't reset web state for every test.
+        if ProcessInfo.processInfo.arguments.contains(LaunchArguments.ClearWebData) {
+            WKWebsiteDataStore.default().removeData(
+                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                modifiedSince: .distantPast
+            ) {}
         }
 
         Tab.ChangeUserAgent.clear()

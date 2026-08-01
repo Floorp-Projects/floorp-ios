@@ -32,14 +32,15 @@ struct AIControlsSettingsView: View, ThemeApplicable {
                 Text(aiControlsModel.blockAIEnhancementsDescription)
                     .font(FXFontStyles.Regular.caption1.scaledSwiftUIFont())
                     .foregroundStyle(themeColors.textSecondary.color)
-                    .padding(.leading)
+                    .padding(.leading, UX.padding)
                 if let url = aiControlsModel.headerLinkInfo.url {
-                    Link(
-                        aiControlsModel.blockAIEnhancementsLinkInfo.label,
-                        destination: url
-                    )
-                    .tint(themeColors.actionPrimary.color)
-                    .font(FXFontStyles.Regular.caption1.scaledSwiftUIFont())
+                    Link(destination: url) {
+                        Text(aiControlsModel.blockAIEnhancementsLinkInfo.label)
+                            .underline()
+                            .multilineTextAlignment(.leading)
+                            .font(FXFontStyles.Regular.caption1.scaledSwiftUIFont())
+                            .foregroundStyle(themeColors.layerSelectedText.color)
+                    }
                     .padding(.leading, UX.padding)
                 }
                 Spacer(minLength: UX.cardSpacing)
@@ -50,26 +51,15 @@ struct AIControlsSettingsView: View, ThemeApplicable {
                 if aiControlsModel.hasVisibleAIFeatures {
                     aiFeaturesControls
                 }
+                if aiControlsModel.hasVisibleAIFeatures {
+                    aiFeaturesControlsStatusDescription
+                }
             }.padding(.horizontal, UX.padding)
-            if aiControlsModel.hasVisibleAIFeatures {
-                VStack(alignment: .leading, spacing: UX.rowSpacing) {
-                    Text(.init(.Settings.AIControls.AIPoweredFeaturesSection.AvailableStatusDescription))
-                        .font(FXFontStyles.Regular.caption1.scaledSwiftUIFont())
-                    Text(.init(.Settings.AIControls.AIPoweredFeaturesSection.BlockedStatusDescription))
-                        .font(FXFontStyles.Regular.caption1.scaledSwiftUIFont())
-                }.padding(.horizontal, UX.padding*2)
-            }
         }
         .background(themeColors.layer1.color)
-        .onChange(of: aiControlsModel.killSwitchIsOn, perform: { newValue in
-            aiControlsModel.toggleKillSwitch(to: newValue)
-        })
-        .onChange(of: aiControlsModel.translationEnabled, perform: { newValue in
-            aiControlsModel.toggleTranslationsFeature(to: newValue)
-        })
-        .onChange(of: aiControlsModel.pageSummariesEnabled, perform: { newValue in
-            aiControlsModel.togglePageSummariesFeature(to: newValue)
-        })
+        .onAppear {
+            applyTheme(theme: themeManager.getCurrentTheme(for: aiControlsModel.windowUUID))
+        }
         .onReceive(NotificationCenter.default.publisher(for: .ThemeDidChange)) { notification in
             guard let uuid = notification.windowUUID, uuid == aiControlsModel.windowUUID else { return }
             applyTheme(theme: themeManager.getCurrentTheme(for: aiControlsModel.windowUUID))
@@ -91,9 +81,13 @@ struct AIControlsSettingsView: View, ThemeApplicable {
                         .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
                         .foregroundStyle(themeColors.textSecondary.color)
                     if let url = aiControlsModel.headerLinkInfo.url {
-                        Link(aiControlsModel.headerLinkInfo.label, destination: url)
-                            .tint(themeColors.actionPrimary.color)
-                            .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
+                        Link(destination: url) {
+                            Text(aiControlsModel.headerLinkInfo.label)
+                                .underline()
+                                .multilineTextAlignment(.leading)
+                                .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
+                                .foregroundStyle(themeColors.layerSelectedText.color)
+                        }
                     }
                 }
                 Spacer()
@@ -110,9 +104,13 @@ struct AIControlsSettingsView: View, ThemeApplicable {
             cornerRadius: UX.cornerRadius,
             padding: UX.padding
         ) {
-            Toggle(isOn: $aiControlsModel.killSwitchIsOn) {
+            Toggle(isOn: Binding(
+                get: { aiControlsModel.killSwitchIsOn },
+                set: { aiControlsModel.toggleKillSwitch(to: $0) }
+            )) {
                 Text(verbatim: .Settings.AIControls.BlockAIEnhancementsTitle)
                     .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textPrimary.color)
             }
             .tint(themeColors.actionPrimary.color)
         }
@@ -125,7 +123,7 @@ struct AIControlsSettingsView: View, ThemeApplicable {
             padding: UX.padding
         ) {
             HStack(alignment: .top) {
-                Image(ImageIdentifiers.information)
+                Image(StandardImageIdentifiers.Large.information)
                 Text(verbatim: .Settings.AIControls.BlockedInformation)
                     .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
                     .foregroundStyle(themeColors.textPrimary.color)
@@ -139,7 +137,7 @@ struct AIControlsSettingsView: View, ThemeApplicable {
         Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.Title)
             .font(.caption)
             .foregroundStyle(themeColors.textSecondary.color)
-            .padding(.leading)
+            .padding(.leading, UX.padding)
         RoundedCard(
             background: themeColors.layer5.color,
             cornerRadius: UX.cornerRadius,
@@ -147,36 +145,94 @@ struct AIControlsSettingsView: View, ThemeApplicable {
         ) {
             VStack(alignment: .leading) {
                 if aiControlsModel.translationsVisible {
-                    Toggle(isOn: $aiControlsModel.translationEnabled) {
-                        VStack(alignment: .leading, spacing: UX.infoCardTextSpacing) {
-                            Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.TranslationSection.Title)
-                                .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
-                                .foregroundStyle(themeColors.textPrimary.color)
-                            Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.TranslationSection.Message)
-                                .font(FXFontStyles.Regular.footnote.scaledSwiftUIFont())
-                                .foregroundStyle(themeColors.textSecondary.color)
-                            aiFeatureToggleStatus(isEnabled: aiControlsModel.translationEnabled)
-                        }
-                    }.tint(themeColors.actionPrimary.color)
+                    translationsToggle
                 }
                 if aiControlsModel.translationsVisible && aiControlsModel.pageSummariesVisible {
                     Divider().foregroundStyle(themeColors.textSecondary.color)
                 }
                 if aiControlsModel.pageSummariesVisible {
-                    Toggle(isOn: $aiControlsModel.pageSummariesEnabled) {
-                        VStack(alignment: .leading, spacing: UX.infoCardTextSpacing) {
-                            Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.PageSummariesSection.Title)
-                                .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
-                                .foregroundStyle(themeColors.textPrimary.color)
-                            Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.PageSummariesSection.Message)
-                                .font(FXFontStyles.Regular.footnote.scaledSwiftUIFont())
-                                .foregroundStyle(themeColors.textSecondary.color)
-                            aiFeatureToggleStatus(isEnabled: aiControlsModel.pageSummariesEnabled)
-                        }
-                    }.tint(themeColors.actionPrimary.color)
+                    pageSummariesToggle
+                }
+                if aiControlsModel.quickAnswersVisible
+                    && (aiControlsModel.translationsVisible || aiControlsModel.pageSummariesVisible) {
+                    Divider().foregroundStyle(themeColors.textSecondary.color)
+                }
+                if aiControlsModel.quickAnswersVisible {
+                    quickAnswersToggle
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    var translationsToggle: some View {
+        Toggle(isOn: Binding(
+            get: { aiControlsModel.translationEnabled },
+            set: { aiControlsModel.toggleTranslationsFeature(to: $0) }
+        )) {
+            VStack(alignment: .leading, spacing: UX.infoCardTextSpacing) {
+                Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.TranslationSection.Title)
+                    .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textPrimary.color)
+                Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.TranslationSection.Message)
+                    .font(FXFontStyles.Regular.footnote.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textSecondary.color)
+                aiFeatureToggleStatus(isEnabled: aiControlsModel.translationEnabled)
+            }
+        }.tint(themeColors.actionPrimary.color)
+    }
+
+    @ViewBuilder
+    var pageSummariesToggle: some View {
+        Toggle(isOn: Binding(
+            get: { aiControlsModel.pageSummariesEnabled },
+            set: { aiControlsModel.togglePageSummariesFeature(to: $0) }
+        )) {
+            VStack(alignment: .leading, spacing: UX.infoCardTextSpacing) {
+                Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.PageSummariesSection.Title)
+                    .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textPrimary.color)
+                Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.PageSummariesSection.Message)
+                    .font(FXFontStyles.Regular.footnote.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textSecondary.color)
+                aiFeatureToggleStatus(isEnabled: aiControlsModel.pageSummariesEnabled)
+            }
+        }.tint(themeColors.actionPrimary.color)
+    }
+
+    @ViewBuilder
+    var quickAnswersToggle: some View {
+        Toggle(isOn: Binding(
+            get: { aiControlsModel.quickAnswersEnabled },
+            set: { aiControlsModel.toggleQuickAnswersFeature(to: $0) }
+        )) {
+            VStack(alignment: .leading, spacing: UX.infoCardTextSpacing) {
+                Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.QuickAnswersSection.Title)
+                    .font(FXFontStyles.Regular.body.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textPrimary.color)
+                Text(verbatim: .Settings.AIControls.AIPoweredFeaturesSection.QuickAnswersSection.Message)
+                    .font(FXFontStyles.Regular.footnote.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textSecondary.color)
+                aiFeatureToggleStatus(isEnabled: aiControlsModel.quickAnswersEnabled)
+            }
+        }.tint(themeColors.actionPrimary.color)
+    }
+
+    @ViewBuilder
+    var aiFeaturesControlsStatusDescription: some View {
+        VStack(alignment: .leading, spacing: UX.rowSpacing) {
+            if let text = aiControlsModel.availableStatusDescription {
+                Text(text)
+                    .font(FXFontStyles.Regular.caption1.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textSecondary.color)
+            }
+            if let text = aiControlsModel.blockedStatusDescription {
+                Text(text)
+                    .font(FXFontStyles.Regular.caption1.scaledSwiftUIFont())
+                    .foregroundStyle(themeColors.textSecondary.color)
+            }
+        }
+        .padding(.leading, UX.padding)
     }
 
     @ViewBuilder

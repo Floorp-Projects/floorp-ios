@@ -31,7 +31,6 @@ final class TranslationsServiceTests: XCTestCase {
             injectedWindowManager: mockWindowManager,
             injectedTabManager: mockTabManager
         )
-        LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: mockProfile)
     }
 
     override func tearDown() async throws {
@@ -112,6 +111,22 @@ final class TranslationsServiceTests: XCTestCase {
         XCTAssertFalse(
             result,
             "Expected shouldOfferTranslation to be false when the only preferred language matches the page language."
+        )
+    }
+
+    func test_shouldOfferTranslation_returnsTrue_whenPageLanguageMatchesFirstPreferredLanguageAndOthersExist() async throws {
+        let subject = createSubject(
+            detectedLanguage: "en",
+            languageDetectorError: nil,
+            modelsAvailable: false
+        )
+
+        setupWebViewForTabManager()
+
+        let result = try await subject.shouldOfferTranslation(for: .XCTestDefaultUUID, using: ["en", "fr"])
+        XCTAssertTrue(
+            result,
+            "Expected shouldOfferTranslation to be true when the page is in a preferred language and others exist."
         )
     }
 

@@ -63,9 +63,6 @@ github:
     name: darkreader
   - owner: cure53
     name: dompurify
-    # We used CopyWithChanges in our project, modified and renamed to CopyWithUpdates. Credit author here.
-  - owner: entonio
-    name: CopyWithChanges
 
 # Manually specify additional non-remote repositories not picked up by LicensePlist
 manual:
@@ -74,6 +71,8 @@ manual:
   # Manually add Down's license so we can correct some run-on text in the generated HTML
   - name: "Down"
     file: "LicenseFiles/Down License.txt"
+  - name: "EasyList"
+    file: "LicenseFiles/EasyList.txt"
 
 # Rename a few packages to more human-readable names
 rename:

@@ -3,9 +3,12 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
+import Glean
 import Storage
+import UIKit
 import WebKit
 import SummarizeKit
+import QuickAnswersKit
 
 import struct MozillaAppServices.CreditCard
 import enum MozillaAppServices.VisitType
@@ -120,6 +123,23 @@ protocol BrowserNavigationHandler: AnyObject, QRCodeNavigationHandler {
 
     @MainActor
     func showShortcutsLibrary()
+
+    @MainActor
+    func showWorldCupCountryPicker()
+
+    @MainActor
+    func showGoogleLensPhotoPicker()
+
+    @MainActor
+    func showGoogleLensCamera()
+
+    @MainActor
+    func searchGoogleLens(with image: UIImage,
+                          source: GoogleLensTelemetry.Source,
+                          searchTimerId: GleanTimerId?)
+
+    @MainActor
+    func showQuickAnswers(transitionType: QuickAnswersTransitionType)
 
     @MainActor
     func showPrivacyNoticeLink(url: URL)

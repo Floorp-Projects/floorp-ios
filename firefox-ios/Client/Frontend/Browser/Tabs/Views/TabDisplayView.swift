@@ -27,9 +27,9 @@ final class TabDisplayView: UIView,
                       ThemeApplicable,
                       UICollectionViewDelegate,
                       UICollectionViewDelegateFlowLayout,
+                      UICollectionViewDataSourcePrefetching,
                       TabCellDelegate,
                       SwipeAnimatorDelegate,
-                      LegacyFeatureFlaggable,
                       InsetUpdatable {
     struct UX {
         static let cornerRadius: CGFloat = 6.0
@@ -41,6 +41,9 @@ final class TabDisplayView: UIView,
     private var tabsSectionManager: TabsSectionManager
     private let windowUUID: WindowUUID
     var theme: Theme?
+
+    /// UUID of the tab currently minimizing into the tray during the open animation
+    var minimizingTabUUID: TabUUID?
     weak var dragAndDropDelegate: TabDisplayViewDragAndDropInteraction?
     private var tabTrayUtils: TabTrayUtils
 
@@ -62,6 +65,9 @@ final class TabDisplayView: UIView,
 
                     let a11yId = "\(AccessibilityIdentifiers.TabTray.tabCell)_\(indexPath.section)_\(indexPath.row)"
                     cell.configure(with: tab, theme: theme, delegate: self, a11yId: a11yId, newTabTitle: newTabTitle)
+                    if tab.tabUUID == self.minimizingTabUUID {
+                        cell.isHidden = true
+                    }
                     return cell
                 } else {
                     guard let cell = collectionView.dequeueReusableCell(
@@ -119,6 +125,7 @@ final class TabDisplayView: UIView,
         collectionView.delegate = self
         collectionView.dragDelegate = self
         collectionView.dropDelegate = self
+        collectionView.prefetchDataSource = self
         collectionView.collectionViewLayout = createLayout()
         collectionView.accessibilityIdentifier = AccessibilityIdentifiers.TabTray.collectionView
         return collectionView
@@ -274,6 +281,13 @@ final class TabDisplayView: UIView,
     }
 
     func collectionView(_ collectionView: UICollectionView,
+                        willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        guard let tab = tabsState.tabs[safe: indexPath.row] else { return }
+        dispatchPrefetchScreenshot(for: tab.tabUUID)
+    }
+
+    func collectionView(_ collectionView: UICollectionView,
                         contextMenuConfigurationForItemAt indexPath: IndexPath,
                         point: CGPoint) -> UIContextMenuConfiguration? {
         guard getSection(for: indexPath.section) == .tabs
@@ -320,6 +334,23 @@ final class TabDisplayView: UIView,
     func updateInsets(top: CGFloat, bottom: CGFloat) {
         collectionView.contentInset.top = top
         collectionView.contentInset.bottom = bottom
+    }
+
+    // MARK: - UICollectionViewDataSourcePrefetching
+
+    func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
+        for indexPath in indexPaths {
+            guard let tab = tabsState.tabs[safe: indexPath.row] else { continue }
+            dispatchPrefetchScreenshot(for: tab.tabUUID)
+        }
+    }
+
+    private func dispatchPrefetchScreenshot(for tabUUID: TabUUID) {
+        let action = TabPanelViewAction(panelType: panelType,
+                                        tabUUID: tabUUID,
+                                        windowUUID: windowUUID,
+                                        actionType: TabPanelViewActionType.prefetchScreenshots)
+        store.dispatch(action)
     }
 }
 

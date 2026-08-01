@@ -3,12 +3,12 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
-import CopyWithUpdates
+import ModifiedCopy
 import Redux
 import Shared
 
 /// State for the bookmark section that is used in the homepage view
-@CopyWithUpdates
+@Copyable
 struct BookmarksSectionState: StateType, Equatable, Hashable {
     var windowUUID: WindowUUID
     var bookmarks: [BookmarkConfiguration]
@@ -26,8 +26,8 @@ struct BookmarksSectionState: StateType, Equatable, Hashable {
 
     init(profile: Profile = AppContainer.shared.resolve(), windowUUID: WindowUUID) {
         // TODO: FXIOS-11412 - Move profile dependency
-        let shouldShowSection = LegacyFeatureFlagsManager.shared.isFeatureEnabled(.homepageBookmarksSectionDefault,
-                                                                                  checking: .userOnly)
+        let userPreferences: UserFeaturePreferring = AppContainer.shared.resolve()
+        let shouldShowSection = userPreferences.getPreferenceFor(.homepageBookmarksSectionDefault)
         self.init(
             windowUUID: windowUUID,
             bookmarks: [],
@@ -45,7 +45,14 @@ struct BookmarksSectionState: StateType, Equatable, Hashable {
         self.shouldShowSection = shouldShowSection
     }
 
-    static let reducer: Reducer<Self> = { state, action in
+    static let reducer: Reducer<Self> = (legacyReducer, modernReducer)
+
+    static let modernReducer: ReducerMethod<Self> = { state, action, actionWindowUUID in
+        // Does not handle any modern actions
+        return defaultState(from: state)
+    }
+
+    static let legacyReducer: LegacyReducerMethod<Self> = { state, action in
         guard action.windowUUID == .unavailable || action.windowUUID == state.windowUUID
         else {
             return defaultState(from: state)
@@ -70,7 +77,7 @@ struct BookmarksSectionState: StateType, Equatable, Hashable {
         else {
             return defaultState(from: state)
         }
-        return state.copyWithUpdates(
+        return state.copy(
             bookmarks: bookmarks
         )
     }
@@ -82,12 +89,16 @@ struct BookmarksSectionState: StateType, Equatable, Hashable {
             return defaultState(from: state)
         }
 
-        return state.copyWithUpdates(
+        return state.copy(
             shouldShowSection: isEnabled
         )
     }
 
     static func defaultState(from state: BookmarksSectionState) -> BookmarksSectionState {
-        return state.copyWithUpdates()
+        return BookmarksSectionState(
+            windowUUID: state.windowUUID,
+            bookmarks: state.bookmarks,
+            shouldShowSection: state.shouldShowSection
+        )
     }
 }

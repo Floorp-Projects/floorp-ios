@@ -160,9 +160,9 @@ final class LegacyWebViewController: UIViewController, LegacyWebController {
         // Focus on iPad, which means there could be some edge cases right now.
 
         if UIDevice.current.userInterfaceIdiom == .pad {
-            configuration.applicationNameForUserAgent = "Version/18.6 Safari/605.1.15"
+            configuration.applicationNameForUserAgent = "Version/26.4 Safari/605.1.15"
         } else {
-            configuration.applicationNameForUserAgent = "FxiOS/\(AppInfo.majorVersion) Mobile/15E148 Version/18.6"
+            configuration.applicationNameForUserAgent = "FxiOS/\(AppInfo.majorVersion) Mobile/15E148 Version/26.4"
         }
 
         if #available(iOS 15.0, *) {
@@ -419,7 +419,15 @@ extension LegacyWebViewController: WKNavigationDelegate {
         GleanMetrics.Webview.failProvisional.record()
 
         let error = error as NSError
-        guard error.code != Int(CFNetworkErrors.cfurlErrorCancelled.rawValue), let errorUrl = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL else { return }
+        guard error.code != Int(CFNetworkErrors.cfurlErrorCancelled.rawValue),
+              let errorUrl = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL else { return }
+
+        // Bugzilla #1975667. Do not load error pages for non-http(s) failed redirects.
+        // Loading an error page with a rejected `javascript` scheme can cause WebKit to execute a
+        // `javascript:` URI that arrived via the server-side redirect chain.
+        let scheme = errorUrl.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else { return }
+
         let errorPageData = ErrorPage(error: error).data
         webView.load(errorPageData, mimeType: "", characterEncodingName: UIConstants.strings.encodingNameUTF8, baseURL: errorUrl)
     }

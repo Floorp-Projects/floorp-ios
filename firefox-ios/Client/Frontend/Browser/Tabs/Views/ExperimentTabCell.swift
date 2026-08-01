@@ -27,7 +27,6 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
         static let shadowRadius: CGFloat = 4
         static let shadowOffset = CGSize(width: 0, height: 2)
         static let shadowOpacity: Float = 1
-        static let thumbnailScreenshotHeight: CGFloat = 200
         static let borderLayerName = "externalBorder"
     }
     // MARK: - Properties
@@ -49,12 +48,29 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
         view.clipsToBounds = false
     }
 
-    private lazy var screenshotView: UIImageView = .build { view in
+    private lazy var screenshotViewPhone: UIImageView = .build { view in
         view.contentMode = .scaleAspectFill
         view.layer.cornerRadius = UX.cornerRadius
         view.clipsToBounds = true
         view.isAccessibilityElement = false
         view.accessibilityElementsHidden = true
+    }
+
+    private lazy var screenshotViewPad: TabCellCustomImage = .build { view in
+        view.layer.cornerRadius = UX.cornerRadius
+        view.isAccessibilityElement = false
+        view.accessibilityElementsHidden = true
+    }
+
+    private var screenshotView: UIImageView {
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        return isPad ? screenshotViewPad : screenshotViewPhone
+    }
+
+    /// Syncs the screenshot between the tab preview and the tab cell when opening the tab tray
+    func syncScreenshotForAnimation(_ image: UIImage?) {
+        guard let image, screenshotView.image != nil else { return }
+        screenshotView.image = image
     }
 
     /// Invisible button without corner radius to ensure the button has the required hitbox size
@@ -87,16 +103,25 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
 
         closeButtonBlurView.addBlurEffectWithClearBackgroundAndClipping(using: .systemUltraThinMaterialDark)
         closeButtonBlurView.layer.cornerRadius = closeButtonBlurView.frame.height / 2
+
+        // Handles initial draw and non-rotation layout changes (e.g. multitasking resize).
+        guard isSelectedTab, backgroundHolder.bounds != borderLayer.frame else { return }
+        redrawExternalBorder()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
 
-        guard isSelectedTab else { return }
+        // Defers redraw via Task so the border updates after the rotation animation completes.
+        guard isSelectedTab,
+              previousTraitCollection?.horizontalSizeClass != traitCollection.horizontalSizeClass
+              || previousTraitCollection?.verticalSizeClass != traitCollection.verticalSizeClass
+        else { return }
+
         Task {
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                redrawExternalBorder()
+                self.redrawExternalBorder()
             }
         }
     }
@@ -223,6 +248,10 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
         } else if let tabScreenshot = tabModel.screenshot {
             // Use Tab screenshot when available
             screenshotView.image = tabScreenshot
+        } else if tabModel.hasScreenshotOnDisk {
+            // A screenshot exists on disk and is being loaded asynchronously. Keep the cell blank
+            // until it arrives to avoid a brief favicon-to-screenshot flash after tab restoration.
+            screenshotView.image = nil
         } else {
             // Favicon or letter image when tab screenshot isn't available
             smallFaviconView.isHidden = false
@@ -273,6 +302,19 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
         view.layer.addSublayer(borderLayer)
     }
 
+    private func gradientBorderImage(size: CGSize, colors: [CGColor]) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                            colors: colors as CFArray,
+                                            locations: nil) else { return }
+            context.cgContext.drawLinearGradient(gradient,
+                                                 start: .zero,
+                                                 end: CGPoint(x: size.width, y: size.height),
+                                                 options: [])
+        }
+    }
+
     private func redrawExternalBorder() {
         let width = borderLayer.lineWidth
         let borderRect = backgroundHolder.bounds.insetBy(dx: -width / 3, dy: -width / 3)
@@ -293,8 +335,15 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
         // We are using a non-CALayer borderWidth for unselected cells for reduced graphics processing
         // we zero that value here when we are in the selected state to assign the CAShapeLayer
         backgroundHolder.layer.borderWidth = UX.zeroBorderWidth
-        let borderColor = isPrivate ? theme.colors.borderAccentPrivate : theme.colors.borderAccent
 
+        if theme.isNova {
+            let gradientColor = UIColor(patternImage: gradientBorderImage(size: backgroundHolder.bounds.size,
+                                                                          colors: theme.colors.gradientBorder.cgColors))
+            addExternalBorder(to: backgroundHolder, color: gradientColor, width: UX.selectedBorderWidth)
+            return
+        }
+
+        let borderColor = isPrivate ? theme.colors.borderAccentPrivate : theme.colors.borderAccent
         addExternalBorder(to: backgroundHolder, color: borderColor, width: UX.selectedBorderWidth)
     }
 
@@ -309,6 +358,8 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
     override func prepareForReuse() {
         // Reset any close animations.
         super.prepareForReuse()
+        tabModel = nil
+        accessibilityLabel = nil
         screenshotView.image = nil
         smallFaviconView.isHidden = true
         removeExternalBorder(from: backgroundHolder)
@@ -326,7 +377,6 @@ final class ExperimentTabCell: UICollectionViewCell, ThemeApplicable, ReusableCe
             backgroundHolder.topAnchor.constraint(equalTo: contentView.topAnchor),
             backgroundHolder.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             backgroundHolder.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            backgroundHolder.heightAnchor.constraint(equalToConstant: UX.thumbnailScreenshotHeight),
             backgroundHolder.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
             closeButton.heightAnchor.constraint(equalToConstant: UX.closeButtonHitTarget),

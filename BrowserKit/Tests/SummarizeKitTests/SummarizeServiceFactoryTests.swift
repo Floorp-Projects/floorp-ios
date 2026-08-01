@@ -25,14 +25,18 @@ final class MockSummarizerServiceLifecycle: SummarizerServiceLifecycle, @uncheck
 }
 
 final class SummarizeServiceFactoryTests: XCTestCase {
-    var serviceLifecycle = MockSummarizerServiceLifecycle()
+    var serviceLifecycle: MockSummarizerServiceLifecycle!
 
     override func setUp() {
         super.setUp()
         serviceLifecycle = MockSummarizerServiceLifecycle()
     }
 
-    #if canImport(FoundationModels)
+    override func tearDown() {
+        serviceLifecycle = nil
+        super.tearDown()
+    }
+
     func test_make_whenAppleIntelligenceAvailable() throws {
         guard #available(iOS 26, *) else {
             throw XCTSkip("Skipping iOS 26-only test on earlier OS versions")
@@ -67,7 +71,6 @@ final class SummarizeServiceFactoryTests: XCTestCase {
 
         XCTAssertNotNil(result as? DefaultSummarizerService)
     }
-    #endif
 
     func test_make_whenHostedSummarizerTrue_returnsNilForLLMConfigNotAvailable() throws {
         let subject = createSubject()

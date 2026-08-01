@@ -21,8 +21,7 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
     override func setUpExperimentVariables() {
         launchArguments = [
             LaunchArguments.ClearProfile,
-            LaunchArguments.DisableAnimations,
-            LaunchArguments.SkipSplashScreenExperiment
+            LaunchArguments.DisableAnimations
         ]
 
         jsonFileName = flowType.jsonFeatureOverrideFileName
@@ -68,10 +67,57 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
 
     // MARK: - Individual Screen Tests
 
+    // https://mozilla.testrail.io/index.php?/cases/view/4035806
     func testModernTermsOfServiceScreen() {
         launchApp()
 
         onboardingScreen.assertModernTermsOfServiceScreen()
+    }
+
+    // https://mozilla.testrail.io/index.php?/cases/view/4035799
+    func testModernTermsOfUseLinkDisplayAndDismissal() {
+        verifyLinkDisplayAndDismissal(for: .termsOfUse)
+    }
+
+    // https://mozilla.testrail.io/index.php?/cases/view/4035800
+    func testModernPrivacyNoticeLinkDisplayAndDismissal() {
+        verifyLinkDisplayAndDismissal(for: .privacyNotice)
+    }
+
+    // https://mozilla.testrail.io/index.php?/cases/view/4035801
+    func testModernManageBottomSheetDisplayAndDismissal() {
+        verifyLinkDisplayAndDismissal(for: .manage)
+    }
+
+    /// Shared flow for the ToS card link cases (C4035799–C4035801): tap link → overlay shown → force
+    /// close hides it → backgrounding keeps it → Done dismisses it. iOS 26+ only (link tappability).
+    private func verifyLinkDisplayAndDismissal(for link: OnboardingScreen.ToSLink) {
+        launchApp()
+
+        // Step 1: The ToS card, including the link, is displayed
+        onboardingScreen.assertModernTermsOfServiceScreen()
+        onboardingScreen.assertLinkIsDisplayed(link)
+
+        // Step 2: Tapping the link displays its overlay
+        onboardingScreen.tapLink(link)
+        onboardingScreen.assertOverlayIsDisplayed(for: link)
+
+        // Step 3: Force closing and resuming closes the overlay and shows the ToS card
+        app.terminate()
+        launchApp()
+        onboardingScreen.assertModernTermsOfServiceScreen()
+        onboardingScreen.assertOverlayIsClosed(for: link)
+
+        // Step 4: Reopen the overlay; backgrounding and foregrounding keeps it displayed
+        onboardingScreen.tapLink(link)
+        onboardingScreen.assertOverlayIsDisplayed(for: link)
+        restartInBackground()
+        onboardingScreen.assertOverlayIsDisplayed(for: link)
+
+        // Step 5: Dismissing via the Done button closes the overlay and shows the ToS card
+        onboardingScreen.dismissOverlay(for: link)
+        onboardingScreen.assertModernTermsOfServiceScreen()
+        onboardingScreen.assertOverlayIsClosed(for: link)
     }
 
     func testModernKitOnboardingWelcomeScreen() throws {
@@ -81,6 +127,7 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
         onboardingScreen.assertModernWelcomeScreen()
     }
 
+    // https://mozilla.testrail.io/index.php?/cases/view/4035645
     func testModernKitOnboardingToolbarPlacementTop() throws {
         if iPad() {
             throw XCTSkip("Toolbar customization is not available on iPad")
@@ -117,6 +164,7 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
         XCTAssertTrue(toolbar.frame.origin.y < screenHeight / 2, "Toolbar is not near the top")
     }
 
+    // https://mozilla.testrail.io/index.php?/cases/view/4038428
     func testModernKitOnboardingToolbarPlacementBottom() throws {
         if iPad() {
             throw XCTSkip("Toolbar customization is not available on iPad")
@@ -153,6 +201,7 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
         XCTAssertFalse(toolbar.frame.origin.y < screenHeight / 2, "Toolbar is not near the bottom")
     }
 
+    // https://mozilla.testrail.io/index.php?/cases/view/4035640
     func testModernKitOnboardingThemeSelection() throws {
         launchApp()
 
@@ -172,17 +221,25 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
             onboardingScreen.goToNextScreenViaPrimary()
         }
 
-        // Screen 3: Choose theme - Continue (primary button)
+        // Screen 3: Choose theme - System Auto is the default selection
         onboardingScreen.assertModernThemeCustomizationScreen()
+        onboardingScreen.assertDefaultThemeIsSystemAuto()
 
-        onboardingScreen.selectThemeButtons()
-
-        onboardingScreen.selectTheme("Automatic")
+        // Keep the default (System Auto) and continue
         onboardingScreen.goToNextScreenViaPrimary()
+
+        // Screen 4: Sign in to sync - Not now (secondary button) completes onboarding
+        onboardingScreen.assertSyncScreen()
+        onboardingScreen.goToNextScreenViaSecondary()
+
+        // Homepage is reached with System Auto kept as the theme
+        firefoxHomePageScreen.dismissNewChangesPopupIfNeeded()
+        firefoxHomePageScreen.assertTopSitesItemCellExist()
     }
 
     // MARK: - Sync Flow Tests
 
+    // https://mozilla.testrail.io/index.php?/cases/view/4036954
     func testModernKitOnboardingSyncFlow() throws {
         launchApp()
 
@@ -205,7 +262,7 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
 
         // Screen 3: Choose theme - Continue (primary button)
         onboardingScreen.assertTitle()
-        onboardingScreen.selectTheme("Automatic")
+        onboardingScreen.selectThemeButtons()
         onboardingScreen.goToNextScreenViaPrimary()
 
         // Screen 4: Sign in to sync - Not now (secondary button)
@@ -232,7 +289,7 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
             onboardingScreen.currentScreen += 1
         }
 
-        onboardingScreen.selectTheme("Automatic")
+        onboardingScreen.selectThemeButtons()
         onboardingScreen.goToNextScreenViaPrimary()
 
         onboardingScreen.assertSyncScreen()
@@ -247,6 +304,7 @@ class ModernKitOnboardingTests: FeatureFlaggedTestSuite {
 
     // MARK: - Navigation Tests
 
+    // https://mozilla.testrail.io/index.php?/cases/view/4035643
     func testModernKitOnboardingSkipButton() {
         launchApp()
 

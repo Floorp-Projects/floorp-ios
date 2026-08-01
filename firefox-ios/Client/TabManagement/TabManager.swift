@@ -23,7 +23,6 @@ protocol TabManager: AnyObject {
     var recentlyAccessedNormalTabs: [Tab] { get }
 
     var selectedTab: Tab? { get }
-    var backupCloseTab: BackupCloseTab? { get set }
 
     var tabs: [Tab] { get }
     var normalTabs: [Tab] { get }
@@ -87,11 +86,6 @@ protocol TabManager: AnyObject {
     /// Remove normal tabs older than a certain period of time
     func removeNormalTabsOlderThan(period: TabsDeletionPeriod, currentDate: Date)
 
-    // MARK: - Undo Close
-    func undoCloseTab()
-    /// Undo close all tabs, it will restore the tabs that were backed up when the close action was called.
-    func undoCloseAllTabs()
-
     // MARK: Get Tab
     func getTabForUUID(uuid: TabUUID) -> Tab?
     func getTabForURL(_ url: URL) -> Tab?
@@ -119,12 +113,15 @@ protocol TabManager: AnyObject {
     func restoreTabs()
 
     func expireLoginAlerts()
-    @discardableResult
-
-    func switchPrivacyMode() -> SwitchPrivacyModeResult
 
     func addPopupForParentTab(profile: Profile, parentTab: Tab, configuration: WKWebViewConfiguration) -> Tab
     func tabDidSetScreenshot(_ tab: Tab)
+    func offloadBackgroundWebViews() async
+
+    /// ADR 0008: load `tab`'s screenshot from disk if it isn't already in memory. Intended for
+    /// just-in-time loading driven by the tab tray's prefetch data source. No-op if the tab
+    /// already has a screenshot.
+    func restoreScreenshot(for tab: Tab)
 }
 
 extension TabManager {

@@ -6,13 +6,14 @@ import Common
 import UIKit
 
 /// A horizontally scrolling picker that renders selectable options as chip buttons.
-public final class ChipPickerView: UIView, ThemeApplicable {
+public final class ChipPickerView: UIView, ThemeApplicable, UIScrollViewDelegate {
     public struct UX {
         public static let itemSpacing: CGFloat = 10
     }
 
     private lazy var scrollView: UIScrollView = .build { scrollView in
         scrollView.showsHorizontalScrollIndicator = false
+        scrollView.clipsToBounds = false
     }
 
     private lazy var stackView: UIStackView = .build { stackView in
@@ -25,7 +26,9 @@ public final class ChipPickerView: UIView, ThemeApplicable {
     private var currentTheme: Theme?
     private var items = [ChipPickerItem]()
     private var selectedID: String?
+    private var titleRendering = ChipButtonTitleRendering.configuration
     private var onSelection: (@MainActor (String) -> Void)?
+    private var onScroll: ((CGFloat) -> Void)?
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -39,17 +42,33 @@ public final class ChipPickerView: UIView, ThemeApplicable {
     public func configure(
         items: [ChipPickerItem],
         selectedID: String?,
+        contentOffsetX: CGFloat = 0,
+        titleRendering: ChipButtonTitleRendering = .configuration,
+        onScroll: ((CGFloat) -> Void)? = nil,
         onSelection: (@MainActor (String) -> Void)? = nil
     ) {
         self.items = items
         self.selectedID = selectedID
+        self.titleRendering = titleRendering
         self.onSelection = onSelection
+        self.onScroll = onScroll
         rebuildButtons()
+        updateContentOffsetX(contentOffsetX)
     }
 
     public func applyTheme(theme: Theme) {
         currentTheme = theme
         chipButtons.forEach { $0.applyTheme(theme: theme) }
+    }
+
+    public func updateSelectedID(_ selectedID: String?) {
+        self.selectedID = selectedID
+        rebuildButtons()
+        scrollView.layoutIfNeeded()
+    }
+
+    public func updateContentOffsetX(_ contentOffsetX: CGFloat) {
+        scrollView.setContentOffset(CGPoint(x: contentOffsetX, y: 0), animated: false)
     }
 
     private var chipButtons: [ChipButton] {
@@ -59,6 +78,7 @@ public final class ChipPickerView: UIView, ThemeApplicable {
     private func setupLayout() {
         addSubview(scrollView)
         scrollView.addSubview(stackView)
+        scrollView.delegate = self
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: topAnchor),
@@ -84,6 +104,7 @@ public final class ChipPickerView: UIView, ThemeApplicable {
                     title: item.title,
                     a11yIdentifier: item.a11yIdentifier,
                     isSelected: item.id == selectedID,
+                    titleRendering: titleRendering,
                     touchUpAction: { [weak self] _ in
                         self?.handleSelection(id: item.id)
                     }
@@ -103,5 +124,11 @@ public final class ChipPickerView: UIView, ThemeApplicable {
         selectedID = id
         rebuildButtons()
         onSelection?(id)
+    }
+
+    // MARK: = UIScrollViewDelegate
+
+    public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        onScroll?(scrollView.contentOffset.x)
     }
 }

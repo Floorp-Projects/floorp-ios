@@ -3,10 +3,10 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
-import CopyWithUpdates
+import ModifiedCopy
 import Redux
 
-@CopyWithUpdates
+@Copyable
 struct SearchEngineSelectionState: ScreenState {
     var windowUUID: WindowUUID
 
@@ -25,7 +25,11 @@ struct SearchEngineSelectionState: ScreenState {
             return
         }
 
-        self = state.copyWithUpdates()
+        self.init(
+            windowUUID: state.windowUUID,
+            searchEngines: state.searchEngines,
+            selectedSearchEngine: state.selectedSearchEngine
+        )
     }
 
     init(windowUUID: WindowUUID) {
@@ -42,7 +46,14 @@ struct SearchEngineSelectionState: ScreenState {
         self.selectedSearchEngine = selectedSearchEngine
     }
 
-    static let reducer: Reducer<Self> = { state, action in
+    static let reducer: Reducer<Self> = (legacyReducer, modernReducer)
+
+    static let modernReducer: ReducerMethod<Self> = { state, action, actionWindowUUID in
+        // Does not handle any modern actions
+        return defaultState(from: state)
+    }
+
+    static let legacyReducer: LegacyReducerMethod<Self> = { state, action in
         // Only process actions for the current window
         guard action.windowUUID == .unavailable || action.windowUUID == state.windowUUID else {
             return defaultState(from: state)
@@ -57,7 +68,7 @@ struct SearchEngineSelectionState: ScreenState {
             }
 
             // With the current usage, we don't want to reset the selectedSearchEngine to nil for didLoadSearchEngines
-            return state.copyWithUpdates(
+            return state.copy(
                 searchEngines: searchEngines
             )
 
@@ -66,7 +77,7 @@ struct SearchEngineSelectionState: ScreenState {
                 let selectedSearchEngine = action.selectedSearchEngine
             else { return defaultState(from: state) }
 
-            return state.copyWithUpdates(
+            return state.copy(
                 selectedSearchEngine: selectedSearchEngine
             )
 
@@ -76,6 +87,10 @@ struct SearchEngineSelectionState: ScreenState {
     }
 
     static func defaultState(from state: SearchEngineSelectionState) -> SearchEngineSelectionState {
-        return state.copyWithUpdates()
+        return SearchEngineSelectionState(
+            windowUUID: state.windowUUID,
+            searchEngines: state.searchEngines,
+            selectedSearchEngine: state.selectedSearchEngine
+        )
     }
 }

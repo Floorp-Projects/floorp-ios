@@ -3,9 +3,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
+import Glean
 import Storage
 import WebKit
 import SummarizeKit
+import QuickAnswersKit
 
 @testable import Client
 
@@ -45,6 +47,7 @@ class MockBrowserCoordinator: BrowserNavigationHandler,
     var setHomepageVisibilityCalled = 0
     var showSummarizePanelCalled = 0
     var showShortcutsLibraryCalled = 0
+    var showWorldCupCountryPickerCalled = 0
     var showPrivacyNoticeLink = 0
     var showTermsOfUseCalled = 0
     var showCertificatesFromErrorPageCalled = 0
@@ -52,6 +55,12 @@ class MockBrowserCoordinator: BrowserNavigationHandler,
     var shouldShowNewTabToastCalled = 0
     var popToBVCCalled = 0
     var openLearnMoreFromNativeErrorPageCalled = 0
+    var showQuickAnswersCalled = 0
+    var showGoogleLensPhotoPickerCalled = 0
+    var showGoogleLensCameraCalled = 0
+    var searchGoogleLensCalled = 0
+    var searchGoogleLensSource: GoogleLensTelemetry.Source?
+    var searchGoogleLensTimerId: GleanTimerId?
 
     func show(settings: Client.Route.SettingsSection, onDismiss: (() -> Void)?) {
         showSettingsCalled += 1
@@ -175,6 +184,26 @@ class MockBrowserCoordinator: BrowserNavigationHandler,
         openLearnMoreFromNativeErrorPageCalled += 1
     }
 
+    func showQuickAnswers(transitionType: QuickAnswersTransitionType) {
+        showQuickAnswersCalled += 1
+    }
+
+    func showGoogleLensPhotoPicker() {
+        showGoogleLensPhotoPickerCalled += 1
+    }
+
+    func showGoogleLensCamera() {
+        showGoogleLensCameraCalled += 1
+    }
+
+    func searchGoogleLens(with image: UIImage,
+                          source: GoogleLensTelemetry.Source,
+                          searchTimerId: GleanTimerId?) {
+        searchGoogleLensCalled += 1
+        searchGoogleLensSource = source
+        searchGoogleLensTimerId = searchTimerId
+    }
+
     // MARK: - BrowserDelegate
 
     func show(webView: WKWebView) {
@@ -208,6 +237,10 @@ class MockBrowserCoordinator: BrowserNavigationHandler,
 
     func showShortcutsLibrary() {
         showShortcutsLibraryCalled += 1
+    }
+
+    func showWorldCupCountryPicker() {
+        showWorldCupCountryPickerCalled += 1
     }
 
     func showPrivacyNoticeLink(url: URL) {

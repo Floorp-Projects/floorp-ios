@@ -17,7 +17,6 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
 
     override func setUp() async throws {
         try await super.setUp()
-        LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: MockProfile())
         DependencyHelperMock().bootstrapDependencies()
         homepageTabStateStore = HomepageTabStateStore()
         setupStore()
@@ -63,7 +62,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
         let mockStatusBarScrollDelegate = MockStatusBarScrollDelegate()
         let homepageVC = createSubject(statusBarScrollDelegate: mockStatusBarScrollDelegate)
         let wallpaperConfiguration = WallpaperConfiguration(hasImage: true)
-        let newState = HomepageState.reducer(
+        let newState = HomepageState.reducer.legacyReducer(
             HomepageState(windowUUID: .XCTestDefaultUUID),
             WallpaperAction(
                 wallpaperConfiguration: wallpaperConfiguration,
@@ -85,7 +84,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
         let mockStatusBarScrollDelegate = MockStatusBarScrollDelegate()
         let homepageVC = createSubject(statusBarScrollDelegate: mockStatusBarScrollDelegate)
         let wallpaperConfiguration = WallpaperConfiguration(hasImage: true)
-        let newState = HomepageState.reducer(
+        let newState = HomepageState.reducer.legacyReducer(
             HomepageState(windowUUID: .XCTestDefaultUUID),
             WallpaperAction(
                 wallpaperConfiguration: wallpaperConfiguration,
@@ -170,7 +169,6 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
         let actionType = try XCTUnwrap(actionCalled.actionType as? HomepageActionType)
         XCTAssertEqual(actionType, HomepageActionType.traitCollectionDidChange)
         XCTAssertEqual(actionCalled.windowUUID, .XCTestDefaultUUID)
-        XCTAssertFalse(actionCalled.showiPadSetup ?? true)
     }
 
     func test_viewWillAppear_triggersHomepageAction() throws {
@@ -202,7 +200,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
     func test_viewDidLayoutSubviews_withTopSitesChange_triggersHomepageAction() throws {
         let subject = createSubject()
 
-        let newState = HomepageState.reducer(
+        let newState = HomepageState.reducer.legacyReducer(
             HomepageState(windowUUID: .XCTestDefaultUUID),
             HomepageAction(
                 numberOfTopSitesPerRow: 10,
@@ -286,7 +284,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
 
         // Add some visible sections in the collection view to trigger impression telemetry
         let populatedState = await getPopulatedCollectionViewState(from: initialState)
-        let newState = HomepageState.reducer(
+        let newState = HomepageState.reducer.legacyReducer(
             populatedState,
             GeneralBrowserAction(
                 windowUUID: .XCTestDefaultUUID,
@@ -315,7 +313,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
     func test_newState_didSelectedTabChangeToHomepageAction_forScrollToTop_setsCollectionViewOffsetToZero() {
         let mockStatusBarScrollDelegate = MockStatusBarScrollDelegate()
         let subject = createSubject(statusBarScrollDelegate: mockStatusBarScrollDelegate)
-        let newState = HomepageState.reducer(
+        let newState = HomepageState.reducer.legacyReducer(
             HomepageState(windowUUID: .XCTestDefaultUUID),
             GeneralBrowserAction(
                 windowUUID: .XCTestDefaultUUID,
@@ -382,6 +380,31 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
         XCTAssertEqual(collectionView.contentOffset, CGPoint(x: 0, y: -collectionView.adjustedContentInset.top))
     }
 
+    func test_restoreContentOffset_whenNotForcedAndSameTab_doesNotRestoreStoredOffset() {
+        let tabManager = HomepageRestoreContentOffsetTabManager()
+        let tab = MockTab(profile: MockProfile(), windowUUID: .XCTestDefaultUUID)
+        tabManager.tabs = [tab]
+        tabManager.selectedTab = tab
+        homepageTabStateStore.updateState(for: tab.tabUUID) { $0.scrollOffsetY = 180 }
+        let subject = createSubject(tabManager: tabManager)
+
+        subject.loadViewIfNeeded()
+        subject.viewWillAppear(false)
+
+        guard let collectionView = subject.view.subviews.first(where: {
+            $0 is UICollectionView
+        }) as? UICollectionView else {
+            XCTFail()
+            return
+        }
+
+        collectionView.contentOffset = CGPoint(x: 0, y: 75)
+
+        subject.restoreVerticalScrollOffset(force: false)
+
+        XCTAssertEqual(collectionView.contentOffset.y, 75)
+    }
+
     func test_viewDidDisappear_savesVerticalScrollOffset() {
         let tabManager = HomepageRestoreContentOffsetTabManager()
         let tab = MockTab(profile: MockProfile(), windowUUID: .XCTestDefaultUUID)
@@ -402,6 +425,30 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
         collectionView.contentOffset = CGPoint(x: 0, y: 140)
 
         subject.viewWillDisappear(false)
+
+        XCTAssertEqual(homepageTabStateStore.state(for: tab.tabUUID).scrollOffsetY, 140)
+    }
+
+    func test_stopScrollingAndSaveVerticalScrollOffset_savesCurrentOffset() {
+        let tabManager = HomepageRestoreContentOffsetTabManager()
+        let tab = MockTab(profile: MockProfile(), windowUUID: .XCTestDefaultUUID)
+        tabManager.tabs = [tab]
+        tabManager.selectedTab = tab
+        let subject = createSubject(tabManager: tabManager)
+
+        subject.loadViewIfNeeded()
+        subject.viewWillAppear(false)
+
+        guard let collectionView = subject.view.subviews.first(where: {
+            $0 is UICollectionView
+        }) as? UICollectionView else {
+            XCTFail()
+            return
+        }
+
+        collectionView.contentOffset = CGPoint(x: 0, y: 140)
+
+        subject.stopScrollingAndSaveVerticalScrollOffset()
 
         XCTAssertEqual(homepageTabStateStore.state(for: tab.tabUUID).scrollOffsetY, 140)
     }
@@ -458,7 +505,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
         let subject = createSubject()
         subject.loadViewIfNeeded()
 
-        let stateWithWallpaperHeight = HomepageState.reducer(
+        let stateWithWallpaperHeight = HomepageState.reducer.legacyReducer(
             HomepageState(windowUUID: .XCTestDefaultUUID),
             HomepageAction(
                 availableContentHeight: 100,
@@ -539,7 +586,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
     private func getPopulatedCollectionViewState(from currentState: HomepageState) async -> HomepageState {
         let merinoManager = MockMerinoManager()
         let merinoStories = await merinoManager.getMerinoItems(source: .homepage)
-        return HomepageState.reducer(
+        return HomepageState.reducer.legacyReducer(
             currentState,
             MerinoAction(
                 merinoStoryResponse: merinoStories,
@@ -553,7 +600,7 @@ final class HomepageViewControllerTests: XCTestCase, StoreTestUtility {
 // FXIOS-13346 / FXIOS-13343 - needed to update tests since we added a bandaid fix to not call
 @MainActor
 private func changeInitialStateToTriggerUpdateInSnapshot() -> HomepageState {
-   return HomepageState.reducer(
+   return HomepageState.reducer.legacyReducer(
         HomepageState(windowUUID: .XCTestDefaultUUID),
         GeneralBrowserAction(
             windowUUID: .XCTestDefaultUUID,
