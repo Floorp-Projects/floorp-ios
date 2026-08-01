@@ -6,16 +6,20 @@ import Common
 import ComponentLibrary
 import MozillaAppServices
 import Redux
+import SwiftUI
 import WebKit
 import XCTest
 import GCDWebServers
 import SummarizeKit
 import Shared
+import QuickAnswersKit
 
 @testable import Client
 
 @MainActor
-final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTestUtility {
+final class BrowserCoordinatorTests: XCTestCase,
+                                     FeatureFlaggable,
+                                     StoreTestUtility {
     private var mockRouter: MockRouter!
     private var profile: MockProfile!
     private var overlayModeManager: MockOverlayModeManager!
@@ -27,6 +31,7 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
     private var browserViewController: MockBrowserViewController!
     private var mockStore: MockStoreForMiddleware<AppState>!
     private var homepageTabStateStore: HomepageTabStateStore!
+    private var mockWorldCupStore: MockWorldCupStore!
     let windowUUID: WindowUUID = .XCTestDefaultUUID
 
     override func setUp() async throws {
@@ -35,7 +40,6 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         self.tabManager = mockTabManager
         profile = MockProfile()
         DependencyHelperMock().bootstrapDependencies(injectedTabManager: mockTabManager)
-        LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: profile)
         setIsAppleSummarizerEnabled(false)
         setIsDeeplinkOptimizationRefactorEnabled(false)
         mockRouter = MockRouter(navigationController: MockNavigationController())
@@ -46,6 +50,7 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         scrollDelegate = MockStatusBarScrollDelegate()
         browserViewController = MockBrowserViewController(profile: profile, tabManager: tabManager)
         homepageTabStateStore = HomepageTabStateStore()
+        mockWorldCupStore = MockWorldCupStore()
         setupStore()
     }
 
@@ -61,6 +66,7 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         scrollDelegate = nil
         browserViewController = nil
         homepageTabStateStore = nil
+        mockWorldCupStore = nil
         resetStore()
         DependencyHelperMock().reset()
         try await super.tearDown()
@@ -78,7 +84,7 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         let subject = createSubject()
         subject.start(with: nil)
         // TODO: FXIOS-12947 - Add tests for ToU Feature implementation
-        if !featureFlags.isFeatureEnabled(.touFeature, checking: .buildOnly) {
+        if !featureFlagsProvider.isEnabled(.touFeature) {
             XCTAssertNotNil(mockRouter.rootViewController as? BrowserViewController)
             XCTAssertEqual(mockRouter.setRootViewControllerCalled, 1)
             XCTAssertTrue(subject.childCoordinators.isEmpty)
@@ -139,6 +145,36 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
                              toastContainer: UIView())
         let secondHomepage = subject.homepageViewController
         XCTAssertEqual(firstHomepage, secondHomepage)
+    }
+
+    func testShowHomepage_whenAlreadyEmbedded_doesNotRestoreScrollOffset() throws {
+        let tab = MockTab(profile: profile, windowUUID: windowUUID)
+        tabManager.tabs = [tab]
+        tabManager.selectedTab = tab
+        homepageTabStateStore.updateState(for: tab.tabUUID) { $0.scrollOffsetY = 180 }
+        let subject = createSubject()
+
+        subject.showHomepage(
+            overlayManager: overlayModeManager,
+            isZeroSearch: true,
+            statusBarScrollDelegate: scrollDelegate,
+            toastContainer: UIView()
+        )
+
+        let homepageViewController = try XCTUnwrap(subject.homepageViewController)
+        let collectionView = try XCTUnwrap(
+            homepageViewController.view.subviews.first(where: { $0 is UICollectionView }) as? UICollectionView
+        )
+        collectionView.contentOffset = CGPoint(x: 0, y: 75)
+
+        subject.showHomepage(
+            overlayManager: overlayModeManager,
+            isZeroSearch: true,
+            statusBarScrollDelegate: scrollDelegate,
+            toastContainer: UIView()
+        )
+
+        XCTAssertEqual(collectionView.contentOffset.y, 75)
     }
 
     // MARK: - Show new homepage
@@ -257,12 +293,7 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         XCTAssertEqual(subject.childCoordinators.count, 1)
         XCTAssertNotNil(subject.childCoordinators[0] as? EnhancedTrackingProtectionCoordinator)
         XCTAssertEqual(mockRouter.presentCalled, 1)
-
-        if featureFlags.isFeatureEnabled(.trackingProtectionRefactor, checking: .buildOnly) {
-            XCTAssertTrue(mockRouter.presentedViewController is UINavigationController)
-        } else {
-            XCTAssertTrue(mockRouter.presentedViewController is EnhancedTrackingProtectionMenuVC)
-        }
+        XCTAssertTrue(mockRouter.presentedViewController is UINavigationController)
     }
 
     func testStartShareSheetCoordinator_addsShareSheetCoordinator() {
@@ -377,6 +408,79 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
 
         XCTAssertEqual(subject.childCoordinators.count, 1)
         XCTAssertTrue(subject.childCoordinators.first is QRCodeCoordinator)
+    }
+
+    func testShowGoogleLensPhotoPicker_addsPhotoPickerCoordinator() {
+        let subject = createSubject()
+
+        subject.showGoogleLensPhotoPicker()
+
+        XCTAssertEqual(subject.childCoordinators.count, 1)
+        XCTAssertTrue(subject.childCoordinators.first is PhotoPickerCoordinator)
+    }
+
+    func testShowGoogleLensPhotoPicker_calledTwice_addsOnlyOnePhotoPickerCoordinator() {
+        let subject = createSubject()
+
+        subject.showGoogleLensPhotoPicker()
+        subject.showGoogleLensPhotoPicker()
+
+        XCTAssertEqual(subject.childCoordinators.count, 1)
+        XCTAssertTrue(subject.childCoordinators.first is PhotoPickerCoordinator)
+    }
+
+    func testShowGoogleLensCamera_whenCameraUnavailable_doesNotPresentOrLeaveChild() {
+        // The simulator has no camera, so the coordinator finishes immediately and cleans
+        // itself up without presenting anything.
+        let subject = createSubject()
+
+        subject.showGoogleLensCamera()
+
+        XCTAssertTrue(subject.childCoordinators.isEmpty)
+        XCTAssertEqual(mockRouter.presentCalled, 0)
+    }
+
+    func testShowGoogleLensCamera_whenCameraCoordinatorAlreadyPresent_doesNotAddDuplicate() {
+        let subject = createSubject()
+        let existing = CameraCoordinator(parentCoordinatorDelegate: subject,
+                                         router: mockRouter,
+                                         cameraReason: .googleLens) { _ in }
+        subject.add(child: existing)
+
+        subject.showGoogleLensCamera()
+
+        XCTAssertEqual(subject.childCoordinators.count, 1)
+        XCTAssertTrue(subject.childCoordinators.first is CameraCoordinator)
+    }
+
+    func testSearchGoogleLens_fromToolbarButton_startsSearchTimer() throws {
+        let tab = MockTab(profile: profile, windowUUID: windowUUID)
+        tab.webView = MockTabWebView(tab: tab)
+        tabManager.tabs = [tab]
+        tabManager.selectedTab = tab
+        let subject = createSubject(googleLensService: MockGoogleLensService())
+
+        subject.searchGoogleLens(with: UIImage(), source: .camera)
+
+        let search = try XCTUnwrap(subject.browserViewController.googleLensSearches[tab.tabUUID])
+        XCTAssertEqual(glean.startTimingCalled, 1)
+        XCTAssertNotNil(search.searchTimerId)
+    }
+
+    func testSearchGoogleLens_fromWebImageContextMenu_usesExistingSearchTimer() throws {
+        let tab = MockTab(profile: profile, windowUUID: windowUUID)
+        tab.webView = MockTabWebView(tab: tab)
+        tabManager.tabs = [tab]
+        tabManager.selectedTab = tab
+        let subject = createSubject(googleLensService: MockGoogleLensService())
+
+        subject.searchGoogleLens(with: UIImage(),
+                                 source: .contextMenu,
+                                 searchTimerId: glean.savedTimerId)
+
+        let search = try XCTUnwrap(subject.browserViewController.googleLensSearches[tab.tabUUID])
+        XCTAssertEqual(glean.startTimingCalled, 0)
+        XCTAssertNotNil(search.searchTimerId)
     }
 
     func testShowQRCode_presentsQRCodeNavigationController() {
@@ -538,7 +642,11 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
 
     // MARK: - Summarize Panel
 
-    func testShowSummarizePanel_whenSummarizeFeatureEnabled_showsPanel() async {
+    func testShowSummarizePanel_whenSummarizeFeatureEnabled_showsPanel() async throws {
+        // Skip the entire test run if device < iOS 26 due to testing Apple Intelligence capabilities
+        guard #available(iOS 26, *) else {
+            throw XCTSkip("Skipping iOS 26-only tests on earlier OS versions")
+        }
         setIsAppleSummarizerEnabled(true)
         let subject = createSubject()
         let tab = MockTab(profile: profile, windowUUID: windowUUID)
@@ -556,7 +664,11 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         await Task.yield()
     }
 
-    func testShowSummarizePanel_whenSelectedTabIsHomePage_doesntShowPanel() {
+    func testShowSummarizePanel_whenSelectedTabIsHomePage_doesntShowPanel() throws {
+        // Skip the entire test run if device < iOS 26 due to testing Apple Intelligence capabilities
+        guard #available(iOS 26, *) else {
+            throw XCTSkip("Skipping iOS 26-only tests on earlier OS versions")
+        }
         setIsAppleSummarizerEnabled(true)
         let subject = createSubject()
         let tab = MockTab(profile: profile, windowUUID: windowUUID, isHomePage: true)
@@ -581,7 +693,11 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         }))
     }
 
-    func testShowSummarizePanel_whenSummarizeCoordinatorAlreadyPresent_doesntAddNewOne() async {
+    func testShowSummarizePanel_whenSummarizeCoordinatorAlreadyPresent_doesntAddNewOne() async throws {
+        // Skip the entire test run if device < iOS 26 due to testing Apple Intelligence capabilities
+        guard #available(iOS 26, *) else {
+            throw XCTSkip("Skipping iOS 26-only tests on earlier OS versions")
+        }
         setIsAppleSummarizerEnabled(true)
         let subject = createSubject()
         let tab = MockTab(profile: profile, windowUUID: windowUUID)
@@ -603,6 +719,38 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         await Task.yield()
     }
 
+    // MARK: - Quick Answers
+
+    func testShowQuickAnswers_addsQuickAnswersCoordinator() {
+        let subject = createSubject()
+
+        subject.showQuickAnswers(transitionType: .crossDissolve(sourceRect: .zero))
+
+        XCTAssertEqual(subject.childCoordinators.count, 1)
+        XCTAssertTrue(subject.childCoordinators.first is QuickAnswersCoordinator)
+        XCTAssertEqual(mockRouter.presentCalled, 1)
+    }
+
+    func testShowQuickAnswers_doesNotAddDuplicateCoordinator() {
+        let subject = createSubject()
+
+        subject.showQuickAnswers(transitionType: .crossDissolve(sourceRect: .zero))
+        subject.showQuickAnswers(transitionType: .crossDissolve(sourceRect: .zero))
+
+        let count = subject.childCoordinators.count { $0 is QuickAnswersCoordinator }
+        XCTAssertEqual(count, 1)
+    }
+
+    func testShowQuickAnswers_didFinish_removesChild() throws {
+        let subject = createSubject()
+        subject.showQuickAnswers(transitionType: .crossDissolve(sourceRect: .zero))
+
+        let coordinator = try XCTUnwrap(subject.childCoordinators.first as? QuickAnswersCoordinator)
+        subject.didFinish(from: coordinator)
+
+        XCTAssertTrue(subject.childCoordinators.isEmpty)
+    }
+
     // MARK: - Shortcuts Library
 
     func testShowShortcutsLibrary_showsShortcutsLibrary() throws {
@@ -612,6 +760,19 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
 
         XCTAssertNotNil(mockRouter.pushedViewController as? ShortcutsLibraryViewController)
         XCTAssertEqual(mockRouter.pushCalled, 1)
+    }
+
+    // MARK: - World Cup Country Picker
+
+    func testShowWorldCupCountryPicker_presentsHostingController() throws {
+        let subject = createSubject()
+
+        subject.showWorldCupCountryPicker()
+
+        XCTAssertEqual(mockRouter.presentCalled, 1)
+        XCTAssertTrue(
+            mockRouter.presentedViewController is UIHostingController<WorldCupCountryPickerView>
+        )
     }
 
     func testShowPrivacyNoticeLink_showsTermsOfUseLinkView() throws {
@@ -680,24 +841,43 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
     func testDidRemoveTab_removesHomepageTabStateForTab() throws {
         let subject = createSubject()
         let tab = MockTab(profile: profile, windowUUID: windowUUID)
-        homepageTabStateStore.updateState(for: tab.tabUUID) { $0.scrollOffsetY = 180 }
+        homepageTabStateStore.updateState(for: tab.tabUUID) { state in
+            state.scrollOffsetY = 180
+            state.selectedNewsfeedCategoryID = "technology"
+            state.newsfeedCategoryPickerOffsetX = 64
+        }
 
         subject.tabManager(tabManager, didRemoveTab: tab, isRestoring: false)
 
-        XCTAssertNil(homepageTabStateStore.state(for: tab.tabUUID).scrollOffsetY)
+        XCTAssertEqual(homepageTabStateStore.state(for: tab.tabUUID), HomepageTabState())
     }
 
     func testDidRemoveTab_keepsHomepageTabStateForOtherTabs() throws {
         let subject = createSubject()
         let removedTab = MockTab(profile: profile, windowUUID: windowUUID)
         let otherTab = MockTab(profile: profile, windowUUID: windowUUID)
-        homepageTabStateStore.updateState(for: removedTab.tabUUID) { $0.scrollOffsetY = 120 }
-        homepageTabStateStore.updateState(for: otherTab.tabUUID) { $0.scrollOffsetY = 240 }
+        homepageTabStateStore.updateState(for: removedTab.tabUUID) { state in
+            state.scrollOffsetY = 120
+            state.selectedNewsfeedCategoryID = "science"
+            state.newsfeedCategoryPickerOffsetX = 40
+        }
+        homepageTabStateStore.updateState(for: otherTab.tabUUID) { state in
+            state.scrollOffsetY = 240
+            state.selectedNewsfeedCategoryID = "technology"
+            state.newsfeedCategoryPickerOffsetX = 72
+        }
 
         subject.tabManager(tabManager, didRemoveTab: removedTab, isRestoring: false)
 
-        XCTAssertNil(homepageTabStateStore.state(for: removedTab.tabUUID).scrollOffsetY)
-        XCTAssertEqual(homepageTabStateStore.state(for: otherTab.tabUUID).scrollOffsetY, 240)
+        XCTAssertEqual(homepageTabStateStore.state(for: removedTab.tabUUID), HomepageTabState())
+        XCTAssertEqual(
+            homepageTabStateStore.state(for: otherTab.tabUUID),
+            HomepageTabState(
+                scrollOffsetY: 240,
+                selectedNewsfeedCategoryID: "technology",
+                newsfeedCategoryPickerOffsetX: 72
+            )
+        )
     }
 
     // MARK: - Search route
@@ -949,6 +1129,32 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         XCTAssertTrue(presentedVC.topViewController is AppSettingsTableViewController)
     }
 
+    func testSettingsRoute_whenModalIsPresented_dismissesModalBeforeShowingSettings() throws {
+        let subject = createSubject()
+        subject.browserHasLoaded()
+        let presentedViewController = DismissSpyViewController()
+        presentedViewController.onDismiss = {
+            XCTAssertEqual(self.mockRouter.presentCalled, 0)
+        }
+        let navigationController = try XCTUnwrap(
+            mockRouter.navigationController as? MockNavigationController
+        )
+        navigationController.presentedViewController = presentedViewController
+
+        subject.handle(route: .settings(section: .appIcon))
+
+        XCTAssertEqual(presentedViewController.dismissCalled, 1)
+        let presentedNavigationController = try XCTUnwrap(
+            mockRouter.presentedViewController as? ThemedNavigationController
+        )
+        XCTAssertEqual(mockRouter.presentCalled, 1)
+        XCTAssertTrue(
+            presentedNavigationController.topViewController is UIHostingController<AppIconSelectionView>
+        )
+        XCTAssertEqual(subject.childCoordinators.count, 1)
+        XCTAssertNotNil(subject.childCoordinators[0] as? SettingsCoordinator)
+    }
+
     func testSettingsRoute_addSettingsCoordinator() {
         let subject = createSubject()
         subject.browserHasLoaded()
@@ -1131,14 +1337,19 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         XCTAssertNil(coordinator)
     }
 
-    func testSavedRouteCalled_whenRestoredTabsIsCalled() {
+    func testSavedRouteCalled_whenRestoredTabsIsCalled() async {
         tabManager.isRestoringTabs = true
         let subject = createSubject()
         subject.browserHasLoaded()
         subject.findAndHandle(route: .defaultBrowser(section: .tutorial))
+        let exp = expectation(description: "Saved route handled")
+        mockRouter.onPresent = { exp.fulfill() }
+
+        subject.tabManagerDidRestoreTabs(tabManager)
+        XCTAssertNil(mockRouter.presentedViewController)
 
         tabManager.isRestoringTabs = false
-        subject.tabManagerDidRestoreTabs(tabManager)
+        await fulfillment(of: [exp], timeout: 1)
 
         XCTAssertNotNil(mockRouter.presentedViewController as? DefaultBrowserOnboardingViewController)
         XCTAssertEqual(mockRouter.presentCalled, 1)
@@ -1354,6 +1565,73 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         XCTAssertTrue(subject.childCoordinators.isEmpty)
     }
 
+    // MARK: - Route handling
+
+    // MARK: canHandle(route:)
+
+    func testCanHandle_returnsFalse_beforeBrowserLoaded() {
+        let subject = createSubject()
+
+        let result = subject.canHandle(route: .search(url: nil, isPrivate: false))
+
+        XCTAssertFalse(result)
+    }
+
+    func testCanHandle_returnsFalse_whenTabsAreRestoring() {
+        tabManager.isRestoringTabs = true
+        let subject = createSubject()
+        subject.browserHasLoaded()
+
+        let result = subject.canHandle(route: .search(url: nil, isPrivate: false))
+
+        XCTAssertFalse(result, "isRestoringTabs should block route handling (FXIOS-13351)")
+    }
+
+    func testCanHandle_returnsTrue_whenBrowserReadyAndNotRestoring() {
+        tabManager.isRestoringTabs = false
+        let subject = createSubject()
+        subject.browserHasLoaded()
+
+        let result = subject.canHandle(route: .search(url: nil, isPrivate: false))
+
+        XCTAssertTrue(result)
+    }
+
+    // MARK: handle(route:)
+
+    func testHandle_doesNotExecuteRoute_beforeBrowserLoaded() {
+        let subject = createSubject()
+        subject.browserViewController = browserViewController
+
+        subject.handle(route: .searchQuery(query: "firefox", isPrivate: false))
+
+        XCTAssertFalse(browserViewController.handleQueryCalled)
+    }
+
+    func testHandle_doesNotExecuteRoute_whenTabsAreRestoring() {
+        tabManager.isRestoringTabs = true
+        let subject = createSubject()
+        subject.browserViewController = browserViewController
+        subject.browserHasLoaded()
+
+        subject.handle(route: .searchQuery(query: "firefox", isPrivate: false))
+
+        XCTAssertFalse(browserViewController.handleQueryCalled,
+                       "Route should not execute while tabs are restoring (FXIOS-13351)")
+    }
+
+    func testHandle_executesRoute_whenBrowserReadyAndNotRestoring() {
+        tabManager.isRestoringTabs = false
+        let subject = createSubject()
+        subject.browserViewController = browserViewController
+        subject.browserHasLoaded()
+
+        subject.handle(route: .searchQuery(query: "firefox", isPrivate: false))
+
+        XCTAssertTrue(browserViewController.handleQueryCalled)
+        XCTAssertEqual(browserViewController.handleQuery, "firefox")
+    }
+
     // MARK: - StoreTestUtility
     func setupAppState() -> AppState {
         return AppState()
@@ -1369,7 +1647,8 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
     }
 
     // MARK: - Helpers
-    private func createSubject(file: StaticString = #filePath,
+    private func createSubject(googleLensService: GoogleLensServicing = GoogleLensService(),
+                               file: StaticString = #filePath,
                                line: UInt = #line) -> BrowserCoordinator {
         let subject = BrowserCoordinator(router: mockRouter,
                                          screenshotService: screenshotService,
@@ -1377,7 +1656,9 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
                                          homepageTabStateStore: homepageTabStateStore,
                                          profile: profile,
                                          glean: glean,
-                                         applicationHelper: applicationHelper)
+                                         applicationHelper: applicationHelper,
+                                         worldCupStore: mockWorldCupStore,
+                                         googleLensService: googleLensService)
         trackForMemoryLeaks(subject, file: file, line: line)
         return subject
     }
@@ -1430,5 +1711,24 @@ final class BrowserCoordinatorTests: XCTestCase, LegacyFeatureFlaggable, StoreTe
         }
 
         return URL(string: "http://localhost:\(webServer.port)")!
+    }
+}
+
+private struct MockGoogleLensService: GoogleLensServicing {
+    func makeUploadRequest(for image: UIImage,
+                           viewportSize: CGSize,
+                           entryPoint: GoogleLensUploadEntryPoint) -> URLRequest? {
+        return URLRequest(url: URL(string: "https://lens.google.com/upload")!)
+    }
+}
+
+private final class DismissSpyViewController: UIViewController {
+    var dismissCalled = 0
+    var onDismiss: (() -> Void)?
+
+    override func dismiss(animated flag: Bool, completion: (() -> Void)? = nil) {
+        dismissCalled += 1
+        onDismiss?()
+        completion?()
     }
 }

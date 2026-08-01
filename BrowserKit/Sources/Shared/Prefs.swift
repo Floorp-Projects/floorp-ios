@@ -10,6 +10,17 @@ public struct PrefsKeys {
     public static let KeyEnableChinaSyncService = "useChinaSyncService"
     public static let KeyLastRemoteTabSyncTime = "lastRemoteTabSyncTime"
 
+    // Long-term blocked-tracker stats (non-private), keyed by category. The
+    // in-progress week is stored separately from a single lifetime running total
+    // (the sum of all completed weeks) so the hot-path write only ever touches a
+    // small, fixed-size value. The start date marks when tracking first began.
+    public static let TrackerBlockStatsCurrentWeek = "trackerBlockStatsCurrentWeek"
+    public static let TrackerBlockStatsLifetime = "trackerBlockStatsLifetime"
+    public static let TrackerBlockStatsStartDate = "trackerBlockStatsStartDate"
+    // Highest figure-count boundary already reported to telemetry for the lifetime
+    // blocked-tracker total. Reset alongside the stats above.
+    public static let TrackerBlockStatsReportedFigures = "trackerBlockStatsReportedFigures"
+
     // Global sync state for rust sync manager
     public static let RustSyncManagerPersistedState = "rustSyncManagerPersistedStateKey"
     public static let LoginsHaveBeenVerified = "loginsHaveBeenVerified"
@@ -20,6 +31,7 @@ public struct PrefsKeys {
     public static let KeyNoImageModeStatus = "NoImageModeStatus"
     public static let KeyMailToOption = "MailToOption"
     public static let IntroSeen = "IntroViewControllerSeen"
+    public static let OnboardingLastCardSeen = "OnboardingLastCardSeen"
     public static let TermsOfServiceAccepted = "TermsOfServiceAccepted"
     public static let TermsOfServiceAcceptedDate = "TermsOfServiceAcceptedDate"
     // TermsOfUseAccepted should use same string key as before to maintain compatibility
@@ -50,6 +62,7 @@ public struct PrefsKeys {
     public static let ShowClipboardBar = "showClipboardBar"
     public static let ShowRelayMaskSuggestions = "showRelayMaskSuggestions"
     public static let BlockOpeningExternalApps = "blockOpeningExternalApps"
+    public static let BlockAds = "blockAds"
     public static let NewTabCustomUrlPrefKey = "HomePageURLPref"
     public static let GoogleTopSiteAddedKey = "googleTopSiteAddedKey"
     public static let GoogleTopSiteHideKey = "googleTopSiteHideKey"
@@ -84,6 +97,10 @@ public struct PrefsKeys {
         public static let Latest = "latestAppVersion"
     }
 
+    public struct AdsClient {
+        public static let documentsDirectoryMigrationCheck = "adsClientDocumentsDirectoryMigrationCheckUserPrefsKey"
+    }
+
     public struct Wallpapers {
         public static let MetadataLastCheckedDate = "WallpaperMetadataLastCheckedUserPrefsKey"
         public static let CurrentWallpaper = "CurrentWallpaperUserPrefsKey"
@@ -103,6 +120,7 @@ public struct PrefsKeys {
     public struct FeatureFlags {
         public static let DebugSuffixKey = "DebugKey"
         public static let FirefoxSuggest = "FirefoxSuggest"
+        public static let GoogleLens = "GoogleLensUserPrefsKey"
         public static let SearchBarPosition = "SearchBarPositionUsersPrefsKey"
         public static let SentFromFirefox = "SentFromFirefoxUserPrefsKey"
         public static let SponsoredShortcuts = "SponsoredShortcutsUserPrefsKey"
@@ -112,6 +130,29 @@ public struct PrefsKeys {
     public struct HomepageSettings {
         public static let BookmarksSection = "BookmarksSectionUserPrefsKey"
         public static let JumpBackInSection = "JumpBackInSectionUserPrefsKey"
+        public static let TrackerBlockerSection = "TrackerBlockerSectionUserPrefsKey"
+        public static let WorldCupSection = "WorldCupSectionUserPrefsKey"
+        /// Tracks whether we've performed the one-time transition from World
+        /// Cup milestone 1 to milestone 2. When the milestone 2 date is first
+        /// reached we force-enable the homepage section once, then respect the
+        /// user preference on subsequent reads.
+        public static let WorldCupMilestone2Transitioned = "WorldCupMilestone2TransitionedUserPrefsKey"
+        /// Override for the merino WCS base host
+        public static let WorldCupBaseHost = "worldCupBaseHostKey"
+        /// Dev-only override for the World Cup `/matches` and `/live` polling
+        /// cadence in seconds. When set, both streams fire on this interval
+        /// regardless of result type — used to test live behavior without
+        /// waiting for the production cadence.
+        public static let WorldCupPollInterval = "worldCupPollIntervalKey"
+    }
+
+    public struct Homepage {
+        public static let WorldCupSelectedCountry = "WorldCupSelectedCountryUserPrefsKey"
+        public static let WorldCupSeenWinningMatchIDs = "WorldCupSeenWinningMatchIDsUserPrefsKey"
+    }
+
+    public struct QuickAnswers {
+        public static let optInCompleted = "quickAnswers.optInCompleted"
     }
 
     public struct SearchSettings {
@@ -141,6 +182,7 @@ public struct PrefsKeys {
 
     public struct MLPASettings {
         public static let mlpaEndpointEnvironment = "mlpaEndpointEnvironment"
+        public static let lastUsedEnvironment = "mlpaLastUsedEnvironment"
     }
 
     public struct UserFeatureFlagPrefs {
@@ -159,7 +201,6 @@ public struct PrefsKeys {
         case mainMenuRedesignKey = "mainMenuRedesignHintKey"
         case navigationKey = "ContextualHintNavigation"
         case relayMaskKey = "ContextualHintRelayMaskKey"
-        case toolbarUpdateKey = "ContextualHintToolbarUpdate"
         case translationKey = "ContextualHintTranslationKey"
         case summarizerToolbarEntryKey = "summarizerToolbarEntryKey"
     }
@@ -174,6 +215,7 @@ public struct PrefsKeys {
         public static let translationAutoTranslate = "settings.translationAutoTranslate"
         public static let translationAutoTranslatePromptShown = "settings.translationAutoTranslatePromptShown"
         public static let aiKillSwitchFeature = "settings.aiKillSwitchFeature"
+        public static let quickAnswersFeature = "settings.quickAnswersFeature"
     }
 
     // Activity Stream
@@ -220,17 +262,11 @@ public struct PrefsKeys {
     // Representing whether or not the last user session was private
     public static let LastSessionWasPrivate = "wasLastSessionPrivate"
 
-    // Only used in unit tests to override the user's setting for nimbus features
-    public static let NimbusUserEnabledFeatureTestsOverride = "NimbusUserEnabledFeatureTestsOverride"
-
     // Only used to force faster Terms of Use timeout for debugging purposes
     public static let FasterTermsOfUseTimeoutOverride = "FasterTermsOfUseTimeoutOverride"
 
     // Only used to force showing the App Store review dialog for debugging purposes
     public static let ForceShowAppReviewPromptOverride = "ForceShowAppReviewPromptOverride"
-
-    // Used to show splash screen only during first time on fresh install
-    public static let splashScreenShownKey = "splashScreenShownKey"
 
     public static let PasswordGeneratorShown = "PasswordGeneratorShown"
 

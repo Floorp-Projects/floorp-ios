@@ -59,6 +59,9 @@ struct AccessibilityIdentifiers {
             static let lockIconOff = "AddressToolbar.lockIconOff"
             static let searchTextField = "AddressToolbar.address"
             static let searchEngine = "AddressToolbar.searchEngine"
+            static let googleLensButton = "AddressToolbar.googleLensButton"
+            static let googleLensTakePhotoAction = "AddressToolbar.googleLensTakePhotoAction"
+            static let googleLensPhotoLibraryAction = "AddressToolbar.googleLensPhotoLibraryAction"
             static let leadingSkeleton = "AddressToolbar.leadingSkeleton"
             static let trailingSkeleton = "AddressToolbar.trailingSkeleton"
         }
@@ -66,6 +69,11 @@ struct AccessibilityIdentifiers {
         struct WebView {
             static let documentLoadingLabel = "WebView.documentLoadingLabel"
             static let automationTestLeakIndicator = "WebView.LeakIndicatorElement"
+            static let contentView = "contentView"
+        }
+
+        struct Tab {
+            static let automationTestLeakIndicator = "Tab.LeakIndicatorElement"
         }
 
         static let overKeyboardContainer = "Browser.overKeyboardContainer"
@@ -76,6 +84,7 @@ struct AccessibilityIdentifiers {
         static let statusBarOverlay = "Browser.statusBarOverlay"
         static let topBlurView = "Browser.topBlurView"
         static let bottomBlurView = "Browser.bottomBlurView"
+        static let keyboardSpacer = "AddressToolbar.keyboardSpacer"
     }
 
     struct ContextualHints {
@@ -92,7 +101,6 @@ struct AccessibilityIdentifiers {
         }
 
         struct HeaderView {
-            static let mainButton = "MainMenu.MainButton"
             static let closeButton = "MainMenu.CloseMenuButton"
         }
 
@@ -111,7 +119,6 @@ struct AccessibilityIdentifiers {
         static let whatsNew = "MainMenu.WhatsNew"
         static let saveToReadingList = "MainMenu.SaveToReadingList"
         static let addToShortcuts = "MainMenu.AddToShortcuts"
-        static let bookmarkThisPage = "MainMenu.BookmarkThisPage"
         static let bookmarkPage = "MainMenu.BookmarkPage"
         static let print = "MainMenu.Print"
         static let share = "MainMenu.Share"
@@ -125,6 +132,17 @@ struct AccessibilityIdentifiers {
         static let summarizePage = "MainMenu.SummarizePage"
         static let translatePage = "MainMenu.TranslatePage"
         static let trackigProtection = "shieldCheckmarkLarge"
+    }
+
+    struct WebCompatReporter {
+        static let urlField = "WebCompatReporter.URLField"
+        static let categoryMenu = "WebCompatReporter.CategoryMenu"
+        static let subOption = "WebCompatReporter.SubOption"
+        static let additionalDetails = "WebCompatReporter.AdditionalDetails"
+        static let sendButton = "WebCompatReporter.SendButton"
+        static let includeScreenshot = "WebCompatReporter.IncludeScreenshot"
+        static let includeBlockedList = "WebCompatReporter.IncludeBlockedList"
+        static let learnMore = "WebCompatReporter.LearnMore"
     }
 
     struct UnifiedSearch {
@@ -246,6 +264,7 @@ struct AccessibilityIdentifiers {
         struct OtherButtons {
             static let logoID = "FxHomeLogoID"
             static let closeButton = "FirefoxHomepage.closeButton"
+            static let quickAnswersButton = "FirefoxHomepage.quickAnswersButton"
         }
 
         struct MoreButtons {
@@ -263,6 +282,11 @@ struct AccessibilityIdentifiers {
 
         struct TopSites {
             static let itemCell = "TopSitesCell"
+
+            struct AddShortcutAlert {
+                static let view = "TopSites.AddShortcutAlert"
+                static let urlTextField = "TopSites.AddShortcutAlert.URLTextField"
+            }
         }
 
         struct SearchBar {
@@ -292,16 +316,15 @@ struct AccessibilityIdentifiers {
             static let favIconImage = "SyncedTabFavIconImage"
             static let descriptionLabel = "SyncedTabDescriptionLabel"
         }
+
+        struct TrackerBlockerModule {
+            static let shieldIcon = "TrackerBlockerModule.shieldIcon"
+            static let titleLabel = "TrackerBlockerModule.titleLabel"
+        }
     }
 
     struct GeneralizedIdentifiers {
         public static let back = "Back"
-    }
-
-    struct SaveCardPrompt {
-        struct Prompt {
-            static let closeButton = "a11yCloseButton"
-        }
     }
 
     struct Microsurvey {
@@ -373,6 +396,7 @@ struct AccessibilityIdentifiers {
         static let tabCell = "TabDisplayView.tabCell"
         static let closeButton = "tabCloseButton"
         static let tabsTray = "Tabs Tray"
+        static let iPadSelectionBackgroundView =  "TabTraySelectorView.selectionBackgroundView"
     }
 
     struct LibraryPanels {
@@ -404,6 +428,8 @@ struct AccessibilityIdentifiers {
             static let titleTextFieldClearButton = "BookmarksDetail.TitleTextFieldClearButton"
             static let urlTextFieldClearButton = "BookmarksDetail.UrlTextFieldClearButton"
             static let bookmarksFolder = "BookmarksDetail.ParentFolderSelector.FolderCell_0"
+            static let folderSectionHeader = "BookmarksDetail.ParentFolderSelector.SectionHeader"
+            static let changeLocationCell = "BookmarksDetail.ParentFolderSelector.ChangeLocationCell"
         }
 
         struct HistoryPanel {
@@ -479,7 +505,6 @@ struct AccessibilityIdentifiers {
     }
 
     struct Upgrade {
-        static let backgroundImage = "Upgrade.BackgroundImage"
         static let upgrade = "upgrade."
         static let closeButton = "Upgrade.CloseButton"
         static let pageControl = "Upgrade.PageControl"
@@ -649,6 +674,7 @@ struct AccessibilityIdentifiers {
             struct Addresses {
                 static let title = "Addresses"
                 static let addAddress = "Add address"
+                static let addressCell = "AddressCell"
             }
         }
 
@@ -759,6 +785,8 @@ struct AccessibilityIdentifiers {
             static let blockPopUps = "blockPopups"
             static let autoPlay = "AutoplaySettings"
             static let blockImages = "NoImageModeStatus"
+            static let adBlockerTitle = "AdBlocker"
+            static let adBlockerLearnMore = "AdBlockerLearnMore"
         }
 
         struct Summarize {
@@ -776,10 +804,16 @@ struct AccessibilityIdentifiers {
             static let title = "Settings.Translation.Title"
             // This is based on `PrefsKeys.Settings.translationsFeature`
             static let toggleSwitch = "settings.translationFeature"
+            static let autoTranslateSwitch = "settings.translationAutoTranslate"
             static let navigationBar = "Settings.Translation.navigationBar"
             static let backButtoniOS26 = "BackButton"
             static let backButton = "Settings"
             static let languagePickerList = "Settings.Translation.LanguagePickerList"
+        }
+
+        struct QuickAnswers {
+            static let title = "Settings.QuickAnswers.Title"
+            static let learnMoreButton = "Settings.QuickAnswers.LearnMoreButton"
         }
 
         struct BlockImages {
@@ -818,6 +852,10 @@ struct AccessibilityIdentifiers {
             static let allowAudioAndVideo = "AllowAudioAndVideo"
             static let blockAudio = "BlockAudio"
             static let blockAudioAndVideo = "BlockAudioAndVideo"
+        }
+
+        struct Debug {
+            static let offloadBackgroundWebViews = "Settings.Debug.OffloadBackgroundWebViews"
         }
     }
 
@@ -881,7 +919,6 @@ struct AccessibilityIdentifiers {
         static let rememberCreditCardHeader = "RememberCreditCard.Header"
         static let yesButton = "RememberCreditCard.yesButton"
         static let manageCardsButton = "RememberCreditCard.manageCardsButton"
-        static let notNowButton = "RememberCreditCard.notNowButton"
     }
 
     enum Autofill {
@@ -910,6 +947,10 @@ struct AccessibilityIdentifiers {
         static let titleLabel = "NativeErrorPage.titleLabel"
         static let errorDescriptionLabel = "NativeErrorPage.errorDescriptionLabel"
         static let reloadButton = "NativeErrorPage.reloadButton"
+        static let waybackButton = "NativeErrorPage.waybackButton"
+        static let waybackErrorCard = "NativeErrorPage.waybackErrorCard"
+        static let waybackErrorLabel = "NativeErrorPage.waybackErrorLabel"
+        static let waybackErrorButton = "NativeErrorPage.waybackRetryButton"
         static let goBackButton = "NativeErrorPage.goBackButton"
         static let proceedButton = "NativeErrorPage.proceedButton"
         static let advancedSectionHeader = "NativeErrorPage.advancedSectionHeader"

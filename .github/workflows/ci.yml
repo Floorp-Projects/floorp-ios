@@ -111,6 +111,7 @@ jobs:
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             -disableAutomaticPackageResolution \
             -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGN_IDENTITY= \
             CODE_SIGNING_REQUIRED=NO \
@@ -130,6 +131,7 @@ jobs:
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             -disableAutomaticPackageResolution \
             -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
             -resultBundlePath "$RUNNER_TEMP/FloorpCI.xcresult" \
             CODE_SIGN_IDENTITY= \
             CODE_SIGNING_REQUIRED=NO \

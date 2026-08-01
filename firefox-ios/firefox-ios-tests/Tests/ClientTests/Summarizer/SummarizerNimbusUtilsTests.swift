@@ -7,19 +7,25 @@ import Shared
 @testable import Client
 
 final class SummarizerNimbusUtilsTests: XCTestCase {
-    private var profile = MockProfile()
+    private var profile: MockProfile!
     private let itTestLocale = Locale(identifier: "it")
     private let userDefaults = UserDefaults.standard
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         profile = MockProfile()
+        await DependencyHelperMock().bootstrapDependencies(injectedProfile: profile)
         // Set features to default values
         setHostedSummarizerFeature()
         setIsAppleIntelligenceAvailable()
         setLanguageExpansionFeature()
         setIsAppAttestAuthEnabled()
-        LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: profile)
+    }
+
+    override func tearDown() async throws {
+        profile = nil
+        DependencyHelperMock().reset()
+        try await super.tearDown()
     }
 
     // MARK: - isSummarizeFeatureToggledOn

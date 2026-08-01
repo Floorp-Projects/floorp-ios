@@ -16,10 +16,10 @@ class MockTabManager: TabManager {
     var selectedIndex = 0
     var selectedTab: Tab?
     var selectedTabUUID: UUID?
-    var backupCloseTab: BackupCloseTab?
-    var backupCloseTabs = [Tab]()
     // Use to return in getTabForUUID()
     var tabForUUID: Tab?
+    // Maps tabUUID → Tab; takes precedence over `tabForUUID` for callers that need per-UUID lookups.
+    var tabsByUUID: [TabUUID: Tab] = [:]
 
     var recentlyAccessedNormalTabs = [Tab]()
 
@@ -96,10 +96,6 @@ class MockTabManager: TabManager {
 
     func removeNormalTabsOlderThan(period: TabsDeletionPeriod, currentDate: Date) {}
 
-    func undoCloseAllTabs() {}
-
-    func undoCloseTab() {}
-
     func clearAllTabsHistory() {}
 
     func commitChanges() {
@@ -115,6 +111,7 @@ class MockTabManager: TabManager {
     func restoreTabs() {}
 
     func getTabForUUID(uuid: String) -> Tab? {
+        if let match = tabsByUUID[uuid] { return match }
         return tabForUUID
     }
 
@@ -124,10 +121,6 @@ class MockTabManager: TabManager {
 
     func expireLoginAlerts() {}
 
-    func switchPrivacyMode() -> SwitchPrivacyModeResult {
-        return .createdNewTab
-    }
-
     func addPopupForParentTab(profile: Profile, parentTab: Tab, configuration: WKWebViewConfiguration) -> Tab {
         return Tab(profile: MockProfile(), windowUUID: windowUUID)
     }
@@ -135,8 +128,6 @@ class MockTabManager: TabManager {
     func makeToastFromRecentlyClosedUrls(_ recentlyClosedTabs: [Tab],
                                          isPrivate: Bool,
                                          previousTabUUID: String) {}
-
-    func undoCloseAllTabsLegacy(recentlyClosedTabs: [Client.Tab], previousTabUUID: String, isPrivate: Bool) {}
 
     @discardableResult
     func addTab(_ request: URLRequest?,
@@ -162,5 +153,14 @@ class MockTabManager: TabManager {
         notifyCurrentTabDidFinishLoadingCalled += 1
     }
 
-    func tabDidSetScreenshot(_ tab: Client.Tab) {}
+    var tabDidSetScreenshotCalls = 0
+    func tabDidSetScreenshot(_ tab: Client.Tab) {
+        tabDidSetScreenshotCalls += 1
+    }
+    func offloadBackgroundWebViews() async {}
+
+    var restoreScreenshotCalls: [Tab] = []
+    func restoreScreenshot(for tab: Tab) {
+        restoreScreenshotCalls.append(tab)
+    }
 }

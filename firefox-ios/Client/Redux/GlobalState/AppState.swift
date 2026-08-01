@@ -9,9 +9,18 @@ import Common
 struct AppState: StateType, Sendable {
     let presentedComponents: PresentedComponentsState
 
-    static let reducer: Reducer<Self> = { state, action in
+    static let reducer: Reducer<Self> = (legacyReducer, modernReducer)
+
+    static let modernReducer: ReducerMethod<Self> = { state, action, actionWindowUUID in
         return AppState(
-            presentedComponents: PresentedComponentsState.reducer(state.presentedComponents, action)
+            presentedComponents: PresentedComponentsState.reducer
+                                 .modernReducer(state.presentedComponents, action, actionWindowUUID)
+        )
+    }
+
+    static let legacyReducer: LegacyReducerMethod<Self> = { state, action in
+        return AppState(
+            presentedComponents: PresentedComponentsState.reducer.legacyReducer(state.presentedComponents, action)
         )
     }
 
@@ -30,7 +39,6 @@ struct AppState: StateType, Sendable {
                 case (.tabPeek(let state), .tabPeek): return state as? S
                 case (.tabsTray(let state), .tabsTray): return state as? S
                 case (.termsOfUse(let state), .termsOfUse): return state as? S
-                case (.themeSettings(let state), .themeSettings): return state as? S
                 case (.toolbar(let state), .toolbar): return state as? S
                 case (.searchEngineSelection(let state), .searchEngineSelection): return state as? S
                 case (.trackingProtection(let state), .trackingProtection): return state as? S
@@ -38,6 +46,7 @@ struct AppState: StateType, Sendable {
                 case (.nativeErrorPage(let state), .nativeErrorPage): return state as? S
                 case (.shortcutsLibrary(let state), .shortcutsLibrary): return state as? S
                 case (.translationSettings(let state), .translationSettings): return state as? S
+                case (.webCompatReporter(let state), .webCompatReporter): return state as? S
                 default: return nil
                 }
             }.first(where: {
@@ -83,13 +92,17 @@ let middlewares = [
     NativeErrorPageMiddleware().nativeErrorPageProvider,
     WallpaperMiddleware().wallpaperProvider,
     BookmarksMiddleware().bookmarksProvider,
+    WorldCupMiddleware().worldCupProvider,
+    TrackerBlockerModuleMiddleware().trackerBlockerModuleProvider,
     HomepageMiddleware(notificationCenter: NotificationCenter.default).homepageProvider,
+    QuickAnswersMiddleware().quickAnswersProvider,
     StartAtHomeMiddleware().startAtHomeProvider,
     ShortcutsLibraryMiddleware().shortcutsLibraryProvider,
     SummarizerMiddleware().summarizerProvider,
     TermsOfUseMiddleware().termsOfUseProvider,
     TranslationsMiddleware().translationsProvider,
-    TranslationSettingsMiddleware().translationSettingsProvider
+    TranslationSettingsMiddleware().translationSettingsProvider,
+    WebCompatReporterMiddleware().webCompatReporterProvider
 ]
 
 // In order for us to mock and test the middlewares easier,

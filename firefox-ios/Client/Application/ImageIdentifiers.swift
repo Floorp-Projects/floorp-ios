@@ -5,20 +5,19 @@
 import Foundation
 
 /// This struct defines all the non-standard image identifiers of icons and images used in the app.
-/// Please see `StandardImageIdentifiers` for th standard ones.
+/// Please see `StandardImageIdentifiers` for the standard ones.
 /// When adding new identifiers, please respect alphabetical order.
 /// Sing the song if you must.
 struct ImageIdentifiers {
     public static let badgeMask = "badge-mask"
     public static let floorpFavicon = "floorpFavicon"
+    public static let firefoxLogoSoccer = "firefoxLogoSoccer"
     public static let foxConfirmation = "foxConfirmation"
     public static let foxDefaultBrowser = "foxDefaultBrowser"
     public static let foxWithStars = "foxWithStars"
     public static let homeHeaderLogoBall = "fxHomeHeaderLogoBall"
     public static let homeHeaderLogoText = "fxHomeHeaderLogoText"
     public static let homepagePocket = "homepage-pocket"
-    public static let lightningBadge = "lightningBadge"
-    public static let information = "information"
     public static let logo = "splash"
     public static let logoAmex = "logo_amex"
     public static let logoDiners = "logo_diners"
@@ -35,9 +34,12 @@ struct ImageIdentifiers {
     public static let qrCodeScanBorder = "qrcode-scanBorder"
     public static let qrCodeScanLine = "qrcode-scanLine"
     public static let signinSync = "signin-sync"
+    public static let shieldCheckmarkColored = "shieldCheckmarkColored"
     public static let syncOpenTab = "sync_open_tab"
     public static let radioButtonNotSelected = "radioButtonNotSelected"
     public static let radioButtonSelected = "radioButtonSelected"
+    public static let radioButtonNotSelectedNova = "radioButtonNotSelectedNova"
+    public static let radioButtonSelectedNova = "radioButtonSelectedNova"
 
     public struct Appearance {
         public static let automaticBrowserThemeGradient = "automaticBrowserThemeGradient"

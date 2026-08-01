@@ -5,12 +5,12 @@
 import XCTest
 
 let website1: [String: String] = [
-    "url": path(forTestPage: "test-mozilla-org.html"),
+    "url": path(forTestPage: TestPages.mozillaOrg),
     "label": "Internet for people, not profit — Mozilla",
     "value": "localhost",
-    "longValue": "localhost:\(serverPort)/test-fixture/test-mozilla-org.html"
+    "longValue": "localhost:\(serverPort)/test-fixture/\(TestPages.mozillaOrg)"
 ]
-let website2 = path(forTestPage: "test-example.html")
+let website2 = path(forTestPage: TestPages.exampleHTML)
 
 class ToolbarTests: FeatureFlaggedTestBase {
     override func setUp() async throws {
@@ -160,6 +160,26 @@ class ToolbarTests: FeatureFlaggedTestBase {
         }
     }
 
+    // https://mozilla.testrail.io/index.php?/cases/view/4105580
+    // Smoketest
+    func testToolbarIsVisibleAfterTypingInWebPageTextField() {
+        let browserScreen = BrowserScreen(app: app)
+        let toolbarScreen = ToolbarScreen(app: app)
+        XCUIDevice.shared.orientation = UIDeviceOrientation.portrait
+        app.launch()
+
+        // Access a page with a text field
+        browserScreen.navigateToURL(path(forTestPage: "empty-login-form.html"))
+        waitUntilPageLoad()
+
+        // Type some characters in the text field and tap on enter
+        browserScreen.typeOnWebFormTextField("firefox")
+        waitUntilPageLoad()
+
+        // The toolbar is visible
+        toolbarScreen.assertToolbarIsVisible()
+    }
+
     private func validateAddNewTabButtonOnToolbar(isPrivate: Bool) {
         mozWaitForElementToExist(app.buttons[AccessibilityIdentifiers.Toolbar.tabsButton])
         restartInBackground()
@@ -170,8 +190,14 @@ class ToolbarTests: FeatureFlaggedTestBase {
             mozWaitForElementToExist(app.textFields[AccessibilityIdentifiers.Browser.AddressToolbar.searchTextField])
             mozWaitForElementToExist(app.buttons[AccessibilityIdentifiers.Toolbar.settingsMenuButton])
             if !isPrivate {
-                app.partialSwipeUp(distance: 0.2)
-                mozWaitForElementToExist(app.staticTexts[AccessibilityIdentifiers.FirefoxHomepage.SectionTitles.merino])
+                // News scrolls in after the relaunch and loads async; retry the swipe.
+                let news = app.otherElements["News"]
+                var swipes = 3
+                repeat {
+                    app.partialSwipeUp(distance: 0.2)
+                    swipes -= 1
+                } while !news.mozWaitForElementToExist(timeout: TIMEOUT, failOnTimeout: false) && swipes > 0
+                mozWaitForElementToExist(news)
             }
             navigator.nowAt(BrowserTab)
             mozWaitElementHittable(element: app.buttons[AccessibilityIdentifiers.Toolbar.tabsButton], timeout: TIMEOUT)

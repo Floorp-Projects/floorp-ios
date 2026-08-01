@@ -43,10 +43,8 @@ enum RemoteTabsPanelActionType: ActionType {
     case syncDidBegin
     case refreshDidFail
     case refreshDidSucceed
-    case closeTabCompatible
     case openSelectedURL
     case closeSelectedRemoteURL
-    case undoCloseSelectedRemoteURL
     case flushTabCommands
     case remoteDevicesChanged
 }

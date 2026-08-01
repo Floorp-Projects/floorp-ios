@@ -51,7 +51,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didLoadSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertFalse(newState.isTranslationsEnabled)
         XCTAssertEqual(newState.preferredLanguages, languages)
@@ -73,7 +73,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didLoadSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertFalse(newState.isTranslationsEnabled)
         XCTAssertEqual(newState.preferredLanguages, languages)
@@ -92,7 +92,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didLoadSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertTrue(newState.isAutoTranslateEnabled)
     }
@@ -112,7 +112,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didLoadSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertTrue(newState.isAutoTranslateEnabled)
     }
@@ -134,7 +134,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsViewActionType.enterEditMode
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertTrue(newState.isEditing)
         XCTAssertEqual(newState.pendingLanguages, languages)
@@ -159,7 +159,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsViewActionType.cancelEditMode
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertFalse(newState.isEditing)
         XCTAssertNil(newState.pendingLanguages)
@@ -186,7 +186,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsViewActionType.reorderLanguages
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertEqual(newState.pendingLanguages, reordered)
         XCTAssertEqual(newState.preferredLanguages, makeLanguages(["en", "fr"]))
@@ -211,7 +211,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsViewActionType.removeLanguage
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertEqual(newState.pendingLanguages?.map { $0.code }, ["en", "de"])
         XCTAssertEqual(newState.preferredLanguages, makeLanguages(["en", "fr", "de"]))
@@ -233,7 +233,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsViewActionType.removeLanguage
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertEqual(newState.pendingLanguages?.map { $0.code }, ["fr"])
     }
@@ -250,7 +250,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didUpdateSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertFalse(newState.isTranslationsEnabled)
         XCTAssertEqual(newState.preferredLanguages, initialState.preferredLanguages)
@@ -273,11 +273,35 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didUpdateSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertFalse(newState.isTranslationsEnabled)
         XCTAssertEqual(newState.preferredLanguages, languages)
         XCTAssertEqual(newState.supportedLanguages, ["en", "fr", "de"])
+    }
+
+    // MARK: - Reducer Tests - TranslationsAction.didTranslationSettingsChange
+
+    /// FXIOS-15120: the settings reducer reacts to the same `TranslationsAction` the toolbar listens
+    /// to, so the toggle flow only needs a single dispatch.
+    func test_didTranslationSettingsChange_updatesTranslationsEnabledFromAction() {
+        let initialState = TranslationSettingsState(
+            windowUUID: .XCTestDefaultUUID,
+            isTranslationsEnabled: false,
+            preferredLanguages: [],
+            supportedLanguages: []
+        )
+        let reducer = translationSettingsReducer()
+
+        let action = TranslationsAction(
+            isTranslationsEnabled: true,
+            windowUUID: .XCTestDefaultUUID,
+            actionType: TranslationsActionType.didTranslationSettingsChange
+        )
+
+        let newState = reducer.legacyReducer(initialState, action)
+
+        XCTAssertTrue(newState.isTranslationsEnabled)
     }
 
     // MARK: - Equality Tests
@@ -352,7 +376,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didLoadSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertEqual(newState, initialState)
     }
@@ -367,7 +391,7 @@ final class TranslationSettingsStateTests: XCTestCase {
             actionType: TranslationSettingsMiddlewareActionType.didLoadSettings
         )
 
-        let newState = reducer(initialState, action)
+        let newState = reducer.legacyReducer(initialState, action)
 
         XCTAssertEqual(newState, initialState)
     }

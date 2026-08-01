@@ -3,11 +3,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
-import CopyWithUpdates
+import ModifiedCopy
 import Redux
 
 /// State for the message cell that is used in the homepage view
-@CopyWithUpdates
+@Copyable
 struct MessageCardState: StateType, Equatable, Hashable {
     var windowUUID: WindowUUID
     var messageCardConfiguration: MessageCardConfiguration?
@@ -27,7 +27,14 @@ struct MessageCardState: StateType, Equatable, Hashable {
         self.messageCardConfiguration = messageCardConfiguration
     }
 
-    static let reducer: Reducer<Self> = { state, action in
+    static let reducer: Reducer<Self> = (legacyReducer, modernReducer)
+
+    static let modernReducer: ReducerMethod<Self> = { state, action, actionWindowUUID in
+        // Does not handle any modern actions
+        return defaultState(from: state)
+    }
+
+    static let legacyReducer: LegacyReducerMethod<Self> = { state, action in
         guard action.windowUUID == .unavailable || action.windowUUID == state.windowUUID
         else {
             return defaultState(from: state)
@@ -49,19 +56,22 @@ struct MessageCardState: StateType, Equatable, Hashable {
         else {
             return defaultState(from: state)
         }
-        return state.copyWithUpdates(
+        return state.copy(
             messageCardConfiguration: messageCardConfiguration
         )
     }
 
     /// Tapping an action on the card should dismiss the message card and we do this by setting the configuration to nil
     private static func handleTappingAction(for state: MessageCardState, with action: Action) -> MessageCardState {
-        return state.copyWithUpdates(
+        return state.copy(
             messageCardConfiguration: nil
         )
     }
 
     static func defaultState(from state: MessageCardState) -> MessageCardState {
-        return state.copyWithUpdates()
+        return MessageCardState(
+            windowUUID: state.windowUUID,
+            messageCardConfiguration: state.messageCardConfiguration
+        )
     }
 }

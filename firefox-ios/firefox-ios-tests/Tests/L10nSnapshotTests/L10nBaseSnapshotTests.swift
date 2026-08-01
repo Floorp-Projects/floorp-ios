@@ -131,36 +131,3 @@ class L10nBaseSnapshotTests: XCTestCase {
         mozWaitForElementToNotExist(progressIndicator, timeout: 30.0)
     }
 }
-
-extension XCUIElement {
-    func tapOnApp() {
-        coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-    }
-
-    /// Waits for the UI element and then taps if it exists.
-    func waitAndTap(timeout: TimeInterval? = TIMEOUT) {
-        L10nBaseSnapshotTests().mozWaitForElementToExist(self, timeout: timeout)
-        self.tap()
-    }
-
-    /// Waits for the UI element and then taps and types the provided text if it exists.
-    func tapAndTypeText(_ text: String, timeout: TimeInterval? = TIMEOUT) {
-        L10nBaseSnapshotTests().mozWaitForElementToExist(self, timeout: timeout)
-        self.tap()
-        self.typeText(text)
-    }
-
-    func pressWithRetry(duration: TimeInterval, timeout: TimeInterval = TIMEOUT, element: XCUIElement) {
-        L10nBaseSnapshotTests().mozWaitForElementToExist(self, timeout: timeout)
-        self.press(forDuration: duration)
-        var attempts = 5
-        while !element.exists && attempts > 0 {
-            self.press(forDuration: duration)
-            attempts -= 1
-        }
-
-        if !element.exists {
-            XCTFail("\(element) is not visible after \(attempts) attempts")
-        }
-    }
-}

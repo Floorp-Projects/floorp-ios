@@ -3,7 +3,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Redux
-import MozillaAppServices
 import UIKit
 import XCTest
 
@@ -13,7 +12,6 @@ final class MerinoStateTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         await DependencyHelperMock().bootstrapDependencies()
-        LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: MockProfile())
     }
 
     override func tearDown() async throws {
@@ -30,19 +28,14 @@ final class MerinoStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_retrievedUpdatedStoriesAction_returnsExpectedState() throws {
+    func test_retrievedUpdatedStoriesAction_sortsStoriesByRank() throws {
         let initialState = createSubject()
         let reducer = pocketReducer()
-
-        let feedStories: [RecommendationDataItem] = [
-            .makeItem("feed1"),
-            .makeItem("feed2"),
-            .makeItem("feed3"),
+        let stories = [
+            createStoryConfiguration(title: "feed2", rank: 2),
+            createStoryConfiguration(title: "feed0", rank: 0),
+            createStoryConfiguration(title: "feed1", rank: 1),
         ]
-
-        let stories = feedStories.compactMap {
-            MerinoStoryConfiguration(story: MerinoStory(from: $0))
-        }
 
         let newState = reducer(
             initialState,
@@ -55,7 +48,10 @@ final class MerinoStateTests: XCTestCase {
 
         XCTAssertEqual(newState.windowUUID, .XCTestDefaultUUID)
         XCTAssertEqual(newState.merinoData.stories?.count, 3)
-        XCTAssertEqual(newState.merinoData.stories?.compactMap { $0.title }, ["feed1", "feed2", "feed3"])
+        XCTAssertEqual(
+            newState.merinoData.stories?.compactMap { $0.title },
+            ["feed0", "feed1", "feed2"]
+        )
     }
 
     @MainActor
@@ -95,68 +91,61 @@ final class MerinoStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_categorySelected_withSpecificCategory_updatesSelectedCategoryID() {
-        let initialState = createSubject()
-        let reducer = pocketReducer()
-
-        let newState = reducer(
-            initialState,
-            MerinoAction(
-                selectedCategoryID: "technology",
-                windowUUID: .XCTestDefaultUUID,
-                actionType: MerinoActionType.categorySelected
-            )
-        )
-
-        XCTAssertEqual(newState.selectedCategoryID, "technology")
-    }
-
-    @MainActor
-    func test_categorySelected_withNilCategory_clearsSelectedCategoryID() {
-        let initialState = pocketReducer()(
+    func test_retrievedUpdatedStoriesAction_sortsCategoriesAndRecommendationsByRank() {
+        let categories = [
+            createCategory(
+                feedID: "technology",
+                title: "Technology",
+                rank: 2,
+                recommendations: [
+                    createStoryConfiguration(title: "technology1", rank: 1),
+                    createStoryConfiguration(title: "technology0", rank: 0),
+                ]
+            ),
+            createCategory(
+                feedID: "science",
+                title: "Science",
+                rank: 1,
+                recommendations: [
+                    createStoryConfiguration(title: "science2", rank: 2),
+                    createStoryConfiguration(title: "science0", rank: 0),
+                    createStoryConfiguration(title: "science1", rank: 1),
+                ]
+            ),
+        ]
+        let state = pocketReducer()(
             createSubject(),
             MerinoAction(
-                selectedCategoryID: "technology",
+                merinoStoryResponse: MerinoStoryResponse(categories: categories),
                 windowUUID: .XCTestDefaultUUID,
-                actionType: MerinoActionType.categorySelected
+                actionType: MerinoMiddlewareActionType.retrievedUpdatedHomepageStories
             )
         )
 
-        let newState = pocketReducer()(
-            initialState,
-            MerinoAction(
-                selectedCategoryID: nil,
-                windowUUID: .XCTestDefaultUUID,
-                actionType: MerinoActionType.categorySelected
-            )
+        XCTAssertEqual(state.merinoData.categories?.map(\.feedID), ["science", "technology"])
+        XCTAssertEqual(state.availableCategories.map(\.feedID), ["science", "technology"])
+        XCTAssertEqual(
+            state.merinoData.categories?.first?.recommendations.map(\.title),
+            ["science0", "science1", "science2"]
         )
-
-        XCTAssertNil(newState.selectedCategoryID)
+        XCTAssertEqual(
+            state.merinoData.categories?.last?.recommendations.map(\.title),
+            ["technology0", "technology1"]
+        )
     }
 
     @MainActor
-    func test_availableCategories_returnsCategoriesSortedByRank() {
-        let categories = [
+    func test_availableCategories_filtersCategoriesWithoutRecommendations() {
+        let categories = createTestCategories() + [
             MerinoCategoryConfiguration(
                 category: MerinoCategory(
-                    feedID: "technology",
+                    feedID: "empty",
                     recommendations: [],
                     isBlocked: false,
                     isFollowed: false,
-                    title: "Technology",
+                    title: "Empty",
                     subtitle: nil,
-                    receivedFeedRank: 2
-                )
-            ),
-            MerinoCategoryConfiguration(
-                category: MerinoCategory(
-                    feedID: "science",
-                    recommendations: [],
-                    isBlocked: false,
-                    isFollowed: false,
-                    title: "Science",
-                    subtitle: nil,
-                    receivedFeedRank: 1
+                    receivedFeedRank: 0
                 )
             ),
         ]
@@ -183,13 +172,15 @@ final class MerinoStateTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(state.visibleStories.map(\.title), ["science1", "science2", "technology1"])
+        XCTAssertEqual(
+            state.visibleStories(selectedNewsfeedCategoryID: nil).map(\.title),
+            ["science1", "science2", "technology1"]
+        )
     }
 
     @MainActor
     func test_visibleStories_withSelectedCategory_returnsOnlySelectedCategoryStories() {
-        let reducer = pocketReducer()
-        let categorizedState = reducer(
+        let state = pocketReducer()(
             createSubject(),
             MerinoAction(
                 merinoStoryResponse: MerinoStoryResponse(categories: createTestCategories()),
@@ -197,16 +188,45 @@ final class MerinoStateTests: XCTestCase {
                 actionType: MerinoMiddlewareActionType.retrievedUpdatedHomepageStories
             )
         )
-        let selectedState = reducer(
-            categorizedState,
+
+        XCTAssertEqual(
+            state.visibleStories(selectedNewsfeedCategoryID: "technology").map(\.title),
+            ["technology1"]
+        )
+    }
+
+    @MainActor
+    func test_visibleStories_withEmptyCategories_returnsFlatStories() {
+        let stories = [
+            createStoryConfiguration(title: "story1"),
+            createStoryConfiguration(title: "story2"),
+        ]
+        let categories = [
+            MerinoCategoryConfiguration(
+                category: MerinoCategory(
+                    feedID: "empty",
+                    recommendations: [],
+                    isBlocked: false,
+                    isFollowed: false,
+                    title: "Empty",
+                    subtitle: nil,
+                    receivedFeedRank: 0
+                )
+            ),
+        ]
+        let state = pocketReducer()(
+            createSubject(),
             MerinoAction(
-                selectedCategoryID: "technology",
+                merinoStoryResponse: MerinoStoryResponse(stories: stories, categories: categories),
                 windowUUID: .XCTestDefaultUUID,
-                actionType: MerinoActionType.categorySelected
+                actionType: MerinoMiddlewareActionType.retrievedUpdatedHomepageStories
             )
         )
 
-        XCTAssertEqual(selectedState.visibleStories.map(\.title), ["technology1"])
+        XCTAssertEqual(
+            state.visibleStories(selectedNewsfeedCategoryID: nil).map(\.title),
+            ["story1", "story2"]
+        )
     }
 
     @MainActor
@@ -224,6 +244,34 @@ final class MerinoStateTests: XCTestCase {
         XCTAssertTrue(state.shouldShowSection)
     }
 
+    @MainActor
+    func test_handleMerinoStoriesAction_withEmptyCategoriesAndNoStories_setsHasMerinoResponseContentFalse() {
+        let categories = [
+            MerinoCategoryConfiguration(
+                category: MerinoCategory(
+                    feedID: "empty",
+                    recommendations: [],
+                    isBlocked: false,
+                    isFollowed: false,
+                    title: "Empty",
+                    subtitle: nil,
+                    receivedFeedRank: 0
+                )
+            ),
+        ]
+        let state = pocketReducer()(
+            createSubject(),
+            MerinoAction(
+                merinoStoryResponse: MerinoStoryResponse(stories: [], categories: categories),
+                windowUUID: .XCTestDefaultUUID,
+                actionType: MerinoMiddlewareActionType.retrievedUpdatedHomepageStories
+            )
+        )
+
+        XCTAssertFalse(state.hasMerinoResponseContent)
+        XCTAssertFalse(state.shouldShowSection)
+    }
+
     func test_initialState_returnsExpectedSectionHeaderConfiguration() {
         XCTAssertEqual(MerinoState.Constants.sectionHeaderConfiguration.style, .newsAffordance)
         XCTAssertEqual(MerinoState.Constants.sectionHeaderConfiguration.isButtonHidden, true)
@@ -234,43 +282,67 @@ final class MerinoStateTests: XCTestCase {
         return MerinoState(windowUUID: .XCTestDefaultUUID)
     }
 
-    private func pocketReducer() -> Reducer<MerinoState> {
-        return MerinoState.reducer
+    private func pocketReducer() -> LegacyReducerMethod<MerinoState> {
+        return MerinoState.reducer.legacyReducer
     }
 
     private func createTestCategories() -> [MerinoCategoryConfiguration] {
         [
-            MerinoCategoryConfiguration(
-                category: MerinoCategory(
-                    feedID: "technology",
-                    recommendations: [
-                        createStoryConfiguration(title: "technology1"),
-                    ],
-                    isBlocked: false,
-                    isFollowed: false,
-                    title: "Technology",
-                    subtitle: nil,
-                    receivedFeedRank: 2
-                )
+            createCategory(
+                feedID: "technology",
+                title: "Technology",
+                rank: 2,
+                recommendations: [
+                    createStoryConfiguration(title: "technology1", rank: 0),
+                ]
             ),
-            MerinoCategoryConfiguration(
-                category: MerinoCategory(
-                    feedID: "science",
-                    recommendations: [
-                        createStoryConfiguration(title: "science1"),
-                        createStoryConfiguration(title: "science2"),
-                    ],
-                    isBlocked: false,
-                    isFollowed: false,
-                    title: "Science",
-                    subtitle: nil,
-                    receivedFeedRank: 1
-                )
+            createCategory(
+                feedID: "science",
+                title: "Science",
+                rank: 1,
+                recommendations: [
+                    createStoryConfiguration(title: "science2", rank: 1),
+                    createStoryConfiguration(title: "science1", rank: 0),
+                ]
             ),
         ]
     }
 
-    private func createStoryConfiguration(title: String) -> MerinoStoryConfiguration {
-        MerinoStoryConfiguration(story: MerinoStory(from: .makeItem(title)))
+    private func createCategory(
+        feedID: String,
+        title: String,
+        rank: Int,
+        recommendations: [MerinoStoryConfiguration]
+    ) -> MerinoCategoryConfiguration {
+        return MerinoCategoryConfiguration(
+            category: MerinoCategory(
+                feedID: feedID,
+                recommendations: recommendations,
+                isBlocked: false,
+                isFollowed: false,
+                title: title,
+                subtitle: nil,
+                receivedFeedRank: rank
+            )
+        )
+    }
+
+    private func createStoryConfiguration(title: String, rank: Int = 0) -> MerinoStoryConfiguration {
+        return MerinoStoryConfiguration(
+            story: MerinoStory(
+                corpusItemId: title,
+                scheduledCorpusItemId: title,
+                url: nil,
+                title: title,
+                excerpt: "Excerpt \(title)",
+                topic: nil,
+                publisher: "Publisher \(title)",
+                isTimeSensitive: false,
+                imageURL: nil,
+                iconURL: nil,
+                tileId: nil,
+                receivedRank: rank
+            )
+        )
     }
 }

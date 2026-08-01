@@ -15,6 +15,12 @@ This log lists the architectural decisions for MADR.
 - [ADR-0006](0006-adopt-three-tier-documentation-structure.md) - Adopt Three-Tier Documentation Structure
 - [ADR-0007](0007-upstream-merge-rebrand-strategy.md) - Upstream Merge & Rebrand Strategy
 - [ADR-0008](0008-floorp-directory-consolidation.md) - Floorp Directory Consolidation Architecture
+- [ADR-0007](0007-deeplink-startup-flow-refactor.md) - Deeplink Startup Flow Refactor
+- [ADR-0008](0008-lazy-tab-screenshot-restoration.md) - Lazy Tab Screenshot Restoration
+- [ADR-0009](0009-feature-flags-refactor) - Feature Flags Refactor
+- [ADR-0010](0010-offload-background-webviews-on-memory-warning.md) - Offload Background WebViews on Memory Warning
+- [ADR-0011](0011-redux-state-reducer-initializer-cleanup-with-copy-macro.md) - Redux State Reducer Initializer Cleanup with Copy Macro
+- [ADR-0012](0012-redux-action-guidelines.md) - Redux Action Guidelines
 
 <!-- adrlogstop -->
 

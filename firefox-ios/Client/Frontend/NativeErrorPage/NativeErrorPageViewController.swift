@@ -30,6 +30,7 @@ final class NativeErrorPageViewController: UIViewController,
     private let logger: Logger
     var contentType: ContentType = .nativeErrorPage
     private var nativeErrorPageState: NativeErrorPageState
+    private var model: ErrorPageModel?
 
     // MARK: UI Elements
     private struct UX {
@@ -53,6 +54,7 @@ final class NativeErrorPageViewController: UIViewController,
         static let badCertContentGap: CGFloat = 16
         static let badCertImageSize: CGFloat = 160
         static let badCertGapBetweenImageAndContent: CGFloat = 40
+        static let waybackTopPaddingReduction: CGFloat = 40
     }
 
     private lazy var scrollView: UIScrollView = .build()
@@ -149,11 +151,14 @@ final class NativeErrorPageViewController: UIViewController,
         }
     }
 
+    private let searchEnginesManager: SearchEnginesManagerProvider
+
     init(
         windowUUID: WindowUUID,
         tabManager: TabManager,
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         overlayManager: OverlayModeManager,
+        searchEnginesManager: SearchEnginesManagerProvider = AppContainer.shared.resolve(SearchEnginesManager.self),
         notificationCenter: NotificationProtocol = NotificationCenter.default,
         logger: Logger = DefaultLogger.shared
     ) {
@@ -161,6 +166,7 @@ final class NativeErrorPageViewController: UIViewController,
         self.tabManager = tabManager
         self.themeManager = themeManager
         self.overlayManager = overlayManager
+        self.searchEnginesManager = searchEnginesManager
         self.notificationCenter = notificationCenter
         self.logger = logger
         nativeErrorPageState = NativeErrorPageState(windowUUID: windowUUID)
@@ -180,17 +186,18 @@ final class NativeErrorPageViewController: UIViewController,
 
     func newState(state: NativeErrorPageState) {
         nativeErrorPageState = state
-        guard !state.title.isEmpty else { return }
+        guard let model = state.model else { return }
+        self.model = model
 
-        let isBadCert = state.advancedSection != nil && state.showGoBackButton
-        if isBadCert {
-            showBadCertUI()
-        } else {
+        if model.isRegularUI {
             showRegularUI()
+        } else {
+            showBadCertUI()
         }
     }
 
     private func showRegularUI() {
+        guard let model else { return }
         setActionView(regularContentView)
         scrollContainer.spacing = UX.mainStackSpacing
         contentStack.spacing = UX.textStackSpacing
@@ -198,20 +205,22 @@ final class NativeErrorPageViewController: UIViewController,
         foxImageWidthConstraint?.constant = UX.logoSizeWidth
         foxImageHeightConstraint?.isActive = false
 
-        titleLabel.text = nativeErrorPageState.title
-        foxImage.image = UIImage(named: nativeErrorPageState.foxImage)
-        if let validURL = nativeErrorPageState.url {
+        titleLabel.text = model.title
+        foxImage.image = UIImage(named: model.foxImageName)
+        if let validURL = model.url {
             errorDescriptionLabel.attributedText = getDescriptionWithHostName(
                 errorURL: validURL,
-                description: nativeErrorPageState.description
+                description: model.description
             )
         } else {
-            errorDescriptionLabel.text = nativeErrorPageState.description
+            errorDescriptionLabel.text = model.description
         }
+        regularContentView.configure(showWaybackButton: model.isWayback)
         applyTheme()
     }
 
     private func showBadCertUI() {
+        guard let model else { return }
         setActionView(badCertContentView)
         scrollContainer.spacing = UX.badCertGapBetweenImageAndContent
         contentStack.spacing = UX.badCertContentGap
@@ -221,21 +230,19 @@ final class NativeErrorPageViewController: UIViewController,
         foxImageWidthConstraint?.constant = UX.badCertImageSize
         foxImageHeightConstraint?.isActive = true
 
-        foxImage.image = !nativeErrorPageState.foxImage.isEmpty
-            ? UIImage(named: nativeErrorPageState.foxImage)
-            : UIImage(named: ImageIdentifiers.NativeErrorPage.securityError)
+        foxImage.image = UIImage(named: model.foxImageName)
 
-        titleLabel.text = nativeErrorPageState.title
+        titleLabel.text = model.title
         titleLabel.font = FXFontStyles.Bold.title2.scaledFont()
-        errorDescriptionLabel.text = nativeErrorPageState.description
+        errorDescriptionLabel.text = model.description
         errorDescriptionLabel.font = FXFontStyles.Regular.body.scaledFont()
 
         applyTheme()
 
-        if let advancedSection = nativeErrorPageState.advancedSection {
+        if let advancedSection = model.advancedSection {
             badCertContentView.configure(
                 advancedSection: advancedSection,
-                url: nativeErrorPageState.url,
+                url: model.url,
                 goBackTitle: String.NativeErrorPage.GoBackButton
             )
         }
@@ -274,7 +281,7 @@ final class NativeErrorPageViewController: UIViewController,
     deinit {
         // TODO: FXIOS-13097 This is a work around until we can leverage isolated deinits
         guard Thread.isMainThread else {
-            assertionFailure("AddressBarPanGestureHandler was not deallocated on the main thread. Observer was not removed")
+            assertionFailure("TabSwipeGestureHandler was not deallocated on the main thread. Observer was not removed")
             return
         }
 
@@ -354,7 +361,8 @@ final class NativeErrorPageViewController: UIViewController,
 
             scrollContainer.topAnchor.constraint(
                 equalTo: scrollView.topAnchor,
-                constant: isLandscape ? UX.landscapePadding.top : UX.portraitPadding.top
+                constant: (isLandscape ? UX.landscapePadding.top : UX.portraitPadding.top) -
+                          (model?.isWayback == true ? UX.waybackTopPaddingReduction : 0)
             ),
             scrollContainer.leadingAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor,
@@ -417,6 +425,51 @@ final class NativeErrorPageViewController: UIViewController,
         dispatchBrowserAction(actionType: .reloadWebsite, isNativeErrorPage: true)
     }
 
+    func regularContentViewDidTapSearchWayback() {
+        guard let failingURL = model?.url?.baseURLWithPath else { return }
+        regularContentView.configureWaybackButton(state: .loading)
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let snapshot = try await WaybackService.fetchSnapshot(for: failingURL.absoluteString)
+                guard let snapshot, snapshot.available, let archivedURL = URL(string: snapshot.url) else {
+                    await MainActor.run { self.regularContentView.configureWaybackButton(state: .failed(.notFound)) }
+                    return
+                }
+                await MainActor.run {
+                    store.dispatch(
+                        GeneralBrowserAction(
+                            destinationURL: archivedURL,
+                            isNativeErrorPage: true,
+                            windowUUID: self.windowUUID,
+                            actionType: GeneralBrowserActionType.loadWaybackURL
+                        )
+                    )
+                }
+            } catch {
+                await MainActor.run { self.regularContentView.configureWaybackButton(state: .failed(.networkError)) }
+            }
+        }
+    }
+
+    func regularContentViewDidTapSearchWeb() {
+        guard let failingURL = model?.url?.baseURLWithPath,
+              let defaultEngine = searchEnginesManager.defaultEngine else { return }
+
+        let query = "\"\(failingURL.absoluteString)\""
+        guard let searchURL = defaultEngine.searchURLForQuery(query) else { return }
+
+        store.dispatch(
+            GeneralBrowserAction(
+                destinationURL: searchURL,
+                isNativeErrorPage: true,
+                windowUUID: self.windowUUID,
+                actionType: GeneralBrowserActionType.loadWaybackURL
+            )
+        )
+    }
+
     // MARK: - NativeErrorBadCertContentViewDelegate
 
     func badCertContentViewDidTapGoBack() {
@@ -437,14 +490,14 @@ final class NativeErrorPageViewController: UIViewController,
               let errorURL = selectedTab.webView?.url,
               let internalURL = InternalURL(errorURL),
               internalURL.isErrorPage else { return }
-        let originalURL = nativeErrorPageState.url ?? internalURL.originalURLFromErrorPage ?? errorURL
+        let originalURL = model?.url ?? internalURL.originalURLFromErrorPage ?? errorURL
         guard !CertificateHelper.certificatesFromErrorURL(errorURL, logger: logger).isEmpty else { return }
 
         let destination = NavigationDestination(
             .certificatesFromErrorPage,
             url: originalURL,
             errorPageURL: errorURL,
-            certificateTitle: nativeErrorPageState.title
+            certificateTitle: model?.title ?? ""
         )
         store.dispatch(
             NavigationBrowserAction(

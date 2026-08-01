@@ -15,8 +15,7 @@ final class BookmarksSectionStateTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         mockProfile = MockProfile()
-        await DependencyHelperMock().bootstrapDependencies()
-        LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: mockProfile)
+        await DependencyHelperMock().bootstrapDependencies(injectedProfile: mockProfile)
         setupNimbusHomepageBookmarksSectionDefaultTesting(isEnabled: false)
     }
 
@@ -39,7 +38,7 @@ final class BookmarksSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = bookmarksSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             HomepageAction(
                 windowUUID: .XCTestDefaultUUID,
@@ -56,7 +55,7 @@ final class BookmarksSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = bookmarksSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             BookmarksAction(
                 bookmarks: [BookmarkConfiguration(
@@ -82,7 +81,7 @@ final class BookmarksSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = bookmarksSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             BookmarksAction(
                 isEnabled: true,
@@ -100,7 +99,7 @@ final class BookmarksSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = bookmarksSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             BookmarksAction(
                 isEnabled: false,
@@ -150,7 +149,7 @@ final class BookmarksSectionStateTests: XCTestCase {
         let reducer = bookmarksSectionReducer()
 
         // Updates the bookmarks section user pref
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             BookmarksAction(
                 isEnabled: false,
@@ -169,7 +168,7 @@ final class BookmarksSectionStateTests: XCTestCase {
         let reducer = bookmarksSectionReducer()
 
         // Updates the bookmarks section user pref
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             BookmarksAction(
                 isEnabled: true,

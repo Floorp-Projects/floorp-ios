@@ -223,7 +223,7 @@ class PaddedSwitch: UIView {
 
 // A helper class for settings with a UISwitch.
 // Takes and optional settingsDidChange callback and status text.
-class BoolSetting: Setting, LegacyFeatureFlaggable {
+class BoolSetting: Setting, UserFeaturePreferenceProvider {
     // Sometimes a subclass will manage its own pref setting. In that case the prefkey will be nil
     let prefKey: String?
     let prefs: Prefs?
@@ -375,7 +375,7 @@ class BoolSetting: Setting, LegacyFeatureFlaggable {
     // These methods allow a subclass to control how the pref is saved
     func displayBool(_ control: UISwitch) {
         if let featureFlagName = featureFlagName {
-            control.isOn = featureFlags.isFeatureEnabled(featureFlagName, checking: .userOnly)
+            control.isOn = userPreferences.getPreferenceFor(featureFlagName)
         } else {
             guard let key = prefKey, let defaultValue = defaultValue else { return }
             control.isOn = prefs?.boolForKey(key) ?? defaultValue
@@ -384,7 +384,7 @@ class BoolSetting: Setting, LegacyFeatureFlaggable {
 
     func writeBool(_ control: UISwitch) {
         if let featureFlagName = featureFlagName {
-            featureFlags.set(feature: featureFlagName, to: control.isOn)
+            userPreferences.setPreferenceFor(featureFlagName, to: control.isOn)
         } else {
             guard let key = prefKey else { return }
             prefs?.setBool(control.isOn, forKey: key)
@@ -397,7 +397,7 @@ class BoolNotificationSetting: BoolSetting {
 
     override func displayBool(_ control: UISwitch) {
         if let featureFlagName = getFeatureFlagName() {
-            control.isOn = featureFlags.isFeatureEnabled(featureFlagName, checking: .userOnly)
+            control.isOn = userPreferences.getPreferenceFor(featureFlagName)
         } else {
             guard let key = prefKey, let defaultValue = getDefaultValue() else { return }
 
@@ -410,7 +410,7 @@ class BoolNotificationSetting: BoolSetting {
 
     override func writeBool(_ control: UISwitch) {
         if let featureFlagName = getFeatureFlagName() {
-            featureFlags.set(feature: featureFlagName, to: control.isOn)
+            userPreferences.setPreferenceFor(featureFlagName, to: control.isOn)
         } else {
             Task { @MainActor in
                 let isSystemNotificationOn = await isSystemNotificationOn()
@@ -1067,7 +1067,7 @@ class SettingsTableViewController: ThemedTableViewController, Notifiable {
                 return ThemedCenteredTableViewCell()
             }
             return cell
-        } else if setting is SendDataSetting {
+        } else if setting is SendDataSetting || setting is AdBlockerSetting {
             guard let cell = tableView.dequeueReusableCell(
                 withIdentifier: ThemedLearnMoreTableViewCell.cellIdentifier,
                 for: indexPath

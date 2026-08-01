@@ -8,19 +8,20 @@ import Glean
 import MozillaAppServices
 import OnboardingKit
 
-struct TermsOfServiceManager: LegacyFeatureFlaggable, Sendable {
+struct Links {
+    static let termsOfService = "https://www.mozilla.org/about/legal/terms/firefox/"
+    static let privacyNotice = "https://www.mozilla.org/privacy/firefox/"
+}
+
+struct TermsOfServiceManager: FeatureFlaggable, Sendable {
     var prefs: Prefs
 
     init(prefs: Prefs) {
         self.prefs = prefs
     }
 
-    var isModernOnboardingEnabled: Bool {
-        featureFlags.isFeatureEnabled(.modernOnboardingUI, checking: .buildAndUser)
-    }
-
     var isFeatureEnabled: Bool {
-        featureFlags.isFeatureEnabled(.tosFeature, checking: .buildAndUser)
+        featureFlagsProvider.isEnabled(.tosFeature)
     }
 
     var isAccepted: Bool {
@@ -28,7 +29,7 @@ struct TermsOfServiceManager: LegacyFeatureFlaggable, Sendable {
     }
 
     var shouldShowScreen: Bool {
-        guard featureFlags.isFeatureEnabled(.tosFeature, checking: .buildAndUser) else { return false }
+        guard featureFlagsProvider.isEnabled(.tosFeature) else { return false }
         return prefs.boolForKey(PrefsKeys.TermsOfUseAccepted) == nil
     }
 
@@ -88,17 +89,20 @@ struct TermsOfServiceManager: LegacyFeatureFlaggable, Sendable {
                 EmbeddedLink(
                     fullText: termsOfUseAgreement,
                     linkText: termsOfUseLink,
-                    action: .openTermsOfService
+                    action: .openTermsOfService,
+                    accessibilityIdentifier: AccessibilityIdentifiers.TermsOfService.termsOfServiceAgreement
                 ),
                 EmbeddedLink(
                     fullText: privacyAgreement,
                     linkText: privacyNoticeLink,
-                    action: .openPrivacyNotice
+                    action: .openPrivacyNotice,
+                    accessibilityIdentifier: AccessibilityIdentifiers.TermsOfService.privacyNoticeAgreement
                 ),
                 EmbeddedLink(
                     fullText: manageAgreement,
                     linkText: manageLink,
-                    action: .openManageSettings
+                    action: .openManageSettings,
+                    accessibilityIdentifier: AccessibilityIdentifiers.TermsOfService.manageDataCollectionAgreement
                 )
             ]
         )

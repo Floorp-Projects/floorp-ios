@@ -7,7 +7,7 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | Concern | System | Current state |
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
-| Upstream Firefox synchronization | GitHub Actions | Weekly PR workflow with a workflow allowlist and explicit CI dispatch |
+| Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow that restores the trusted Floorp workflow tree and explicitly dispatches CI |
 | Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (1)` signed, uploaded, and verified by the internal group |
 | Repeatable signed delivery | Xcode Cloud | Scaffold implemented; workflow not yet configured |
 | App Store release | App Store Connect | Manual approval initially |
@@ -40,7 +40,7 @@ SwiftPM checkouts and Derived Data use job-local directories. This avoids shared
 
 Dependabot checks GitHub Actions and npm dependencies monthly. External actions remain pinned to immutable commit SHAs.
 
-The upstream workflow restores the trusted Floorp workflow and rebrand files after merging, removes every non-allowlisted workflow, and aborts on conflicts outside `.github/workflows`. It explicitly dispatches `ci.yml` for `automation/upstream-sync` after creating or updating the PR, instead of relying on the approval state and trigger behavior of events produced by `GITHUB_TOKEN`.
+The upstream workflow restores the complete trusted Floorp workflow tree and rebrand script after merging, so upstream-only automation cannot become active accidentally. Workflow-only conflicts are resolved from the Floorp base; every conflict outside that tree aborts without publishing a branch and retains a short-lived diagnostic artifact. It explicitly dispatches `ci.yml` for `automation/upstream-sync` after creating or updating the draft PR, instead of relying on the approval state and trigger behavior of events produced by `GITHUB_TOKEN`. The generated branch is disposable and must not receive manual fixes.
 
 ## GitHub repository settings
 

@@ -9,6 +9,7 @@ import ComponentLibrary
 import SiteImageView
 import Redux
 import X509
+import Storage
 
 struct TPMenuUX {
     struct UX {
@@ -57,7 +58,7 @@ class TrackingProtectionViewController: UIViewController,
     var currentWindowUUID: UUID? { windowUUID }
     private let logger: Logger
 
-    weak var enhancedTrackingProtectionMenuDelegate: TrackingProtectionMenuDelegate?
+    weak var trackingProtectionMenuDelegate: TrackingProtectionMenuDelegate?
 
     private var foxImageHeightConstraint: NSLayoutConstraint?
 
@@ -219,8 +220,18 @@ class TrackingProtectionViewController: UIViewController,
         updateBlockedTrackersCount()
         updateConnectionStatus()
         applyTheme()
+
         if let serverTrust = model.selectedTab?.webView?.serverTrust {
             model.certificates = getCertificates(from: serverTrust)
+        } else if let url = model.selectedTab?.webView?.url,
+                  let internalURL = InternalURL(url),
+                  internalURL.isCertificateErrorURL,
+                  let originalURL = internalURL.originalURLFromErrorPage {
+            CertificatesFetcher().getCertificates(for: originalURL) { certificates in
+                Task { @MainActor in
+                    self.model.certificates = certificates ?? []
+                }
+            }
         }
     }
 
@@ -250,7 +261,7 @@ class TrackingProtectionViewController: UIViewController,
             case .back:
                 navigationController?.popViewController(animated: true)
             case .close:
-                enhancedTrackingProtectionMenuDelegate?.didFinish()
+                trackingProtectionMenuDelegate?.didFinish()
             case .settings:
                 showSettings()
             }
@@ -334,7 +345,7 @@ class TrackingProtectionViewController: UIViewController,
         ]
         constraints.append(contentsOf: headerConstraints)
         headerContainer.closeButtonCallback = { [weak self] in
-            self?.enhancedTrackingProtectionMenuDelegate?.didFinish()
+            self?.trackingProtectionMenuDelegate?.didFinish()
         }
         headerContainer.updateHeaderLineView(isHidden: true)
     }
@@ -399,7 +410,13 @@ class TrackingProtectionViewController: UIViewController,
             )
         }
         connectionStatusView.connectionStatusButtonCallback = { [weak self] in
-            guard let self, model.connectionSecure else { return }
+            guard let self else { return }
+
+            let isCertificateErrorPage = InternalURL(model.url)?.isCertificateErrorURL ?? false
+
+            guard InternalURL(model.url) == nil || isCertificateErrorPage else {
+                return
+            }
 
             store.dispatch(
                 TrackingProtectionAction(
@@ -515,11 +532,16 @@ class TrackingProtectionViewController: UIViewController,
     }
 
     private func updateConnectionStatus() {
+        let isInternalCertErrorURL = InternalURL(model.url)?.isCertificateErrorURL ?? false
+        let origin = CertStore.origin(for: model.url) ?? ""
+        let isManuallyTrusted = profile?.certStore.hasCertificate(forOrigin: origin) ?? false
         model.connectionSecure = model.selectedTab?.webView?.hasOnlySecureContent ?? false
         connectionStatusView.setConnectionStatus(image: model.getConnectionStatusImage(themeType: currentTheme().type),
                                                  text: model.connectionStatusString,
                                                  isConnectionSecure: model.connectionSecure,
-                                                 theme: currentTheme())
+                                                 theme: currentTheme(),
+                                                 isInternalCertErrorURL: isInternalCertErrorURL,
+                                                 isManuallyTrusted: isManuallyTrusted)
         connectionDetailsHeaderView.setupDetails(title: model.connectionDetailsTitle,
                                                  status: model.connectionDetailsHeader,
                                                  image: model.connectionDetailsImage)
@@ -704,12 +726,12 @@ class TrackingProtectionViewController: UIViewController,
         // Setting x based on window calculation because we don't want
         // users to move the frame side ways, only straight up or down
         view.frame.origin = CGPoint(x: originalXPosition,
-                                    y: self.pointOrigin!.y + translation.y)
+                                    y: (self.pointOrigin?.y ?? originalYPosition) + translation.y)
 
         if sender.state == .ended {
             let dragVelocity = sender.velocity(in: view)
             if dragVelocity.y >= 1300 {
-                enhancedTrackingProtectionMenuDelegate?.didFinish()
+                trackingProtectionMenuDelegate?.didFinish()
             } else {
                 // Set back to original position of the view controller
                 UIView.animate(withDuration: 0.3) {

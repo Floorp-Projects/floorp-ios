@@ -1,6 +1,6 @@
 # Floorp for iOS
 
-[![Xcode](https://img.shields.io/badge/Xcode-26.3-blue?logo=Xcode&logoColor=white)]()
+[![Xcode](https://img.shields.io/badge/Xcode-26.5-blue?logo=Xcode&logoColor=white)]()
 [![Swift](https://img.shields.io/badge/Swift-6.2-red?logo=Swift&logoColor=white)]()
 [![iOS](https://img.shields.io/badge/iOS-15.0+-green?logo=apple&logoColor=white)]()
 
@@ -12,12 +12,16 @@ Floorp is a community-driven project that aims to provide a customizable and pri
 
 ### Prerequisites
 
-- **Xcode 26.3** (the canonical version is declared in `.xcode-version`)
+- **Xcode 26.5** (the canonical version is declared in `.xcode-version`)
 - **Node.js 24.18.1** (the canonical version is declared in `.nvmrc`)
 - **Swift Package Manager** (the pinned packages are resolved by Xcode)
 - **SwiftLint 0.62.2** for the pre-push check (`brew install swiftlint`)
 
 ### Quick Start
+
+Ensure `xcode-select -p` points to the intended Xcode installation. Mozilla's
+[automated FXIOS setup guide](https://github.com/mozilla-mobile/firefox-ios/wiki/Automated-Project-Setup-with-FXIOS)
+is also useful when working with the inherited upstream toolchain.
 
 1. Clone the repository:
 
@@ -104,8 +108,9 @@ The [Upstream Sync](.github/workflows/upstream-sync.yml) workflow automates this
 
 - **Schedule**: Every Monday at 09:00 UTC (18:00 JST)
 - **Manual trigger**: Available via GitHub Actions → "Run workflow"
-- **Process**: Fetches upstream → merges → runs rebrand script → creates a PR
-- **Conflict handling**: If merge conflicts occur, the workflow fails and notifies maintainers
+- **Process**: Fetches upstream → merges → restores Floorp-owned automation → runs the rebrand script → opens a draft PR → dispatches CI
+- **Conflict handling**: Workflow-only conflicts restore the trusted Floorp workflow tree; every other conflict aborts with a diagnostic artifact
+- **Generated branch**: `automation/upstream-sync` is replaced by each run, so fixes belong on a normal branch or in the sync tooling—not directly on the generated branch
 
 ## Contributing
 

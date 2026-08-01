@@ -29,19 +29,26 @@ final class TranslationsService: TranslationsServiceProtocol {
         self.logger = logger
     }
 
-    /// Determines whether translation should be offered by checking any of the given
-    /// preferred target languages against the detected page language.
-    /// Returns `true` if at least one preferred language has an available model pair.
+    /// Determines whether translation should be offered by checking the detected page language
+    /// against the given preferred target languages. Returns `true` if:
+    /// - The page language is already one of the user's preferred languages and there is at
+    ///   least one other preferred language to translate to (language-picker flow), OR
+    /// - The page language is not in the preferred list and at least one preferred language
+    ///   has an available model pair.
     /// NOTE: `fetchModels` inspects Remote Settings metadata and returns JSON data
     /// describing the pipeline, it does not fetch large model attachments.
     func shouldOfferTranslation(for windowUUID: WindowUUID, using preferredLanguages: [String]) async throws -> Bool {
         guard !preferredLanguages.isEmpty else { return false }
         let pageLanguage = try await detectPageLanguage(for: windowUUID)
-        for language in preferredLanguages {
-            guard language != pageLanguage else { continue }
-            if await modelsFetcher.fetchModels(from: pageLanguage, to: language) != nil {
-                return true
-            }
+
+        // If the page is already in one of the user's preferred languages, offer the
+        // translation picker as long as there is at least one other language to translate to.
+        if preferredLanguages.contains(pageLanguage) {
+            return preferredLanguages.count > 1
+        }
+
+        for language in preferredLanguages where await modelsFetcher.fetchModels(from: pageLanguage, to: language) != nil {
+            return true
         }
         return false
     }
@@ -49,10 +56,16 @@ final class TranslationsService: TranslationsServiceProtocol {
     /// Initiates translation of the current page to the specified target language.
     func translateCurrentPage(
         for windowUUID: WindowUUID,
+        from sourceLanguage: String? = nil,
         to targetLanguage: String,
         onLanguageIdentified: ((String, String) -> Void)?
     ) async throws {
-        let pageLanguage = try await detectPageLanguage(for: windowUUID)
+        let pageLanguage: String
+        if let sourceLanguage {
+            pageLanguage = sourceLanguage
+        } else {
+            pageLanguage = try await detectPageLanguage(for: windowUUID)
+        }
         onLanguageIdentified?(pageLanguage, targetLanguage)
         let webView = try currentWebView(for: windowUUID)
         // Prewarm resources prior to calling the JS translation API.
@@ -70,17 +83,6 @@ final class TranslationsService: TranslationsServiceProtocol {
     func firstResponseReceived(for windowUUID: WindowUUID) async throws {
         let webView = try currentWebView(for: windowUUID)
         _ = try await firstResponseReceivedJS(on: webView)
-    }
-
-    /// Tells the engine to discard translations for a document.
-    func discardTranslations(for windowUUID: WindowUUID) async throws {
-        let pageLanguage = try await detectPageLanguage(for: windowUUID)
-        guard let deviceLanguage = deviceLanguageCode() else {
-            throw TranslationsServiceError.deviceLanguageUnavailable
-        }
-
-        let webView = try currentWebView(for: windowUUID)
-        try await discardTranslationsJS(on: webView, from: pageLanguage, to: deviceLanguage)
     }
 
     /// Attempts to detect the language of the currently displayed page.
@@ -127,23 +129,9 @@ final class TranslationsService: TranslationsServiceProtocol {
         }
     }
 
-    /// Calls the JS `discardTranslations` hook.
-    private func discardTranslationsJS(on webView: WKWebView, from: String, to: String) async throws {
-        let jsArgs = "{from: \"\(from)\", to: \"\(to)\"}"
-        let js = "window.__firefox__.Translations.discardTranslations(\(jsArgs))"
-
-        do {
-            _ = try await webView.callAsyncJavaScript(js, contentWorld: .defaultClient)
-        } catch {
-            /// NOTE: It would be safe to pass in the js string directly here, but it would just add too much noise
-            /// since from and to could be any language code. We only care that discardTranslationsJS failed.
-            throw TranslationsServiceError.jsEvaluationFailed(reason: "JS evaluation failed: discardTranslationsJS")
-        }
-    }
-
     /// Returns the current WebView for a given window, or throws if it is unavailable.
     private func currentWebView(for windowUUID: WindowUUID) throws -> WKWebView {
-        guard let tab = windowManager.tabManager(for: windowUUID).selectedTab,
+        guard let tab = windowManager.tabManager(for: windowUUID)?.selectedTab,
               let webView = tab.webView else {
             throw TranslationsServiceError.missingWebView
         }
@@ -153,10 +141,5 @@ final class TranslationsService: TranslationsServiceProtocol {
     /// Returns the unique set of languages that can be used as translation targets.
     func fetchSupportedTargetLanguages() async -> [String] {
         return await modelsFetcher.fetchSupportedTargetLanguages()
-    }
-
-    /// Returns the device language code for a given locale, if available.
-    private func deviceLanguageCode(using locale: Locale = .current) -> String? {
-        return locale.languageCode
     }
 }

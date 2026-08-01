@@ -15,8 +15,7 @@ final class JumpBackInSectionStateTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         mockProfile = MockProfile()
-        await DependencyHelperMock().bootstrapDependencies()
-        LegacyFeatureFlagsManager.shared.initializeDeveloperFeatures(with: mockProfile)
+        await DependencyHelperMock().bootstrapDependencies(injectedProfile: mockProfile)
         setupNimbusHomepageJumpBackInSectionDefaultTesting(isEnabled: false)
     }
 
@@ -39,7 +38,7 @@ final class JumpBackInSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = jumpBackInSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             TabManagerAction(
                 recentTabs: [createTab(urlString: "www.mozilla.org")],
@@ -61,7 +60,7 @@ final class JumpBackInSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = jumpBackInSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             RemoteTabsAction(
                 mostRecentSyncedTab: RemoteTabConfiguration(client: remoteClient, tab: remoteTab),
@@ -82,7 +81,7 @@ final class JumpBackInSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = jumpBackInSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             JumpBackInAction(
                 isEnabled: true,
@@ -100,7 +99,7 @@ final class JumpBackInSectionStateTests: XCTestCase {
         let initialState = createSubject()
         let reducer = jumpBackInSectionReducer()
 
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             JumpBackInAction(
                 isEnabled: false,
@@ -150,7 +149,7 @@ final class JumpBackInSectionStateTests: XCTestCase {
         let reducer = jumpBackInSectionReducer()
 
         // Updates the jump back in section user pref
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             JumpBackInAction(
                 isEnabled: false,
@@ -169,7 +168,7 @@ final class JumpBackInSectionStateTests: XCTestCase {
         let reducer = jumpBackInSectionReducer()
 
         // Updates the jump back in section user pref
-        let newState = reducer(
+        let newState = reducer.legacyReducer(
             initialState,
             JumpBackInAction(
                 isEnabled: true,
