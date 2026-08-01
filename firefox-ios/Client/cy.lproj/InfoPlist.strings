@@ -8,7 +8,7 @@
 "New Tab" = "Tab Newydd";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Gall Firefox ddefnyddio'ch camera i sganio codau QR neu dynnu lluniau a fideos.";
+"NSCameraUsageDescription" = "Gall Floorp ddefnyddio'ch camera i sganio codau QR neu dynnu lluniau a fideos.";
 
 /* Privacy - Face ID Usage Description */
 "NSFaceIDUsageDescription" = "Mae Floorp angen Face ID i gael mynediad i'ch cyfrineiriau a'ch dulliau talu sydd wedi'u cadw.";

@@ -8,7 +8,7 @@
 "New Tab" = "Жаңа бет";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Firefox сіздің камераңызды QR кодтарын сканерлеу немесе фотосуреттер мен видеоларды түсіру үшін пайдалана алады.";
+"NSCameraUsageDescription" = "Floorp сіздің камераңызды QR кодтарын сканерлеу немесе фотосуреттер мен видеоларды түсіру үшін пайдалана алады.";
 
 /* Privacy - Face ID Usage Description */
 "NSFaceIDUsageDescription" = "Сақталған парольдер мен төлем әдістеріне қол жеткізу үшін Floorp Face ID қажет етеді.";
