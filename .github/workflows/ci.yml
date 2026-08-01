@@ -20,7 +20,8 @@ env:
   PROJECT_PATH: firefox-ios/Client.xcodeproj
   SCHEME: Fennec
   CONFIGURATION: Fennec_Testing
-  DESTINATION: platform=iOS Simulator,name=iPhone 17,OS=26.2
+  SIMULATOR_NAME: iPhone 17
+  SIMULATOR_OS: "26.2"
   UPSTREAM_REPOSITORY: https://github.com/mozilla-mobile/firefox-ios.git
 
 jobs:
@@ -122,6 +123,22 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
 
+      - name: Prepare iOS Simulator
+        timeout-minutes: 10
+        run: |
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIMULATOR_OS//./-}"
+          simulator_id="$(
+            xcrun simctl list devices available --json \
+              | jq -er --arg runtime "$runtime" --arg name "$SIMULATOR_NAME" \
+                '.devices[$runtime] | map(select(.name == $name)) | first | .udid'
+          )"
+          simulator_arch="$(uname -m)"
+
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf 'DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+            "$simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
+          printf 'Using %s (%s, %s)\n' "$SIMULATOR_NAME" "$simulator_id" "$simulator_arch"
+
       - name: Build for testing
         run: |
           set -o pipefail
@@ -143,9 +160,10 @@ jobs:
             | tee "$RUNNER_TEMP/build.log"
 
       - name: Run unit tests
+        timeout-minutes: 30
         run: |
           set -o pipefail
-          xcodebuild test-without-building -quiet \
+          xcodebuild test-without-building \
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME" \
             -configuration "$CONFIGURATION" \
