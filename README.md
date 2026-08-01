@@ -108,8 +108,9 @@ The [Upstream Sync](.github/workflows/upstream-sync.yml) workflow automates this
 
 - **Schedule**: Every Monday at 09:00 UTC (18:00 JST)
 - **Manual trigger**: Available via GitHub Actions → "Run workflow"
-- **Process**: Fetches upstream → merges → runs rebrand script → creates a PR
-- **Conflict handling**: If merge conflicts occur, the workflow fails and notifies maintainers
+- **Process**: Fetches upstream → merges → restores Floorp-owned automation → runs the rebrand script → opens a draft PR → dispatches CI
+- **Conflict handling**: Workflow-only conflicts restore the trusted Floorp workflow tree; every other conflict aborts with a diagnostic artifact
+- **Generated branch**: `automation/upstream-sync` is replaced by each run, so fixes belong on a normal branch or in the sync tooling—not directly on the generated branch
 
 ## Contributing
 
