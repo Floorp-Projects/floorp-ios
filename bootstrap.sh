@@ -81,6 +81,7 @@ if [[ "${PRODUCT}" == "firefox" ]]; then
     # package-lock.json is authoritative in local builds and CI.
     npm ci
     npm run build
+    "${PROJECT_ROOT}/scripts/generate-glean-metrics.sh"
 
 elif [[ "${PRODUCT}" == "focus" ]]; then
     echo "Running Focus script..."
