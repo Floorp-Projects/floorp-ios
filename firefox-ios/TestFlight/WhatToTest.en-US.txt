@@ -1,7 +1,9 @@
 Floorp for iOS internal beta
 
+This is the post-rebrand 0.1.0 (2) checkpoint. Test both a clean install and an update from 0.1.0 (1). Confirm the Floorp name and icon on the Home Screen, in the app switcher, and throughout launch, onboarding, Home, Settings, About, and permission prompts. Open the Terms, Privacy, Support, and source/feedback links. Repeat the main paths in English and Japanese.
+
 Please focus on Floorp Notes: create, edit, delete, and search notes; restart the app and confirm notes persist; and check the readability of saved page text and links. Notes are currently stored on this device and are not included in Sync.
 
-Also smoke-test launch, normal and private browsing, tabs, and settings. Do not use production account credentials until Floorp's account-service ownership is confirmed.
+Also smoke-test normal and private browsing, tabs, and settings. Do not use production account credentials until Floorp's account-service ownership is confirmed.
 
-Known limitations: Push and cloud-hosted page summarization are disabled, app extensions are not included in this build, and Rate Floorp is hidden until the App Store listing is configured. On supported devices, Apple Intelligence page summarization remains available on-device.
+Known limitations: Floorp cannot yet be selected as the default browser because its managed entitlement is not approved. Push and cloud-hosted page summarization are disabled, app extensions are not included in this build, and Rate Floorp is hidden until the App Store listing is configured. On supported devices, Apple Intelligence page summarization remains available on-device.

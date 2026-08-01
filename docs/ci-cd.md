@@ -97,13 +97,13 @@ Adding Push later requires restoring that target where needed, production entitl
 
 ### Managed browser entitlements
 
-The app declares `com.apple.developer.web-browser`, which lets an approved app appear as a default browser. The Apple Account Holder must request and receive this managed capability.
+The private `0.1.0 (2)` Internal TestFlight candidate intentionally omits `com.apple.developer.web-browser`. Apple has not approved that managed capability for the Floorp App ID, so this build will not appear as a default-browser choice. Apple's request form requires an App Store build or a public TestFlight link, so the request is intentionally deferred while distribution remains private. When Floorp adopts external testing or public distribution, first provide an assessment build without the entitlement; after Apple approves the request, enable the capability for `app.floorp.Floorp`, regenerate the distribution profile, re-add the entitlement, and verify it in the signed archive.
 
 The Floorp release entitlement omits `com.apple.developer.browser.app-installation`, which is for installing alternative-distribution apps from a website. Add it only if Floorp deliberately adopts that distribution path and Apple approves the request.
 
 ### Versioning
 
-The checked-in release baseline is `0.1.0 (1)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign the monotonically increasing distribution build number for the initial TestFlight workflow.
+The last validated Internal TestFlight baseline is `0.1.0 (1)`, and the checked-in post-rebrand release candidate is `0.1.0 (2)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
 
 ### Floorp-owned services and App Store ID
 
