@@ -117,6 +117,14 @@
     },
     {
       "selectedTests" : [
+        "FloorpNoteEditorViewControllerTests\/testExplicitSaveDoesNotRewriteUntouchedExistingNote()",
+        "FloorpNoteEditorViewControllerTests\/testExplicitSavePersistsUntouchedNewDraftOnlyOnce()",
+        "FloorpNoteEditorViewControllerTests\/testFailedExplicitSaveOfUntouchedDraftCanRetry()",
+        "FloorpNotePersistenceSessionTests\/testConcurrentFirstSavesCreateOneNote()",
+        "FloorpNotePersistenceSessionTests\/testExistingNoteSessionPreservesConflictDetection()",
+        "FloorpNotePersistenceSessionTests\/testFailedFirstSaveCanRetryWithoutDuplicate()",
+        "FloorpNotePersistenceSessionTests\/testFirstSaveCreatesAndSubsequentSaveUpdatesSameNote()",
+        "FloorpNotePersistenceSessionTests\/testNewDraftDoesNotPersistBeforeFirstSave()",
         "FloorpNotesStoreTests\/testCRUDPersistsAcrossStoreInstancesIncludingEmptyArchive()",
         "FloorpNotesStoreTests\/testConcurrentUpdatesToDifferentNotesDoNotOverwriteEachOther()",
         "FloorpNotesStoreTests\/testCorruptArchiveIsPreservedAndRequiresExplicitReset()",

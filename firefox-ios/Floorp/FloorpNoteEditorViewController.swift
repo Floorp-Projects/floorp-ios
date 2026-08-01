@@ -6,6 +6,58 @@ import UIKit
 import Common
 import Shared
 
+/// Owns the persistence identity for one editor session.
+///
+/// New drafts stay in memory until the editor reports its first change. Once
+/// created, every later save uses the last persisted revision so concurrent
+/// edits continue to be rejected by `FloorpNotesStore`.
+@MainActor
+final class FloorpNotePersistenceSession {
+    private let notesStore: FloorpNotesStore
+    private var persistedNote: FloorpNote?
+    private var isSaving = false
+    private var saveWaiters = [CheckedContinuation<Void, Never>]()
+
+    init(notesStore: FloorpNotesStore, persistedNote: FloorpNote?) {
+        self.notesStore = notesStore
+        self.persistedNote = persistedNote
+    }
+
+    func save(_ draft: FloorpNote) async throws -> FloorpNote {
+        if isSaving {
+            await withCheckedContinuation { continuation in
+                saveWaiters.append(continuation)
+            }
+            return try await save(draft)
+        }
+
+        isSaving = true
+        defer {
+            isSaving = false
+            let waiters = saveWaiters
+            saveWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+
+        let savedNote: FloorpNote
+        if let persistedNote {
+            savedNote = try await notesStore.updateNote(
+                id: persistedNote.id,
+                title: draft.title,
+                content: draft.content,
+                expectedUpdatedAt: persistedNote.updatedAt
+            )
+        } else {
+            savedNote = try await notesStore.createNote(
+                title: draft.title,
+                content: draft.content
+            )
+        }
+        persistedNote = savedNote
+        return savedNote
+    }
+}
+
 /// Native, local-first editor for a single Floorp note.
 ///
 /// Plain text is fully editable. Rich TipTap/Lexical content remains byte-for-
@@ -37,6 +89,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private var didApprovePlainTextConversion: Bool
     private var changeVersion = 0
     private var savedVersion = 0
+    private var hasPersistedNote: Bool
     private var isSaving = false
     private var saveWaiters = [CheckedContinuation<Void, Never>]()
     private var autosaveTask: Task<Void, Never>?
@@ -89,6 +142,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         windowUUID: WindowUUID,
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default,
+        isPersisted: Bool = true,
         onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote
     ) {
         let contentAnalysis = FloorpNoteContent.analyze(note.content)
@@ -98,6 +152,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         self.windowUUID = windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
+        self.hasPersistedNote = isPersisted
         self.onSave = onSave
         super.init(nibName: nil, bundle: nil)
     }
@@ -222,9 +277,23 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     @objc private func saveTapped() {
         Task { @MainActor in
-            autosaveTask?.cancel()
-            _ = await saveLatestDraft()
+            _ = await saveForExplicitRequest()
         }
+    }
+
+    /// Saves in response to an explicit user request.
+    ///
+    /// An untouched new draft has no content change to autosave, but choosing
+    /// Save is still an instruction to create it. Advancing the version also
+    /// keeps a failed first save pending so it can be retried before dismissal.
+    @discardableResult
+    func saveForExplicitRequest() async -> Bool {
+        autosaveTask?.cancel()
+        if !hasPersistedNote && savedVersion == changeVersion {
+            changeVersion += 1
+            setInteractiveDismissalBlocked(true)
+        }
+        return await saveLatestDraft()
     }
 
     @objc private func closeTapped() {
@@ -288,7 +357,16 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             do {
                 let persistedNote = try await onSave(noteToSave)
                 savedVersion = versionToSave
-                draft.updatedAt = persistedNote.updatedAt
+                hasPersistedNote = true
+                // Keep edits made while this save was in flight, but adopt the
+                // real identity assigned when a new draft is first persisted.
+                draft = FloorpNote(
+                    id: persistedNote.id,
+                    title: draft.title,
+                    content: draft.content,
+                    createdAt: persistedNote.createdAt,
+                    updatedAt: persistedNote.updatedAt
+                )
                 lastAttemptSucceeded = true
                 if savedVersion == changeVersion {
                     updateSaveState(.saved)
