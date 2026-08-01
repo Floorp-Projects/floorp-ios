@@ -106,7 +106,7 @@ git push -u origin HEAD
 
 > See [ADR-0007](adr/0007-upstream-merge-rebrand-strategy.md) for the full architectural decision record.
 
-Localized product names use a separate, reviewed overlay. It changes only 4,032 allowlisted semantic values in 844 resources, protects Mozilla service names, and fails closed when upstream text no longer matches the approved transformation. See [docs/l10n-overlay.md](docs/l10n-overlay.md) for extraction, verification, and merge-resolution commands. Generated localization resources remain tracked so Xcode and translation tooling continue to see ordinary Apple resources.
+Localized product names use a separate, reviewed overlay. It changes only 4,074 allowlisted semantic values in 849 resources, protects Mozilla service names, and fails closed when upstream text no longer matches the approved transformation. See [docs/l10n-overlay.md](docs/l10n-overlay.md) for extraction, verification, and merge-resolution commands. Generated localization resources remain tracked so Xcode and translation tooling continue to see ordinary Apple resources.
 
 ### Automatic Sync (GitHub Actions)
 

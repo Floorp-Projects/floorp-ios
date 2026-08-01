@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "generatedFrom": {
     "base": "e58637e772e4456efcf7dbf3826f172c7da721ba",
-    "reviewed": "b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c"
+    "reviewed": "9e46feb476739c508bb6d23a8ec92508d72adae0"
   },
   "summary": {
-    "paths": 844,
-    "semanticValues": 4032,
+    "paths": 849,
+    "semanticValues": 4074,
     "nonSemanticDifferences": 0
   },
   "nonSemanticDifferencePaths": [],
@@ -46,6 +46,21 @@
         }
       }
     },
+    "firefox-ios/Client/anp.lproj/InfoPlist.strings": {
+      "kind": "strings",
+      "entries": {
+        "NSFaceIDUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "595587cbe84de70759cc7eced1dc2d36b89a9c764d1838fe3595687d386581c6",
+          "resultSha256": "01574ed3d541a68a766bc8804723e3496311809b0a8e13ef9ea042e05e6b1aa8"
+        },
+        "NSSpeechRecognitionUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "45080aa5b109edeb2b2111c9e72d5ea394acedb18c942d138a71e94d5622e172",
+          "resultSha256": "451fff7f47b7d3fd754647456c434ef78f0a9c8ed57789060a877376965abab9"
+        }
+      }
+    },
     "firefox-ios/Client/ar.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
@@ -63,6 +78,11 @@
           "mode": "token",
           "sourceSha256": "bbc48a852472b45bd26ec8b798defc4201c42267ca391136f8aeff892f71f3a6",
           "resultSha256": "656476aeb5b1c2977fb2f90332193ec1105dded54da4b93341e29086b198072b"
+        },
+        "NSSpeechRecognitionUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "b024da04f187086304b8618eda3e3b87e5ef35f5110e6a882c7028c93efd9ff2",
+          "resultSha256": "6d6426517596d4f450f4569a1c7ce5c319c4bc64da3fe5bc640c7abd456c2b26"
         }
       }
     },
@@ -73,6 +93,11 @@
           "mode": "token",
           "sourceSha256": "e204440aa91cc227b5854726686632fd1f3fbad2894d361490dd4549b8f70c0d",
           "resultSha256": "04c4d259307bc2d2b3c5a3c922696734748940daeb508b3b9823f67479822045"
+        },
+        "NSFaceIDUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "9260cc70e54d799669dc961795eb5c561e801d57f68adbc626ecd1557cee596f",
+          "resultSha256": "66b2ae7d955c257faea438b10eb1eb2135f50092996187854aa9cf705c730115"
         },
         "NSMicrophoneUsageDescription": {
           "mode": "token",
@@ -136,6 +161,16 @@
         }
       }
     },
+    "firefox-ios/Client/bo.lproj/InfoPlist.strings": {
+      "kind": "strings",
+      "entries": {
+        "NSCameraUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
+        }
+      }
+    },
     "firefox-ios/Client/br.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
@@ -178,6 +213,11 @@
           "mode": "token",
           "sourceSha256": "2b66ddbf8d4e5483789975f98b887076bf347941d9c47ad3fd05aa60a43514f0",
           "resultSha256": "c64537d59c9d14d7360083ba20193cb8516dda6bdb9c7e348f5fedd559f1ae84"
+        },
+        "NSSpeechRecognitionUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "7a9efda0d79b594b04edbe165248c5388987019c6dfc62f139329836c004085b",
+          "resultSha256": "30376ca0169afa972508ffa078332740afcfd93862255d9f85a8f78031d83941"
         }
       }
     },
@@ -234,6 +274,11 @@
     "firefox-ios/Client/cy.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
+        "NSCameraUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "830e205d849ade6fa63cb6d73b0605dccc28a1cda2725c82e1bd521623ee2858",
+          "resultSha256": "bc83aae89b5d0fb187fc0e7a504a88316385b6a1fc8ef35fd49094fdd24d87fa"
+        },
         "NSFaceIDUsageDescription": {
           "mode": "token",
           "sourceSha256": "71e41f79c15491d04da54e11020f2071d4cae07bd54f861f4fb11a8d3368ea46",
@@ -434,6 +479,11 @@
     "firefox-ios/Client/eo.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
+        "NSCameraUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "b3c58500bff1d38eb210e049a225865c55c49204c021eb8e2f9555478fba3d48",
+          "resultSha256": "c2d08b4e91f9dac3741090e6433af3bd0f3038fb8a9df32dfbd054c4c8607f12"
+        },
         "NSFaceIDUsageDescription": {
           "mode": "token",
           "sourceSha256": "a3340038a409e294f24adab68470c51cea08243aeae6a477d1ee9e9dbc2a0c23",
@@ -553,6 +603,21 @@
           "mode": "token",
           "sourceSha256": "c0212e0a507e2c266ba05e366d52d2a7052ecf9722cb37e45a6ca2d686c738d9",
           "resultSha256": "dcf4a2f0f0f4943c072150d682f75b507c7910351ad27d99e43eacba7f111bba"
+        },
+        "NSFaceIDUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "97d8242e2159c4d508d30a9d8588439f4878ab05ae08cd5b2a5398c18a11b5f7",
+          "resultSha256": "002ed1f60d489be1fd60c6407aad1c1cd49f572ee926eec5d6f170e3fa78357d"
+        },
+        "NSMicrophoneUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "b799e261b5949ae59d8a842fd9d84f501a5549b353e93fad250b998fc5fd64ec",
+          "resultSha256": "cfc399b6051875388b59f9b6e11b2019e2693d58a1a1bf5f8ddeaeef599f28b2"
+        },
+        "NSSpeechRecognitionUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "2472e6f930fdeb962f53b1553a266903ff65488c8c71fb0a777e1b56009502b7",
+          "resultSha256": "7f3e87516cc3ec0b2c3c743a87f19dc28a440f3b01ae20dde9c4b2c6cfcb9752"
         }
       }
     },
@@ -949,6 +1014,11 @@
     "firefox-ios/Client/ka.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
+        "NSCameraUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "7d4d1bc18b3f0a3f94d35c3478e46b6d2033d840eef80075d5b6ec9ceb62c16e",
+          "resultSha256": "1c5376d0bb508e2e637a528c2acbd0b0c950be13deb20a07d7b57fedf924b9c7"
+        },
         "NSFaceIDUsageDescription": {
           "mode": "token",
           "sourceSha256": "9068b995479fd76a53a8ea938acd18b7e95bb90b3f96730331a1a805aaa718f2",
@@ -974,6 +1044,11 @@
     "firefox-ios/Client/kk.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
+        "NSCameraUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "9e30b22dd9ab9cfe7f30fde1fce89c70e06b27a800079a8158e4aa838842c63d",
+          "resultSha256": "b8242f3e851768dd28a0957575b4be92adf076fd100439c4acf5b49dd329b8b3"
+        },
         "NSFaceIDUsageDescription": {
           "mode": "token",
           "sourceSha256": "7eade4ad33db579e0864d9d4e0c29728818ac48b75778b7615ead6703cde41d3",
@@ -1374,10 +1449,20 @@
     "firefox-ios/Client/sat-Olck.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
+        "NSCameraUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "2c7ca9c4c963a8ff4f862960e6e7cdc34dbc40ffa0525f10dc26d9037aabc80e",
+          "resultSha256": "bf9c828f1eb4744a4d50281421c767b7b13ec38c9ae1320fbb385f7dfdfe00fe"
+        },
         "NSFaceIDUsageDescription": {
           "mode": "token",
           "sourceSha256": "af7d913bcd2545d729d78035213a854c2b62bc5e6cb2e1fb492b8e6d8ea11308",
           "resultSha256": "08a457fba88e670df1a011f5c25bd006b9ee316433d849dace0453c503d1b4cd"
+        },
+        "NSSpeechRecognitionUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "cabb8cf445e9fe1c6783945fe7a5e9f91ba386dccbaa2bc60f86fa971c4980ff",
+          "resultSha256": "5e293984e8ad225eacd586f4066c40fbfb3d30d65f0c86a350a57ec7fa537422"
         }
       }
     },
@@ -1718,6 +1803,11 @@
           "mode": "token",
           "sourceSha256": "6d307efd5ff774b2a555537461bb5099bfc8bc8704dc853814854e39bd863127",
           "resultSha256": "924061f9ff2e14669f3bfd571d690f40f4b8e92fdd794cd9a93b5875a0541f60"
+        },
+        "NSSpeechRecognitionUsageDescription": {
+          "mode": "token",
+          "sourceSha256": "23eb0dc702b25e456dc5dbe579a81a204e01a5ead0e27956abbae732ec287e71",
+          "resultSha256": "c4c70244b374be4bde67797f557ef6e7a254dd42fd0e1b863d0adbe4069d69bc"
         }
       }
     },
@@ -1823,6 +1913,16 @@
           "mode": "token",
           "sourceSha256": "487fdb6901223662cad4bd0f544de1a15395311440999cd2d7a234e8ea2eae85",
           "resultSha256": "33f273984567c23dea20be90b4b37a57e198a22b1a6b93ed7ab30178943db8bf"
+        }
+      }
+    },
+    "firefox-ios/Extensions/ActionExtension/ca.lproj/InfoPlist.strings": {
+      "kind": "strings",
+      "entries": {
+        "CFBundleDisplayName": {
+          "mode": "token",
+          "sourceSha256": "343e585e43efefa3c70e868bc43860fb58a44109efddc6b341b36a8e778dc048",
+          "resultSha256": "ee27c276ec25c21d6f0434f1461be94c314a8e3ef666eb28682cbc55cee29bdb"
         }
       }
     },
@@ -1967,6 +2067,16 @@
       }
     },
     "firefox-ios/Extensions/ActionExtension/es-MX.lproj/InfoPlist.strings": {
+      "kind": "strings",
+      "entries": {
+        "CFBundleDisplayName": {
+          "mode": "token",
+          "sourceSha256": "1500cc9d1436504938fd81d3548a339a01cc0a8bd1b024003548c6859a6b6811",
+          "resultSha256": "f9a9745beb678e35f86c2c34ac384232a7decd2873f19cfbd88d714b45ec2d1f"
+        }
+      }
+    },
+    "firefox-ios/Extensions/ActionExtension/es.lproj/InfoPlist.strings": {
       "kind": "strings",
       "entries": {
         "CFBundleDisplayName": {
@@ -2363,6 +2473,16 @@
           "mode": "token",
           "sourceSha256": "ac701220f704fdc8cec6080d552a24fec8cebe98540304842eb6fafa7a039156",
           "resultSha256": "3b2413f2ffc6feefc8816878bc523df3442cd06d03488e4fe7135f236ac182e5"
+        }
+      }
+    },
+    "firefox-ios/Extensions/ActionExtension/tt.lproj/InfoPlist.strings": {
+      "kind": "strings",
+      "entries": {
+        "CFBundleDisplayName": {
+          "mode": "token",
+          "sourceSha256": "734b018187b07c671edef2770d789088946a4d7d6e7fbe215431a11b9a5f3a7f",
+          "resultSha256": "a5d5f6c8736b7c543dff58c826be1a57c2bf4a24adb59fd4720e183cc543d37d"
         }
       }
     },
@@ -2994,10 +3114,45 @@
           "sourceSha256": "e8f2d425ab24370e073bbc9abd4c73729cde00596dcd7bfc3f7ad69b5a83f2e5",
           "resultSha256": "071ad38b7cb767b4542d022e45451603186592247c0896ea6f3c8d4cc593924b"
         },
+        "Settings.Home.Option.Description.v101": {
+          "mode": "token",
+          "sourceSha256": "de82b5e9b2b092ec847aed7520afcd7471e0d395188ecdf02932380c6b46e165",
+          "resultSha256": "dede18b15cb56e9b59791a33dfa896eb8f9cd708ef739ff7665d9da60d6fc2df"
+        },
         "Settings.Home.Option.StartAtHome.Description": {
           "mode": "token",
           "sourceSha256": "be171490cff33263749847c1df7bfe87fdfd49f5c364129742e8d6d4e7833ddd",
           "resultSha256": "c802c7d968d26074d7d271a59e77b2b01df9b7f4a796fd447c38ef26fcb6595b"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99": {
+          "mode": "token",
+          "sourceSha256": "1b829fd229a34f35ad9793615ab04e1c95b4efd8238b69b8a037873ed992377c",
+          "resultSha256": "c08a086ba52a8a97ed3c1925ff968e9666609581d06bc5ae28e0746bd3ca0741"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100": {
+          "mode": "token",
+          "sourceSha256": "6736239c429da4eb78ba5a79ba1fae0772269f6d5d74bc6bb1d897ebac139075",
+          "resultSha256": "3aec5976185bf5c2277bcfb4c5328f8f307240e81efc0c4d11857bbbd0d42ed4"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99": {
+          "mode": "token",
+          "sourceSha256": "220d24ff25335ed5468e23b49201f7a4d17ef1fd4f3f0f53b2b84462d8069e1f",
+          "resultSha256": "36f2497771adf1b325df88845095df8c5bef9fccd78d9c9520941d2352f5f79c"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99": {
+          "mode": "token",
+          "sourceSha256": "4a8bb4c7b7f85896567c676f68685f3a518915549fbb76f107e9ce19d0404083",
+          "resultSha256": "99ad6bbad269f599a92633cf33640de9182424149e5e7225f633b1109a24cb0c"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100": {
+          "mode": "token",
+          "sourceSha256": "37fd8ddead88686655d1846dafe1591d63aea2f42ba66ead90fba221b2dacb25",
+          "resultSha256": "f725e3535ab5fa236666b181b703558c8fa94ec71ac41cf5e9dce6218eaba9c0"
+        },
+        "Settings.Home.Option.Wallpaper.SwitchTitle.v99": {
+          "mode": "token",
+          "sourceSha256": "7ed386a21720e98f345d6a788bad73c661e7051259958c8cc6d351ebcb2848b4",
+          "resultSha256": "7ef76da752bfef6e995c65f69503d57ffdc9826e8178f622368b0315bca406b0"
         },
         "Settings.NewTab.Option.FirefoxHome": {
           "mode": "token",
@@ -7038,6 +7193,11 @@
           "mode": "token",
           "sourceSha256": "ab3cac9b787212655d52073837e8748904020e4e8449eb5d330188bc0485a10f",
           "resultSha256": "78d310af89178060cc1094dde4dac85a8eed1460cc8b9bcbae6625d7295c711a"
+        },
+        "TodayWidget.SearchInFirefoxV2": {
+          "mode": "token",
+          "sourceSha256": "16aff12d16b0feba1bfed5a62b1bc023c10c7937ea1fb5eefb37e5848a2d0868",
+          "resultSha256": "ae66c9893c95974832ca9fc2221d09db54608fe54e4198a9ff0573bbe60c886d"
         }
       }
     },
@@ -8179,10 +8339,30 @@
     "firefox-ios/Shared/es.lproj/Default Browser.strings": {
       "kind": "strings",
       "entries": {
+        "DefaultBrowserCard.BetterInternet.Description.v108": {
+          "mode": "token",
+          "sourceSha256": "b2c23eeca1ea62c2a57da8e8bb7b887582060d45869554d0c10ff35305ce5ce4",
+          "resultSha256": "4715468a35a124c930067d64d92ee85ff2402b16d07f46403065c8b23bab57ef"
+        },
         "DefaultBrowserCard.Description": {
           "mode": "token",
           "sourceSha256": "ea4ab617a5063331c603e6d5eba98d7740e6da48461849db60f31abfe9cc9172",
           "resultSha256": "323e0e812f7a1f4cf8e890ebeb7b023d9e8773e88d1f3b90c6a77bd84a0b4c36"
+        },
+        "DefaultBrowserCard.NextLevel.Description.v108": {
+          "mode": "token",
+          "sourceSha256": "820cde21157c40554f1ddc5fd34e6bc202bdb325b961536469248d4d4479ab2b",
+          "resultSha256": "abe2cc9dc6f7a76bbc29c2b584daddbccf12241143b919e72eb675f61f3fbc52"
+        },
+        "DefaultBrowserCard.PeaceOfMind.Description.v108": {
+          "mode": "token",
+          "sourceSha256": "d83d7b6d22aeb565698a7eb537c7773f68dfc21c3c2c470fff46c56a078a8e6e",
+          "resultSha256": "3b8dffb05c6330a771e9f58fe4119570466ed4b0d6fb2366f517017227f998ce"
+        },
+        "DefaultBrowserCard.PeaceOfMind.Title.v108": {
+          "mode": "token",
+          "sourceSha256": "4760bec916790a64f476d21e6d7238906dc583f705045d9dbf643cd265c0263a",
+          "resultSha256": "25b8e14f2eb00f604c1d04d7efb9f338c5b1e25b37350226658cfbf063bc872a"
         },
         "DefaultBrowserOnboarding.Description3": {
           "mode": "token",
@@ -8214,6 +8394,21 @@
           "sourceSha256": "bc7442d15feb3a707bdc37dccc81de6e9e0141e075385bd3df887fe7212fffc6",
           "resultSha256": "3feb99ff79a4488de6d2bcea38366f81aa364edd071122ec8dddb082ced3cac4"
         },
+        "FxHomepage.Wallpaper.ButtonLabel.v99": {
+          "mode": "token",
+          "sourceSha256": "6e99b037299f4122b7f95ef8f1c259e0927864f08839a3c24c6823d3ba74bf0c",
+          "resultSha256": "d2d8ec5339839859843305b5b60cf1def5f1cd0b79b9ee64eb2f5242bae1009e"
+        },
+        "Logins.PasscodeRequirement.Warning": {
+          "mode": "token",
+          "sourceSha256": "111eb58178e9e4f3b88a9cdeb59ce286498490880db37097aee8cedab6c475be",
+          "resultSha256": "eb256ef7afa22f605139ec295031ea17b4a2f1e796509c2457d83803825767c1"
+        },
+        "Logins.WelcomeView.Title2": {
+          "mode": "token",
+          "sourceSha256": "25ee8d1619837782cbd94902d56fe114713ee3e20ad29be0b15f0b35fa2a6d56",
+          "resultSha256": "09eae4438719fb4d22dd6a3738e95922cc5c12bd79c735ce1840297f05a70d43"
+        },
         "Looks like Firefox crashed previously. Would you like to restore your tabs?": {
           "mode": "token",
           "sourceSha256": "58a2a7503a7ee69f7ebe42b04c805d3e89fff8528036085cb3e4ac2dfcdc443c",
@@ -8234,6 +8429,11 @@
           "sourceSha256": "62fae67b4c99a70ead70b0a50b3ee3131d31ec720d53c05193ee664fb6467bc9",
           "resultSha256": "ffbeed8d98f5c1316b73792f59d8770d25157bbed3460336cef41ba33d9b739a"
         },
+        "ScanQRCode.PermissionError.Message.v100": {
+          "mode": "token",
+          "sourceSha256": "9c9fcf80ec4f30be612a32bb7da570a3b22b17bbc5a8cc82dc5e2cf4e4d886b6",
+          "resultSha256": "8d7567258d8412a26be7094705def3fd6958543a698b46a059c31853b7806489"
+        },
         "SendTo.NotSignedIn.Message": {
           "mode": "token",
           "sourceSha256": "2c7bf49b54d142bf0fedbde85f1d35450361979153efbae6b9d81a4ad8715e25",
@@ -8244,10 +8444,45 @@
           "sourceSha256": "6ab1fe4b9d7f2e59e7ed7dcb6108bc309d45b67bc82b4402fbf4b7a625b1336b",
           "resultSha256": "d94f158427da8754c42058dbc396769b94b9c31ecf9ade5bd56d5a57269340aa"
         },
+        "Settings.Home.Option.Description.v101": {
+          "mode": "token",
+          "sourceSha256": "75192707da79593583f2a171f01fd951eb1091e43e97f5ca3cfc66b3c5cd0731",
+          "resultSha256": "f5b013af0ad1854597cd804f82291a428ec98e7c25463ce7122db79357deb0cc"
+        },
         "Settings.Home.Option.StartAtHome.Description": {
           "mode": "token",
           "sourceSha256": "97e2916d52af13ed3862160b8bef25bffba81a98eea85f72118d89da829e8ca0",
           "resultSha256": "df69147c5f31ba1d92a6943dda3ec62283ae1136211c90c14f02a0e556a72156"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99": {
+          "mode": "token",
+          "sourceSha256": "742ded72e9c6317c9f6bedec55f060b35ef4201e6cdb1c65eb39447e91cf3119",
+          "resultSha256": "15bfd4ac968bf88c08ff8fe52ce35e2f7a118712cbb7902d736f2cb966cae35d"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100": {
+          "mode": "token",
+          "sourceSha256": "c56398373706a2dfced91e237f6e91815b1e51eaba401bcfd2f773b07481d806",
+          "resultSha256": "6fa033a6171ca9dde129158b043f1fd8ad574baa96026dd5483c6488dcb9e2a4"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99": {
+          "mode": "token",
+          "sourceSha256": "7e35855d12ed0e00b735b6231df3bc0584cc50741a8a673fbb9a8259cef72e62",
+          "resultSha256": "b876e084fe1de0a01d9ef5d854ec8ece439c8268ec7ab41c7d170220187253f6"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99": {
+          "mode": "token",
+          "sourceSha256": "589917437b3881cb529203f73ca83f610a6bc6dce5b69efbd98ddda3636c4d6a",
+          "resultSha256": "564421117ff423dc6956ce72417250a0edb985d9448c91b1fca8f474cc428c2f"
+        },
+        "Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100": {
+          "mode": "token",
+          "sourceSha256": "f8ef7d75bab69193ab91808e950c98286cf695a52895f401250e3aab4cd86bf0",
+          "resultSha256": "6aa11bef27388d4ca00809a8e9d9ba799701a9fb49710e431bbaaa833fceef03"
+        },
+        "Settings.Home.Option.Wallpaper.SwitchTitle.v99": {
+          "mode": "token",
+          "sourceSha256": "68d1284f1cb269e3039fb62eb02f86535c959e97dfd78db3074fc28492bbc33b",
+          "resultSha256": "4bd8e83628af89140b7d655a82ad12d4a01c03bc51215db57fc7b7ba3a0ee114"
         },
         "Settings.NewTab.Option.FirefoxHome": {
           "mode": "token",

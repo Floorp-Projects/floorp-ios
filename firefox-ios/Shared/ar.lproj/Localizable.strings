@@ -1268,7 +1268,7 @@
 "Settings.Home.Current.Description.v101" = "اختر ما يُعرض كصفحة رئيسية.";
 
 /* In the settings menu, on the Firefox homepage customization section, this is the description below the section, describing what the options in the section are for. */
-"Settings.Home.Option.Description.v101" = "اختر ما يتم تضمينه في صفحة فايرفوكس الرئيسية.";
+"Settings.Home.Option.Description.v101" = "اختر ما يتم تضمينه في صفحة Floorp الرئيسية.";
 
 /* In the settings menu, in the Firefox homepage customization section, this is the title for the option that allows users to toggle the Jump Back In section on homepage on or off */
 "Settings.Home.Option.JumpBackIn" = "عُد إلى حيث كنت";
@@ -1307,25 +1307,25 @@
 "Settings.Home.Option.Wallpaper" = "خلفية";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the amethyst firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "خلفية فايرفوكس، نقش جمشت.";
+"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "خلفية Floorp، نقش جمشت.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the beach hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "خلفية فايرفوكس، نقش تلال الشاطئ.";
+"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "خلفية Floorp، نقش تلال الشاطئ.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the cerulean firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "خلفية فايرفوكس، نقش سماوي.";
+"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "خلفية Floorp، نقش سماوي.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the default wallpaper. */
 "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99" = "خلفية شفافة افتراضية.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the sunrise firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "خلفية فايرفوكس، نقش شروق الشمس.";
+"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "خلفية Floorp، نقش شروق الشمس.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string of the toggle for turning wallpaper cycling shortcut on or off on the homepage. */
 "Settings.Home.Option.Wallpaper.Accessibility.ToggleButton" = "مفتاح تبديل تدوير خلفية الصفحة الرئيسية";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the twilight hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "خلفية فايرفوكس، نقش تلال الشفق.";
+"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "خلفية Floorp، نقش تلال الشفق.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of the group of wallpapers that are always available to the user. The %@ will be replaced by the app name and thus doesn't need translation. */
 "Settings.Home.Option.Wallpaper.Classic.Title.v106" = "كلاسيكي %@";
@@ -1346,7 +1346,7 @@
 "Settings.Home.Option.Wallpaper.LimitedEdition.Title.v106" = "إصدار محدود";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off. */
-"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "تغيير الخلفية بالنقر على شعار صفحة فايرفوكس الرئيسية";
+"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "تغيير الخلفية بالنقر على شعار صفحة Floorp الرئيسية";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of that screen, which allows users to change the wallpaper settings for the application. */
 "Settings.Home.Option.Wallpaper.Title" = "الخلفية";

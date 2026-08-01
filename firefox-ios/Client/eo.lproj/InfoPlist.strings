@@ -8,7 +8,7 @@
 "New Tab" = "Nova langeto";
 
 /* Privacy - Camera Usage Description */
-"NSCameraUsageDescription" = "Firefox povas uzi vian filmilon por skani kodojn QR, foti aŭ filmi.";
+"NSCameraUsageDescription" = "Floorp povas uzi vian filmilon por skani kodojn QR, foti aŭ filmi.";
 
 /* Privacy - Face ID Usage Description */
 "NSFaceIDUsageDescription" = "Floorp postulas Face ID por aliri viajn konservitajn legitimilojn kaj pagmetodojn.";

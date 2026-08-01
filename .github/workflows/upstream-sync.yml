@@ -24,7 +24,7 @@ concurrency:
 env:
   FLOORP_BASE_BRANCH: main
   L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
-  L10N_REVIEWED: b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c
+  L10N_REVIEWED: 9e46feb476739c508bb6d23a8ec92508d72adae0
   UPSTREAM_BRANCH: main
   UPSTREAM_REPOSITORY: https://github.com/mozilla-mobile/firefox-ios.git
   SYNC_BRANCH: automation/upstream-sync

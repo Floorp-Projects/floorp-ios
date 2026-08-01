@@ -425,7 +425,7 @@
 "FxAPush_DeviceDisconnected_UnknownDevice_body" = "Se ha desconectado un dispositivo de Firefox Sync";
 
 /* On the firefox homepage, the string read by the voice over prompt for accessibility, for the button which changes the wallpaper */
-"FxHomepage.Wallpaper.ButtonLabel.v99" = "Logotipo de Firefox, cambiar el fondo de pantalla.";
+"FxHomepage.Wallpaper.ButtonLabel.v99" = "Logotipo de Floorp, cambiar el fondo de pantalla.";
 
 /* Show the SUMO support page from the Support section in the settings. see http://mzl.la/1dmM8tZ */
 "Help" = "Ayuda";
@@ -656,13 +656,13 @@
 "Logins.Onboarding.LearnMoreButtonTitle" = "Aprender más";
 
 /* Warning message shown when you try to enable or use native AutoFill without a device passcode setup */
-"Logins.PasscodeRequirement.Warning" = "Para utilizar la función de autocompletar en Firefox, debes tener habilitada una contraseña para el dispositivo.";
+"Logins.PasscodeRequirement.Warning" = "Para utilizar la función de autocompletar en Floorp, debes tener habilitada una contraseña para el dispositivo.";
 
 /* Label displaying welcome view tagline under the title */
 "Logins.WelcomeView.Tagline" = "Lleva tus contraseñas siempre contigo";
 
 /* Label displaying welcome view title */
-"Logins.WelcomeView.Title2" = "Autocompletar contraseñas en Firefox";
+"Logins.WelcomeView.Title2" = "Autocompletar contraseñas en Floorp";
 
 /* Title of the big blue button to enable AutoFill */
 "Logins.WelcomeView.TurnOnAutoFill" = "Activar autocompletado";
@@ -995,7 +995,7 @@
 "ScanQRCode.InvalidDataError.Message" = "La información no es válida";
 
 /* Text of the prompt to setup the camera authorization for the Scan QR Code feature. */
-"ScanQRCode.PermissionError.Message.v100" = "Vete a ‘Ajustes’ > ‘Firefox’. Permitir que Firefox acceda a la cámara.";
+"ScanQRCode.PermissionError.Message.v100" = "Vete a ‘Ajustes’ > ‘Floorp’. Permitir que Floorp acceda a la cámara.";
 
 /* Title for the QR code scanner view. */
 "ScanQRCode.View.Title" = "Escanear código QR";
@@ -1268,7 +1268,7 @@
 "Settings.Home.Current.Description.v101" = "Elige lo que se mostrará como página de inicio.";
 
 /* In the settings menu, on the Firefox homepage customization section, this is the description below the section, describing what the options in the section are for. */
-"Settings.Home.Option.Description.v101" = "Elige lo que se incluirá en la página de inicio de Firefox.";
+"Settings.Home.Option.Description.v101" = "Elige lo que se incluirá en la página de inicio de Floorp.";
 
 /* In the settings menu, in the Firefox homepage customization section, this is the title for the option that allows users to toggle the Jump Back In section on homepage on or off */
 "Settings.Home.Option.JumpBackIn" = "Saltar hacia atrás";
@@ -1307,25 +1307,25 @@
 "Settings.Home.Option.Wallpaper" = "Fondo de pantalla";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the amethyst firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Fondo de pantalla de Firefox, motivo de amatista.";
+"Settings.Home.Option.Wallpaper.Accessibility.AmethystWallpaper.v99" = "Fondo de pantalla de Floorp, motivo de amatista.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the beach hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Fondo de pantalla de Firefox, motivo de colinas de playa.";
+"Settings.Home.Option.Wallpaper.Accessibility.BeachHillsWallpaper.v100" = "Fondo de pantalla de Floorp, motivo de colinas de playa.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the cerulean firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Fondo de pantalla de Firefox, motivo cerúleo.";
+"Settings.Home.Option.Wallpaper.Accessibility.CeruleanWallpaper.v99" = "Fondo de pantalla de Floorp, motivo cerúleo.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string for the default wallpaper. */
 "Settings.Home.Option.Wallpaper.Accessibility.DefaultWallpaper.v99" = "Fondo de pantalla claro predeterminado.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the sunrise firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Fondo de pantalla de Firefox, motivo de amanecer.";
+"Settings.Home.Option.Wallpaper.Accessibility.SunriseWallpaper.v99" = "Fondo de pantalla de Floorp, motivo de amanecer.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the accessibility string of the toggle for turning wallpaper cycling shortcut on or off on the homepage. */
 "Settings.Home.Option.Wallpaper.Accessibility.ToggleButton" = "Botón de cambio cíclico del fondo de pantalla de la página de inicio";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title accessibility string for the twilight hills firefox wallpaper. */
-"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Fondo de pantalla de Firefox, motivo de colinas al atardecer.";
+"Settings.Home.Option.Wallpaper.Accessibility.TwilightHillsWallpaper.v100" = "Fondo de pantalla de Floorp, motivo de colinas al atardecer.";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of the group of wallpapers that are always available to the user. The %@ will be replaced by the app name and thus doesn't need translation. */
 "Settings.Home.Option.Wallpaper.Classic.Title.v106" = "%@ clásico";
@@ -1346,7 +1346,7 @@
 "Settings.Home.Option.Wallpaper.LimitedEdition.Title.v106" = "Edición limitada";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the string titling the switch button's function, which allows a user to toggle wallpaper switching from the homepage logo on or off. */
-"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Cambia el fondo de pantalla tocando el logotipo de la página de inicio de Firefox";
+"Settings.Home.Option.Wallpaper.SwitchTitle.v99" = "Cambia el fondo de pantalla tocando el logotipo de la página de inicio de Floorp";
 
 /* In the settings menu, on the Firefox wallpaper customization screen, this is the title of that screen, which allows users to change the wallpaper settings for the application. */
 "Settings.Home.Option.Wallpaper.Title" = "Fondo de pantalla";

@@ -7,9 +7,9 @@ Floorp's localized product-name changes are generated from a narrow, reviewed ov
 `floorp/l10n/manifest.json` is reproducibly extracted from:
 
 - reviewed base: `e58637e772e4456efcf7dbf3826f172c7da721ba`
-- reviewed result: `b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c` (preserved by tag `rebranding-reviewed-l10n-v2-2026-08-01`)
+- reviewed result: `9e46feb476739c508bb6d23a8ec92508d72adae0` (preserved by tag `rebranding-reviewed-l10n-v3-2026-08-01`)
 
-The extracted scope is 844 localization resources (843 Apple `.strings` files and one intent definition), containing 4,032 changed semantic values. The parser normalizes 57 source key spellings to 55 keys. Twenty-three localized brand spellings are inferred from the reviewed change, and 18 values that cannot be represented as a token substitution are kept as exact overrides. This includes the camera-permission fallback key in all 50 locales that currently provide it.
+The extracted scope is 849 localization resources (848 Apple `.strings` files and one intent definition), containing 4,074 changed semantic values. The parser normalizes 57 source key spellings to 55 keys. Twenty-four localized brand spellings are inferred from the reviewed change, and 18 values that cannot be represented as a token substitution are kept as exact overrides. This includes the camera-permission fallback key in all 50 locales that currently provide it.
 
 `floorp/l10n/coverage.json` records every covered path and key, its transformation mode, and source/result hashes. The reviewed result changes only semantic value spans; formatting remains identical to the reviewed upstream base.
 
@@ -24,7 +24,7 @@ Use the Node version declared by `.nvmrc` (currently Node 24):
 ```sh
 node scripts/l10n/floorp-l10n-overlay.mjs extract \
   --base e58637e772e4456efcf7dbf3826f172c7da721ba \
-  --reviewed b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c \
+  --reviewed 9e46feb476739c508bb6d23a8ec92508d72adae0 \
   --check-counts --check
 
 node scripts/l10n/floorp-l10n-overlay.mjs apply \

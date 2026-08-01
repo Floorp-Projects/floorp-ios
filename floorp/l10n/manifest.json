@@ -3,16 +3,16 @@
   "productName": "Floorp",
   "generatedFrom": {
     "base": "e58637e772e4456efcf7dbf3826f172c7da721ba",
-    "reviewed": "b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c"
+    "reviewed": "9e46feb476739c508bb6d23a8ec92508d72adae0"
   },
   "summary": {
-    "paths": 844,
-    "stringsFiles": 843,
+    "paths": 849,
+    "stringsFiles": 848,
     "intentFiles": 1,
-    "semanticValues": 4032,
+    "semanticValues": 4074,
     "rawKeyForms": 57,
     "normalizedKeys": 55,
-    "brandTokens": 23,
+    "brandTokens": 24,
     "exactOverrides": 18
   },
   "protectedTerms": [
@@ -54,6 +54,7 @@
     "ഫയർഫോക്സു്",
     "ෆයර්ෆොක්ස්",
     "Firefoksa",
+    "फायरफॉक्स",
     "ଫାୟାରଫକ୍ସ",
     "பயர்பாஃசு",
     "ഫയർഫോക്സ്",

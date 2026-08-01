@@ -37,13 +37,13 @@ import {
 const DEFAULT_MANIFEST = "floorp/l10n/manifest.json";
 const DEFAULT_COVERAGE = "floorp/l10n/coverage.json";
 const EXPECTED_EXTRACTION = {
-  paths: 844,
-  stringsFiles: 843,
+  paths: 849,
+  stringsFiles: 848,
   intentFiles: 1,
-  semanticValues: 4032,
+  semanticValues: 4074,
   rawKeyForms: 57,
   normalizedKeys: 55,
-  brandTokens: 23,
+  brandTokens: 24,
   exactOverrides: 18,
   nonSemanticFiles: 0
 };
