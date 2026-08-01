@@ -168,6 +168,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     /// Callback when drawer is dismissed.
     var onDismissed: (() -> Void)?
 
+    /// Supplies a safe, non-private current page suggestion for a new web panel.
+    var webPanelSuggestionProvider: (() -> FloorpWebPanelDraft?)?
+
     private var currentPanelType: FloorpPanelType = .bookmarks
     private var items = [DrawerItem]()
     private var filteredItems = [DrawerItem]()
@@ -177,6 +180,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var isTransitioningDrawer = false
     private var didFinishDismissal = false
     private var dismissWhenPresentationFinishes = false
+    private var displayedPanelIDs = [String]()
 
     // MARK: - UI Components
 
@@ -218,6 +222,15 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         return view
     }()
 
+    private lazy var sidebarScrollView: UIScrollView = {
+        let scrollView = UIScrollView()
+        scrollView.alwaysBounceVertical = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.accessibilityIdentifier = "Floorp.Drawer.PanelRail"
+        return scrollView
+    }()
+
     private lazy var sidebarStackView: UIStackView = {
         let sv = UIStackView()
         sv.axis = .vertical
@@ -225,6 +238,26 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         sv.spacing = 4
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
+    }()
+
+    private lazy var addWebPanelButton: UIButton = {
+        let button = makeRailActionButton(
+            systemImageName: "plus",
+            accessibilityLabel: FloorpStrings.PanelRegistry.addWebPanel,
+            accessibilityIdentifier: "Floorp.Drawer.AddWebPanel"
+        )
+        button.addTarget(self, action: #selector(addWebPanelTapped), for: .touchUpInside)
+        return button
+    }()
+
+    private lazy var managePanelsButton: UIButton = {
+        let button = makeRailActionButton(
+            systemImageName: "slider.horizontal.3",
+            accessibilityLabel: FloorpStrings.PanelRegistry.title,
+            accessibilityIdentifier: "Floorp.Drawer.ManagePanels"
+        )
+        button.addTarget(self, action: #selector(managePanelsTapped), for: .touchUpInside)
+        return button
     }()
 
     // Header
@@ -374,6 +407,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             name: .FloorpNotesDidChange,
             object: nil
         )
+        notificationCenter.addObserver(
+            self,
+            selector: #selector(panelRegistryDidChange),
+            name: .FloorpPanelRegistryDidChange,
+            object: nil
+        )
         listenForThemeChanges(withNotificationCenter: notificationCenter)
         applyTheme()
         logger.log("Floorp: OverlayDrawer loaded", level: .info, category: .setup)
@@ -450,7 +489,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         headerView.addSubview(addNoteButton)
         headerView.addSubview(closeButton)
 
-        sidebarView.addSubview(sidebarStackView)
+        sidebarView.addSubview(sidebarScrollView)
+        sidebarScrollView.addSubview(sidebarStackView)
+        sidebarView.addSubview(managePanelsButton)
 
         containerView.addGestureRecognizer(dismissSwipeGesture)
     }
@@ -498,15 +539,6 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             sidebarView.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
             sidebarView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
             sidebarWidthConstraint,
-
-            // Sidebar stack view
-            sidebarStackView.topAnchor.constraint(equalTo: sidebarView.topAnchor, constant: 12),
-            sidebarStackView.centerXAnchor.constraint(equalTo: sidebarView.centerXAnchor),
-            sidebarStackView.bottomAnchor.constraint(
-                lessThanOrEqualTo: containerView.safeAreaLayoutGuide.bottomAnchor,
-                constant: -12
-            ),
-            sidebarStackWidthConstraint,
 
             // Header
             headerView.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
@@ -577,7 +609,39 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             // Retry button
             retryButton.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
             retryButton.topAnchor.constraint(equalTo: emptyStateLabel.bottomAnchor, constant: 12),
-        ])
+        ] + panelRailConstraints(sidebarStackWidthConstraint: sidebarStackWidthConstraint))
+    }
+
+    /// Keeps the scrollable rail independent from the content constraints so
+    /// adding panel-management controls does not make layout setup monolithic.
+    private func panelRailConstraints(
+        sidebarStackWidthConstraint: NSLayoutConstraint
+    ) -> [NSLayoutConstraint] {
+        [
+            sidebarScrollView.topAnchor.constraint(equalTo: sidebarView.topAnchor, constant: 8),
+            sidebarScrollView.leadingAnchor.constraint(equalTo: sidebarView.leadingAnchor),
+            sidebarScrollView.trailingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
+            sidebarScrollView.bottomAnchor.constraint(equalTo: managePanelsButton.topAnchor, constant: -4),
+            sidebarStackView.topAnchor.constraint(
+                equalTo: sidebarScrollView.contentLayoutGuide.topAnchor,
+                constant: 4
+            ),
+            sidebarStackView.centerXAnchor.constraint(
+                equalTo: sidebarScrollView.frameLayoutGuide.centerXAnchor
+            ),
+            sidebarStackView.bottomAnchor.constraint(
+                equalTo: sidebarScrollView.contentLayoutGuide.bottomAnchor,
+                constant: -4
+            ),
+            sidebarStackWidthConstraint,
+            managePanelsButton.centerXAnchor.constraint(equalTo: sidebarView.centerXAnchor),
+            managePanelsButton.bottomAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.bottomAnchor,
+                constant: -8
+            ),
+            managePanelsButton.widthAnchor.constraint(equalToConstant: 44),
+            managePanelsButton.heightAnchor.constraint(equalToConstant: 44),
+        ]
     }
 
     private func updateDrawerGeometry(availableWidth: CGFloat) {
@@ -617,6 +681,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
         // Sidebar
         sidebarView.backgroundColor = colors.layer3
+        addWebPanelButton.tintColor = colors.iconSecondary
+        managePanelsButton.tintColor = colors.iconSecondary
 
         // Header
         headerView.backgroundColor = colors.layer1
@@ -650,7 +716,10 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     // MARK: - Sidebar Buttons
 
     private func buildSidebarButtons() {
-        sidebarButtons.forEach { $0.removeFromSuperview() }
+        sidebarStackView.arrangedSubviews.forEach {
+            sidebarStackView.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
         sidebarButtons.removeAll()
 
         for panel in panelManager.panels {
@@ -658,17 +727,43 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             sidebarStackView.addArrangedSubview(button)
             sidebarButtons.append(button)
         }
+        sidebarStackView.addArrangedSubview(addWebPanelButton)
+        displayedPanelIDs = panelManager.panels.map(\.id)
+    }
+
+    private func makeRailActionButton(
+        systemImageName: String,
+        accessibilityLabel: String,
+        accessibilityIdentifier: String
+    ) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: systemImageName), for: .normal)
+        button.backgroundColor = .clear
+        button.layer.cornerRadius = 8
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = accessibilityLabel
+        button.accessibilityHint = FloorpStrings.Drawer.panelSidebarAccessibility
+        button.accessibilityIdentifier = accessibilityIdentifier
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 44),
+            button.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return button
     }
 
     private func createSidebarButton(for panel: FloorpPanel) -> UIButton {
         let button = UIButton(type: .system)
-        let icon = UIImage(systemName: panel.iconName) ?? UIImage(systemName: "square.dashed")
+        let icon = UIImage(systemName: displayIconName(for: panel))
+            ?? UIImage(systemName: "square.dashed")
         button.setImage(icon, for: .normal)
         button.backgroundColor = .clear
         button.layer.cornerRadius = 8
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.accessibilityLabel = panel.type.localizedBuiltInTitle ?? panel.title
+        button.accessibilityLabel = displayTitle(for: panel)
         button.accessibilityHint = FloorpStrings.Drawer.panelSidebarAccessibility
+        if panel.type == .web, (try? FloorpWebPanelValidator.validate(panel)) == nil {
+            button.accessibilityValue = FloorpStrings.PanelRegistry.needsAttention
+        }
 
         button.addTarget(self, action: #selector(sidebarButtonTapped(_:)), for: .touchUpInside)
 
@@ -679,8 +774,62 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
         // Store panel ID in accessibility identifier for retrieval
         button.accessibilityIdentifier = panel.id
+        button.menu = makeSidebarMenu(for: panel)
 
         return button
+    }
+
+    private func makeSidebarMenu(for panel: FloorpPanel) -> UIMenu {
+        guard let index = panelManager.panels.firstIndex(where: { $0.id == panel.id }) else {
+            return UIMenu(children: [])
+        }
+        var actions = [UIMenuElement]()
+        if panel.type == .web {
+            actions.append(UIAction(
+                title: FloorpStrings.PanelRegistry.edit,
+                image: UIImage(systemName: "pencil"),
+                handler: { [weak self] _ in self?.presentPanelRegistry(editingPanelID: panel.id) }
+            ))
+        }
+        actions.append(UIAction(
+            title: FloorpStrings.PanelRegistry.moveUp,
+            image: UIImage(systemName: "arrow.up"),
+            attributes: index == panelManager.panels.startIndex ? .disabled : [],
+            handler: { [weak self] _ in self?.movePanel(id: panel.id, offset: -1) }
+        ))
+        actions.append(UIAction(
+            title: FloorpStrings.PanelRegistry.moveDown,
+            image: UIImage(systemName: "arrow.down"),
+            attributes: index == panelManager.panels.index(before: panelManager.panels.endIndex)
+                ? .disabled
+                : [],
+            handler: { [weak self] _ in self?.movePanel(id: panel.id, offset: 1) }
+        ))
+        actions.append(UIAction(
+            title: panel.type == .web
+                ? FloorpStrings.PanelRegistry.delete
+                : FloorpStrings.PanelRegistry.removeFromSidebar,
+            image: UIImage(systemName: panel.type == .web ? "trash" : "sidebar.left"),
+            attributes: panel.type == .web ? .destructive : [],
+            handler: { [weak self] _ in self?.requestPanelRemoval(id: panel.id) }
+        ))
+        return UIMenu(children: actions)
+    }
+
+    private func displayTitle(for panel: FloorpPanel) -> String {
+        if panel.type == .web {
+            return panel.safeDisplayTitle ?? FloorpStrings.PanelRegistry.needsAttention
+        }
+        return panel.type.localizedBuiltInTitle ?? FloorpStrings.PanelRegistry.builtInPanel
+    }
+
+    private func displayIconName(for panel: FloorpPanel) -> String {
+        if panel.type == .web {
+            return FloorpWebPanelValidator.curatedIconNames.contains(panel.iconName)
+                ? panel.iconName
+                : FloorpPanelType.web.systemIconName
+        }
+        return panel.iconName
     }
 
     private func updateSidebarSelection() {
@@ -705,11 +854,161 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         loadCurrentPanel()
     }
 
+    @objc private func addWebPanelTapped() {
+        presentPanelRegistry(presentsAddEditor: true)
+    }
+
+    @objc private func managePanelsTapped() {
+        presentPanelRegistry()
+    }
+
+    private func presentPanelRegistry(
+        editingPanelID: String? = nil,
+        presentsAddEditor: Bool = false
+    ) {
+        guard presentedViewController == nil else { return }
+        let registry = FloorpPanelRegistryViewController(
+            panelManager: panelManager,
+            windowUUID: windowUUID,
+            webPanelSuggestion: webPanelSuggestionProvider?(),
+            themeManager: themeManager,
+            notificationCenter: notificationCenter
+        )
+        let navigationController = UINavigationController(rootViewController: registry)
+        navigationController.modalPresentationStyle = traitCollection.horizontalSizeClass == .regular
+            ? .formSheet
+            : .pageSheet
+        registry.onDone = { [weak navigationController] in
+            navigationController?.dismiss(animated: true)
+        }
+        present(navigationController, animated: true) {
+            if presentsAddEditor {
+                registry.presentEditor(for: nil)
+            } else if let editingPanelID {
+                registry.presentEditor(for: editingPanelID)
+            }
+        }
+    }
+
+    private func movePanel(id: String, offset: Int) {
+        guard let currentIndex = panelManager.panels.firstIndex(where: { $0.id == id }) else { return }
+        let destinationIndex = currentIndex + offset
+        guard panelManager.panels.indices.contains(destinationIndex) else { return }
+        do {
+            try panelManager.movePanel(id: id, to: destinationIndex)
+            let panelTitle = panelManager.panel(for: id).map(displayTitle(for:)) ?? ""
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: FloorpStrings.PanelRegistry.moveAnnouncement(
+                    title: panelTitle,
+                    position: destinationIndex + 1
+                )
+            )
+        } catch {
+            presentPanelOperationError(error)
+        }
+    }
+
+    private func requestPanelRemoval(id: String) {
+        guard presentedViewController == nil,
+              let panel = panelManager.panel(for: id) else { return }
+        guard panelManager.panels.count > 1 else {
+            let alert = UIAlertController(
+                title: FloorpStrings.PanelRegistry.lastPanelTitle,
+                message: FloorpStrings.PanelRegistry.lastPanelMessage,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: FloorpStrings.PanelRegistry.done, style: .default))
+            present(alert, animated: true)
+            return
+        }
+
+        let title = displayTitle(for: panel)
+        let isWebPanel = panel.type == .web
+        let alert = UIAlertController(
+            title: isWebPanel
+                ? FloorpStrings.PanelRegistry.deleteWebPanelTitle
+                : FloorpStrings.PanelRegistry.removeBuiltInTitle,
+            message: isWebPanel
+                ? FloorpStrings.PanelRegistry.deleteWebPanelMessage(title: title)
+                : FloorpStrings.PanelRegistry.removeBuiltInMessage(title: title),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: FloorpStrings.PanelRegistry.cancel, style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: isWebPanel
+                ? FloorpStrings.PanelRegistry.delete
+                : FloorpStrings.PanelRegistry.removeFromSidebar,
+            style: isWebPanel ? .destructive : .default,
+            handler: { [weak self] _ in
+                do {
+                    try self?.panelManager.removePanel(id: id)
+                    UIAccessibility.post(
+                        notification: .announcement,
+                        argument: FloorpStrings.PanelRegistry.removedAnnouncement(title: title)
+                    )
+                } catch {
+                    DispatchQueue.main.async {
+                        self?.presentPanelOperationError(error)
+                    }
+                }
+            }
+        ))
+        present(alert, animated: true)
+    }
+
+    private func presentPanelOperationError(_ error: Error) {
+        logger.log(
+            "Floorp: Panel registry operation failed: \(error.localizedDescription)",
+            level: .warning,
+            category: .setup
+        )
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: FloorpStrings.PanelRegistry.operationFailedTitle,
+            message: FloorpStrings.PanelRegistry.operationFailedMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: FloorpStrings.PanelRegistry.done, style: .default))
+        present(alert, animated: true)
+    }
+
+    @objc private func panelRegistryDidChange() {
+        guard isViewLoaded else { return }
+        let previousPanelIDs = displayedPanelIDs
+        let previousSelection = presentationState.selectedPanelId
+        buildSidebarButtons()
+
+        if let previousSelection,
+           let selectedPanel = panelManager.panel(for: previousSelection) {
+            selectPanel(selectedPanel.id)
+            if selectedPanel.type == .web {
+                loadCurrentPanel()
+            }
+            return
+        }
+
+        guard !panelManager.panels.isEmpty else {
+            panelLoadTask?.cancel()
+            items = []
+            filteredItems = []
+            tableView.reloadData()
+            return
+        }
+
+        let previousIndex = previousSelection.flatMap { previousPanelIDs.firstIndex(of: $0) } ?? 0
+        let fallbackIndex = min(previousIndex, panelManager.panels.count - 1)
+        let fallbackPanel = panelManager.panels[fallbackIndex]
+        selectPanel(fallbackPanel.id)
+        loadCurrentPanel()
+        UIAccessibility.post(notification: .layoutChanged, argument: titleLabel)
+    }
+
     private func selectPanel(_ panelId: String) {
         guard let panel = panelManager.panel(for: panelId) else { return }
         currentPanelType = panel.type
         presentationState.select(panel)
-        let panelTitle = panel.type.localizedBuiltInTitle ?? panel.title
+        let panelTitle = displayTitle(for: panel)
         titleLabel.text = panel.type == .notes
             ? "\(panelTitle) · \(FloorpStrings.Notes.localOnly)"
             : panelTitle

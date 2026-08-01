@@ -16,10 +16,17 @@ import MozillaAppServices
 // MARK: - Errors
 
 /// Errors that can occur during panel operations.
-enum FloorpPanelError: Error, LocalizedError {
+enum FloorpPanelError: Error, LocalizedError, Equatable {
     case panelNotFound(id: String)
     case duplicatePanel(id: String)
     case invalidConfiguration
+    case panelLimitReached(maximum: Int)
+    case reservedIdentifier(id: String)
+    case panelIsNotWeb(id: String)
+    case editConflict(id: String)
+    case cannotRemoveLastPanel
+    case invalidMoveDestination(index: Int)
+    case registryReadOnly
     case storageError(String)
 
     var errorDescription: String? {
@@ -27,6 +34,13 @@ enum FloorpPanelError: Error, LocalizedError {
         case .panelNotFound(let id): return "Panel not found: \(id)"
         case .duplicatePanel(let id): return "Panel already exists: \(id)"
         case .invalidConfiguration: return "Invalid panel configuration"
+        case .panelLimitReached(let maximum): return "Panel limit reached: \(maximum)"
+        case .reservedIdentifier(let id): return "Reserved panel identifier: \(id)"
+        case .panelIsNotWeb(let id): return "Panel is not a Web panel: \(id)"
+        case .editConflict(let id): return "Panel changed while being edited: \(id)"
+        case .cannotRemoveLastPanel: return "At least one panel must remain"
+        case .invalidMoveDestination(let index): return "Invalid panel destination: \(index)"
+        case .registryReadOnly: return "The stored panel registry is read-only"
         case .storageError(let msg): return "Storage error: \(msg)"
         }
     }
@@ -208,12 +222,19 @@ final class FloorpPanelDataProvider {
 @MainActor
 final class FloorpPanelManager {
     static let shared = FloorpPanelManager()
+    static let maximumPanelCount = 32
 
     // MARK: - Storage Keys
     private enum StorageKey {
         static let panels = "floorp.overlayDrawer.panels"
         static let config = "floorp.overlayDrawer.config"
         static let schemaVersion = "floorp.overlayDrawer.schemaVersion"
+    }
+
+    private struct PanelLoadResult {
+        let panels: [FloorpPanel]?
+        let hasStoredData: Bool
+        let encounteredDecodingFailure: Bool
     }
 
     private static let notesSchemaVersion = 1
@@ -224,9 +245,14 @@ final class FloorpPanelManager {
     private let defaults: UserDefaults
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let notificationCenter: NotificationProtocol
 
     /// Current list of panels, sorted by `sortOrder`.
     private(set) var panels: [FloorpPanel]
+
+    /// Protects unknown future-schema or partially undecodable data from a
+    /// lossy rewrite. Reading known panels remains available for recovery.
+    private(set) var isRegistryReadOnly: Bool
 
     /// Global drawer configuration.
     private(set) var config: FloorpOverlayDrawerConfig
@@ -238,36 +264,47 @@ final class FloorpPanelManager {
 
     init(
         logger: Logger = DefaultLogger.shared,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        notificationCenter: NotificationProtocol = NotificationCenter.default
     ) {
         self.logger = logger
         self.defaults = defaults
         self.encoder = JSONEncoder()
         self.decoder = JSONDecoder()
+        self.notificationCenter = notificationCenter
         self.dataProvider = FloorpPanelDataProvider(logger: logger)
 
         // Load persisted data or use defaults. Schema v1 introduced Notes;
         // schema v2 separates per-window presentation state from this
         // profile-wide registry and configuration.
-        let storedPanels = Self.loadPanels(from: defaults, decoder: decoder)
+        let panelLoadResult = Self.loadPanels(from: defaults, decoder: decoder)
+        let storedPanels = panelLoadResult.panels
         var loadedPanels = storedPanels ?? FloorpPanel.defaultPanels()
         let loadedConfig = Self.loadConfig(from: defaults, decoder: decoder) ?? FloorpOverlayDrawerConfig()
         let storedSchemaVersion = defaults.integer(forKey: StorageKey.schemaVersion)
         let needsNotesMigration = storedSchemaVersion < Self.notesSchemaVersion
         let needsMigration = storedSchemaVersion < Self.currentSchemaVersion
+        let isRegistryReadOnly = storedSchemaVersion > Self.currentSchemaVersion
+            || panelLoadResult.encounteredDecodingFailure
 
         if needsNotesMigration {
             Self.migrateNotesPanelIfNeeded(panels: &loadedPanels)
         }
-        Self.normalizeSortOrder(&loadedPanels)
+        let sanitizedPanels = Self.sanitizeLoadedPanels(loadedPanels)
 
-        self.panels = loadedPanels
+        self.panels = sanitizedPanels
+        self.isRegistryReadOnly = isRegistryReadOnly
         self.config = loadedConfig
 
         logger.log("Floorp: PanelManager initialized with \(panels.count) panels", level: .info, category: .setup)
 
-        if needsMigration {
+        let canRewriteStoredPanels = storedSchemaVersion <= Self.currentSchemaVersion
+            && !panelLoadResult.encounteredDecodingFailure
+        if canRewriteStoredPanels,
+           !panelLoadResult.hasStoredData || storedPanels != sanitizedPanels || needsMigration {
             persistPanels()
+        }
+        if needsMigration, canRewriteStoredPanels {
             persistConfig()
             defaults.set(Self.currentSchemaVersion, forKey: StorageKey.schemaVersion)
         }
@@ -275,42 +312,113 @@ final class FloorpPanelManager {
 
     // MARK: - Panel CRUD
 
-    /// Adds a new panel.
-    func addPanel(_ panel: FloorpPanel) throws {
-        guard !panels.contains(where: { $0.id == panel.id }) else {
-            throw FloorpPanelError.duplicatePanel(id: panel.id)
+    /// Adds a validated custom Web panel. Identity and ordering are generated
+    /// here so callers cannot spoof built-in panels or overwrite another item.
+    @discardableResult
+    func addWebPanel(draft: FloorpWebPanelDraft) throws -> FloorpPanel {
+        try ensureRegistryIsMutable()
+        let validated = try FloorpWebPanelValidator.validate(draft)
+        guard panels.count < Self.maximumPanelCount else {
+            throw FloorpPanelError.panelLimitReached(maximum: Self.maximumPanelCount)
         }
-        panels.append(panel)
-        panels.sort { $0.sortOrder < $1.sortOrder }
-        Self.normalizeSortOrder(&panels)
-        persistPanels()
-        logger.log("Floorp: Added panel '\(panel.title)' (\(panel.id))", level: .info, category: .setup)
+
+        var id = UUID().uuidString
+        while panels.contains(where: { $0.id == id }) || FloorpPanel.isReservedIdentifier(id) {
+            id = UUID().uuidString
+        }
+        let panel = FloorpPanel(
+            id: id,
+            type: .web,
+            title: validated.title,
+            url: validated.url.absoluteString,
+            iconName: validated.iconName,
+            sortOrder: panels.count
+        )
+        try commitPanels(panels + [panel])
+        logger.log("Floorp: Added Web panel (\(panel.id))", level: .info, category: .setup)
+        return panel
+    }
+
+    /// Updates only user-editable values of a custom Web panel.
+    func updateWebPanel(
+        id: String,
+        draft: FloorpWebPanelDraft,
+        expectedRevision: FloorpWebPanelRevision
+    ) throws {
+        try ensureRegistryIsMutable()
+        guard !FloorpPanel.isReservedIdentifier(id) else {
+            throw FloorpPanelError.reservedIdentifier(id: id)
+        }
+        guard let index = panels.firstIndex(where: { $0.id == id }) else {
+            // An update always originates from an editor that captured this
+            // panel. If it vanished, another window changed the registry.
+            throw FloorpPanelError.editConflict(id: id)
+        }
+        guard panels[index].type == .web else {
+            throw FloorpPanelError.panelIsNotWeb(id: id)
+        }
+        guard FloorpWebPanelRevision(panel: panels[index]) == expectedRevision else {
+            throw FloorpPanelError.editConflict(id: id)
+        }
+        let validated = try FloorpWebPanelValidator.validate(draft)
+        var updatedPanels = panels
+        updatedPanels[index].title = validated.title
+        updatedPanels[index].url = validated.url.absoluteString
+        updatedPanels[index].iconName = validated.iconName
+        try commitPanels(updatedPanels)
+        logger.log("Floorp: Updated Web panel (\(id))", level: .info, category: .setup)
+    }
+
+    /// Moves a panel to a zero-based destination in the current registry.
+    func movePanel(id: String, to destination: Int) throws {
+        try ensureRegistryIsMutable()
+        guard let source = panels.firstIndex(where: { $0.id == id }) else {
+            throw FloorpPanelError.panelNotFound(id: id)
+        }
+        guard panels.indices.contains(destination) else {
+            throw FloorpPanelError.invalidMoveDestination(index: destination)
+        }
+        guard source != destination else { return }
+
+        var reordered = panels
+        let panel = reordered.remove(at: source)
+        reordered.insert(panel, at: destination)
+        try commitPanels(reordered)
     }
 
     /// Removes a panel by ID.
     func removePanel(id: String) throws {
+        try ensureRegistryIsMutable()
         guard let index = panels.firstIndex(where: { $0.id == id }) else {
             throw FloorpPanelError.panelNotFound(id: id)
         }
-        let removed = panels.remove(at: index)
-        Self.normalizeSortOrder(&panels)
-        persistPanels()
-        logger.log("Floorp: Removed panel '\(removed.title)' (\(id))", level: .info, category: .setup)
+        guard panels.count > 1 else {
+            throw FloorpPanelError.cannotRemoveLastPanel
+        }
+        var updatedPanels = panels
+        updatedPanels.remove(at: index)
+        try commitPanels(updatedPanels)
+        logger.log("Floorp: Removed panel (\(id))", level: .info, category: .setup)
     }
 
-    /// Updates an existing panel.
-    func updatePanel(_ panel: FloorpPanel) throws {
-        guard let index = panels.firstIndex(where: { $0.id == panel.id }) else {
-            throw FloorpPanelError.panelNotFound(id: panel.id)
+    /// Restores built-in panels that the user previously removed, appending
+    /// them in their canonical order without disturbing the current registry.
+    @discardableResult
+    func restoreMissingBuiltIns() throws -> [FloorpPanel] {
+        try ensureRegistryIsMutable()
+        let existingIDs = Set(panels.map(\.id))
+        let missing = FloorpPanel.defaultPanels().filter { !existingIDs.contains($0.id) }
+        guard !missing.isEmpty else { return [] }
+        guard panels.count + missing.count <= Self.maximumPanelCount else {
+            throw FloorpPanelError.panelLimitReached(maximum: Self.maximumPanelCount)
         }
-        panels[index] = panel
-        Self.normalizeSortOrder(&panels)
-        persistPanels()
-        logger.log("Floorp: Updated panel '\(panel.title)' (\(panel.id))", level: .info, category: .setup)
+        try commitPanels(panels + missing)
+        return missing
     }
 
     /// Reorders panels based on the given array of IDs.
-    func reorderPanels(orderedIds: [String]) {
+    func reorderPanels(orderedIds: [String]) throws {
+        try ensureRegistryIsMutable()
         let panelsByID = Dictionary(uniqueKeysWithValues: panels.map { ($0.id, $0) })
         var seen = Set<String>()
         var reordered = orderedIds.compactMap { id -> FloorpPanel? in
@@ -320,13 +428,24 @@ final class FloorpPanelManager {
         // Preserve panels unknown to an older order list, including Notes.
         reordered.append(contentsOf: panels.filter { !seen.contains($0.id) })
         Self.assignSortOrder(&reordered)
-        panels = reordered
-        persistPanels()
+        guard reordered != panels else { return }
+        try commitPanels(reordered)
     }
 
     /// Gets a panel by ID.
     func panel(for id: String) -> FloorpPanel? {
         panels.first { $0.id == id }
+    }
+
+    /// Revalidates the URL at the final loading boundary.
+    func validatedWebURL(for id: String) throws -> URL {
+        guard let panel = panel(for: id) else {
+            throw FloorpPanelError.panelNotFound(id: id)
+        }
+        guard panel.type == .web else {
+            throw FloorpPanelError.panelIsNotWeb(id: id)
+        }
+        return try FloorpWebPanelValidator.validate(panel).url
     }
 
     // MARK: - Config Management
@@ -338,6 +457,33 @@ final class FloorpPanelManager {
     }
 
     // MARK: - Persistence
+
+    private func commitPanels(_ candidatePanels: [FloorpPanel]) throws {
+        try ensureRegistryIsMutable()
+        var normalizedPanels = candidatePanels
+        Self.assignSortOrder(&normalizedPanels)
+        try Self.validateRegistryStructure(normalizedPanels)
+
+        let data: Data
+        do {
+            data = try encoder.encode(normalizedPanels)
+        } catch {
+            throw FloorpPanelError.storageError(error.localizedDescription)
+        }
+        defaults.set(data, forKey: StorageKey.panels)
+        panels = normalizedPanels
+        notificationCenter.post(
+            name: .FloorpPanelRegistryDidChange,
+            withObject: self,
+            withUserInfo: nil
+        )
+    }
+
+    private func ensureRegistryIsMutable() throws {
+        guard !isRegistryReadOnly else {
+            throw FloorpPanelError.registryReadOnly
+        }
+    }
 
     private func persistPanels() {
         do {
@@ -357,12 +503,52 @@ final class FloorpPanelManager {
         }
     }
 
-    private static func loadPanels(from defaults: UserDefaults, decoder: JSONDecoder) -> [FloorpPanel]? {
-        guard let data = defaults.data(forKey: StorageKey.panels) else { return nil }
+    private static func loadPanels(from defaults: UserDefaults, decoder: JSONDecoder) -> PanelLoadResult {
+        guard let storedValue = defaults.object(forKey: StorageKey.panels) else {
+            return PanelLoadResult(
+                panels: nil,
+                hasStoredData: false,
+                encounteredDecodingFailure: false
+            )
+        }
+        guard let data = storedValue as? Data else {
+            return PanelLoadResult(
+                panels: nil,
+                hasStoredData: true,
+                encounteredDecodingFailure: true
+            )
+        }
         do {
-            return try decoder.decode([FloorpPanel].self, from: data)
+            guard let rawPanels = try JSONSerialization.jsonObject(with: data) as? [Any] else {
+                return PanelLoadResult(
+                    panels: nil,
+                    hasStoredData: true,
+                    encounteredDecodingFailure: true
+                )
+            }
+            var encounteredDecodingFailure = false
+            let panels = rawPanels.compactMap { rawPanel -> FloorpPanel? in
+                guard let wrappedData = try? JSONSerialization.data(withJSONObject: [rawPanel]) else {
+                    encounteredDecodingFailure = true
+                    return nil
+                }
+                guard let panel = try? decoder.decode([FloorpPanel].self, from: wrappedData).first else {
+                    encounteredDecodingFailure = true
+                    return nil
+                }
+                return panel
+            }
+            return PanelLoadResult(
+                panels: panels,
+                hasStoredData: true,
+                encounteredDecodingFailure: encounteredDecodingFailure
+            )
         } catch {
-            return nil
+            return PanelLoadResult(
+                panels: nil,
+                hasStoredData: true,
+                encounteredDecodingFailure: true
+            )
         }
     }
 
@@ -377,7 +563,7 @@ final class FloorpPanelManager {
 
     private static func migrateNotesPanelIfNeeded(panels: inout [FloorpPanel]) {
         let notesID = "floorp//notes"
-        if !panels.contains(where: { $0.id == notesID }),
+        if !panels.contains(where: { $0.id == notesID && $0.type == .notes }),
            let notesPanel = FloorpPanel.defaultPanels().first(where: { $0.id == notesID }) {
             let insertionIndex = panels.firstIndex(where: { $0.id == "floorp//downloads" })
                 .map { panels.index(after: $0) } ?? panels.endIndex
@@ -386,8 +572,68 @@ final class FloorpPanelManager {
     }
 
     private static func normalizeSortOrder(_ panels: inout [FloorpPanel]) {
-        panels.sort { $0.sortOrder < $1.sortOrder }
+        panels = panels.enumerated().sorted { lhs, rhs in
+            lhs.element.sortOrder == rhs.element.sortOrder
+                ? lhs.offset < rhs.offset
+                : lhs.element.sortOrder < rhs.element.sortOrder
+        }.map(\.element)
         assignSortOrder(&panels)
+    }
+
+    private static func sanitizeLoadedPanels(_ loadedPanels: [FloorpPanel]) -> [FloorpPanel] {
+        var sortedPanels = loadedPanels
+        normalizeSortOrder(&sortedPanels)
+
+        var sanitizedPanels = [FloorpPanel]()
+        var seenIDs = Set<String>()
+        for panel in sortedPanels where sanitizedPanels.count < maximumPanelCount {
+            if FloorpPanel.isReservedIdentifier(panel.id) {
+                guard let canonicalPanel = FloorpPanel.canonicalBuiltInPanel(for: panel.id),
+                      panel.type == canonicalPanel.type,
+                      seenIDs.insert(panel.id).inserted else {
+                    continue
+                }
+                var restoredPanel = canonicalPanel
+                restoredPanel.sortOrder = sanitizedPanels.count
+                sanitizedPanels.append(restoredPanel)
+                continue
+            }
+
+            guard !panel.id.isEmpty,
+                  panel.type == .web,
+                  seenIDs.insert(panel.id).inserted else {
+                continue
+            }
+            var preservedPanel = panel
+            preservedPanel.sortOrder = sanitizedPanels.count
+            sanitizedPanels.append(preservedPanel)
+        }
+
+        return sanitizedPanels.isEmpty ? FloorpPanel.defaultPanels() : sanitizedPanels
+    }
+
+    private static func validateRegistryStructure(_ panels: [FloorpPanel]) throws {
+        guard !panels.isEmpty else { throw FloorpPanelError.cannotRemoveLastPanel }
+        guard panels.count <= maximumPanelCount else {
+            throw FloorpPanelError.panelLimitReached(maximum: maximumPanelCount)
+        }
+
+        var seenIDs = Set<String>()
+        for panel in panels {
+            guard seenIDs.insert(panel.id).inserted else {
+                throw FloorpPanelError.duplicatePanel(id: panel.id)
+            }
+            if FloorpPanel.isReservedIdentifier(panel.id) {
+                guard let canonical = FloorpPanel.canonicalBuiltInPanel(for: panel.id),
+                      panel.type == canonical.type else {
+                    throw FloorpPanelError.reservedIdentifier(id: panel.id)
+                }
+            } else {
+                guard !panel.id.isEmpty, panel.type == .web else {
+                    throw FloorpPanelError.invalidConfiguration
+                }
+            }
+        }
     }
 
     private static func assignSortOrder(_ panels: inout [FloorpPanel]) {
