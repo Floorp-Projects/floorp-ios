@@ -37,15 +37,15 @@ import {
 const DEFAULT_MANIFEST = "floorp/l10n/manifest.json";
 const DEFAULT_COVERAGE = "floorp/l10n/coverage.json";
 const EXPECTED_EXTRACTION = {
-  paths: 794,
-  stringsFiles: 793,
+  paths: 844,
+  stringsFiles: 843,
   intentFiles: 1,
-  semanticValues: 3982,
-  rawKeyForms: 56,
-  normalizedKeys: 54,
-  brandTokens: 21,
-  exactOverrides: 19,
-  nonSemanticFiles: 1
+  semanticValues: 4032,
+  rawKeyForms: 57,
+  normalizedKeys: 55,
+  brandTokens: 23,
+  exactOverrides: 18,
+  nonSemanticFiles: 0
 };
 
 const PATH_RULE_TEMPLATES = [
@@ -58,6 +58,11 @@ const PATH_RULE_TEMPLATES = [
     id: "action-extension-info-plist",
     kind: "strings",
     pattern: "^firefox-ios/Extensions/ActionExtension/[A-Za-z0-9-]+\\.lproj/InfoPlist\\.strings$"
+  },
+  {
+    id: "shared-camera",
+    kind: "strings",
+    pattern: "^firefox-ios/Shared/Supporting Files/[A-Za-z0-9-]+\\.lproj/Camera\\.strings$"
   },
   {
     id: "shared-default-browser",
@@ -127,10 +132,9 @@ const FORBIDDEN_OUTPUT_TERMS = [
   "Floorp Sync"
 ];
 
-// The reviewed base used the English token in Arabic strings. Upstream later
-// supplied a localized Arabic spelling, so keep that new source spelling in a
-// separate, explicit allowlist instead of weakening token recognition.
-const ADDITIONAL_BRAND_TOKENS = ["فايرفوكس"];
+// Tokens present in the current reviewed base are inferred during extraction.
+// Keep this list for future upstream spellings that appear after that base.
+const ADDITIONAL_BRAND_TOKENS = [];
 const BOOLEAN_OPTIONS = new Set(["check", "check-counts", "help", "stage", "write"]);
 
 function parseArguments(arguments_) {

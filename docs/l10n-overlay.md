@@ -6,14 +6,14 @@ Floorp's localized product-name changes are generated from a narrow, reviewed ov
 
 `floorp/l10n/manifest.json` is reproducibly extracted from:
 
-- reviewed base: `b1f6991d551fe072abd975fed9330b205a317802`
-- reviewed result: `6f58b2578825f74394fe16bb1c15aa17a17ad91d` (preserved by tag `rebranding-reviewed-2026-08-01`)
+- reviewed base: `e58637e772e4456efcf7dbf3826f172c7da721ba`
+- reviewed result: `b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c` (preserved by tag `rebranding-reviewed-l10n-v2-2026-08-01`)
 
-The extracted scope is 794 localization resources (793 Apple `.strings` files and one intent definition), containing 3,982 changed semantic values. The parser normalizes 56 source key spellings to 54 keys. Twenty-one localized brand spellings are inferred from the reviewed change, and 19 values that cannot be represented as a token substitution are kept as exact overrides.
+The extracted scope is 844 localization resources (843 Apple `.strings` files and one intent definition), containing 4,032 changed semantic values. The parser normalizes 57 source key spellings to 55 keys. Twenty-three localized brand spellings are inferred from the reviewed change, and 18 values that cannot be represented as a token substitution are kept as exact overrides. This includes the camera-permission fallback key in all 50 locales that currently provide it.
 
-`floorp/l10n/coverage.json` records every covered path and key, its transformation mode, and source/result hashes. One reviewed Italian file also removed a blank line; that nonsemantic edit is recorded but deliberately not generated.
+`floorp/l10n/coverage.json` records every covered path and key, its transformation mode, and source/result hashes. The reviewed result changes only semantic value spans; formatting remains identical to the reviewed upstream base.
 
-Upstream added the Arabic spelling `فايرفوكس` after the reviewed base. It is separately allowlisted as an additional source token, so the current translation can be preserved without broadening matching rules.
+The current reviewed base includes both the Arabic spelling `فايرفوكس` and the Polish inflection `Firefoksowi`, so extraction infers both as narrow brand tokens. A spelling introduced by a later upstream revision still fails closed until it is reviewed and explicitly added.
 
 Protected terms include Firefox Sync, Firefox Suggest, Firefox Relay, Firefox Focus/Klar, Mozilla Account/Autopush, Mozilla, Pocket, Nimbus, and Remote Settings. Corresponding invented names such as `Floorp Sync` are rejected.
 
@@ -23,8 +23,8 @@ Use the Node version declared by `.nvmrc` (currently Node 24):
 
 ```sh
 node scripts/l10n/floorp-l10n-overlay.mjs extract \
-  --base b1f6991d551fe072abd975fed9330b205a317802 \
-  --reviewed 6f58b2578825f74394fe16bb1c15aa17a17ad91d \
+  --base e58637e772e4456efcf7dbf3826f172c7da721ba \
+  --reviewed b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c \
   --check-counts --check
 
 node scripts/l10n/floorp-l10n-overlay.mjs apply \
@@ -36,7 +36,7 @@ node scripts/l10n/floorp-l10n-overlay.mjs verify \
 node --test scripts/l10n/__tests__/*.test.mjs
 ```
 
-`extract --check` proves that the canonical JSON still represents the reviewed Git diff. Extraction also reapplies the resulting policy in memory and verifies all 3,982 reviewed values and their hashes. `apply` first validates all inputs, then writes only covered value spans. `verify` fails if any tracked generated output is stale. Running `apply --write` twice must produce zero changes on the second run.
+`extract --check` proves that the canonical JSON still represents the reviewed Git diff. Extraction also reapplies the resulting policy in memory and verifies all 4,032 reviewed values and their hashes. `apply` first validates all inputs, then writes only covered value spans. `verify` fails if any tracked generated output is stale. Running `apply --write` twice must produce zero changes on the second run.
 
 Policy loading also rejects duplicate or inconsistent path rules, malformed digests, mismatched exact overrides, and non-canonical repository paths. Covered resources may not traverse a symbolic link. CI must run the pinned `extract --check --check-counts` command before any `apply --write`; tests or `verify` alone do not authorize a changed manifest.
 

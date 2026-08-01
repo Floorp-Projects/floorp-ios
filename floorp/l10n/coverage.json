@@ -1,17 +1,15 @@
 {
   "schemaVersion": 1,
   "generatedFrom": {
-    "base": "b1f6991d551fe072abd975fed9330b205a317802",
-    "reviewed": "6f58b2578825f74394fe16bb1c15aa17a17ad91d"
+    "base": "e58637e772e4456efcf7dbf3826f172c7da721ba",
+    "reviewed": "b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c"
   },
   "summary": {
-    "paths": 794,
-    "semanticValues": 3982,
-    "nonSemanticDifferences": 1
+    "paths": 844,
+    "semanticValues": 4032,
+    "nonSemanticDifferences": 0
   },
-  "nonSemanticDifferencePaths": [
-    "firefox-ios/Shared/it.lproj/Localizable.strings"
-  ],
+  "nonSemanticDifferencePaths": [],
   "files": {
     "firefox-ios/Client/ab.lproj/InfoPlist.strings": {
       "kind": "strings",
@@ -53,18 +51,18 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "6cf5a6880b672253179dac35e0b1a41647702f32e8623b391781c88ac2438040",
-          "resultSha256": "910e705d7b786f5d9f04f4c2493779af09f227df1dd01ce4aad1ab8b2a27e9c8"
+          "sourceSha256": "d9b709775859060c0dea41f13928db26001fd35ce9288e2aaa1378b4101c52f5",
+          "resultSha256": "9af395a5d7a08d5968e2e7bedd925bc4201e1b9794fd0a9b0c55155dbcc9fc87"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
-          "sourceSha256": "7af8ddd4617638a4e6911a5f64f6d9823667a84e396c8ede8971c1ff0f814acf",
-          "resultSha256": "9939c20dbd585ac013b28752697e3c1294606be4b72fca3adf0d29fad59f1434"
+          "sourceSha256": "7863dd29ea94c4b861f7c98b63d143588f342dbe8a41432af02e78bb2ede4721",
+          "resultSha256": "d4646c983240628b44608f5720550c9d785b53284e20b52da6ddfd0ae39af4c0"
         },
         "NSMicrophoneUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d44a1b41dcfbe8322687f4942b6b079efa7a50aa3a18c1a8bf66daf4188a4282",
-          "resultSha256": "ee23fb4ced57ffef6240a7cdcb10c3659dde6c9e03db7ba6da267af8e88f6115"
+          "sourceSha256": "bbc48a852472b45bd26ec8b798defc4201c42267ca391136f8aeff892f71f3a6",
+          "resultSha256": "656476aeb5b1c2977fb2f90332193ec1105dded54da4b93341e29086b198072b"
         }
       }
     },
@@ -108,8 +106,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "1e7dc9f8b6962098aac6eae781f06934d301edb4e852575dfba64698702d6d3e",
-          "resultSha256": "ae87b2258cd02fb348c45ad67998c3f52a7149f35ae9e607ba78b7993c545e4a"
+          "sourceSha256": "22426f4843f06afe7ce4d93d5030aacdf5efe9dca1805b191824c2a43dff0589",
+          "resultSha256": "ce3160eb66433b64f879414c27e2dc5371e15dad7d4344ad79f89272b6db1a30"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -173,8 +171,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "ab49ac9347109504478d661f0300c290ad0e7897dc38dab6176990b15a544d9c",
-          "resultSha256": "ee3bbd5b6a2357b2ce8a9984c2fa24ec786132aad00e0954d4818629a18c3722"
+          "sourceSha256": "c3da534a1e36a62b3fdadf5918a6e055490447de9124884b0bc76e71f775c6d9",
+          "resultSha256": "08996fbdd39766540930c74fb096eb3779ce59d88cfd56d6bb5b1f9c69103298"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -188,8 +186,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "4e3862c4df1c521f1423c14bc2673b5ad96de665b649e9ba5a75a4ca9df3a448",
-          "resultSha256": "efe780067ec62fa86aa39b8ae265377288fb5d192fe2c39dfff859a704c259b7"
+          "sourceSha256": "843a585eda3031710f46c457d4c79869abf7acdf2220fe69423e6557da482734",
+          "resultSha256": "525715d72efa0ca99e1cdc485987fc1884434649b13875d0c417dd0e58425397"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -213,8 +211,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "9fe49e5b8053906625cb75de94f67a22029fe293cb64edca26abf280f2e6c128",
-          "resultSha256": "a8775dba255c00b6ce510ae6e3f8699e2205349b54fd362a34f54d687add57e7"
+          "sourceSha256": "62bac964f481b6a00da11067ca7b94635d51b00991c3237aa2a14d91e72aa9ae",
+          "resultSha256": "2dab5d5c1c540337f51c6ab7c0250ef91abde205a1d896ec618040c9f669cfc2"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -278,8 +276,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "93e53cbbee7b1a1cce12ac019fe5ea6f05e8a2094bd19b35248b0d63d187fd3b",
-          "resultSha256": "106892a5212f36b98db2282cbb0f42c3309ec5b982e9a7cf59bc3d542a945a7c"
+          "sourceSha256": "b6263c90888a953d54730a24a60a38d5828b0c23a51e0e03ba4299d5f400b935",
+          "resultSha256": "71645b15c16179b81a98d5d2397b8ec849f2cc70c2e4ad9370a695aaf9d2209f"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -303,8 +301,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "942e4ac4f1ca4b357bec16e2ab90d30fad1f9379f05f6a2c3164ca88b63b1f43",
-          "resultSha256": "1ca933bf6805d46c8ee352e78d075c93727493460d1ebc512d13d1a7327d0c81"
+          "sourceSha256": "1833c2e3b9f1fedf48e6a902f774ef48dad081660f6f9d35d9fd98d80d611d88",
+          "resultSha256": "02b9e0bf2b9f36ce93a205f1f0ff26a8c003cf252e40042b689b75cb1e50fde0"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -328,8 +326,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "caa026018ef7377c1d363a0936e01a5cd62fac5e903af3ee96daec310e9d0bfe",
-          "resultSha256": "f65de6c95a064df7db30a46f5fa521a92a2052fd948ccde5926af4ae150cbbc0"
+          "sourceSha256": "96be342d1a121472cc353eb4eae875be0e77cb8a1a6d3a3b493f359f9dc49a3e",
+          "resultSha256": "9ab2fb6fdb77a02f47eb814136209f85bb1c34cbf7e8aba7bf28becf5ae2509a"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -353,8 +351,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -378,8 +376,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -403,8 +401,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -423,8 +421,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSMicrophoneUsageDescription": {
           "mode": "token",
@@ -453,8 +451,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "876da27fa9f1af4161ba3138b0f9b7470ae0ed180e0fb9a5ff495f9bd4bd1f1c",
-          "resultSha256": "4f877929b75e145fe8058b251f7f104f52f9c940ac2adfee14eecfe9b8ecc703"
+          "sourceSha256": "8ccfaff956ad9ea9e16640ff360fd24932be8d5240bcc21dcf1afe05cb420c0e",
+          "resultSha256": "b4546e7fe65a10faa0779d0279eae8d58e28d6a1d9095eb7f04f9a69991dc3f3"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -478,8 +476,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "6883d51d1cce984c578be89828855e95ddecb8bd71556853add97507237d3b85",
-          "resultSha256": "390ae2ec1fc8bd12dc84dd4ef0983f21113cb53225fc4ecb110720338b33fc19"
+          "sourceSha256": "71c1972ea4d4594e74ef57f0ba330aceb2d059f4f5601eaedc138d4be274e50c",
+          "resultSha256": "3e5f3cf7992bde99cd659cbe1981a800c244d5842af7e0317b0f21ae8db0afc6"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -528,8 +526,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "a8eb6313075af5b3dd0f4a54fa575f491faabe9f3923d450e8a696a208e10df8",
-          "resultSha256": "b287707364c6786e2addc7a626799e5b7abcec8e5353d36930572c9e32b0a039"
+          "sourceSha256": "e9d55ef33ae6db15dc625b52189ffc3694f731b30ad2484befcfab823b9111f7",
+          "resultSha256": "14e62d8c4e2649a0c47f2067bf1d50f21b069ff1f4a81ea0b2b3fe80dc1e3866"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -553,8 +551,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "6883d51d1cce984c578be89828855e95ddecb8bd71556853add97507237d3b85",
-          "resultSha256": "390ae2ec1fc8bd12dc84dd4ef0983f21113cb53225fc4ecb110720338b33fc19"
+          "sourceSha256": "c0212e0a507e2c266ba05e366d52d2a7052ecf9722cb37e45a6ca2d686c738d9",
+          "resultSha256": "dcf4a2f0f0f4943c072150d682f75b507c7910351ad27d99e43eacba7f111bba"
         }
       }
     },
@@ -583,8 +581,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "8342109fec93e5493eb05baf43495357df88e7a9e80881683acc031d3fe7bdee",
-          "resultSha256": "bf54a1ca0415f10dc6ab0cd3797ecffc16d9b7c2bae526ce0ae05794ec731c22"
+          "sourceSha256": "b20bde64953b7bcb5eae1d1ad2f6df3eb6c94f5bc56ec1900a84a3a6004863f6",
+          "resultSha256": "0239366eddca8dfbbe1095e29a8de1ebe73eedd54dda5e16a1b45a20db7e3929"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -623,8 +621,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "1d67f8df0d3d707cac5ac262b408c65ee8575e8deb2bb9ef9f29881d039e96db",
-          "resultSha256": "58543df10e516f9e63d102d9db4097a5976369e9d2880742015d3e139776a83b"
+          "sourceSha256": "1d7f238703adda208409ef1fc86f7be70b0c6fb0ea2389882c7b72740daf72d1",
+          "resultSha256": "e1df8b3308e1ec1c4faa733f8b8f554c491de5799f617f15deadaf22a1c8ed2f"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -648,8 +646,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         }
       }
     },
@@ -658,8 +656,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "1bc03c819334200b4a89347d7480a372cd145f55f737f074b226c222c8a6b79c",
-          "resultSha256": "b6d5e941846c2b8ae7f401e28823e9d7192c4f23beca5c688c6bfb159fe9f5a0"
+          "sourceSha256": "aa30848311f6a65943129e15540e60371f08a7b4c06d925a57a9f95351679d50",
+          "resultSha256": "4a76bd0caafd0f7da61d858c1daf033b8512b759974ec9ba2d456821c6175c25"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -708,8 +706,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "f6ec458b4122a0708602b239635c7b95233d16bafce5a619298bbf0daac4d516",
-          "resultSha256": "9b890ed2159b09882d5eca34bb623e954203298efa51eb4ef1037b128c542dac"
+          "sourceSha256": "0ef01676a74aa65028cc171567bec5d95f78fd4173631a49131b61e2662ade82",
+          "resultSha256": "99c64ccb5234d076a52976bdb4c718cec2fc96f59aad2c122da850f4316dec76"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -758,8 +756,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "ed17c157b7b2b960bc2378d8205abf127852a3b88ede635c2b9f1c9cc832b70b",
-          "resultSha256": "e04586da304b76a1bdeddd2d699d456a377c77c07619792d1bf0a26c34d4f83a"
+          "sourceSha256": "ecba97aa705d7b616a81b2fcdbb50dda5dcb70b07fff5dd39fdbeb13c45c3c95",
+          "resultSha256": "d5971c4aaf8ffd2572e96d7da755e08ce36098857914e924081f927af8293399"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -783,8 +781,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "43633f432e7b4e24e081f3ebe4ee5120958acd24e111d0c0d8b222f246156b9c",
-          "resultSha256": "d783b9f1075adb066f744b7b650a3ec0600d028b901020e637e8812811bfa2fa"
+          "sourceSha256": "dd7509f2a06caa52e56c7550ab21a6dc5d485d89d2ba42f60420f4b7f19922bd",
+          "resultSha256": "c88bf6b162ab66eaf0a47172567f4597ae271981def61665363e0d31badcde09"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -808,8 +806,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "02ed369f723b78286b0fb44c7eef46447063796608936cdd7e02ea21a122a3e1",
-          "resultSha256": "429ac97beff08a52a919c0293066a46ccd81988e6019c4b7165a70fa21e5f263"
+          "sourceSha256": "881533df42c8c1587882dcf5a6d9d9f1fab7de6bbb1a930182263afd96c5e26c",
+          "resultSha256": "6a2cd319d7ea9b7e326061cd09f2ef0ec334e2419fe52481b63face702d3c38d"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -833,8 +831,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "67e385e8d7f99424f266e9a5c0abc5a3886b6e3eef95527f84bd128a8be79d0c",
-          "resultSha256": "66179afc6e54c7cf9aba510651993e0321a9e45bde17ed278d46f21035bb6a40"
+          "sourceSha256": "593b682aae37135c9f27c7491d1125880597b9d24a1efe44e34aa74a31c7fc2d",
+          "resultSha256": "a11d11c14770b2db24e2c9330f58503948f86e65fdfd6b5782802e2a7427b9b5"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -858,8 +856,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "2f6f20013e525c5011bfff95deaa3200857597af3335b01f22a999c8c070fcd4",
-          "resultSha256": "3b6a9908dcd739deb8fce8560ec9575bafd45d17fa730fe80b3fa6070a746da8"
+          "sourceSha256": "68f2f1771d3248d0b159f1bb8f7026cf6a14b13e67e5bcb9a32b9db9734e4553",
+          "resultSha256": "142bd09e73ceddbb03c3dafe81b901d7398a80a0faae42f0f4d5e64ad90a5f21"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -908,8 +906,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "b96489abc3a877608c0e349e38882926f17eb31cf6bd7070cd2339365c9d1350",
-          "resultSha256": "cc7cfe1080bb0a2c9fab3cb59de0e460e65931ff26ef57cb07cecd048e1c37f4"
+          "sourceSha256": "e9d89c74117810003f489ea1a6daf15e3ac93fd8b0e66612e9e6c26fb3ecbd54",
+          "resultSha256": "87239e6d23d854049e89c2d32f2df16e92df1943454d3786c9a67a35fd6a9759"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -993,8 +991,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "1af090c4bdaeb76c9e570106129b7d6e48431078424e30cb985e8dfeda338b02",
-          "resultSha256": "b67302f199e320f290b0a92142838e4320b00264a2cbf5c0e26dd41569dbdc7d"
+          "sourceSha256": "dc4365ecab68ca645e5c1c300b8a45ee758f5028902a33cf48a54a48ebb75bb4",
+          "resultSha256": "00a386db690f93a349c8bd5fa856f7fee6664960682eaa418bdf76c272908feb"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1018,8 +1016,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "265b92eac9086030891fa1e042c3175cefa0753c2c071f3a6b0638caca7a2a3d",
-          "resultSha256": "1c9fe48a6b6261c61ede1c901ca9aad37f78c1f57a681b2d2196c9e5ab7c233a"
+          "sourceSha256": "00c1895f01c0313497d0350d4f0b59b5066499648beebac56ed7b133f1c64d0d",
+          "resultSha256": "ce8788ddee5bbf227c1de71968156b0d866c730ef6285e9032d2d78b2a21487a"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1068,8 +1066,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSFaceIDUsageDescription": {
           "mode": "exact",
@@ -1098,8 +1096,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "6b4fd36a374ce2504c0e98f5e2cf211960e1ba36f1c7ee1705071d1b972e9cc3",
-          "resultSha256": "6addb8f55b816e2f9c59c37f407cd4d1793b3d5e75736282cc82b9e6ca1a1ab9"
+          "sourceSha256": "f99192323dbd80da38367fcf4ff02148dbf6601a2b7c8435ce9bfdc8f78749af",
+          "resultSha256": "6f50367d192c347abfb551073fca635fd4d82ece5938901305702efcba65ad82"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1138,8 +1136,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "67294ad8d54cdaa03a48804944bc97a00711971fd9c5882a0dcd4114b1e16d03",
-          "resultSha256": "0b2409310b49d18019a850444dc1f0a1370d62e3e49864d4c30eb5b962c506a6"
+          "sourceSha256": "efb2b4b5d3c7c4177d5e15108aaf7c7a117d61e2a9fcea5846ec3921d167f180",
+          "resultSha256": "8ebf0685a397ae701a0e3b125fd44e328ec3e6ede8c8396d1be1ce799e33e842"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1163,8 +1161,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "529c6b2345c56e35c9e4a0a84d3748e2240224dd722ac5fe1506b349d7f623ff",
-          "resultSha256": "552239722f5839a4d49b66c6f0be759fe127adf253dcca27271ca9790cbfe7e9"
+          "sourceSha256": "fc3a87cc5c3a59a81ed7208b3b7282975472be20b2cd06da27c08618ba73bb17",
+          "resultSha256": "d461cbb3a0f3888205299d9de985ca04e5fc5dfa66425aced844bc4bf3ebd5bf"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1188,8 +1186,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSMicrophoneUsageDescription": {
           "mode": "token",
@@ -1203,8 +1201,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "03ba204570e39d5533d37e164be061011d8786b645b9fcabb925bb8c950e1dd1",
-          "resultSha256": "6c9578efca115a784dc6ef0dd86376e6a304b0dc3b38ece059a79b0703e64d51"
+          "sourceSha256": "391a8ecac5c32329e74c6d3e652ea8432ef76c8e2355fe0ff07e75aac08ceb9e",
+          "resultSha256": "c6be34bad48de500d9766cc5811008e67ad4272b5df2514a7ad170d85a08d507"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1228,8 +1226,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "b319b1acfeecef87934208af4d35524b7598707bb745f69fd33b6d45ce737116",
-          "resultSha256": "3518f0a2ae653ae22c874beefe9401bc9a4b95654190bbadeb09ff04476b6b69"
+          "sourceSha256": "122e6eddbdd95c93edea6b0ee584d9c414346a8ee529c878645b5964ce174586",
+          "resultSha256": "549fa8bdf0588e78f67cb1e3c9fe8f47190b67481e162b0f9bfbfeb846306cfb"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1253,8 +1251,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "9d1414326c0b6df14910d969007d40273581c5992d02e7f33d759db0e7f43c9c",
-          "resultSha256": "51dcee50720b3ffbc3a70b19e398d7aaf533559a5e43b7778f31b118400ecb11"
+          "sourceSha256": "61ae2aac34cf048d37f230b286dc9729f63c8ffdad680d2599706dc919e8db34",
+          "resultSha256": "c982978fe8ace5c9c84e99ccf5e1022cff76d442ad35a1c72c4bfcda0b1f26a9"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1278,8 +1276,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "6174fe2bb0fb4786035eedbb4fbb52c49e2d46d5696173f9e0ace13630b3f76d",
-          "resultSha256": "92571f27a55ebd51eb6ad5052e7929d290ffd42b927f320dedb71e502f9c92eb"
+          "sourceSha256": "b868d640a65786b3a79756ca10aa865b4b400835c1c0d71ffc7af6c7fbd9bc7b",
+          "resultSha256": "6a13ad91ebb38e649fb4aa02b9a3282e385fbcbc8561253ad67d88c66c2a17ab"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1303,8 +1301,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "ce8fbeac4c3b0141b4f0abbf8ff1849a2646ec90661b752f8709f6b4f1ce5400",
-          "resultSha256": "e7a960d22c23bcea32002138c20adcd7ee2cc1dbcbadacadd11b8fe6af13454b"
+          "sourceSha256": "16282884daeaf290e97a577058516b8d78efa45669eac77cde693a4aed79b703",
+          "resultSha256": "64caa98ede239f788b439bf740472c4615c81f2d145c4b40dded23b083744317"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1328,8 +1326,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "7c3e9bd5bce6d60f1e76be7a46a7467642ae3d5d4828c961fbb4e91449f2300a",
-          "resultSha256": "3718566c6ebde37f211b9d64872bea8753641636c8dc4c5b21f3b9314352d5be"
+          "sourceSha256": "80206eb8410662e81fe06d26f91cd5754b656c6a04a8c1be41547beb1a90b164",
+          "resultSha256": "25dd6d0cccc43580e1cd15ac9ccc3c2526dec81480a675a9e1b05c714783fcc7"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1353,8 +1351,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "ff22be76af8c5ae58436855d68c06d04c19d2877ea415165c552b229ae13db7f",
-          "resultSha256": "f0702048ef3bb1fb5304d87214833064727649cf569538afac0a3be52a464be1"
+          "sourceSha256": "bc47c207d33fca9854379359019abee935b9c76411af506b15c4094ef31853c9",
+          "resultSha256": "58b121054428c0ef13cb83edddea0e1dd6261e1d824720c51e8d84b9d3c6c642"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1428,8 +1426,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "76c502a06870b20ccb7336a6ba4874ff243ede95941096086f278e4cec350183",
-          "resultSha256": "2ca0747382766ba1d63103201c8d946b250e2b49625659f9ebdd42f961affb8e"
+          "sourceSha256": "63001d958b0f3c5d3dd8bf2cfdf80f43b811efe29b24159b096e48e28ae734bd",
+          "resultSha256": "f889c2f2584fb058810df20a56f6e8d1d1082fd76c7d9f4b8d04c39605ad2d51"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1453,8 +1451,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "14cbbb5f418e574968cecea0a1b672c7557bcd9cd7adaaec28cfca1f6a89b9c1",
-          "resultSha256": "11fa1714e4fccbde1cc9a4f40d9004ec5d4b8f10fc00a6584c1890a66fe451ce"
+          "sourceSha256": "91e7418727ff37e231876a5f4e4247bcd593956e87a705e27d84e1d72855fd7c",
+          "resultSha256": "0f79ea0d9fff495c5dc1165112e329a5b3db00a150f35cd900f87108f82f77ff"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1498,8 +1496,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "45cc5392ced2f7b1224b55ccfa69c69b693893eb4eff23b90550fe0960aa7055",
-          "resultSha256": "4646eca2a73c42f0be35b26af337d8c92fc741a475a9c2cdee7ad3c539b4429f"
+          "sourceSha256": "449420643673d63adc81c216ed137c8c47dd7d988deb1857151241aa315a9e51",
+          "resultSha256": "67d043868bfaf00404d1b27fca070e06ca439184a6334359e05561dc6e5456f3"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1538,8 +1536,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "acd46bda6d7bfdd0ec266fcd0f9df03e9ca9e47a18330e8325eae7a7f0c7f0d7",
-          "resultSha256": "0ee9c1895de0750ae2190ea8f35087e4737f46fb157846e97bbafa23449a46f8"
+          "sourceSha256": "a15d1b829d69a2a3b71d24188ddc31a24647fc4b562a1ff965f64f9daaa76c7a",
+          "resultSha256": "0e732a36b26a5fed9e4c5e7daee72bcdc13380324f557a8dae4c9016e2c47227"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1573,8 +1571,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "ea68d32530fe65c6302a76f71bb9e1cbae7a143d7672ff59ebb0915e5eec67fb",
-          "resultSha256": "ff6b72dedfa4dc555cb6e6670738db57e6ceb705b14261920d8a8a5bc9754b16"
+          "sourceSha256": "80150f19a32cabf564717c1540a57791e9f1673341d3ad2884a659d445ad4442",
+          "resultSha256": "5037f718a3ba9f308a34fe4ffbf8115e55f806d8568f4cf52ebdb55eedc95e4c"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1598,8 +1596,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "6faa4c37df44b7c917eb6f64174e6bd272bf776e0228b1bb525d2f506fee5b95",
-          "resultSha256": "2125bcbb7aa42cd5c774aed3a8f2e847d4a25730dcc1fdcd6439f8c294351c7b"
+          "sourceSha256": "6737bed8227adfd7843232b1d91f29f9a792eb37d5a7f5520b2971fef9624374",
+          "resultSha256": "732d9246a6bfa35a7973e826d4bc9acdf0a30593f0d4d16c46fe19961d9e21a5"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1623,8 +1621,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "885bb187c751f268de2ae9aca36d3310569e7adb1e67ed978a8f26745e292ac7",
-          "resultSha256": "5159387923bbaeba378278db1aeaeffd09c74e2e21ff97a06df8c01f492b1b74"
+          "sourceSha256": "b8165c6dac508a8e026f6b488a9c87ba3c7bf64a47044bed322067c836a7a5d3",
+          "resultSha256": "40ba37c9f8f64dd0255241e18f94d90d25c9243dab561fbd022b12794a357a08"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1648,8 +1646,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1668,8 +1666,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "d2fa37ec904c14382e6ae60b754766d4a5e91e3260979da4362c35f2b2ff8bee",
-          "resultSha256": "52ea0b79f94a6da60d966bfd8a8fd26712605b9516b03b77e80b7cc36d2b23a3"
+          "sourceSha256": "fe50a4032daf38962848049adf94f3c55abd80a87ac9bfdd46fcdd4a3c78557f",
+          "resultSha256": "45b38d22f6a5975608d85437ed686d87fb3d0c9174a6da803b971ea958e4fcee"
         },
         "NSMicrophoneUsageDescription": {
           "mode": "token",
@@ -1708,8 +1706,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "c6c582b438fd153a88cf66c328ed04e3829b4321528d0fdf0da6a8c1f93846b0",
-          "resultSha256": "c85b14d2d8e21f19640126ebab826a856bdab620606f8a6aae55ea1224ae47f7"
+          "sourceSha256": "6f567b9d19959f85b4233d08cdc0b8668878bb060f5910c2e4f96b80fcfc3c4b",
+          "resultSha256": "2060a452e88d175d773d8630efc8623d954384965f3a83600b551cfcd555017c"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1738,8 +1736,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "744be5d5027489e3de96b7c94ed9559789367475a72e0e3af12be18e990a2f5c",
-          "resultSha256": "b85e3a40c362cbd9f5b1402052ef43ff3cf2530c0fc6d8a4fe3ab41d6054089b"
+          "sourceSha256": "bcab12cf5c65e6a82830100dad52755436dfa08ed8f8f20c9a306d2562f20443",
+          "resultSha256": "bcc04d484d310aa6b0006bbe2d9b7139a99592784484ba0528c61577ccd00a0d"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1763,8 +1761,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "e9f1b0d478fb6378938065b690821a50120e10e4c9c70a2a901ae06853c02994",
-          "resultSha256": "1d6fe2b4336ce972ebc66c459edcc9b0f76e08aa162f18d900b2926a51fc3acb"
+          "sourceSha256": "63da444c7c283d0b70dd6bdd394e590659f2f5788fc7e3ca748ab0b7b6efd524",
+          "resultSha256": "4dcf66a0d457b0cef46f6933afe2e179493890df972cdfcbe4f332f63481ab9d"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1788,8 +1786,8 @@
       "entries": {
         "NSCameraUsageDescription": {
           "mode": "token",
-          "sourceSha256": "7f40f6f53d927d4f084b452ef057a4b059154437f50b309c1271b93258d876a7",
-          "resultSha256": "a7b62989a99190bd841471ba9cd883847a79b2b0bdc4233da82c97f0c0eb2cd1"
+          "sourceSha256": "14ef857b45f7d5b51761cfdad86bf177508be81cfd2e0b956af50d1e67f6d006",
+          "resultSha256": "d82b6821167ba1f42367ee5a95276a6271007d65cbe919bee10e8b9821db885b"
         },
         "NSFaceIDUsageDescription": {
           "mode": "token",
@@ -1813,8 +1811,8 @@
       "entries": {
         "CFBundleDisplayName": {
           "mode": "token",
-          "sourceSha256": "8d63691f1b7450d3e7af4a6b600426bf6c162809db1ab017589a92e7a1650025",
-          "resultSha256": "06ab055cbeb8a66ed6f09a6b6df3ed8be9c72e6bfe5ef2d0b8d12e6f8012ed02"
+          "sourceSha256": "4fc2a1e4a2aebbd845499722bb6c74ac8dd7efb8897708159f365b214b964bd3",
+          "resultSha256": "3283c90920ba02d4977874d2f8277aab19f80f5c29da3124b371c518651f7b5c"
         }
       }
     },
@@ -11188,8 +11186,8 @@
         },
         "TodayWidget.QuickActionsGalleryTitleV2": {
           "mode": "token",
-          "sourceSha256": "ef4f96ada4aab71cd3044077aad9ddb015db9c4e1e70956a8e08164972cd8934",
-          "resultSha256": "35b9442244f7e88bf5fd7e6a323490ecee046f578ce1363c79c1033c1c774f8d"
+          "sourceSha256": "47ee0c8a9416dd2800ddbe24fa707265ef6f73dc00ceb1ffdc199a3f0797c5d8",
+          "resultSha256": "99c4cd68c65e03fa9bce462ba72dee946b04524f42322b52a3459f377eb27858"
         },
         "TodayWidget.SearchInFirefoxV2": {
           "mode": "token",
@@ -12158,8 +12156,8 @@
       "entries": {
         "Intro.Slides.Welcome.Title.v2": {
           "mode": "token",
-          "sourceSha256": "70e1e4c9c309bb17ed7f0f2a818b9b082e7316a92c831bb10a686fa65694cb3f",
-          "resultSha256": "bd3a28a43c104745d9a89fc0362561a409ba02585e4307b512785256983a1a5c"
+          "sourceSha256": "75b853f76296fe3bb5e43e1263a417bcb26cf566d79b485aa01fd9e85662fc39",
+          "resultSha256": "fed89a7dacede5c7bf29b6f9ecd594bf64a936ae9f3f699ae837c756e015fdca"
         }
       }
     },
@@ -12173,8 +12171,8 @@
         },
         "ErrorPages.CertWarning.Description": {
           "mode": "token",
-          "sourceSha256": "12719e9aeca303ba6139784edc6e82d7faae4ddec3493d38568209db35cf0eab",
-          "resultSha256": "e9012fda8b5557baf316935a057ab7f7c0278dcc15f190c0a910af88ae7855d4"
+          "sourceSha256": "02ab7a75b18bccaa06277f93584cfd200831ddd048b9dd3e5383caff40a8512f",
+          "resultSha256": "372858c44165dcd377f124aecf1ea2d7329820b7248288d79eb21f5b972e7a77"
         },
         "Firefox.HomePage.Title": {
           "mode": "token",
@@ -12313,8 +12311,8 @@
       "entries": {
         "Firefox won’t remember any of your history or cookies, but new bookmarks will be saved.": {
           "mode": "token",
-          "sourceSha256": "7560d8517a9832789d1c29f94cdc8b66897b9a2e45974429782031c4e1890842",
-          "resultSha256": "3712937fb01102dd6efa07752856e729312758c9cd50361ddc5110efe1d3cfaa"
+          "sourceSha256": "71e8a5146d1800af3c2208eb244ddca155cbce5b0c47082011122d292999346c",
+          "resultSha256": "7fdb9f2c27bba0c0e303f7b9e4d8d3049ea22e83865808b5ed7d54e1c710da2c"
         }
       }
     },
@@ -12323,8 +12321,8 @@
       "entries": {
         "TodayWidget.FirefoxShortcutGalleryDescription": {
           "mode": "token",
-          "sourceSha256": "5021728b12bce34f2a6fa965fd036bc132b12d98eb503af33095614e7b7426c7",
-          "resultSha256": "de31892b307959770bf11991f9cf9ab730d14b42166ba8b88c1236f13ece2791"
+          "sourceSha256": "166638339d2b10acb75eaac8e64cc3d9179543f50cc59a21bacfb048178e0322",
+          "resultSha256": "967491460eecaad11f66b2a9c85b28369718267f0a3057bb1eafcb6c9fc5bef2"
         },
         "TodayWidget.OpenFirefoxLabel": {
           "mode": "token",
@@ -16132,7 +16130,7 @@
           "resultSha256": "25602956b8c4dfa6d15ce0861197ead3c5642cc51016d0743aea1af7cc6e8fc4"
         },
         "ScanQRCode.PermissionError.Message.v100": {
-          "mode": "exact",
+          "mode": "token",
           "sourceSha256": "babaeeceb167f2550801ef90d7d0f628aa2822dc147ea0fefbf8d06d4043528b",
           "resultSha256": "9903e344a08641928c4204832cd421d1ebdcd68ee53a7522b60ec735685667db"
         },
@@ -17013,8 +17011,8 @@
         },
         "Firefox.HomePage.Title": {
           "mode": "token",
-          "sourceSha256": "28809490872f5623556fa5465000e2e016a04b5819d389fd92b7194d03e3b222",
-          "resultSha256": "4d1732f4b6d8bce751c4408f6437c7ac434e334d5cd4d35db0ad620bcd670218"
+          "sourceSha256": "900ff99bd8dd51b4227e679a0e8d68d8dbed93ce9750f024ea45e471d8b6c046",
+          "resultSha256": "2ecea4bae781b65be39a103e68ab112a8eb312cf7eb8fc0384af141c8f771765"
         },
         "FxHomepage.Wallpaper.ButtonLabel.v99": {
           "mode": "token",
@@ -18553,8 +18551,8 @@
         },
         "Settings.NewTab.Option.FirefoxHome": {
           "mode": "token",
-          "sourceSha256": "71bf79a3323302651c9ee23376786149fbcbad8e9bed6a3d1c81185cd0d511a5",
-          "resultSha256": "1e6278cb328d0b6b60309eaa2c990441fcc288e3318823cbc4bc600090049f15"
+          "sourceSha256": "a0f6801ca48b2c1b2736b0c6122939dc449ecd2cdefbca87dde6ea17bb645781",
+          "resultSha256": "06b1194f17632f40ea9003360f8a8e4abdd4e4e574f805c0e29c0ed7cfc73540"
         },
         "Settings.OfferClipboardBar.Status": {
           "mode": "token",
@@ -19310,6 +19308,506 @@
           "mode": "token",
           "sourceSha256": "81c45a7adeb10609c51b72dcf099d9563c7e1ab8d04a92861f3600b449190009",
           "resultSha256": "76923537a59fda1e6b3adf20c27ab8d60a17037a60fc248c51402e9b29cab141"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/bg.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "42ca767c2f0afefe27c5d7cc695c7038293b42aa7b9fe97b6d2ce4b6d4d06bc1",
+          "resultSha256": "e5463fec832445977d305f94d4505ba8d85f5f4a993b1a92b01cd78ff7cfde46"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/ca.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "a395c24a473410aca0dd69bb1bd5190c23508e40c4fcb8e37b146b3b09dd5ab3",
+          "resultSha256": "6f243a4f155e8df0be51b75ced9ed4dfb9440f199262305e4a5a7a5c9c7d2c72"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/co.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "ed16ac0df6c47807127bf6b842dd16e4d9c5e3027ece152a7957dffdce6d766d",
+          "resultSha256": "459f80c58cf5bffd158cf7489eb2ec390613e696ca31dcc1d0ffc7febb624bfa"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/cs.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "e079a3c1510bd1ac6e9535e61d6b2a3ff82c7c037def3dd0edabcd5cc6344ec9",
+          "resultSha256": "e0d02c39a53e340885a1ed654076bdfab6461023a4e4be8e97930d9a7e38e3f8"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/cy.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "c58033095dece4c45988e6066b3761aa34213e5f7cdfa2e45b1922697a6d5e96",
+          "resultSha256": "08e5648b139fdd59ff44c10dd0d59697a6b2f83515b6a619f1b3abe35b13e426"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/de.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "8051e42a5a16704bf2bd3d6fd5930a225e507580ff16df60d1bb9e679011f869",
+          "resultSha256": "44038dae8a387f8f841f389d08141878ed93169fd5a48454153a453a6d148155"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/dsb.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "f1fc43d28132c2c69c99c4259ba5f1dc3f6b3a76f786c81c0c9671e804a95a83",
+          "resultSha256": "69572a2432c318013c41e65155e9d426a4ee240578b5d51a4ce99d216fa9e3bf"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/el.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "b8c2d5a0c28c712731009c6506a4ae40456d07cd5a14f17bb4b4aa6a9cad3d24",
+          "resultSha256": "db93a2ba21920ef25e473bc58d4274311a4245813e36ee182c229a33c3325062"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/en-GB.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "e62de5622135a53f9da94d549cbcc7884ed70eb92df51c1a993db1f05c97674e",
+          "resultSha256": "45c844c7a7299dcb04ae397b7267aa581151c8c3156f4429b2811086efe70b74"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/eo.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "e681da92187885c8b5ad633a810e4736bf059e2d6c8c93208c934676e670bc6c",
+          "resultSha256": "e10566caa9740882fd712e24456c6cda2a10f089cab1332f1574390bbafb0985"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/es-AR.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "09008895bc96de28924882626e110948dd3421afa2021f762e5609776bda8ff7",
+          "resultSha256": "82f18be5256358c2938bf0c86ffebd3119b2065fa681c7b671eb6e07695b0450"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/es-CL.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "cc8a426bb00ef6739069e3a6a6a1193d31d7c0f09ca9dfa083d66d35dae4fe4b",
+          "resultSha256": "148ba50927daae7ab44743da4595fa96397a69d755e54e3608c1f50d16c67281"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/es-MX.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "b52b97f1c725d1071c39400601467706f91bce2f3f667322265ccbfdba22d55b",
+          "resultSha256": "457e377982403df74248f56a59d08735825e6f9a80c9199565a0445676bb3fe3"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/eu.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "5f8d07916f3bc8e388753ddda9b293252dbee51af41104d730b2203589615c7b",
+          "resultSha256": "e1bc426e4dce498f7a942bbaa6de3a48bc0a3e16af31aff22590b21688b89b3a"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/fi.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "66abc76ffb3a2c0236834a85612e82bea36c7ac1cfbae8eebadbff4ae0d57ade",
+          "resultSha256": "f17e0ee101399fb3e8f295fc2145e1fb8772ebedceb43871f2e502e07a9d6a6b"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/fr.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "96295ae34ec3d5c4961512bc51f779b9d9d4842de253c003bc1e2ab06b55571a",
+          "resultSha256": "ed863a5412406c65d0eb4f1976ad6fc53eb54b8319f145e721a2ff8c9412d6aa"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/he.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "c19199cdcc467671abf92b58f87238088678469dfa541342ff7c3aa63efeb61b",
+          "resultSha256": "9b6aab1c9ae7ecc8caef0b78726dd302092115719d33d21c850f998f10a77975"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/hsb.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "ca7f506d6b0b0f6b9ae9863ec1cb1048e33fbabfa6e05b55da55afad254ab384",
+          "resultSha256": "ad31bf460964d6208009a253eaf6a41f855d2e53e5efef51705d028cfa70fa67"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/hu.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "73295cea9cf7a0c6bdc34c11d796ad09ea6149fc11d01625baacb04d0f0c142f",
+          "resultSha256": "23a87bf162717ed837dc297292d962ba5763b9243718b9931258120d7b1f0a8a"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/hy-AM.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "ea95a456e117fdd0f8db1fffe2fbb2a6aec7c2fb576a66acef288b2163893b61",
+          "resultSha256": "fcdfd09a9ecc6bbb2b4682cbf74e2e267a8a58797d9019b96a2bfc3dfebc51fd"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/ia.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "80c1ab3d03b16c0822fd9719c9a34bccecc5af1ab15903b1e83288b11040ad4a",
+          "resultSha256": "7c37b524596f766873672ec79c2172f2e253fa92798d955343bbab3d66062674"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/id.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "f8c28410abf32a9ca0f5bcb9584ffdb558d2d004fe2df629fdeb5d6050ebe9b4",
+          "resultSha256": "035f4e8059bd6caf97afccc0daeaa91e5fce9ccb7faf8f0dd4821b728e000e43"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/is.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "762159a11e9d8dc6d6051549cdfbd8eac0cf9d2907511fa80d6bd37455cdb6c6",
+          "resultSha256": "1055a8bec287042f84800ebec9177ea428b4096fefdd213539669f0971e1340f"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/it.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "5695120fb32ac1000d6aa46f1212cf1693d3caf0d423621cb6533367077ae57e",
+          "resultSha256": "3d7b242cbd5b2c17bcf66011258ef2cf3bd68d353d9ca10fd964e199db9f808b"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/ja.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "46ef160240bd07dc445f563a3a17c69f6fa4b1943e69d811d4cb105f35a1d34d",
+          "resultSha256": "347e7f4162d7dd0dc89d6ba85f75630f8a564f5c508023336c5b0ca94fc86d07"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/ka.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "ef62b3714f7a51b395c3f8cae0e0dc451677d55ca71b51f1573b17dc4691b8bb",
+          "resultSha256": "008cd503df5474b9a67bb85722adb25cc87c4e0b68d2501ab2377b2525430928"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/kk.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "cdd79453f87c829bacb414862303e05603b9e9f5f093fc808062df773787f75c",
+          "resultSha256": "f7677e247b88727a0914009b2b5e0c537635c58a90748ef93c179158dbac3f38"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/ko.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "cda1a84fc0a108fbce2098269d831f8ca8b98c120444e256674b1168269df67b",
+          "resultSha256": "82c0886497d6fa383cc5f579eccee1cbf5c4e076c9431f821dd5acf51abe1c0f"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/nb.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "0a06d50217ba7c781da65c5e35ca415898a413ae97585ed5b2d9d3354fba54e1",
+          "resultSha256": "4a2dda01393a9f73000237f6f4aca9bb3eb719444ccc50e7fbcbca61ba12b7ac"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/nl.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "199e01fdef16e970b6032d0cec07dc4777d0446eed4f7e5e83bdf4e9ed5a576e",
+          "resultSha256": "397fa7a37fbd6ba7e2b83125332b07ae8052e574b7bcfc12e0c5286378a82c2b"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/nn.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "9181e1099f69d4e20371060c88ff1002b38ace0e000520ad007ddfb547b23db5",
+          "resultSha256": "b3a71f034b10d839a8caa8785afb08d42d5f2172eb7de6ca7b21f91c17426cdf"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/pa-IN.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "fbdb2e0bd6ff8e0ed6a0e0f54aa988bb3ddbeea8566c18a0dd4fd8e16e0ecc84",
+          "resultSha256": "db42f475982307b60fd78b7bb802af779fe0a5babf9416ee9e6cd0320aae447b"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/pl.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "990960a95e59bf847c7ac050b1d63d1742a669fe5335a68c5302802a7b8aa615",
+          "resultSha256": "e0d5c48376e6ce35bc6c204999e5a0a6a1ce3996754a1364202d3faa895a39ee"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/pt-BR.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "99ef7df7f94f7852a3906a1f859b6b6db356d677990cddb6b0ad515f57a9dc75",
+          "resultSha256": "f17e690c7ce1cb48d5e66d26783c388dd1fc21b5d66a6529f75c1b9bde48c071"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/pt-PT.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "87b4583543e11656bcfd97fa54140636b938344c19a965e9f88392a66b199298",
+          "resultSha256": "8d09609aaa6b19c3b6436475f2e32c816a992995fa754b317762e55b2b17b20d"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/rm.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "44f36d33debfe33dbab5f1a563da51688cfff4b5a705db7168529489b8660383",
+          "resultSha256": "267ebddd4eac831364510869c57c3fb9b1154d8604695f80df03499782e7c6ae"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/ro.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "75b1fac1d695ddb4a896b67e764176d644f43692a57d1c375b0d291e533783ed",
+          "resultSha256": "146636bd75d04001e340e94b97125d3929eec1d1c38e93bdc1b5cf5f6eea6b2d"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/ru.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "eb87047f4b993ee02aa66edb59dea060c3cd0030b01518d2a4e30d6b23b5f4d1",
+          "resultSha256": "00d81ebbfffbc9bb1c5d5ad423438af3b525cf92a8c7ac9a7e6745e67dd79d7e"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/sat-Olck.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "74d10d66c1dac43b5ebbaa80e6005800fce7d26f85786f2cba4167a53ebb72ef",
+          "resultSha256": "c06cc57f279472fede36ba998df4724876b787ab4b1d6fa1f069451d3b49522b"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/sk.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "447d7c164fede9e8c9b4830bcfe3bc93dac830caaa2a650364289aff983b98d3",
+          "resultSha256": "709b318d5d83d29fdc05da73d59ba2a0bde802b59bc0c6797d07eb5524e971f8"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/sl.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "ab08c66e9d2f660b7f8f84d0bd38d14e1d5306c9c900f9a00b582d89e05605b5",
+          "resultSha256": "fa910623d99ac6f7ace9afbb7571d10a0b9327eb1c4be3a39c1a93f501f5c17b"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/sr.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "627f691ea641099e5e8b5aab4d6e9ca7b1c8c6fabb364cab5b34a834cf1cb27a",
+          "resultSha256": "be67423f176a1a5d8b1c1d09d39a2744d91f41e18debd7dc6901ec6a2b8ac383"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/sv.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "952b3dc308acc1c9d3028e68e448feaa584b7377ea699a9f351925c07f39287c",
+          "resultSha256": "4f272c2fcf6e36511e64a14ca48521b4e224dded07a2038997c3c6d4ea900621"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/tg.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "a77632dfcbf016b8a80df5de5f386e9c6b4821d35559056d694c92e7554a7c24",
+          "resultSha256": "8ebd5dc8161a7f5ed56b24cf2b2ff8758c6d1774b5de8c774acc8a2483842320"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/th.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "eb19c66dc1648dba7889f34fe41d42ec8dbafa57d174d5053f6d6d06da81d975",
+          "resultSha256": "81ee8851cc7db38727af92e9819eb43fd74c6650f9f913d67bd94faf52ab9d39"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/tr.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "5380b9cd7bb97dfdf9f133a19fadcb0979027e36b64130f724bce76a590fb50f",
+          "resultSha256": "12f397bbe2e2d181ac3577c2594695ce9cfd245cf9a2c496a6d60479787c1dfc"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/uk.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "3ead819ce90e6da3c96e866a15b2588455439c47b7a7ffea840f5405f461429d",
+          "resultSha256": "f378ae5160a936af383780bb9a34d0c46a0d716de6833e537e66ea455d801ce1"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/vi.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "790a460208fcd2c30ebbd9f5c31d7faae8f8386ec0c3fa7686bcff937bcdc2df",
+          "resultSha256": "267e5998753b4a3691c1cccdcf3747997197278cc70bf75e90c0ec108cc62647"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/zh-CN.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "bff9ae3405d66dac0009200e63899ee06d1ef7de59f99931cda2574bf0243764",
+          "resultSha256": "21800ec69c0939e00ab1a5ba557d8e2fce0b54ed8900e113bbf3038bdc5fde57"
+        }
+      }
+    },
+    "firefox-ios/Shared/Supporting Files/zh-TW.lproj/Camera.strings": {
+      "kind": "strings",
+      "entries": {
+        "CameraAccess.DisabledAlertMessage.v153": {
+          "mode": "token",
+          "sourceSha256": "4896bf0150107ea92f5e9c091dd921c0e0de748b09aa7e5907ecc216439f27f9",
+          "resultSha256": "56a1cf773a30749ebb8b8f10bbf79474f78ce330ebba79bdd78d2ba022778e71"
         }
       }
     },
@@ -21573,8 +22071,8 @@
         },
         "TodayWidget.QuickActionGalleryDescription": {
           "mode": "token",
-          "sourceSha256": "462d56a3958b3501a477bd06283ae82912faca75c0fa1ca5ca3006ee1cb5dfa6",
-          "resultSha256": "379ba4d8944fa36f9d8622698971fdb4ae577d3118373a21d949419868a9e700"
+          "sourceSha256": "c8207492891ba0ae7bd225af3be99cc05ba01e3ebe547060f66e5b6415e15019",
+          "resultSha256": "fb20650926defffdd69beee4de49bf257205ac0578fdd7ba6cf50dba13647d0f"
         },
         "TodayWidget.QuickActionsGalleryTitleV2": {
           "mode": "token",

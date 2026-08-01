@@ -2,18 +2,18 @@
   "schemaVersion": 1,
   "productName": "Floorp",
   "generatedFrom": {
-    "base": "b1f6991d551fe072abd975fed9330b205a317802",
-    "reviewed": "6f58b2578825f74394fe16bb1c15aa17a17ad91d"
+    "base": "e58637e772e4456efcf7dbf3826f172c7da721ba",
+    "reviewed": "b0b2960d3dd908ec5f43e9d1b2bfb581b3da788c"
   },
   "summary": {
-    "paths": 794,
-    "stringsFiles": 793,
+    "paths": 844,
+    "stringsFiles": 843,
     "intentFiles": 1,
-    "semanticValues": 3982,
-    "rawKeyForms": 56,
-    "normalizedKeys": 54,
-    "brandTokens": 21,
-    "exactOverrides": 19
+    "semanticValues": 4032,
+    "rawKeyForms": 57,
+    "normalizedKeys": 55,
+    "brandTokens": 23,
+    "exactOverrides": 18
   },
   "protectedTerms": [
     "Firefox Accounts",
@@ -44,6 +44,7 @@
     "பயர்பாக்சில்",
     "பயர்பாக்சைத்",
     "Firefoksach",
+    "Firefoksowi",
     "பயர்பாஃசில்",
     "பயர்பாஃசைத்",
     "Firefoksie",
@@ -56,15 +57,14 @@
     "ଫାୟାରଫକ୍ସ",
     "பயர்பாஃசு",
     "ഫയർഫോക്സ്",
+    "فايرفوكس",
     "فایرفاکس",
     "ⴼⴰⵢⵔⴼⵓⴽⵙ",
     "firefox",
     "Firefox",
     "파이어 폭스"
   ],
-  "additionalBrandTokens": [
-    "فايرفوكس"
-  ],
+  "additionalBrandTokens": [],
   "pathRules": [
     {
       "id": "client-info-plist",
@@ -83,6 +83,14 @@
       "pattern": "^firefox-ios/Extensions/ActionExtension/[A-Za-z0-9-]+\\.lproj/InfoPlist\\.strings$",
       "keys": [
         "CFBundleDisplayName"
+      ]
+    },
+    {
+      "id": "shared-camera",
+      "kind": "strings",
+      "pattern": "^firefox-ios/Shared/Supporting Files/[A-Za-z0-9-]+\\.lproj/Camera\\.strings$",
+      "keys": [
+        "CameraAccess.DisabledAlertMessage.v153"
       ]
     },
     {
@@ -318,13 +326,6 @@
       "sourceSha256": "cb0c3656a0055460da009631d9a3f9de5b9fa7d127628528327851c7bf6e7059",
       "resultSha256": "2995dc524b6fe6350ebdbf6b312bc0afb3aa5063a2d4b7d70035e0b1faaf9466",
       "resultValue": "Floorp-ൽ\\nതിരയുക"
-    },
-    {
-      "path": "firefox-ios/Shared/pl.lproj/Localizable.strings",
-      "key": "ScanQRCode.PermissionError.Message.v100",
-      "sourceSha256": "babaeeceb167f2550801ef90d7d0f628aa2822dc147ea0fefbf8d06d4043528b",
-      "resultSha256": "9903e344a08641928c4204832cd421d1ebdcd68ee53a7522b60ec735685667db",
-      "resultValue": "Otwórz „Ustawienia” urządzenia → „Floorp” i zezwól Floorp na dostęp do aparatu."
     }
   ]
 }
