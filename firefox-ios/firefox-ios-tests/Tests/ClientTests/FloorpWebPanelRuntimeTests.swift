@@ -846,8 +846,12 @@ final class FloorpWebPanelFindControllerTests: XCTestCase {
         controller.updateQuery("third")
 
         XCTAssertEqual(target.requests.map(\.query), ["first"])
+        XCTAssertEqual(target.requests.first?.kind, .queryChanged)
+        XCTAssertEqual(target.requests.first?.wraps, true)
         target.completeNext(matchFound: true)
         XCTAssertEqual(target.requests.map(\.query), ["first", "third"])
+        XCTAssertEqual(target.requests.last?.kind, .queryChanged)
+        XCTAssertEqual(target.requests.last?.wraps, true)
         XCTAssertEqual(controller.state, .searching("third"))
 
         target.completeNext(matchFound: false)
@@ -864,18 +868,56 @@ final class FloorpWebPanelFindControllerTests: XCTestCase {
         )
         XCTAssertTrue(controller.present())
         controller.updateQuery("needle")
+        XCTAssertEqual(target.requests.last?.wraps, true)
         target.completeNext(matchFound: true)
         XCTAssertEqual(controller.state, .match("needle"))
 
         controller.findNext()
         XCTAssertEqual(target.requests.last?.direction, .forward)
+        XCTAssertEqual(target.requests.last?.kind, .navigation)
+        XCTAssertEqual(target.requests.last?.wraps, false)
         target.completeNext(matchFound: false)
         XCTAssertEqual(controller.state, .finished("needle", .forward))
 
         controller.findPrevious()
         XCTAssertEqual(target.requests.last?.direction, .backward)
+        XCTAssertEqual(target.requests.last?.kind, .navigation)
+        XCTAssertEqual(target.requests.last?.wraps, false)
         target.completeNext(matchFound: false)
         XCTAssertEqual(controller.state, .finished("needle", .backward))
+    }
+
+    func testTimeoutKeepsRequestSlotUntilLateCompletionAndStartsLatestQuery() {
+        let target = MockFloorpWebPanelFindTarget()
+        let timeoutScheduler = MockFloorpWebPanelFindTimeoutScheduler()
+        let controller = FloorpWebPanelFindController(
+            target: target,
+            requestTimeoutNanoseconds: 1,
+            timeoutScheduler: timeoutScheduler,
+            accessibilityAnnouncement: { _ in }
+        )
+        XCTAssertTrue(controller.present())
+        controller.updateQuery("slow")
+        XCTAssertEqual(target.requests.map(\.query), ["slow"])
+        XCTAssertEqual(target.pendingCompletionCount, 1)
+        XCTAssertEqual(timeoutScheduler.scheduledDelays, [1])
+
+        timeoutScheduler.fireNext()
+        XCTAssertEqual(controller.state, .unavailable("slow"))
+        controller.updateQuery("newer")
+        controller.updateQuery("latest")
+
+        XCTAssertEqual(target.requests.map(\.query), ["slow"])
+        XCTAssertEqual(target.pendingCompletionCount, 1)
+        XCTAssertEqual(controller.state, .searching("latest"))
+        target.completeNext(matchFound: true)
+
+        XCTAssertEqual(target.requests.map(\.query), ["slow", "latest"])
+        XCTAssertEqual(target.pendingCompletionCount, 1)
+        XCTAssertEqual(controller.state, .searching("latest"))
+        target.completeNext(matchFound: false)
+        XCTAssertEqual(target.pendingCompletionCount, 0)
+        XCTAssertEqual(controller.state, .noMatch("latest"))
     }
 
     func testInvalidationClearsMemoryAndIgnoresLateResults() {
@@ -1533,6 +1575,13 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
 
         XCTAssertNil(findToolbar.superview)
         XCTAssertGreaterThanOrEqual(session.findTargetMock.endSessionCount, 1)
+        let builtInKeyCommands = try XCTUnwrap(drawer.keyCommands)
+        XCTAssertFalse(builtInKeyCommands.contains {
+            $0.input == "f" && $0.modifierFlags.contains(.command)
+        })
+        XCTAssertFalse(builtInKeyCommands.contains {
+            $0.input == "g" && $0.modifierFlags.contains(.command)
+        })
     }
 
     func testOpenInMainBrowserDismissesDrawerAndPreservesSessionForReopen() async throws {
@@ -1821,6 +1870,27 @@ final class FloorpWebPanelNavigationPolicyTests: XCTestCase {
 }
 
 @MainActor
+private final class MockFloorpWebPanelFindTimeoutScheduler:
+    FloorpWebPanelFindTimeoutScheduling {
+    private(set) var scheduledDelays = [UInt64]()
+    private var handlers = [FloorpWebPanelFindTimeoutHandler]()
+
+    func schedule(
+        after nanoseconds: UInt64,
+        handler: @escaping FloorpWebPanelFindTimeoutHandler
+    ) -> Task<Void, Never> {
+        scheduledDelays.append(nanoseconds)
+        handlers.append(handler)
+        return Task {}
+    }
+
+    func fireNext() {
+        guard !handlers.isEmpty else { return }
+        handlers.removeFirst()()
+    }
+}
+
+@MainActor
 private final class MockFloorpWebPanelFindTarget: FloorpWebPanelFindTarget {
     let supportsNativeFindInteraction: Bool
     private(set) var nativePresentationCount = 0
@@ -1830,6 +1900,10 @@ private final class MockFloorpWebPanelFindTarget: FloorpWebPanelFindTarget {
     private(set) var invalidationCount = 0
     private(set) var requests = [FloorpWebPanelFindRequest]()
     private var completions = [FloorpWebPanelFindCompletion]()
+
+    var pendingCompletionCount: Int {
+        completions.count
+    }
 
     init(supportsNativeFindInteraction: Bool = false) {
         self.supportsNativeFindInteraction = supportsNativeFindInteraction

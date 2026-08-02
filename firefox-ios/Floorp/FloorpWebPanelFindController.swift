@@ -10,13 +10,48 @@ enum FloorpWebPanelFindDirection: Equatable, Sendable {
     case backward
 }
 
+enum FloorpWebPanelFindRequestKind: Equatable, Sendable {
+    case queryChanged
+    case navigation
+}
+
 struct FloorpWebPanelFindRequest: Equatable, Sendable {
     let query: String
     let direction: FloorpWebPanelFindDirection
-    let wraps: Bool
+    let kind: FloorpWebPanelFindRequestKind
+
+    var wraps: Bool {
+        kind == .queryChanged
+    }
 }
 
 typealias FloorpWebPanelFindCompletion = @MainActor @Sendable (Bool) -> Void
+typealias FloorpWebPanelFindTimeoutHandler = @MainActor @Sendable () -> Void
+
+@MainActor
+protocol FloorpWebPanelFindTimeoutScheduling {
+    func schedule(
+        after nanoseconds: UInt64,
+        handler: @escaping FloorpWebPanelFindTimeoutHandler
+    ) -> Task<Void, Never>
+}
+
+@MainActor
+final class DefaultFloorpWebPanelFindTimeoutScheduler: FloorpWebPanelFindTimeoutScheduling {
+    func schedule(
+        after nanoseconds: UInt64,
+        handler: @escaping FloorpWebPanelFindTimeoutHandler
+    ) -> Task<Void, Never> {
+        Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            handler()
+        }
+    }
+}
 
 @MainActor
 protocol FloorpWebPanelFindTarget: AnyObject {
@@ -44,6 +79,14 @@ extension FloorpWebPanelFindTarget {
 final class DefaultFloorpWebPanelFindTarget: FloorpWebPanelFindTarget {
     private weak var webView: WKWebView?
     private var isFindSessionActive = false
+    private var isFindOperationInFlight = false
+    private var pendingOperations = [FindOperation]()
+    private var isInvalidated = false
+
+    private enum FindOperation {
+        case find(FloorpWebPanelFindRequest, FloorpWebPanelFindCompletion)
+        case clear
+    }
 
     var supportsNativeFindInteraction: Bool {
         if #available(iOS 16.0, *) {
@@ -87,39 +130,91 @@ final class DefaultFloorpWebPanelFindTarget: FloorpWebPanelFindTarget {
         _ request: FloorpWebPanelFindRequest,
         completion: @escaping FloorpWebPanelFindCompletion
     ) {
-        guard let webView else {
+        guard !isInvalidated, webView != nil else {
             completion(false)
             return
         }
         isFindSessionActive = !request.query.isEmpty
-        let configuration = WKFindConfiguration()
-        configuration.backwards = request.direction == .backward
-        configuration.caseSensitive = false
-        configuration.wraps = request.wraps
-        webView.find(request.query, configuration: configuration) { result in
-            completion(result.matchFound)
-        }
+        pendingOperations.append(.find(request, completion))
+        startNextOperationIfNeeded()
     }
 
     func endFindSession() {
-        guard let webView,
-              isFindSessionActive || nativeFindInteractionIsEnabled(on: webView) else {
+        guard let webView else { return }
+        let wasUsingNativeFind = nativeFindInteractionIsEnabled(on: webView)
+        guard isFindSessionActive || wasUsingNativeFind else {
             return
         }
         isFindSessionActive = false
-        if #available(iOS 16.0, *), webView.isFindInteractionEnabled {
+        if #available(iOS 16.0, *), wasUsingNativeFind {
             webView.findInteraction?.searchText = nil
             webView.findInteraction?.dismissFindNavigator()
             webView.isFindInteractionEnabled = false
         }
-        let configuration = WKFindConfiguration()
-        configuration.wraps = false
-        webView.find("", configuration: configuration) { _ in }
+        guard !wasUsingNativeFind else { return }
+        let canceledCompletions = pendingOperations.compactMap { operation in
+            if case .find(_, let completion) = operation {
+                return completion
+            }
+            return nil
+        }
+        pendingOperations.removeAll()
+        pendingOperations.append(.clear)
+        canceledCompletions.forEach { $0(false) }
+        startNextOperationIfNeeded()
     }
 
     func invalidate() {
-        endFindSession()
+        guard !isInvalidated else { return }
+        isInvalidated = true
+        isFindSessionActive = false
+        if #available(iOS 16.0, *), let webView, webView.isFindInteractionEnabled {
+            webView.findInteraction?.searchText = nil
+            webView.findInteraction?.dismissFindNavigator()
+            webView.isFindInteractionEnabled = false
+        }
+        pendingOperations.removeAll()
+        isFindOperationInFlight = false
         webView = nil
+    }
+
+    private func startNextOperationIfNeeded() {
+        guard !isInvalidated, !isFindOperationInFlight else { return }
+        guard let webView else {
+            let completions = pendingOperations.compactMap { operation in
+                if case .find(_, let completion) = operation {
+                    return completion
+                }
+                return nil
+            }
+            pendingOperations.removeAll()
+            completions.forEach { $0(false) }
+            return
+        }
+        guard !pendingOperations.isEmpty else { return }
+        let operation = pendingOperations.removeFirst()
+        isFindOperationInFlight = true
+        switch operation {
+        case .find(let request, let completion):
+            let configuration = WKFindConfiguration()
+            configuration.backwards = request.direction == .backward
+            configuration.caseSensitive = false
+            configuration.wraps = request.wraps
+            webView.find(request.query, configuration: configuration) { [weak self] result in
+                guard let self, !self.isInvalidated else { return }
+                self.isFindOperationInFlight = false
+                completion(result.matchFound)
+                self.startNextOperationIfNeeded()
+            }
+        case .clear:
+            let configuration = WKFindConfiguration()
+            configuration.wraps = false
+            webView.find("", configuration: configuration) { [weak self] _ in
+                guard let self, !self.isInvalidated else { return }
+                self.isFindOperationInFlight = false
+                self.startNextOperationIfNeeded()
+            }
+        }
     }
 
     private func nativeFindInteractionIsEnabled(on webView: WKWebView) -> Bool {
@@ -146,7 +241,6 @@ final class FloorpWebPanelFindController: NSObject {
     typealias AccessibilityAnnouncement = @MainActor (String) -> Void
 
     static let fallbackToolbarHeight: CGFloat = 52
-    private static let requestTimeoutNanoseconds: UInt64 = 5_000_000_000
 
     let toolbarView: UIView
     private(set) var state: State = .inactive {
@@ -156,6 +250,8 @@ final class FloorpWebPanelFindController: NSObject {
 
     private let target: any FloorpWebPanelFindTarget
     private let accessibilityAnnouncement: AccessibilityAnnouncement
+    private let requestTimeoutNanoseconds: UInt64
+    private let timeoutScheduler: any FloorpWebPanelFindTimeoutScheduling
     private let scrollView: UIScrollView
     private let stackView: UIStackView
     private let queryTextField: UITextField
@@ -179,11 +275,16 @@ final class FloorpWebPanelFindController: NSObject {
 
     init(
         target: any FloorpWebPanelFindTarget,
+        requestTimeoutNanoseconds: UInt64 = 5_000_000_000,
+        timeoutScheduler: (any FloorpWebPanelFindTimeoutScheduling)? = nil,
         accessibilityAnnouncement: @escaping AccessibilityAnnouncement = { message in
             UIAccessibility.post(notification: .announcement, argument: message)
         }
     ) {
         self.target = target
+        self.requestTimeoutNanoseconds = requestTimeoutNanoseconds
+        self.timeoutScheduler = timeoutScheduler
+            ?? DefaultFloorpWebPanelFindTimeoutScheduler()
         self.accessibilityAnnouncement = accessibilityAnnouncement
         self.toolbarView = UIView()
         self.scrollView = UIScrollView()
@@ -237,7 +338,12 @@ final class FloorpWebPanelFindController: NSObject {
             state = .empty
             return
         }
-        enqueueFind(query: query, direction: .forward, canReportFinished: false)
+        enqueueFind(
+            query: query,
+            direction: .forward,
+            kind: .queryChanged,
+            canReportFinished: false
+        )
     }
 
     func findNext() {
@@ -397,6 +503,7 @@ final class FloorpWebPanelFindController: NSObject {
         enqueueFind(
             query: query,
             direction: direction,
+            kind: .navigation,
             canReportFinished: hasMatchForCurrentQuery
         )
     }
@@ -404,6 +511,7 @@ final class FloorpWebPanelFindController: NSObject {
     private func enqueueFind(
         query: String,
         direction: FloorpWebPanelFindDirection,
+        kind: FloorpWebPanelFindRequestKind,
         canReportFinished: Bool
     ) {
         requestGeneration &+= 1
@@ -413,13 +521,14 @@ final class FloorpWebPanelFindController: NSObject {
             request: FloorpWebPanelFindRequest(
                 query: query,
                 direction: direction,
-                wraps: false
+                kind: kind
             ),
             canReportFinished: canReportFinished
         )
         state = .searching(query)
         guard activeRequestID == nil else {
             pendingRequest = pending
+            scheduleTimeout(for: pending)
             return
         }
         start(pending)
@@ -427,6 +536,9 @@ final class FloorpWebPanelFindController: NSObject {
 
     private func start(_ pending: PendingRequest) {
         activeRequestID = pending.id
+        if pending.generation == requestGeneration {
+            state = .searching(pending.request.query)
+        }
         scheduleTimeout(for: pending)
         target.find(pending.request) { [weak self] matchFound in
             self?.finish(pending, matchFound: matchFound)
@@ -435,17 +547,23 @@ final class FloorpWebPanelFindController: NSObject {
 
     private func scheduleTimeout(for pending: PendingRequest) {
         requestTimeoutTask?.cancel()
-        requestTimeoutTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: Self.requestTimeoutNanoseconds)
-            } catch {
-                return
-            }
-            self?.finish(pending, matchFound: nil)
+        requestTimeoutTask = timeoutScheduler.schedule(
+            after: requestTimeoutNanoseconds
+        ) { [weak self] in
+            self?.markRequestTimedOut(pending)
         }
     }
 
-    private func finish(_ pending: PendingRequest, matchFound: Bool?) {
+    private func markRequestTimedOut(_ pending: PendingRequest) {
+        let isTrackedRequest = activeRequestID == pending.id
+            || pendingRequest?.id == pending.id
+        guard !isInvalidated, isTrackedRequest else { return }
+        requestTimeoutTask = nil
+        guard pending.generation == requestGeneration else { return }
+        state = .unavailable(pending.request.query)
+    }
+
+    private func finish(_ pending: PendingRequest, matchFound: Bool) {
         guard !isInvalidated, activeRequestID == pending.id else { return }
         activeRequestID = nil
         requestTimeoutTask?.cancel()
@@ -460,12 +578,8 @@ final class FloorpWebPanelFindController: NSObject {
         }
     }
 
-    private func renderResult(for pending: PendingRequest, matchFound: Bool?) {
+    private func renderResult(for pending: PendingRequest, matchFound: Bool) {
         let query = pending.request.query
-        guard let matchFound else {
-            state = .unavailable(query)
-            return
-        }
         if matchFound {
             hasMatchForCurrentQuery = true
             state = .match(query)
@@ -486,7 +600,6 @@ final class FloorpWebPanelFindController: NSObject {
 
     private func resetSession() {
         requestGeneration &+= 1
-        activeRequestID = nil
         pendingRequest = nil
         requestTimeoutTask?.cancel()
         requestTimeoutTask = nil

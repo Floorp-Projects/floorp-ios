@@ -826,7 +826,7 @@ final class FloorpOverlayDrawerViewController:
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        [
+        var commands = [
             UIKeyCommand(
                 title: FloorpStrings.Drawer.closeAccessibilityLabel,
                 action: #selector(closeTapped),
@@ -839,6 +839,13 @@ final class FloorpOverlayDrawerViewController:
                 input: UIKeyCommand.inputEscape,
                 modifierFlags: []
             ),
+        ]
+        guard currentPanelType == .web,
+              activeWebPanelSession != nil,
+              webPanelFindController != nil else {
+            return commands
+        }
+        commands.append(contentsOf: [
             UIKeyCommand(
                 title: FloorpStrings.Drawer.webPanelFind,
                 action: #selector(webPanelFindTapped),
@@ -857,7 +864,8 @@ final class FloorpOverlayDrawerViewController:
                 input: "g",
                 modifierFlags: [.command, .shift]
             ),
-        ]
+        ])
+        return commands
     }
 
     override func accessibilityPerformEscape() -> Bool {
