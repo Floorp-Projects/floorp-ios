@@ -1038,7 +1038,6 @@ final class TabManagerImplementation: NSObject,
         }
 
         tabs = normalTabs
-
     }
 
     private func synchronizePrivateBrowsingSessionOwnership() {
