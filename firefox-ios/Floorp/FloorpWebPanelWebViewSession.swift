@@ -310,6 +310,11 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         runtime?.stopLoading()
     }
 
+    func openCurrentPageInMainBrowser() {
+        guard !isInvalidated, let currentURL = state.currentURL else { return }
+        navigationExecutor?.openInMainBrowserIfSafe(currentURL)
+    }
+
     func invalidate() {
         guard !isInvalidated else { return }
         isInvalidated = true
@@ -423,6 +428,8 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
             runtime: runtime,
             contentRuleInstallerFactory: contentRuleInstallerFactory,
             navigationExecutor: FloorpWebPanelNavigationExecutor(
+                windowUUID: key.windowUUID,
+                isPrivate: key.isPrivate,
                 openInMainBrowser: openInMainBrowser
             ),
             privateBrowsingSessionLease: privateBrowsingSessionLease

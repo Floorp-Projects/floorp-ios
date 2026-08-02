@@ -131,6 +131,35 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertEqual(fixture.runtime.stopLoadingCallCount, 1)
     }
 
+    func testOpenCurrentPageInMainBrowserAllowsOnlySafeCurrentURL() throws {
+        var requests = [FloorpWebPanelMainBrowserRequest]()
+        let fixture = makeFixture(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: true
+        ) { requests.append($0) }
+        let safeURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        let unsafeURL = try XCTUnwrap(URL(string: "javascript:alert(1)"))
+
+        fixture.session.openCurrentPageInMainBrowser()
+        fixture.runtime.currentURL = safeURL
+        fixture.runtime.stateDidChange?()
+        fixture.session.openCurrentPageInMainBrowser()
+        fixture.runtime.currentURL = unsafeURL
+        fixture.runtime.stateDidChange?()
+        fixture.session.openCurrentPageInMainBrowser()
+
+        XCTAssertEqual(
+            requests,
+            [
+                FloorpWebPanelMainBrowserRequest(
+                    url: safeURL,
+                    windowUUID: .XCTestDefaultUUID,
+                    isPrivate: true
+                ),
+            ]
+        )
+    }
+
     func testMetadataUpdatePreservesRuntimeAndNotifies() throws {
         let fixture = makeFixture()
         let currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
@@ -225,7 +254,11 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         replacementLease.invalidate()
     }
 
-    private func makeFixture() -> Fixture {
+    private func makeFixture(
+        windowUUID: WindowUUID = UUID(),
+        isPrivate: Bool = false,
+        openInMainBrowser: @escaping FloorpWebPanelNavigationExecutor.OpenInMainBrowser = { _ in }
+    ) -> Fixture {
         let runtime = MockFloorpWebPanelWebViewRuntime()
         let installer = MockFloorpWebPanelContentRuleInstaller()
         let installerFactory = MockFloorpWebPanelContentRuleInstallerFactory(installer: installer)
@@ -236,14 +269,18 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         )
         let session = FloorpWebPanelWebViewSession(
             key: FloorpWebPanelSessionKey(
-                windowUUID: UUID(),
+                windowUUID: windowUUID,
                 panelID: "panel",
-                isPrivate: false
+                isPrivate: isPrivate
             ),
             configuration: configuration,
             runtime: runtime,
             contentRuleInstallerFactory: installerFactory,
-            navigationExecutor: FloorpWebPanelNavigationExecutor(openInMainBrowser: { _ in })
+            navigationExecutor: FloorpWebPanelNavigationExecutor(
+                windowUUID: windowUUID,
+                isPrivate: isPrivate,
+                openInMainBrowser: openInMainBrowser
+            )
         )
         return Fixture(
             session: session,
@@ -263,8 +300,36 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
 
 @MainActor
 final class FloorpWebPanelNavigationExecutorTests: XCTestCase {
+    func testOpenRequestPreservesOwningWindowAndSourcePrivacy() throws {
+        let windowUUID = WindowUUID()
+        let url = try XCTUnwrap(URL(string: "https://example.com/private-panel"))
+        var requests = [FloorpWebPanelMainBrowserRequest]()
+        let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: windowUUID,
+            isPrivate: true,
+            openInMainBrowser: { requests.append($0) }
+        )
+
+        executor.openInMainBrowserIfSafe(url)
+
+        XCTAssertEqual(
+            requests,
+            [
+                FloorpWebPanelMainBrowserRequest(
+                    url: url,
+                    windowUUID: windowUUID,
+                    isPrivate: true
+                ),
+            ]
+        )
+    }
+
     func testAllowsAndCancelsExistingFrameDecisions() throws {
-        let executor = FloorpWebPanelNavigationExecutor(openInMainBrowser: { _ in })
+        let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: false,
+            openInMainBrowser: { _ in }
+        )
         let url = try XCTUnwrap(URL(string: "https://example.com"))
 
         XCTAssertEqual(
@@ -283,6 +348,8 @@ final class FloorpWebPanelNavigationExecutorTests: XCTestCase {
 
     func testUserInitiatedPopupsAreThrottled() throws {
         let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: false,
             minimumPopupInterval: 1,
             openInMainBrowser: { _ in }
         )
@@ -304,7 +371,11 @@ final class FloorpWebPanelNavigationExecutorTests: XCTestCase {
     }
 
     func testInvalidatedExecutorRejectsEveryDecision() throws {
-        let executor = FloorpWebPanelNavigationExecutor(openInMainBrowser: { _ in })
+        let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: false,
+            openInMainBrowser: { _ in }
+        )
         let url = try XCTUnwrap(URL(string: "https://example.com"))
 
         executor.invalidate()
@@ -317,6 +388,71 @@ final class FloorpWebPanelNavigationExecutorTests: XCTestCase {
             executor.execution(for: .openInMainBrowser(url), isUserInitiated: true, at: 0),
             .cancel
         )
+    }
+}
+
+@MainActor
+final class FloorpWebPanelMainBrowserRouterTests: XCTestCase {
+    func testRoutesRegularRequestToRegularNewTab() throws {
+        let windowUUID = WindowUUID()
+        let url = try XCTUnwrap(URL(string: "https://example.com/regular"))
+        var openedURL: URL?
+        var openedPrivately: Bool?
+        let router = FloorpWebPanelMainBrowserRouter(windowUUID: windowUUID) {
+            openedURL = $0
+            openedPrivately = $1
+        }
+
+        router.open(
+            FloorpWebPanelMainBrowserRequest(
+                url: url,
+                windowUUID: windowUUID,
+                isPrivate: false
+            )
+        )
+
+        XCTAssertEqual(openedURL, url)
+        XCTAssertEqual(openedPrivately, false)
+    }
+
+    func testRoutesPrivateRequestToPrivateNewTab() throws {
+        let windowUUID = WindowUUID()
+        let url = try XCTUnwrap(URL(string: "https://example.com/private"))
+        var openedURL: URL?
+        var openedPrivately: Bool?
+        let router = FloorpWebPanelMainBrowserRouter(windowUUID: windowUUID) {
+            openedURL = $0
+            openedPrivately = $1
+        }
+
+        router.open(
+            FloorpWebPanelMainBrowserRequest(
+                url: url,
+                windowUUID: windowUUID,
+                isPrivate: true
+            )
+        )
+
+        XCTAssertEqual(openedURL, url)
+        XCTAssertEqual(openedPrivately, true)
+    }
+
+    func testRejectsRequestOwnedByAnotherWindow() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/other-window"))
+        var openCallCount = 0
+        let router = FloorpWebPanelMainBrowserRouter(windowUUID: WindowUUID()) { _, _ in
+            openCallCount += 1
+        }
+
+        router.open(
+            FloorpWebPanelMainBrowserRequest(
+                url: url,
+                windowUUID: WindowUUID(),
+                isPrivate: false
+            )
+        )
+
+        XCTAssertEqual(openCallCount, 0)
     }
 }
 

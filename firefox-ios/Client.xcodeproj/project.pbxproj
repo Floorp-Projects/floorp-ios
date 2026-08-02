@@ -20929,7 +20929,7 @@
 			files = (
 				CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */,
 				CEC2F0B62F98000900D67401 /* FloorpWebPanelRuntimeTests.swift in Sources */,
-				CEC2F0BA2F98000D67401 /* FloorpWebPanelWebViewSessionTests.swift in Sources */,
+				CEC2F0BA2F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift in Sources */,
 				CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */,
 				CEC2F0B52F99000200D67401 /* FloorpLibraryPanelHostTests.swift in Sources */,
 				CEC2F0B12FA8000300D67401 /* FloorpNotesInteractionTests.swift in Sources */,

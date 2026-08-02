@@ -415,6 +415,161 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(privateSession.invalidationCount, 0)
     }
 
+    func testWebPanelToolbarTracksStateAndDispatchesCommands() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.manager.updateConfig(
+            FloorpOverlayDrawerConfig(isEnabled: true, sidebarWidth: 72),
+            expectedRevision: FloorpOverlayDrawerConfigRevision(
+                config: fixture.manager.config
+            )
+        )
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        drawer.view.semanticContentAttribute = .forceRightToLeft
+        drawer.view.frame = CGRect(x: 0, y: 0, width: 320, height: 568)
+        drawer.view.layoutIfNeeded()
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let toolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Toolbar", in: drawer.view)
+        )
+        let webContent = try XCTUnwrap(
+            findView(identifier: "Floorp.Drawer.WebPanelContent", in: drawer.view)
+        )
+        let backButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Back", in: drawer.view) as? UIButton
+        )
+        let forwardButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Forward", in: drawer.view) as? UIButton
+        )
+        let reloadButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.ReloadOrStop", in: drawer.view) as? UIButton
+        )
+        let homeButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Home", in: drawer.view) as? UIButton
+        )
+        let openButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.OpenInMainBrowser", in: drawer.view) as? UIButton
+        )
+
+        XCTAssertFalse(toolbar.isHidden)
+        XCTAssertEqual(webContent.frame.minY, toolbar.frame.maxY, accuracy: 0.5)
+        XCTAssertFalse(toolbar.hasAmbiguousLayout)
+        for button in [backButton, forwardButton, reloadButton, homeButton, openButton] {
+            XCTAssertEqual(button.bounds.width, 44, accuracy: 0.5)
+            XCTAssertEqual(button.bounds.height, 44, accuracy: 0.5)
+        }
+        let toolbarScrollView = try XCTUnwrap(toolbar.subviews.first as? UIScrollView)
+        XCTAssertGreaterThan(toolbarScrollView.contentSize.width, toolbarScrollView.bounds.width)
+        XCTAssertFalse(backButton.isEnabled)
+        XCTAssertFalse(forwardButton.isEnabled)
+        XCTAssertFalse(reloadButton.isEnabled)
+        XCTAssertTrue(homeButton.isEnabled)
+        XCTAssertFalse(openButton.isEnabled)
+
+        homeButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(session.reloadCallCount, 0)
+        XCTAssertEqual(session.loadHomeCallCount, 1)
+
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        session.recordRuntimeState(
+            currentURL: currentURL,
+            pageTitle: "Current",
+            canGoBack: true,
+            canGoForward: true,
+            isLoading: true
+        )
+
+        XCTAssertTrue(backButton.isEnabled)
+        XCTAssertTrue(forwardButton.isEnabled)
+        XCTAssertTrue(openButton.isEnabled)
+        XCTAssertEqual(
+            reloadButton.accessibilityLabel,
+            FloorpStrings.Drawer.webPanelStopLoading
+        )
+
+        backButton.sendActions(for: .touchUpInside)
+        forwardButton.sendActions(for: .touchUpInside)
+        reloadButton.sendActions(for: .touchUpInside)
+        openButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(session.goBackCallCount, 1)
+        XCTAssertEqual(session.goForwardCallCount, 1)
+        XCTAssertEqual(session.stopLoadingCallCount, 1)
+        XCTAssertEqual(session.openInMainBrowserCallCount, 1)
+
+        session.recordRuntimeState(
+            currentURL: currentURL,
+            pageTitle: "Current",
+            isLoading: false
+        )
+        XCTAssertEqual(reloadButton.accessibilityLabel, FloorpStrings.Drawer.webPanelReload)
+        reloadButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(session.reloadCallCount, 1)
+
+        let builtInPanel = try XCTUnwrap(
+            fixture.manager.panels.first(where: { $0.type == .bookmarks })
+        )
+        let builtInButton = try XCTUnwrap(
+            findView(identifier: builtInPanel.id, in: drawer.view) as? UIButton
+        )
+        builtInButton.sendActions(for: .touchUpInside)
+        drawer.view.layoutIfNeeded()
+        XCTAssertTrue(toolbar.isHidden)
+        XCTAssertEqual(toolbar.bounds.height, 0, accuracy: 0.5)
+    }
+
+    func testOpenInMainBrowserDismissesDrawerAndPreservesSessionForReopen() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        let presented = expectation(description: "Web panel drawer presented")
+        let dismissed = expectation(description: "Web panel drawer dismissed after open")
+        drawer.onDismissed = { dismissed.fulfill() }
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        session.recordRuntimeState(currentURL: currentURL, pageTitle: "Current")
+        let openButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.OpenInMainBrowser", in: drawer.view) as? UIButton
+        )
+
+        openButton.sendActions(for: .touchUpInside)
+        await fulfillment(of: [dismissed], timeout: 1)
+
+        XCTAssertEqual(session.openInMainBrowserCallCount, 1)
+        XCTAssertEqual(session.stateObserverCount, 0)
+        XCTAssertNil(session.contentView?.superview)
+        XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertNil(fixture.presentationState.activeDrawer)
+
+        let replacement = fixture.makeDrawer(isPrivate: false)
+        let replacementPresented = expectation(description: "Replacement web panel drawer presented")
+        let replacementDismissed = expectation(description: "Replacement web panel drawer dismissed")
+        replacement.onDismissed = { replacementDismissed.fulfill() }
+        XCTAssertTrue(replacement.show(from: parent) { replacementPresented.fulfill() })
+        await fulfillment(of: [replacementPresented], timeout: 1)
+        XCTAssertEqual(fixture.factory.makeCallCount, 1)
+        XCTAssertTrue(fixture.factory.sessions.first === session)
+        XCTAssertEqual(session.state.currentURL, currentURL)
+        XCTAssertEqual(session.stateObserverCount, 1)
+
+        replacement.dismissDrawer()
+        await fulfillment(of: [replacementDismissed], timeout: 1)
+    }
+
     func testWindowRuntimeTeardownPurgesEveryPrivacyModeAndDetachesContent() throws {
         let fixture = try makeDrawerFixture()
         defer { fixture.cleanup() }
@@ -459,6 +614,18 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             presentationState: presentationState,
             factory: factory
         )
+    }
+
+    private func findView(identifier: String, in rootView: UIView) -> UIView? {
+        if rootView.accessibilityIdentifier == identifier {
+            return rootView
+        }
+        for subview in rootView.subviews {
+            if let match = findView(identifier: identifier, in: subview) {
+                return match
+            }
+        }
+        return nil
     }
 }
 
@@ -579,6 +746,12 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private(set) var state: FloorpWebPanelSessionState
     private(set) var configurationUpdateCount = 0
     private(set) var invalidationCount = 0
+    private(set) var loadHomeCallCount = 0
+    private(set) var goBackCallCount = 0
+    private(set) var goForwardCallCount = 0
+    private(set) var reloadCallCount = 0
+    private(set) var stopLoadingCallCount = 0
+    private(set) var openInMainBrowserCallCount = 0
     private let hostedContentView = UIView()
     private var stateObservers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
 
@@ -618,11 +791,42 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         hostedContentView.removeFromSuperview()
     }
 
-    func recordRuntimeState(currentURL: URL, pageTitle: String) {
+    func loadHome() {
+        loadHomeCallCount += 1
+    }
+
+    func goBack() {
+        goBackCallCount += 1
+    }
+
+    func goForward() {
+        goForwardCallCount += 1
+    }
+
+    func reload() {
+        reloadCallCount += 1
+    }
+
+    func stopLoading() {
+        stopLoadingCallCount += 1
+    }
+
+    func openCurrentPageInMainBrowser() {
+        openInMainBrowserCallCount += 1
+    }
+
+    func recordRuntimeState(
+        currentURL: URL,
+        pageTitle: String,
+        canGoBack: Bool = true,
+        canGoForward: Bool = false,
+        isLoading: Bool = true
+    ) {
         state.currentURL = currentURL
         state.pageTitle = pageTitle
-        state.canGoBack = true
-        state.isLoading = true
+        state.canGoBack = canGoBack
+        state.canGoForward = canGoForward
+        state.isLoading = isLoading
         state.estimatedProgress = 0.5
         notifyStateObservers()
     }

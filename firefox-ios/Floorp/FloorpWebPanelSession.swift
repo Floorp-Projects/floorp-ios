@@ -63,6 +63,7 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     func goForward()
     func reload()
     func stopLoading()
+    func openCurrentPageInMainBrowser()
     func invalidate()
 }
 
@@ -83,6 +84,7 @@ extension FloorpWebPanelSessionProtocol {
     func goForward() {}
     func reload() {}
     func stopLoading() {}
+    func openCurrentPageInMainBrowser() {}
 }
 
 @MainActor
