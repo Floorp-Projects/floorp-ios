@@ -772,13 +772,30 @@ final class FloorpRichTextDocumentTests: XCTestCase {
             #"{"root":{"children":[{"type":"paragraph","direction":"rtl","children":[]}]}}"#,
             #"{"root":{"children":[{"type":"paragraph","textFormat":1,"children":[]}]}}"#,
             #"{"root":{"children":[{"type":"paragraph","textStyle":"color:red","children":[]}]}}"#,
-            #"{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"x","format":0,"detail":1}]}]}}"#,
-            #"{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"x","format":0,"style":"color:red"}]}]}}"#,
-            #"{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"x","format":0,"mode":"token"}]}]}}"#,
-            #"{"root":{"children":[{"type":"list","listType":"number","start":3,"tag":"ul","children":[{"type":"listitem","value":3,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
-            #"{"root":{"children":[{"type":"list","listType":"bullet","start":2,"tag":"ul","children":[{"type":"listitem","value":1,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
-            #"{"root":{"children":[{"type":"list","listType":"number","start":1,"tag":"ol","children":[{"type":"listitem","value":7,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
-            #"{"root":{"children":[{"type":"list","listType":"number","start":9007199254740992,"tag":"ol","children":[{"type":"listitem","value":9007199254740992,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
+            """
+            {"root":{"children":[{"type":"paragraph","children":[
+              {"type":"text","text":"x","format":0,"detail":1}
+            ]}]}}
+            """,
+            """
+            {"root":{"children":[{"type":"paragraph","children":[
+              {"type":"text","text":"x","format":0,"style":"color:red"}
+            ]}]}}
+            """,
+            """
+            {"root":{"children":[{"type":"paragraph","children":[
+              {"type":"text","text":"x","format":0,"mode":"token"}
+            ]}]}}
+            """,
+            lexicalListFixture(listType: "number", start: 3, tag: "ul", value: 3),
+            lexicalListFixture(listType: "bullet", start: 2, tag: "ul", value: 1),
+            lexicalListFixture(listType: "number", start: 1, tag: "ol", value: 7),
+            lexicalListFixture(
+                listType: "number",
+                start: 9_007_199_254_740_992,
+                tag: "ol",
+                value: 9_007_199_254_740_992
+            ),
         ]
 
         for source in fixtures {
@@ -786,6 +803,82 @@ final class FloorpRichTextDocumentTests: XCTestCase {
             XCTAssertFalse(migration.isEditable, source)
             XCTAssertNil(migration.document, source)
             XCTAssertEqual(migration.originalSource, source)
+            XCTAssertFalse(migration.compatibility.issues.isEmpty, source)
+        }
+    }
+
+    func testLexicalMetadataRequiresSupportedVersionAndStrictTypes() throws {
+        let fixtures = [
+            #"{"root":{"type":"root","children":[]}}"#,
+            #"{"root":{"version":1,"children":[]}}"#,
+            #"{"root":{"type":"root","version":2,"children":[]}}"#,
+            #"{"root":{"type":"root","version":"1","children":[]}}"#,
+            #"{"root":{"type":7,"version":1,"children":[]}}"#,
+            """
+            {"root":{"children":[
+              {"type":"paragraph","version":2,"children":[]}
+            ]}}
+            """,
+            """
+            {"root":{"children":[
+              {"type":"paragraph","children":[{"type":"linebreak","version":false}]}
+            ]}}
+            """,
+            """
+            {"root":{"children":[
+              {"type":"heading","tag":3,"children":[]}
+            ]}}
+            """,
+            """
+            {"root":{"type":"root","version":1,"children":[
+              {"type":"heading","version":1,"children":[]}
+            ]}}
+            """,
+            """
+            {"root":{"children":[
+              {"type":"list","listType":1,"children":[]}
+            ]}}
+            """,
+            """
+            {"root":{"type":"root","version":1,"children":[
+              {"type":"list","version":1,"children":[]}
+            ]}}
+            """,
+            """
+            {"root":{"children":[{
+              "type":"list","listType":"bullet","tag":1,"children":[
+                {"type":"listitem","children":[{"type":"text","text":"x","format":0}]}
+              ]
+            }]}}
+            """,
+            """
+            {"root":{"children":[
+              {"type":"paragraph","format":true,"children":[]}
+            ]}}
+            """,
+            """
+            {"root":{"children":[{"type":"paragraph","children":[
+              {"type":"text","text":"x","format":"1","version":1}
+            ]}]}}
+            """,
+            """
+            {"root":{"type":"root","version":1,"children":[
+              {"type":"paragraph","version":1,"children":[
+                {"type":"text","text":"x","version":1}
+              ]}
+            ]}}
+            """,
+            """
+            {"root":{"children":[{"type":"paragraph","children":[
+              {"type":"text","text":"x","format":0,"detail":null,"version":1}
+            ]}]}}
+            """,
+        ]
+
+        for source in fixtures {
+            let migration = try FloorpLexicalMigrator.migrate(source)
+            XCTAssertFalse(migration.isEditable, source)
+            XCTAssertNil(migration.document, source)
             XCTAssertFalse(migration.compatibility.issues.isEmpty, source)
         }
     }
@@ -850,6 +943,23 @@ final class FloorpRichTextDocumentTests: XCTestCase {
             try JSONDecoder().decode(FloorpRichTextStateEnvelope.self, from: data),
             envelope
         )
+    }
+
+    private func lexicalListFixture(
+        listType: String,
+        start: Int,
+        tag: String,
+        value: Int
+    ) -> String {
+        """
+        {"root":{"children":[{
+          "type":"list","listType":"\(listType)","start":\(start),"tag":"\(tag)","children":[
+            {"type":"listitem","value":\(value),"children":[
+              {"type":"text","text":"x","format":0}
+            ]}
+          ]
+        }]}}
+        """
     }
 
     private func session(

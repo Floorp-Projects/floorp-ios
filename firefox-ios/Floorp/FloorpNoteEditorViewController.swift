@@ -4,9 +4,11 @@
 
 import UIKit
 import Common
+import ImageIO
 import Photos
 import PhotosUI
 import Shared
+import UniformTypeIdentifiers
 import WebKit
 
 @MainActor
@@ -234,6 +236,7 @@ final class FloorpNoteSaveCoordinator {
         contentFormat: FloorpNoteContentFormat
     ) async throws -> Bool {
         while true {
+            try Task.checkCancellation()
             guard draft.content == expectedContent,
                   draft.contentFormat == expectedContentFormat else {
                 return false
@@ -243,6 +246,7 @@ final class FloorpNoteSaveCoordinator {
             candidate.content = content
             candidate.contentFormat = contentFormat
             try await persistence.preflight(candidate)
+            try Task.checkCancellation()
             guard draft.content == expectedContent,
                   draft.contentFormat == expectedContentFormat else {
                 return false
@@ -492,8 +496,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private var queuedRichCommands = [FloorpRichTextCommand]()
     private var isProcessingRichUpdates = false
     private var isRichCommandInFlight = false
+    private var richCommandQuiescenceWaiters = [CheckedContinuation<Void, Never>]()
     private var richUpdateDrainTask: Task<Void, Never>?
     private var richAuthoritativeFlushTask: Task<Void, Error>?
+    private var plainToRichConversionTask: Task<Void, Never>?
     private var richEditingLockCount = 0
     private var latestRichEditorState: FloorpRichTextEditorState?
     private var lastRichUpdateFailure: Error?
@@ -503,6 +509,8 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private let backgroundSaveLease = FloorpBackgroundSaveLease()
     private let shouldFocusTitleOnFirstAppearance: Bool
     private var didApplyInitialFocus = false
+    private var isClosing = false
+    private var isEditorSessionTerminated = false
 
     var currentRichTextSession: FloorpRichTextEditorSessionCursor? { richSession }
     var currentRichTextRecoveryDraft: FloorpRichTextRecoveryDraft? { richRecoveryDraft }
@@ -901,12 +909,14 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         savedStatusResetTask?.cancel()
         richUpdateDrainTask?.cancel()
         richAuthoritativeFlushTask?.cancel()
+        plainToRichConversionTask?.cancel()
         notificationCenter.removeObserver(self)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if isBeingDismissed || navigationController?.isBeingDismissed == true {
+            terminateEditorSession()
             endBackgroundSaveTask()
         }
     }
@@ -969,6 +979,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @objc private func titleChanged() {
+        guard !isClosing, !isEditorSessionTerminated else { return }
         if saveCoordinator.updateTitle(titleField.text ?? "") {
             draftDidChange()
         }
@@ -993,6 +1004,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     /// keeps a failed first save pending so it can be retried before dismissal.
     @discardableResult
     func saveForExplicitRequest() async -> Bool {
+        guard !isClosing, !isEditorSessionTerminated else { return false }
         autosaveTask?.cancel()
         saveCoordinator.requestExplicitSave()
         setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
@@ -1005,15 +1017,28 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @objc private func closeTapped() {
-        Task { @MainActor in
-            autosaveTask?.cancel()
-            let outcome = await saveLatestDraft()
-            if case .failed(let failure) = outcome {
-                presentSaveFailure(failure)
-                return
-            }
-            dismiss(animated: true)
+        Task { @MainActor [weak self] in
+            _ = await self?.closeEditor(animated: true)
         }
+    }
+
+    @discardableResult
+    private func closeEditor(animated: Bool) async -> Bool {
+        guard !isClosing, !isEditorSessionTerminated else { return false }
+        isClosing = true
+        plainToRichConversionTask?.cancel()
+        autosaveTask?.cancel()
+        setReloadInteractionEnabled(false, updatesRichEditor: false)
+        let outcome = await saveLatestDraft()
+        if case .failed(let failure) = outcome {
+            isClosing = false
+            setReloadInteractionEnabled(true)
+            presentSaveFailure(failure)
+            return false
+        }
+        terminateEditorSession()
+        dismiss(animated: animated)
+        return true
     }
 
     @objc private func applicationWillResignActive() {
@@ -1027,6 +1052,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func draftDidChange() {
+        guard !isClosing, !isEditorSessionTerminated else { return }
         setInteractiveDismissalBlocked(true)
         scheduleAutosave()
     }
@@ -1046,6 +1072,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     @discardableResult
     func saveLatestDraft() async -> FloorpNoteSaveCoordinator.SaveOutcome {
+        guard !isEditorSessionTerminated else { return .noChanges }
         let locksRichEditing = editorMode == .richText || richRecoveryDraft != nil
         if locksRichEditing { lockRichEditing() }
         defer {
@@ -1061,6 +1088,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             updateSaveState(.failed)
             return .failed(failure)
         }
+        guard !isEditorSessionTerminated else { return .noChanges }
         guard saveCoordinator.hasUnsavedChanges else { return .noChanges }
         updateSaveState(.saving)
         let outcome = await saveCoordinator.saveLatest()
@@ -1079,12 +1107,15 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private func lockRichEditing() {
         richEditingLockCount += 1
         guard richEditingLockCount == 1 else { return }
-        setReloadInteractionEnabled(false)
+        // Native controls are locked immediately, but commands accepted just
+        // before the lock must finish against an editable DOM before flush.
+        setReloadInteractionEnabled(false, updatesRichEditor: false)
     }
 
     private func unlockRichEditing() {
         richEditingLockCount = max(0, richEditingLockCount - 1)
         guard richEditingLockCount == 0 else { return }
+        guard !isClosing, !isEditorSessionTerminated else { return }
         setReloadInteractionEnabled(true)
     }
 
@@ -1262,10 +1293,15 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         }
     }
 
-    private func setReloadInteractionEnabled(_ isEnabled: Bool) {
+    private func setReloadInteractionEnabled(
+        _ isEnabled: Bool,
+        updatesRichEditor: Bool = true
+    ) {
         titleField.isEnabled = isEnabled
         textView.isEditable = isEnabled && editorMode == .plainText
-        richEditorView.setEditable(isEnabled && editorMode == .richText)
+        if updatesRichEditor {
+            richEditorView.setEditable(isEnabled && editorMode == .richText)
+        }
         richToolbarButtons.forEach { $0.isEnabled = isEnabled }
         if isEnabled {
             if let latestRichEditorState {
@@ -1345,6 +1381,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         queuedRichStates.removeAll()
         queuedRichCommands.removeAll()
         isRichCommandInFlight = false
+        resumeRichCommandQuiescenceWaitersIfNeeded()
         latestRichEditorState = nil
         richDocument = document
         richSession = session
@@ -1354,6 +1391,26 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 #if TESTING
     func saveRecoveryDraftAsCopyForTesting() async -> Bool {
         await saveCurrentDraftAsCopyNow()
+    }
+
+    func closeForTesting() async -> Bool {
+        await closeEditor(animated: false)
+    }
+
+    var hasTerminatedEditorSessionForTesting: Bool {
+        isEditorSessionTerminated
+    }
+
+    var pendingRichCommandCountForTesting: Int {
+        queuedRichCommands.count + (isRichCommandInFlight ? 1 : 0)
+    }
+
+    var hasPendingPlainToRichConversionForTesting: Bool {
+        plainToRichConversionTask != nil
+    }
+
+    var currentDraftForTesting: FloorpNote {
+        saveCoordinator.draft
     }
 #endif
 
@@ -1374,7 +1431,22 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private func dismissDiscardingChanges() {
         autosaveTask?.cancel()
         setInteractiveDismissalBlocked(false)
+        terminateEditorSession()
         navigationController?.dismiss(animated: true)
+    }
+
+    private func terminateEditorSession() {
+        guard !isEditorSessionTerminated else { return }
+        isEditorSessionTerminated = true
+        autosaveTask?.cancel()
+        plainToRichConversionTask?.cancel()
+        richUpdateDrainTask?.cancel()
+        richAuthoritativeFlushTask?.cancel()
+        queuedRichUpdates.removeAll()
+        queuedRichStates.removeAll()
+        queuedRichCommands.removeAll()
+        isRichCommandInFlight = false
+        resumeRichCommandQuiescenceWaitersIfNeeded()
     }
 
     private func configureContentEditor() {
@@ -1406,6 +1478,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         queuedRichStates.removeAll()
         queuedRichCommands.removeAll()
         isRichCommandInFlight = false
+        resumeRichCommandQuiescenceWaitersIfNeeded()
         latestRichEditorState = nil
         richRecoveryDraft = nil
         lastRichUpdateFailure = nil
@@ -1459,60 +1532,85 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @objc private func enableRichTextTapped() {
-        guard editorMode == .plainText else { return }
+        guard editorMode == .plainText,
+              plainToRichConversionTask == nil,
+              !isClosing,
+              !isEditorSessionTerminated else {
+            return
+        }
         view.endEditing(true)
         enableRichTextButton.isEnabled = false
         textView.isEditable = false
+        setInteractiveDismissalBlocked(true)
         updateSaveState(.saving)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
+        plainToRichConversionTask = Task { @MainActor [weak self] in
+            await self?.performPlainToRichConversion()
+        }
+    }
+
+    private func performPlainToRichConversion() async {
+        defer {
+            plainToRichConversionTask = nil
+            if !isClosing, !isEditorSessionTerminated {
                 enableRichTextButton.isEnabled = true
                 if editorMode == .plainText {
                     textView.isEditable = true
                 }
+                setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
             }
-            do {
-                while editorMode == .plainText {
-                    let expectedContent = saveCoordinator.draft.content
-                    let expectedFormat = saveCoordinator.draft.contentFormat
-                    let document = try FloorpRichTextCodec.document(fromPlainText: expectedContent)
-                    let source = try FloorpRichTextCodec.encode(document)
-                    let didReplace = try await saveCoordinator.preflightAndReplaceContent(
-                        expectedContent: expectedContent,
-                        expectedContentFormat: expectedFormat,
-                        content: source,
-                        contentFormat: .automatic
-                    )
-                    guard didReplace else { continue }
-                    richDocument = document
-                    richSession = try FloorpRichTextEditorSessionCursor(
-                        noteID: saveCoordinator.draft.id,
-                        documentID: UUID().uuidString,
-                        generation: 0,
-                        revision: 0
-                    )
-                    editorMode = .richText
-                    draftDidChange()
-                    configureContentEditor()
-                    updateSaveState(.idle)
-                    UIAccessibility.post(notification: .layoutChanged, argument: richEditorView)
-                    return
-                }
-            } catch {
-                presentPreflightFailure(error)
+        }
+        do {
+            while editorMode == .plainText {
+                try Task.checkCancellation()
+                let expectedContent = saveCoordinator.draft.content
+                let expectedFormat = saveCoordinator.draft.contentFormat
+                let document = try FloorpRichTextCodec.document(fromPlainText: expectedContent)
+                let source = try FloorpRichTextCodec.encode(document)
+                let didReplace = try await saveCoordinator.preflightAndReplaceContent(
+                    expectedContent: expectedContent,
+                    expectedContentFormat: expectedFormat,
+                    content: source,
+                    contentFormat: .automatic
+                )
+                try Task.checkCancellation()
+                guard !isClosing, !isEditorSessionTerminated else { return }
+                guard didReplace else { continue }
+                richDocument = document
+                richSession = try FloorpRichTextEditorSessionCursor(
+                    noteID: saveCoordinator.draft.id,
+                    documentID: UUID().uuidString,
+                    generation: 0,
+                    revision: 0
+                )
+                editorMode = .richText
+                draftDidChange()
+                configureContentEditor()
+                updateSaveState(.idle)
+                UIAccessibility.post(notification: .layoutChanged, argument: richEditorView)
+                return
             }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !isClosing, !isEditorSessionTerminated else { return }
+            presentPreflightFailure(error)
         }
     }
 
     private func enqueueRichCommand(_ command: FloorpRichTextCommand) {
-        guard editorMode == .richText else { return }
+        guard editorMode == .richText,
+              richEditingLockCount == 0,
+              !isClosing,
+              !isEditorSessionTerminated else {
+            return
+        }
         queuedRichCommands.append(command)
         sendNextRichCommandIfPossible()
     }
 
     private func sendNextRichCommandIfPossible() {
-        guard !isRichCommandInFlight,
+        guard !isEditorSessionTerminated,
+              !isRichCommandInFlight,
               !isProcessingRichUpdates,
               queuedRichUpdates.isEmpty,
               let document = richDocument,
@@ -1528,13 +1626,22 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
                 session: session
             )
             isRichCommandInFlight = true
-            richEditorView.send(envelope) { [weak self] wasAccepted in
-                guard let self, !wasAccepted else { return }
+            richEditorView.send(envelope) { [weak self] update in
+                guard let self else { return }
                 isRichCommandInFlight = false
+                guard let update else {
+                    sendNextRichCommandIfPossible()
+                    resumeRichCommandQuiescenceWaitersIfNeeded()
+                    return
+                }
+                enqueueRichUpdate(update)
                 sendNextRichCommandIfPossible()
+                resumeRichCommandQuiescenceWaitersIfNeeded()
             }
         } catch {
             isRichCommandInFlight = false
+            sendNextRichCommandIfPossible()
+            resumeRichCommandQuiescenceWaitersIfNeeded()
         }
     }
 
@@ -1549,7 +1656,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func processQueuedRichUpdates() {
-        guard richUpdateDrainTask == nil else { return }
+        guard !isEditorSessionTerminated, richUpdateDrainTask == nil else { return }
         isProcessingRichUpdates = true
         richUpdateDrainTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1560,6 +1667,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
                 processQueuedRichUpdates()
             } else {
                 sendNextRichCommandIfPossible()
+                resumeRichCommandQuiescenceWaitersIfNeeded()
             }
         }
     }
@@ -1588,10 +1696,13 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
                     source,
                     contentFormat: .automatic
                 )
-                guard richSession == session else { continue }
+                guard !Task.isCancelled,
+                      !isEditorSessionTerminated,
+                      richSession == session else {
+                    continue
+                }
                 richDocument = accepted.document
                 richSession = accepted.session
-                isRichCommandInFlight = false
                 clearRecoveryDraft(through: accepted.session)
                 if saveCoordinator.updateContent(source, contentFormat: .automatic) {
                     draftDidChange()
@@ -1606,7 +1717,8 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func enqueueRichUpdate(_ update: FloorpRichTextUpdateEnvelope) {
-        guard update.payload.isDirty,
+        guard !isEditorSessionTerminated,
+              update.payload.isDirty,
               let session = richSession,
               update.session.noteID == session.noteID,
               update.session.documentID == session.documentID,
@@ -1630,6 +1742,22 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         while let task = richUpdateDrainTask {
             await task.value
         }
+    }
+
+    private func waitForRichCommandsToQuiesce() async {
+        sendNextRichCommandIfPossible()
+        while !queuedRichCommands.isEmpty || isRichCommandInFlight {
+            await withCheckedContinuation { continuation in
+                richCommandQuiescenceWaiters.append(continuation)
+            }
+        }
+    }
+
+    private func resumeRichCommandQuiescenceWaitersIfNeeded() {
+        guard queuedRichCommands.isEmpty, !isRichCommandInFlight else { return }
+        let waiters = richCommandQuiescenceWaiters
+        richCommandQuiescenceWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 
     private func retainRecoveryDraft(_ envelope: FloorpRichTextUpdateEnvelope) {
@@ -1673,6 +1801,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         queuedRichStates.removeAll()
         queuedRichCommands.removeAll()
         isRichCommandInFlight = false
+        resumeRichCommandQuiescenceWaitersIfNeeded()
         guard let recovery = richRecoveryDraft,
               let document = try? FloorpRichTextCodec.decode(recovery.source),
               document.compatibility.isEditable,
@@ -1721,6 +1850,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func performRichEditorFlush() async throws {
+        await waitForRichCommandsToQuiesce()
         await waitForRichUpdateDrain()
         guard editorMode == .richText else {
             if lastRichUpdateFailure != nil || richRecoveryDraft != nil {
@@ -1758,6 +1888,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func authoritativeRichSourceForCopy() async throws -> String? {
+        await waitForRichCommandsToQuiesce()
         await waitForRichUpdateDrain()
         guard editorMode == .richText, let session = richSession else {
             return richRecoveryDraft?.source
@@ -1892,48 +2023,44 @@ extension FloorpNoteEditorViewController: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: true)
         guard let provider = results.first?.itemProvider,
-              provider.canLoadObject(ofClass: UIImage.self) else {
+              provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
             return
         }
-        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
-            guard let image = object as? UIImage else { return }
+        provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
+            guard let data else { return }
             Task { @MainActor [weak self] in
-                guard let self,
-                      let richImage = FloorpRichTextImageEncoder.encode(image) else {
-                    return
-                }
+                let richImage = await Task.detached(priority: .userInitiated) {
+                    FloorpRichTextImageEncoder.encode(data)
+                }.value
+                guard let self, let richImage else { return }
                 enqueueRichCommand(.insertImage(richImage))
             }
         }
     }
 }
 
-@MainActor
 enum FloorpRichTextImageEncoder {
-    static func encode(_ image: UIImage) -> FloorpRichTextImage? {
-        guard image.size.width > 0, image.size.height > 0 else { return nil }
+    static let maximumSourceBytes = 64 * 1_024 * 1_024
+
+    static func encode(_ data: Data) -> FloorpRichTextImage? {
+        guard !data.isEmpty,
+              data.count <= maximumSourceBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
         var maximumDimension: CGFloat = 1_600
         var quality: CGFloat = 0.82
 
         for _ in 0..<12 {
-            let scale = min(
-                1,
-                maximumDimension / max(image.size.width, image.size.height)
-            )
-            let size = CGSize(
-                width: max(1, floor(image.size.width * scale)),
-                height: max(1, floor(image.size.height * scale))
-            )
-            let renderer = UIGraphicsImageRenderer(size: size)
-            let normalized = renderer.image { _ in
-                image.draw(in: CGRect(origin: .zero, size: size))
+            guard let thumbnail = downsample(source, maximumDimension: maximumDimension),
+                  let jpeg = renderJPEG(thumbnail, quality: quality) else {
+                return nil
             }
-            guard let data = normalized.jpegData(compressionQuality: quality) else { return nil }
-            let source = "data:image/jpeg;base64," + data.base64EncodedString()
-            if FloorpRichTextImagePolicy.isSafePersistedSource(source) {
-                let width = Int(size.width.rounded())
+            let encodedSource = "data:image/jpeg;base64," + jpeg.base64EncodedString()
+            if FloorpRichTextImagePolicy.isSafePersistedSource(encodedSource) {
+                let width = thumbnail.width
                 return FloorpRichTextImage(
-                    source: source,
+                    source: encodedSource,
                     width: FloorpRichTextImagePolicy.allowedDisplayWidth.contains(width)
                         ? width
                         : nil
@@ -1946,6 +2073,30 @@ enum FloorpRichTextImageEncoder {
             }
         }
         return nil
+    }
+
+    private static func downsample(
+        _ source: CGImageSource,
+        maximumDimension: CGFloat
+    ) -> CGImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, Int(maximumDimension.rounded(.down))),
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    private static func renderJPEG(_ image: CGImage, quality: CGFloat) -> Data? {
+        let size = CGSize(width: image.width, height: image.height)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let normalized = renderer.image { _ in
+            UIImage(cgImage: image).draw(in: CGRect(origin: .zero, size: size))
+        }
+        return normalized.jpegData(compressionQuality: quality)
     }
 }
 
@@ -2071,24 +2222,48 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 
     func send(
         _ command: FloorpRichTextCommandEnvelope,
-        completion: @escaping @MainActor (Bool) -> Void
+        completion: @escaping @MainActor (FloorpRichTextUpdateEnvelope?) -> Void
     ) {
         guard let commandObject = jsonObject(command) else {
-            completion(false)
+            completion(nil)
             return
         }
+        Task { @MainActor [weak self] in
+            guard let self else {
+                completion(nil)
+                return
+            }
+            do {
+                try await waitUntilLoaded(expectedSession: command.session)
+            } catch {
+                completion(nil)
+                return
+            }
+            sendLoadedCommand(commandObject, completion: completion)
+        }
+    }
+
+    private func sendLoadedCommand(
+        _ commandObject: Any,
+        completion: @escaping @MainActor (FloorpRichTextUpdateEnvelope?) -> Void
+    ) {
         webView.callAsyncJavaScript(
             "return window.floorpApplyCommand(command);",
             arguments: ["command": commandObject],
             in: nil,
             in: .page
         ) { result in
-            switch result {
-            case .success(let value):
-                completion(value as? Bool == true)
-            case .failure:
-                completion(false)
+            guard case .success(let value) = result,
+                  JSONSerialization.isValidJSONObject(value),
+                  let data = try? JSONSerialization.data(withJSONObject: value),
+                  let envelope = try? JSONDecoder().decode(
+                    FloorpRichTextUpdateEnvelope.self,
+                    from: data
+                  ) else {
+                completion(nil)
+                return
             }
+            completion(envelope)
         }
     }
 
@@ -2372,6 +2547,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         let suppressUpdates = false;
         let dirty = false;
         let savedRange = null;
+        let savedTextSelection = null;
 
         const clone = (value) => JSON.parse(JSON.stringify(value));
         const withAttrs = (element, attrs) => {
@@ -2505,7 +2681,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
           }
           if (tag === 'hr') return [{ type: 'horizontalRule' }];
           if (tag === 'img') {
-            const attrs = { src: node.src };
+            const attrs = { src: node.getAttribute('src') || '' };
             if (node.hasAttribute('alt')) attrs.alt = node.alt;
             if (node.hasAttribute('title')) attrs.title = node.title;
             if (node.hasAttribute('width')) {
@@ -2556,11 +2732,62 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
           const element = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentElement : ancestor;
           return element === editor || editor.contains(element);
         };
+        const textOffsetAt = (container, offset) => {
+          const probe = document.createRange();
+          probe.selectNodeContents(editor);
+          try {
+            probe.setEnd(container, offset);
+          } catch (_) {
+            return null;
+          }
+          return probe.cloneContents().textContent.length;
+        };
+        const textSelectionForRange = (range) => {
+          if (!rangeBelongsToEditor(range)) return null;
+          const start = textOffsetAt(range.startContainer, range.startOffset);
+          const end = textOffsetAt(range.endContainer, range.endOffset);
+          return start === null || end === null ? null : { start, end };
+        };
+        const pointAtTextOffset = (requestedOffset) => {
+          let offset = Math.max(0, requestedOffset);
+          const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+          let lastText = null;
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            lastText = node;
+            if (offset <= node.data.length) return { node, offset };
+            offset -= node.data.length;
+          }
+          if (lastText) return { node: lastText, offset: lastText.data.length };
+          return { node: editor, offset: editor.childNodes.length };
+        };
+        const rangeForTextSelection = (bookmark) => {
+          if (!bookmark) return null;
+          const start = pointAtTextOffset(bookmark.start);
+          const end = pointAtTextOffset(bookmark.end);
+          const range = document.createRange();
+          try {
+            range.setStart(start.node, start.offset);
+            range.setEnd(end.node, end.offset);
+          } catch (_) {
+            return null;
+          }
+          return range;
+        };
         const rememberSelection = () => {
           const selection = document.getSelection();
-          if (!selection?.rangeCount) return;
+          if (!selection?.rangeCount) {
+            savedRange = null;
+            savedTextSelection = null;
+            return;
+          }
           const range = selection.getRangeAt(0);
-          if (rangeBelongsToEditor(range)) savedRange = range.cloneRange();
+          if (!rangeBelongsToEditor(range)) {
+            savedRange = null;
+            savedTextSelection = null;
+            return;
+          }
+          savedRange = range.cloneRange();
+          savedTextSelection = textSelectionForRange(range);
         };
         const insertionRange = () => {
           const selection = document.getSelection();
@@ -2569,6 +2796,19 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
             if (rangeBelongsToEditor(active)) return active.cloneRange();
           }
           return rangeBelongsToEditor(savedRange) ? savedRange.cloneRange() : null;
+        };
+        const restoreEditorSelection = () => {
+          const rememberedTextRange = savedTextSelection?.start !== savedTextSelection?.end
+            ? rangeForTextSelection(savedTextSelection)
+            : null;
+          const range = rememberedTextRange || insertionRange();
+          if (!range) return null;
+          const selection = document.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          savedRange = range.cloneRange();
+          savedTextSelection = textSelectionForRange(range);
+          return range;
         };
         const topLevelChild = (node) => {
           let current = node?.nodeType === Node.TEXT_NODE ? node.parentNode : node;
@@ -2604,6 +2844,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
           selection.removeAllRanges();
           selection.addRange(nextRange);
           savedRange = nextRange.cloneRange();
+          savedTextSelection = textSelectionForRange(nextRange);
           return true;
         };
         const nearestBlock = () => {
@@ -2644,10 +2885,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
           dirty = true;
           session.revision += 1;
           const source = JSON.stringify(currentDocument());
-          window.webkit.messageHandlers.floorpRichTextUpdate.postMessage(
-            envelope({ source, isDirty: true })
-          );
+          const update = envelope({ source, isDirty: true });
+          window.webkit.messageHandlers.floorpRichTextUpdate.postMessage(update);
           emitState();
+          return update;
         };
 
         const matchesExpectedSession = (expected) =>
@@ -2662,9 +2903,15 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
           session = clone(nextSession);
           dirty = Boolean(isDirty);
           savedRange = null;
+          savedTextSelection = null;
           editor.setAttribute('aria-label', strings?.label || '');
           editor.dataset.placeholder = strings?.placeholder || '';
           editor.replaceChildren(...(root.content || [{ type: 'paragraph' }]).map(renderNode));
+          const initialRange = document.createRange();
+          initialRange.selectNodeContents(editor);
+          initialRange.collapse(false);
+          savedRange = initialRange;
+          savedTextSelection = textSelectionForRange(initialRange);
           suppressUpdates = false;
           emitState();
           return true;
@@ -2690,46 +2937,67 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
               incoming.generation !== session.generation || incoming.revision !== session.revision) return false;
           const planned = message.payload;
           const command = planned.command;
-          if (planned.exclusiveMarkToUnset) {
-            const unset = planned.exclusiveMarkToUnset === 'strike' ? 'strikeThrough' : planned.exclusiveMarkToUnset;
-            if (document.queryCommandState(unset)) document.execCommand(unset, false);
-          }
           let applied = true;
-          switch (command.kind) {
-            case 'undo': applied = document.execCommand('undo'); break;
-            case 'redo': applied = document.execCommand('redo'); break;
-            case 'setParagraph': applied = document.execCommand('formatBlock', false, 'p'); break;
-            case 'toggleHeading': {
-              const block = nearestBlock();
-              const activeTag = block?.tagName?.toLowerCase();
-              const target = activeTag === `h${command.level}` ? 'p' : `h${command.level}`;
-              applied = document.execCommand('formatBlock', false, target);
-              break;
-            }
-            case 'toggleMark':
-              applied = document.execCommand(
-                command.mark === 'strike' ? 'strikeThrough' : command.mark,
-                false
-              );
-              break;
-            case 'toggleList':
-              applied = document.execCommand(
-                command.listKind === 'ordered' ? 'insertOrderedList' : 'insertUnorderedList'
-              );
-              break;
-            case 'setAlignment':
-              applied = document.execCommand(
-                `justify${command.alignment[0].toUpperCase()}${command.alignment.slice(1)}`
-              );
-              break;
-            case 'insertImage':
-              applied = insertImageAtSelection(command.image);
-              break;
-            default: applied = false;
+          const preservesSelection = !['undo', 'redo', 'insertImage'].includes(command.kind);
+          const commandRange = preservesSelection ? restoreEditorSelection() : null;
+          const commandSelection = textSelectionForRange(commandRange);
+          if (preservesSelection && !commandRange) {
+            return false;
           }
+          suppressUpdates = true;
+          try {
+            if (planned.exclusiveMarkToUnset) {
+              const unset = planned.exclusiveMarkToUnset === 'strike'
+                ? 'strikeThrough'
+                : planned.exclusiveMarkToUnset;
+              if (document.queryCommandState(unset)) document.execCommand(unset, false);
+            }
+            switch (command.kind) {
+              case 'undo': applied = document.execCommand('undo'); break;
+              case 'redo': applied = document.execCommand('redo'); break;
+              case 'setParagraph': applied = document.execCommand('formatBlock', false, 'p'); break;
+              case 'toggleHeading': {
+                const block = nearestBlock();
+                const activeTag = block?.tagName?.toLowerCase();
+                const target = activeTag === `h${command.level}` ? 'p' : `h${command.level}`;
+                applied = document.execCommand('formatBlock', false, target);
+                break;
+              }
+              case 'toggleMark':
+                applied = document.execCommand(
+                  command.mark === 'strike' ? 'strikeThrough' : command.mark,
+                  false
+                );
+                break;
+              case 'toggleList':
+                applied = document.execCommand(
+                  command.listKind === 'ordered' ? 'insertOrderedList' : 'insertUnorderedList'
+                );
+                break;
+              case 'setAlignment':
+                applied = document.execCommand(
+                  `justify${command.alignment[0].toUpperCase()}${command.alignment.slice(1)}`
+                );
+                break;
+              case 'insertImage':
+                applied = insertImageAtSelection(command.image);
+                break;
+              default: applied = false;
+            }
+          } catch (_) {
+            applied = false;
+          }
+          suppressUpdates = false;
           if (!applied) return false;
-          emitUpdate();
-          return true;
+          const restoredRange = rangeForTextSelection(commandSelection);
+          if (restoredRange && rangeBelongsToEditor(restoredRange)) {
+            const selection = document.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(restoredRange);
+            savedRange = restoredRange.cloneRange();
+            savedTextSelection = textSelectionForRange(restoredRange);
+          }
+          return emitUpdate();
         };
 
         editor.addEventListener('input', emitUpdate);
