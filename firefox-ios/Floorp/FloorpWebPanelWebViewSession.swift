@@ -61,6 +61,10 @@ protocol FloorpWebPanelWebViewRuntime: AnyObject {
     func goForward()
     func reload()
     func stopLoading()
+    func setMediaPlaybackSuppressed(
+        _ isSuppressed: Bool,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    )
     func invalidate()
 }
 
@@ -96,6 +100,8 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
     var stateDidChange: (@MainActor () -> Void)?
     private var tabWebView: TabWebView?
     private var observations = [NSKeyValueObservation]()
+    private var isMediaPlaybackSuppressed = false
+    private var mediaPlaybackTransitionTask: Task<Void, Never>?
 
     var contentView: UIView? { tabWebView }
     var webView: WKWebView? { tabWebView }
@@ -154,8 +160,61 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
         tabWebView?.stopLoading()
     }
 
+    func setMediaPlaybackSuppressed(
+        _ isSuppressed: Bool,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        guard isMediaPlaybackSuppressed != isSuppressed else {
+            completion(.success(()))
+            return
+        }
+        guard let webView = tabWebView else {
+            completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
+            return
+        }
+
+        isMediaPlaybackSuppressed = isSuppressed
+        let previousTransition = mediaPlaybackTransitionTask
+        mediaPlaybackTransitionTask = Task { @MainActor [weak self, weak webView] in
+            await previousTransition?.value
+            guard !Task.isCancelled,
+                  let self,
+                  let webView,
+                  self.tabWebView === webView else {
+                completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
+                return
+            }
+
+            await webView.setAllMediaPlaybackSuspended(isSuppressed)
+            guard !Task.isCancelled, self.tabWebView === webView else {
+                completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
+                return
+            }
+
+            guard isSuppressed else {
+                completion(.success(()))
+                return
+            }
+
+            // Native suspension remains authoritative. This one-shot pause is
+            // best effort and deliberately avoids persistent DOM mutations.
+            do {
+                _ = try await webView.evaluateJavaScript(
+                    FloorpWebPanelMediaPlaybackScript.suppress,
+                    in: nil,
+                    contentWorld: .defaultClient
+                )
+                completion(.success(()))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
     func invalidate() {
         stateDidChange = nil
+        mediaPlaybackTransitionTask?.cancel()
+        mediaPlaybackTransitionTask = nil
         observations.forEach { $0.invalidate() }
         observations.removeAll()
         tabWebView?.stopLoading()
@@ -211,6 +270,21 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
     }
 }
 
+private enum FloorpWebPanelMediaPlaybackError: Error {
+    case runtimeUnavailable
+}
+
+private enum FloorpWebPanelMediaPlaybackScript {
+    static let suppress = #"""
+    (() => {
+      for (const element of document.querySelectorAll("audio, video")) {
+        element.pause();
+      }
+      return true;
+    })();
+    """#
+}
+
 @MainActor
 final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     let key: FloorpWebPanelSessionKey
@@ -225,6 +299,9 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private var areContentRulesReady = false
     private var hasPendingHomeLoad = true
     private var isInvalidated = false
+    private var isVisible = true
+    private var isMediaPlaybackSuppressed = false
+    private(set) var isAudioMuted = false
 
     var contentView: UIView? {
         runtime?.contentView
@@ -315,6 +392,18 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         navigationExecutor?.openInMainBrowserIfSafe(currentURL)
     }
 
+    func setVisible(_ isVisible: Bool) {
+        guard !isInvalidated, self.isVisible != isVisible else { return }
+        self.isVisible = isVisible
+        updateMediaPlaybackSuppression()
+    }
+
+    func setAudioMuted(_ isMuted: Bool) {
+        guard !isInvalidated, isAudioMuted != isMuted else { return }
+        isAudioMuted = isMuted
+        updateMediaPlaybackSuppression()
+    }
+
     func invalidate() {
         guard !isInvalidated else { return }
         isInvalidated = true
@@ -360,6 +449,13 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
     private func performHomeLoad() {
         runtime?.load(URLRequest(url: state.configuration.homeURL))
+    }
+
+    private func updateMediaPlaybackSuppression() {
+        let shouldSuppress = !isVisible || isAudioMuted
+        guard isMediaPlaybackSuppressed != shouldSuppress else { return }
+        isMediaPlaybackSuppressed = shouldSuppress
+        runtime?.setMediaPlaybackSuppressed(shouldSuppress) { _ in }
     }
 
     private func synchronizeState() {

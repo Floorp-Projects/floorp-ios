@@ -70,6 +70,42 @@ final class FloorpWebPanelSessionStore {
     }
 
     @discardableResult
+    func hideSession(
+        _ session: any FloorpWebPanelSessionProtocol,
+        autoUnload: Bool
+    ) -> Bool {
+        let key = session.key
+        guard key.windowUUID == windowUUID,
+              let entry = entries[key],
+              entry.session === session else {
+            return false
+        }
+
+        session.setVisible(false)
+        if autoUnload {
+            removeSession(for: key)
+        }
+        return true
+    }
+
+    @discardableResult
+    func setAudioMuted(
+        _ isMuted: Bool,
+        for key: FloorpWebPanelSessionKey
+    ) -> Bool {
+        guard key.windowUUID == windowUUID, let entry = entries[key] else { return false }
+        entry.session.setAudioMuted(isMuted)
+        return true
+    }
+
+    @discardableResult
+    func unloadSession(for key: FloorpWebPanelSessionKey) -> Bool {
+        guard key.windowUUID == windowUUID, entries[key] != nil else { return false }
+        removeSession(for: key)
+        return true
+    }
+
+    @discardableResult
     func closePrivateSessions() -> Bool {
         let keys = entries.keys.filter(\.isPrivate)
         keys.forEach(removeSession)
@@ -139,7 +175,7 @@ final class FloorpWebPanelSessionStore {
     private func removeSession(for key: FloorpWebPanelSessionKey) {
         regularSessionLRU.removeAll { $0 == key }
         guard let entry = entries.removeValue(forKey: key) else { return }
-        entry.session.invalidate()
+        entry.session.unload()
     }
 
     private static func configuration(

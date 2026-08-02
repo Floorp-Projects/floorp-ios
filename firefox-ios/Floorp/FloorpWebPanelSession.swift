@@ -51,6 +51,7 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
     var state: FloorpWebPanelSessionState { get }
     var contentView: UIView? { get }
+    var isAudioMuted: Bool { get }
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration)
     @discardableResult
@@ -64,6 +65,9 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     func reload()
     func stopLoading()
     func openCurrentPageInMainBrowser()
+    func setVisible(_ isVisible: Bool)
+    func setAudioMuted(_ isMuted: Bool)
+    func unload()
     func invalidate()
 }
 
@@ -85,6 +89,9 @@ extension FloorpWebPanelSessionProtocol {
     func reload() {}
     func stopLoading() {}
     func openCurrentPageInMainBrowser() {}
+    func unload() {
+        invalidate()
+    }
 }
 
 @MainActor

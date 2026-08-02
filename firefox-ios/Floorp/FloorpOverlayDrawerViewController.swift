@@ -1563,7 +1563,10 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private func loadCurrentPanel() {
         panelLoadTask?.cancel()
         notesLoadGeneration = UUID()
-        detachWebPanelContent()
+        let keepsActiveWebPanelVisible = currentPanelType == .web
+            && activeWebPanelSession?.key.panelID == presentationState.selectedPanelId
+            && activeWebPanelSession?.key.isPrivate == isPrivateProvider()
+        detachWebPanelContent(applyHiddenLifecycle: !keepsActiveWebPanelVisible)
         endNotesReordering(reload: false)
         setWebPanelToolbarVisible(currentPanelType == .web)
         items = []
@@ -1629,6 +1632,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             }
 
             activeWebPanelSession = session
+            session.setVisible(true)
             contentView.removeFromSuperview()
             contentView.translatesAutoresizingMaskIntoConstraints = false
             webPanelContainerView.addSubview(contentView)
@@ -1664,12 +1668,22 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         renderWebPanelToolbarState(state)
     }
 
-    private func detachWebPanelContent() {
+    private func detachWebPanelContent(applyHiddenLifecycle: Bool = true) {
+        let session = activeWebPanelSession
         if let webPanelStateObserverID {
-            activeWebPanelSession?.removeStateObserver(webPanelStateObserverID)
+            session?.removeStateObserver(webPanelStateObserverID)
         }
         webPanelStateObserverID = nil
-        activeWebPanelSession?.contentView?.removeFromSuperview()
+        session?.contentView?.removeFromSuperview()
+        if applyHiddenLifecycle, let session {
+            let wasHandled = presentationState.webPanelSessionStore?.hideSession(
+                session,
+                autoUnload: panelManager.config.autoUnload
+            ) == true
+            if !wasHandled {
+                session.setVisible(false)
+            }
+        }
         activeWebPanelSession = nil
         webPanelContainerView.isHidden = true
         webPanelContainerView.accessibilityValue = nil

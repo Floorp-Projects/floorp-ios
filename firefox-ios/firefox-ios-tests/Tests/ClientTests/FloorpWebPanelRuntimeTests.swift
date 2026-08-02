@@ -71,6 +71,50 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         XCTAssertFalse(privateSession === otherWindow)
     }
 
+    func testMuteHideAndUnloadAPIsAreWindowScopedAndIdempotent() throws {
+        let firstWindow = WindowUUID()
+        let secondWindow = WindowUUID()
+        let firstFactory = MockFloorpWebPanelSessionFactory()
+        let secondFactory = MockFloorpWebPanelSessionFactory()
+        let firstStore = FloorpWebPanelSessionStore(
+            windowUUID: firstWindow,
+            factory: firstFactory
+        )
+        let secondStore = FloorpWebPanelSessionStore(
+            windowUUID: secondWindow,
+            factory: secondFactory
+        )
+        let panel = makePanel(id: "portal")
+        let first = try mockSession(from: firstStore.session(for: panel, isPrivate: false))
+        let second = try mockSession(from: secondStore.session(for: panel, isPrivate: false))
+
+        XCTAssertFalse(firstStore.setAudioMuted(true, for: second.key))
+        XCTAssertFalse(firstStore.unloadSession(for: second.key))
+        XCTAssertFalse(firstStore.hideSession(second, autoUnload: true))
+        XCTAssertFalse(second.isAudioMuted)
+        XCTAssertEqual(second.invalidationCount, 0)
+
+        XCTAssertTrue(firstStore.setAudioMuted(true, for: first.key))
+        XCTAssertTrue(firstStore.setAudioMuted(true, for: first.key))
+        XCTAssertTrue(first.isAudioMuted)
+        XCTAssertEqual(first.audioMuteChanges, [true])
+        XCTAssertTrue(firstStore.hideSession(first, autoUnload: false))
+        XCTAssertTrue(firstStore.hideSession(first, autoUnload: false))
+        XCTAssertEqual(first.visibilityChanges, [false])
+        XCTAssertEqual(first.invalidationCount, 0)
+
+        first.setVisible(true)
+        XCTAssertTrue(firstStore.hideSession(first, autoUnload: true))
+        XCTAssertFalse(firstStore.unloadSession(for: first.key))
+        XCTAssertEqual(first.invalidationCount, 1)
+        XCTAssertEqual(firstStore.cachedSessionCount, 0)
+        XCTAssertEqual(secondStore.cachedSessionCount, 1)
+
+        let replacement = try mockSession(from: firstStore.session(for: panel, isPrivate: false))
+        XCTAssertFalse(replacement === first)
+        XCTAssertNil(replacement.state.currentURL)
+    }
+
     func testRegularSessionsUseLeastRecentlyUsedEviction() throws {
         let factory = MockFloorpWebPanelSessionFactory()
         let store = FloorpWebPanelSessionStore(
@@ -587,6 +631,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(session.stateObserverCount, 0)
         XCTAssertNil(session.contentView?.superview)
         XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertEqual(session.visibilityChanges, [false])
     }
 
     func testWindowAssociationTeardownInvalidatesAndRemovesRuntimeState() throws {
@@ -635,12 +680,14 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(regularSession.stateObserverCount, 0)
         XCTAssertNil(regularSession.contentView?.superview)
         XCTAssertEqual(regularSession.invalidationCount, 0)
+        XCTAssertEqual(regularSession.visibilityChanges, [false])
 
         let reopenedRegularDrawer = fixture.makeDrawer(isPrivate: false)
         reopenedRegularDrawer.loadViewIfNeeded()
         XCTAssertEqual(fixture.factory.makeCallCount, 1)
         XCTAssertTrue(fixture.factory.sessions.first === regularSession)
         XCTAssertEqual(regularSession.stateObserverCount, 1)
+        XCTAssertEqual(regularSession.visibilityChanges, [false, true])
 
         reopenedRegularDrawer.viewDidDisappear(false)
         let privateDrawer = fixture.makeDrawer(isPrivate: true)
@@ -661,6 +708,54 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(fixture.factory.makeCallCount, 2)
         XCTAssertTrue(fixture.factory.sessions.last === privateSession)
         XCTAssertEqual(privateSession.invalidationCount, 0)
+    }
+
+    func testAutoUnloadRecreatesFreshSessionAfterPanelSwitchAndDrawerHide() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.manager.setAutoUnload(
+            true,
+            expectedRevision: FloorpOverlayDrawerConfigRevision(config: fixture.manager.config)
+        )
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let first = try XCTUnwrap(fixture.factory.sessions.first)
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        first.recordRuntimeState(currentURL: currentURL, pageTitle: "Current")
+        let builtInPanel = try XCTUnwrap(
+            fixture.manager.panels.first(where: { $0.type == .bookmarks })
+        )
+        let builtInButton = try XCTUnwrap(
+            findView(identifier: builtInPanel.id, in: drawer.view) as? UIButton
+        )
+
+        builtInButton.sendActions(for: .touchUpInside)
+
+        XCTAssertEqual(first.visibilityChanges, [false])
+        XCTAssertEqual(first.invalidationCount, 1)
+        XCTAssertEqual(fixture.presentationState.webPanelSessionStore?.cachedSessionCount, 0)
+
+        let webPanel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let webPanelButton = try XCTUnwrap(
+            findView(identifier: webPanel.id, in: drawer.view) as? UIButton
+        )
+        webPanelButton.sendActions(for: .touchUpInside)
+        let second = try XCTUnwrap(fixture.factory.sessions.last)
+
+        XCTAssertFalse(second === first)
+        XCTAssertNil(second.state.currentURL)
+        XCTAssertEqual(fixture.factory.makeCallCount, 2)
+
+        drawer.viewDidDisappear(false)
+        XCTAssertEqual(second.visibilityChanges, [false])
+        XCTAssertEqual(second.invalidationCount, 1)
+
+        let reopened = fixture.makeDrawer(isPrivate: false)
+        reopened.loadViewIfNeeded()
+        let third = try XCTUnwrap(fixture.factory.sessions.last)
+        XCTAssertFalse(third === second)
+        XCTAssertNil(third.state.currentURL)
+        XCTAssertEqual(fixture.factory.makeCallCount, 3)
     }
 
     func testWebPanelToolbarTracksStateAndDispatchesCommands() throws {
@@ -764,6 +859,19 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         drawer.view.layoutIfNeeded()
         XCTAssertTrue(toolbar.isHidden)
         XCTAssertEqual(toolbar.bounds.height, 0, accuracy: 0.5)
+        XCTAssertEqual(session.visibilityChanges, [false])
+        XCTAssertEqual(session.invalidationCount, 0)
+
+        let webPanel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let webPanelButton = try XCTUnwrap(
+            findView(identifier: webPanel.id, in: drawer.view) as? UIButton
+        )
+        webPanelButton.sendActions(for: .touchUpInside)
+
+        XCTAssertEqual(fixture.factory.makeCallCount, 1)
+        XCTAssertTrue(fixture.factory.sessions.first === session)
+        XCTAssertEqual(session.state.currentURL, currentURL)
+        XCTAssertEqual(session.visibilityChanges, [false, true])
     }
 
     func testOpenInMainBrowserDismissesDrawerAndPreservesSessionForReopen() async throws {
@@ -1000,8 +1108,12 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private(set) var reloadCallCount = 0
     private(set) var stopLoadingCallCount = 0
     private(set) var openInMainBrowserCallCount = 0
+    private(set) var visibilityChanges = [Bool]()
+    private(set) var audioMuteChanges = [Bool]()
+    private(set) var isAudioMuted = false
     private let hostedContentView = UIView()
     private var stateObservers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
+    private var isVisible = true
 
     var contentView: UIView? { hostedContentView }
     var stateObserverCount: Int { stateObservers.count }
@@ -1061,6 +1173,18 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
 
     func openCurrentPageInMainBrowser() {
         openInMainBrowserCallCount += 1
+    }
+
+    func setVisible(_ isVisible: Bool) {
+        guard self.isVisible != isVisible else { return }
+        self.isVisible = isVisible
+        visibilityChanges.append(isVisible)
+    }
+
+    func setAudioMuted(_ isMuted: Bool) {
+        guard isAudioMuted != isMuted else { return }
+        isAudioMuted = isMuted
+        audioMuteChanges.append(isMuted)
     }
 
     func recordRuntimeState(
