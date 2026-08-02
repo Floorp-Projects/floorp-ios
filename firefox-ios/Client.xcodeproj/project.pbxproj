@@ -1434,6 +1434,7 @@
 		CEC2F0AE2F98000100D67401 /* FloorpNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B082F98000100D67401 /* FloorpNotes.swift */; };
 		CEC2F0AF2F98000200D67401 /* FloorpNoteEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */; };
 		CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */; };
+		CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */; };
 		CEC2F0B12F98000400D67401 /* Floorp.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = CE903B0B2F98000400D67401 /* Floorp.xcstrings */; };
 		CEC2F0B22F98000500D67401 /* FloorpPanelRegistryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0C2F98000500D67401 /* FloorpPanelRegistryViewController.swift */; };
 		CEC2F0B32F98000600D67401 /* FloorpWebPanelSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0D2F98000600D67401 /* FloorpWebPanelSession.swift */; };
@@ -11100,6 +11101,7 @@
 		CE903B082F98000100D67401 /* FloorpNotes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotes.swift; sourceTree = "<group>"; };
 		CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNoteEditorViewController.swift; sourceTree = "<group>"; };
 		CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesTests.swift; sourceTree = "<group>"; };
+		CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanelPreferencesTests.swift; sourceTree = "<group>"; };
 		CE903B0B2F98000400D67401 /* Floorp.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Floorp.xcstrings; sourceTree = "<group>"; };
 		CE903B0C2F98000500D67401 /* FloorpPanelRegistryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanelRegistryViewController.swift; sourceTree = "<group>"; };
 		CE903B0D2F98000600D67401 /* FloorpWebPanelSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelSession.swift; sourceTree = "<group>"; };
@@ -17565,6 +17567,7 @@
 				CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */,
 				CE903B102F98000900D67401 /* FloorpWebPanelRuntimeTests.swift */,
 				CE903B142F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift */,
+				CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */,
 				EC405C123007DC820003DE07 /* WaybackTests */,
 				EECF6B623006864D006FD44E /* SwipeGestureFeatureFlagProviderTests.swift */,
 				C2F2C19A30044C8700F9B916 /* MockAdBlockerListFetcher.swift */,
@@ -20916,7 +20919,8 @@
 			files = (
 				CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */,
 				CEC2F0B62F98000900D67401 /* FloorpWebPanelRuntimeTests.swift in Sources */,
-				CEC2F0BA2F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift in Sources */,
+				CEC2F0BA2F98000D67401 /* FloorpWebPanelWebViewSessionTests.swift in Sources */,
+				CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */,
 				2151EF572F2AB94A007B67A6 /* BrowserViewControllerConstraintTests.swift in Sources */,
 				8C50DD752F56E1D00020E5C4 /* PreferredTranslationLanguagesManagerTests.swift in Sources */,
 				394615622FEC37FC003321D8 /* MockWebServer.swift in Sources */,

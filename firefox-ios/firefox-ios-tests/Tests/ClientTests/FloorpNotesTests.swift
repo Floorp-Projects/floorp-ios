@@ -1587,14 +1587,19 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
         XCTAssertEqual(migrated.panels.filter { $0.type == .notes }.count, 1)
         XCTAssertFalse(migrated.config.isEnabled)
         XCTAssertEqual(migrated.config.sidebarWidth, 61)
-        XCTAssertEqual(defaults.integer(forKey: "floorp.overlayDrawer.schemaVersion"), 2)
+        XCTAssertEqual(defaults.integer(forKey: "floorp.overlayDrawer.schemaVersion"), 3)
         let migratedConfigData = try XCTUnwrap(
             defaults.data(forKey: "floorp.overlayDrawer.config")
         )
         let migratedConfig = try XCTUnwrap(
             JSONSerialization.jsonObject(with: migratedConfigData) as? [String: Any]
         )
-        XCTAssertEqual(Set(migratedConfig.keys), ["isEnabled", "sidebarWidth"])
+        XCTAssertEqual(
+            Set(migratedConfig.keys),
+            ["isEnabled", "sidebarWidth", "autoUnload", "revision"]
+        )
+        XCTAssertEqual(migratedConfig["autoUnload"] as? Bool, false)
+        XCTAssertEqual((migratedConfig["revision"] as? NSNumber)?.uint64Value, 0)
 
         let restarted = FloorpPanelManager(defaults: defaults)
         XCTAssertEqual(restarted.panels.filter { $0.type == .notes }.count, 1)
@@ -1616,7 +1621,7 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
 
         let migrated = FloorpPanelManager(defaults: defaults)
         XCTAssertFalse(migrated.panels.contains(where: { $0.type == .notes }))
-        XCTAssertEqual(defaults.integer(forKey: "floorp.overlayDrawer.schemaVersion"), 2)
+        XCTAssertEqual(defaults.integer(forKey: "floorp.overlayDrawer.schemaVersion"), 3)
 
         let restarted = FloorpPanelManager(defaults: defaults)
         XCTAssertFalse(restarted.panels.contains(where: { $0.type == .notes }))
@@ -2067,7 +2072,8 @@ final class FloorpPanelManagerRegistryTests: XCTestCase {
                 .panelLimitReached(maximum: FloorpPanelManager.maximumPanelCount)
             )
         }
-        XCTAssertEqual(manager.panels, fullRegistry)
+        XCTAssertEqual(manager.panels.map(\.id), fullRegistry.map(\.id))
+        XCTAssertTrue(manager.panels.allSatisfy { $0.webPreferences == FloorpWebPanelPreferences() })
         XCTAssertEqual(notificationCenter.postCallCount, 0)
     }
 

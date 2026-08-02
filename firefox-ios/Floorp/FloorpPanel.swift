@@ -58,6 +58,130 @@ extension FloorpPanelType {
     }
 }
 
+// MARK: - Web Panel Preferences
+
+enum FloorpWebPanelContentMode: String, Codable, Equatable, Sendable {
+    case mobile
+    case desktop
+}
+
+enum FloorpWebPanelZoomChange: Equatable, Sendable {
+    case increase
+    case decrease
+    case reset
+}
+
+enum FloorpWebPanelZoomLevel: Int, Codable, CaseIterable, Equatable, Sendable {
+    case fiftyPercent = 50
+    case seventyFivePercent = 75
+    case ninetyPercent = 90
+    case oneHundredPercent = 100
+    case oneHundredTenPercent = 110
+    case oneHundredTwentyFivePercent = 125
+    case oneHundredFiftyPercent = 150
+    case oneHundredSeventyFivePercent = 175
+    case twoHundredPercent = 200
+    case twoHundredFiftyPercent = 250
+    case threeHundredPercent = 300
+
+    static let defaultLevel = FloorpWebPanelZoomLevel.oneHundredPercent
+
+    var scale: Double {
+        Double(rawValue) / 100
+    }
+
+    func applying(_ change: FloorpWebPanelZoomChange) -> FloorpWebPanelZoomLevel {
+        let levels = Self.allCases
+        switch change {
+        case .reset:
+            return Self.defaultLevel
+        case .increase:
+            guard let index = levels.firstIndex(of: self), index < levels.count - 1 else {
+                return self
+            }
+            return levels[index + 1]
+        case .decrease:
+            guard let index = levels.firstIndex(of: self), index > 0 else {
+                return self
+            }
+            return levels[index - 1]
+        }
+    }
+}
+
+struct FloorpWebPanelPreferencesRevision: Equatable, Sendable {
+    let panelID: String
+    let value: UInt64
+
+    init(panel: FloorpPanel) {
+        panelID = panel.id
+        value = panel.effectiveWebPreferences?.revision ?? 0
+    }
+}
+
+struct FloorpWebPanelPreferences: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = 1
+    static let defaultContentWidth = 400
+    static let minimumContentWidth = 360
+    static let maximumContentWidth = 480
+
+    let schemaVersion: Int
+    let revision: UInt64
+    let contentWidth: Int
+    let zoomLevel: FloorpWebPanelZoomLevel
+    let contentMode: FloorpWebPanelContentMode
+
+    init(
+        revision: UInt64 = 0,
+        contentWidth: Int = Self.defaultContentWidth,
+        zoomLevel: FloorpWebPanelZoomLevel = .defaultLevel,
+        contentMode: FloorpWebPanelContentMode = .mobile
+    ) {
+        self.schemaVersion = Self.currentSchemaVersion
+        self.revision = revision
+        self.contentWidth = Self.clampedContentWidth(contentWidth)
+        self.zoomLevel = zoomLevel
+        self.contentMode = contentMode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case revision
+        case contentWidth
+        case zoomLevel
+        case contentMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let storedSchemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+        guard (0...Self.currentSchemaVersion).contains(storedSchemaVersion) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription: "Unsupported Floorp Web panel preferences schema"
+            )
+        }
+        schemaVersion = Self.currentSchemaVersion
+        revision = try container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0
+        contentWidth = Self.clampedContentWidth(
+            try container.decodeIfPresent(Int.self, forKey: .contentWidth) ?? Self.defaultContentWidth
+        )
+        zoomLevel = try container.decodeIfPresent(
+            FloorpWebPanelZoomLevel.self,
+            forKey: .zoomLevel
+        ) ?? .defaultLevel
+        contentMode = try container.decodeIfPresent(
+            FloorpWebPanelContentMode.self,
+            forKey: .contentMode
+        ) ?? .mobile
+    }
+
+    static func clampedContentWidth(_ width: Int) -> Int {
+        min(max(width, minimumContentWidth), maximumContentWidth)
+    }
+}
+
 // MARK: - Panel Model
 
 /// A single panel configuration in the overlay drawer.
@@ -91,6 +215,9 @@ struct FloorpPanel: Codable, Identifiable, Equatable {
 
     /// Sort order index (0 = first/top).
     var sortOrder: Int
+
+    /// Persistent behavior owned by custom Web panels.
+    var webPreferences: FloorpWebPanelPreferences?
 
     // MARK: - Factory Methods
 
@@ -156,6 +283,11 @@ struct FloorpPanel: Codable, Identifiable, Equatable {
         }
         guard type == .web else { return nil }
         return FloorpWebPanelValidator.safeDisplayTitle(title)
+    }
+
+    var effectiveWebPreferences: FloorpWebPanelPreferences? {
+        guard type == .web, !Self.isReservedIdentifier(id) else { return nil }
+        return webPreferences ?? FloorpWebPanelPreferences()
     }
 }
 
@@ -491,19 +623,44 @@ struct FloorpOverlayDrawerConfig: Codable, Equatable {
     /// Desktop: 42px (compact), 60px (touch). iOS uses 50px.
     var sidebarWidth = 50
 
-    init(isEnabled: Bool = true, sidebarWidth: Int = 50) {
+    /// Whether hiding the selected Web panel should release its session.
+    var autoUnload = false
+
+    /// Revision used by profile-wide configuration edits.
+    var revision: UInt64 = 0
+
+    init(
+        isEnabled: Bool = true,
+        sidebarWidth: Int = 50,
+        autoUnload: Bool = false,
+        revision: UInt64 = 0
+    ) {
         self.isEnabled = isEnabled
         self.sidebarWidth = sidebarWidth
+        self.autoUnload = autoUnload
+        self.revision = revision
     }
 
     private enum CodingKeys: String, CodingKey {
         case isEnabled
         case sidebarWidth
+        case autoUnload
+        case revision
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         sidebarWidth = try container.decodeIfPresent(Int.self, forKey: .sidebarWidth) ?? 50
+        autoUnload = try container.decodeIfPresent(Bool.self, forKey: .autoUnload) ?? false
+        revision = try container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0
+    }
+}
+
+struct FloorpOverlayDrawerConfigRevision: Equatable, Sendable {
+    let value: UInt64
+
+    init(config: FloorpOverlayDrawerConfig) {
+        value = config.revision
     }
 }
