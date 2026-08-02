@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import XCTest
+import WebKit
 @testable import WebEngine
 
 @MainActor
@@ -68,6 +69,42 @@ final class WKPrivateBrowsingSessionCoordinatorTests: XCTestCase {
 
         lease = nil
 
+        XCTAssertFalse(originalStore === subject.websiteDataStore)
+        XCTAssertEqual(subject.activeLeaseCount, 0)
+    }
+
+    func testExplicitInvalidationThenDeinitDoesNotRotateAgain() {
+        let subject = WKPrivateBrowsingSessionCoordinator()
+        var lease: WKPrivateBrowsingSessionLease? = subject.acquireLease()
+
+        lease?.invalidate()
+        let replacementStore = subject.websiteDataStore
+        lease = nil
+
+        XCTAssertTrue(replacementStore === subject.websiteDataStore)
+        XCTAssertEqual(subject.activeLeaseCount, 0)
+    }
+
+    func testLeaseDeinitOffMainActorEventuallyReleasesOwner() async {
+        let storeRotated = expectation(description: "Private data store rotated")
+        var dataStoreCreationCount = 0
+        let subject = WKPrivateBrowsingSessionCoordinator {
+            dataStoreCreationCount += 1
+            if dataStoreCreationCount == 2 {
+                storeRotated.fulfill()
+            }
+            return WKWebsiteDataStore.nonPersistent()
+        }
+        let originalStore = subject.websiteDataStore
+
+        await Task.detached {
+            let lease = await MainActor.run {
+                subject.acquireLease()
+            }
+            withExtendedLifetime(lease) {}
+        }.value
+
+        await fulfillment(of: [storeRotated], timeout: 1)
         XCTAssertFalse(originalStore === subject.websiteDataStore)
         XCTAssertEqual(subject.activeLeaseCount, 0)
     }

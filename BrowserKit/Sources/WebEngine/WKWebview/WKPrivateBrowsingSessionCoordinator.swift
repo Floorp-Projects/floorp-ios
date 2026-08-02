@@ -70,28 +70,52 @@ public final class WKPrivateBrowsingSessionCoordinator {
 /// An idempotent ownership token for one private browsing surface.
 @MainActor
 public final class WKPrivateBrowsingSessionLease {
-    private let coordinator: WKPrivateBrowsingSessionCoordinator
-    private let identifier: UUID
-    private let generation: UInt64
-    private var isInvalidated = false
+    private let releaseState: PrivateBrowsingLeaseReleaseState
 
     fileprivate init(
         coordinator: WKPrivateBrowsingSessionCoordinator,
         identifier: UUID,
         generation: UInt64
     ) {
-        self.coordinator = coordinator
-        self.identifier = identifier
-        self.generation = generation
+        self.releaseState = PrivateBrowsingLeaseReleaseState {
+            coordinator.releaseLease(identifier: identifier, generation: generation)
+        }
     }
 
     public func invalidate() {
-        guard !isInvalidated else { return }
-        isInvalidated = true
-        coordinator.releaseLease(identifier: identifier, generation: generation)
+        releaseState.takeRelease()?()
     }
 
-    isolated deinit {
-        invalidate()
+    deinit {
+        guard let release = releaseState.takeRelease() else { return }
+
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                release()
+            }
+        } else {
+            Task { @MainActor in
+                release()
+            }
+        }
+    }
+}
+
+private final class PrivateBrowsingLeaseReleaseState: @unchecked Sendable {
+    typealias Release = @MainActor @Sendable () -> Void
+
+    private let lock = NSLock()
+    private var release: Release?
+
+    init(release: @escaping Release) {
+        self.release = release
+    }
+
+    func takeRelease() -> Release? {
+        lock.lock()
+        defer { lock.unlock() }
+        let release = release
+        self.release = nil
+        return release
     }
 }
