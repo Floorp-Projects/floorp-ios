@@ -1446,6 +1446,101 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         XCTAssertEqual(textView.text, "Visible fallback")
     }
 
+    func testLateRichLoadRestartsAfterIdleInitialNavigationFailureAndCanSaveAndClose() async throws {
+        let note = FloorpNote(
+            id: "late-rich-load",
+            title: "Late navigation",
+            content: "Body after navigation failure",
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .plainText
+        )
+        let persistence = FloorpRichTextTestPersistence()
+        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        editor.loadViewIfNeeded()
+        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ) as? FloorpRichTextWebEditorView)
+        let enable = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.Editor.EnableRichText"
+        ) as? UIButton)
+        try await waitUntil { richView.isPageReadyForTesting }
+
+        richView.restartWithStalledInitialNavigationForTesting(
+            attempts: 1,
+            timeoutNanoseconds: 40_000_000
+        )
+        try await waitUntil { !richView.hasPendingInitialNavigationForTesting }
+        XCTAssertFalse(richView.isPageReadyForTesting)
+        XCTAssertNil(editor.currentRichTextSession)
+
+        enable.sendActions(for: .touchUpInside)
+        try await waitUntil { editor.currentRichTextSession != nil }
+        let session = try XCTUnwrap(editor.currentRichTextSession)
+        let snapshot = try await richView.snapshot(expectedSession: session)
+        XCTAssertEqual(
+            FloorpNoteContent.plainText(from: snapshot.payload.source, contentFormat: .automatic),
+            "Body after navigation failure"
+        )
+
+        let didSave = await editor.saveForExplicitRequest()
+        XCTAssertTrue(didSave)
+        XCTAssertEqual(persistence.savedDrafts.last?.contentFormat, .automatic)
+        let didClose = await editor.closeForTesting()
+        XCTAssertTrue(didClose)
+        XCTAssertTrue(editor.hasTerminatedEditorSessionForTesting)
+    }
+
+    func testLateRichLoadBoundsTwoRecoveryNavigationFailuresWithoutLingeringWork() async throws {
+        let note = FloorpNote(
+            id: "bounded-late-rich-load",
+            title: "Bounded navigation",
+            content: "Visible bounded fallback",
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .plainText
+        )
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            persistence: FloorpRichTextTestPersistence()
+        )
+        editor.loadViewIfNeeded()
+        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ) as? FloorpRichTextWebEditorView)
+        let enable = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.Editor.EnableRichText"
+        ) as? UIButton)
+        try await waitUntil { richView.isPageReadyForTesting }
+
+        richView.restartWithStalledInitialNavigationForTesting(
+            attempts: 1,
+            timeoutNanoseconds: 40_000_000
+        )
+        try await waitUntil { !richView.hasPendingInitialNavigationForTesting }
+        richView.stallNextInitialNavigationAttemptsForTesting(
+            attempts: 2,
+            timeoutNanoseconds: 40_000_000
+        )
+
+        enable.sendActions(for: .touchUpInside)
+        try await waitUntil { editor.currentRichTextSession?.generation == 0 }
+        try await waitUntil { editor.currentRichTextSession?.generation == 1 }
+        try await waitUntil { editor.currentRichTextSession == nil }
+
+        XCTAssertFalse(richView.isPageReadyForTesting)
+        XCTAssertFalse(richView.hasPendingInitialNavigationForTesting)
+        XCTAssertEqual(richView.pendingJavaScriptRequestCountForTesting, 0)
+        XCTAssertTrue(richView.isHidden)
+        let textView = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.Editor.Body"
+        ) as? UITextView)
+        XCTAssertFalse(textView.isHidden)
+        XCTAssertFalse(textView.isEditable)
+        XCTAssertEqual(textView.text, "Visible bounded fallback")
+    }
+
     func testOverflowAndDeletedNoteRecoveryKeepsNewestEnvelopeForReeditAndCopy() async throws {
         let originalSource = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
         let note = FloorpNote(

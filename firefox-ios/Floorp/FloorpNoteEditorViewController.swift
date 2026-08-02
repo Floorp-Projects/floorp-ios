@@ -2670,7 +2670,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
             webView.trailingAnchor.constraint(equalTo: trailingAnchor),
             webView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        startInitialNavigation()
+        startInitialNavigationIfNeeded()
     }
 
     required init?(coder: NSCoder) {
@@ -2689,6 +2689,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         pendingDocumentIsDirty = isDirty
         pendingLoadRequestVersion = loadRequestVersion
         loadedSession = nil
+        startInitialNavigationIfNeeded()
         loadPendingDocumentIfPossible()
     }
 
@@ -2804,6 +2805,14 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         pendingJavaScriptRequests.count
     }
 
+    var isPageReadyForTesting: Bool {
+        isPageReady
+    }
+
+    var hasPendingInitialNavigationForTesting: Bool {
+        initialNavigation != nil || initialNavigationWatchdogTask != nil
+    }
+
     func setUpdateDeliverySuspendedForTesting(_ isSuspended: Bool) {
         suspendsUpdateDeliveryForTesting = isSuspended
         guard !isSuspended else { return }
@@ -2816,16 +2825,27 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         attempts: Int,
         timeoutNanoseconds: UInt64
     ) {
-        stalledInitialNavigationAttemptsForTesting = max(0, attempts)
-        initialNavigationTimeoutNanoseconds = timeoutNanoseconds
+        stallNextInitialNavigationAttemptsForTesting(
+            attempts: attempts,
+            timeoutNanoseconds: timeoutNanoseconds
+        )
         isPageReady = false
         loadedSession = nil
         didAuthorizeInitialNavigation = false
         initialNavigationWatchdogTask?.cancel()
+        initialNavigationWatchdogTask = nil
         initialNavigationAttemptVersion += 1
         initialNavigation = nil
         webView.stopLoading()
-        startInitialNavigation()
+        startInitialNavigationIfNeeded()
+    }
+
+    func stallNextInitialNavigationAttemptsForTesting(
+        attempts: Int,
+        timeoutNanoseconds: UInt64
+    ) {
+        stalledInitialNavigationAttemptsForTesting = max(0, attempts)
+        initialNavigationTimeoutNanoseconds = timeoutNanoseconds
     }
 #endif
 
@@ -2833,6 +2853,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         guard navigation === initialNavigation, didAuthorizeInitialNavigation else { return }
         initialNavigationWatchdogTask?.cancel()
         initialNavigationWatchdogTask = nil
+        initialNavigation = nil
         isPageReady = true
         setEditable(requestedEditable)
         loadPendingDocumentIfPossible()
@@ -2867,7 +2888,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         didAuthorizeInitialNavigation = false
         failPendingJavaScriptRequests(with: EditorError.webContentProcessTerminated)
         delegate?.richTextEditorWebContentProcessDidTerminate(self)
-        startInitialNavigation()
+        startInitialNavigationIfNeeded()
     }
 
     func webView(
@@ -2928,8 +2949,12 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         }
     }
 
-    private func startInitialNavigation() {
-        initialNavigationWatchdogTask?.cancel()
+    private func startInitialNavigationIfNeeded() {
+        guard !isPageReady,
+              initialNavigation == nil,
+              initialNavigationWatchdogTask == nil else {
+            return
+        }
         initialNavigationAttemptVersion += 1
         let attemptVersion = initialNavigationAttemptVersion
         isPageReady = false
@@ -2981,7 +3006,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         // stalls, the controller transitions to its read-only fallback and
         // leaves no pending session, bounding the retry sequence.
         if pendingSession != nil {
-            startInitialNavigation()
+            startInitialNavigationIfNeeded()
         }
     }
 

@@ -167,6 +167,8 @@
         "FloorpNoteEditorViewControllerTests\/testInitialHTMLNavigationStallRetriesOnceThenShowsReadOnlyBody()",
         "FloorpNoteEditorViewControllerTests\/testInputImmediatelyFollowedByBoldItalicAndCloseKeepsLatestDOM()",
         "FloorpNoteEditorViewControllerTests\/testKnownLexicalTitleOnlyEditPreservesOriginalSourceUntilBodyChanges()",
+        "FloorpNoteEditorViewControllerTests\/testLateRichLoadBoundsTwoRecoveryNavigationFailuresWithoutLingeringWork()",
+        "FloorpNoteEditorViewControllerTests\/testLateRichLoadRestartsAfterIdleInitialNavigationFailureAndCanSaveAndClose()",
         "FloorpNoteEditorViewControllerTests\/testLexicalSaveAsCopyRebindsUsingExistingDocumentAndPreservesOpaqueSource()",
         "FloorpNoteEditorViewControllerTests\/testOverflowAndDeletedNoteRecoveryKeepsNewestEnvelopeForReeditAndCopy()",
         "FloorpNoteEditorViewControllerTests\/testOversizedDesktopNoteIdentityShowsRichBodyReadOnlyInsteadOfBlank()",
