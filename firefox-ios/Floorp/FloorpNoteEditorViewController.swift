@@ -22,13 +22,19 @@ protocol FloorpNotePersistence: AnyObject {
 @MainActor
 final class FloorpNotePersistenceSession: FloorpNotePersistence {
     private let notesStore: FloorpNotesStore
+    private let onCreatedNote: @MainActor (FloorpNote) -> Void
     private var persistedNote: FloorpNote?
     private var isOperating = false
     private var operationWaiters = [CheckedContinuation<Void, Never>]()
 
-    init(notesStore: FloorpNotesStore, persistedNote: FloorpNote?) {
+    init(
+        notesStore: FloorpNotesStore,
+        persistedNote: FloorpNote?,
+        onCreatedNote: @escaping @MainActor (FloorpNote) -> Void = { _ in }
+    ) {
         self.notesStore = notesStore
         self.persistedNote = persistedNote
+        self.onCreatedNote = onCreatedNote
     }
 
     func save(_ draft: FloorpNote) async throws -> FloorpNote {
@@ -36,6 +42,7 @@ final class FloorpNotePersistenceSession: FloorpNotePersistence {
         defer { finishOperation() }
 
         let savedNote: FloorpNote
+        let isCreatingNote = persistedNote == nil
         if let persistedNote {
             savedNote = try await notesStore.updateNote(
                 id: persistedNote.id,
@@ -52,6 +59,9 @@ final class FloorpNotePersistenceSession: FloorpNotePersistence {
             )
         }
         persistedNote = savedNote
+        if isCreatingNote {
+            onCreatedNote(savedNote)
+        }
         return savedNote
     }
 
@@ -75,6 +85,7 @@ final class FloorpNotePersistenceSession: FloorpNotePersistence {
             contentFormat: draft.contentFormat
         )
         persistedNote = savedNote
+        onCreatedNote(savedNote)
         return savedNote
     }
 
@@ -374,6 +385,8 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private var savedStatusResetTask: Task<Void, Never>?
     private var isApplyingPendingEdit = false
     private let backgroundSaveLease = FloorpBackgroundSaveLease()
+    private let shouldFocusTitleOnFirstAppearance: Bool
+    private var didApplyInitialFocus = false
 
     private lazy var titleField: UITextField = {
         let field = UITextField()
@@ -384,6 +397,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         field.borderStyle = .roundedRect
         field.placeholder = FloorpStrings.Notes.titlePlaceholder
         field.accessibilityLabel = FloorpStrings.Notes.titlePlaceholder
+        field.accessibilityIdentifier = "Floorp.Notes.Editor.Title"
         field.translatesAutoresizingMaskIntoConstraints = false
         field.delegate = self
         field.addTarget(self, action: #selector(titleChanged), for: .editingChanged)
@@ -396,8 +410,38 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .right
         label.numberOfLines = 0
+        label.accessibilityIdentifier = "Floorp.Notes.Editor.Status.Idle"
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
+    }()
+
+    private lazy var retrySaveButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle(FloorpStrings.Notes.retry, for: .normal)
+        button.titleLabel?.font = FXFontStyles.Bold.caption1.scaledFont()
+        button.accessibilityIdentifier = "Floorp.Notes.Editor.Retry"
+        button.addTarget(self, action: #selector(retrySaveTapped), for: .touchUpInside)
+        button.isHidden = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        let minimumWidth = button.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: UX.minimumControlHeight
+        )
+        let minimumHeight = button.heightAnchor.constraint(
+            greaterThanOrEqualToConstant: UX.minimumControlHeight
+        )
+        minimumWidth.priority = .init(999)
+        minimumHeight.priority = .init(999)
+        NSLayoutConstraint.activate([minimumWidth, minimumHeight])
+        return button
+    }()
+
+    private lazy var statusStackView: UIStackView = {
+        let stackView = UIStackView(arrangedSubviews: [statusLabel, retrySaveButton])
+        stackView.axis = .horizontal
+        stackView.alignment = .center
+        stackView.spacing = 8
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        return stackView
     }()
 
     private lazy var textView: UITextView = {
@@ -411,6 +455,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         textView.layer.borderWidth = 1
         textView.accessibilityLabel = FloorpStrings.Notes.contentAccessibilityLabel
         textView.accessibilityHint = FloorpStrings.Notes.contentAccessibilityHint
+        textView.accessibilityIdentifier = "Floorp.Notes.Editor.Body"
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.delegate = self
         return textView
@@ -433,6 +478,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         self.windowUUID = windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
+        self.shouldFocusTitleOnFirstAppearance = !isPersisted
         self.saveCoordinator = FloorpNoteSaveCoordinator(
             draft: note,
             isPersisted: isPersisted,
@@ -478,10 +524,12 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             target: self,
             action: #selector(saveTapped)
         )
+        navigationItem.leftBarButtonItem?.accessibilityIdentifier = "Floorp.Notes.Editor.Close"
         navigationItem.rightBarButtonItem?.accessibilityLabel = FloorpStrings.Notes.saveAccessibilityLabel
+        navigationItem.rightBarButtonItem?.accessibilityIdentifier = "Floorp.Notes.Editor.Save"
 
         view.addSubview(titleField)
-        view.addSubview(statusLabel)
+        view.addSubview(statusStackView)
         view.addSubview(textView)
 
         NSLayoutConstraint.activate([
@@ -490,12 +538,12 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             titleField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -UX.padding),
             titleField.heightAnchor.constraint(greaterThanOrEqualToConstant: UX.minimumControlHeight),
 
-            statusLabel.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 4),
-            statusLabel.leadingAnchor.constraint(equalTo: titleField.leadingAnchor),
-            statusLabel.trailingAnchor.constraint(equalTo: titleField.trailingAnchor),
-            statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
+            statusStackView.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 4),
+            statusStackView.leadingAnchor.constraint(equalTo: titleField.leadingAnchor),
+            statusStackView.trailingAnchor.constraint(equalTo: titleField.trailingAnchor),
+            statusStackView.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
 
-            textView.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
+            textView.topAnchor.constraint(equalTo: statusStackView.bottomAnchor, constant: 8),
             textView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: UX.padding),
             textView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -UX.padding),
             textView.bottomAnchor.constraint(
@@ -539,6 +587,18 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         }
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard shouldFocusTitleOnFirstAppearance, !didApplyInitialFocus else { return }
+        didApplyInitialFocus = true
+        titleField.becomeFirstResponder()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, titleField.isFirstResponder else { return }
+            titleField.selectAll(nil)
+            UIAccessibility.post(notification: .screenChanged, argument: titleField)
+        }
+    }
+
     override var keyCommands: [UIKeyCommand]? {
         [
             UIKeyCommand(
@@ -572,6 +632,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         titleField.tintColor = colors.actionPrimary
         titleField.keyboardAppearance = theme.type.keyboardAppearence(isPrivate: false)
         statusLabel.textColor = colors.textSecondary
+        retrySaveButton.tintColor = colors.actionPrimary
         textView.backgroundColor = colors.layer3
         textView.textColor = colors.textPrimary
         textView.tintColor = colors.actionPrimary
@@ -586,6 +647,12 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @objc private func saveTapped() {
+        Task { @MainActor in
+            _ = await saveForExplicitRequest()
+        }
+    }
+
+    @objc private func retrySaveTapped() {
         Task { @MainActor in
             _ = await saveForExplicitRequest()
         }
@@ -652,7 +719,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     @discardableResult
-    private func saveLatestDraft() async -> FloorpNoteSaveCoordinator.SaveOutcome {
+    func saveLatestDraft() async -> FloorpNoteSaveCoordinator.SaveOutcome {
         guard saveCoordinator.hasUnsavedChanges else { return .noChanges }
         updateSaveState(.saving)
         let outcome = await saveCoordinator.saveLatest()
@@ -683,8 +750,14 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     private func updateSaveState(_ state: SaveState) {
         savedStatusResetTask?.cancel()
+        if case .failed = state {
+            retrySaveButton.isHidden = false
+        } else {
+            retrySaveButton.isHidden = true
+        }
         switch state {
         case .idle:
+            statusLabel.accessibilityIdentifier = "Floorp.Notes.Editor.Status.Idle"
             switch contentAnalysis.editPolicy {
             case .readOnly:
                 statusLabel.text = FloorpStrings.Notes.unsupportedContentReadOnlyNotice
@@ -696,10 +769,16 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             navigationItem.rightBarButtonItem?.isEnabled = true
         case .saving:
             statusLabel.text = FloorpStrings.Notes.saving
+            statusLabel.accessibilityIdentifier = "Floorp.Notes.Editor.Status.Saving"
             navigationItem.rightBarButtonItem?.isEnabled = false
         case .saved:
             statusLabel.text = FloorpStrings.Notes.saved
+            statusLabel.accessibilityIdentifier = "Floorp.Notes.Editor.Status.Saved"
             navigationItem.rightBarButtonItem?.isEnabled = true
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: FloorpStrings.Notes.saved
+            )
             savedStatusResetTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 guard !Task.isCancelled, self?.saveCoordinator.hasUnsavedChanges == false else { return }
@@ -707,7 +786,12 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             }
         case .failed:
             statusLabel.text = FloorpStrings.Notes.saveFailed
+            statusLabel.accessibilityIdentifier = "Floorp.Notes.Editor.Status.Error"
             navigationItem.rightBarButtonItem?.isEnabled = true
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: FloorpStrings.Notes.saveFailed
+            )
         }
     }
 

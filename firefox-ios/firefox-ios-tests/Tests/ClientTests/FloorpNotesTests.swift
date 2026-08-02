@@ -796,6 +796,30 @@ final class FloorpNotePersistenceSessionTests: XCTestCase {
         XCTAssertEqual(notes, [updated])
     }
 
+    func testCreationCallbackReportsInitialCreateAndSaveAsCopyOnly() async throws {
+        let location = makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        var reportedIDs = [String]()
+        let session = FloorpNotePersistenceSession(
+            notesStore: store,
+            persistedNote: nil,
+            onCreatedNote: { reportedIDs.append($0.id) }
+        )
+        var draft = makeDraft(title: "First", content: "Body")
+
+        let created = try await session.save(draft)
+        draft.title = "Updated"
+        let updated = try await session.save(draft)
+        draft.title = "Copy"
+        let copy = try await session.saveAsCopy(draft)
+
+        XCTAssertEqual(updated.id, created.id)
+        XCTAssertNotEqual(copy.id, created.id)
+        XCTAssertEqual(reportedIDs, [created.id, copy.id])
+    }
+
     func testConcurrentFirstSavesCreateOneNote() async throws {
         let location = makeTemporaryArchiveLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }

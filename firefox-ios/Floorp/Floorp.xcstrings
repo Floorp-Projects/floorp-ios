@@ -535,6 +535,48 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモのデータが大きすぎるため、このデバイスでは開けません。元のデータは変更せずに保持しています。" } }
       }
     },
+    "Floorp.Notes.Reorder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reorder Notes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモを並べ替え" } }
+      }
+    },
+    "Floorp.Notes.ReorderDone.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Done Reordering" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "並べ替えを完了" } }
+      }
+    },
+    "Floorp.Notes.ReorderCancelledForChanges.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Notes changed elsewhere. Reordering was cancelled." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "別の場所でメモが変更されたため、並べ替えをキャンセルしました。" } }
+      }
+    },
+    "Floorp.Notes.MoveUp.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Move Up" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "上へ移動" } }
+      }
+    },
+    "Floorp.Notes.MoveDown.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Move Down" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "下へ移動" } }
+      }
+    },
+    "Floorp.Notes.MoveAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ moved to position %2$ld of %3$ld." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@を%3$ld件中%2$ld番目に移動しました。" } }
+      }
+    },
+    "Floorp.Notes.ReorderAccessibilityHint.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use the reorder control or Move Up and Move Down actions, then choose Done." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "並べ替えコントロールまたは「上へ移動」と「下へ移動」を使用し、完了を選択します。" } }
+      }
+    },
     "Floorp.Notes.Cancel.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } },

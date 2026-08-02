@@ -177,6 +177,47 @@ struct FloorpNotesDesktopPayload: Codable, Equatable, Sendable {
     }
 }
 
+enum FloorpNotesListOrderError: Error, Equatable, Sendable {
+    case duplicateID(String)
+    case mismatchedVisibleIDs
+    case staleVisibleIDs([String])
+}
+
+enum FloorpNotesListOrder {
+    static func merge(
+        latestFullIDs: [String],
+        originalVisibleIDs: [String],
+        orderedVisibleIDs: [String]
+    ) throws -> [String] {
+        try validateUnique(originalVisibleIDs)
+        try validateUnique(orderedVisibleIDs)
+
+        guard Set(originalVisibleIDs) == Set(orderedVisibleIDs) else {
+            throw FloorpNotesListOrderError.mismatchedVisibleIDs
+        }
+
+        let latestIDs = Set(latestFullIDs)
+        let missingIDs = originalVisibleIDs.filter { !latestIDs.contains($0) }
+        guard missingIDs.isEmpty else {
+            throw FloorpNotesListOrderError.staleVisibleIDs(missingIDs)
+        }
+
+        let visibleIDs = Set(originalVisibleIDs)
+        var orderedIterator = orderedVisibleIDs.makeIterator()
+        return latestFullIDs.map { id in
+            guard visibleIDs.contains(id) else { return id }
+            return orderedIterator.next() ?? id
+        }
+    }
+
+    private static func validateUnique(_ ids: [String]) throws {
+        var seen = Set<String>()
+        for id in ids where !seen.insert(id).inserted {
+            throw FloorpNotesListOrderError.duplicateID(id)
+        }
+    }
+}
+
 // MARK: - Safe plain-text projection
 
 enum FloorpNoteContent {
@@ -447,6 +488,7 @@ enum FloorpNotesStoreError: Error, LocalizedError {
     case duplicateNoteID(String)
     case noteNotFound(String)
     case editConflict(String)
+    case reorderConflict(expectedRevision: UInt64, actualRevision: UInt64)
     case timestampExhausted(String)
     case tooManyNotes(Int)
     case archiveTooLarge(actualBytes: Int, maximumBytes: Int)
@@ -469,6 +511,8 @@ enum FloorpNotesStoreError: Error, LocalizedError {
             return "The note no longer exists."
         case .editConflict:
             return "The note changed in another window."
+        case .reorderConflict:
+            return "The notes list changed while it was being reordered."
         case .timestampExhausted:
             return "The note timestamp cannot be advanced."
         case .tooManyNotes(let count):
@@ -477,6 +521,11 @@ enum FloorpNotesStoreError: Error, LocalizedError {
             return "The notes archive is too large (\(actualBytes) bytes; maximum \(maximumBytes))."
         }
     }
+}
+
+struct FloorpNotesSnapshot: Equatable, Sendable {
+    let revision: UInt64
+    let notes: [FloorpNote]
 }
 
 /// Serial, crash-safe persistence for local Floorp Notes.
@@ -549,6 +598,11 @@ actor FloorpNotesStore {
 
     func loadNotes() throws -> [FloorpNote] {
         try loadArchive().notes
+    }
+
+    func loadSnapshot() throws -> FloorpNotesSnapshot {
+        let archive = try loadArchive()
+        return FloorpNotesSnapshot(revision: archive.revision, notes: archive.notes)
     }
 
     @discardableResult
@@ -629,6 +683,34 @@ actor FloorpNotesStore {
         }
         reordered.append(contentsOf: archive.notes.filter { !seen.contains($0.id) })
         try commit(notes: reordered, replacing: archive)
+    }
+
+    @discardableResult
+    func reorderVisibleNotes(
+        originalVisibleIDs: [String],
+        orderedVisibleIDs: [String],
+        expectedRevision: UInt64
+    ) throws -> Bool {
+        let archive = try loadArchiveForWriting()
+        guard archive.revision == expectedRevision else {
+            throw FloorpNotesStoreError.reorderConflict(
+                expectedRevision: expectedRevision,
+                actualRevision: archive.revision
+            )
+        }
+
+        let latestIDs = archive.notes.map(\.id)
+        let orderedIDs = try FloorpNotesListOrder.merge(
+            latestFullIDs: latestIDs,
+            originalVisibleIDs: originalVisibleIDs,
+            orderedVisibleIDs: orderedVisibleIDs
+        )
+        guard orderedIDs != latestIDs else { return false }
+
+        let notesByID = Dictionary(uniqueKeysWithValues: archive.notes.map { ($0.id, $0) })
+        let notes = orderedIDs.compactMap { notesByID[$0] }
+        try commit(notes: notes, replacing: archive)
+        return true
     }
 
     /// Replaces local notes with an explicitly imported set.
