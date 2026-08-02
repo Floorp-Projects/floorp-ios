@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import CryptoKit
 import Foundation
 import XCTest
 @testable import Client
@@ -141,6 +142,48 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(sharedFirst.conflicts, candidateFirst.conflicts)
         XCTAssertEqual(sharedFirst.notes.count, 4)
         XCTAssertNotEqual(sharedConflict.conflictCopyID, collidingID)
+    }
+
+    func testNestedConflictWinnerReusesCandidateNearLimit() throws {
+        let sharedBase = note("shared", title: "Base", content: "base", updatedAt: 10)
+        let sharedLocal = note("shared", title: "Local", content: "local", updatedAt: 20)
+        let sharedRemote = note("shared", title: "Remote", content: "remote", updatedAt: 30)
+        let initial = try FloorpNotesSyncMerger.merge(
+            base: [sharedBase],
+            local: [sharedLocal],
+            remote: [sharedRemote]
+        )
+        let collidingID = try XCTUnwrap(initial.conflicts.first?.conflictCopyID)
+        let candidateWinner = try XCTUnwrap(initial.notes.first { $0.id == collidingID })
+        let candidateBase = note(
+            collidingID,
+            title: "Candidate Base",
+            content: "candidate base",
+            updatedAt: 5
+        )
+        let candidateLoser = note(
+            collidingID,
+            title: "Candidate Remote",
+            content: "candidate remote",
+            updatedAt: 15
+        )
+        let filler = (0..<(FloorpNotesStore.maximumNoteCount - 3)).map { index in
+            note("nested-filler-\(index)")
+        }
+
+        let result = try FloorpNotesSyncMerger.merge(
+            base: [sharedBase, candidateBase] + filler,
+            local: [sharedLocal, candidateWinner] + filler,
+            remote: [sharedRemote, candidateLoser] + filler
+        )
+
+        XCTAssertEqual(result.notes.count, FloorpNotesStore.maximumNoteCount)
+        XCTAssertEqual(result.notes.filter { $0.id == collidingID }, [candidateWinner])
+        XCTAssertEqual(
+            result.conflicts.first { $0.originalNoteID == "shared" }?.conflictCopyID,
+            collidingID
+        )
+        XCTAssertNotNil(result.conflicts.first { $0.originalNoteID == collidingID })
     }
 
     func testTimestampTieIsCommutative() throws {
@@ -1152,6 +1195,7 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
             FloorpNotesSyncReleaseGate.allowsNetworkSync(
                 FloorpNotesSyncReleaseEvidence(
                     fixtureContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
+                    fixtureSHA256: FloorpNotesSyncReleaseGate.mergeFixtureSHA256,
                     currentDesktopContractVersion: nil,
                     coordinatedDesktopMigrationVersion: nil,
                     linkedApplicationServicesContractVersion:
@@ -1164,6 +1208,7 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
     func testReleaseGateAcceptsOnlyExactDesktopOrCoordinatedMigrationContract() {
         let baseEvidence = FloorpNotesSyncReleaseEvidence(
             fixtureContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
+            fixtureSHA256: FloorpNotesSyncReleaseGate.mergeFixtureSHA256,
             currentDesktopContractVersion: nil,
             coordinatedDesktopMigrationVersion: nil,
             linkedApplicationServicesContractVersion:
@@ -1174,6 +1219,7 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
             FloorpNotesSyncReleaseGate.allowsNetworkSync(
                 FloorpNotesSyncReleaseEvidence(
                     fixtureContractVersion: baseEvidence.fixtureContractVersion,
+                    fixtureSHA256: baseEvidence.fixtureSHA256,
                     currentDesktopContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
                     coordinatedDesktopMigrationVersion: nil,
                     linkedApplicationServicesContractVersion:
@@ -1185,6 +1231,7 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
             FloorpNotesSyncReleaseGate.allowsNetworkSync(
                 FloorpNotesSyncReleaseEvidence(
                     fixtureContractVersion: baseEvidence.fixtureContractVersion,
+                    fixtureSHA256: baseEvidence.fixtureSHA256,
                     currentDesktopContractVersion: nil,
                     coordinatedDesktopMigrationVersion:
                         FloorpNotesSyncReleaseGate.mergeContractVersion,
@@ -1197,6 +1244,19 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
             FloorpNotesSyncReleaseGate.allowsNetworkSync(
                 FloorpNotesSyncReleaseEvidence(
                     fixtureContractVersion: "other-fixtures",
+                    fixtureSHA256: baseEvidence.fixtureSHA256,
+                    currentDesktopContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
+                    coordinatedDesktopMigrationVersion: nil,
+                    linkedApplicationServicesContractVersion:
+                        baseEvidence.linkedApplicationServicesContractVersion
+                )
+            )
+        )
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsNetworkSync(
+                FloorpNotesSyncReleaseEvidence(
+                    fixtureContractVersion: baseEvidence.fixtureContractVersion,
+                    fixtureSHA256: "partial-desktop-fixture",
                     currentDesktopContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
                     coordinatedDesktopMigrationVersion: nil,
                     linkedApplicationServicesContractVersion:
@@ -1222,16 +1282,21 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
                 withExtension: "json"
             )
         )
+        let fixtureData = try Data(contentsOf: resourceURL)
+        let fixtureSHA256 = SHA256.hash(data: fixtureData)
+            .map { String(format: "%02x", $0) }
+            .joined()
         let fixture = try JSONDecoder().decode(
             FloorpNotesMergeFixture.self,
-            from: Data(contentsOf: resourceURL)
+            from: fixtureData
         )
 
-        XCTAssertEqual(fixture.fixtureSchemaVersion, 1)
+        XCTAssertEqual(fixture.fixtureSchemaVersion, 2)
         XCTAssertEqual(
             fixture.contractVersion,
             FloorpNotesSyncReleaseGate.mergeContractVersion
         )
+        XCTAssertEqual(fixtureSHA256, FloorpNotesSyncReleaseGate.mergeFixtureSHA256)
         XCTAssertEqual(fixture.wirePayloadVersion, 1)
         XCTAssertEqual(
             fixture.productionDesktopObservation.commit,
@@ -1243,6 +1308,7 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
             FloorpNotesSyncReleaseGate.allowsNetworkSync(
                 FloorpNotesSyncReleaseEvidence(
                     fixtureContractVersion: fixture.contractVersion,
+                    fixtureSHA256: fixtureSHA256,
                     currentDesktopContractVersion:
                         fixture.productionDesktopObservation.declaredContractVersion,
                     coordinatedDesktopMigrationVersion: nil,
@@ -1252,25 +1318,114 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
             )
         )
 
-        for fixtureCase in fixture.cases {
-            let result = try FloorpNotesSyncMerger.merge(
-                base: fixtureCase.base.map(\.note),
-                local: fixtureCase.local.map(\.note),
-                remote: fixtureCase.remote.map(\.note)
-            )
-            let expectedConflicts = fixtureCase.expectedConflicts.map {
-                FloorpNotesSyncConflict(
-                    originalNoteID: $0.originalNoteID,
-                    conflictCopyID: $0.conflictCopyID
-                )
+        let mergeCaseNames = fixture.mergeCases.map { $0.name }
+        let sequenceCaseNames = fixture.sequenceCases.map { $0.name }
+        let errorCaseNames = fixture.errorCases.map { $0.name }
+        let actualCaseNames = mergeCaseNames + sequenceCaseNames + errorCaseNames
+        XCTAssertEqual(actualCaseNames.count, Set(actualCaseNames).count)
+        XCTAssertEqual(
+            fixture.requiredCaseNames.count,
+            Set(fixture.requiredCaseNames).count
+        )
+        XCTAssertEqual(Set(actualCaseNames), Set(fixture.requiredCaseNames))
+
+        for fixtureCase in fixture.mergeCases {
+            _ = try run(fixtureCase)
+        }
+
+        for sequence in fixture.sequenceCases {
+            var resultsByStep = [String: FloorpNotesSyncMergeResult]()
+            for (index, step) in sequence.steps.enumerated() {
+                if index == 0 {
+                    XCTAssertNil(step.transitionFromPrevious, sequence.name)
+                } else {
+                    XCTAssertNotNil(step.transitionFromPrevious, sequence.name)
+                }
+                resultsByStep[step.name] = try run(step)
             }
 
-            XCTAssertEqual(
-                result.notes,
-                fixtureCase.expectedNotes.map(\.note),
-                fixtureCase.name
+            for invariant in sequence.invariants {
+                switch invariant.kind {
+                case .sameConflictCopy:
+                    let fromResult = try XCTUnwrap(resultsByStep[invariant.fromStep])
+                    let toResult = try XCTUnwrap(resultsByStep[invariant.toStep])
+                    let fromID = try XCTUnwrap(
+                        fromResult.conflicts.first {
+                            $0.originalNoteID == invariant.originalNoteID
+                        }?.conflictCopyID
+                    )
+                    let toID = try XCTUnwrap(
+                        toResult.conflicts.first {
+                            $0.originalNoteID == invariant.originalNoteID
+                        }?.conflictCopyID
+                    )
+                    XCTAssertEqual(fromID, toID, sequence.name)
+                    let fromNote = fromResult.notes.first { $0.id == fromID }
+                    let toNote = toResult.notes.first { $0.id == toID }
+                    XCTAssertEqual(
+                        fromNote,
+                        toNote,
+                        sequence.name
+                    )
+                }
+            }
+        }
+
+        for errorCase in fixture.errorCases {
+            XCTAssertThrowsError(
+                try FloorpNotesSyncMerger.merge(
+                    base: errorCase.base.map { $0.note },
+                    local: errorCase.local.map { $0.note },
+                    remote: errorCase.remote.map { $0.note }
+                ),
+                errorCase.name
+            ) { error in
+                XCTAssertEqual(
+                    observedFixtureError(error),
+                    errorCase.expectedError,
+                    errorCase.name
+                )
+            }
+        }
+    }
+
+    private func run(
+        _ fixtureCase: FloorpNotesMergeFixture.MergeVector
+    ) throws -> FloorpNotesSyncMergeResult {
+        let result = try FloorpNotesSyncMerger.merge(
+            base: fixtureCase.base.map(\.note),
+            local: fixtureCase.local.map(\.note),
+            remote: fixtureCase.remote.map(\.note)
+        )
+        let expectedConflicts = fixtureCase.expectedConflicts.map {
+            FloorpNotesSyncConflict(
+                originalNoteID: $0.originalNoteID,
+                conflictCopyID: $0.conflictCopyID
             )
-            XCTAssertEqual(result.conflicts, expectedConflicts, fixtureCase.name)
+        }
+
+        XCTAssertEqual(
+            result.notes,
+            fixtureCase.expectedNotes.map(\.note),
+            fixtureCase.name
+        )
+        XCTAssertEqual(result.conflicts, expectedConflicts, fixtureCase.name)
+        return result
+    }
+
+    private func observedFixtureError(
+        _ error: Error
+    ) -> FloorpNotesMergeFixture.ExpectedError? {
+        guard let error = error as? FloorpNotesSyncError else { return nil }
+        switch error {
+        case .duplicateNoteID(let source, let id):
+            return FloorpNotesMergeFixture.ExpectedError(
+                code: .duplicateNoteID,
+                source: source,
+                id: id
+            )
+        default:
+            return nil
         }
     }
 }
@@ -1279,8 +1434,11 @@ private struct FloorpNotesMergeFixture: Decodable {
     let fixtureSchemaVersion: Int
     let contractVersion: String
     let wirePayloadVersion: Int
+    let requiredCaseNames: [String]
     let productionDesktopObservation: ProductionDesktopObservation
-    let cases: [MergeCase]
+    let mergeCases: [MergeVector]
+    let sequenceCases: [SequenceCase]
+    let errorCases: [ErrorCase]
 
     struct ProductionDesktopObservation: Decodable {
         let commit: String
@@ -1288,13 +1446,54 @@ private struct FloorpNotesMergeFixture: Decodable {
         let matchesFixtureContract: Bool
     }
 
-    struct MergeCase: Decodable {
+    struct MergeVector: Decodable {
         let name: String
+        let transitionFromPrevious: Transition?
         let base: [FixtureNote]
         let local: [FixtureNote]
         let remote: [FixtureNote]
         let expectedNotes: [FixtureNote]
         let expectedConflicts: [FixtureConflict]
+    }
+
+    enum Transition: String, Decodable {
+        case uploadedWithoutLocalCommitAndRemoteWinnerEdited =
+            "previous-upload-succeeded-local-commit-failed-then-remote-winner-edited"
+    }
+
+    struct SequenceCase: Decodable {
+        let name: String
+        let steps: [MergeVector]
+        let invariants: [Invariant]
+    }
+
+    struct Invariant: Decodable {
+        let kind: Kind
+        let originalNoteID: String
+        let fromStep: String
+        let toStep: String
+
+        enum Kind: String, Decodable {
+            case sameConflictCopy = "same-conflict-copy"
+        }
+    }
+
+    struct ErrorCase: Decodable {
+        let name: String
+        let base: [FixtureNote]
+        let local: [FixtureNote]
+        let remote: [FixtureNote]
+        let expectedError: ExpectedError
+    }
+
+    struct ExpectedError: Decodable, Equatable {
+        let code: Code
+        let source: FloorpNotesSyncSource?
+        let id: String?
+
+        enum Code: String, Decodable, Equatable {
+            case duplicateNoteID = "duplicate-note-id"
+        }
     }
 
     struct FixtureNote: Decodable {

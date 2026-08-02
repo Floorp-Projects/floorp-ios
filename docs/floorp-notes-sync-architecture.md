@@ -67,10 +67,12 @@ contract and must not be described as cross-client compatible.
 
 The target `floorp-notes-merge-v1` contract is captured in the shared
 `sync-fixtures/floorp-notes/floorp-notes-merge-v1.json` fixture. iOS executes
-that fixture as a bundled unit-test resource. Desktop must execute the same
-file and publish that exact contract version, or ship a coordinated migration
-declaring that version, before network Notes Sync can be enabled. A Desktop
-source change without the shared fixture passing is not sufficient evidence.
+that fixture as a bundled unit-test resource and the release gate pins its
+exact SHA-256 digest. Desktop must execute every required merge, sequence, and
+error case from those exact bytes and publish that contract version, or ship a
+coordinated migration declaring it, before network Notes Sync can be enabled.
+A partial fixture port or Desktop source change without the shared fixture
+passing is not sufficient evidence.
 
 The Application Services delegate boundary also remains typed. Its
 `RecordMissing`, `NotesKeyMissing`, `NotesNull`, and `NotesString` cases are
@@ -142,10 +144,11 @@ unless the user explicitly chooses to delete them.
 Network Sync stays disabled until all of the following pass:
 
 1. `FloorpNotesSyncReleaseGate` has exact evidence for the shared fixture,
-   either a matching current Desktop contract or the coordinated Desktop
-   migration contract, and the linked `floorp-prefs-sync-v1` Application
-   Services artifact. The evidence embedded by this branch deliberately fails
-   this gate.
+   including its pinned SHA-256 digest and complete required case set, either a
+   matching current Desktop contract or the coordinated Desktop migration
+   contract, and the linked `floorp-prefs-sync-v1` Application Services
+   artifact. The evidence embedded by this branch deliberately fails this
+   gate.
 2. Rust engine tests against a fake Sync server, including aggregate-map
    preservation, conditional writes, retry/backoff, reset, and account
    isolation.

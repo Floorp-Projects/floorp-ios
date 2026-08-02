@@ -133,6 +133,7 @@ enum FloorpNotesApplicationServicesAdapter {
 
 struct FloorpNotesSyncReleaseEvidence: Equatable, Sendable {
     let fixtureContractVersion: String
+    let fixtureSHA256: String
     let currentDesktopContractVersion: String?
     let coordinatedDesktopMigrationVersion: String?
     let linkedApplicationServicesContractVersion: String?
@@ -144,10 +145,12 @@ struct FloorpNotesSyncReleaseEvidence: Equatable, Sendable {
 /// the evidence bundled by this branch intentionally evaluates to false.
 enum FloorpNotesSyncReleaseGate {
     static let mergeContractVersion = "floorp-notes-merge-v1"
+    static let mergeFixtureSHA256 = "2597e5311c7c4ea4bb9d6a806ffa183aae3b3bd7380893b664b02ac829d665fd"
     static let observedProductionDesktopCommit = "410c211c202012631159d1bce1f3ab208305d2b7"
 
     static let currentRuntimeEvidence = FloorpNotesSyncReleaseEvidence(
         fixtureContractVersion: mergeContractVersion,
+        fixtureSHA256: mergeFixtureSHA256,
         currentDesktopContractVersion: nil,
         coordinatedDesktopMigrationVersion: nil,
         linkedApplicationServicesContractVersion: nil
@@ -155,6 +158,7 @@ enum FloorpNotesSyncReleaseGate {
 
     static func allowsNetworkSync(_ evidence: FloorpNotesSyncReleaseEvidence) -> Bool {
         guard evidence.fixtureContractVersion == mergeContractVersion,
+              evidence.fixtureSHA256 == mergeFixtureSHA256,
               evidence.linkedApplicationServicesContractVersion
                 == FloorpNotesApplicationServicesAdapter.transportContractVersion else {
             return false
@@ -841,9 +845,19 @@ enum FloorpNotesSyncMerger {
                 return AvailableConflictCopy(note: generated, shouldInsert: false)
             }
 
-            if case .note(let existing) = originalResolutions[candidate.id],
-               sameWireNote(existing, candidate) {
-                return AvailableConflictCopy(note: existing, shouldInsert: false)
+            if let originalResolution = originalResolutions[candidate.id] {
+                let existing: FloorpNote?
+                switch originalResolution {
+                case .note(let note):
+                    existing = note
+                case .conflict(let resolution):
+                    existing = resolution.winner
+                case .none:
+                    existing = nil
+                }
+                if let existing, sameWireNote(existing, candidate) {
+                    return AvailableConflictCopy(note: existing, shouldInsert: false)
+                }
             }
         }
         throw FloorpNotesSyncError.conflictIDExhausted(losingNote.id)
