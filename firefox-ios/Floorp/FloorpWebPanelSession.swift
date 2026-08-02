@@ -46,6 +46,20 @@ struct FloorpWebPanelSessionState: Equatable {
     }
 }
 
+enum FloorpWebPanelRestorationPolicy {
+    static func safeWebURL(_ url: URL?) -> URL? {
+        guard let url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              FloorpWebPanelNavigationPolicy.decision(
+                for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+              ) == .allow else {
+            return nil
+        }
+        return url
+    }
+}
+
 @MainActor
 protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
@@ -98,6 +112,16 @@ extension FloorpWebPanelSessionProtocol {
 protocol FloorpWebPanelSessionFactory {
     func makeSession(
         for key: FloorpWebPanelSessionKey,
-        configuration: FloorpWebPanelSessionConfiguration
+        configuration: FloorpWebPanelSessionConfiguration,
+        restorationURL: URL?
     ) throws -> any FloorpWebPanelSessionProtocol
+}
+
+extension FloorpWebPanelSessionFactory {
+    func makeSession(
+        for key: FloorpWebPanelSessionKey,
+        configuration: FloorpWebPanelSessionConfiguration
+    ) throws -> any FloorpWebPanelSessionProtocol {
+        try makeSession(for: key, configuration: configuration, restorationURL: nil)
+    }
 }

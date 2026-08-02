@@ -16,11 +16,17 @@ final class FloorpWebPanelSessionStore {
         var configuration: FloorpWebPanelSessionConfiguration
     }
 
+    private struct RestorationSnapshot {
+        let homeURL: URL
+        let currentURL: URL
+    }
+
     private let windowUUID: WindowUUID
     private let regularSessionLimit: Int
     private let factory: any FloorpWebPanelSessionFactory
     private var entries = [FloorpWebPanelSessionKey: Entry]()
     private var regularSessionLRU = [FloorpWebPanelSessionKey]()
+    private var restorationSnapshots = [FloorpWebPanelSessionKey: RestorationSnapshot]()
 
     init(
         windowUUID: WindowUUID,
@@ -53,7 +59,7 @@ final class FloorpWebPanelSessionStore {
 
         if var entry = entries[key] {
             guard entry.configuration.homeURL == configuration.homeURL else {
-                removeSession(for: key)
+                removeSession(for: key, preservingRestoration: false)
                 return try makeSession(for: key, configuration: configuration)
             }
 
@@ -83,7 +89,7 @@ final class FloorpWebPanelSessionStore {
 
         session.setVisible(false)
         if autoUnload {
-            removeSession(for: key)
+            removeSession(for: key, preservingRestoration: true)
         }
         return true
     }
@@ -101,14 +107,16 @@ final class FloorpWebPanelSessionStore {
     @discardableResult
     func unloadSession(for key: FloorpWebPanelSessionKey) -> Bool {
         guard key.windowUUID == windowUUID, entries[key] != nil else { return false }
-        removeSession(for: key)
+        removeSession(for: key, preservingRestoration: true)
         return true
     }
 
     @discardableResult
     func closePrivateSessions() -> Bool {
         let keys = entries.keys.filter(\.isPrivate)
-        keys.forEach(removeSession)
+        Array(restorationSnapshots.keys.filter(\.isPrivate))
+            .forEach { restorationSnapshots.removeValue(forKey: $0) }
+        keys.forEach { removeSession(for: $0, preservingRestoration: false) }
         return !keys.isEmpty
     }
 
@@ -118,12 +126,12 @@ final class FloorpWebPanelSessionStore {
         for key in Array(entries.keys) {
             guard var entry = entries[key],
                   let configuration = configurations[key.panelID] else {
-                removeSession(for: key)
+                removeSession(for: key, preservingRestoration: false)
                 continue
             }
 
             guard entry.configuration.homeURL == configuration.homeURL else {
-                removeSession(for: key)
+                removeSession(for: key, preservingRestoration: false)
                 continue
             }
 
@@ -133,12 +141,21 @@ final class FloorpWebPanelSessionStore {
                 entries[key] = entry
             }
         }
+
+        for (key, snapshot) in Array(restorationSnapshots) {
+            guard let configuration = configurations[key.panelID],
+                  configuration.homeURL == snapshot.homeURL else {
+                restorationSnapshots.removeValue(forKey: key)
+                continue
+            }
+        }
     }
 
     func invalidateAll() {
         let sessions = entries.values.map(\.session)
         entries.removeAll()
         regularSessionLRU.removeAll()
+        restorationSnapshots.removeAll()
         sessions.forEach { $0.invalidate() }
     }
 
@@ -146,12 +163,25 @@ final class FloorpWebPanelSessionStore {
         for key: FloorpWebPanelSessionKey,
         configuration: FloorpWebPanelSessionConfiguration
     ) throws -> any FloorpWebPanelSessionProtocol {
-        let session = try factory.makeSession(for: key, configuration: configuration)
+        let restorationURL: URL?
+        if let snapshot = restorationSnapshots[key],
+           snapshot.homeURL == configuration.homeURL {
+            restorationURL = FloorpWebPanelRestorationPolicy.safeWebURL(snapshot.currentURL)
+        } else {
+            restorationSnapshots.removeValue(forKey: key)
+            restorationURL = nil
+        }
+        let session = try factory.makeSession(
+            for: key,
+            configuration: configuration,
+            restorationURL: restorationURL
+        )
         guard session.key == key else {
             session.invalidate()
             throw FloorpWebPanelSessionStoreError.factoryReturnedMismatchedKey
         }
 
+        restorationSnapshots.removeValue(forKey: key)
         entries[key] = Entry(session: session, configuration: configuration)
         touchRegularSession(for: key)
         trimRegularSessionsIfNeeded()
@@ -167,14 +197,35 @@ final class FloorpWebPanelSessionStore {
     private func trimRegularSessionsIfNeeded() {
         while regularSessionLRU.count > regularSessionLimit {
             let key = regularSessionLRU.removeFirst()
-            guard let entry = entries.removeValue(forKey: key) else { continue }
-            entry.session.invalidate()
+            removeSession(for: key, preservingRestoration: true)
         }
     }
 
-    private func removeSession(for key: FloorpWebPanelSessionKey) {
+    private func removeSession(
+        for key: FloorpWebPanelSessionKey,
+        preservingRestoration: Bool
+    ) {
         regularSessionLRU.removeAll { $0 == key }
-        guard let entry = entries.removeValue(forKey: key) else { return }
+        guard let entry = entries.removeValue(forKey: key) else {
+            if !preservingRestoration {
+                restorationSnapshots.removeValue(forKey: key)
+            }
+            return
+        }
+        if preservingRestoration {
+            if let currentURL = FloorpWebPanelRestorationPolicy.safeWebURL(
+                entry.session.state.currentURL
+            ) {
+                restorationSnapshots[key] = RestorationSnapshot(
+                    homeURL: entry.configuration.homeURL,
+                    currentURL: currentURL
+                )
+            } else {
+                restorationSnapshots.removeValue(forKey: key)
+            }
+        } else {
+            restorationSnapshots.removeValue(forKey: key)
+        }
         entry.session.unload()
     }
 

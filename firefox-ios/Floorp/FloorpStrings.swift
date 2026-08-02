@@ -123,6 +123,14 @@ enum FloorpStrings {
             comment: "Error shown when a custom web panel cannot be opened"
         )
 
+        static let webPanelUnloaded = NSLocalizedString(
+            "Floorp.Drawer.WebPanelUnloaded.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Web panel unloaded. Select it again to reload.",
+            comment: "State shown after a custom web panel is explicitly unloaded"
+        )
+
         static let webPanelBack = NSLocalizedString(
             "Floorp.Drawer.WebPanelBack.v1",
             tableName: "Floorp",

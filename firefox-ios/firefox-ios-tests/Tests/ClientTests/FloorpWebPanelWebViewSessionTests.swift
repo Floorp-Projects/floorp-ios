@@ -64,7 +64,32 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         )
     }
 
-    func testPendingHomeLoadRemainsSuppressedWhileSessionIsHidden() {
+    func testRestorationURLLoadsExactlyOnceAfterContentRulesAndRejectsUnsafeURL() throws {
+        let restorationURL = try XCTUnwrap(URL(string: "https://example.com/restored"))
+        let restoredFixture = makeFixture(restorationURL: restorationURL)
+
+        restoredFixture.installer.completeInstallation()
+        restoredFixture.installer.completeInstallation()
+
+        XCTAssertEqual(restoredFixture.runtime.loadedRequests.map(\.url), [restorationURL])
+
+        let homeFixture = makeFixture(restorationURL: restoredFixture.configuration.homeURL)
+        homeFixture.installer.completeInstallation()
+        XCTAssertEqual(
+            homeFixture.runtime.loadedRequests.map(\.url),
+            [homeFixture.configuration.homeURL]
+        )
+
+        let unsafeURL = try XCTUnwrap(URL(string: "javascript:alert(1)"))
+        let unsafeFixture = makeFixture(restorationURL: unsafeURL)
+        unsafeFixture.installer.completeInstallation()
+        XCTAssertEqual(
+            unsafeFixture.runtime.loadedRequests.map(\.url),
+            [unsafeFixture.configuration.homeURL]
+        )
+    }
+
+    func testHiddenSessionContinuesPendingLoadAndRequestsMediaSuppression() {
         let fixture = makeFixture()
 
         fixture.session.setVisible(false)
@@ -167,6 +192,30 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         )
         XCTAssertFalse(fixture.session.isAudioMuted)
         XCTAssertEqual(fixture.runtime.invalidateCallCount, 0)
+    }
+
+    func testDelayedMediaCallbacksDoNotOverrideLatestStateAfterInvalidate() {
+        let fixture = makeFixture()
+        fixture.runtime.delaysMediaPlaybackCompletions = true
+
+        fixture.session.setVisible(false)
+        fixture.session.setVisible(true)
+        fixture.session.setAudioMuted(true)
+
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false, true])
+        XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 3)
+        XCTAssertTrue(fixture.session.isAudioMuted)
+
+        fixture.session.invalidate()
+        fixture.runtime.mediaPlaybackError = MockMediaPlaybackError.javaScriptFailure
+        fixture.runtime.completePendingMediaPlaybackTransitions()
+        fixture.session.setAudioMuted(false)
+        fixture.session.setVisible(false)
+
+        XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 0)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false, true])
+        XCTAssertTrue(fixture.session.isAudioMuted)
+        XCTAssertEqual(fixture.runtime.invalidateCallCount, 1)
     }
 
     func testOpenCurrentPageInMainBrowserAllowsOnlySafeCurrentURL() throws {
@@ -308,6 +357,7 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
     private func makeFixture(
         windowUUID: WindowUUID = UUID(),
         isPrivate: Bool = false,
+        restorationURL: URL? = nil,
         openInMainBrowser: @escaping FloorpWebPanelNavigationExecutor.OpenInMainBrowser = { _ in }
     ) -> Fixture {
         let runtime = MockFloorpWebPanelWebViewRuntime()
@@ -331,7 +381,8 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
                 windowUUID: windowUUID,
                 isPrivate: isPrivate,
                 openInMainBrowser: openInMainBrowser
-            )
+            ),
+            restorationURL: restorationURL
         )
         return Fixture(
             session: session,
@@ -524,7 +575,15 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
     private(set) var stopLoadingCallCount = 0
     private(set) var invalidateCallCount = 0
     private(set) var mediaPlaybackSuppressionRequests = [Bool]()
+    private var pendingMediaPlaybackCompletions = [
+        @MainActor (Result<Void, Error>) -> Void
+    ]()
+    var delaysMediaPlaybackCompletions = false
     var mediaPlaybackError: Error?
+
+    var pendingMediaPlaybackCompletionCount: Int {
+        pendingMediaPlaybackCompletions.count
+    }
 
     var contentView: UIView? { invalidateCallCount == 0 ? retainedWebView : nil }
     var webView: WKWebView? { invalidateCallCount == 0 ? retainedWebView : nil }
@@ -556,10 +615,26 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
         completion: @escaping @MainActor (Result<Void, Error>) -> Void
     ) {
         mediaPlaybackSuppressionRequests.append(isSuppressed)
+        if delaysMediaPlaybackCompletions {
+            pendingMediaPlaybackCompletions.append(completion)
+            return
+        }
         if let mediaPlaybackError {
             completion(.failure(mediaPlaybackError))
         } else {
             completion(.success(()))
+        }
+    }
+
+    func completePendingMediaPlaybackTransitions() {
+        let completions = pendingMediaPlaybackCompletions
+        pendingMediaPlaybackCompletions.removeAll()
+        completions.forEach { completion in
+            if let mediaPlaybackError {
+                completion(.failure(mediaPlaybackError))
+            } else {
+                completion(.success(()))
+            }
         }
     }
 

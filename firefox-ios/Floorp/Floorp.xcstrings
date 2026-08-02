@@ -529,6 +529,12 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "この Web パネルを開けませんでした" } }
       }
     },
+    "Floorp.Drawer.WebPanelUnloaded.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web panel unloaded. Select it again to reload." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルをアンロードしました。もう一度選択すると再読み込みします。" } }
+      }
+    },
     "Floorp.Drawer.WebPanelBack.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } },

@@ -297,7 +297,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private var observers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
     private var installationGeneration = UUID()
     private var areContentRulesReady = false
-    private var hasPendingHomeLoad = true
+    private var pendingInitialLoadURL: URL?
     private var isInvalidated = false
     private var isVisible = true
     private var isMediaPlaybackSuppressed = false
@@ -313,12 +313,15 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         runtime: any FloorpWebPanelWebViewRuntime,
         contentRuleInstallerFactory: any FloorpWebPanelContentRuleInstallerFactory,
         navigationExecutor: FloorpWebPanelNavigationExecutor,
+        restorationURL: URL? = nil,
         privateBrowsingSessionLease: WKPrivateBrowsingSessionLease? = nil
     ) {
         self.key = key
         self.state = FloorpWebPanelSessionState(configuration: configuration)
         self.runtime = runtime
         self.navigationExecutor = navigationExecutor
+        self.pendingInitialLoadURL = FloorpWebPanelRestorationPolicy.safeWebURL(restorationURL)
+            ?? configuration.homeURL
         self.privateBrowsingSessionLease = privateBrowsingSessionLease
 
         runtime.setNavigationExecutor(navigationExecutor)
@@ -361,10 +364,10 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     func loadHome() {
         guard !isInvalidated else { return }
         guard areContentRulesReady else {
-            hasPendingHomeLoad = true
+            pendingInitialLoadURL = state.configuration.homeURL
             return
         }
-        performHomeLoad()
+        performLoad(state.configuration.homeURL)
     }
 
     func goBack() {
@@ -408,7 +411,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         guard !isInvalidated else { return }
         isInvalidated = true
         installationGeneration = UUID()
-        hasPendingHomeLoad = false
+        pendingInitialLoadURL = nil
         observers.removeAll()
         contentRuleInstaller?.invalidate()
         contentRuleInstaller = nil
@@ -442,13 +445,13 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private func finishContentRuleInstallation() {
         guard !isInvalidated, !areContentRulesReady else { return }
         areContentRulesReady = true
-        guard hasPendingHomeLoad else { return }
-        hasPendingHomeLoad = false
-        performHomeLoad()
+        guard let initialLoadURL = pendingInitialLoadURL else { return }
+        pendingInitialLoadURL = nil
+        performLoad(initialLoadURL)
     }
 
-    private func performHomeLoad() {
-        runtime?.load(URLRequest(url: state.configuration.homeURL))
+    private func performLoad(_ url: URL) {
+        runtime?.load(URLRequest(url: url))
     }
 
     private func updateMediaPlaybackSuppression() {
@@ -507,7 +510,8 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
 
     func makeSession(
         for key: FloorpWebPanelSessionKey,
-        configuration: FloorpWebPanelSessionConfiguration
+        configuration: FloorpWebPanelSessionConfiguration,
+        restorationURL: URL?
     ) throws -> any FloorpWebPanelSessionProtocol {
         let privateBrowsingSessionLease = key.isPrivate
             ? privateBrowsingSessionCoordinator.acquireLease()
@@ -528,6 +532,7 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
                 isPrivate: key.isPrivate,
                 openInMainBrowser: openInMainBrowser
             ),
+            restorationURL: restorationURL,
             privateBrowsingSessionLease: privateBrowsingSessionLease
         )
     }
