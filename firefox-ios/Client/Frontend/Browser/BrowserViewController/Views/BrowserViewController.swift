@@ -4172,7 +4172,12 @@ class BrowserViewController: UIViewController,
     // MARK: - RecentlyClosedPanelDelegate
 
     func openRecentlyClosedSiteInNewTab(_ url: URL, isPrivate: Bool) {
-        tabManager.selectTab(tabManager.addTab(URLRequest(url: url)))
+        let tab = tabManager.addTab(
+            URLRequest(url: url),
+            afterTab: tabManager.selectedTab,
+            isPrivate: isPrivate
+        )
+        tabManager.selectTab(tab)
     }
 
     // MARK: - BrowserFrameInfoProvider
@@ -4711,7 +4716,10 @@ extension BrowserViewController {
 
     func openRecentlyClosedTabs() {
         self.navigationHandler?.show(homepanelSection: .history)
-        self.notificationCenter.post(name: .OpenRecentlyClosedTabs)
+        self.notificationCenter.post(
+            name: .OpenRecentlyClosedTabs,
+            withUserInfo: windowUUID.userInfo
+        )
     }
 
     // MARK: - BrowserStatusBarScrollDelegate

@@ -37,7 +37,11 @@ extension BrowserViewController {
     @objc
     func openClearHistoryPanelKeyCommand() {
         navigationHandler?.show(homepanelSection: .history)
-        NotificationCenter.default.post(name: .OpenClearRecentHistory, object: nil)
+        NotificationCenter.default.post(
+            name: .OpenClearRecentHistory,
+            object: nil,
+            userInfo: windowUUID.userInfo
+        )
     }
 
     @objc

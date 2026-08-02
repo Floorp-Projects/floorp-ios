@@ -169,7 +169,7 @@ class HistoryPanel: UIViewController,
         KeyboardHelper.defaultHelper.addDelegate(self)
 
         startObservingNotifications(
-            withNotificationCenter: NotificationCenter.default,
+            withNotificationCenter: notificationCenter,
             forObserver: self,
             observing: viewModel.historyPanelNotifications
         )
@@ -334,6 +334,7 @@ class HistoryPanel: UIViewController,
     func handleNotifications(_ notification: Notification) {
         let notificationName = notification.name
         let notificationDBName = notification.object as? String
+        let notificationWindowUUID = notification.windowUUID
 
         ensureMainThread {
             switch notificationName {
@@ -358,6 +359,7 @@ class HistoryPanel: UIViewController,
                 }
 
             case .OpenClearRecentHistory:
+                guard notificationWindowUUID == self.windowUUID else { return }
                 if self.viewModel.isSearchInProgress {
                     self.exitSearchState()
                 }
@@ -365,6 +367,7 @@ class HistoryPanel: UIViewController,
                 self.showClearRecentHistory()
 
             case .OpenRecentlyClosedTabs:
+                guard notificationWindowUUID == self.windowUUID else { return }
                 self.historyCoordinatorDelegate?.showRecentlyClosedTab()
                 self.applySnapshot(animatingDifferences: true)
 
@@ -813,8 +816,13 @@ extension HistoryPanel {
 extension HistoryPanel {
     func handleLeftTopButton() {
         updatePanelState(newState: .history(state: .mainView))
-        let userInfo: [String: Any] = ["state": state]
-        NotificationCenter.default.post(name: .LibraryPanelStateDidChange, object: nil, userInfo: userInfo)
+        var userInfo = windowUUID.userInfo
+        userInfo["state"] = state
+        notificationCenter.post(
+            name: .LibraryPanelStateDidChange,
+            withObject: nil,
+            withUserInfo: userInfo
+        )
     }
 
     func handleRightTopButton() {

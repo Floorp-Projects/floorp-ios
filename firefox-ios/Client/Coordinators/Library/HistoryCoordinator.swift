@@ -48,7 +48,8 @@ class HistoryCoordinator: BaseCoordinator,
 
     // MARK: Notifiable
     func handleNotifications(_ notification: Notification) {
-        guard notification.name == .OpenClearRecentHistory else { return }
+        guard notification.name == .OpenClearRecentHistory,
+              notification.windowUUID == windowUUID else { return }
 
         ensureMainThread {
             guard let historyPanel = self.router.rootViewController as? HistoryPanel else { return }

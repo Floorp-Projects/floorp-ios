@@ -33,6 +33,7 @@ final class FloorpPanelPresentationState: NSObject {
     private(set) var webPanelSessionStore: FloorpWebPanelSessionStore?
     private var panelManager: FloorpPanelManager?
     private var observesPanelRegistry = false
+    var libraryPanelHost: (any FloorpLibraryPanelHosting)?
 
     var hasActivePresentation: Bool {
         activeDrawer != nil
@@ -213,6 +214,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private let notesStore: FloorpNotesStore
     private let logger: Logger
     private let isPrivateProvider: @MainActor () -> Bool
+    private let libraryPanelHost: (any FloorpLibraryPanelHosting)?
+    private let registryFallbackRetryDelayNanoseconds: UInt64
 
     /// Callback when user taps a bookmark/history item.
     var onItemSelected: ((URL) -> Void)?
@@ -235,6 +238,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var displayedPanelIDs = [String]()
     private var activeWebPanelSession: (any FloorpWebPanelSessionProtocol)?
     private var webPanelStateObserverID: UUID?
+    private var pendingRegistryFallbackIndex: Int?
+    private var pendingRegistryFallbackRetryTask: Task<Void, Never>?
+    private var pendingRegistryFallbackRetryID: UUID?
 
     // MARK: - UI Components
 
@@ -395,6 +401,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         return view
     }()
 
+    private lazy var nativeContentContainerView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.accessibilityIdentifier = "Floorp.Drawer.NativeLibraryContent"
+        view.isHidden = true
+        return view
+    }()
+
     // Empty state
     private lazy var emptyStateLabel: UILabel = {
         let label = UILabel()
@@ -427,9 +441,11 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
          notesStore: FloorpNotesStore = .shared,
          logger: Logger = DefaultLogger.shared,
          presentationState: FloorpPanelPresentationState? = nil,
+         libraryPanelHost: (any FloorpLibraryPanelHosting)? = nil,
          themeManager: ThemeManager = AppContainer.shared.resolve(),
          notificationCenter: NotificationProtocol = NotificationCenter.default,
-         isPrivateProvider: @escaping @MainActor () -> Bool = { false }) {
+         isPrivateProvider: @escaping @MainActor () -> Bool = { false },
+         registryFallbackRetryDelayNanoseconds: UInt64 = 250_000_000) {
         let presentationState = presentationState ?? FloorpPanelPresentationState(
             windowUUID: WindowUUID.XCTestDefaultUUID
         )
@@ -437,10 +453,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         self.presentationState = presentationState
         self.notesStore = notesStore
         self.logger = logger
+        self.libraryPanelHost = libraryPanelHost
         self.windowUUID = presentationState.windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
         self.isPrivateProvider = isPrivateProvider
+        self.registryFallbackRetryDelayNanoseconds = registryFallbackRetryDelayNanoseconds
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .overFullScreen
         modalTransitionStyle = .crossDissolve
@@ -452,6 +470,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     deinit {
         panelLoadTask?.cancel()
+        pendingRegistryFallbackRetryTask?.cancel()
         notificationCenter.removeObserver(self)
     }
 
@@ -477,6 +496,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             self,
             selector: #selector(panelRegistryDidChange),
             name: .FloorpPanelRegistryDidChange,
+            object: nil
+        )
+        notificationCenter.addObserver(
+            self,
+            selector: #selector(libraryPanelStateDidChange(_:)),
+            name: .LibraryPanelStateDidChange,
             object: nil
         )
         listenForThemeChanges(withNotificationCenter: notificationCenter)
@@ -549,6 +574,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         containerView.addSubview(searchTextField)
         containerView.addSubview(tableView)
         containerView.addSubview(webPanelContainerView)
+        containerView.addSubview(nativeContentContainerView)
         containerView.addSubview(emptyStateLabel)
         containerView.addSubview(retryButton)
 
@@ -671,6 +697,13 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             webPanelContainerView.bottomAnchor.constraint(
                 equalTo: containerView.safeAreaLayoutGuide.bottomAnchor
             ),
+
+            nativeContentContainerView.topAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.topAnchor
+            ),
+            nativeContentContainerView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
+            nativeContentContainerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            nativeContentContainerView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
 
             // Empty state
             emptyStateLabel.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
@@ -928,24 +961,29 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     @objc private func sidebarButtonTapped(_ sender: UIButton) {
-        guard let panelId = sender.accessibilityIdentifier else { return }
+        guard let panelId = sender.accessibilityIdentifier,
+              let panel = panelManager.panel(for: panelId),
+              canSelectPanel(panel) else { return }
         selectPanel(panelId)
         loadCurrentPanel()
     }
 
     @objc private func addWebPanelTapped() {
+        guard canLeaveCurrentPanel else { return }
         presentPanelRegistry(presentsAddEditor: true)
     }
 
     @objc private func managePanelsTapped() {
+        guard canLeaveCurrentPanel else { return }
         presentPanelRegistry()
     }
 
-    private func presentPanelRegistry(
+    func presentPanelRegistry(
         editingPanelID: String? = nil,
         presentsAddEditor: Bool = false
     ) {
-        guard presentedViewController == nil else { return }
+        guard canLeaveCurrentPanel,
+              presentedViewController == nil else { return }
         let registry = FloorpPanelRegistryViewController(
             panelManager: panelManager,
             windowUUID: windowUUID,
@@ -969,8 +1007,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         }
     }
 
-    private func movePanel(id: String, offset: Int) {
-        guard let currentIndex = panelManager.panels.firstIndex(where: { $0.id == id }) else { return }
+    func movePanel(id: String, offset: Int) {
+        guard canLeaveCurrentPanel,
+              let currentIndex = panelManager.panels.firstIndex(where: { $0.id == id }) else { return }
         let destinationIndex = currentIndex + offset
         guard panelManager.panels.indices.contains(destinationIndex) else { return }
         do {
@@ -988,8 +1027,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         }
     }
 
-    private func requestPanelRemoval(id: String) {
-        guard presentedViewController == nil,
+    func requestPanelRemoval(id: String) {
+        guard canLeaveCurrentPanel,
+              presentedViewController == nil,
               let panel = panelManager.panel(for: id) else { return }
         guard panelManager.panels.count > 1 else {
             let alert = UIAlertController(
@@ -1061,6 +1101,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
         if let previousSelection,
            let selectedPanel = panelManager.panel(for: previousSelection) {
+            clearPendingRegistryFallback()
             selectPanel(selectedPanel.id)
             if selectedPanel.type == .web {
                 loadCurrentPanel()
@@ -1069,6 +1110,10 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         }
 
         guard !panelManager.panels.isEmpty else {
+            pendingRegistryFallbackIndex = pendingRegistryFallbackIndex
+                ?? previousSelection.flatMap { previousPanelIDs.firstIndex(of: $0) }
+                ?? 0
+            cancelPendingRegistryFallbackRetry()
             panelLoadTask?.cancel()
             items = []
             filteredItems = []
@@ -1076,7 +1121,27 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             return
         }
 
-        let previousIndex = previousSelection.flatMap { previousPanelIDs.firstIndex(of: $0) } ?? 0
+        let previousIndex = pendingRegistryFallbackIndex
+            ?? previousSelection.flatMap { previousPanelIDs.firstIndex(of: $0) }
+            ?? 0
+        guard canLeaveCurrentPanel else {
+            pendingRegistryFallbackIndex = previousIndex
+            schedulePendingRegistryFallbackRetry()
+            return
+        }
+        applyRegistryFallback(at: previousIndex)
+    }
+
+    @objc private func libraryPanelStateDidChange(_ notification: Notification) {
+        guard notification.windowUUID == windowUUID,
+              let pendingRegistryFallbackIndex,
+              canLeaveCurrentPanel else { return }
+        applyRegistryFallback(at: pendingRegistryFallbackIndex)
+    }
+
+    private func applyRegistryFallback(at previousIndex: Int) {
+        guard !panelManager.panels.isEmpty else { return }
+        clearPendingRegistryFallback()
         let fallbackIndex = min(previousIndex, panelManager.panels.count - 1)
         let fallbackPanel = panelManager.panels[fallbackIndex]
         selectPanel(fallbackPanel.id)
@@ -1086,6 +1151,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     private func selectPanel(_ panelId: String) {
         guard let panel = panelManager.panel(for: panelId) else { return }
+        clearPendingRegistryFallback()
         currentPanelType = panel.type
         presentationState.select(panel)
         let panelTitle = displayTitle(for: panel)
@@ -1098,6 +1164,45 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             ? FloorpStrings.Notes.searchPlaceholder
             : FloorpStrings.Drawer.searchPlaceholder
         updateSidebarSelection()
+    }
+
+    private func schedulePendingRegistryFallbackRetry() {
+        guard pendingRegistryFallbackRetryTask == nil else { return }
+        let retryID = UUID()
+        let retryDelayNanoseconds = registryFallbackRetryDelayNanoseconds
+        pendingRegistryFallbackRetryID = retryID
+        pendingRegistryFallbackRetryTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                } catch {
+                    break
+                }
+
+                guard let self,
+                      let pendingRegistryFallbackIndex = self.pendingRegistryFallbackIndex else {
+                    break
+                }
+                guard self.canLeaveCurrentPanel else { continue }
+                self.applyRegistryFallback(at: pendingRegistryFallbackIndex)
+                break
+            }
+
+            guard self?.pendingRegistryFallbackRetryID == retryID else { return }
+            self?.pendingRegistryFallbackRetryTask = nil
+            self?.pendingRegistryFallbackRetryID = nil
+        }
+    }
+
+    private func clearPendingRegistryFallback() {
+        pendingRegistryFallbackIndex = nil
+        cancelPendingRegistryFallbackRetry()
+    }
+
+    private func cancelPendingRegistryFallbackRetry() {
+        pendingRegistryFallbackRetryID = nil
+        pendingRegistryFallbackRetryTask?.cancel()
+        pendingRegistryFallbackRetryTask = nil
     }
 
     // MARK: - Data Loading
@@ -1118,6 +1223,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         tableView.isHidden = false
         webPanelContainerView.isHidden = true
         tableView.reloadData()
+
+        if currentPanelType.usesNativeLibrary,
+           showNativeLibraryPanel(currentPanelType) {
+            return
+        }
+
+        hideNativeLibraryPanel()
+        setLegacyContentHidden(false)
 
         switch currentPanelType {
         case .bookmarks:
@@ -1209,6 +1322,75 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         searchTextField.isHidden = true
         tableView.isHidden = false
         showEmptyState(message: FloorpStrings.Drawer.webPanelUnavailable)
+    }
+
+    private var canLeaveCurrentPanel: Bool {
+        guard currentPanelType.usesNativeLibrary,
+              let libraryPanelHost else { return true }
+        return libraryPanelHost.allowsPanelSwitching
+    }
+
+    private func canSelectPanel(_ panel: FloorpPanel) -> Bool {
+        guard panel.id != presentationState.selectedPanelId else { return true }
+        return canLeaveCurrentPanel
+    }
+
+    private func showNativeLibraryPanel(_ panelType: FloorpPanelType) -> Bool {
+        guard let libraryPanelHost,
+              libraryPanelHost.select(panelType: panelType) else { return false }
+
+        setLegacyContentHidden(true)
+        nativeContentContainerView.isHidden = false
+        let libraryViewController = libraryPanelHost.viewController
+        guard libraryViewController.parent !== self else { return true }
+
+        addChild(libraryViewController)
+        let forwardsAppearance = view.window != nil
+        if forwardsAppearance {
+            libraryViewController.beginAppearanceTransition(true, animated: false)
+        }
+        nativeContentContainerView.addSubview(libraryViewController.view)
+        libraryViewController.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            libraryViewController.view.topAnchor.constraint(equalTo: nativeContentContainerView.topAnchor),
+            libraryViewController.view.leadingAnchor.constraint(equalTo: nativeContentContainerView.leadingAnchor),
+            libraryViewController.view.trailingAnchor.constraint(equalTo: nativeContentContainerView.trailingAnchor),
+            libraryViewController.view.bottomAnchor.constraint(equalTo: nativeContentContainerView.bottomAnchor),
+        ])
+        libraryViewController.didMove(toParent: self)
+        if forwardsAppearance {
+            libraryViewController.endAppearanceTransition()
+        }
+        libraryPanelHost.onRequestDrawerDismiss = { [weak self] in
+            self?.performDrawerDismissal()
+        }
+        return true
+    }
+
+    private func hideNativeLibraryPanel() {
+        nativeContentContainerView.isHidden = true
+        guard let libraryViewController = libraryPanelHost?.viewController,
+              libraryViewController.parent === self else { return }
+        libraryViewController.willMove(toParent: nil)
+        let forwardsAppearance = view.window != nil
+        if forwardsAppearance {
+            libraryViewController.beginAppearanceTransition(false, animated: false)
+        }
+        libraryViewController.view.removeFromSuperview()
+        if forwardsAppearance {
+            libraryViewController.endAppearanceTransition()
+        }
+        libraryViewController.removeFromParent()
+    }
+
+    private func setLegacyContentHidden(_ isHidden: Bool) {
+        headerView.isHidden = isHidden
+        searchTextField.isHidden = isHidden
+        tableView.isHidden = isHidden
+        if isHidden {
+            emptyStateLabel.isHidden = true
+            retryButton.isHidden = true
+        }
     }
 
     private func loadBookmarks() {
@@ -1630,6 +1812,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     /// Dismisses the drawer with animation.
     func dismissDrawer() {
+        if currentPanelType.usesNativeLibrary,
+           let libraryPanelHost {
+            guard libraryPanelHost.prepareForDrawerDismissal() == .allow else { return }
+        }
+        performDrawerDismissal()
+    }
+
+    private func performDrawerDismissal() {
         // An editor or confirmation alert owns its own save/destructive gate.
         // Do not let an external toolbar toggle tear down that presentation.
         guard presentedViewController == nil,
@@ -1668,9 +1858,23 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         guard !didFinishDismissal else { return }
         didFinishDismissal = true
         isTransitioningDrawer = false
+        clearPendingRegistryFallback()
         detachWebPanelContent()
         presentationState.detach(self)
+        if libraryPanelHost?.viewController.parent === self {
+            hideNativeLibraryPanel()
+        }
+        libraryPanelHost?.onRequestDrawerDismiss = nil
         onDismissed?()
+    }
+}
+
+private extension FloorpPanelType {
+    var usesNativeLibrary: Bool {
+        switch self {
+        case .bookmarks, .history, .downloads: return true
+        case .notes, .web: return false
+        }
     }
 }
 
