@@ -33,6 +33,7 @@ final class FloorpPanelPresentationState: NSObject {
     private(set) var webPanelSessionStore: FloorpWebPanelSessionStore?
     private var panelManager: FloorpPanelManager?
     private var observesPanelRegistry = false
+    private(set) var hasPendingNotesOperationError = false
     var libraryPanelHost: (any FloorpLibraryPanelHosting)?
 
     var hasActivePresentation: Bool {
@@ -72,6 +73,17 @@ final class FloorpPanelPresentationState: NSObject {
     func detach(_ drawer: FloorpOverlayDrawerViewController) {
         guard activeDrawer === drawer else { return }
         activeDrawer = nil
+    }
+
+    func recordPendingNotesOperationError() {
+        hasPendingNotesOperationError = true
+    }
+
+    @discardableResult
+    func consumePendingNotesOperationError() -> Bool {
+        guard hasPendingNotesOperationError else { return false }
+        hasPendingNotesOperationError = false
+        return true
     }
 
     func configureWebPanelRuntime(
@@ -187,6 +199,52 @@ struct FloorpDrawerLayoutMetrics {
 /// │         │ (BM/Hist/DL)     │
 /// └─────────┴──────────────────┘
 /// ```
+struct FloorpNotesReorderSession: Equatable {
+    let originalVisibleIDs: [String]
+    let expectedRevision: UInt64
+    private(set) var orderedVisibleIDs: [String]
+
+    init(visibleIDs: [String], expectedRevision: UInt64) {
+        self.originalVisibleIDs = visibleIDs
+        self.expectedRevision = expectedRevision
+        self.orderedVisibleIDs = visibleIDs
+    }
+
+    var hasChanges: Bool {
+        originalVisibleIDs != orderedVisibleIDs
+    }
+
+    mutating func move(from sourceIndex: Int, to destinationIndex: Int) -> Bool {
+        guard orderedVisibleIDs.indices.contains(sourceIndex),
+              orderedVisibleIDs.indices.contains(destinationIndex),
+              sourceIndex != destinationIndex else { return false }
+        let id = orderedVisibleIDs.remove(at: sourceIndex)
+        orderedVisibleIDs.insert(id, at: destinationIndex)
+        return true
+    }
+
+    mutating func move(id: String, offset: Int) -> Int? {
+        guard let sourceIndex = orderedVisibleIDs.firstIndex(of: id) else { return nil }
+        let destinationIndex = sourceIndex + offset
+        guard orderedVisibleIDs.indices.contains(destinationIndex) else { return nil }
+        return move(from: sourceIndex, to: destinationIndex) ? destinationIndex : nil
+    }
+}
+
+private struct FloorpNoteMoveAnnouncement {
+    let id: String
+    let position: Int
+    let total: Int
+}
+
+typealias FloorpNotesSnapshotLoader = @MainActor () async throws -> FloorpNotesSnapshot
+typealias FloorpNotesReorderWriter = @MainActor (
+    _ originalVisibleIDs: [String],
+    _ orderedVisibleIDs: [String],
+    _ expectedRevision: UInt64
+) async throws -> Bool
+typealias FloorpNoteAccessibilityFocusPoster = @MainActor (_ argument: Any?) -> Void
+
 @MainActor
 final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     var themeManager: ThemeManager
@@ -216,6 +274,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private let isPrivateProvider: @MainActor () -> Bool
     private let libraryPanelHost: (any FloorpLibraryPanelHosting)?
     private let registryFallbackRetryDelayNanoseconds: UInt64
+    private let notesSnapshotLoader: FloorpNotesSnapshotLoader
+    private let notesReorderWriter: FloorpNotesReorderWriter
+    private let noteAccessibilityFocusPoster: FloorpNoteAccessibilityFocusPoster
 
     /// Callback when user taps a bookmark/history item.
     var onItemSelected: ((URL) -> Void)?
@@ -231,7 +292,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var filteredItems = [DrawerItem]()
     private var isSearching = false
     private var isCreatingNote = false
+    private var notesRevision: UInt64?
+    private var notesReorderSession: FloorpNotesReorderSession?
+    private var isCommittingNotesReorder = false
+    private var pendingNoteAccessibilityFocusID: String?
+    private var pendingNoteAccessibilityFocusRequiresReload = false
+    private var shouldFocusAddNoteButton = false
     private var panelLoadTask: Task<Void, Never>?
+    private var notesLoadGeneration = UUID()
     private var isTransitioningDrawer = false
     private var didFinishDismissal = false
     private var dismissWhenPresentationFinishes = false
@@ -358,6 +426,42 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         return button
     }()
 
+    private lazy var notesReorderButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: "arrow.up.arrow.down"), for: .normal)
+        button.addTarget(self, action: #selector(notesReorderTapped), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = FloorpStrings.Notes.reorder
+        button.accessibilityIdentifier = "Floorp.Notes.Reorder"
+        button.isHidden = true
+        return button
+    }()
+
+    private lazy var cancelNotesReorderButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: "arrow.uturn.backward"), for: .normal)
+        button.addTarget(self, action: #selector(cancelNotesReorderTapped), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = FloorpStrings.Notes.cancel
+        button.accessibilityIdentifier = "Floorp.Notes.Reorder.Cancel"
+        button.isHidden = true
+        return button
+    }()
+
+    private lazy var headerActionsStackView: UIStackView = {
+        let stackView = UIStackView(arrangedSubviews: [
+            notesReorderButton,
+            addNoteButton,
+            cancelNotesReorderButton,
+            closeButton,
+        ])
+        stackView.axis = .horizontal
+        stackView.alignment = .center
+        stackView.spacing = 4
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        return stackView
+    }()
+
     // Search bar
     private lazy var searchTextField: UITextField = {
         let tf = UITextField()
@@ -371,6 +475,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         tf.leftViewMode = .always
         tf.translatesAutoresizingMaskIntoConstraints = false
         tf.accessibilityLabel = FloorpStrings.Drawer.searchFieldAccessibility
+        tf.accessibilityIdentifier = "Floorp.Notes.Search"
         tf.delegate = self
         tf.addTarget(self, action: #selector(searchTextChanged), for: .editingChanged)
         return tf
@@ -445,7 +550,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
          themeManager: ThemeManager = AppContainer.shared.resolve(),
          notificationCenter: NotificationProtocol = NotificationCenter.default,
          isPrivateProvider: @escaping @MainActor () -> Bool = { false },
-         registryFallbackRetryDelayNanoseconds: UInt64 = 250_000_000) {
+         registryFallbackRetryDelayNanoseconds: UInt64 = 250_000_000,
+         notesSnapshotLoader: FloorpNotesSnapshotLoader? = nil,
+         notesReorderWriter: FloorpNotesReorderWriter? = nil,
+         noteAccessibilityFocusPoster: @escaping FloorpNoteAccessibilityFocusPoster = {
+             UIAccessibility.post(notification: .layoutChanged, argument: $0)
+         }) {
         let presentationState = presentationState ?? FloorpPanelPresentationState(
             windowUUID: WindowUUID.XCTestDefaultUUID
         )
@@ -459,6 +569,17 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         self.notificationCenter = notificationCenter
         self.isPrivateProvider = isPrivateProvider
         self.registryFallbackRetryDelayNanoseconds = registryFallbackRetryDelayNanoseconds
+        self.notesSnapshotLoader = notesSnapshotLoader ?? {
+            try await notesStore.loadSnapshot()
+        }
+        self.notesReorderWriter = notesReorderWriter ?? {
+            try await notesStore.reorderVisibleNotes(
+                originalVisibleIDs: $0,
+                orderedVisibleIDs: $1,
+                expectedRevision: $2
+            )
+        }
+        self.noteAccessibilityFocusPoster = noteAccessibilityFocusPoster
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .overFullScreen
         modalTransitionStyle = .crossDissolve
@@ -488,7 +609,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         loadCurrentPanel()
         notificationCenter.addObserver(
             self,
-            selector: #selector(notesDidChange),
+            selector: #selector(notesDidChange(_:)),
             name: .FloorpNotesDidChange,
             object: nil
         )
@@ -518,6 +639,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         if isBeingDismissed || presentingViewController == nil {
             finishDismissal()
         }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !presentPendingNotesOperationErrorIfPossible() else { return }
+        applyPendingNoteAccessibilityFocus()
     }
 
     override func viewDidLayoutSubviews() {
@@ -555,6 +682,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     override func accessibilityPerformEscape() -> Bool {
+        guard !isCommittingNotesReorder else { return false }
         dismissDrawer()
         return true
     }
@@ -579,8 +707,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         containerView.addSubview(retryButton)
 
         headerView.addSubview(titleLabel)
-        headerView.addSubview(addNoteButton)
-        headerView.addSubview(closeButton)
+        headerView.addSubview(headerActionsStackView)
 
         sidebarView.addSubview(sidebarScrollView)
         sidebarScrollView.addSubview(sidebarStackView)
@@ -644,20 +771,17 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             // Title
             titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: UX.horizontalPadding),
             titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: addNoteButton.leadingAnchor, constant: -8),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: headerActionsStackView.leadingAnchor,
+                constant: -8
+            ),
 
-            // Notes action
-            addNoteButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
-            addNoteButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            addNoteButton.widthAnchor.constraint(equalToConstant: 44),
-            addNoteButton.heightAnchor.constraint(equalToConstant: 44),
-
-            // Close button
-            closeButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -UX.horizontalPadding),
-            closeButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: 44),
-            closeButton.heightAnchor.constraint(equalToConstant: 44),
-
+            headerActionsStackView.trailingAnchor.constraint(
+                equalTo: headerView.trailingAnchor,
+                constant: -UX.horizontalPadding
+            ),
+            headerActionsStackView.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+        ] + headerActionConstraints + [
             // Search bar
             searchTextField.topAnchor.constraint(
                 equalTo: headerView.bottomAnchor, constant: 4
@@ -721,6 +845,19 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             retryButton.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
             retryButton.topAnchor.constraint(equalTo: emptyStateLabel.bottomAnchor, constant: 12),
         ] + panelRailConstraints(sidebarStackWidthConstraint: sidebarStackWidthConstraint))
+    }
+
+    private var headerActionConstraints: [NSLayoutConstraint] {
+        [
+            notesReorderButton.widthAnchor.constraint(equalToConstant: 44),
+            notesReorderButton.heightAnchor.constraint(equalToConstant: 44),
+            addNoteButton.widthAnchor.constraint(equalToConstant: 44),
+            addNoteButton.heightAnchor.constraint(equalToConstant: 44),
+            cancelNotesReorderButton.widthAnchor.constraint(equalToConstant: 44),
+            cancelNotesReorderButton.heightAnchor.constraint(equalToConstant: 44),
+            closeButton.widthAnchor.constraint(equalToConstant: 44),
+            closeButton.heightAnchor.constraint(equalToConstant: 44),
+        ]
     }
 
     /// Keeps the scrollable rail independent from the content constraints so
@@ -1152,6 +1289,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private func selectPanel(_ panelId: String) {
         guard let panel = panelManager.panel(for: panelId) else { return }
         clearPendingRegistryFallback()
+        if currentPanelType == .notes, panel.type != .notes {
+            endNotesReordering(reload: false)
+        }
         currentPanelType = panel.type
         presentationState.select(panel)
         let panelTitle = displayTitle(for: panel)
@@ -1160,9 +1300,15 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             : panelTitle
         titleLabel.accessibilityValue = panel.type == .notes ? FloorpStrings.Notes.localOnly : nil
         addNoteButton.isHidden = panel.type != .notes
+        notesReorderButton.isHidden = panel.type != .notes
+        cancelNotesReorderButton.isHidden = true
         searchTextField.placeholder = panel.type == .notes
             ? FloorpStrings.Notes.searchPlaceholder
             : FloorpStrings.Drawer.searchPlaceholder
+        searchTextField.accessibilityIdentifier = panel.type == .notes
+            ? "Floorp.Notes.Search"
+            : "Floorp.Drawer.Search"
+        updateNotesReorderControls()
         updateSidebarSelection()
     }
 
@@ -1209,9 +1355,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     private func loadCurrentPanel() {
         panelLoadTask?.cancel()
+        notesLoadGeneration = UUID()
         detachWebPanelContent()
+        endNotesReordering(reload: false)
         items = []
         filteredItems = []
+        notesRevision = nil
         searchTextField.text = nil
         searchTextField.isEnabled = true
         addNoteButton.isEnabled = currentPanelType == .notes && !isCreatingNote
@@ -1325,6 +1474,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     private var canLeaveCurrentPanel: Bool {
+        guard !notesInteractionsLocked else { return false }
         guard currentPanelType.usesNativeLibrary,
               let libraryPanelHost else { return true }
         return libraryPanelHost.allowsPanelSwitching
@@ -1486,19 +1636,32 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     private func loadNotes() {
+        panelLoadTask?.cancel()
+        let generation = UUID()
+        notesLoadGeneration = generation
         panelLoadTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let notes = try await notesStore.loadNotes()
-                guard !Task.isCancelled, currentPanelType == .notes else { return }
-                items = makeNoteItems(notes)
-                applySearchFilter()
+                let snapshot = try await notesSnapshotLoader()
+                guard !Task.isCancelled,
+                      notesLoadGeneration == generation,
+                      currentPanelType == .notes else { return }
+                guard let didDiscardReorder = applyNotesSnapshot(snapshot) else { return }
+                pendingNoteAccessibilityFocusRequiresReload = false
                 updateUI()
+                applyPendingNoteAccessibilityFocus()
+                if didDiscardReorder {
+                    announceNotesReorderCancelledForChanges()
+                }
             } catch let error as FloorpNotesStoreError {
-                guard !Task.isCancelled, currentPanelType == .notes else { return }
+                guard !Task.isCancelled,
+                      notesLoadGeneration == generation,
+                      currentPanelType == .notes else { return }
                 handleNotesLoadError(error)
             } catch {
-                guard !Task.isCancelled, currentPanelType == .notes else { return }
+                guard !Task.isCancelled,
+                      notesLoadGeneration == generation,
+                      currentPanelType == .notes else { return }
                 showGenericNotesLoadError()
             }
         }
@@ -1520,6 +1683,23 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
                 source: .note(id: note.id)
             )
         }
+    }
+
+    /// Returns nil when an already-applied revision is newer than this result.
+    private func applyNotesSnapshot(_ snapshot: FloorpNotesSnapshot) -> Bool? {
+        if let notesRevision, snapshot.revision < notesRevision {
+            return nil
+        }
+        let didDiscardReorder = notesReorderSession.map {
+            $0.expectedRevision != snapshot.revision
+        } ?? false
+        if didDiscardReorder {
+            discardNotesReordering()
+        }
+        notesRevision = snapshot.revision
+        items = makeNoteItems(snapshot.notes)
+        applySearchFilter()
+        return didDiscardReorder
     }
 
     private func handleNotesLoadError(_ error: FloorpNotesStoreError) {
@@ -1562,8 +1742,12 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     private func updateUI() {
-        searchTextField.isEnabled = true
-        addNoteButton.isEnabled = currentPanelType == .notes && !isCreatingNote
+        let isReordering = notesReorderSession != nil
+        searchTextField.isEnabled = !isReordering && !isCommittingNotesReorder
+        addNoteButton.isEnabled = currentPanelType == .notes
+            && !isCreatingNote
+            && !isReordering
+            && !isCommittingNotesReorder
         tableView.reloadData()
         let displayItems = isSearching ? filteredItems : items
         let isEmpty = displayItems.isEmpty
@@ -1583,6 +1767,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         retryButton.isHidden = true
         retryButton.setTitle(FloorpStrings.Drawer.retryButton, for: .normal)
         currentRetryAction = nil
+        updateNotesReorderControls()
     }
 
     private func deleteItem(_ item: DrawerItem) async throws {
@@ -1605,6 +1790,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     ) {
         items = []
         filteredItems = []
+        notesRevision = nil
+        endNotesReordering(reload: false)
         searchTextField.isEnabled = false
         addNoteButton.isEnabled = false
         emptyStateLabel.text = message
@@ -1627,6 +1814,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     // MARK: - Search
 
     @objc private func searchTextChanged() {
+        guard notesReorderSession == nil, !isCommittingNotesReorder else { return }
         applySearchFilter()
         updateUI()
     }
@@ -1645,10 +1833,308 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         currentRetryAction?()
     }
 
+    private var displayedItems: [DrawerItem] {
+        isSearching ? filteredItems : items
+    }
+
+    private var displayedNoteIDs: [String] {
+        displayedItems.compactMap { item in
+            if case .note(let id) = item.source { return id }
+            return nil
+        }
+    }
+
+    private var notesInteractionsLocked: Bool {
+        notesReorderSession != nil || isCommittingNotesReorder
+    }
+
+    private func updateNotesReorderControls() {
+        let isNotesPanel = currentPanelType == .notes
+        let isReordering = notesReorderSession != nil
+        notesReorderButton.isHidden = !isNotesPanel
+        addNoteButton.isHidden = !isNotesPanel || isReordering
+        cancelNotesReorderButton.isHidden = !isNotesPanel || !isReordering
+        notesReorderButton.setImage(
+            UIImage(systemName: isReordering ? "checkmark" : "arrow.up.arrow.down"),
+            for: .normal
+        )
+        notesReorderButton.accessibilityLabel = isReordering
+            ? FloorpStrings.Notes.reorderDone
+            : FloorpStrings.Notes.reorder
+        notesReorderButton.isEnabled = !isCommittingNotesReorder
+            && (isReordering || displayedNoteIDs.count > 1)
+        cancelNotesReorderButton.isEnabled = !isCommittingNotesReorder
+        closeButton.isEnabled = !isCommittingNotesReorder
+        isModalInPresentation = isCommittingNotesReorder
+        sidebarButtons.forEach { $0.isEnabled = !notesInteractionsLocked }
+        addWebPanelButton.isEnabled = !notesInteractionsLocked
+        managePanelsButton.isEnabled = !notesInteractionsLocked
+        if tableView.isEditing != isReordering {
+            tableView.setEditing(isReordering, animated: false)
+        }
+    }
+
+    @objc private func notesReorderTapped() {
+        if notesReorderSession == nil {
+            beginNotesReordering()
+        } else {
+            commitNotesReordering()
+        }
+    }
+
+    @objc private func cancelNotesReorderTapped() {
+        guard notesReorderSession != nil, !isCommittingNotesReorder else { return }
+        endNotesReordering(reload: true)
+        UIAccessibility.post(notification: .layoutChanged, argument: notesReorderButton)
+    }
+
+    private func beginNotesReordering() {
+        guard currentPanelType == .notes,
+              presentedViewController == nil,
+              !isCommittingNotesReorder,
+              let notesRevision,
+              displayedNoteIDs.count > 1 else { return }
+        searchTextField.resignFirstResponder()
+        notesReorderSession = FloorpNotesReorderSession(
+            visibleIDs: displayedNoteIDs,
+            expectedRevision: notesRevision
+        )
+        updateUI()
+        UIAccessibility.post(notification: .layoutChanged, argument: tableView)
+    }
+
+    private func commitNotesReordering() {
+        guard let session = notesReorderSession, !isCommittingNotesReorder else { return }
+        guard session.hasChanges else {
+            endNotesReordering(reload: false)
+            return
+        }
+        persistNotesOrder(session, focusNoteID: nil, completesStagedReorder: true)
+    }
+
+    private func endNotesReordering(reload: Bool) {
+        if let session = notesReorderSession {
+            restoreDisplayedNoteOrder(session.originalVisibleIDs)
+        }
+        notesReorderSession = nil
+        if tableView.isEditing {
+            tableView.setEditing(false, animated: false)
+        }
+        updateUI()
+        if reload, currentPanelType == .notes {
+            loadNotes()
+        }
+    }
+
+    @discardableResult
+    private func discardNotesReordering() -> Bool {
+        guard notesReorderSession != nil else { return false }
+        notesReorderSession = nil
+        if tableView.isEditing {
+            tableView.setEditing(false, animated: false)
+        }
+        updateNotesReorderControls()
+        return true
+    }
+
+    private func announceNotesReorderCancelledForChanges() {
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: FloorpStrings.Notes.reorderCancelledForChanges
+        )
+    }
+
+    private func restoreDisplayedNoteOrder(_ orderedIDs: [String]) {
+        let itemsByID = Dictionary(uniqueKeysWithValues: displayedItems.map { ($0.id, $0) })
+        let restoredItems = orderedIDs.compactMap { itemsByID[$0] }
+        guard restoredItems.count == orderedIDs.count else { return }
+        if isSearching {
+            filteredItems = restoredItems
+        } else {
+            items = restoredItems
+            filteredItems = restoredItems
+        }
+    }
+
+    @discardableResult
+    func performNoteAccessibilityMove(id: String, offset: Int) -> Bool {
+        guard currentPanelType == .notes, !isCommittingNotesReorder else { return false }
+
+        if var session = notesReorderSession {
+            guard let sourceIndex = session.orderedVisibleIDs.firstIndex(of: id),
+                  let destinationIndex = session.move(id: id, offset: offset) else { return false }
+            notesReorderSession = session
+            moveDisplayedItem(from: sourceIndex, to: destinationIndex)
+            tableView.reloadData()
+            announceNoteMove(id: id, position: destinationIndex, total: session.orderedVisibleIDs.count)
+            return true
+        }
+
+        guard let notesRevision else { return false }
+        var session = FloorpNotesReorderSession(
+            visibleIDs: displayedNoteIDs,
+            expectedRevision: notesRevision
+        )
+        guard let destinationIndex = session.move(id: id, offset: offset) else { return false }
+        persistNotesOrder(
+            session,
+            focusNoteID: id,
+            completesStagedReorder: false,
+            announcement: FloorpNoteMoveAnnouncement(
+                id: id,
+                position: destinationIndex,
+                total: session.orderedVisibleIDs.count
+            )
+        )
+        return true
+    }
+
+    @discardableResult
+    func performNoteAccessibilityDelete(id: String) -> Bool {
+        guard notesReorderSession == nil,
+              !isCommittingNotesReorder,
+              let item = displayedItems.first(where: { $0.id == id }),
+              itemIsNote(item) else { return false }
+        confirmNoteDeletion(item)
+        return true
+    }
+
+    private func persistNotesOrder(
+        _ session: FloorpNotesReorderSession,
+        focusNoteID: String?,
+        completesStagedReorder: Bool,
+        announcement: FloorpNoteMoveAnnouncement? = nil
+    ) {
+        guard !isCommittingNotesReorder else { return }
+        isCommittingNotesReorder = true
+        updateUI()
+        // Once Done is accepted, keep the transaction owner alive even if an
+        // upstream parent dismisses the modal hierarchy programmatically.
+        Task { @MainActor [self] in
+            do {
+                _ = try await notesReorderWriter(
+                    session.originalVisibleIDs,
+                    session.orderedVisibleIDs,
+                    session.expectedRevision
+                )
+                if completesStagedReorder {
+                    notesReorderSession = nil
+                    tableView.setEditing(false, animated: false)
+                }
+                setPendingNoteAccessibilityFocus(
+                    focusNoteID,
+                    requiresReload: focusNoteID != nil
+                )
+                isCommittingNotesReorder = false
+                updateUI()
+                if let announcement {
+                    announceNoteMove(
+                        id: announcement.id,
+                        position: announcement.position,
+                        total: announcement.total
+                    )
+                }
+                loadNotes()
+            } catch FloorpNotesStoreError.reorderConflict {
+                handleStaleNotesReorder()
+            } catch is FloorpNotesListOrderError {
+                handleStaleNotesReorder()
+            } catch {
+                isCommittingNotesReorder = false
+                endNotesReordering(reload: true)
+                presentOperationError()
+            }
+        }
+    }
+
+    private func handleStaleNotesReorder() {
+        isCommittingNotesReorder = false
+        endNotesReordering(reload: true)
+        announceNotesReorderCancelledForChanges()
+    }
+
+    private func moveDisplayedItem(from sourceIndex: Int, to destinationIndex: Int) {
+        if isSearching {
+            guard filteredItems.indices.contains(sourceIndex),
+                  filteredItems.indices.contains(destinationIndex) else { return }
+            let item = filteredItems.remove(at: sourceIndex)
+            filteredItems.insert(item, at: destinationIndex)
+        } else {
+            guard items.indices.contains(sourceIndex),
+                  items.indices.contains(destinationIndex) else { return }
+            let item = items.remove(at: sourceIndex)
+            items.insert(item, at: destinationIndex)
+            filteredItems = items
+        }
+    }
+
+    private func announceNoteMove(id: String, position: Int, total: Int) {
+        guard let item = displayedItems.first(where: { $0.id == id }) else { return }
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: FloorpStrings.Notes.moveAnnouncement(
+                title: item.title,
+                position: position + 1,
+                total: total
+            )
+        )
+    }
+
+    private func applyPendingNoteAccessibilityFocus() {
+        guard presentedViewController == nil else { return }
+        guard !pendingNoteAccessibilityFocusRequiresReload else { return }
+        view.layoutIfNeeded()
+
+        if let id = pendingNoteAccessibilityFocusID {
+            guard let row = displayedItems.firstIndex(where: { $0.id == id }) else {
+                handleMissingPendingNoteAccessibilityFocus()
+                return
+            }
+            let indexPath = IndexPath(row: row, section: 0)
+            tableView.scrollToRow(at: indexPath, at: .none, animated: false)
+            tableView.layoutIfNeeded()
+            clearPendingNoteAccessibilityFocus()
+            noteAccessibilityFocusPoster(tableView.cellForRow(at: indexPath))
+            return
+        }
+
+        guard shouldFocusAddNoteButton else { return }
+        clearPendingNoteAccessibilityFocus()
+        noteAccessibilityFocusPoster(addNoteButton)
+    }
+
+    private func setPendingNoteAccessibilityFocus(
+        _ id: String?,
+        requiresReload: Bool = false
+    ) {
+        pendingNoteAccessibilityFocusID = id
+        pendingNoteAccessibilityFocusRequiresReload = id != nil && requiresReload
+        shouldFocusAddNoteButton = false
+    }
+
+    private func clearPendingNoteAccessibilityFocus() {
+        pendingNoteAccessibilityFocusID = nil
+        pendingNoteAccessibilityFocusRequiresReload = false
+        shouldFocusAddNoteButton = false
+    }
+
+    private func handleMissingPendingNoteAccessibilityFocus() {
+        clearPendingNoteAccessibilityFocus()
+        if isSearching {
+            noteAccessibilityFocusPoster(searchTextField)
+        } else if let firstCell = tableView.cellForRow(at: IndexPath(row: 0, section: 0)) {
+            noteAccessibilityFocusPoster(firstCell)
+        } else {
+            noteAccessibilityFocusPoster(addNoteButton)
+        }
+    }
+
     // MARK: - Actions
 
     @objc private func addNoteTapped() {
-        guard !isCreatingNote else { return }
+        guard !isCreatingNote,
+              notesReorderSession == nil,
+              !isCommittingNotesReorder else { return }
         isCreatingNote = true
         addNoteButton.isEnabled = false
         defer {
@@ -1668,8 +2154,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         presentNoteEditor(draft, isPersisted: false)
     }
 
-    @objc private func notesDidChange() {
+    @objc private func notesDidChange(_: Notification) {
         guard currentPanelType == .notes else { return }
+        guard !isCommittingNotesReorder else { return }
+        if discardNotesReordering() {
+            loadNotes()
+            announceNotesReorderCancelledForChanges()
+            return
+        }
         loadNotes()
     }
 
@@ -1690,9 +2182,18 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     private func presentNoteEditor(_ note: FloorpNote, isPersisted: Bool = true) {
         guard presentedViewController == nil else { return }
+        if isPersisted {
+            setPendingNoteAccessibilityFocus(note.id)
+        } else {
+            clearPendingNoteAccessibilityFocus()
+            shouldFocusAddNoteButton = true
+        }
         let persistenceSession = FloorpNotePersistenceSession(
             notesStore: notesStore,
-            persistedNote: isPersisted ? note : nil
+            persistedNote: isPersisted ? note : nil,
+            onCreatedNote: { [weak self] in
+                self?.noteCreatedInOwningDrawer($0)
+            }
         )
         let editor = FloorpNoteEditorViewController(
             note: note,
@@ -1706,6 +2207,15 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         let navigationController = UINavigationController(rootViewController: editor)
         navigationController.modalPresentationStyle = .pageSheet
         present(navigationController, animated: true)
+    }
+
+    func noteCreatedInOwningDrawer(_ note: FloorpNote) {
+        guard currentPanelType == .notes else { return }
+        searchTextField.text = nil
+        isSearching = false
+        filteredItems = items
+        setPendingNoteAccessibilityFocus(note.id, requiresReload: true)
+        loadNotes()
     }
 
     private func confirmResetNotes() {
@@ -1732,13 +2242,39 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     }
 
     private func presentOperationError() {
-        guard presentedViewController == nil else { return }
+        presentationState.recordPendingNotesOperationError()
+        guard canPresentNotesOperationError else { return }
+        presentNotesOperationErrorAlert()
+    }
+
+    @discardableResult
+    private func presentPendingNotesOperationErrorIfPossible() -> Bool {
+        guard presentationState.hasPendingNotesOperationError,
+              canPresentNotesOperationError else { return false }
+        presentNotesOperationErrorAlert()
+        return true
+    }
+
+    private var canPresentNotesOperationError: Bool {
+        presentedViewController == nil
+            && presentingViewController != nil
+            && viewIfLoaded?.window != nil
+            && !isBeingDismissed
+            && !didFinishDismissal
+            && !isTransitioningDrawer
+    }
+
+    private func presentNotesOperationErrorAlert() {
         let alert = UIAlertController(
             title: FloorpStrings.Notes.operationFailedTitle,
             message: FloorpStrings.Notes.operationFailedMessage,
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: FloorpStrings.Notes.close, style: .default))
+        alert.addAction(
+            UIAlertAction(title: FloorpStrings.Notes.close, style: .default) { [weak self] _ in
+                self?.presentationState.consumePendingNotesOperationError()
+            }
+        )
         present(alert, animated: true)
     }
 
@@ -1798,6 +2334,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
                     self.dismissDrawer()
                     return
                 }
+                if self.presentPendingNotesOperationErrorIfPossible() {
+                    return
+                }
                 UIAccessibility.post(notification: .screenChanged, argument: self.titleLabel)
             }
         }
@@ -1822,13 +2361,16 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private func performDrawerDismissal() {
         // An editor or confirmation alert owns its own save/destructive gate.
         // Do not let an external toolbar toggle tear down that presentation.
-        guard presentedViewController == nil,
+        guard !isCommittingNotesReorder,
+              presentedViewController == nil,
               presentingViewController != nil,
               !didFinishDismissal else { return }
         if isTransitioningDrawer {
             dismissWhenPresentationFinishes = true
             return
         }
+
+        endNotesReordering(reload: false)
 
         isTransitioningDrawer = true
         let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
@@ -1910,12 +2452,68 @@ extension FloorpOverlayDrawerViewController: UITableViewDataSource {
             return UITableViewCell()
         }
 
-        let displayedItems = isSearching ? filteredItems : items
         guard displayedItems.indices.contains(indexPath.row) else { return UITableViewCell() }
         let item = displayedItems[indexPath.row]
-        cell.configure(title: item.title, subtitle: item.subtitle, icon: item.icon)
+        let accessibilityIdentifier: String
+        switch item.source {
+        case .note(let id):
+            accessibilityIdentifier = "Floorp.Notes.Row.\(id)"
+        default:
+            accessibilityIdentifier = "Floorp.Drawer.Row.\(item.id)"
+        }
+        cell.configure(
+            title: item.title,
+            subtitle: item.subtitle,
+            icon: item.icon,
+            accessibilityIdentifier: accessibilityIdentifier,
+            accessibilityHint: notesReorderSession == nil
+                ? nil
+                : FloorpStrings.Notes.reorderAccessibilityHint,
+            accessibilityActions: accessibilityActions(for: item, at: indexPath.row),
+            showsReorderControl: notesReorderSession != nil
+        )
         cell.applyTheme(themeManager.getCurrentTheme(for: windowUUID))
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
+        guard displayedItems.indices.contains(indexPath.row) else { return false }
+        let item = displayedItems[indexPath.row]
+        if notesReorderSession != nil {
+            return itemIsNote(item)
+        }
+        switch item.source {
+        case .bookmark, .history, .note:
+            return true
+        case .download, .none:
+            return false
+        }
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        canMoveRowAt indexPath: IndexPath
+    ) -> Bool {
+        guard notesReorderSession != nil,
+              displayedItems.indices.contains(indexPath.row) else { return false }
+        return itemIsNote(displayedItems[indexPath.row])
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        moveRowAt sourceIndexPath: IndexPath,
+        to destinationIndexPath: IndexPath
+    ) {
+        guard var session = notesReorderSession,
+              session.move(from: sourceIndexPath.row, to: destinationIndexPath.row) else { return }
+        notesReorderSession = session
+        moveDisplayedItem(from: sourceIndexPath.row, to: destinationIndexPath.row)
+        tableView.reloadData()
+        announceNoteMove(
+            id: session.orderedVisibleIDs[destinationIndexPath.row],
+            position: destinationIndexPath.row,
+            total: session.orderedVisibleIDs.count
+        )
     }
 }
 
@@ -1925,7 +2523,7 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
 
-        let displayedItems = isSearching ? filteredItems : items
+        guard notesReorderSession == nil, !isCommittingNotesReorder else { return }
         guard displayedItems.indices.contains(indexPath.row) else { return }
         let item = displayedItems[indexPath.row]
 
@@ -1966,7 +2564,7 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
-        let displayedItems = isSearching ? filteredItems : items
+        guard notesReorderSession == nil, !isCommittingNotesReorder else { return nil }
         guard displayedItems.indices.contains(indexPath.row) else { return nil }
         let item = displayedItems[indexPath.row]
 
@@ -2006,6 +2604,65 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
         return UISwipeActionsConfiguration(actions: [deleteAction])
     }
 
+    func tableView(
+        _ tableView: UITableView,
+        editingStyleForRowAt indexPath: IndexPath
+    ) -> UITableViewCell.EditingStyle {
+        .none
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        shouldIndentWhileEditingRowAt indexPath: IndexPath
+    ) -> Bool {
+        false
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        targetIndexPathForMoveFromRowAt sourceIndexPath: IndexPath,
+        toProposedIndexPath proposedDestinationIndexPath: IndexPath
+    ) -> IndexPath {
+        let lastRow = max(displayedItems.count - 1, 0)
+        return IndexPath(
+            row: min(max(proposedDestinationIndexPath.row, 0), lastRow),
+            section: sourceIndexPath.section
+        )
+    }
+
+    private func accessibilityActions(
+        for item: DrawerItem,
+        at index: Int
+    ) -> [UIAccessibilityCustomAction] {
+        guard case .note(let id) = item.source else { return [] }
+        var actions = [UIAccessibilityCustomAction]()
+        if index > 0 {
+            actions.append(UIAccessibilityCustomAction(
+                name: FloorpStrings.Notes.moveUp,
+                actionHandler: { [weak self] _ in
+                    self?.performNoteAccessibilityMove(id: id, offset: -1) ?? false
+                }
+            ))
+        }
+        if index < displayedNoteIDs.count - 1 {
+            actions.append(UIAccessibilityCustomAction(
+                name: FloorpStrings.Notes.moveDown,
+                actionHandler: { [weak self] _ in
+                    self?.performNoteAccessibilityMove(id: id, offset: 1) ?? false
+                }
+            ))
+        }
+        if notesReorderSession == nil, !isCommittingNotesReorder {
+            actions.append(UIAccessibilityCustomAction(
+                name: FloorpStrings.Notes.delete,
+                actionHandler: { [weak self] _ in
+                    self?.performNoteAccessibilityDelete(id: id) ?? false
+                }
+            ))
+        }
+        return actions
+    }
+
     private func itemIsNote(_ item: DrawerItem) -> Bool {
         if case .note = item.source { return true }
         return false
@@ -2035,9 +2692,21 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
     }
 
     private func removeItemFromUI(id: String) {
+        if currentPanelType == .notes,
+           let removedIndex = displayedItems.firstIndex(where: { $0.id == id }) {
+            let remainingItems = displayedItems.filter { $0.id != id }
+            if remainingItems.isEmpty {
+                setPendingNoteAccessibilityFocus(nil)
+                shouldFocusAddNoteButton = true
+            } else {
+                let focusIndex = min(removedIndex, remainingItems.count - 1)
+                setPendingNoteAccessibilityFocus(remainingItems[focusIndex].id)
+            }
+        }
         items.removeAll { $0.id == id }
         filteredItems.removeAll { $0.id == id }
         updateUI()
+        applyPendingNoteAccessibilityFocus()
     }
 }
 
@@ -2106,13 +2775,25 @@ private final class DrawerItemCell: UITableViewCell {
         ])
     }
 
-    func configure(title: String, subtitle: String? = nil, icon: UIImage?) {
+    func configure(
+        title: String,
+        subtitle: String? = nil,
+        icon: UIImage?,
+        accessibilityIdentifier: String,
+        accessibilityHint: String?,
+        accessibilityActions: [UIAccessibilityCustomAction],
+        showsReorderControl: Bool
+    ) {
         titleLabel.text = title
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle == nil
         iconImageView.image = icon
+        self.accessibilityIdentifier = accessibilityIdentifier
         accessibilityLabel = title
         accessibilityValue = subtitle
+        self.accessibilityHint = accessibilityHint
+        accessibilityCustomActions = accessibilityActions.isEmpty ? nil : accessibilityActions
+        self.showsReorderControl = showsReorderControl
     }
 
     override func prepareForReuse() {
@@ -2122,6 +2803,10 @@ private final class DrawerItemCell: UITableViewCell {
         iconImageView.image = nil
         accessibilityLabel = nil
         accessibilityValue = nil
+        accessibilityHint = nil
+        accessibilityIdentifier = nil
+        accessibilityCustomActions = nil
+        showsReorderControl = false
     }
 
     func applyTheme(_ theme: Theme) {

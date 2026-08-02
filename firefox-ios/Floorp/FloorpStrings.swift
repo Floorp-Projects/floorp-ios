@@ -629,6 +629,41 @@ enum FloorpStrings {
             value: "Search notes…",
             comment: "Placeholder for Floorp Notes search"
         )
+        static let reorder = string(
+            "Floorp.Notes.Reorder.v1",
+            value: "Reorder Notes",
+            comment: "Action that starts reordering Floorp notes"
+        )
+        static let reorderDone = string(
+            "Floorp.Notes.ReorderDone.v1",
+            value: "Done Reordering",
+            comment: "Action that saves the staged Floorp note order"
+        )
+        static let reorderCancelledForChanges = string(
+            "Floorp.Notes.ReorderCancelledForChanges.v1",
+            value: "Notes changed elsewhere. Reordering was cancelled.",
+            comment: "Announcement after an external Notes change invalidates staged reordering"
+        )
+        static let moveUp = string(
+            "Floorp.Notes.MoveUp.v1",
+            value: "Move Up",
+            comment: "Accessibility action that moves a Floorp note up"
+        )
+        static let moveDown = string(
+            "Floorp.Notes.MoveDown.v1",
+            value: "Move Down",
+            comment: "Accessibility action that moves a Floorp note down"
+        )
+        private static let moveAnnouncementFormat = string(
+            "Floorp.Notes.MoveAnnouncement.v1",
+            value: "%1$@ moved to position %2$ld of %3$ld.",
+            comment: "Accessibility announcement after moving a note; note title, position, total"
+        )
+        static let reorderAccessibilityHint = string(
+            "Floorp.Notes.ReorderAccessibilityHint.v1",
+            value: "Use the reorder control or Move Up and Move Down actions, then choose Done.",
+            comment: "Accessibility hint while Floorp notes are being reordered"
+        )
         static let loadFailed = string(
             "Floorp.Notes.LoadFailed.v1",
             value: "Failed to load notes",
@@ -865,6 +900,10 @@ enum FloorpStrings {
             value: "Stored on this device",
             comment: "Accessibility and UI notice that iOS Notes are not synced yet"
         )
+
+        static func moveAnnouncement(title: String, position: Int, total: Int) -> String {
+            String.localizedStringWithFormat(moveAnnouncementFormat, title, position, total)
+        }
 
         private static func string(_ key: String, value: String, comment: String) -> String {
             NSLocalizedString(
