@@ -66,6 +66,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(result.notes[0], remote[0])
         XCTAssertEqual(result.notes[1].title, "Local (Conflict)")
         XCTAssertEqual(result.notes[1].content, "local")
+        XCTAssertEqual(result.notes[1].updatedAt, local[0].updatedAt)
         XCTAssertEqual(result.conflicts.count, 1)
         XCTAssertEqual(result.notes[1].id, result.conflicts[0].conflictCopyID)
         XCTAssertTrue(result.notes[1].id.hasPrefix("floorp-sync-conflict-"))
@@ -195,6 +196,41 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertEqual(retry.notes, first.notes)
         XCTAssertTrue(retry.conflicts.isEmpty)
+    }
+
+    func testRetryAfterUploadedConflictAndFailedLocalCommitReusesCopyNearLimit() throws {
+        let filler = (1..<(FloorpNotesStore.maximumNoteCount - 1)).map { index in
+            note("note-\(index)")
+        }
+        let base = [note("shared", content: "base", updatedAt: 10)] + filler
+        let localBeforeUpload = [note("shared", content: "local", updatedAt: 20)] + filler
+        let firstRemote = [note("shared", content: "remote", updatedAt: 30)] + filler
+        let first = try FloorpNotesSyncMerger.merge(
+            base: base,
+            local: localBeforeUpload,
+            remote: firstRemote
+        )
+        let conflictID = try XCTUnwrap(first.conflicts.first?.conflictCopyID)
+        let uploadedConflict = try XCTUnwrap(first.notes.first { $0.id == conflictID })
+        let remoteAfterWinnerEdit = first.notes.map { candidate in
+            candidate.id == "shared"
+                ? note("shared", content: "remote edited again", updatedAt: 40)
+                : candidate
+        }
+
+        // The upload succeeded but the local atomic commit failed, so the old
+        // base/local snapshot is retried against the uploaded result. A later
+        // edit to only the winner must not change any conflict-copy wire field.
+        let retry = try FloorpNotesSyncMerger.merge(
+            base: base,
+            local: localBeforeUpload,
+            remote: remoteAfterWinnerEdit
+        )
+
+        XCTAssertEqual(first.notes.count, FloorpNotesStore.maximumNoteCount)
+        XCTAssertEqual(retry.notes.count, FloorpNotesStore.maximumNoteCount)
+        XCTAssertEqual(retry.notes.filter { $0.id == conflictID }, [uploadedConflict])
+        XCTAssertEqual(retry.conflicts.first?.conflictCopyID, conflictID)
     }
 
     func testOneSidedRemoteReorderWins() throws {
@@ -473,9 +509,11 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
 
     func testPlannerRejectsUnknownRemoteFields() {
         let record = FloorpNotesSyncRemoteRecord(
-            payloadData: Data(#"{"titles":[],"contents":[],"future":true}"#.utf8),
+            remoteNotes: .notesString(
+                Data(#"{"titles":[],"contents":[],"future":true}"#.utf8)
+            ),
             revision: "remote-1",
-            maximumPayloadBytes: FloorpNotesStore.maximumArchiveBytes
+            maximumEncodedNotesValueBytes: FloorpNotesStore.maximumArchiveBytes
         )
 
         XCTAssertThrowsError(
@@ -494,16 +532,16 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
     }
 
     func testPlannerRejectsInconsistentMissingRecordRepresentation() throws {
-        let payload = try remoteRecord(FloorpNotesDesktopPayload(notes: []))
+        let payloadData = try JSONEncoder().encode(FloorpNotesDesktopPayload(notes: []))
         let bytesWithoutRevision = FloorpNotesSyncRemoteRecord(
-            payloadData: payload.payloadData,
+            remoteNotes: .notesString(payloadData),
             revision: nil,
-            maximumPayloadBytes: payload.maximumPayloadBytes
+            maximumEncodedNotesValueBytes: FloorpNotesStore.maximumArchiveBytes
         )
         let revisionWithoutBytes = FloorpNotesSyncRemoteRecord(
-            payloadData: nil,
+            remoteNotes: .recordMissing,
             revision: "remote-1",
-            maximumPayloadBytes: payload.maximumPayloadBytes
+            maximumEncodedNotesValueBytes: FloorpNotesStore.maximumArchiveBytes
         )
 
         for record in [bytesWithoutRevision, revisionWithoutBytes] {
@@ -566,9 +604,9 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         }
 
         let invalidLimit = FloorpNotesSyncRemoteRecord(
-            payloadData: emptyRemoteRecord.payloadData,
-            revision: nil,
-            maximumPayloadBytes: 0
+            remoteNotes: emptyRemoteRecord.remoteNotes,
+            revision: emptyRemoteRecord.revision,
+            maximumEncodedNotesValueBytes: 0
         )
         XCTAssertThrowsError(
             try FloorpNotesSyncPlanner.makePlan(
@@ -589,11 +627,13 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         )
         let encoded = try JSONEncoder().encode(payload)
         let payloadData = Data(" \n".utf8) + encoded
-        let actualBytes = payloadData.count
+        let actualBytes = try FloorpNotesSyncPlanner.encodedNotesValueByteCount(
+            payloadData: payloadData
+        )
         let record = FloorpNotesSyncRemoteRecord(
-            payloadData: payloadData,
+            remoteNotes: .notesString(payloadData),
             revision: "remote-oversized",
-            maximumPayloadBytes: actualBytes - 1
+            maximumEncodedNotesValueBytes: actualBytes - 1
         )
 
         XCTAssertThrowsError(
@@ -616,25 +656,31 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         let notes = [note("boundary", title: "Title", content: "Body")]
         let data = try FloorpNotesSyncPlanner.encodedPayload(
             notes: notes,
-            maximumPayloadBytes: FloorpNotesStore.maximumArchiveBytes
+            maximumEncodedNotesValueBytes: FloorpNotesStore.maximumArchiveBytes
+        )
+        let encodedValueBytes = try FloorpNotesSyncPlanner.encodedNotesValueByteCount(
+            payloadData: data
         )
 
         XCTAssertEqual(
             try FloorpNotesSyncPlanner.encodedPayload(
                 notes: notes,
-                maximumPayloadBytes: data.count
+                maximumEncodedNotesValueBytes: encodedValueBytes
             ),
             data
         )
         XCTAssertThrowsError(
             try FloorpNotesSyncPlanner.encodedPayload(
                 notes: notes,
-                maximumPayloadBytes: data.count - 1
+                maximumEncodedNotesValueBytes: encodedValueBytes - 1
             )
         ) { error in
             XCTAssertEqual(
                 error as? FloorpNotesSyncError,
-                .recordTooLarge(actualBytes: data.count, maximumBytes: data.count - 1)
+                .recordTooLarge(
+                    actualBytes: encodedValueBytes,
+                    maximumBytes: encodedValueBytes - 1
+                )
             )
         }
     }
@@ -653,9 +699,10 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
             #"{"ids":["same"],"titles":["T"],"contents":["B"],"createdAts":[1e18],"updatedAts":[1e18]}"#.utf8
         )
         let record = FloorpNotesSyncRemoteRecord(
-            payloadData: payloadData,
+            remoteNotes: .notesString(payloadData),
             revision: "remote-1",
-            maximumPayloadBytes: payloadData.count
+            maximumEncodedNotesValueBytes: try FloorpNotesSyncPlanner
+                .encodedNotesValueByteCount(payloadData: payloadData)
         )
 
         let plan = try FloorpNotesSyncPlanner.makePlan(
@@ -673,9 +720,9 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
     func testMissingRemoteRecordRetainsLocalNotesAndInvalidatesOldBase() throws {
         let local = [note("local", content: "keep")]
         let record = FloorpNotesSyncRemoteRecord(
-            payloadData: nil,
+            remoteNotes: .recordMissing,
             revision: nil,
-            maximumPayloadBytes: FloorpNotesStore.maximumArchiveBytes
+            maximumEncodedNotesValueBytes: FloorpNotesStore.maximumArchiveBytes
         )
 
         let plan = try FloorpNotesSyncPlanner.makePlan(
@@ -689,6 +736,30 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(plan.mergedNotes, local)
         XCTAssertEqual(plan.nextBaseState.notes, local)
         XCTAssertTrue(plan.requiresUpload)
+    }
+
+    func testPresentAggregateWithoutNotesAppliesRemoteDeletionWithoutResettingBase() throws {
+        let existing = [note("established", content: "unchanged")]
+
+        for remoteNotes in [
+            FloorpNotesSyncRemoteNotes.notesKeyMissing,
+            .notesNull,
+        ] {
+            let plan = try FloorpNotesSyncPlanner.makePlan(
+                accountID: "account",
+                baseState: FloorpNotesSyncBaseState(accountID: "account", notes: existing),
+                localNotes: existing,
+                remoteRecord: FloorpNotesSyncRemoteRecord(
+                    remoteNotes: remoteNotes,
+                    revision: "42",
+                    maximumEncodedNotesValueBytes: FloorpNotesStore.maximumArchiveBytes
+                ),
+                now: 100
+            )
+
+            XCTAssertEqual(plan.mergedNotes, [])
+            XCTAssertFalse(plan.requiresUpload)
+        }
     }
 
     func testRunnerDoesNotAdvanceBaseWhenUploadFails() async throws {
@@ -896,14 +967,14 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
     private func remoteRecord(
         _ payload: FloorpNotesDesktopPayload,
         revision: String? = "remote-1",
-        maximumPayloadBytes: Int = FloorpNotesStore.maximumArchiveBytes
+        maximumEncodedNotesValueBytes: Int = FloorpNotesStore.maximumArchiveBytes
     ) throws -> FloorpNotesSyncRemoteRecord {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return FloorpNotesSyncRemoteRecord(
-            payloadData: try encoder.encode(payload),
+            remoteNotes: .notesString(try encoder.encode(payload)),
             revision: revision,
-            maximumPayloadBytes: maximumPayloadBytes
+            maximumEncodedNotesValueBytes: maximumEncodedNotesValueBytes
         )
     }
 
@@ -923,6 +994,331 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
             updatedAt: updatedAt,
             contentFormat: contentFormat
         )
+    }
+}
+
+final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
+    func testTypedRemoteStatesMapWithoutConflation() throws {
+        let notesValue = #"{"ids":[],"titles":[],"contents":[],"createdAts":[],"updatedAts":[]}"#
+        let cases = [
+            ApplicationServicesRemoteStateCase(
+                remoteNotes: .recordMissing,
+                modified: nil,
+                expectedNotes: .recordMissing,
+                expectedRevision: nil
+            ),
+            ApplicationServicesRemoteStateCase(
+                remoteNotes: .notesKeyMissing,
+                modified: 41,
+                expectedNotes: .notesKeyMissing,
+                expectedRevision: "41"
+            ),
+            ApplicationServicesRemoteStateCase(
+                remoteNotes: .notesNull,
+                modified: 42,
+                expectedNotes: .notesNull,
+                expectedRevision: "42"
+            ),
+            ApplicationServicesRemoteStateCase(
+                remoteNotes: .notesString(value: notesValue),
+                modified: 43,
+                expectedNotes: .notesString(Data(notesValue.utf8)),
+                expectedRevision: "43"
+            ),
+        ]
+
+        for testCase in cases {
+            let record = try FloorpNotesApplicationServicesAdapter.remoteRecord(
+                from: FloorpNotesApplicationServicesPrepareInput(
+                    remoteNotes: testCase.remoteNotes,
+                    remoteRecordModifiedMillis: testCase.modified,
+                    collectionModifiedMillis: 99,
+                    maximumNotesValueBytes: 4_096
+                )
+            )
+
+            XCTAssertEqual(record.remoteNotes, testCase.expectedNotes)
+            XCTAssertEqual(record.revision, testCase.expectedRevision)
+            XCTAssertEqual(record.maximumEncodedNotesValueBytes, 4_096)
+        }
+    }
+
+    func testTypedRemoteStateRejectsInconsistentRecordModification() {
+        let invalidInputs = [
+            FloorpNotesApplicationServicesPrepareInput(
+                remoteNotes: .recordMissing,
+                remoteRecordModifiedMillis: 1,
+                collectionModifiedMillis: 1,
+                maximumNotesValueBytes: 100
+            ),
+            FloorpNotesApplicationServicesPrepareInput(
+                remoteNotes: .notesKeyMissing,
+                remoteRecordModifiedMillis: nil,
+                collectionModifiedMillis: 1,
+                maximumNotesValueBytes: 100
+            ),
+            FloorpNotesApplicationServicesPrepareInput(
+                remoteNotes: .notesNull,
+                remoteRecordModifiedMillis: nil,
+                collectionModifiedMillis: 1,
+                maximumNotesValueBytes: 100
+            ),
+            FloorpNotesApplicationServicesPrepareInput(
+                remoteNotes: .notesString(value: "{}"),
+                remoteRecordModifiedMillis: nil,
+                collectionModifiedMillis: 1,
+                maximumNotesValueBytes: 100
+            ),
+        ]
+
+        for input in invalidInputs {
+            XCTAssertThrowsError(
+                try FloorpNotesApplicationServicesAdapter.remoteRecord(from: input)
+            ) { error in
+                XCTAssertEqual(
+                    error as? FloorpNotesSyncError,
+                    .invalidApplicationServicesBoundary
+                )
+            }
+        }
+    }
+
+    func testOuterJSONStringEscapingDefinesApplicationServicesBudget() throws {
+        let notes = [
+            FloorpNote(
+                id: "escaped",
+                title: "Quote \" slash / backslash \\",
+                content: "first\nsecond\t\"quoted\"\\tail",
+                createdAt: 1,
+                updatedAt: 2,
+                contentFormat: .plainText
+            ),
+        ]
+        let roomyPayload = try FloorpNotesSyncPlanner.encodedPayload(
+            notes: notes,
+            maximumEncodedNotesValueBytes: FloorpNotesStore.maximumArchiveBytes
+        )
+        let outerBytes = try FloorpNotesSyncPlanner.encodedNotesValueByteCount(
+            payloadData: roomyPayload
+        )
+
+        XCTAssertGreaterThan(outerBytes, roomyPayload.count + 2)
+        XCTAssertEqual(
+            try FloorpNotesSyncPlanner.encodedPayload(
+                notes: notes,
+                maximumEncodedNotesValueBytes: outerBytes
+            ),
+            roomyPayload
+        )
+        XCTAssertThrowsError(
+            try FloorpNotesSyncPlanner.encodedPayload(
+                notes: notes,
+                maximumEncodedNotesValueBytes: outerBytes - 1
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpNotesSyncError,
+                .recordTooLarge(actualBytes: outerBytes, maximumBytes: outerBytes - 1)
+            )
+        }
+
+        let incomingRecord = try FloorpNotesApplicationServicesAdapter.remoteRecord(
+            from: FloorpNotesApplicationServicesPrepareInput(
+                remoteNotes: .notesString(value: String(decoding: roomyPayload, as: UTF8.self)),
+                remoteRecordModifiedMillis: 7,
+                collectionModifiedMillis: 8,
+                maximumNotesValueBytes: UInt64(outerBytes - 1)
+            )
+        )
+        XCTAssertThrowsError(
+            try FloorpNotesSyncPlanner.makePlan(
+                accountID: "account",
+                baseState: nil,
+                localNotes: [],
+                remoteRecord: incomingRecord,
+                now: 100
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpNotesSyncError,
+                .recordTooLarge(actualBytes: outerBytes, maximumBytes: outerBytes - 1)
+            )
+        }
+    }
+
+    func testCurrentRuntimeEvidenceCannotEnableNetworkSync() {
+        XCTAssertFalse(FloorpNotesSyncReleaseGate.isNetworkSyncEnabled)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsNetworkSync(
+                FloorpNotesSyncReleaseEvidence(
+                    fixtureContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
+                    currentDesktopContractVersion: nil,
+                    coordinatedDesktopMigrationVersion: nil,
+                    linkedApplicationServicesContractVersion:
+                        FloorpNotesApplicationServicesAdapter.transportContractVersion
+                )
+            )
+        )
+    }
+
+    func testReleaseGateAcceptsOnlyExactDesktopOrCoordinatedMigrationContract() {
+        let baseEvidence = FloorpNotesSyncReleaseEvidence(
+            fixtureContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
+            currentDesktopContractVersion: nil,
+            coordinatedDesktopMigrationVersion: nil,
+            linkedApplicationServicesContractVersion:
+                FloorpNotesApplicationServicesAdapter.transportContractVersion
+        )
+
+        XCTAssertTrue(
+            FloorpNotesSyncReleaseGate.allowsNetworkSync(
+                FloorpNotesSyncReleaseEvidence(
+                    fixtureContractVersion: baseEvidence.fixtureContractVersion,
+                    currentDesktopContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
+                    coordinatedDesktopMigrationVersion: nil,
+                    linkedApplicationServicesContractVersion:
+                        baseEvidence.linkedApplicationServicesContractVersion
+                )
+            )
+        )
+        XCTAssertTrue(
+            FloorpNotesSyncReleaseGate.allowsNetworkSync(
+                FloorpNotesSyncReleaseEvidence(
+                    fixtureContractVersion: baseEvidence.fixtureContractVersion,
+                    currentDesktopContractVersion: nil,
+                    coordinatedDesktopMigrationVersion:
+                        FloorpNotesSyncReleaseGate.mergeContractVersion,
+                    linkedApplicationServicesContractVersion:
+                        baseEvidence.linkedApplicationServicesContractVersion
+                )
+            )
+        )
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsNetworkSync(
+                FloorpNotesSyncReleaseEvidence(
+                    fixtureContractVersion: "other-fixtures",
+                    currentDesktopContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,
+                    coordinatedDesktopMigrationVersion: nil,
+                    linkedApplicationServicesContractVersion:
+                        baseEvidence.linkedApplicationServicesContractVersion
+                )
+            )
+        )
+    }
+}
+
+private struct ApplicationServicesRemoteStateCase {
+    let remoteNotes: FloorpNotesApplicationServicesRemoteNotes
+    let modified: Int64?
+    let expectedNotes: FloorpNotesSyncRemoteNotes
+    let expectedRevision: String?
+}
+
+final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
+    func testSharedMergeFixturesMatchIOSAndKeepProductionDesktopGated() throws {
+        let resourceURL = try XCTUnwrap(
+            Bundle(for: Self.self).url(
+                forResource: "floorp-notes-merge-v1",
+                withExtension: "json"
+            )
+        )
+        let fixture = try JSONDecoder().decode(
+            FloorpNotesMergeFixture.self,
+            from: Data(contentsOf: resourceURL)
+        )
+
+        XCTAssertEqual(fixture.fixtureSchemaVersion, 1)
+        XCTAssertEqual(
+            fixture.contractVersion,
+            FloorpNotesSyncReleaseGate.mergeContractVersion
+        )
+        XCTAssertEqual(fixture.wirePayloadVersion, 1)
+        XCTAssertEqual(
+            fixture.productionDesktopObservation.commit,
+            FloorpNotesSyncReleaseGate.observedProductionDesktopCommit
+        )
+        XCTAssertNil(fixture.productionDesktopObservation.declaredContractVersion)
+        XCTAssertFalse(fixture.productionDesktopObservation.matchesFixtureContract)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsNetworkSync(
+                FloorpNotesSyncReleaseEvidence(
+                    fixtureContractVersion: fixture.contractVersion,
+                    currentDesktopContractVersion:
+                        fixture.productionDesktopObservation.declaredContractVersion,
+                    coordinatedDesktopMigrationVersion: nil,
+                    linkedApplicationServicesContractVersion:
+                        FloorpNotesApplicationServicesAdapter.transportContractVersion
+                )
+            )
+        )
+
+        for fixtureCase in fixture.cases {
+            let result = try FloorpNotesSyncMerger.merge(
+                base: fixtureCase.base.map(\.note),
+                local: fixtureCase.local.map(\.note),
+                remote: fixtureCase.remote.map(\.note)
+            )
+            let expectedConflicts = fixtureCase.expectedConflicts.map {
+                FloorpNotesSyncConflict(
+                    originalNoteID: $0.originalNoteID,
+                    conflictCopyID: $0.conflictCopyID
+                )
+            }
+
+            XCTAssertEqual(
+                result.notes,
+                fixtureCase.expectedNotes.map(\.note),
+                fixtureCase.name
+            )
+            XCTAssertEqual(result.conflicts, expectedConflicts, fixtureCase.name)
+        }
+    }
+}
+
+private struct FloorpNotesMergeFixture: Decodable {
+    let fixtureSchemaVersion: Int
+    let contractVersion: String
+    let wirePayloadVersion: Int
+    let productionDesktopObservation: ProductionDesktopObservation
+    let cases: [MergeCase]
+
+    struct ProductionDesktopObservation: Decodable {
+        let commit: String
+        let declaredContractVersion: String?
+        let matchesFixtureContract: Bool
+    }
+
+    struct MergeCase: Decodable {
+        let name: String
+        let base: [FixtureNote]
+        let local: [FixtureNote]
+        let remote: [FixtureNote]
+        let expectedNotes: [FixtureNote]
+        let expectedConflicts: [FixtureConflict]
+    }
+
+    struct FixtureNote: Decodable {
+        let id: String
+        let title: String
+        let content: String
+        let createdAt: Int64
+        let updatedAt: Int64
+
+        var note: FloorpNote {
+            FloorpNote(
+                id: id,
+                title: title,
+                content: content,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                contentFormat: .automatic
+            )
+        }
+    }
+
+    struct FixtureConflict: Decodable {
+        let originalNoteID: String
+        let conflictCopyID: String
     }
 }
 

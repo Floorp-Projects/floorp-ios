@@ -19,11 +19,24 @@ enum FloorpNotesSyncError: Error, Equatable, Sendable {
     case invalidNoteID(source: FloorpNotesSyncSource, index: Int)
     case duplicateNoteID(source: FloorpNotesSyncSource, id: String)
     case invalidRemotePayload
+    case invalidApplicationServicesBoundary
     case unsupportedRemoteFields([String])
     case missingRemoteIDsAfterInitialSync
     case conflictIDExhausted(String)
     case tooManyNotes(Int)
     case recordTooLarge(actualBytes: Int, maximumBytes: Int)
+}
+
+/// The four remote states exposed by the Floorp Application Services prefs
+/// engine. They deliberately remain distinct until the merge policy sees
+/// them: a missing aggregate record resets the merge base, while a present
+/// aggregate whose Notes value is absent or null represents an empty remote
+/// Notes value without resetting the account association.
+enum FloorpNotesSyncRemoteNotes: Equatable, Sendable {
+    case recordMissing
+    case notesKeyMissing
+    case notesNull
+    case notesString(Data)
 }
 
 struct FloorpNotesSyncBaseState: Codable, Equatable, Sendable {
@@ -47,13 +60,112 @@ struct FloorpNotesSyncBaseState: Codable, Equatable, Sendable {
 }
 
 struct FloorpNotesSyncRemoteRecord: Equatable, Sendable {
-    /// Exact decrypted Notes preference bytes supplied by the Sync engine.
-    /// Keeping the original bytes makes size and forward-schema checks real.
-    let payloadData: Data?
+    let remoteNotes: FloorpNotesSyncRemoteNotes
     let revision: String?
-    /// Usable decrypted payload budget after the engine accounts for record
-    /// framing and encryption overhead.
-    let maximumPayloadBytes: Int
+    /// Maximum byte length of the Notes string after it is encoded as an
+    /// outer JSON string value, including the two surrounding quote bytes.
+    /// This exactly matches Application Services' escaping-aware budget.
+    let maximumEncodedNotesValueBytes: Int
+}
+
+/// Local DTO mirroring the generated UniFFI enum. Keeping it in Client avoids
+/// linking an unreleased XCFramework while still making the boundary contract
+/// executable. The eventual generated-type adapter must be a mechanical,
+/// exhaustive conversion to this enum.
+enum FloorpNotesApplicationServicesRemoteNotes: Equatable, Sendable {
+    case recordMissing
+    case notesKeyMissing
+    case notesNull
+    case notesString(value: String)
+}
+
+/// Local DTO mirroring `FloorpPrefsSyncPrepareInput` from the pinned Floorp
+/// Application Services source contract.
+struct FloorpNotesApplicationServicesPrepareInput: Equatable, Sendable {
+    let remoteNotes: FloorpNotesApplicationServicesRemoteNotes
+    let remoteRecordModifiedMillis: Int64?
+    let collectionModifiedMillis: Int64
+    let maximumNotesValueBytes: UInt64
+}
+
+enum FloorpNotesApplicationServicesAdapter {
+    static let transportContractVersion = "floorp-prefs-sync-v1"
+
+    static func remoteRecord(
+        from input: FloorpNotesApplicationServicesPrepareInput
+    ) throws -> FloorpNotesSyncRemoteRecord {
+        guard let maximumBytes = Int(exactly: input.maximumNotesValueBytes) else {
+            throw FloorpNotesSyncError.invalidApplicationServicesBoundary
+        }
+
+        let revision = input.remoteRecordModifiedMillis.map(String.init)
+        let remoteNotes: FloorpNotesSyncRemoteNotes
+        switch input.remoteNotes {
+        case .recordMissing:
+            guard revision == nil else {
+                throw FloorpNotesSyncError.invalidApplicationServicesBoundary
+            }
+            remoteNotes = .recordMissing
+        case .notesKeyMissing:
+            guard revision != nil else {
+                throw FloorpNotesSyncError.invalidApplicationServicesBoundary
+            }
+            remoteNotes = .notesKeyMissing
+        case .notesNull:
+            guard revision != nil else {
+                throw FloorpNotesSyncError.invalidApplicationServicesBoundary
+            }
+            remoteNotes = .notesNull
+        case .notesString(let value):
+            guard revision != nil else {
+                throw FloorpNotesSyncError.invalidApplicationServicesBoundary
+            }
+            remoteNotes = .notesString(Data(value.utf8))
+        }
+
+        return FloorpNotesSyncRemoteRecord(
+            remoteNotes: remoteNotes,
+            revision: revision,
+            maximumEncodedNotesValueBytes: maximumBytes
+        )
+    }
+}
+
+struct FloorpNotesSyncReleaseEvidence: Equatable, Sendable {
+    let fixtureContractVersion: String
+    let currentDesktopContractVersion: String?
+    let coordinatedDesktopMigrationVersion: String?
+    let linkedApplicationServicesContractVersion: String?
+}
+
+/// Network Notes Sync is release-gated independently of build-time feature
+/// flags. Production Desktop does not yet implement this deterministic merge
+/// contract, and the custom Application Services binary is not yet linked, so
+/// the evidence bundled by this branch intentionally evaluates to false.
+enum FloorpNotesSyncReleaseGate {
+    static let mergeContractVersion = "floorp-notes-merge-v1"
+    static let observedProductionDesktopCommit = "410c211c202012631159d1bce1f3ab208305d2b7"
+
+    static let currentRuntimeEvidence = FloorpNotesSyncReleaseEvidence(
+        fixtureContractVersion: mergeContractVersion,
+        currentDesktopContractVersion: nil,
+        coordinatedDesktopMigrationVersion: nil,
+        linkedApplicationServicesContractVersion: nil
+    )
+
+    static func allowsNetworkSync(_ evidence: FloorpNotesSyncReleaseEvidence) -> Bool {
+        guard evidence.fixtureContractVersion == mergeContractVersion,
+              evidence.linkedApplicationServicesContractVersion
+                == FloorpNotesApplicationServicesAdapter.transportContractVersion else {
+            return false
+        }
+        return evidence.currentDesktopContractVersion == mergeContractVersion
+            || evidence.coordinatedDesktopMigrationVersion == mergeContractVersion
+    }
+
+    static var isNetworkSyncEnabled: Bool {
+        allowsNetworkSync(currentRuntimeEvidence)
+    }
 }
 
 struct FloorpNotesSyncUploadReceipt: Equatable, Sendable {
@@ -235,16 +347,16 @@ enum FloorpNotesSyncPlanner {
             }
         }
 
-        let maximumPayloadBytes = remoteRecord.maximumPayloadBytes
-        guard maximumPayloadBytes > 0 else {
-            throw FloorpNotesSyncError.invalidRecordLimit(maximumPayloadBytes)
+        let maximumEncodedNotesValueBytes = remoteRecord.maximumEncodedNotesValueBytes
+        guard maximumEncodedNotesValueBytes > 0 else {
+            throw FloorpNotesSyncError.invalidRecordLimit(maximumEncodedNotesValueBytes)
         }
 
         let normalizedRemote = try normalizedRemoteNotes(
             record: remoteRecord,
             accountID: trimmedAccountID,
             now: now,
-            maximumPayloadBytes: maximumPayloadBytes
+            maximumEncodedNotesValueBytes: maximumEncodedNotesValueBytes
         )
         if baseState != nil,
            let payload = normalizedRemote.payload,
@@ -267,7 +379,7 @@ enum FloorpNotesSyncPlanner {
         let payloadData = requiresUpload
             ? try encodedPayload(
                 notes: mergeResult.notes,
-                maximumPayloadBytes: maximumPayloadBytes
+                maximumEncodedNotesValueBytes: maximumEncodedNotesValueBytes
             )
             : nil
 
@@ -287,21 +399,45 @@ enum FloorpNotesSyncPlanner {
 
     static func encodedPayload(
         notes: [FloorpNote],
-        maximumPayloadBytes: Int
+        maximumEncodedNotesValueBytes: Int
     ) throws -> Data {
-        guard maximumPayloadBytes > 0 else {
-            throw FloorpNotesSyncError.invalidRecordLimit(maximumPayloadBytes)
+        guard maximumEncodedNotesValueBytes > 0 else {
+            throw FloorpNotesSyncError.invalidRecordLimit(maximumEncodedNotesValueBytes)
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(FloorpNotesDesktopPayload(notes: notes))
-        guard data.count <= maximumPayloadBytes else {
+        let encodedValueBytes = try encodedNotesValueByteCount(payloadData: data)
+        guard encodedValueBytes <= maximumEncodedNotesValueBytes else {
             throw FloorpNotesSyncError.recordTooLarge(
-                actualBytes: data.count,
-                maximumBytes: maximumPayloadBytes
+                actualBytes: encodedValueBytes,
+                maximumBytes: maximumEncodedNotesValueBytes
             )
         }
         return data
+    }
+
+    static func encodedNotesValueByteCount(payloadData: Data) throws -> Int {
+        guard let value = String(data: payloadData, encoding: .utf8) else {
+            throw FloorpNotesSyncError.invalidRemotePayload
+        }
+        // Match serde_json's compact string serializer used by the Rust
+        // engine instead of relying on Foundation's encoder implementation.
+        // Quotes/backslashes and JSON control escapes grow to two bytes;
+        // remaining U+0000...U+001F scalars use `\u00XX`; all other scalars
+        // stay as their original UTF-8 bytes (including `/` and U+2028/2029).
+        var count = 2
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x22, 0x5C:
+                count += 2
+            case 0x00...0x1F:
+                count += 6
+            default:
+                count += scalar.utf8.count
+            }
+        }
+        return count
     }
 
     private struct NormalizedRemoteRecord {
@@ -313,21 +449,34 @@ enum FloorpNotesSyncPlanner {
         record: FloorpNotesSyncRemoteRecord,
         accountID: String,
         now: Int64,
-        maximumPayloadBytes: Int
+        maximumEncodedNotesValueBytes: Int
     ) throws -> NormalizedRemoteRecord {
-        guard let payloadData = record.payloadData else {
+        let payloadData: Data
+        switch record.remoteNotes {
+        case .recordMissing:
             guard record.revision == nil else {
                 throw FloorpNotesSyncError.invalidRemotePayload
             }
             return NormalizedRemoteRecord(payload: nil, notes: [])
+        case .notesKeyMissing, .notesNull:
+            guard record.revision != nil else {
+                throw FloorpNotesSyncError.invalidRemotePayload
+            }
+            return NormalizedRemoteRecord(
+                payload: FloorpNotesDesktopPayload(notes: []),
+                notes: []
+            )
+        case .notesString(let value):
+            payloadData = value
         }
         guard record.revision != nil else {
             throw FloorpNotesSyncError.invalidRemotePayload
         }
-        guard payloadData.count <= maximumPayloadBytes else {
+        let encodedValueBytes = try encodedNotesValueByteCount(payloadData: payloadData)
+        guard encodedValueBytes <= maximumEncodedNotesValueBytes else {
             throw FloorpNotesSyncError.recordTooLarge(
-                actualBytes: payloadData.count,
-                maximumBytes: maximumPayloadBytes
+                actualBytes: encodedValueBytes,
+                maximumBytes: maximumEncodedNotesValueBytes
             )
         }
 
@@ -496,8 +645,7 @@ enum FloorpNotesSyncMerger {
             case .conflict(let resolution):
                 mergedByID[id] = resolution.winner
                 let conflictCopy = try availableConflictCopy(
-                    originalID: id,
-                    resolution: resolution,
+                    losingNote: resolution.loser,
                     existingIDs: &existingIDs,
                     originalResolutions: resolutionsByID,
                     generatedConflictCopies: generatedConflictCopies
@@ -665,8 +813,7 @@ enum FloorpNotesSyncMerger {
     }
 
     private static func availableConflictCopy(
-        originalID: String,
-        resolution: ConflictResolution,
+        losingNote: FloorpNote,
         existingIDs: inout Set<String>,
         originalResolutions: [String: Resolution],
         generatedConflictCopies: [String: FloorpNote]
@@ -674,18 +821,14 @@ enum FloorpNotesSyncMerger {
         for probe in 0...FloorpNotesStore.maximumNoteCount {
             let candidate = FloorpNote(
                 id: conflictCopyID(
-                    originalID: originalID,
-                    losingNote: resolution.loser,
+                    losingNote: losingNote,
                     probe: probe
                 ),
-                title: "\(resolution.loser.title) (Conflict)",
-                content: resolution.loser.content,
-                createdAt: resolution.loser.createdAt,
-                updatedAt: max(
-                    resolution.winner.updatedAt,
-                    resolution.loser.updatedAt
-                ),
-                contentFormat: resolution.loser.contentFormat
+                title: losingNote.title.isEmpty ? "(Conflict)" : "\(losingNote.title) (Conflict)",
+                content: losingNote.content,
+                createdAt: losingNote.createdAt,
+                updatedAt: losingNote.updatedAt,
+                contentFormat: losingNote.contentFormat
             )
 
             if !existingIDs.contains(candidate.id) {
@@ -703,7 +846,7 @@ enum FloorpNotesSyncMerger {
                 return AvailableConflictCopy(note: existing, shouldInsert: false)
             }
         }
-        throw FloorpNotesSyncError.conflictIDExhausted(originalID)
+        throw FloorpNotesSyncError.conflictIDExhausted(losingNote.id)
     }
 
     private static func sameWireNote(_ lhs: FloorpNote, _ rhs: FloorpNote) -> Bool {
@@ -715,12 +858,14 @@ enum FloorpNotesSyncMerger {
     }
 
     private static func conflictCopyID(
-        originalID: String,
         losingNote: FloorpNote,
         probe: Int
     ) -> String {
         var data = Data()
-        FloorpNotesSyncPlanner.append(originalID, to: &data)
+        // Preserve the pre-v1 candidate-ID layout while making its dependency
+        // explicit: both this prefix and the canonical bytes come from the
+        // losing note, never from the winner or the current merge clock.
+        FloorpNotesSyncPlanner.append(losingNote.id, to: &data)
         data.append(canonicalData(for: losingNote))
         if probe > 0 {
             FloorpNotesSyncPlanner.append(String(probe), to: &data)

@@ -30,7 +30,7 @@ Application Services that:
 Until that artifact exists and passes staging tests, the transport remains
 disabled and Notes remain local-only.
 
-## Desktop wire compatibility
+## Target wire contract and current Desktop gap
 
 Floorp Desktop stores Notes in the JSON string preference
 `floorp.browser.note.memos`. That payload contains parallel arrays for IDs,
@@ -56,6 +56,32 @@ engine must preserve every unknown `value` entry byte-for-byte while changing
 only the Notes value and its control preference. Uploading a Notes-only map
 would delete other preferences and is forbidden.
 
+Matching the storage shape is not the same as having a compatible merge
+algorithm. An audit of production Desktop commit
+`410c211c202012631159d1bce1f3ab208305d2b7` found that its current merger uses
+random conflict-copy UUIDs, resolves equal timestamps from the local client's
+point of view, drops the loser of a first-sync same-ID collision, advances its
+base on local save before Sync succeeds, and does not apply a one-sided remote
+reorder. It therefore **does not implement** the deterministic iOS merge
+contract and must not be described as cross-client compatible.
+
+The target `floorp-notes-merge-v1` contract is captured in the shared
+`sync-fixtures/floorp-notes/floorp-notes-merge-v1.json` fixture. iOS executes
+that fixture as a bundled unit-test resource. Desktop must execute the same
+file and publish that exact contract version, or ship a coordinated migration
+declaring that version, before network Notes Sync can be enabled. A Desktop
+source change without the shared fixture passing is not sufficient evidence.
+
+The Application Services delegate boundary also remains typed. Its
+`RecordMissing`, `NotesKeyMissing`, `NotesNull`, and `NotesString` cases are
+not collapsed into an optional string. A missing aggregate resets the stale
+merge base and preserves local Notes as a first sync. A present aggregate with
+a missing or null Notes value represents an empty remote Notes value without
+resetting the account association. `NotesString` contains the inner Notes JSON
+string. The size advertised by Application Services counts that whole string
+after encoding it as an outer JSON string value, including quotes and escaping;
+iOS checks that exact byte count on incoming and outgoing values.
+
 ## Merge and commit contract
 
 `FloorpNotesSyncMerger` performs a deterministic three-way merge over the last
@@ -67,12 +93,15 @@ snapshot.
 - A one-sided deletion removes an unchanged value.
 - An edit wins over a concurrent deletion.
 - Concurrent different edits retain a deterministic winner and a deterministic
-  conflict copy, so retrying cannot create duplicate copies.
+  conflict copy. Every conflict-copy wire field and its SHA-256 identity derive
+  only from the losing note. A later edit to the winner therefore cannot create
+  another copy when an upload succeeded but the local base commit failed.
 - A one-sided reorder wins. Concurrent reorders prefer the local order and
   append remote-only notes deterministically.
 - The engine supplies a usable payload budget derived from the negotiated
-  record-size limit after framing/encryption overhead. It is checked on both
-  incoming and outgoing plaintext payloads.
+  record-size limit after framing/encryption overhead. The limit counts the
+  Notes payload after outer JSON-string quoting and escaping and is checked on
+  both incoming and outgoing values.
 - A canonical remote Notes payload equal to the merged payload is not uploaded;
   the fetched revision still confirms the state and allows the local base to
   advance. Legacy/incomplete arrays are canonicalized with one conditional
@@ -112,16 +141,21 @@ unless the user explicitly chooses to delete them.
 
 Network Sync stays disabled until all of the following pass:
 
-1. Rust engine tests against a fake Sync server, including aggregate-map
+1. `FloorpNotesSyncReleaseGate` has exact evidence for the shared fixture,
+   either a matching current Desktop contract or the coordinated Desktop
+   migration contract, and the linked `floorp-prefs-sync-v1` Application
+   Services artifact. The evidence embedded by this branch deliberately fails
+   this gate.
+2. Rust engine tests against a fake Sync server, including aggregate-map
    preservation, conditional writes, retry/backoff, reset, and account
    isolation.
-2. iOS integration tests proving engine registration, foreground/manual/
+3. iOS integration tests proving engine registration, foreground/manual/
    background triggers, transactional base advancement, disconnect, and UI
    refresh.
-3. Desktop xpcshell/TPS coverage for the same merge semantics and a corrected
-   base that advances only after successful Sync.
-4. Two-device iOS-to-Desktop staging tests for offline edits, delete-versus-
+4. Desktop xpcshell/TPS coverage executes the shared v1 fixtures and verifies a
+   corrected base that advances only after successful Sync.
+5. Two-device iOS-to-Desktop staging tests for offline edits, delete-versus-
    edit, equal timestamps, reorder, rich unknown nodes, payload limits, and
    repeated retries.
-5. Binary provenance, security, privacy, retention, and rollout ownership
+6. Binary provenance, security, privacy, retention, and rollout ownership
    approval for the Floorp Application Services artifact.
