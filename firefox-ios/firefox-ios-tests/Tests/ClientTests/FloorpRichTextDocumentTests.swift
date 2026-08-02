@@ -654,6 +654,140 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         }
     }
 
+    func testKnownLexicalFixtureMigratesWithDesktopMarksBlocksListsAndAlignment() throws {
+        let source = """
+        {
+          "root": {
+            "type": "root",
+            "version": 1,
+            "children": [
+              {
+                "type": "heading",
+                "tag": "h2",
+                "format": "center",
+                "version": 1,
+                "children": [
+                  {"type":"text","text":"Title","format":3,"detail":0,"mode":"normal","style":"","version":1}
+                ]
+              },
+              {
+                "type": "paragraph",
+                "format": "right",
+                "version": 1,
+                "children": [
+                  {"type":"text","text":"A","format":12,"version":1},
+                  {"type":"linebreak","version":1},
+                  {"type":"text","text":"B","format":0,"version":1}
+                ]
+              },
+              {
+                "type": "list",
+                "listType": "number",
+                "version": 1,
+                "children": [
+                  {"type":"listitem","value":1,"version":1,"children":[
+                    {"type":"text","text":"One","format":0,"version":1}
+                  ]}
+                ]
+              },
+              {
+                "type": "quote",
+                "version": 1,
+                "children": [
+                  {"type":"text","text":"Quote","format":0,"version":1}
+                ]
+              }
+            ]
+          }
+        }
+        """
+
+        let migration = try FloorpLexicalMigrator.migrate(source)
+
+        XCTAssertTrue(migration.isEditable, "\(migration.compatibility.issues)")
+        let document = try XCTUnwrap(migration.document)
+        let encoded = try FloorpRichTextCodec.encode(document)
+        let root = try XCTUnwrap(try semanticJSON(encoded) as? [String: Any])
+        let content = try XCTUnwrap(root["content"] as? [[String: Any]])
+        XCTAssertEqual(content.map { $0["type"] as? String }, [
+            "heading", "paragraph", "orderedList", "blockquote",
+        ])
+        XCTAssertEqual((content[0]["attrs"] as? [String: Any])?["level"] as? Int, 2)
+        XCTAssertEqual((content[0]["attrs"] as? [String: Any])?["textAlign"] as? String, "center")
+        let headingText = try XCTUnwrap((content[0]["content"] as? [[String: Any]])?.first)
+        XCTAssertEqual(
+            (headingText["marks"] as? [[String: Any]])?.compactMap { $0["type"] as? String },
+            ["bold", "italic"]
+        )
+        let paragraphText = try XCTUnwrap((content[1]["content"] as? [[String: Any]])?.first)
+        XCTAssertEqual(
+            (paragraphText["marks"] as? [[String: Any]])?.compactMap { $0["type"] as? String },
+            ["strike", "underline"]
+        )
+    }
+
+    func testLexicalUnknownNodeOrFieldKeepsOriginalSourceReadOnly() throws {
+        let fixtures = [
+            """
+            { "root" : { "children" : [
+              {"type":"futureWidget","payload":{"opaque":true}}
+            ] } }
+            """,
+            """
+            { "root" : { "children" : [
+              {"type":"paragraph","futureSpacing":7,"children":[
+                {"type":"text","text":"keep","format":0}
+              ]}
+            ] } }
+            """,
+            """
+            { "root" : { "children" : [
+              {"type":"paragraph","children":[
+                {"type":"text","text":"keep","format":16}
+              ]}
+            ] } }
+            """,
+        ]
+
+        for source in fixtures {
+            let migration = try FloorpLexicalMigrator.migrate(source)
+            XCTAssertFalse(migration.isEditable)
+            XCTAssertNil(migration.document)
+            XCTAssertEqual(migration.originalSource, source)
+
+            let note = FloorpNote(
+                id: "lexical",
+                title: "Preserve",
+                content: source,
+                createdAt: 1,
+                updatedAt: 1,
+                contentFormat: .automatic
+            )
+            guard case .readOnly = FloorpRichTextEditorPreparation.prepare(note) else {
+                return XCTFail("Unknown Lexical content must remain read-only")
+            }
+        }
+    }
+
+    func testRichEditorStateCarriesAccessibleSelectionState() throws {
+        let state = FloorpRichTextEditorState(
+            isReady: true,
+            canUndo: true,
+            canRedo: false,
+            activeHeadingLevel: 2,
+            activeMarks: [.bold, .underline],
+            activeListKind: .ordered,
+            alignment: .center
+        )
+        let envelope = FloorpRichTextStateEnvelope(session: try session(), payload: state)
+        let data = try JSONEncoder().encode(envelope)
+
+        XCTAssertEqual(
+            try JSONDecoder().decode(FloorpRichTextStateEnvelope.self, from: data),
+            envelope
+        )
+    }
+
     private func session(
         noteID: String = "note-a",
         documentID: String = "document-a",

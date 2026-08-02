@@ -605,6 +605,53 @@ actor FloorpNotesStore {
         return FloorpNotesSnapshot(revision: archive.revision, notes: archive.notes)
     }
 
+    func preflightCreateNote(
+        title: String,
+        content: String,
+        contentFormat: FloorpNoteContentFormat,
+        candidateID: String = UUID().uuidString
+    ) throws {
+        let archive = try loadArchiveForWriting()
+        var id = candidateID
+        let existingIDs = Set(archive.notes.map(\.id))
+        if id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            id = UUID().uuidString
+        }
+        while existingIDs.contains(id) { id = UUID().uuidString }
+        let note = FloorpNote(
+            id: id,
+            title: title,
+            content: content,
+            createdAt: Int64.max,
+            updatedAt: Int64.max,
+            contentFormat: contentFormat
+        )
+        try preflightCommit(notes: [note] + archive.notes, replacing: archive)
+    }
+
+    func preflightUpdateNote(
+        id: String,
+        title: String,
+        content: String,
+        contentFormat: FloorpNoteContentFormat
+    ) throws {
+        let archive = try loadArchiveForWriting()
+        guard let index = archive.notes.firstIndex(where: { $0.id == id }) else {
+            throw FloorpNotesStoreError.noteNotFound(id)
+        }
+        var notes = archive.notes
+        var note = notes[index]
+        guard note.updatedAt < Int64.max else {
+            throw FloorpNotesStoreError.timestampExhausted(id)
+        }
+        note.title = title
+        note.content = content
+        note.contentFormat = contentFormat
+        note.updatedAt = Int64.max
+        notes[index] = note
+        try preflightCommit(notes: notes, replacing: archive)
+    }
+
     @discardableResult
     func createNote(
         title: String,
@@ -857,24 +904,31 @@ actor FloorpNotesStore {
 
     private func commit(notes: [FloorpNote], replacing archive: Archive) throws {
         try validate(notes)
-        let nextRevision = archive.revision == UInt64.max ? archive.revision : archive.revision + 1
-        let nextArchive = Archive(
-            schemaVersion: Self.currentSchemaVersion,
-            revision: nextRevision,
-            notes: notes
-        )
+        let nextArchive = archiveByAdvancingRevision(of: archive, notes: notes)
         try persist(nextArchive)
         cachedArchive = nextArchive
         postChangeNotification(revision: nextArchive.revision)
     }
 
+    private func preflightCommit(notes: [FloorpNote], replacing archive: Archive) throws {
+        try validate(notes)
+        _ = try encodedArchiveData(archiveByAdvancingRevision(of: archive, notes: notes))
+    }
+
+    private func archiveByAdvancingRevision(
+        of archive: Archive,
+        notes: [FloorpNote]
+    ) -> Archive {
+        let nextRevision = archive.revision == UInt64.max ? archive.revision : archive.revision + 1
+        return Archive(
+            schemaVersion: Self.currentSchemaVersion,
+            revision: nextRevision,
+            notes: notes
+        )
+    }
+
     private func persist(_ archive: Archive) throws {
-        let encoder = JSONEncoder()
-        // Escaping every solidus can nearly double a valid legacy archive and
-        // make an otherwise lossless migration exceed the v2 size limit.
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(archive)
-        try validateSize(data)
+        let data = try encodedArchiveData(archive)
 
         let directoryURL = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
@@ -886,6 +940,16 @@ actor FloorpNotesStore {
             to: fileURL,
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
         )
+    }
+
+    private func encodedArchiveData(_ archive: Archive) throws -> Data {
+        let encoder = JSONEncoder()
+        // Escaping every solidus can nearly double a valid legacy archive and
+        // make an otherwise lossless migration exceed the v2 size limit.
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(archive)
+        try validateSize(data)
+        return data
     }
 
     private func validate(_ notes: [FloorpNote]) throws {

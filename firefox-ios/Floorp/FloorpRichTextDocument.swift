@@ -280,7 +280,7 @@ enum FloorpRichTextCodec {
         return lines
     }
 
-    private static func validateJSONResources(_ root: Any) throws {
+    fileprivate static func validateJSONResources(_ root: Any) throws {
         var pending: [(value: Any, depth: Int)] = [(root, 0)]
         var valueCount = 0
 
@@ -296,6 +296,401 @@ enum FloorpRichTextCodec {
             } else if let values = current.value as? [Any] {
                 pending.append(contentsOf: values.map { ($0, current.depth + 1) })
             }
+        }
+    }
+}
+
+struct FloorpLexicalMigrationResult: Equatable, Sendable {
+    let originalSource: String
+    let document: FloorpRichTextDocument?
+    let compatibility: FloorpRichTextCompatibility
+
+    var isEditable: Bool {
+        document != nil && compatibility.isEditable
+    }
+}
+
+enum FloorpRichTextEditorPreparation: Equatable, Sendable {
+    case plainText
+    case editable(document: FloorpRichTextDocument, migratedFromLexical: Bool)
+    case readOnly(compatibility: FloorpRichTextCompatibility)
+
+    static func prepare(_ note: FloorpNote) -> Self {
+        guard note.contentFormat == .automatic else { return .plainText }
+        let analysis = FloorpNoteContent.analyze(
+            note.content,
+            contentFormat: note.contentFormat
+        )
+        do {
+            switch analysis.format {
+            case .tipTap:
+                let document = try FloorpRichTextCodec.decode(note.content)
+                return document.compatibility.isEditable
+                    ? .editable(document: document, migratedFromLexical: false)
+                    : .readOnly(compatibility: document.compatibility)
+            case .lexical:
+                let migration = try FloorpLexicalMigrator.migrate(note.content)
+                if let document = migration.document, migration.isEditable {
+                    return .editable(document: document, migratedFromLexical: true)
+                }
+                return .readOnly(compatibility: migration.compatibility)
+            case .unknownJSON:
+                return .readOnly(
+                    compatibility: FloorpRichTextCompatibility(
+                        issues: [
+                            FloorpRichTextCompatibilityIssue(
+                                kind: .invalidShape("Unknown JSON note content"),
+                                path: "/"
+                            ),
+                        ]
+                    )
+                )
+            case .plainText:
+                return .plainText
+            }
+        } catch {
+            return .readOnly(
+                compatibility: FloorpRichTextCompatibility(
+                    issues: [
+                        FloorpRichTextCompatibilityIssue(
+                            kind: .invalidShape("Rich note could not be decoded safely"),
+                            path: "/"
+                        ),
+                    ]
+                )
+            )
+        }
+    }
+}
+
+/// Preservation-first implementation of Floorp desktop's legacy Lexical to
+/// TipTap mapping. The supported node mapping intentionally follows the
+/// desktop editor, while any field or node whose semantics are not known to
+/// this client prevents migration so the original source remains untouched.
+enum FloorpLexicalMigrator {
+    static func migrate(_ source: String) throws -> FloorpLexicalMigrationResult {
+        let byteCount = source.utf8.count
+        guard byteCount <= FloorpRichTextCodec.maximumInputBytes else {
+            throw FloorpRichTextCodecError.inputTooLarge(
+                actualBytes: byteCount,
+                maximumBytes: FloorpRichTextCodec.maximumInputBytes
+            )
+        }
+        guard let data = source.data(using: .utf8) else {
+            throw FloorpRichTextCodecError.invalidJSON
+        }
+
+        let object: Any
+        let value: FloorpRichTextJSONValue
+        do {
+            object = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+            try FloorpRichTextCodec.validateJSONResources(object)
+            value = try FloorpRichTextJSONValue(foundationObject: object)
+        } catch let error as FloorpRichTextCodecError {
+            throw error
+        } catch {
+            throw FloorpRichTextCodecError.invalidJSON
+        }
+
+        var converter = Converter()
+        guard let tipTapRoot = converter.convertEnvelope(value) else {
+            let compatibility = FloorpRichTextCompatibility(issues: converter.issues)
+            return FloorpLexicalMigrationResult(
+                originalSource: source,
+                document: nil,
+                compatibility: compatibility
+            )
+        }
+        guard converter.issues.isEmpty else {
+            let compatibility = FloorpRichTextCompatibility(issues: converter.issues)
+            return FloorpLexicalMigrationResult(
+                originalSource: source,
+                document: nil,
+                compatibility: compatibility
+            )
+        }
+
+        let provisional = FloorpRichTextDocument(
+            root: tipTapRoot,
+            compatibility: FloorpRichTextCompatibility(issues: [])
+        )
+        let migrated = try FloorpRichTextCodec.decode(FloorpRichTextCodec.encode(provisional))
+        guard migrated.compatibility.isEditable else {
+            return FloorpLexicalMigrationResult(
+                originalSource: source,
+                document: nil,
+                compatibility: migrated.compatibility
+            )
+        }
+        return FloorpLexicalMigrationResult(
+            originalSource: source,
+            document: migrated,
+            compatibility: migrated.compatibility
+        )
+    }
+
+    private struct Converter {
+        private static let commonElementFields: Set<String> = [
+            "children", "direction", "format", "indent", "type", "version",
+            "textFormat", "textStyle",
+        ]
+        private static let textFields: Set<String> = [
+            "detail", "format", "mode", "style", "text", "type", "version",
+        ]
+        private static let supportedTextFormatMask = 1 | 2 | 4 | 8
+
+        var issues = [FloorpRichTextCompatibilityIssue]()
+        private var nodeCount = 0
+
+        mutating func convertEnvelope(_ value: FloorpRichTextJSONValue) -> FloorpRichTextJSONValue? {
+            guard let envelope = value.objectValue,
+                  let rootValue = envelope["root"],
+                  let root = rootValue.objectValue else {
+                append(.invalidShape("Lexical document requires a root object"), path: "/root")
+                return nil
+            }
+            for key in envelope.keys where key != "root" {
+                append(.unsupportedField(key), path: "/(key)")
+            }
+            validateFields(
+                root,
+                allowed: Self.commonElementFields,
+                path: "/root"
+            )
+            if let type = root["type"]?.stringValue, type != "root" {
+                append(.invalidShape("Lexical root type must be root"), path: "/root/type")
+            }
+            guard let children = root["children"]?.arrayValue else {
+                append(.invalidShape("Lexical root requires children"), path: "/root/children")
+                return nil
+            }
+
+            let content = convertChildren(children, path: "/root/children", depth: 1)
+            let blocks = content.isEmpty ? [paragraph(content: [])] : content
+            return .object([
+                "type": .string("doc"),
+                "content": .array(blocks),
+            ])
+        }
+
+        private mutating func convertChildren(
+            _ children: [FloorpRichTextJSONValue],
+            path: String,
+            depth: Int
+        ) -> [FloorpRichTextJSONValue] {
+            children.enumerated().flatMap { index, child in
+                convertNode(child, path: "\(path)/\(index)", depth: depth)
+            }
+        }
+
+        private mutating func convertNode(
+            _ value: FloorpRichTextJSONValue,
+            path: String,
+            depth: Int
+        ) -> [FloorpRichTextJSONValue] {
+            guard depth <= FloorpRichTextCodec.maximumDepth,
+                  nodeCount < FloorpRichTextCodec.maximumNodeCount else {
+                append(.resourceLimit, path: path)
+                return []
+            }
+            nodeCount += 1
+            guard let node = value.objectValue,
+                  let type = node["type"]?.stringValue else {
+                append(.invalidShape("Lexical node requires a string type"), path: path)
+                return []
+            }
+
+            switch type {
+            case "text":
+                return convertText(node, path: path).map { [$0] } ?? []
+            case "linebreak":
+                validateFields(node, allowed: ["type", "version"], path: path)
+                return [.object(["type": .string("hardBreak")])]
+            case "paragraph":
+                validateFields(node, allowed: Self.commonElementFields, path: path)
+                let content = convertNodeChildren(node, path: path, depth: depth)
+                return [paragraph(content: content, alignment: alignment(node["format"], path: path))]
+            case "heading":
+                validateFields(
+                    node,
+                    allowed: Self.commonElementFields.union(["tag"]),
+                    path: path
+                )
+                let tag = node["tag"]?.stringValue ?? "h1"
+                guard tag.count == 2,
+                      tag.first == "h",
+                      let level = Int(tag.dropFirst()),
+                      (1...6).contains(level) else {
+                    append(.invalidShape("Lexical heading tag must be h1 through h6"), path: path + "/tag")
+                    return []
+                }
+                var attributes: [String: FloorpRichTextJSONValue] = ["level": .number(String(level))]
+                if let textAlignment = alignment(node["format"], path: path) {
+                    attributes["textAlign"] = .string(textAlignment)
+                }
+                var result: [String: FloorpRichTextJSONValue] = [
+                    "type": .string("heading"),
+                    "attrs": .object(attributes),
+                ]
+                let content = convertNodeChildren(node, path: path, depth: depth)
+                if !content.isEmpty { result["content"] = .array(content) }
+                return [.object(result)]
+            case "list":
+                validateFields(
+                    node,
+                    allowed: Self.commonElementFields.union(["listType", "start", "tag"]),
+                    path: path
+                )
+                let listType = node["listType"]?.stringValue ?? "bullet"
+                guard ["bullet", "number"].contains(listType) else {
+                    append(.invalidShape("Unsupported Lexical list type"), path: path + "/listType")
+                    return []
+                }
+                let content = convertNodeChildren(node, path: path, depth: depth)
+                guard !content.isEmpty else {
+                    append(.invalidShape("Lexical list requires an item"), path: path + "/children")
+                    return []
+                }
+                return [.object([
+                    "type": .string(listType == "number" ? "orderedList" : "bulletList"),
+                    "content": .array(content),
+                ])]
+            case "listitem":
+                validateFields(
+                    node,
+                    allowed: Self.commonElementFields.union(["value"]),
+                    path: path
+                )
+                let converted = convertNodeChildren(node, path: path, depth: depth)
+                let itemContent: [FloorpRichTextJSONValue]
+                if converted.allSatisfy(Self.isInlineNode) {
+                    itemContent = [paragraph(content: converted)]
+                } else if converted.first.flatMap(Self.nodeType) == "paragraph" {
+                    itemContent = converted
+                } else {
+                    append(
+                        .invalidShape("Lexical list item cannot be represented without loss"),
+                        path: path + "/children"
+                    )
+                    return []
+                }
+                return [.object([
+                    "type": .string("listItem"),
+                    "content": .array(itemContent),
+                ])]
+            case "quote":
+                validateFields(node, allowed: Self.commonElementFields, path: path)
+                let converted = convertNodeChildren(node, path: path, depth: depth)
+                let blocks = converted.allSatisfy(Self.isInlineNode)
+                    ? [paragraph(content: converted)]
+                    : converted
+                guard !blocks.isEmpty else {
+                    append(.invalidShape("Lexical quote requires content"), path: path + "/children")
+                    return []
+                }
+                return [.object([
+                    "type": .string("blockquote"),
+                    "content": .array(blocks),
+                ])]
+            default:
+                append(.unsupportedNode(type), path: path)
+                return []
+            }
+        }
+
+        private mutating func convertText(
+            _ node: [String: FloorpRichTextJSONValue],
+            path: String
+        ) -> FloorpRichTextJSONValue? {
+            validateFields(node, allowed: Self.textFields, path: path)
+            guard let text = node["text"]?.stringValue else {
+                append(.invalidShape("Lexical text node requires text"), path: path + "/text")
+                return nil
+            }
+            guard !text.isEmpty else { return nil }
+            let format = node["format"]?.integerValue ?? 0
+            guard format >= 0, format & ~Self.supportedTextFormatMask == 0 else {
+                append(.unsupportedField("format"), path: path + "/format")
+                return nil
+            }
+            let markTypes: [(Int, String)] = [
+                (1, "bold"),
+                (2, "italic"),
+                (4, "strike"),
+                (8, "underline"),
+            ]
+            let marks = markTypes.compactMap { mask, type -> FloorpRichTextJSONValue? in
+                format & mask == 0 ? nil : .object(["type": .string(type)])
+            }
+            var result: [String: FloorpRichTextJSONValue] = [
+                "type": .string("text"),
+                "text": .string(text),
+            ]
+            if !marks.isEmpty { result["marks"] = .array(marks) }
+            return .object(result)
+        }
+
+        private mutating func convertNodeChildren(
+            _ node: [String: FloorpRichTextJSONValue],
+            path: String,
+            depth: Int
+        ) -> [FloorpRichTextJSONValue] {
+            guard let childrenValue = node["children"] else { return [] }
+            guard let children = childrenValue.arrayValue else {
+                append(.invalidShape("Lexical children must be an array"), path: path + "/children")
+                return []
+            }
+            return convertChildren(children, path: path + "/children", depth: depth + 1)
+        }
+
+        private mutating func alignment(
+            _ value: FloorpRichTextJSONValue?,
+            path: String
+        ) -> String? {
+            guard let value, value != .null else { return nil }
+            if value.integerValue != nil { return nil }
+            guard let alignment = value.stringValue,
+                  ["left", "center", "right"].contains(alignment) else {
+                append(.invalidShape("Unsupported Lexical text alignment"), path: path + "/format")
+                return nil
+            }
+            return alignment
+        }
+
+        private mutating func validateFields(
+            _ node: [String: FloorpRichTextJSONValue],
+            allowed: Set<String>,
+            path: String
+        ) {
+            for key in node.keys where !allowed.contains(key) {
+                append(.unsupportedField(key), path: path + "/" + key)
+            }
+        }
+
+        private func paragraph(
+            content: [FloorpRichTextJSONValue],
+            alignment: String? = nil
+        ) -> FloorpRichTextJSONValue {
+            var result: [String: FloorpRichTextJSONValue] = ["type": .string("paragraph")]
+            if !content.isEmpty { result["content"] = .array(content) }
+            if let alignment { result["attrs"] = .object(["textAlign": .string(alignment)]) }
+            return .object(result)
+        }
+
+        private static func nodeType(_ value: FloorpRichTextJSONValue) -> String? {
+            value.objectValue?["type"]?.stringValue
+        }
+
+        private static func isInlineNode(_ value: FloorpRichTextJSONValue) -> Bool {
+            guard let type = nodeType(value) else { return false }
+            return type == "text" || type == "hardBreak"
+        }
+
+        private mutating func append(
+            _ kind: FloorpRichTextCompatibilityIssue.Kind,
+            path: String
+        ) {
+            issues.append(FloorpRichTextCompatibilityIssue(kind: kind, path: path))
         }
     }
 }
@@ -716,7 +1111,7 @@ enum FloorpRichTextAlignment: String, Codable, Equatable, Sendable {
     case right
 }
 
-enum FloorpRichTextMark: String, Codable, Equatable, Sendable {
+enum FloorpRichTextMark: String, Codable, Equatable, Hashable, Sendable {
     case bold
     case italic
     case underline
@@ -919,6 +1314,28 @@ struct FloorpRichTextEditorState: Codable, Equatable, Sendable {
     let isReady: Bool
     let canUndo: Bool
     let canRedo: Bool
+    let activeHeadingLevel: Int?
+    let activeMarks: [FloorpRichTextMark]?
+    let activeListKind: FloorpRichTextListKind?
+    let alignment: FloorpRichTextAlignment?
+
+    init(
+        isReady: Bool,
+        canUndo: Bool,
+        canRedo: Bool,
+        activeHeadingLevel: Int? = nil,
+        activeMarks: [FloorpRichTextMark]? = nil,
+        activeListKind: FloorpRichTextListKind? = nil,
+        alignment: FloorpRichTextAlignment? = nil
+    ) {
+        self.isReady = isReady
+        self.canUndo = canUndo
+        self.canRedo = canRedo
+        self.activeHeadingLevel = activeHeadingLevel
+        self.activeMarks = activeMarks
+        self.activeListKind = activeListKind
+        self.alignment = alignment
+    }
 }
 
 struct FloorpRichTextEditorUpdate: Codable, Equatable, Sendable {

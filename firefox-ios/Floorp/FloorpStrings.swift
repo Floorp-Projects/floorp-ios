@@ -896,6 +896,91 @@ enum FloorpStrings {
             value: "Edits are saved automatically",
             comment: "Accessibility hint for the note editor"
         )
+        static let enableRichText = string(
+            "Floorp.Notes.EnableRichText.v1",
+            value: "Use Rich Text",
+            comment: "Action that losslessly upgrades a plain Floorp note to rich text"
+        )
+        static let richTextToolbar = string(
+            "Floorp.Notes.RichTextToolbar.v1",
+            value: "Rich text formatting",
+            comment: "Accessibility label for the Floorp Notes rich-text toolbar"
+        )
+        static let undo = string(
+            "Floorp.Notes.Undo.v1",
+            value: "Undo",
+            comment: "Undo action in the rich-text note editor"
+        )
+        static let redo = string(
+            "Floorp.Notes.Redo.v1",
+            value: "Redo",
+            comment: "Redo action in the rich-text note editor"
+        )
+        static let heading1 = string(
+            "Floorp.Notes.Heading1.v1",
+            value: "Heading 1",
+            comment: "Heading level 1 formatting action"
+        )
+        static let heading2 = string(
+            "Floorp.Notes.Heading2.v1",
+            value: "Heading 2",
+            comment: "Heading level 2 formatting action"
+        )
+        static let heading3 = string(
+            "Floorp.Notes.Heading3.v1",
+            value: "Heading 3",
+            comment: "Heading level 3 formatting action"
+        )
+        static let bold = string(
+            "Floorp.Notes.Bold.v1",
+            value: "Bold",
+            comment: "Bold formatting action"
+        )
+        static let italic = string(
+            "Floorp.Notes.Italic.v1",
+            value: "Italic",
+            comment: "Italic formatting action"
+        )
+        static let underline = string(
+            "Floorp.Notes.Underline.v1",
+            value: "Underline",
+            comment: "Underline formatting action"
+        )
+        static let strikethrough = string(
+            "Floorp.Notes.Strikethrough.v1",
+            value: "Strikethrough",
+            comment: "Strikethrough formatting action"
+        )
+        static let bulletList = string(
+            "Floorp.Notes.BulletList.v1",
+            value: "Bulleted List",
+            comment: "Bulleted-list formatting action"
+        )
+        static let orderedList = string(
+            "Floorp.Notes.OrderedList.v1",
+            value: "Numbered List",
+            comment: "Numbered-list formatting action"
+        )
+        static let alignLeft = string(
+            "Floorp.Notes.AlignLeft.v1",
+            value: "Align Left",
+            comment: "Left alignment formatting action"
+        )
+        static let alignCenter = string(
+            "Floorp.Notes.AlignCenter.v1",
+            value: "Align Center",
+            comment: "Center alignment formatting action"
+        )
+        static let alignRight = string(
+            "Floorp.Notes.AlignRight.v1",
+            value: "Align Right",
+            comment: "Right alignment formatting action"
+        )
+        static let insertImage = string(
+            "Floorp.Notes.InsertImage.v1",
+            value: "Insert Image",
+            comment: "Image insertion action in the rich-text note editor"
+        )
         static let close = string(
             "Floorp.Notes.Close.v1",
             value: "Close",

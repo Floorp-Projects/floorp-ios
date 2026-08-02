@@ -4,14 +4,22 @@
 
 import UIKit
 import Common
+import Photos
+import PhotosUI
 import Shared
+import WebKit
 
 @MainActor
 protocol FloorpNotePersistence: AnyObject {
+    func preflight(_ draft: FloorpNote) async throws
     func save(_ draft: FloorpNote) async throws -> FloorpNote
     func reload() async throws -> FloorpNote?
     func acceptReloaded(_ note: FloorpNote)
     func saveAsCopy(_ draft: FloorpNote) async throws -> FloorpNote
+}
+
+extension FloorpNotePersistence {
+    func preflight(_ draft: FloorpNote) async throws {}
 }
 
 /// Owns the persistence identity for one editor session.
@@ -63,6 +71,24 @@ final class FloorpNotePersistenceSession: FloorpNotePersistence {
             onCreatedNote(savedNote)
         }
         return savedNote
+    }
+
+    func preflight(_ draft: FloorpNote) async throws {
+        if let persistedNote {
+            try await notesStore.preflightUpdateNote(
+                id: persistedNote.id,
+                title: draft.title,
+                content: draft.content,
+                contentFormat: draft.contentFormat
+            )
+        } else {
+            try await notesStore.preflightCreateNote(
+                title: draft.title,
+                content: draft.content,
+                contentFormat: draft.contentFormat,
+                candidateID: draft.id
+            )
+        }
     }
 
     func reload() async throws -> FloorpNote? {
@@ -171,6 +197,20 @@ final class FloorpNoteSaveCoordinator {
     func requestExplicitSave() {
         if !hasPersistedNote && !hasUnsavedChanges {
             markChanged()
+        }
+    }
+
+    func preflightContentUpdate(
+        _ content: String,
+        contentFormat: FloorpNoteContentFormat
+    ) async throws {
+        while true {
+            let candidateVersion = changeVersion
+            var candidate = draft
+            candidate.content = content
+            candidate.contentFormat = contentFormat
+            try await persistence.preflight(candidate)
+            guard changeVersion != candidateVersion else { return }
         }
     }
 
@@ -289,7 +329,7 @@ final class FloorpNoteSaveCoordinator {
         }
     }
 
-    private static func failureKind(for error: Error) -> FailureKind {
+    static func failureKind(for error: Error) -> FailureKind {
         switch error {
         case FloorpNotesStoreError.editConflict:
             return .conflict
@@ -354,9 +394,6 @@ private final class FloorpBackgroundSaveLease {
 }
 
 /// Native, local-first editor for a single Floorp note.
-///
-/// Plain text is fully editable. Rich TipTap/Lexical content remains byte-for-
-/// byte unchanged until the user explicitly accepts conversion to plain text.
 @MainActor
 final class FloorpNoteEditorViewController: UIViewController, Themeable {
     var themeManager: ThemeManager
@@ -377,16 +414,30 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         case failed
     }
 
+    private enum ContentEditorMode {
+        case plainText
+        case richText
+        case readOnly
+    }
+
     private let notificationCenter: NotificationProtocol
     private let saveCoordinator: FloorpNoteSaveCoordinator
     private var contentAnalysis: FloorpNoteContent.Analysis
-    private var didApprovePlainTextConversion: Bool
+    private var editorMode: ContentEditorMode
+    private var richDocument: FloorpRichTextDocument?
+    private var richSession: FloorpRichTextEditorSessionCursor?
+    private var queuedRichUpdates = [FloorpRichTextUpdateEnvelope]()
+    private var queuedRichStates = [FloorpRichTextStateEnvelope]()
+    private var queuedRichCommands = [FloorpRichTextCommand]()
+    private var isProcessingRichUpdates = false
+    private var isRichCommandInFlight = false
     private var autosaveTask: Task<Void, Never>?
     private var savedStatusResetTask: Task<Void, Never>?
-    private var isApplyingPendingEdit = false
     private let backgroundSaveLease = FloorpBackgroundSaveLease()
     private let shouldFocusTitleOnFirstAppearance: Bool
     private var didApplyInitialFocus = false
+
+    var currentRichTextSession: FloorpRichTextEditorSessionCursor? { richSession }
 
     private lazy var titleField: UITextField = {
         let field = UITextField()
@@ -461,6 +512,183 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         return textView
     }()
 
+    private lazy var enableRichTextButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle(FloorpStrings.Notes.enableRichText, for: .normal)
+        button.titleLabel?.font = FXFontStyles.Bold.body.scaledFont()
+        button.accessibilityIdentifier = "Floorp.Notes.Editor.EnableRichText"
+        button.addTarget(self, action: #selector(enableRichTextTapped), for: .touchUpInside)
+        button.heightAnchor.constraint(
+            greaterThanOrEqualToConstant: UX.minimumControlHeight
+        ).isActive = true
+        return button
+    }()
+
+    private lazy var richEditorView: FloorpRichTextWebEditorView = {
+        let editor = FloorpRichTextWebEditorView()
+        editor.delegate = self
+        editor.layer.cornerRadius = 12
+        editor.layer.borderWidth = 1
+        editor.clipsToBounds = true
+        return editor
+    }()
+
+    private lazy var richToolbarStackView: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: richToolbarButtons)
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 4
+        stack.layoutMargins = UIEdgeInsets(top: 2, left: 4, bottom: 2, right: 4)
+        stack.isLayoutMarginsRelativeArrangement = true
+        return stack
+    }()
+
+    private lazy var richToolbarScrollView: UIScrollView = {
+        let scrollView = UIScrollView()
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.accessibilityIdentifier = "Floorp.Notes.RichEditor.Toolbar"
+        scrollView.accessibilityLabel = FloorpStrings.Notes.richTextToolbar
+        scrollView.addSubview(richToolbarStackView)
+        richToolbarStackView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            richToolbarStackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            richToolbarStackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            richToolbarStackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            richToolbarStackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            richToolbarStackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+        ])
+        scrollView.heightAnchor.constraint(equalToConstant: UX.minimumControlHeight + 4).isActive = true
+        return scrollView
+    }()
+
+    private lazy var contentStackView: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [
+            enableRichTextButton,
+            richToolbarScrollView,
+            textView,
+            richEditorView,
+        ])
+        stack.axis = .vertical
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }()
+
+    private lazy var undoButton = makeRichToolbarButton(
+        identifier: "Undo",
+        label: FloorpStrings.Notes.undo,
+        symbolName: "arrow.uturn.backward",
+        command: .undo
+    )
+    private lazy var redoButton = makeRichToolbarButton(
+        identifier: "Redo",
+        label: FloorpStrings.Notes.redo,
+        symbolName: "arrow.uturn.forward",
+        command: .redo
+    )
+    private lazy var heading1Button = makeRichToolbarButton(
+        identifier: "Heading1",
+        label: FloorpStrings.Notes.heading1,
+        title: "H1",
+        command: .toggleHeading(level: 1)
+    )
+    private lazy var heading2Button = makeRichToolbarButton(
+        identifier: "Heading2",
+        label: FloorpStrings.Notes.heading2,
+        title: "H2",
+        command: .toggleHeading(level: 2)
+    )
+    private lazy var heading3Button = makeRichToolbarButton(
+        identifier: "Heading3",
+        label: FloorpStrings.Notes.heading3,
+        title: "H3",
+        command: .toggleHeading(level: 3)
+    )
+    private lazy var boldButton = makeRichToolbarButton(
+        identifier: "Bold",
+        label: FloorpStrings.Notes.bold,
+        symbolName: "bold",
+        command: .toggleMark(.bold)
+    )
+    private lazy var italicButton = makeRichToolbarButton(
+        identifier: "Italic",
+        label: FloorpStrings.Notes.italic,
+        symbolName: "italic",
+        command: .toggleMark(.italic)
+    )
+    private lazy var underlineButton = makeRichToolbarButton(
+        identifier: "Underline",
+        label: FloorpStrings.Notes.underline,
+        symbolName: "underline",
+        command: .toggleMark(.underline)
+    )
+    private lazy var strikeButton = makeRichToolbarButton(
+        identifier: "Strikethrough",
+        label: FloorpStrings.Notes.strikethrough,
+        symbolName: "strikethrough",
+        command: .toggleMark(.strike)
+    )
+    private lazy var bulletButton = makeRichToolbarButton(
+        identifier: "BulletList",
+        label: FloorpStrings.Notes.bulletList,
+        symbolName: "list.bullet",
+        command: .toggleList(.bullet)
+    )
+    private lazy var orderedButton = makeRichToolbarButton(
+        identifier: "OrderedList",
+        label: FloorpStrings.Notes.orderedList,
+        symbolName: "list.number",
+        command: .toggleList(.ordered)
+    )
+    private lazy var alignLeftButton = makeRichToolbarButton(
+        identifier: "AlignLeft",
+        label: FloorpStrings.Notes.alignLeft,
+        symbolName: "text.alignleft",
+        command: .setAlignment(.left)
+    )
+    private lazy var alignCenterButton = makeRichToolbarButton(
+        identifier: "AlignCenter",
+        label: FloorpStrings.Notes.alignCenter,
+        symbolName: "text.aligncenter",
+        command: .setAlignment(.center)
+    )
+    private lazy var alignRightButton = makeRichToolbarButton(
+        identifier: "AlignRight",
+        label: FloorpStrings.Notes.alignRight,
+        symbolName: "text.alignright",
+        command: .setAlignment(.right)
+    )
+    private lazy var insertImageButton: UIButton = {
+        let button = makeRichToolbarButton(
+            identifier: "InsertImage",
+            label: FloorpStrings.Notes.insertImage,
+            symbolName: "photo.badge.plus",
+            command: nil
+        )
+        button.addTarget(self, action: #selector(insertImageTapped), for: .touchUpInside)
+        return button
+    }()
+
+    private var richToolbarButtons: [UIButton] {
+        [
+            undoButton,
+            redoButton,
+            heading1Button,
+            heading2Button,
+            heading3Button,
+            boldButton,
+            italicButton,
+            underlineButton,
+            strikeButton,
+            bulletButton,
+            orderedButton,
+            alignLeftButton,
+            alignCenterButton,
+            alignRightButton,
+            insertImageButton,
+        ]
+    }
+
     init(
         note: FloorpNote,
         windowUUID: WindowUUID,
@@ -473,8 +701,27 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             note.content,
             contentFormat: note.contentFormat
         )
+        let richPreparation = FloorpRichTextEditorPreparation.prepare(note)
         self.contentAnalysis = contentAnalysis
-        self.didApprovePlainTextConversion = contentAnalysis.editPolicy == .direct
+        switch richPreparation {
+        case .plainText:
+            self.editorMode = .plainText
+            self.richDocument = nil
+            self.richSession = nil
+        case .editable(let document, _):
+            self.editorMode = .richText
+            self.richDocument = document
+            self.richSession = try? FloorpRichTextEditorSessionCursor(
+                noteID: note.id,
+                documentID: UUID().uuidString,
+                generation: 0,
+                revision: 0
+            )
+        case .readOnly:
+            self.editorMode = .readOnly
+            self.richDocument = nil
+            self.richSession = nil
+        }
         self.windowUUID = windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
@@ -530,7 +777,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
         view.addSubview(titleField)
         view.addSubview(statusStackView)
-        view.addSubview(textView)
+        view.addSubview(contentStackView)
 
         NSLayoutConstraint.activate([
             titleField.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: UX.padding),
@@ -543,25 +790,26 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             statusStackView.trailingAnchor.constraint(equalTo: titleField.trailingAnchor),
             statusStackView.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
 
-            textView.topAnchor.constraint(equalTo: statusStackView.bottomAnchor, constant: 8),
-            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: UX.padding),
-            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -UX.padding),
-            textView.bottomAnchor.constraint(
+            contentStackView.topAnchor.constraint(equalTo: statusStackView.bottomAnchor, constant: 8),
+            contentStackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: UX.padding),
+            contentStackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -UX.padding),
+            contentStackView.bottomAnchor.constraint(
                 lessThanOrEqualTo: view.keyboardLayoutGuide.topAnchor,
                 constant: -UX.padding
             ),
-            textView.bottomAnchor.constraint(
+            contentStackView.bottomAnchor.constraint(
+                equalTo: view.keyboardLayoutGuide.topAnchor,
+                constant: -UX.padding
+            ).withPriority(UILayoutPriority(749)),
+            contentStackView.bottomAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.bottomAnchor,
                 constant: -UX.padding
-            ).withPriority(.defaultLow),
+            ).withPriority(.defaultHigh),
         ])
 
         titleField.text = saveCoordinator.draft.title
         textView.text = contentAnalysis.editorText
-        textView.isEditable = contentAnalysis.editPolicy != .readOnly
-        if contentAnalysis.editPolicy == .readOnly {
-            textView.accessibilityHint = FloorpStrings.Notes.unsupportedContentReadOnlyNotice
-        }
+        configureContentEditor()
         updateSaveState(.idle)
         listenForThemeChanges(withNotificationCenter: notificationCenter)
         applyTheme()
@@ -638,6 +886,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         textView.tintColor = colors.actionPrimary
         textView.keyboardAppearance = theme.type.keyboardAppearence(isPrivate: false)
         textView.layer.borderColor = colors.borderPrimary.cgColor
+        enableRichTextButton.tintColor = colors.actionPrimary
+        richToolbarButtons.forEach { $0.tintColor = colors.actionPrimary }
+        richEditorView.backgroundColor = colors.layer3
+        richEditorView.layer.borderColor = colors.borderPrimary.cgColor
     }
 
     @objc private func titleChanged() {
@@ -758,12 +1010,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         switch state {
         case .idle:
             statusLabel.accessibilityIdentifier = "Floorp.Notes.Editor.Status.Idle"
-            switch contentAnalysis.editPolicy {
+            switch editorMode {
             case .readOnly:
                 statusLabel.text = FloorpStrings.Notes.unsupportedContentReadOnlyNotice
-            case .requiresConversion where !didApprovePlainTextConversion:
-                statusLabel.text = FloorpStrings.Notes.richTextReadOnlyNotice
-            case .direct, .requiresConversion:
+            case .plainText, .richText:
                 statusLabel.text = nil
             }
             navigationItem.rightBarButtonItem?.isEnabled = true
@@ -905,7 +1155,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     private func setReloadInteractionEnabled(_ isEnabled: Bool) {
         titleField.isEnabled = isEnabled
-        textView.isEditable = isEnabled && contentAnalysis.editPolicy != .readOnly
+        textView.isEditable = isEnabled && editorMode == .plainText
+        richEditorView.setEditable(isEnabled && editorMode == .richText)
+        richToolbarButtons.forEach { $0.isEnabled = isEnabled }
+        enableRichTextButton.isEnabled = isEnabled
         navigationItem.rightBarButtonItem?.isEnabled = isEnabled
     }
 
@@ -931,13 +1184,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             note.content,
             contentFormat: note.contentFormat
         )
-        didApprovePlainTextConversion = contentAnalysis.editPolicy == .direct
+        applyRichPreparation(FloorpRichTextEditorPreparation.prepare(note), noteID: note.id)
         titleField.text = note.title
         textView.text = contentAnalysis.editorText
-        textView.isEditable = contentAnalysis.editPolicy != .readOnly
-        textView.accessibilityHint = contentAnalysis.editPolicy == .readOnly
-            ? FloorpStrings.Notes.unsupportedContentReadOnlyNotice
-            : FloorpStrings.Notes.contentAccessibilityHint
+        configureContentEditor()
         setInteractiveDismissalBlocked(false)
         updateSaveState(.idle)
     }
@@ -948,45 +1198,286 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         navigationController?.dismiss(animated: true)
     }
 
-    private func requestPlainTextConversion(
-        range: NSRange,
-        replacementText: String
-    ) {
-        guard presentedViewController == nil else { return }
-        let alert = UIAlertController(
-            title: FloorpStrings.Notes.convertRichTextTitle,
-            message: FloorpStrings.Notes.convertRichTextMessage,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: FloorpStrings.Notes.cancel, style: .cancel))
-        alert.addAction(
-            UIAlertAction(title: FloorpStrings.Notes.convert, style: .destructive) { [weak self] _ in
-                self?.applyPendingPlainTextEdit(range: range, replacementText: replacementText)
-            }
-        )
-        present(alert, animated: true)
+    private func configureContentEditor() {
+        let showsRichEditor = editorMode == .richText
+        enableRichTextButton.isHidden = editorMode != .plainText
+        richToolbarScrollView.isHidden = !showsRichEditor
+        richEditorView.isHidden = !showsRichEditor
+        textView.isHidden = showsRichEditor
+        textView.isEditable = editorMode == .plainText
+        textView.accessibilityHint = editorMode == .readOnly
+            ? FloorpStrings.Notes.unsupportedContentReadOnlyNotice
+            : FloorpStrings.Notes.contentAccessibilityHint
+
+        if showsRichEditor, let richDocument, let richSession {
+            richEditorView.load(document: richDocument, session: richSession)
+            richEditorView.setEditable(true)
+        }
+        undoButton.isEnabled = false
+        redoButton.isEnabled = false
     }
 
-    private func applyPendingPlainTextEdit(range: NSRange, replacementText: String) {
-        let currentText = textView.text ?? ""
-        guard let swiftRange = Range(range, in: currentText) else { return }
-        let updatedText = currentText.replacingCharacters(in: swiftRange, with: replacementText)
-        let cursorOffset = range.location + (replacementText as NSString).length
+    private func applyRichPreparation(
+        _ preparation: FloorpRichTextEditorPreparation,
+        noteID: String
+    ) {
+        queuedRichUpdates.removeAll()
+        queuedRichStates.removeAll()
+        queuedRichCommands.removeAll()
+        isRichCommandInFlight = false
+        switch preparation {
+        case .plainText:
+            editorMode = .plainText
+            richDocument = nil
+            richSession = nil
+        case .editable(let document, _):
+            editorMode = .richText
+            richDocument = document
+            richSession = try? FloorpRichTextEditorSessionCursor(
+                noteID: noteID,
+                documentID: UUID().uuidString,
+                generation: 0,
+                revision: 0
+            )
+        case .readOnly:
+            editorMode = .readOnly
+            richDocument = nil
+            richSession = nil
+        }
+    }
 
-        didApprovePlainTextConversion = true
-        isApplyingPendingEdit = true
-        textView.text = updatedText
-        textView.selectedRange = NSRange(location: cursorOffset, length: 0)
-        isApplyingPendingEdit = false
-        if saveCoordinator.updateContent(updatedText, contentFormat: .plainText) {
-            draftDidChange()
+    private func makeRichToolbarButton(
+        identifier: String,
+        label: String,
+        symbolName: String? = nil,
+        title: String? = nil,
+        command: FloorpRichTextCommand?
+    ) -> UIButton {
+        let button = UIButton(type: .system)
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = symbolName.flatMap { UIImage(systemName: $0) }
+        configuration.title = title
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)
+        button.configuration = configuration
+        button.accessibilityLabel = label
+        button.accessibilityIdentifier = "Floorp.Notes.RichEditor.\(identifier)"
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: UX.minimumControlHeight).isActive = true
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: UX.minimumControlHeight).isActive = true
+        if let command {
+            button.addAction(
+                UIAction { [weak self] _ in
+                    self?.enqueueRichCommand(command)
+                },
+                for: .touchUpInside
+            )
+        }
+        return button
+    }
+
+    @objc private func enableRichTextTapped() {
+        guard editorMode == .plainText else { return }
+        enableRichTextButton.isEnabled = false
+        let plainText = textView.text ?? ""
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { enableRichTextButton.isEnabled = true }
+            do {
+                let document = try FloorpRichTextCodec.document(fromPlainText: plainText)
+                let source = try FloorpRichTextCodec.encode(document)
+                try await saveCoordinator.preflightContentUpdate(
+                    source,
+                    contentFormat: .automatic
+                )
+                richDocument = document
+                richSession = try FloorpRichTextEditorSessionCursor(
+                    noteID: saveCoordinator.draft.id,
+                    documentID: UUID().uuidString,
+                    generation: 0,
+                    revision: 0
+                )
+                editorMode = .richText
+                if saveCoordinator.updateContent(source, contentFormat: .automatic) {
+                    draftDidChange()
+                }
+                configureContentEditor()
+                UIAccessibility.post(notification: .layoutChanged, argument: richEditorView)
+            } catch {
+                presentPreflightFailure(error)
+            }
+        }
+    }
+
+    private func enqueueRichCommand(_ command: FloorpRichTextCommand) {
+        guard editorMode == .richText else { return }
+        queuedRichCommands.append(command)
+        sendNextRichCommandIfPossible()
+    }
+
+    private func sendNextRichCommandIfPossible() {
+        guard !isRichCommandInFlight,
+              !isProcessingRichUpdates,
+              queuedRichUpdates.isEmpty,
+              let document = richDocument,
+              let session = richSession,
+              !queuedRichCommands.isEmpty else {
+            return
+        }
+        let command = queuedRichCommands.removeFirst()
+        do {
+            let envelope = try FloorpRichTextCommandPlanner.plan(
+                command,
+                for: document,
+                session: session
+            )
+            isRichCommandInFlight = true
+            richEditorView.send(envelope) { [weak self] wasAccepted in
+                guard let self, !wasAccepted else { return }
+                isRichCommandInFlight = false
+                queuedRichCommands.insert(command, at: 0)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    self?.sendNextRichCommandIfPossible()
+                }
+            }
+        } catch {
+            isRichCommandInFlight = false
+        }
+    }
+
+    @objc private func insertImageTapped() {
+        guard editorMode == .richText else { return }
+        var configuration = PHPickerConfiguration(photoLibrary: PHPhotoLibrary.shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    private func processQueuedRichUpdates() {
+        guard !isProcessingRichUpdates else { return }
+        isProcessingRichUpdates = true
+        Task { @MainActor [weak self] in
+            await self?.drainQueuedRichUpdates()
+        }
+    }
+
+    private func drainQueuedRichUpdates() async {
+        while !queuedRichUpdates.isEmpty {
+            let envelope = queuedRichUpdates.removeFirst()
+            guard let document = richDocument, let session = richSession else {
+                rejectPendingRichChanges()
+                isProcessingRichUpdates = false
+                return
+            }
+            do {
+                let accepted = try FloorpRichTextEditorUpdatePolicy.accept(
+                    envelope,
+                    for: session,
+                    replacing: document
+                )
+                let source = try FloorpRichTextCodec.encode(accepted.document)
+                try await saveCoordinator.preflightContentUpdate(
+                    source,
+                    contentFormat: .automatic
+                )
+                guard richSession == session else { continue }
+                richDocument = accepted.document
+                richSession = accepted.session
+                isRichCommandInFlight = false
+                if saveCoordinator.updateContent(source, contentFormat: .automatic) {
+                    draftDidChange()
+                }
+                applyQueuedRichStateIfPossible()
+            } catch {
+                rejectPendingRichChanges()
+                presentPreflightFailure(error)
+                isProcessingRichUpdates = false
+                return
+            }
+        }
+        isProcessingRichUpdates = false
+        sendNextRichCommandIfPossible()
+    }
+
+    private func rejectPendingRichChanges() {
+        queuedRichUpdates.removeAll()
+        queuedRichStates.removeAll()
+        queuedRichCommands.removeAll()
+        isRichCommandInFlight = false
+        guard let document = richDocument,
+              let session = richSession,
+              let replacement = try? FloorpRichTextEditorSessionCursor(
+                noteID: session.noteID,
+                documentID: UUID().uuidString,
+                generation: min(
+                    session.generation + 1,
+                    FloorpRichTextBridgeProtocol.maximumSafeSequenceNumber
+                ),
+                revision: 0
+              ) else {
+            return
+        }
+        richSession = replacement
+        richEditorView.load(document: document, session: replacement)
+    }
+
+    private func presentPreflightFailure(_ error: Error) {
+        let kind = FloorpNoteSaveCoordinator.failureKind(for: error)
+        updateSaveState(.failed)
+        presentSaveFailure(
+            FloorpNoteSaveCoordinator.Failure(kind: kind, underlyingError: error)
+        )
+    }
+
+    private func applyRichEditorState(_ state: FloorpRichTextEditorState) {
+        undoButton.isEnabled = state.canUndo
+        redoButton.isEnabled = state.canRedo
+        setSelected(heading1Button, state.activeHeadingLevel == 1)
+        setSelected(heading2Button, state.activeHeadingLevel == 2)
+        setSelected(heading3Button, state.activeHeadingLevel == 3)
+        let marks = Set(state.activeMarks ?? [])
+        setSelected(boldButton, marks.contains(.bold))
+        setSelected(italicButton, marks.contains(.italic))
+        setSelected(underlineButton, marks.contains(.underline))
+        setSelected(strikeButton, marks.contains(.strike))
+        setSelected(bulletButton, state.activeListKind == .bullet)
+        setSelected(orderedButton, state.activeListKind == .ordered)
+        setSelected(alignLeftButton, state.alignment == .left)
+        setSelected(alignCenterButton, state.alignment == .center)
+        setSelected(alignRightButton, state.alignment == .right)
+    }
+
+    private func applyQueuedRichStateIfPossible() {
+        guard let session = richSession else { return }
+        if let index = queuedRichStates.lastIndex(where: { $0.session == session }) {
+            let envelope = queuedRichStates.remove(at: index)
+            queuedRichStates.removeAll { $0.session.revision <= session.revision }
+            if let state = try? FloorpRichTextEditorStatePolicy.accept(envelope, for: session) {
+                applyRichEditorState(state)
+            }
+        }
+    }
+
+    private func setSelected(_ button: UIButton, _ isSelected: Bool) {
+        button.isSelected = isSelected
+        if isSelected {
+            button.accessibilityTraits.insert(.selected)
+            button.configuration?.baseBackgroundColor = button.tintColor.withAlphaComponent(0.18)
+        } else {
+            button.accessibilityTraits.remove(.selected)
+            button.configuration?.baseBackgroundColor = .clear
         }
     }
 }
 
 extension FloorpNoteEditorViewController: UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        textView.becomeFirstResponder()
+        if editorMode == .richText {
+            richEditorView.focus()
+        } else {
+            textView.becomeFirstResponder()
+        }
         return false
     }
 }
@@ -997,24 +1488,625 @@ extension FloorpNoteEditorViewController: UITextViewDelegate {
         shouldChangeTextIn range: NSRange,
         replacementText text: String
     ) -> Bool {
-        switch contentAnalysis.editPolicy {
-        case .direct:
-            return true
-        case .readOnly:
-            return false
-        case .requiresConversion:
-            guard !didApprovePlainTextConversion else { return true }
-            requestPlainTextConversion(range: range, replacementText: text)
-            return false
-        }
+        editorMode == .plainText
     }
 
     func textViewDidChange(_ textView: UITextView) {
-        guard !isApplyingPendingEdit else { return }
+        guard editorMode == .plainText else { return }
         if saveCoordinator.updateContent(textView.text, contentFormat: .plainText) {
             draftDidChange()
         }
     }
+}
+
+extension FloorpNoteEditorViewController: FloorpRichTextWebEditorDelegate {
+    func richTextEditor(
+        _ editor: FloorpRichTextWebEditorView,
+        received update: FloorpRichTextUpdateEnvelope
+    ) {
+        guard queuedRichUpdates.count < 128 else {
+            rejectPendingRichChanges()
+            return
+        }
+        queuedRichUpdates.append(update)
+        processQueuedRichUpdates()
+    }
+
+    func richTextEditor(
+        _ editor: FloorpRichTextWebEditorView,
+        received state: FloorpRichTextStateEnvelope
+    ) {
+        guard let session = richSession,
+              state.schemaVersion == FloorpRichTextBridgeProtocol.currentSchemaVersion,
+              state.session.noteID == session.noteID,
+              state.session.documentID == session.documentID,
+              state.session.generation == session.generation else {
+            return
+        }
+        if let accepted = try? FloorpRichTextEditorStatePolicy.accept(state, for: session) {
+            applyRichEditorState(accepted)
+            return
+        }
+        guard state.session.revision > session.revision else { return }
+        queuedRichStates.append(state)
+        if queuedRichStates.count > 32 {
+            queuedRichStates.removeFirst(queuedRichStates.count - 32)
+        }
+    }
+}
+
+extension FloorpNoteEditorViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let provider = results.first?.itemProvider,
+              provider.canLoadObject(ofClass: UIImage.self) else {
+            return
+        }
+        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+            guard let image = object as? UIImage else { return }
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let richImage = FloorpRichTextImageEncoder.encode(image) else {
+                    return
+                }
+                enqueueRichCommand(.insertImage(richImage))
+            }
+        }
+    }
+}
+
+@MainActor
+enum FloorpRichTextImageEncoder {
+    static func encode(_ image: UIImage) -> FloorpRichTextImage? {
+        guard image.size.width > 0, image.size.height > 0 else { return nil }
+        var maximumDimension: CGFloat = 1_600
+        var quality: CGFloat = 0.82
+
+        for _ in 0..<12 {
+            let scale = min(
+                1,
+                maximumDimension / max(image.size.width, image.size.height)
+            )
+            let size = CGSize(
+                width: max(1, floor(image.size.width * scale)),
+                height: max(1, floor(image.size.height * scale))
+            )
+            let renderer = UIGraphicsImageRenderer(size: size)
+            let normalized = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+            guard let data = normalized.jpegData(compressionQuality: quality) else { return nil }
+            let source = "data:image/jpeg;base64," + data.base64EncodedString()
+            if FloorpRichTextImagePolicy.isSafePersistedSource(source) {
+                let width = Int(size.width.rounded())
+                return FloorpRichTextImage(
+                    source: source,
+                    width: FloorpRichTextImagePolicy.allowedDisplayWidth.contains(width)
+                        ? width
+                        : nil
+                )
+            }
+            if quality > 0.45 {
+                quality -= 0.09
+            } else {
+                maximumDimension *= 0.75
+            }
+        }
+        return nil
+    }
+}
+
+@MainActor
+protocol FloorpRichTextWebEditorDelegate: AnyObject {
+    func richTextEditor(
+        _ editor: FloorpRichTextWebEditorView,
+        received update: FloorpRichTextUpdateEnvelope
+    )
+    func richTextEditor(
+        _ editor: FloorpRichTextWebEditorView,
+        received state: FloorpRichTextStateEnvelope
+    )
+}
+
+@MainActor
+private final class FloorpWeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+
+    init(target: WKScriptMessageHandler) {
+        self.target = target
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        target?.userContentController(userContentController, didReceive: message)
+    }
+}
+
+@MainActor
+final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptMessageHandler {
+    private enum BridgeName {
+        static let update = "floorpRichTextUpdate"
+        static let state = "floorpRichTextState"
+    }
+
+    weak var delegate: FloorpRichTextWebEditorDelegate?
+
+    private let webView: WKWebView
+    private var messageHandlerProxy: FloorpWeakScriptMessageHandler?
+    private var pendingDocument: FloorpRichTextDocument?
+    private var pendingSession: FloorpRichTextEditorSessionCursor?
+    private var isPageReady = false
+
+    override init(frame: CGRect) {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let controller = WKUserContentController()
+        configuration.userContentController = controller
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init(frame: frame)
+
+        let proxy = FloorpWeakScriptMessageHandler(target: self)
+        messageHandlerProxy = proxy
+        controller.add(proxy, name: BridgeName.update)
+        controller.add(proxy, name: BridgeName.state)
+
+        accessibilityIdentifier = "Floorp.Notes.RichEditor.Container"
+        webView.accessibilityIdentifier = "Floorp.Notes.RichEditor.Body"
+        webView.accessibilityLabel = FloorpStrings.Notes.contentAccessibilityLabel
+        webView.accessibilityHint = FloorpStrings.Notes.contentAccessibilityHint
+        webView.navigationDelegate = self
+        webView.scrollView.keyboardDismissMode = .interactive
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: topAnchor),
+            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        webView.loadHTMLString(Self.editorHTML, baseURL: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func load(
+        document: FloorpRichTextDocument,
+        session: FloorpRichTextEditorSessionCursor
+    ) {
+        pendingDocument = document
+        pendingSession = session
+        loadPendingDocumentIfPossible()
+    }
+
+    func send(
+        _ command: FloorpRichTextCommandEnvelope,
+        completion: @escaping @MainActor (Bool) -> Void
+    ) {
+        guard let commandObject = jsonObject(command) else {
+            completion(false)
+            return
+        }
+        webView.callAsyncJavaScript(
+            "return window.floorpApplyCommand(command);",
+            arguments: ["command": commandObject],
+            in: nil,
+            in: .page
+        ) { result in
+            switch result {
+            case .success(let value):
+                completion(value as? Bool == true)
+            case .failure:
+                completion(false)
+            }
+        }
+    }
+
+    func setEditable(_ isEditable: Bool) {
+        webView.callAsyncJavaScript(
+            "return window.floorpSetEditable(isEditable);",
+            arguments: ["isEditable": isEditable],
+            in: nil,
+            in: .page
+        ) { _ in }
+    }
+
+    func focus() {
+        webView.callAsyncJavaScript(
+            "document.getElementById('editor').focus(); return true;",
+            arguments: [:],
+            in: nil,
+            in: .page
+        ) { _ in }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        isPageReady = true
+        loadPendingDocumentIfPossible()
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+    ) {
+        let isEditorDocument = navigationAction.request.url?.scheme == "about"
+        decisionHandler(isEditorDocument ? .allow : .cancel)
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard JSONSerialization.isValidJSONObject(message.body),
+              let data = try? JSONSerialization.data(withJSONObject: message.body) else {
+            return
+        }
+        let decoder = JSONDecoder()
+        switch message.name {
+        case BridgeName.update:
+            guard let envelope = try? decoder.decode(
+                FloorpRichTextUpdateEnvelope.self,
+                from: data
+            ) else { return }
+            delegate?.richTextEditor(self, received: envelope)
+        case BridgeName.state:
+            guard let envelope = try? decoder.decode(
+                FloorpRichTextStateEnvelope.self,
+                from: data
+            ) else { return }
+            delegate?.richTextEditor(self, received: envelope)
+        default:
+            break
+        }
+    }
+
+    private func loadPendingDocumentIfPossible() {
+        guard isPageReady,
+              let document = pendingDocument,
+              let session = pendingSession,
+              let source = try? FloorpRichTextCodec.encode(document),
+              let sourceData = source.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: sourceData),
+              let sessionObject = jsonObject(session) else {
+            return
+        }
+        pendingDocument = nil
+        pendingSession = nil
+        webView.callAsyncJavaScript(
+            "return window.floorpLoad(root, session);",
+            arguments: ["root": root, "session": sessionObject],
+            in: nil,
+            in: .page
+        ) { _ in }
+    }
+
+    private func jsonObject<Value: Encodable>(_ value: Value) -> Any? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private static let editorHTML = #"""
+    <!doctype html>
+    <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+      <meta http-equiv="Content-Security-Policy"
+            content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+      <style>
+        :root { color-scheme: light dark; }
+        html, body { min-height: 100%; margin: 0; padding: 0; background: transparent; }
+        #editor {
+          box-sizing: border-box;
+          min-height: 100vh;
+          padding: 12px 10px 40px;
+          outline: none;
+          font: -apple-system-body;
+          overflow-wrap: anywhere;
+          -webkit-user-select: text;
+        }
+        #editor:empty::before { content: attr(data-placeholder); opacity: 0.55; }
+        h1 { font: -apple-system-title1; font-weight: 700; }
+        h2 { font: -apple-system-title2; font-weight: 700; }
+        h3 { font: -apple-system-title3; font-weight: 700; }
+        blockquote {
+          border-inline-start: 3px solid currentColor;
+          margin-inline-start: 0;
+          padding-inline-start: 12px;
+          opacity: 0.85;
+        }
+        pre { white-space: pre-wrap; font-family: ui-monospace, monospace; }
+        img { display: block; height: auto; max-width: 100%; margin: 8px 0; }
+      </style>
+    </head>
+    <body>
+      <div id="editor" contenteditable="true" role="textbox" aria-multiline="true"
+           aria-label="Note content" data-placeholder="Write a note…"></div>
+      <script>
+      (() => {
+        const editor = document.getElementById('editor');
+        let session = null;
+        let suppressUpdates = false;
+
+        const clone = (value) => JSON.parse(JSON.stringify(value));
+        const withAttrs = (element, attrs) => {
+          if (!attrs) return element;
+          if (typeof attrs.textAlign === 'string') element.style.textAlign = attrs.textAlign;
+          return element;
+        };
+        const appendChildren = (element, children) => {
+          (children || []).forEach((child) => element.appendChild(renderNode(child)));
+          return element;
+        };
+        const renderText = (node) => {
+          let result = document.createTextNode(node.text || '');
+          (node.marks || []).forEach((mark) => {
+            const names = { bold: 'strong', italic: 'em', underline: 'u', strike: 's', code: 'code' };
+            const tag = names[mark.type];
+            if (!tag) return;
+            const wrapper = document.createElement(tag);
+            wrapper.appendChild(result);
+            result = wrapper;
+          });
+          return result;
+        };
+        const renderNode = (node) => {
+          let element;
+          switch (node.type) {
+            case 'text': return renderText(node);
+            case 'hardBreak': return document.createElement('br');
+            case 'paragraph':
+              return appendChildren(withAttrs(document.createElement('p'), node.attrs), node.content);
+            case 'heading':
+              element = document.createElement(`h${Math.min(6, Math.max(1, node.attrs?.level || 1))}`);
+              return appendChildren(withAttrs(element, node.attrs), node.content);
+            case 'blockquote':
+              return appendChildren(document.createElement('blockquote'), node.content);
+            case 'codeBlock':
+              element = document.createElement('pre');
+              if (node.attrs?.language) element.dataset.language = node.attrs.language;
+              return appendChildren(element, node.content);
+            case 'horizontalRule': return document.createElement('hr');
+            case 'bulletList': return appendChildren(document.createElement('ul'), node.content);
+            case 'orderedList':
+              element = document.createElement('ol');
+              if (Number.isInteger(node.attrs?.start)) element.start = node.attrs.start;
+              if (typeof node.attrs?.type === 'string') element.type = node.attrs.type;
+              return appendChildren(element, node.content);
+            case 'listItem': return appendChildren(document.createElement('li'), node.content);
+            case 'image':
+              element = document.createElement('img');
+              element.src = node.attrs?.src || '';
+              if (typeof node.attrs?.alt === 'string') element.alt = node.attrs.alt;
+              if (typeof node.attrs?.title === 'string') element.title = node.attrs.title;
+              if (Number.isInteger(node.attrs?.width)) element.width = node.attrs.width;
+              element.contentEditable = 'false';
+              return element;
+            default: return document.createTextNode('');
+          }
+        };
+
+        const markFromElement = (element) => {
+          const tag = element.tagName?.toLowerCase();
+          if (tag === 'strong' || tag === 'b') return 'bold';
+          if (tag === 'em' || tag === 'i') return 'italic';
+          if (tag === 'u') return 'underline';
+          if (tag === 's' || tag === 'strike' || tag === 'del') return 'strike';
+          if (tag === 'code' && element.parentElement?.tagName.toLowerCase() !== 'pre') return 'code';
+          const style = element.style;
+          if (style?.fontWeight === 'bold' || Number(style?.fontWeight) >= 600) return 'bold';
+          if (style?.fontStyle === 'italic') return 'italic';
+          if (style?.textDecorationLine?.includes('underline')) return 'underline';
+          if (style?.textDecorationLine?.includes('line-through')) return 'strike';
+          return null;
+        };
+        const uniqueMarks = (marks) => [...new Set(marks)].map((type) => ({ type }));
+        const serializeChildren = (element, inheritedMarks = []) =>
+          [...element.childNodes].flatMap((child) => serializeNode(child, inheritedMarks));
+        const serializeInlineOrBlock = (element, type, attrs) => {
+          const content = serializeChildren(element);
+          const result = { type };
+          if (attrs && Object.keys(attrs).length) result.attrs = attrs;
+          if (content.length) result.content = content;
+          return result;
+        };
+        const alignmentAttrs = (element) => {
+          const textAlign = element.style?.textAlign;
+          return ['left', 'center', 'right', 'justify'].includes(textAlign) ? { textAlign } : undefined;
+        };
+        const serializeNode = (node, inheritedMarks = []) => {
+          if (node.nodeType === Node.TEXT_NODE) {
+            if (!node.nodeValue) return [];
+            const result = { type: 'text', text: node.nodeValue };
+            const marks = uniqueMarks(inheritedMarks);
+            if (marks.length) result.marks = marks;
+            return [result];
+          }
+          if (node.nodeType !== Node.ELEMENT_NODE) return [];
+          const tag = node.tagName.toLowerCase();
+          const mark = markFromElement(node);
+          if (mark) return serializeChildren(node, [...inheritedMarks, mark]);
+          if (tag === 'br') {
+            const result = { type: 'hardBreak' };
+            const marks = uniqueMarks(inheritedMarks);
+            if (marks.length) result.marks = marks;
+            return [result];
+          }
+          if (tag === 'p' || tag === 'div') {
+            return [serializeInlineOrBlock(node, 'paragraph', alignmentAttrs(node))];
+          }
+          if (/^h[1-6]$/.test(tag)) {
+            const attrs = { level: Number(tag.slice(1)), ...(alignmentAttrs(node) || {}) };
+            return [serializeInlineOrBlock(node, 'heading', attrs)];
+          }
+          if (tag === 'blockquote') {
+            let content = serializeChildren(node);
+            if (content.length && content.every((item) => ['text', 'hardBreak'].includes(item.type))) {
+              content = [{ type: 'paragraph', content }];
+            }
+            return [{ type: 'blockquote', content: content.length ? content : [{ type: 'paragraph' }] }];
+          }
+          if (tag === 'pre') {
+            const text = node.textContent || '';
+            const result = { type: 'codeBlock' };
+            if (node.dataset.language) result.attrs = { language: node.dataset.language };
+            if (text) result.content = [{ type: 'text', text }];
+            return [result];
+          }
+          if (tag === 'hr') return [{ type: 'horizontalRule' }];
+          if (tag === 'img') {
+            const attrs = { src: node.src };
+            if (node.hasAttribute('alt')) attrs.alt = node.alt;
+            if (node.hasAttribute('title')) attrs.title = node.title;
+            if (node.width) attrs.width = node.width;
+            return [{ type: 'image', attrs }];
+          }
+          if (tag === 'ul' || tag === 'ol') {
+            const content = [...node.children].flatMap((child) => serializeNode(child));
+            const result = { type: tag === 'ol' ? 'orderedList' : 'bulletList', content };
+            if (tag === 'ol') {
+              const attrs = {};
+              if (node.hasAttribute('start')) attrs.start = node.start;
+              if (node.hasAttribute('type')) attrs.type = node.type;
+              if (Object.keys(attrs).length) result.attrs = attrs;
+            }
+            return [result];
+          }
+          if (tag === 'li') {
+            let content = serializeChildren(node);
+            const leadingInline = [];
+            while (content.length && ['text', 'hardBreak'].includes(content[0].type)) {
+              leadingInline.push(content.shift());
+            }
+            if (leadingInline.length) content.unshift({ type: 'paragraph', content: leadingInline });
+            if (!content.length || content[0].type !== 'paragraph') {
+              content.unshift({ type: 'paragraph' });
+            }
+            return [{ type: 'listItem', content }];
+          }
+          return serializeChildren(node, inheritedMarks);
+        };
+
+        const currentDocument = () => {
+          let content = [...editor.childNodes].flatMap((child) => serializeNode(child));
+          const leadingInline = [];
+          while (content.length && ['text', 'hardBreak'].includes(content[0].type)) {
+            leadingInline.push(content.shift());
+          }
+          if (leadingInline.length) content.unshift({ type: 'paragraph', content: leadingInline });
+          if (!content.length) content = [{ type: 'paragraph' }];
+          return { type: 'doc', content };
+        };
+        const nearestBlock = () => {
+          const selection = document.getSelection();
+          let node = selection?.anchorNode;
+          if (node?.nodeType === Node.TEXT_NODE) node = node.parentElement;
+          while (node && node !== editor) {
+            const tag = node.tagName?.toLowerCase();
+            if (/^h[1-6]$/.test(tag) || ['p', 'div', 'li'].includes(tag)) return node;
+            node = node.parentElement;
+          }
+          return null;
+        };
+        const activeState = () => {
+          const block = nearestBlock();
+          const tag = block?.tagName?.toLowerCase();
+          const heading = /^h[1-3]$/.test(tag || '') ? Number(tag.slice(1)) : null;
+          const list = block?.closest('li')?.parentElement?.tagName?.toLowerCase();
+          const align = block?.style?.textAlign;
+          return {
+            isReady: true,
+            canUndo: document.queryCommandEnabled('undo'),
+            canRedo: document.queryCommandEnabled('redo'),
+            activeHeadingLevel: heading,
+            activeMarks: ['bold', 'italic', 'underline', 'strike'].filter((mark) =>
+              document.queryCommandState(mark === 'strike' ? 'strikeThrough' : mark)),
+            activeListKind: list === 'ul' ? 'bullet' : list === 'ol' ? 'ordered' : null,
+            alignment: ['left', 'center', 'right'].includes(align) ? align : 'left',
+          };
+        };
+        const envelope = (payload) => ({ schemaVersion: 1, session: clone(session), payload });
+        const emitState = () => {
+          if (!session) return;
+          window.webkit.messageHandlers.floorpRichTextState.postMessage(envelope(activeState()));
+        };
+        const emitUpdate = () => {
+          if (!session || suppressUpdates) return;
+          session.revision += 1;
+          const source = JSON.stringify(currentDocument());
+          window.webkit.messageHandlers.floorpRichTextUpdate.postMessage(envelope({ source }));
+          emitState();
+        };
+
+        window.floorpLoad = (root, nextSession) => {
+          suppressUpdates = true;
+          session = clone(nextSession);
+          editor.replaceChildren(...(root.content || [{ type: 'paragraph' }]).map(renderNode));
+          suppressUpdates = false;
+          emitState();
+          return true;
+        };
+        window.floorpSetEditable = (isEditable) => {
+          editor.contentEditable = isEditable ? 'true' : 'false';
+          editor.setAttribute('aria-readonly', isEditable ? 'false' : 'true');
+          return true;
+        };
+        window.floorpApplyCommand = (message) => {
+          if (!session || message.schemaVersion !== 1) return false;
+          const incoming = message.session;
+          if (incoming.noteID !== session.noteID || incoming.documentID !== session.documentID ||
+              incoming.generation !== session.generation || incoming.revision !== session.revision) return false;
+          const planned = message.payload;
+          const command = planned.command;
+          if (planned.exclusiveMarkToUnset) {
+            const unset = planned.exclusiveMarkToUnset === 'strike' ? 'strikeThrough' : planned.exclusiveMarkToUnset;
+            if (document.queryCommandState(unset)) document.execCommand(unset, false);
+          }
+          switch (command.kind) {
+            case 'undo': document.execCommand('undo'); break;
+            case 'redo': document.execCommand('redo'); break;
+            case 'setParagraph': document.execCommand('formatBlock', false, 'p'); break;
+            case 'toggleHeading': document.execCommand('formatBlock', false, `h${command.level}`); break;
+            case 'toggleMark':
+              document.execCommand(command.mark === 'strike' ? 'strikeThrough' : command.mark, false);
+              break;
+            case 'toggleList':
+              document.execCommand(command.listKind === 'ordered' ? 'insertOrderedList' : 'insertUnorderedList');
+              break;
+            case 'setAlignment':
+              document.execCommand(`justify${command.alignment[0].toUpperCase()}${command.alignment.slice(1)}`);
+              break;
+            case 'insertImage':
+              document.execCommand('insertImage', false, command.image.source);
+              const images = editor.querySelectorAll('img');
+              const image = images[images.length - 1];
+              if (image) {
+                if (command.image.alt) image.alt = command.image.alt;
+                if (command.image.title) image.title = command.image.title;
+                if (command.image.width) image.width = command.image.width;
+                image.contentEditable = 'false';
+              }
+              break;
+          }
+          emitUpdate();
+          return true;
+        };
+
+        editor.addEventListener('input', emitUpdate);
+        editor.addEventListener('keyup', emitState);
+        editor.addEventListener('mouseup', emitState);
+        document.addEventListener('selectionchange', emitState);
+      })();
+      </script>
+    </body>
+    </html>
+    """#
 }
 
 private extension NSLayoutConstraint {
