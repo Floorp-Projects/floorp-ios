@@ -65,6 +65,7 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
     var state: FloorpWebPanelSessionState { get }
     var contentView: UIView? { get }
+    var findTarget: (any FloorpWebPanelFindTarget)? { get }
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration)
     @discardableResult
@@ -89,6 +90,7 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
 
 extension FloorpWebPanelSessionProtocol {
     var contentView: UIView? { nil }
+    var findTarget: (any FloorpWebPanelFindTarget)? { nil }
 
     @discardableResult
     func addStateObserver(

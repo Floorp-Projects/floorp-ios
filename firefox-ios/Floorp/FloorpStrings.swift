@@ -179,6 +179,102 @@ enum FloorpStrings {
             comment: "Accessibility label for opening the current web panel page in the main browser"
         )
 
+        static let webPanelFind = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFind.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Find in page",
+            comment: "Action and accessibility label for finding text in a web panel"
+        )
+
+        static let webPanelFindPlaceholder = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindPlaceholder.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Find…",
+            comment: "Placeholder for the web panel find field"
+        )
+
+        static let webPanelFindPrevious = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindPrevious.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Previous match",
+            comment: "Accessibility label for the previous web panel find result"
+        )
+
+        static let webPanelFindNext = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindNext.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Next match",
+            comment: "Accessibility label for the next web panel find result"
+        )
+
+        static let webPanelFindClose = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindClose.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Close find",
+            comment: "Accessibility label for closing web panel find"
+        )
+
+        static let webPanelFindEmpty = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindEmpty.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Enter text",
+            comment: "Status shown before a web panel find query is entered"
+        )
+
+        static let webPanelFindSearching = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindSearching.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Searching",
+            comment: "Status shown while a web panel find request is running"
+        )
+
+        static let webPanelFindMatch = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindMatch.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Match found",
+            comment: "Status shown when a web panel find request matches text"
+        )
+
+        static let webPanelFindNoMatches = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindNoMatches.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "No matches",
+            comment: "Status shown when a web panel find query has no matches"
+        )
+
+        static let webPanelFindUnavailable = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindUnavailable.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Search unavailable",
+            comment: "Status shown when a web panel find request cannot finish"
+        )
+
+        static let webPanelFindReachedBeginning = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindReachedBeginning.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Beginning reached",
+            comment: "Status shown after navigating before the first web panel find result"
+        )
+
+        static let webPanelFindReachedEnd = NSLocalizedString(
+            "Floorp.Drawer.WebPanelFindReachedEnd.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "End reached",
+            comment: "Status shown after navigating beyond the last web panel find result"
+        )
+
         static let searchPlaceholder = NSLocalizedString(
             "Floorp.Drawer.SearchPlaceholder.v1",
             tableName: "Floorp",

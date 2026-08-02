@@ -571,6 +571,78 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインブラウザーで開く" } }
       }
     },
+    "Floorp.Drawer.WebPanelFind.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Find in page" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ページ内検索" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindPlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Find…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索…" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindPrevious.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Previous match" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "前の一致" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindNext.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Next match" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "次の一致" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindClose.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close find" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索を閉じる" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindEmpty.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter text" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "テキストを入力" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindSearching.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Searching" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索中" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindMatch.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Match found" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一致しました" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindNoMatches.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No matches" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一致なし" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindUnavailable.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search unavailable" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索を実行できません" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindReachedBeginning.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Beginning reached" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "先頭に到達" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelFindReachedEnd.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "End reached" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "末尾に到達" } }
+      }
+    },
     "Floorp.Notes.ArchiveTooLargeMessage.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "The notes archive is too large to open on this device and was left unchanged." } },

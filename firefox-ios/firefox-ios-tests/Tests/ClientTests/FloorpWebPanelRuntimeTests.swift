@@ -809,6 +809,95 @@ private final class FloorpMutablePrivacyState {
 }
 
 @MainActor
+final class FloorpWebPanelFindControllerTests: XCTestCase {
+    func testNativeInteractionOwnsPresentationAndKeyboardNavigation() {
+        let target = MockFloorpWebPanelFindTarget(supportsNativeFindInteraction: true)
+        let controller = FloorpWebPanelFindController(
+            target: target,
+            accessibilityAnnouncement: { _ in }
+        )
+
+        XCTAssertTrue(controller.present())
+        XCTAssertEqual(controller.state, .native)
+        XCTAssertTrue(controller.toolbarView.isHidden)
+        XCTAssertEqual(target.nativePresentationCount, 1)
+
+        controller.findNext()
+        controller.findPrevious()
+
+        XCTAssertEqual(target.nativeNextCount, 1)
+        XCTAssertEqual(target.nativePreviousCount, 1)
+        XCTAssertTrue(controller.dismissIfActive())
+        XCTAssertEqual(controller.state, .inactive)
+        XCTAssertEqual(target.endSessionCount, 1)
+    }
+
+    func testFallbackFindSerializesRequestsAndKeepsOnlyLatestQuery() {
+        let target = MockFloorpWebPanelFindTarget()
+        var announcements = [String]()
+        let controller = FloorpWebPanelFindController(
+            target: target,
+            accessibilityAnnouncement: { announcements.append($0) }
+        )
+        XCTAssertTrue(controller.present())
+
+        controller.updateQuery("first")
+        controller.updateQuery("second")
+        controller.updateQuery("third")
+
+        XCTAssertEqual(target.requests.map(\.query), ["first"])
+        target.completeNext(matchFound: true)
+        XCTAssertEqual(target.requests.map(\.query), ["first", "third"])
+        XCTAssertEqual(controller.state, .searching("third"))
+
+        target.completeNext(matchFound: false)
+
+        XCTAssertEqual(controller.state, .noMatch("third"))
+        XCTAssertEqual(announcements, [FloorpStrings.Drawer.webPanelFindNoMatches])
+    }
+
+    func testFallbackReportsDocumentBoundariesAfterFindingAMatch() {
+        let target = MockFloorpWebPanelFindTarget()
+        let controller = FloorpWebPanelFindController(
+            target: target,
+            accessibilityAnnouncement: { _ in }
+        )
+        XCTAssertTrue(controller.present())
+        controller.updateQuery("needle")
+        target.completeNext(matchFound: true)
+        XCTAssertEqual(controller.state, .match("needle"))
+
+        controller.findNext()
+        XCTAssertEqual(target.requests.last?.direction, .forward)
+        target.completeNext(matchFound: false)
+        XCTAssertEqual(controller.state, .finished("needle", .forward))
+
+        controller.findPrevious()
+        XCTAssertEqual(target.requests.last?.direction, .backward)
+        target.completeNext(matchFound: false)
+        XCTAssertEqual(controller.state, .finished("needle", .backward))
+    }
+
+    func testInvalidationClearsMemoryAndIgnoresLateResults() {
+        let target = MockFloorpWebPanelFindTarget()
+        let controller = FloorpWebPanelFindController(
+            target: target,
+            accessibilityAnnouncement: { _ in }
+        )
+        XCTAssertTrue(controller.present())
+        controller.updateQuery("private query")
+        XCTAssertEqual(controller.state, .searching("private query"))
+
+        controller.invalidate()
+        target.completeNext(matchFound: true)
+
+        XCTAssertEqual(controller.state, .inactive)
+        XCTAssertTrue(controller.toolbarView.isHidden)
+        XCTAssertEqual(target.endSessionCount, 1)
+    }
+}
+
+@MainActor
 final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
     func testSelectedTabModeChangesRebindBothDirectionsWithoutReplacingDrawer() async throws {
         let fixture = try makeDrawerFixture()
@@ -971,6 +1060,14 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         let privateSession = try XCTUnwrap(fixture.factory.sessions.first)
         XCTAssertTrue(privateSession.key.isPrivate)
         XCTAssertEqual(privateSession.stateObserverCount, 1)
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
+        findButton.sendActions(for: .touchUpInside)
+        XCTAssertFalse(findToolbar.isHidden)
 
         let regularTab = makeTab(isPrivate: false)
         privacyState.isPrivate = false
@@ -991,6 +1088,8 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(privateSession.invalidationCount, 1)
         XCTAssertEqual(privateSession.stateObserverCount, 0)
         XCTAssertNil(privateSession.contentView?.superview)
+        XCTAssertNil(findToolbar.superview)
+        XCTAssertEqual(privateSession.findTargetMock.invalidationCount, 1)
         XCTAssertEqual(fixture.factory.sessions.count, 2)
         let regularSession = try XCTUnwrap(fixture.factory.sessions.last)
         XCTAssertFalse(regularSession.key.isPrivate)
@@ -1109,10 +1208,19 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             regularSession.contentView?.superview?.accessibilityIdentifier,
             "Floorp.Drawer.WebPanelContent"
         )
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: regularDrawer.view) as? UIButton
+        )
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: regularDrawer.view)
+        )
+        findButton.sendActions(for: .touchUpInside)
+        XCTAssertFalse(findToolbar.isHidden)
 
         regularDrawer.viewDidDisappear(false)
         XCTAssertEqual(regularSession.stateObserverCount, 0)
         XCTAssertNil(regularSession.contentView?.superview)
+        XCTAssertNil(findToolbar.superview)
         XCTAssertEqual(regularSession.invalidationCount, 0)
         XCTAssertEqual(regularSession.visibilityChanges, [false])
 
@@ -1207,8 +1315,16 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         let reloadButton = try XCTUnwrap(
             findView(identifier: "Floorp.WebPanel.ReloadOrStop", in: drawer.view) as? UIButton
         )
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
         XCTAssertTrue(backButton.isEnabled)
         XCTAssertTrue(reloadButton.isEnabled)
+        findButton.sendActions(for: .touchUpInside)
+        XCTAssertFalse(findToolbar.isHidden)
 
         XCTAssertTrue(drawer.unloadActiveWebPanel())
 
@@ -1219,6 +1335,8 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(fixture.factory.makeCallCount, 1)
         XCTAssertFalse(backButton.isEnabled)
         XCTAssertFalse(reloadButton.isEnabled)
+        XCTAssertNil(findToolbar.superview)
+        XCTAssertEqual(first.findTargetMock.invalidationCount, 1)
         XCTAssertNotNil(
             findLabel(text: FloorpStrings.Drawer.webPanelUnloaded, in: drawer.view)
         )
@@ -1357,6 +1475,66 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(session.visibilityChanges, [false, true])
     }
 
+    func testFindToolbarIsDiscoverableAndClearsWhenSwitchingPanels() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        drawer.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        drawer.view.layoutIfNeeded()
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
+        let webContent = try XCTUnwrap(
+            findView(identifier: "Floorp.Drawer.WebPanelContent", in: drawer.view)
+        )
+
+        XCTAssertTrue(findButton.isEnabled)
+        XCTAssertTrue(findToolbar.isHidden)
+        let keyCommands = try XCTUnwrap(drawer.keyCommands)
+        XCTAssertTrue(keyCommands.contains {
+            $0.input == "f" && $0.modifierFlags == .command
+        })
+        XCTAssertTrue(keyCommands.contains {
+            $0.input == "g" && $0.modifierFlags == .command
+        })
+        XCTAssertTrue(keyCommands.contains {
+            $0.input == "g" && $0.modifierFlags == [.command, .shift]
+        })
+        findButton.sendActions(for: .touchUpInside)
+        drawer.view.layoutIfNeeded()
+
+        XCTAssertFalse(findToolbar.isHidden)
+        XCTAssertLessThanOrEqual(
+            findToolbar.frame.maxY,
+            webContent.safeAreaLayoutGuide.layoutFrame.maxY + 0.5
+        )
+        XCTAssertTrue(drawer.accessibilityPerformEscape())
+        XCTAssertTrue(findToolbar.isHidden)
+        findButton.sendActions(for: .touchUpInside)
+        let queryField = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: drawer.view) as? UITextField
+        )
+        queryField.text = "ephemeral"
+        queryField.sendActions(for: .editingChanged)
+        XCTAssertEqual(session.findTargetMock.requests.map(\.query), ["ephemeral"])
+
+        let builtInPanel = try XCTUnwrap(
+            fixture.manager.panels.first(where: { $0.type == .bookmarks })
+        )
+        let builtInButton = try XCTUnwrap(
+            findView(identifier: builtInPanel.id, in: drawer.view) as? UIButton
+        )
+        builtInButton.sendActions(for: .touchUpInside)
+
+        XCTAssertNil(findToolbar.superview)
+        XCTAssertGreaterThanOrEqual(session.findTargetMock.endSessionCount, 1)
+    }
+
     func testOpenInMainBrowserDismissesDrawerAndPreservesSessionForReopen() async throws {
         let fixture = try makeDrawerFixture()
         defer { fixture.cleanup() }
@@ -1420,10 +1598,19 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         privateDrawer.loadViewIfNeeded()
         let sessions = fixture.factory.sessions
         XCTAssertEqual(sessions.count, 2)
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: privateDrawer.view) as? UIButton
+        )
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: privateDrawer.view)
+        )
+        findButton.sendActions(for: .touchUpInside)
+        XCTAssertFalse(findToolbar.isHidden)
 
         fixture.presentationState.invalidateWebPanelRuntime()
 
         XCTAssertNil(fixture.presentationState.webPanelSessionStore)
+        XCTAssertNil(findToolbar.superview)
         XCTAssertTrue(sessions.allSatisfy { $0.invalidationCount == 1 })
         XCTAssertTrue(sessions.allSatisfy { $0.contentView?.superview == nil })
         XCTAssertTrue(sessions.allSatisfy { $0.stateObserverCount == 0 })
@@ -1634,6 +1821,57 @@ final class FloorpWebPanelNavigationPolicyTests: XCTestCase {
 }
 
 @MainActor
+private final class MockFloorpWebPanelFindTarget: FloorpWebPanelFindTarget {
+    let supportsNativeFindInteraction: Bool
+    private(set) var nativePresentationCount = 0
+    private(set) var nativeNextCount = 0
+    private(set) var nativePreviousCount = 0
+    private(set) var endSessionCount = 0
+    private(set) var invalidationCount = 0
+    private(set) var requests = [FloorpWebPanelFindRequest]()
+    private var completions = [FloorpWebPanelFindCompletion]()
+
+    init(supportsNativeFindInteraction: Bool = false) {
+        self.supportsNativeFindInteraction = supportsNativeFindInteraction
+    }
+
+    func presentNativeFindNavigator() -> Bool {
+        nativePresentationCount += 1
+        return supportsNativeFindInteraction
+    }
+
+    func findNextUsingNativeInteraction() {
+        nativeNextCount += 1
+    }
+
+    func findPreviousUsingNativeInteraction() {
+        nativePreviousCount += 1
+    }
+
+    func find(
+        _ request: FloorpWebPanelFindRequest,
+        completion: @escaping FloorpWebPanelFindCompletion
+    ) {
+        requests.append(request)
+        completions.append(completion)
+    }
+
+    func endFindSession() {
+        endSessionCount += 1
+    }
+
+    func invalidate() {
+        invalidationCount += 1
+        endFindSession()
+    }
+
+    func completeNext(matchFound: Bool) {
+        guard !completions.isEmpty else { return }
+        completions.removeFirst()(matchFound)
+    }
+}
+
+@MainActor
 private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     let key: FloorpWebPanelSessionKey
     let restorationURL: URL?
@@ -1653,8 +1891,12 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private var latestRuntimeURL: URL?
     private var hasLatestRuntimeURL = false
     private var pendingRestorationCandidateURL: URL?
+    let findTargetMock = MockFloorpWebPanelFindTarget()
 
     var contentView: UIView? { invalidationCount == 0 ? hostedContentView : nil }
+    var findTarget: (any FloorpWebPanelFindTarget)? {
+        invalidationCount == 0 ? findTargetMock : nil
+    }
     var stateObserverCount: Int { stateObservers.count }
 
     init(
@@ -1689,6 +1931,7 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
 
     func invalidate() {
         invalidationCount += 1
+        findTargetMock.invalidate()
         stateObservers.removeAll()
         hostedContentView.removeFromSuperview()
     }
@@ -1721,6 +1964,9 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         guard self.isVisible != isVisible else { return }
         self.isVisible = isVisible
         visibilityChanges.append(isVisible)
+        if !isVisible {
+            findTargetMock.endFindSession()
+        }
     }
 
     func restorationURLForUnload() -> URL? {
