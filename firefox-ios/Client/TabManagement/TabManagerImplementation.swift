@@ -8,6 +8,7 @@ import Storage
 import Common
 import Shared
 import WebKit
+import WebEngine
 
 final class TabManagerImplementation: NSObject,
                                       TabManager,
@@ -22,6 +23,7 @@ final class TabManagerImplementation: NSObject,
         didSet {
             // Invalidate cache on every mutation to keep it always updated.
             tabsInternalCache = nil
+            synchronizePrivateBrowsingSessionOwnership()
         }
     }
 
@@ -44,12 +46,6 @@ final class TabManagerImplementation: NSObject,
 
     var normalTabs: [Tab] { tabSplit().normal }
     var privateTabs: [Tab] { tabSplit().private }
-
-    /// The non-persistent data store is shared across all windows so private tabs can share cookies.
-    /// It must only be cleared once no window has any private tabs left open.
-    private var hasNoPrivateTabsAcrossWindows: Bool {
-        windowManager.allWindowTabManagers().allSatisfy { $0.privateTabs.isEmpty }
-    }
 
     var recentlyAccessedNormalTabs: [Tab] {
         var eligibleTabs = normalTabs
@@ -79,6 +75,8 @@ final class TabManagerImplementation: NSObject,
     private let windowManager: WindowManager
     private let windowIsNew: Bool
     private let profile: Profile
+    private let privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator
+    private var privateBrowsingSessionLease: WKPrivateBrowsingSessionLease?
     private weak var navigationDelegate: WKNavigationDelegate?
     private var tabsTelemetry = TabsTelemetry()
     private var delegates = [WeakTabManagerDelegate]()
@@ -86,7 +84,11 @@ final class TabManagerImplementation: NSObject,
     private(set) var selectedIndex: Int = -1
 
     private lazy var tabConfigurationProvider = {
-        return TabConfigurationProvider(profile: profile, tabManager: self)
+        return TabConfigurationProvider(
+            profile: profile,
+            tabManager: self,
+            privateBrowsingSessionCoordinator: privateBrowsingSessionCoordinator
+        )
     }()
 
     private var selectedTabUUID: UUID? {
@@ -111,6 +113,7 @@ final class TabManagerImplementation: NSObject,
          tabSessionStore: TabSessionStore = DefaultTabSessionStore(),
          notificationCenter: NotificationProtocol = NotificationCenter.default,
          windowManager: WindowManager = AppContainer.shared.resolve(),
+         privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator = .shared,
          tabs: [Tab] = []
     ) {
         let dataStore =  tabDataStore ?? DefaultTabDataStore(logger: logger, fileManager: DefaultTabFileManager())
@@ -119,6 +122,7 @@ final class TabManagerImplementation: NSObject,
         self.imageStore = imageStore
         self.notificationCenter = notificationCenter
         self.windowManager = windowManager
+        self.privateBrowsingSessionCoordinator = privateBrowsingSessionCoordinator
         self.windowIsNew = uuid.isNew
         self.windowUUID = uuid.uuid
         self.profile = profile
@@ -126,6 +130,8 @@ final class TabManagerImplementation: NSObject,
         self.tabs = tabs
 
         super.init()
+
+        synchronizePrivateBrowsingSessionOwnership()
 
         GlobalTabEventHandlers.configure(with: profile)
 
@@ -141,6 +147,11 @@ final class TabManagerImplementation: NSObject,
     }
 
     deinit {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                privateBrowsingSessionLease?.invalidate()
+            }
+        }
         logger.log("TabManager deallocating (window: \(windowUUID))", level: .info, category: .lifecycle)
     }
 
@@ -288,10 +299,6 @@ final class TabManagerImplementation: NSObject,
             $0.get()?.tabManager(self, didRemoveTab: tab, isRestoring: !self.tabRestoreHasFinished)
         }
         TabEvent.post(.didClose, for: tab)
-
-        if tab.isPrivate, hasNoPrivateTabsAcrossWindows {
-            tabConfigurationProvider.endPrivateBrowsingSession()
-        }
 
         if flushToDisk {
             // Only preserve tabs if restore has finished
@@ -1031,9 +1038,14 @@ final class TabManagerImplementation: NSObject,
         }
 
         tabs = normalTabs
+    }
 
-        if hasNoPrivateTabsAcrossWindows {
-            tabConfigurationProvider.endPrivateBrowsingSession()
+    private func synchronizePrivateBrowsingSessionOwnership() {
+        if privateTabs.isEmpty {
+            privateBrowsingSessionLease?.invalidate()
+            privateBrowsingSessionLease = nil
+        } else if privateBrowsingSessionLease == nil {
+            privateBrowsingSessionLease = privateBrowsingSessionCoordinator.acquireLease()
         }
     }
 

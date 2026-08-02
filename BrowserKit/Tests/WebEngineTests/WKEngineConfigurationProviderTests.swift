@@ -9,7 +9,7 @@ import WebKit
 @MainActor
 final class WKEngineConfigurationProviderTests: XCTestCase {
     func testPrivateStore_isSharedWithinSession() {
-        let subject = createSubject()
+        let subject = createSubject(coordinator: WKPrivateBrowsingSessionCoordinator())
 
         let first = subject.createConfiguration(parameters: privateParams())
         let second = subject.createConfiguration(parameters: privateParams())
@@ -21,8 +21,9 @@ final class WKEngineConfigurationProviderTests: XCTestCase {
 
     func testPrivateStore_isSharedAcrossWindows() {
         // Each window owns its own provider, but private tabs must share cookies app-wide.
-        let firstWindow = createSubject()
-        let secondWindow = createSubject()
+        let coordinator = WKPrivateBrowsingSessionCoordinator()
+        let firstWindow = createSubject(coordinator: coordinator)
+        let secondWindow = createSubject(coordinator: coordinator)
 
         let first = firstWindow.createConfiguration(parameters: privateParams())
         let second = secondWindow.createConfiguration(parameters: privateParams())
@@ -33,7 +34,7 @@ final class WKEngineConfigurationProviderTests: XCTestCase {
     }
 
     func testPrivateStore_isFreshAcrossSessionBoundary() {
-        let subject = createSubject()
+        let subject = createSubject(coordinator: WKPrivateBrowsingSessionCoordinator())
 
         let beforeStore = subject.createConfiguration(parameters: privateParams())
             .webViewConfiguration.websiteDataStore
@@ -45,7 +46,7 @@ final class WKEngineConfigurationProviderTests: XCTestCase {
     }
 
     func testNormalStore_isUnaffectedBySessionBoundary() {
-        let subject = createSubject()
+        let subject = createSubject(coordinator: WKPrivateBrowsingSessionCoordinator())
 
         let before = subject.createConfiguration(parameters: normalParams())
             .webViewConfiguration.websiteDataStore
@@ -58,7 +59,7 @@ final class WKEngineConfigurationProviderTests: XCTestCase {
     }
 
     func testPrivateStore_isNonPersistentAcrossBoundary() {
-        let subject = createSubject()
+        let subject = createSubject(coordinator: WKPrivateBrowsingSessionCoordinator())
 
         let beforeStore = subject.createConfiguration(parameters: privateParams())
             .webViewConfiguration.websiteDataStore
@@ -73,8 +74,12 @@ final class WKEngineConfigurationProviderTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func createSubject() -> DefaultWKEngineConfigurationProvider {
-        return DefaultWKEngineConfigurationProvider()
+    private func createSubject(
+        coordinator: WKPrivateBrowsingSessionCoordinator
+    ) -> DefaultWKEngineConfigurationProvider {
+        return DefaultWKEngineConfigurationProvider(
+            privateBrowsingSessionCoordinator: coordinator
+        )
     }
 
     private func privateParams() -> WKWebViewParameters {

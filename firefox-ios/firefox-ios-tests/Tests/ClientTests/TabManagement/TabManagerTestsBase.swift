@@ -6,6 +6,7 @@ import Foundation
 import XCTest
 import TabDataStore
 import Common
+import WebEngine
 @testable import Client
 
 // Note: Some tests are annotated with @MainActor because a new Tab is created without the zombie flag set to true.
@@ -13,11 +14,14 @@ import Common
 // the test isn't run on the main thread, then in its deinit the webView.navigationDelegate is updated not on the
 // main thread, causing failures in Bitrise. This should be improved. [FXIOS-10110]
 class TabManagerTestsBase: XCTestCase {
+    // XCTest initializes these fixtures in setUp and releases them in tearDown.
+    // swiftlint:disable implicitly_unwrapped_optional
     var tabWindowUUID: WindowUUID!
     var mockTabStore: MockTabDataStore!
     var mockSessionStore: MockTabSessionStore!
     var mockProfile: MockProfile!
     var mockDiskImageStore: MockDiskImageStore!
+    // swiftlint:enable implicitly_unwrapped_optional
     let sleepTime: UInt64 = 1 * NSEC_PER_SEC
     let windowUUID: WindowUUID = .XCTestDefaultUUID
     /// 9 Sep 2001 8:00 pm GMT + 0
@@ -52,6 +56,7 @@ class TabManagerTestsBase: XCTestCase {
     @MainActor
     func createSubject(tabs: [Tab] = [],
                        windowUUID: WindowUUID? = nil,
+                       privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator = .shared,
                        file: StaticString = #filePath,
                        line: UInt = #line) -> TabManagerImplementation {
         let subject = TabManagerImplementation(
@@ -60,6 +65,7 @@ class TabManagerTestsBase: XCTestCase {
             uuid: ReservedWindowUUID(uuid: windowUUID ?? tabWindowUUID, isNew: false),
             tabDataStore: mockTabStore,
             tabSessionStore: mockSessionStore,
+            privateBrowsingSessionCoordinator: privateBrowsingSessionCoordinator,
             tabs: tabs
         )
         trackForMemoryLeaks(subject, file: file, line: line)

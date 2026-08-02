@@ -111,12 +111,15 @@ final class FirefoxTabContentBlocker: TabContentBlocker, TabContentScript, Featu
     init(
         tab: ContentBlockerTab,
         prefs: Prefs,
-        statsRecorder: TrackerBlockStatsStore? = nil
+        statsRecorder: TrackerBlockStatsStore? = nil,
+        setupImmediately: Bool = true
     ) {
         userPrefs = prefs
         super.init(tab: tab)
         self.statsRecorder = statsRecorder ?? DefaultTrackerBlockStatsStoreUtility(prefs: prefs)
-        setupForTab()
+        if setupImmediately {
+            setupForTab()
+        }
     }
 
     func setupForTab(completion: (() -> Void)? = nil) {
@@ -132,10 +135,18 @@ final class FirefoxTabContentBlocker: TabContentBlocker, TabContentScript, Featu
     }
 
     override func notifiedTabSetupRequired() {
-        guard let tab = self.tab as? Tab else { return }
+        guard let tab else { return }
         self.logger.log("Notified tab setup required", level: .info, category: .adblock)
-        self.setupForTab(completion: { tab.reload() })
-        TabEvent.post(.didChangeContentBlocking, for: tab)
+        self.setupForTab(completion: {
+            if let browserTab = tab as? Tab {
+                browserTab.reload()
+            } else {
+                tab.currentWebView()?.reload()
+            }
+        })
+        if let browserTab = tab as? Tab {
+            TabEvent.post(.didChangeContentBlocking, for: browserTab)
+        }
     }
 
     override func currentlyEnabledLists() -> [String] {

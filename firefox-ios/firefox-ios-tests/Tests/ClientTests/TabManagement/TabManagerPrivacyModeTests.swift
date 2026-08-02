@@ -5,9 +5,85 @@
 import Foundation
 import XCTest
 import Shared
+import WebEngine
 @testable import Client
 
 final class TabManagerPrivacyModeTests: TabManagerTestsBase {
+    @MainActor
+    func testMultipleWindowOwnersRotateOnlyAfterBothLoseTheirLastPrivateTab() {
+        let coordinator = WKPrivateBrowsingSessionCoordinator()
+        let initialStore = coordinator.websiteDataStore
+        let firstWindow = createSubject(
+            tabs: generateTabs(ofType: .privateAny, count: 1),
+            windowUUID: UUID(),
+            privateBrowsingSessionCoordinator: coordinator
+        )
+        let secondWindow = createSubject(
+            tabs: generateTabs(ofType: .privateAny, count: 1),
+            windowUUID: UUID(),
+            privateBrowsingSessionCoordinator: coordinator
+        )
+
+        firstWindow.removeAllTabs(isPrivateMode: true)
+        XCTAssertTrue(initialStore === coordinator.websiteDataStore)
+
+        secondWindow.removeAllTabs(isPrivateMode: true)
+        XCTAssertFalse(initialStore === coordinator.websiteDataStore)
+    }
+
+    @MainActor
+    func testRestoredPrivateZombieTabsOwnTheSessionBeforeCreatingAWebView() {
+        let coordinator = WKPrivateBrowsingSessionCoordinator()
+        let restoredPrivateTabs = generateTabs(ofType: .privateAny, count: 2)
+        XCTAssertTrue(restoredPrivateTabs.allSatisfy { $0.webView == nil })
+        let subject = createSubject(
+            tabs: restoredPrivateTabs,
+            privateBrowsingSessionCoordinator: coordinator
+        )
+        let restoredSessionStore = coordinator.websiteDataStore
+
+        coordinator.endSessionIfUnowned()
+
+        XCTAssertTrue(restoredSessionStore === coordinator.websiteDataStore)
+        subject.removeAllTabs(isPrivateMode: true)
+        XCTAssertFalse(restoredSessionStore === coordinator.websiteDataStore)
+    }
+
+    @MainActor
+    func testLastPrivateTabDoesNotResetStoreWhilePanelLeaseIsAlive() {
+        let coordinator = WKPrivateBrowsingSessionCoordinator()
+        let initialStore = coordinator.websiteDataStore
+        let privateTabs = generateTabs(ofType: .privateAny, count: 2)
+        let subject = createSubject(
+            tabs: privateTabs,
+            privateBrowsingSessionCoordinator: coordinator
+        )
+        let panelLease = coordinator.acquireLease()
+
+        subject.removeAllTabs(isPrivateMode: true)
+
+        XCTAssertTrue(initialStore === coordinator.websiteDataStore)
+        panelLease.invalidate()
+        XCTAssertFalse(initialStore === coordinator.websiteDataStore)
+    }
+
+    @MainActor
+    func testPrivateTabAndLaterPanelUseTheSameStore() {
+        let coordinator = WKPrivateBrowsingSessionCoordinator()
+        let privateTab = generateTabs(ofType: .privateAny, count: 1)
+        let subject = createSubject(
+            tabs: privateTab,
+            privateBrowsingSessionCoordinator: coordinator
+        )
+        let tabStore = coordinator.websiteDataStore
+
+        let panelLease = coordinator.acquireLease()
+
+        XCTAssertTrue(tabStore === coordinator.websiteDataStore)
+        panelLease.invalidate()
+        subject.removeAllTabs(isPrivateMode: true)
+    }
+
     // MARK: - removeAllPrivateTabs (triggered via selectTab)
 
     @MainActor

@@ -55,13 +55,17 @@ public protocol WKEngineConfigurationProvider {
 
 /// FXIOS-11986 - This will be internal when the WebEngine is fully integrated in Firefox iOS
 public struct DefaultWKEngineConfigurationProvider: WKEngineConfigurationProvider {
-    private static var nonPersistentStore = WKWebsiteDataStore.nonPersistent()
     private static let defaultStore = WKWebsiteDataStore.default()
     private static let defaultDataDetectorTypes: WKDataDetectorTypes = [.phoneNumber]
     private let configuration: WKWebViewConfiguration
+    private let privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator
 
-    public init(configuration: WKWebViewConfiguration = WKWebViewConfiguration()) {
+    public init(
+        configuration: WKWebViewConfiguration = WKWebViewConfiguration(),
+        privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator = .shared
+    ) {
         self.configuration = configuration
+        self.privateBrowsingSessionCoordinator = privateBrowsingSessionCoordinator
     }
 
     public func createConfiguration(parameters: WKWebViewParameters) -> WKEngineConfiguration {
@@ -80,7 +84,7 @@ public struct DefaultWKEngineConfigurationProvider: WKEngineConfigurationProvide
         // may safely share cookies.
         // The cookie store should only be created once, otherwise we can loose them. See FXIOS-11833
         configuration.websiteDataStore = parameters.isPrivate
-            ? Self.nonPersistentStore
+            ? privateBrowsingSessionCoordinator.websiteDataStore
             : Self.defaultStore
 
         // Popup WKWebViewConfiguration can have the scheme already registered thus registering again
@@ -94,6 +98,6 @@ public struct DefaultWKEngineConfigurationProvider: WKEngineConfigurationProvide
     }
 
     public func endPrivateBrowsingSession() {
-        Self.nonPersistentStore = .nonPersistent()
+        privateBrowsingSessionCoordinator.endSessionIfUnowned()
     }
 }
