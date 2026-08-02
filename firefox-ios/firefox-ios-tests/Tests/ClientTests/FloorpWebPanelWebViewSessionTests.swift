@@ -47,6 +47,95 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertNil(runtime.contentView)
     }
 
+    @available(iOS 16.0, *)
+    func testDefaultFindTargetEnablesAndDismissesNativeInteraction() {
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let target = DefaultFloorpWebPanelFindTarget(webView: webView)
+        let host = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        webView.frame = host.view.bounds
+        host.view.addSubview(webView)
+        defer {
+            target.invalidate()
+            webView.removeFromSuperview()
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        XCTAssertFalse(webView.isFindInteractionEnabled)
+        XCTAssertTrue(target.supportsNativeFindInteraction)
+        XCTAssertTrue(target.presentNativeFindNavigator())
+        XCTAssertTrue(webView.isFindInteractionEnabled)
+        XCTAssertNotNil(webView.findInteraction)
+
+        target.endFindSession()
+
+        XCTAssertFalse(webView.isFindInteractionEnabled)
+    }
+
+    func testDefaultFindTargetUsesWKFindForFallbackRequests() async {
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let target = DefaultFloorpWebPanelFindTarget(webView: webView)
+        let navigationDelegate = FloorpWebPanelFindNavigationDelegate()
+        let loaded = expectation(description: "Web content loaded for find")
+        navigationDelegate.onCompletion = { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        let host = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        webView.frame = host.view.bounds
+        host.view.addSubview(webView)
+        defer {
+            target.invalidate()
+            webView.navigationDelegate = nil
+            webView.removeFromSuperview()
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        webView.loadHTMLString(
+            "<html><body>first value<span>middle</span>last value</body></html>",
+            baseURL: nil
+        )
+        await fulfillment(of: [loaded], timeout: 2)
+
+        let foundLast = await performFind(
+            FloorpWebPanelFindRequest(
+                query: "last value",
+                direction: .forward,
+                kind: .queryChanged
+            ),
+            on: target
+        )
+        let wrappedToFirst = await performFind(
+            FloorpWebPanelFindRequest(
+                query: "first value",
+                direction: .forward,
+                kind: .queryChanged
+            ),
+            on: target
+        )
+
+        XCTAssertTrue(foundLast)
+        XCTAssertTrue(wrappedToFirst)
+    }
+
+    private func performFind(
+        _ request: FloorpWebPanelFindRequest,
+        on target: DefaultFloorpWebPanelFindTarget
+    ) async -> Bool {
+        var result = false
+        let completed = expectation(description: "WKWebView find completed")
+        target.find(request) { matchFound in
+            result = matchFound
+            completed.fulfill()
+        }
+        await fulfillment(of: [completed], timeout: 2)
+        return result
+    }
+
     func testInitialLoadWaitsForContentRules() throws {
         let fixture = makeFixture()
 
@@ -687,6 +776,37 @@ final class FloorpWebPanelMainBrowserRouterTests: XCTestCase {
         )
 
         XCTAssertEqual(openCallCount, 0)
+    }
+}
+
+@MainActor
+private final class FloorpWebPanelFindNavigationDelegate: NSObject, WKNavigationDelegate {
+    var onCompletion: (() -> Void)?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        complete()
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFail navigation: WKNavigation?,
+        withError error: Error
+    ) {
+        complete()
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation?,
+        withError error: Error
+    ) {
+        complete()
+    }
+
+    private func complete() {
+        let onCompletion = onCompletion
+        self.onCompletion = nil
+        onCompletion?()
     }
 }
 

@@ -396,6 +396,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private var contentRuleInstaller: (any FloorpWebPanelContentRuleInstalling)?
     private var navigationExecutor: FloorpWebPanelNavigationExecutor?
     private var privateBrowsingSessionLease: WKPrivateBrowsingSessionLease?
+    private var webPanelFindTarget: (any FloorpWebPanelFindTarget)?
     private var observers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
     private var installationGeneration = UUID()
     private var areContentRulesReady = false
@@ -410,6 +411,10 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
     var contentView: UIView? {
         runtime?.contentView
+    }
+
+    var findTarget: (any FloorpWebPanelFindTarget)? {
+        isInvalidated ? nil : webPanelFindTarget
     }
 
     init(
@@ -436,6 +441,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         }
 
         if let webView = runtime.webView {
+            webPanelFindTarget = DefaultFloorpWebPanelFindTarget(webView: webView)
             let blockerTab = FloorpWebPanelContentBlockerTab(
                 isPrivate: key.isPrivate,
                 webView: webView
@@ -505,6 +511,9 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     func setVisible(_ isVisible: Bool) {
         guard !isInvalidated, self.isVisible != isVisible else { return }
         self.isVisible = isVisible
+        if !isVisible {
+            webPanelFindTarget?.endFindSession()
+        }
         updateMediaPlaybackSuppression()
     }
 
@@ -534,6 +543,8 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         contentRuleInstaller = nil
         blockerTab?.detach()
         blockerTab = nil
+        webPanelFindTarget?.invalidate()
+        webPanelFindTarget = nil
         navigationExecutor?.invalidate()
         navigationExecutor = nil
         runtime?.stateDidChange = nil

@@ -1445,6 +1445,7 @@
 		CEC2F0B72F98000A00D67401 /* FloorpWebPanelContentRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B112F98000A00D67401 /* FloorpWebPanelContentRules.swift */; };
 		CEC2F0B82F98000B00D67401 /* FloorpWebPanelNavigationExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B122F98000B00D67401 /* FloorpWebPanelNavigationExecutor.swift */; };
 		CEC2F0B92F98000C00D67401 /* FloorpWebPanelWebViewSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B132F98000C00D67401 /* FloorpWebPanelWebViewSession.swift */; };
+		CEC2F0BB2F98000E00D67401 /* FloorpWebPanelFindController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B152F98000E00D67401 /* FloorpWebPanelFindController.swift */; };
 		CEC2F0BA2F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B142F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift */; };
 		CEC2F0B42F99000100D67401 /* FloorpLibraryPanelHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0E2F99000100D67401 /* FloorpLibraryPanelHost.swift */; };
 		CEC2F0B52F99000200D67401 /* FloorpLibraryPanelHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0F2F99000200D67401 /* FloorpLibraryPanelHostTests.swift */; };
@@ -11115,6 +11116,7 @@
 		CE903B112F98000A00D67401 /* FloorpWebPanelContentRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelContentRules.swift; sourceTree = "<group>"; };
 		CE903B122F98000B00D67401 /* FloorpWebPanelNavigationExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelNavigationExecutor.swift; sourceTree = "<group>"; };
 		CE903B132F98000C00D67401 /* FloorpWebPanelWebViewSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelWebViewSession.swift; sourceTree = "<group>"; };
+		CE903B152F98000E00D67401 /* FloorpWebPanelFindController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelFindController.swift; sourceTree = "<group>"; };
 		CE903B142F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelWebViewSessionTests.swift; sourceTree = "<group>"; };
 		CE903B0E2F99000100D67401 /* FloorpLibraryPanelHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpLibraryPanelHost.swift; sourceTree = "<group>"; };
 		CE903B0F2F99000200D67401 /* FloorpLibraryPanelHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpLibraryPanelHostTests.swift; sourceTree = "<group>"; };
@@ -16398,6 +16400,7 @@
 				CE903B112F98000A00D67401 /* FloorpWebPanelContentRules.swift */,
 				CE903B122F98000B00D67401 /* FloorpWebPanelNavigationExecutor.swift */,
 				CE903B132F98000C00D67401 /* FloorpWebPanelWebViewSession.swift */,
+				CE903B152F98000E00D67401 /* FloorpWebPanelFindController.swift */,
 				CE903B0E2F99000100D67401 /* FloorpLibraryPanelHost.swift */,
 				CE903B0B2F98000400D67401 /* Floorp.xcstrings */,
 			);
@@ -20098,6 +20101,7 @@
 				CEC2F0B72F98000A00D67401 /* FloorpWebPanelContentRules.swift in Sources */,
 				CEC2F0B82F98000B00D67401 /* FloorpWebPanelNavigationExecutor.swift in Sources */,
 				CEC2F0B92F98000C00D67401 /* FloorpWebPanelWebViewSession.swift in Sources */,
+				CEC2F0BB2F98000E00D67401 /* FloorpWebPanelFindController.swift in Sources */,
 				CEC2F0B42F99000100D67401 /* FloorpLibraryPanelHost.swift in Sources */,
 				8CE1E4382B8C76C80026530B /* LoginListViewModel.swift in Sources */,
 				0B8BF3722CA2DA4600E9812D /* EditBookmarkViewController.swift in Sources */,

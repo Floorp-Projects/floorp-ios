@@ -146,6 +146,7 @@ final class FloorpPanelPresentationState: NSObject {
         }
         observesPanelRegistry = false
         panelManager = nil
+        activeDrawer?.webPanelRuntimeWillInvalidate()
         webPanelSessionStore?.invalidateAll()
         webPanelSessionStore = nil
     }
@@ -386,6 +387,7 @@ final class FloorpOverlayDrawerViewController:
     private var dismissWhenPresentationFinishes = false
     private var displayedPanelIDs = [String]()
     private var activeWebPanelSession: (any FloorpWebPanelSessionProtocol)?
+    private var webPanelFindController: FloorpWebPanelFindController?
     private var webPanelStateObserverID: UUID?
     private var explicitlyUnloadedWebPanelKey: FloorpWebPanelSessionKey?
     private var pendingRegistryFallbackIndex: Int?
@@ -590,6 +592,13 @@ final class FloorpOverlayDrawerViewController:
         action: #selector(webPanelHomeTapped)
     )
 
+    private lazy var webPanelFindButton = makeWebPanelToolbarButton(
+        systemImageName: "magnifyingglass",
+        accessibilityLabel: FloorpStrings.Drawer.webPanelFind,
+        accessibilityIdentifier: "Floorp.WebPanel.Find",
+        action: #selector(webPanelFindTapped)
+    )
+
     private lazy var webPanelOpenInMainButton = makeWebPanelToolbarButton(
         systemImageName: "arrow.up.right.square",
         accessibilityLabel: FloorpStrings.Drawer.webPanelOpenInMainBrowser,
@@ -603,6 +612,7 @@ final class FloorpOverlayDrawerViewController:
             webPanelForwardButton,
             webPanelReloadButton,
             webPanelHomeButton,
+            webPanelFindButton,
             webPanelOpenInMainButton,
         ])
         stackView.axis = .horizontal
@@ -816,7 +826,7 @@ final class FloorpOverlayDrawerViewController:
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        [
+        var commands = [
             UIKeyCommand(
                 title: FloorpStrings.Drawer.closeAccessibilityLabel,
                 action: #selector(closeTapped),
@@ -825,15 +835,44 @@ final class FloorpOverlayDrawerViewController:
             ),
             UIKeyCommand(
                 title: FloorpStrings.Drawer.closeAccessibilityLabel,
-                action: #selector(closeTapped),
+                action: #selector(handleEscapeKeyCommand),
                 input: UIKeyCommand.inputEscape,
                 modifierFlags: []
             ),
         ]
+        guard currentPanelType == .web,
+              activeWebPanelSession != nil,
+              webPanelFindController != nil else {
+            return commands
+        }
+        commands.append(contentsOf: [
+            UIKeyCommand(
+                title: FloorpStrings.Drawer.webPanelFind,
+                action: #selector(webPanelFindTapped),
+                input: "f",
+                modifierFlags: .command
+            ),
+            UIKeyCommand(
+                title: FloorpStrings.Drawer.webPanelFindNext,
+                action: #selector(webPanelFindNextKeyCommand),
+                input: "g",
+                modifierFlags: .command
+            ),
+            UIKeyCommand(
+                title: FloorpStrings.Drawer.webPanelFindPrevious,
+                action: #selector(webPanelFindPreviousKeyCommand),
+                input: "g",
+                modifierFlags: [.command, .shift]
+            ),
+        ])
+        return commands
     }
 
     override func accessibilityPerformEscape() -> Bool {
         guard !isCommittingNotesReorder else { return false }
+        if webPanelFindController?.dismissIfActive() == true {
+            return true
+        }
         dismissDrawer()
         return true
     }
@@ -1163,8 +1202,15 @@ final class FloorpOverlayDrawerViewController:
             webPanelForwardButton,
             webPanelReloadButton,
             webPanelHomeButton,
+            webPanelFindButton,
             webPanelOpenInMainButton,
         ].forEach { $0.tintColor = colors.iconPrimary }
+        webPanelFindController?.applyTheme(
+            backgroundColor: colors.layer1,
+            textColor: colors.textPrimary,
+            secondaryTextColor: colors.textSecondary,
+            tintColor: colors.iconPrimary
+        )
 
         // Search bar
         searchTextField.backgroundColor = colors.layer3
@@ -1694,6 +1740,7 @@ final class FloorpOverlayDrawerViewController:
                 contentView.trailingAnchor.constraint(equalTo: webPanelContainerView.trailingAnchor),
                 contentView.bottomAnchor.constraint(equalTo: webPanelContainerView.bottomAnchor),
             ])
+            installWebPanelFindController(for: session)
             webPanelContainerView.isHidden = false
             let sessionKey = session.key
             renderWebPanelState(session.state, expectedKey: sessionKey)
@@ -1722,6 +1769,7 @@ final class FloorpOverlayDrawerViewController:
 
     private func detachWebPanelContent(applyHiddenLifecycle: Bool = true) {
         let session = activeWebPanelSession
+        removeWebPanelFindController()
         if let webPanelStateObserverID {
             session?.removeStateObserver(webPanelStateObserverID)
         }
@@ -1740,6 +1788,50 @@ final class FloorpOverlayDrawerViewController:
         webPanelContainerView.isHidden = true
         webPanelContainerView.accessibilityValue = nil
         renderWebPanelToolbarState(nil)
+    }
+
+    private func installWebPanelFindController(
+        for session: any FloorpWebPanelSessionProtocol
+    ) {
+        removeWebPanelFindController()
+        guard let target = session.findTarget else { return }
+        let controller = FloorpWebPanelFindController(target: target)
+        let findToolbar = controller.toolbarView
+        webPanelContainerView.addSubview(findToolbar)
+        let keyboardConstraint = findToolbar.bottomAnchor.constraint(
+            equalTo: view.keyboardLayoutGuide.topAnchor
+        )
+        keyboardConstraint.priority = .defaultHigh
+        let safeAreaConstraint = findToolbar.bottomAnchor.constraint(
+            equalTo: webPanelContainerView.safeAreaLayoutGuide.bottomAnchor
+        )
+        safeAreaConstraint.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            findToolbar.leadingAnchor.constraint(equalTo: webPanelContainerView.leadingAnchor),
+            findToolbar.trailingAnchor.constraint(equalTo: webPanelContainerView.trailingAnchor),
+            findToolbar.bottomAnchor.constraint(
+                lessThanOrEqualTo: webPanelContainerView.safeAreaLayoutGuide.bottomAnchor
+            ),
+            keyboardConstraint,
+            safeAreaConstraint,
+            findToolbar.heightAnchor.constraint(
+                equalToConstant: FloorpWebPanelFindController.fallbackToolbarHeight
+            ),
+        ])
+        let colors = themeManager.getCurrentTheme(for: windowUUID).colors
+        controller.applyTheme(
+            backgroundColor: colors.layer1,
+            textColor: colors.textPrimary,
+            secondaryTextColor: colors.textSecondary,
+            tintColor: colors.iconPrimary
+        )
+        webPanelFindController = controller
+    }
+
+    private func removeWebPanelFindController() {
+        webPanelFindController?.invalidate()
+        webPanelFindController?.toolbarView.removeFromSuperview()
+        webPanelFindController = nil
     }
 
     /// Unloads the attached runtime without leaving stale observer, content,
@@ -1792,6 +1884,14 @@ final class FloorpOverlayDrawerViewController:
         loadCurrentPanel(webPanelPrivacyMode: false)
     }
 
+    fileprivate func webPanelRuntimeWillInvalidate() {
+        guard activeWebPanelSession != nil else { return }
+        detachWebPanelContent(applyHiddenLifecycle: false)
+        if currentPanelType == .web {
+            showWebPanelUnavailable()
+        }
+    }
+
     private func setWebPanelToolbarVisible(_ isVisible: Bool) {
         webPanelToolbarView.isHidden = !isVisible
         webPanelToolbarHeightConstraint?.constant = isVisible ? UX.webPanelToolbarHeight : 0
@@ -1804,6 +1904,7 @@ final class FloorpOverlayDrawerViewController:
             $0.isLoading || $0.currentURL != nil
         } ?? false
         webPanelHomeButton.isEnabled = state != nil
+        webPanelFindButton.isEnabled = state != nil && webPanelFindController != nil
         webPanelOpenInMainButton.isEnabled = state?.currentURL.map(isSafeMainBrowserURL) == true
 
         let isLoading = state?.isLoading == true
@@ -2663,6 +2764,28 @@ final class FloorpOverlayDrawerViewController:
 
     @objc private func webPanelHomeTapped() {
         activeWebPanelSession?.loadHome()
+    }
+
+    @objc private func webPanelFindTapped() {
+        guard currentPanelType == .web else { return }
+        _ = webPanelFindController?.present()
+    }
+
+    @objc private func webPanelFindNextKeyCommand() {
+        guard currentPanelType == .web else { return }
+        webPanelFindController?.findNext()
+    }
+
+    @objc private func webPanelFindPreviousKeyCommand() {
+        guard currentPanelType == .web else { return }
+        webPanelFindController?.findPrevious()
+    }
+
+    @objc private func handleEscapeKeyCommand() {
+        if webPanelFindController?.dismissIfActive() == true {
+            return
+        }
+        closeTapped()
     }
 
     @objc private func webPanelOpenInMainBrowserTapped() {
