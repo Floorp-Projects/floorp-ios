@@ -4,6 +4,21 @@
 
 import Foundation
 
+enum FloorpPanelRegistryChange: Equatable {
+    case webPanelContentWidth(panelID: String)
+}
+
+enum FloorpPanelRegistryNotification {
+    static let changeUserInfoKey = "FloorpPanelRegistryChange"
+}
+
+extension Notification {
+    var floorpPanelRegistryChange: FloorpPanelRegistryChange? {
+        userInfo?[FloorpPanelRegistryNotification.changeUserInfoKey]
+            as? FloorpPanelRegistryChange
+    }
+}
+
 // MARK: - Floorp Notification Names
 extension Notification.Name {
     /// Posted when the Floorp overlay drawer toolbar button is tapped.
@@ -17,6 +32,8 @@ extension Notification.Name {
     ///
     /// Presentation state remains window-scoped; each visible drawer uses this
     /// notification to reconcile its rail and selected panel against the new
-    /// registry without persisting window UI state globally.
+    /// registry without persisting window UI state globally. Width-only Web
+    /// panel changes are identified in `userInfo` so an active WebView is not
+    /// detached and rebuilt while the user resizes its pinned drawer.
     static let FloorpPanelRegistryDidChange = Notification.Name("FloorpPanelRegistryDidChange")
 }

@@ -14,6 +14,10 @@ final class BrowserViewControllerLayoutManager {
     private unowned let overKeyboardContainer: BaseAlphaStackView
     private unowned let bottomContentStackView: BaseAlphaStackView
     private unowned let navigationToolbarContainer: UIView
+    private let contentLeadingAnchor: NSLayoutXAxisAnchor
+    private let contentTrailingAnchor: NSLayoutXAxisAnchor
+    private let safeAreaContentLeadingAnchor: NSLayoutXAxisAnchor
+    private let safeAreaContentTrailingAnchor: NSLayoutXAxisAnchor
     private let toolbarHelper: ToolbarHelperInterface
     private weak var scrollController: LegacyTabScrollProvider?
 
@@ -37,6 +41,8 @@ final class BrowserViewControllerLayoutManager {
          overKeyboardContainer: BaseAlphaStackView,
          bottomContentStackView: BaseAlphaStackView,
          navigationToolbarContainer: UIView,
+         contentLayoutGuide: UILayoutGuide? = nil,
+         safeAreaContentLayoutGuide: UILayoutGuide? = nil,
          toolbarHelper: ToolbarHelperInterface = ToolbarHelper()) {
         self.parentView = parentView
         self.headerView = headerView
@@ -44,6 +50,12 @@ final class BrowserViewControllerLayoutManager {
         self.overKeyboardContainer = overKeyboardContainer
         self.bottomContentStackView = bottomContentStackView
         self.navigationToolbarContainer = navigationToolbarContainer
+        contentLeadingAnchor = contentLayoutGuide?.leadingAnchor ?? parentView.leadingAnchor
+        contentTrailingAnchor = contentLayoutGuide?.trailingAnchor ?? parentView.trailingAnchor
+        safeAreaContentLeadingAnchor = safeAreaContentLayoutGuide?.leadingAnchor
+            ?? parentView.safeAreaLayoutGuide.leadingAnchor
+        safeAreaContentTrailingAnchor = safeAreaContentLayoutGuide?.trailingAnchor
+            ?? parentView.safeAreaLayoutGuide.trailingAnchor
         self.toolbarHelper = toolbarHelper
     }
 
@@ -55,8 +67,8 @@ final class BrowserViewControllerLayoutManager {
 
     func setupHeaderConstraints(isBottomSearchBar: Bool) {
         NSLayoutConstraint.activate([
-            headerView.leadingAnchor.constraint(equalTo: parentView.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: parentView.trailingAnchor),
+            headerView.leadingAnchor.constraint(equalTo: contentLeadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: contentTrailingAnchor),
         ])
         let topAnchor = getHeaderTopAnchor(isBottomSearchBar: isBottomSearchBar)
         headerTopConstraint = headerView.topAnchor.constraint(equalTo: topAnchor)
@@ -94,8 +106,8 @@ final class BrowserViewControllerLayoutManager {
 
     func setupBottomContainerConstraints() {
         NSLayoutConstraint.activate([
-            bottomContainer.leadingAnchor.constraint(equalTo: parentView.leadingAnchor),
-            bottomContainer.trailingAnchor.constraint(equalTo: parentView.trailingAnchor),
+            bottomContainer.leadingAnchor.constraint(equalTo: contentLeadingAnchor),
+            bottomContainer.trailingAnchor.constraint(equalTo: contentTrailingAnchor),
         ])
         let constraint = bottomContainer.bottomAnchor.constraint(equalTo: parentView.bottomAnchor)
         constraint.isActive = true
@@ -107,8 +119,8 @@ final class BrowserViewControllerLayoutManager {
 
     func setupOverKeyboardContainerConstraints() {
         NSLayoutConstraint.activate([
-            overKeyboardContainer.leadingAnchor.constraint(equalTo: parentView.leadingAnchor),
-            overKeyboardContainer.trailingAnchor.constraint(equalTo: parentView.trailingAnchor),
+            overKeyboardContainer.leadingAnchor.constraint(equalTo: contentLeadingAnchor),
+            overKeyboardContainer.trailingAnchor.constraint(equalTo: contentTrailingAnchor),
         ])
 
         let constraint = overKeyboardContainer.bottomAnchor.constraint(equalTo: bottomContainer.topAnchor)
@@ -129,8 +141,8 @@ final class BrowserViewControllerLayoutManager {
     func setupBottomContentStackViewConstraints() {
         // Default constraints 
         NSLayoutConstraint.activate([
-            bottomContentStackView.leadingAnchor.constraint(equalTo: parentView.safeAreaLayoutGuide.leadingAnchor),
-            bottomContentStackView.trailingAnchor.constraint(equalTo: parentView.safeAreaLayoutGuide.trailingAnchor),
+            bottomContentStackView.leadingAnchor.constraint(equalTo: safeAreaContentLeadingAnchor),
+            bottomContentStackView.trailingAnchor.constraint(equalTo: safeAreaContentTrailingAnchor),
             bottomContentStackView.heightAnchor.constraint(equalToConstant: 0).priority(.defaultLow)
         ])
 

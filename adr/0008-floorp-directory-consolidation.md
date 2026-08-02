@@ -4,7 +4,8 @@ Date: 2026-04-21
 
 ## Status
 
-Accepted; amended 2026-08-01 to make tracked source plus tests the only hook implementation.
+Accepted; amended 2026-08-01 to make tracked source plus tests the only hook implementation,
+and 2026-08-03 to define narrow host-layout hooks for Floorp UI.
 
 ## Context
 
@@ -57,9 +58,10 @@ Instead of directly modifying Firefox method bodies, we use a two-part system:
    if FloorpFlags.isTelemetryDisabled { return }
    ```
 
-### Firefox Files Modified (Hook Points Only)
+### Original Firefox Files Modified (Bootstrap and Privacy Hook Points)
 
-Only 4 Firefox files need minimal modifications (~2 lines each):
+The original bootstrap and privacy boundary uses four minimal Firefox-file
+modifications:
 
 | File                     | Hook                                   | Purpose                      |
 | ------------------------ | -------------------------------------- | ---------------------------- |
@@ -67,6 +69,28 @@ Only 4 Firefox files need minimal modifications (~2 lines each):
 | `TelemetryWrapper.swift` | `FloorpFlags.isTelemetryDisabled` (×2) | Glean telemetry              |
 | `MetricKitWrapper.swift` | `FloorpFlags.isTelemetryDisabled`      | Apple MetricKit              |
 | `SentryWrapper.swift`    | Direct `return`                        | Sentry (BrowserKit boundary) |
+
+### Host UI Integration Hooks
+
+Floorp-owned UI may require a small typed integration at a Firefox-owned view
+or lifecycle boundary when dependency injection, notifications, or a standalone
+child controller cannot express the required layout behavior. These hooks are
+accepted only when all of the following remain true:
+
+- Floorp behavior, state, and policy stay in `firefox-ios/Floorp/`.
+- The Firefox-owned edit only exposes or consumes a narrow typed boundary.
+- The unconfigured path preserves upstream layout and behavior, with a direct
+  regression test where practical.
+- The hook is tracked source code reviewed by CI; build-time patch mutation is
+  not introduced.
+- Frequently changed upstream files are avoided or their edited surface is kept
+  as small as the UIKit integration allows.
+
+The adaptive panel sidebar is the first approved use of this exception. It
+injects Floorp-owned full-width and safe-area-intersection layout guides into
+the browser layout manager and constrains the browser content/chrome to those
+guides while a pinned iPad sidebar is visible. The layout manager falls back to
+the original view-edge and safe-area anchors when no Floorp guides are supplied.
 
 ### BrowserKit Constraint
 
@@ -86,7 +110,9 @@ The hook points are tracked directly and verified by CI. The former `floorp/patc
 
 ### Positive
 
-- **Minimal merge conflicts** — Only 4 Firefox files modified, each with ~2 lines of changes. Upstream changes to these files are unlikely to conflict with our hooks.
+- **Controlled merge conflicts** — Bootstrap/privacy edits remain minimal, and
+  host UI edits are limited to typed layout or lifecycle boundaries with tested
+  upstream-compatible fallbacks.
 - **Clear ownership** — All Floorp code is in one directory. Easy to audit, review, and maintain.
 - **Easy onboarding** — New developers can find all Floorp customizations in `Floorp/` without searching the codebase.
 - **Extensible** — Adding new customizations only requires adding flags to `FloorpFlags` and methods to `FloorpBootstrapper`.
