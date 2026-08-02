@@ -8,6 +8,7 @@
 // This file is part of the Floorp customization layer.
 
 import Foundation
+import CoreFoundation
 import Common
 import Storage
 import Shared
@@ -24,6 +25,8 @@ enum FloorpPanelError: Error, LocalizedError, Equatable {
     case reservedIdentifier(id: String)
     case panelIsNotWeb(id: String)
     case editConflict(id: String)
+    case configEditConflict
+    case revisionExhausted
     case cannotRemoveLastPanel
     case invalidMoveDestination(index: Int)
     case registryReadOnly
@@ -38,6 +41,8 @@ enum FloorpPanelError: Error, LocalizedError, Equatable {
         case .reservedIdentifier(let id): return "Reserved panel identifier: \(id)"
         case .panelIsNotWeb(let id): return "Panel is not a Web panel: \(id)"
         case .editConflict(let id): return "Panel changed while being edited: \(id)"
+        case .configEditConflict: return "Panel configuration changed while being edited"
+        case .revisionExhausted: return "Panel preference revision cannot be advanced"
         case .cannotRemoveLastPanel: return "At least one panel must remain"
         case .invalidMoveDestination(let index): return "Invalid panel destination: \(index)"
         case .registryReadOnly: return "The stored panel registry is read-only"
@@ -237,8 +242,23 @@ final class FloorpPanelManager {
         let encounteredDecodingFailure: Bool
     }
 
+    private struct ConfigLoadResult {
+        let config: FloorpOverlayDrawerConfig?
+        let encounteredDecodingFailure: Bool
+    }
+
+    private struct SchemaVersionLoadResult {
+        let version: Int
+        let encounteredDecodingFailure: Bool
+    }
+
+    private struct MutableSnapshot {
+        let panels: [FloorpPanel]
+        let config: FloorpOverlayDrawerConfig
+    }
+
     private static let notesSchemaVersion = 1
-    private static let currentSchemaVersion = 2
+    private static let currentSchemaVersion = 3
 
     // MARK: - Properties
     private let logger: Logger
@@ -276,21 +296,36 @@ final class FloorpPanelManager {
 
         // Load persisted data or use defaults. Schema v1 introduced Notes;
         // schema v2 separates per-window presentation state from this
-        // profile-wide registry and configuration.
+        // profile-wide registry and configuration; schema v3 adds persistent
+        // Web panel preferences and automatic unloading.
         let panelLoadResult = Self.loadPanels(from: defaults, decoder: decoder)
         let storedPanels = panelLoadResult.panels
         var loadedPanels = storedPanels ?? FloorpPanel.defaultPanels()
-        let loadedConfig = Self.loadConfig(from: defaults, decoder: decoder) ?? FloorpOverlayDrawerConfig()
-        let storedSchemaVersion = defaults.integer(forKey: StorageKey.schemaVersion)
-        let needsNotesMigration = storedSchemaVersion < Self.notesSchemaVersion
-        let needsMigration = storedSchemaVersion < Self.currentSchemaVersion
-        let isRegistryReadOnly = storedSchemaVersion > Self.currentSchemaVersion
+        let configLoadResult = Self.loadConfig(from: defaults, decoder: decoder)
+        let loadedConfig = configLoadResult.config ?? FloorpOverlayDrawerConfig()
+        let schemaVersionLoadResult = Self.loadSchemaVersion(from: defaults)
+        let storedSchemaVersion = schemaVersionLoadResult.version
+        let needsNotesMigration = !schemaVersionLoadResult.encounteredDecodingFailure
+            && storedSchemaVersion < Self.notesSchemaVersion
+        let needsMigration = !schemaVersionLoadResult.encounteredDecodingFailure
+            && storedSchemaVersion < Self.currentSchemaVersion
+        let isRegistryReadOnly = schemaVersionLoadResult.encounteredDecodingFailure
+            || storedSchemaVersion < 0
+            || storedSchemaVersion > Self.currentSchemaVersion
             || panelLoadResult.encounteredDecodingFailure
+            || configLoadResult.encounteredDecodingFailure
+        let canRewriteStoredData = (0...Self.currentSchemaVersion).contains(storedSchemaVersion)
+            && !schemaVersionLoadResult.encounteredDecodingFailure
+            && !panelLoadResult.encounteredDecodingFailure
+            && !configLoadResult.encounteredDecodingFailure
 
         if needsNotesMigration {
             Self.migrateNotesPanelIfNeeded(panels: &loadedPanels)
         }
-        let sanitizedPanels = Self.sanitizeLoadedPanels(loadedPanels)
+        let sanitizedPanels = Self.sanitizeLoadedPanels(
+            loadedPanels,
+            suppliesMissingWebPreferences: canRewriteStoredData
+        )
 
         self.panels = sanitizedPanels
         self.isRegistryReadOnly = isRegistryReadOnly
@@ -298,13 +333,11 @@ final class FloorpPanelManager {
 
         logger.log("Floorp: PanelManager initialized with \(panels.count) panels", level: .info, category: .setup)
 
-        let canRewriteStoredPanels = storedSchemaVersion <= Self.currentSchemaVersion
-            && !panelLoadResult.encounteredDecodingFailure
-        if canRewriteStoredPanels,
+        if canRewriteStoredData,
            !panelLoadResult.hasStoredData || storedPanels != sanitizedPanels || needsMigration {
             persistPanels()
         }
-        if needsMigration, canRewriteStoredPanels {
+        if needsMigration, canRewriteStoredData {
             persistConfig()
             defaults.set(Self.currentSchemaVersion, forKey: StorageKey.schemaVersion)
         }
@@ -316,14 +349,14 @@ final class FloorpPanelManager {
     /// here so callers cannot spoof built-in panels or overwrite another item.
     @discardableResult
     func addWebPanel(draft: FloorpWebPanelDraft) throws -> FloorpPanel {
-        try ensureRegistryIsMutable()
+        let snapshot = try latestMutableSnapshot()
         let validated = try FloorpWebPanelValidator.validate(draft)
-        guard panels.count < Self.maximumPanelCount else {
+        guard snapshot.panels.count < Self.maximumPanelCount else {
             throw FloorpPanelError.panelLimitReached(maximum: Self.maximumPanelCount)
         }
 
         var id = UUID().uuidString
-        while panels.contains(where: { $0.id == id }) || FloorpPanel.isReservedIdentifier(id) {
+        while snapshot.panels.contains(where: { $0.id == id }) || FloorpPanel.isReservedIdentifier(id) {
             id = UUID().uuidString
         }
         let panel = FloorpPanel(
@@ -332,9 +365,10 @@ final class FloorpPanelManager {
             title: validated.title,
             url: validated.url.absoluteString,
             iconName: validated.iconName,
-            sortOrder: panels.count
+            sortOrder: snapshot.panels.count,
+            webPreferences: FloorpWebPanelPreferences()
         )
-        try commitPanels(panels + [panel])
+        try commitPanels(snapshot.panels + [panel])
         logger.log("Floorp: Added Web panel (\(panel.id))", level: .info, category: .setup)
         return panel
     }
@@ -345,23 +379,23 @@ final class FloorpPanelManager {
         draft: FloorpWebPanelDraft,
         expectedRevision: FloorpWebPanelRevision
     ) throws {
-        try ensureRegistryIsMutable()
+        let snapshot = try latestMutableSnapshot()
         guard !FloorpPanel.isReservedIdentifier(id) else {
             throw FloorpPanelError.reservedIdentifier(id: id)
         }
-        guard let index = panels.firstIndex(where: { $0.id == id }) else {
+        guard let index = snapshot.panels.firstIndex(where: { $0.id == id }) else {
             // An update always originates from an editor that captured this
             // panel. If it vanished, another window changed the registry.
             throw FloorpPanelError.editConflict(id: id)
         }
-        guard panels[index].type == .web else {
+        guard snapshot.panels[index].type == .web else {
             throw FloorpPanelError.panelIsNotWeb(id: id)
         }
-        guard FloorpWebPanelRevision(panel: panels[index]) == expectedRevision else {
+        guard FloorpWebPanelRevision(panel: snapshot.panels[index]) == expectedRevision else {
             throw FloorpPanelError.editConflict(id: id)
         }
         let validated = try FloorpWebPanelValidator.validate(draft)
-        var updatedPanels = panels
+        var updatedPanels = snapshot.panels
         updatedPanels[index].title = validated.title
         updatedPanels[index].url = validated.url.absoluteString
         updatedPanels[index].iconName = validated.iconName
@@ -371,16 +405,16 @@ final class FloorpPanelManager {
 
     /// Moves a panel to a zero-based destination in the current registry.
     func movePanel(id: String, to destination: Int) throws {
-        try ensureRegistryIsMutable()
-        guard let source = panels.firstIndex(where: { $0.id == id }) else {
+        let snapshot = try latestMutableSnapshot()
+        guard let source = snapshot.panels.firstIndex(where: { $0.id == id }) else {
             throw FloorpPanelError.panelNotFound(id: id)
         }
-        guard panels.indices.contains(destination) else {
+        guard snapshot.panels.indices.contains(destination) else {
             throw FloorpPanelError.invalidMoveDestination(index: destination)
         }
         guard source != destination else { return }
 
-        var reordered = panels
+        var reordered = snapshot.panels
         let panel = reordered.remove(at: source)
         reordered.insert(panel, at: destination)
         try commitPanels(reordered)
@@ -388,14 +422,14 @@ final class FloorpPanelManager {
 
     /// Removes a panel by ID.
     func removePanel(id: String) throws {
-        try ensureRegistryIsMutable()
-        guard let index = panels.firstIndex(where: { $0.id == id }) else {
+        let snapshot = try latestMutableSnapshot()
+        guard let index = snapshot.panels.firstIndex(where: { $0.id == id }) else {
             throw FloorpPanelError.panelNotFound(id: id)
         }
-        guard panels.count > 1 else {
+        guard snapshot.panels.count > 1 else {
             throw FloorpPanelError.cannotRemoveLastPanel
         }
-        var updatedPanels = panels
+        var updatedPanels = snapshot.panels
         updatedPanels.remove(at: index)
         try commitPanels(updatedPanels)
         logger.log("Floorp: Removed panel (\(id))", level: .info, category: .setup)
@@ -405,30 +439,30 @@ final class FloorpPanelManager {
     /// them in their canonical order without disturbing the current registry.
     @discardableResult
     func restoreMissingBuiltIns() throws -> [FloorpPanel] {
-        try ensureRegistryIsMutable()
-        let existingIDs = Set(panels.map(\.id))
+        let snapshot = try latestMutableSnapshot()
+        let existingIDs = Set(snapshot.panels.map(\.id))
         let missing = FloorpPanel.defaultPanels().filter { !existingIDs.contains($0.id) }
         guard !missing.isEmpty else { return [] }
-        guard panels.count + missing.count <= Self.maximumPanelCount else {
+        guard snapshot.panels.count + missing.count <= Self.maximumPanelCount else {
             throw FloorpPanelError.panelLimitReached(maximum: Self.maximumPanelCount)
         }
-        try commitPanels(panels + missing)
+        try commitPanels(snapshot.panels + missing)
         return missing
     }
 
     /// Reorders panels based on the given array of IDs.
     func reorderPanels(orderedIds: [String]) throws {
-        try ensureRegistryIsMutable()
-        let panelsByID = Dictionary(uniqueKeysWithValues: panels.map { ($0.id, $0) })
+        let snapshot = try latestMutableSnapshot()
+        let panelsByID = Dictionary(uniqueKeysWithValues: snapshot.panels.map { ($0.id, $0) })
         var seen = Set<String>()
         var reordered = orderedIds.compactMap { id -> FloorpPanel? in
             guard seen.insert(id).inserted else { return nil }
             return panelsByID[id]
         }
         // Preserve panels unknown to an older order list, including Notes.
-        reordered.append(contentsOf: panels.filter { !seen.contains($0.id) })
+        reordered.append(contentsOf: snapshot.panels.filter { !seen.contains($0.id) })
         Self.assignSortOrder(&reordered)
-        guard reordered != panels else { return }
+        guard reordered != snapshot.panels else { return }
         try commitPanels(reordered)
     }
 
@@ -448,15 +482,210 @@ final class FloorpPanelManager {
         return try FloorpWebPanelValidator.validate(panel).url
     }
 
+    func webPanelPreferences(for id: String) throws -> FloorpWebPanelPreferences {
+        guard let panel = panel(for: id) else {
+            throw FloorpPanelError.panelNotFound(id: id)
+        }
+        guard let preferences = panel.effectiveWebPreferences else {
+            throw FloorpPanelError.panelIsNotWeb(id: id)
+        }
+        return preferences
+    }
+
+    func webPanelPreferencesRevision(for id: String) throws -> FloorpWebPanelPreferencesRevision {
+        guard let panel = panel(for: id) else {
+            throw FloorpPanelError.panelNotFound(id: id)
+        }
+        guard panel.effectiveWebPreferences != nil else {
+            throw FloorpPanelError.panelIsNotWeb(id: id)
+        }
+        return FloorpWebPanelPreferencesRevision(panel: panel)
+    }
+
+    @discardableResult
+    func setWebPanelContentWidth(
+        _ contentWidth: Int,
+        for id: String,
+        expectedRevision: FloorpWebPanelPreferencesRevision
+    ) throws -> FloorpWebPanelPreferences {
+        try mutateWebPanelPreferences(id: id, expectedRevision: expectedRevision) { current in
+            FloorpWebPanelPreferences(
+                revision: current.revision,
+                contentWidth: contentWidth,
+                zoomLevel: current.zoomLevel,
+                contentMode: current.contentMode
+            )
+        }
+    }
+
+    @discardableResult
+    func adjustWebPanelZoom(
+        for id: String,
+        change: FloorpWebPanelZoomChange,
+        expectedRevision: FloorpWebPanelPreferencesRevision
+    ) throws -> FloorpWebPanelPreferences {
+        try mutateWebPanelPreferences(id: id, expectedRevision: expectedRevision) { current in
+            FloorpWebPanelPreferences(
+                revision: current.revision,
+                contentWidth: current.contentWidth,
+                zoomLevel: current.zoomLevel.applying(change),
+                contentMode: current.contentMode
+            )
+        }
+    }
+
+    @discardableResult
+    func setWebPanelContentMode(
+        _ contentMode: FloorpWebPanelContentMode,
+        for id: String,
+        expectedRevision: FloorpWebPanelPreferencesRevision
+    ) throws -> FloorpWebPanelPreferences {
+        try mutateWebPanelPreferences(id: id, expectedRevision: expectedRevision) { current in
+            FloorpWebPanelPreferences(
+                revision: current.revision,
+                contentWidth: current.contentWidth,
+                zoomLevel: current.zoomLevel,
+                contentMode: contentMode
+            )
+        }
+    }
+
     // MARK: - Config Management
 
     /// Updates the drawer configuration.
-    func updateConfig(_ newConfig: FloorpOverlayDrawerConfig) {
-        config = newConfig
-        persistConfig()
+    @discardableResult
+    func updateConfig(
+        _ newConfig: FloorpOverlayDrawerConfig,
+        expectedRevision: FloorpOverlayDrawerConfigRevision
+    ) throws -> FloorpOverlayDrawerConfig {
+        try mutateConfig(expectedRevision: expectedRevision) { current in
+            FloorpOverlayDrawerConfig(
+                isEnabled: newConfig.isEnabled,
+                sidebarWidth: newConfig.sidebarWidth,
+                autoUnload: newConfig.autoUnload,
+                revision: current.revision
+            )
+        }
+    }
+
+    @discardableResult
+    func setAutoUnload(
+        _ autoUnload: Bool,
+        expectedRevision: FloorpOverlayDrawerConfigRevision
+    ) throws -> FloorpOverlayDrawerConfig {
+        try mutateConfig(expectedRevision: expectedRevision) { current in
+            FloorpOverlayDrawerConfig(
+                isEnabled: current.isEnabled,
+                sidebarWidth: current.sidebarWidth,
+                autoUnload: autoUnload,
+                revision: current.revision
+            )
+        }
     }
 
     // MARK: - Persistence
+
+    private func mutateWebPanelPreferences(
+        id: String,
+        expectedRevision: FloorpWebPanelPreferencesRevision,
+        mutation: (FloorpWebPanelPreferences) -> FloorpWebPanelPreferences
+    ) throws -> FloorpWebPanelPreferences {
+        let snapshot = try latestMutableSnapshot()
+        guard let index = snapshot.panels.firstIndex(where: { $0.id == id }) else {
+            throw FloorpPanelError.editConflict(id: id)
+        }
+        guard let currentPreferences = snapshot.panels[index].effectiveWebPreferences else {
+            throw FloorpPanelError.panelIsNotWeb(id: id)
+        }
+        guard expectedRevision.panelID == id,
+              expectedRevision.value == currentPreferences.revision else {
+            throw FloorpPanelError.editConflict(id: id)
+        }
+
+        let requestedPreferences = mutation(currentPreferences)
+        guard requestedPreferences != currentPreferences else {
+            return currentPreferences
+        }
+        guard currentPreferences.revision < UInt64.max else {
+            throw FloorpPanelError.revisionExhausted
+        }
+
+        let updatedPreferences = FloorpWebPanelPreferences(
+            revision: currentPreferences.revision + 1,
+            contentWidth: requestedPreferences.contentWidth,
+            zoomLevel: requestedPreferences.zoomLevel,
+            contentMode: requestedPreferences.contentMode
+        )
+        var updatedPanels = snapshot.panels
+        updatedPanels[index].webPreferences = updatedPreferences
+        try commitPanels(updatedPanels)
+        return updatedPreferences
+    }
+
+    private func mutateConfig(
+        expectedRevision: FloorpOverlayDrawerConfigRevision,
+        mutation: (FloorpOverlayDrawerConfig) -> FloorpOverlayDrawerConfig
+    ) throws -> FloorpOverlayDrawerConfig {
+        let snapshot = try latestMutableSnapshot()
+        guard snapshot.config.revision == expectedRevision.value else {
+            throw FloorpPanelError.configEditConflict
+        }
+
+        let requestedConfig = mutation(snapshot.config)
+        let normalizedRequest = FloorpOverlayDrawerConfig(
+            isEnabled: requestedConfig.isEnabled,
+            sidebarWidth: requestedConfig.sidebarWidth,
+            autoUnload: requestedConfig.autoUnload,
+            revision: snapshot.config.revision
+        )
+        guard normalizedRequest != snapshot.config else {
+            return snapshot.config
+        }
+        guard snapshot.config.revision < UInt64.max else {
+            throw FloorpPanelError.revisionExhausted
+        }
+
+        let updatedConfig = FloorpOverlayDrawerConfig(
+            isEnabled: normalizedRequest.isEnabled,
+            sidebarWidth: normalizedRequest.sidebarWidth,
+            autoUnload: normalizedRequest.autoUnload,
+            revision: snapshot.config.revision + 1
+        )
+        try commitConfig(updatedConfig, latestPanels: snapshot.panels)
+        return updatedConfig
+    }
+
+    private func latestMutableSnapshot() throws -> MutableSnapshot {
+        try ensureRegistryIsMutable()
+
+        let schemaVersionLoadResult = Self.loadSchemaVersion(from: defaults)
+        let storedSchemaVersion = schemaVersionLoadResult.version
+        let panelLoadResult = Self.loadPanels(from: defaults, decoder: decoder)
+        let configLoadResult = Self.loadConfig(from: defaults, decoder: decoder)
+        guard !schemaVersionLoadResult.encounteredDecodingFailure,
+              (0...Self.currentSchemaVersion).contains(storedSchemaVersion),
+              !panelLoadResult.encounteredDecodingFailure,
+              !configLoadResult.encounteredDecodingFailure else {
+            isRegistryReadOnly = true
+            throw FloorpPanelError.registryReadOnly
+        }
+
+        var latestPanels = panelLoadResult.panels ?? FloorpPanel.defaultPanels()
+        if storedSchemaVersion < Self.notesSchemaVersion {
+            Self.migrateNotesPanelIfNeeded(panels: &latestPanels)
+        }
+        latestPanels = Self.sanitizeLoadedPanels(
+            latestPanels,
+            suppliesMissingWebPreferences: true
+        )
+        let snapshot = MutableSnapshot(
+            panels: latestPanels,
+            config: configLoadResult.config ?? FloorpOverlayDrawerConfig()
+        )
+        panels = snapshot.panels
+        config = snapshot.config
+        return snapshot
+    }
 
     private func commitPanels(_ candidatePanels: [FloorpPanel]) throws {
         try ensureRegistryIsMutable()
@@ -472,6 +701,27 @@ final class FloorpPanelManager {
         }
         defaults.set(data, forKey: StorageKey.panels)
         panels = normalizedPanels
+        notificationCenter.post(
+            name: .FloorpPanelRegistryDidChange,
+            withObject: self,
+            withUserInfo: nil
+        )
+    }
+
+    private func commitConfig(
+        _ candidateConfig: FloorpOverlayDrawerConfig,
+        latestPanels: [FloorpPanel]
+    ) throws {
+        try ensureRegistryIsMutable()
+        let data: Data
+        do {
+            data = try encoder.encode(candidateConfig)
+        } catch {
+            throw FloorpPanelError.storageError(error.localizedDescription)
+        }
+        defaults.set(data, forKey: StorageKey.config)
+        panels = latestPanels
+        config = candidateConfig
         notificationCenter.post(
             name: .FloorpPanelRegistryDidChange,
             withObject: self,
@@ -501,6 +751,19 @@ final class FloorpPanelManager {
         } catch {
             logger.log("Floorp: Failed to persist config: \(error.localizedDescription)", level: .warning, category: .setup)
         }
+    }
+
+    private static func loadSchemaVersion(from defaults: UserDefaults) -> SchemaVersionLoadResult {
+        guard let storedValue = defaults.object(forKey: StorageKey.schemaVersion) else {
+            return SchemaVersionLoadResult(version: 0, encounteredDecodingFailure: false)
+        }
+        guard let number = storedValue as? NSNumber,
+              CFGetTypeID(number) == CFNumberGetTypeID(),
+              !CFNumberIsFloatType(number),
+              let version = Int(number.stringValue) else {
+            return SchemaVersionLoadResult(version: 0, encounteredDecodingFailure: true)
+        }
+        return SchemaVersionLoadResult(version: version, encounteredDecodingFailure: false)
     }
 
     private static func loadPanels(from defaults: UserDefaults, decoder: JSONDecoder) -> PanelLoadResult {
@@ -552,12 +815,20 @@ final class FloorpPanelManager {
         }
     }
 
-    private static func loadConfig(from defaults: UserDefaults, decoder: JSONDecoder) -> FloorpOverlayDrawerConfig? {
-        guard let data = defaults.data(forKey: StorageKey.config) else { return nil }
+    private static func loadConfig(from defaults: UserDefaults, decoder: JSONDecoder) -> ConfigLoadResult {
+        guard let storedValue = defaults.object(forKey: StorageKey.config) else {
+            return ConfigLoadResult(config: nil, encounteredDecodingFailure: false)
+        }
+        guard let data = storedValue as? Data else {
+            return ConfigLoadResult(config: nil, encounteredDecodingFailure: true)
+        }
         do {
-            return try decoder.decode(FloorpOverlayDrawerConfig.self, from: data)
+            return ConfigLoadResult(
+                config: try decoder.decode(FloorpOverlayDrawerConfig.self, from: data),
+                encounteredDecodingFailure: false
+            )
         } catch {
-            return nil
+            return ConfigLoadResult(config: nil, encounteredDecodingFailure: true)
         }
     }
 
@@ -580,7 +851,10 @@ final class FloorpPanelManager {
         assignSortOrder(&panels)
     }
 
-    private static func sanitizeLoadedPanels(_ loadedPanels: [FloorpPanel]) -> [FloorpPanel] {
+    private static func sanitizeLoadedPanels(
+        _ loadedPanels: [FloorpPanel],
+        suppliesMissingWebPreferences: Bool
+    ) -> [FloorpPanel] {
         var sortedPanels = loadedPanels
         normalizeSortOrder(&sortedPanels)
 
@@ -606,6 +880,9 @@ final class FloorpPanelManager {
             }
             var preservedPanel = panel
             preservedPanel.sortOrder = sanitizedPanels.count
+            if suppliesMissingWebPreferences, preservedPanel.webPreferences == nil {
+                preservedPanel.webPreferences = FloorpWebPanelPreferences()
+            }
             sanitizedPanels.append(preservedPanel)
         }
 
@@ -625,11 +902,14 @@ final class FloorpPanelManager {
             }
             if FloorpPanel.isReservedIdentifier(panel.id) {
                 guard let canonical = FloorpPanel.canonicalBuiltInPanel(for: panel.id),
-                      panel.type == canonical.type else {
+                      panel.type == canonical.type,
+                      panel.webPreferences == nil else {
                     throw FloorpPanelError.reservedIdentifier(id: panel.id)
                 }
             } else {
-                guard !panel.id.isEmpty, panel.type == .web else {
+                guard !panel.id.isEmpty,
+                      panel.type == .web,
+                      panel.webPreferences != nil else {
                     throw FloorpPanelError.invalidConfiguration
                 }
             }
