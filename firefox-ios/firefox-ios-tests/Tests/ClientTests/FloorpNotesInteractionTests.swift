@@ -10,42 +10,60 @@ final class FloorpNotesListOrderTests: XCTestCase {
     func testFilteredMergePreservesHiddenPositions() throws {
         XCTAssertEqual(
             try FloorpNotesListOrder.merge(
-                latestFullIDs: ["first", "hidden-a", "second", "hidden-b", "third"],
-                originalVisibleIDs: ["first", "second", "third"],
-                orderedVisibleIDs: ["third", "first", "second"]
+                latestFullIDs: makeFloorpTestNoteIDs(["first", "hidden-a", "second", "hidden-b", "third"]),
+                originalVisibleIDs: makeFloorpTestNoteIDs(["first", "second", "third"]),
+                orderedVisibleIDs: makeFloorpTestNoteIDs(["third", "first", "second"])
             ),
-            ["third", "hidden-a", "first", "hidden-b", "second"]
+            makeFloorpTestNoteIDs(["third", "hidden-a", "first", "hidden-b", "second"])
         )
     }
 
     func testMergeRejectsDuplicateMismatchedAndStaleIDsWithTypedErrors() {
         XCTAssertThrowsError(
             try FloorpNotesListOrder.merge(
-                latestFullIDs: ["first", "second"],
-                originalVisibleIDs: ["first", "first"],
-                orderedVisibleIDs: ["first", "second"]
+                latestFullIDs: makeFloorpTestNoteIDs(["first", "second"]),
+                originalVisibleIDs: makeFloorpTestNoteIDs(["first", "first"]),
+                orderedVisibleIDs: makeFloorpTestNoteIDs(["first", "second"])
             )
         ) { error in
-            XCTAssertEqual(error as? FloorpNotesListOrderError, .duplicateID("first"))
+            XCTAssertEqual(error as? FloorpNotesListOrderError, .duplicateID(FloorpNoteID("first")))
         }
         XCTAssertThrowsError(
             try FloorpNotesListOrder.merge(
-                latestFullIDs: ["first", "second"],
-                originalVisibleIDs: ["first"],
-                orderedVisibleIDs: ["second"]
+                latestFullIDs: makeFloorpTestNoteIDs(["first", "second"]),
+                originalVisibleIDs: makeFloorpTestNoteIDs(["first"]),
+                orderedVisibleIDs: makeFloorpTestNoteIDs(["second"])
             )
         ) { error in
             XCTAssertEqual(error as? FloorpNotesListOrderError, .mismatchedVisibleIDs)
         }
         XCTAssertThrowsError(
             try FloorpNotesListOrder.merge(
-                latestFullIDs: ["first"],
-                originalVisibleIDs: ["first", "removed"],
-                orderedVisibleIDs: ["removed", "first"]
+                latestFullIDs: makeFloorpTestNoteIDs(["first"]),
+                originalVisibleIDs: makeFloorpTestNoteIDs(["first", "removed"]),
+                orderedVisibleIDs: makeFloorpTestNoteIDs(["removed", "first"])
             )
         ) { error in
-            XCTAssertEqual(error as? FloorpNotesListOrderError, .staleVisibleIDs(["removed"]))
+            XCTAssertEqual(
+                error as? FloorpNotesListOrderError,
+                .staleVisibleIDs(makeFloorpTestNoteIDs(["removed"]))
+            )
         }
+    }
+
+    func testMergeTreatsCanonicallyEquivalentIDsAsDistinct() throws {
+        let composedID = FloorpNoteID("note-\u{00E9}")
+        let decomposedID = FloorpNoteID("note-e\u{0301}")
+        let hiddenID = FloorpNoteID("hidden")
+
+        let merged = try FloorpNotesListOrder.merge(
+            latestFullIDs: [composedID, hiddenID, decomposedID],
+            originalVisibleIDs: [composedID, decomposedID],
+            orderedVisibleIDs: [decomposedID, composedID]
+        )
+
+        XCTAssertEqual(merged, [decomposedID, hiddenID, composedID])
+        XCTAssertNotEqual(Data(merged[0].rawValue.utf8), Data(merged[2].rawValue.utf8))
     }
 }
 
@@ -58,18 +76,18 @@ final class FloorpNotesReorderStoreTests: XCTestCase, @unchecked Sendable {
         let original = try await store.loadSnapshot()
 
         let didReorder = try await store.reorderVisibleNotes(
-            originalVisibleIDs: ["first", "third"],
-            orderedVisibleIDs: ["third", "first"],
+            originalVisibleIDs: makeFloorpTestNoteIDs(["first", "third"]),
+            orderedVisibleIDs: makeFloorpTestNoteIDs(["third", "first"]),
             expectedRevision: original.revision
         )
         XCTAssertTrue(didReorder)
         let reordered = try await store.loadSnapshot()
-        XCTAssertEqual(reordered.notes.map(\.id), ["third", "second", "first"])
+        XCTAssertEqual(reordered.notes.map(\.id), makeFloorpTestNoteIDs(["third", "second", "first"]))
         XCTAssertEqual(reordered.revision, original.revision + 1)
 
         let didWriteNoOp = try await store.reorderVisibleNotes(
-            originalVisibleIDs: ["third", "first"],
-            orderedVisibleIDs: ["third", "first"],
+            originalVisibleIDs: makeFloorpTestNoteIDs(["third", "first"]),
+            orderedVisibleIDs: makeFloorpTestNoteIDs(["third", "first"]),
             expectedRevision: reordered.revision
         )
         XCTAssertFalse(didWriteNoOp)
@@ -83,13 +101,13 @@ final class FloorpNotesReorderStoreTests: XCTestCase, @unchecked Sendable {
         let store = FloorpNotesStore(fileURL: location.archive)
         try await store.replaceAllNotes(with: makeNotes())
         let staleSnapshot = try await store.loadSnapshot()
-        _ = try await store.updateNote(id: "second", title: "Latest", content: "kept")
+        _ = try await store.updateNote(id: FloorpNoteID("second"), title: "Latest", content: "kept")
         let latestSnapshot = try await store.loadSnapshot()
 
         do {
             _ = try await store.reorderVisibleNotes(
-                originalVisibleIDs: ["first", "second", "third"],
-                orderedVisibleIDs: ["third", "second", "first"],
+                originalVisibleIDs: makeFloorpTestNoteIDs(["first", "second", "third"]),
+                orderedVisibleIDs: makeFloorpTestNoteIDs(["third", "second", "first"]),
                 expectedRevision: staleSnapshot.revision
             )
             XCTFail("Expected reorderConflict")
@@ -104,9 +122,9 @@ final class FloorpNotesReorderStoreTests: XCTestCase, @unchecked Sendable {
 
     private func makeNotes() -> [FloorpNote] {
         [
-            FloorpNote(id: "first", title: "First", content: "", createdAt: 1, updatedAt: 1),
-            FloorpNote(id: "second", title: "Second", content: "", createdAt: 2, updatedAt: 2),
-            FloorpNote(id: "third", title: "Third", content: "", createdAt: 3, updatedAt: 3),
+            makeFloorpTestNote(id: "first", title: "First", content: "", createdAt: 1, updatedAt: 1),
+            makeFloorpTestNote(id: "second", title: "Second", content: "", createdAt: 2, updatedAt: 2),
+            makeFloorpTestNote(id: "third", title: "Third", content: "", createdAt: 3, updatedAt: 3),
         ]
     }
 
@@ -120,18 +138,18 @@ final class FloorpNotesReorderStoreTests: XCTestCase, @unchecked Sendable {
 final class FloorpNotesReorderSessionTests: XCTestCase {
     func testMovesAreStagedWithoutChangingOriginalOrder() {
         var session = FloorpNotesReorderSession(
-            visibleIDs: ["first", "second", "third"],
+            visibleIDs: makeFloorpTestNoteIDs(["first", "second", "third"]),
             expectedRevision: 9
         )
 
         XCTAssertFalse(session.hasChanges)
         XCTAssertTrue(session.move(from: 0, to: 2))
-        XCTAssertEqual(session.orderedVisibleIDs, ["second", "third", "first"])
-        XCTAssertEqual(session.originalVisibleIDs, ["first", "second", "third"])
+        XCTAssertEqual(session.orderedVisibleIDs, makeFloorpTestNoteIDs(["second", "third", "first"]))
+        XCTAssertEqual(session.originalVisibleIDs, makeFloorpTestNoteIDs(["first", "second", "third"]))
         XCTAssertTrue(session.hasChanges)
-        XCTAssertEqual(session.move(id: "first", offset: -1), 1)
-        XCTAssertEqual(session.orderedVisibleIDs, ["second", "first", "third"])
-        XCTAssertNil(session.move(id: "second", offset: -1))
+        XCTAssertEqual(session.move(id: FloorpNoteID("first"), offset: -1), 1)
+        XCTAssertEqual(session.orderedVisibleIDs, makeFloorpTestNoteIDs(["second", "first", "third"]))
+        XCTAssertNil(session.move(id: FloorpNoteID("second"), offset: -1))
     }
 }
 
@@ -210,7 +228,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
         XCTAssertFalse(table.isEditing)
         XCTAssertTrue(search.isEnabled)
         let idsAfterCancel = try await fixture.store.loadNotes().map(\.id)
-        XCTAssertEqual(idsAfterCancel, ["first", "second", "third"])
+        XCTAssertEqual(idsAfterCancel, makeFloorpTestNoteIDs(["first", "second", "third"]))
         let didRestoreVisibleOrder = await waitUntil {
             fixture.drawer.tableView(
                 table,
@@ -261,7 +279,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
         let storedIDs = try await fixture.store.loadNotes().dropFirst().map(\.id)
         XCTAssertEqual(
             storedIDs,
-            ["first", "second", "third"]
+            makeFloorpTestNoteIDs(["first", "second", "third"])
         )
     }
 
@@ -306,7 +324,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
         let savedNote = try await fixture.store.createNote(title: "Owned creation")
         fixture.drawer.noteCreatedInOwningDrawer(savedNote)
 
-        let savedIdentifier = "Floorp.Notes.Row.\(savedNote.id)"
+        let savedIdentifier = "Floorp.Notes.Row.\(savedNote.id.rawValue)"
         await assertEventually {
             table.numberOfRows(inSection: 0) == 4
                 && focusedIdentifiers.last == savedIdentifier
@@ -351,7 +369,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
             !table.isEditing && table.numberOfRows(inSection: 0) == 4
         }
         XCTAssertEqual(rowIdentifiers(in: fixture.drawer, table: table), latest.notes.map {
-            "Floorp.Notes.Row.\($0.id)"
+            "Floorp.Notes.Row.\($0.id.rawValue)"
         })
     }
 
@@ -376,7 +394,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
         loader.resumeLoad(at: 1, with: latest)
         await assertEventually {
             rowIdentifiers(in: fixture.drawer, table: table) == latest.notes.map {
-                "Floorp.Notes.Row.\($0.id)"
+                "Floorp.Notes.Row.\($0.id.rawValue)"
             }
         }
 
@@ -390,7 +408,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(rowIdentifiers(in: fixture.drawer, table: table), latest.notes.map {
-            "Floorp.Notes.Row.\($0.id)"
+            "Floorp.Notes.Row.\($0.id.rawValue)"
         })
     }
 
@@ -454,7 +472,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
 
         await assertEventually { presentation.parent.presentedViewController == nil }
         let storedIDs = try await fixture.store.loadNotes().map(\.id)
-        XCTAssertEqual(storedIDs, ["first", "second", "third"])
+        XCTAssertEqual(storedIDs, makeFloorpTestNoteIDs(["first", "second", "third"]))
     }
 
     func testFailureAfterExternalDismissalIsShownByReplacementDrawer() async throws {
@@ -529,7 +547,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
     }
 
     private func makeNote(id: String, timestamp: Int64 = 1) -> FloorpNote {
-        FloorpNote(
+        makeFloorpTestNote(
             id: id,
             title: id.capitalized,
             content: "",
@@ -592,9 +610,9 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
             .appendingPathComponent("\(prefix)-\(UUID().uuidString)")
         let store = FloorpNotesStore(fileURL: directory.appendingPathComponent("notes.json"))
         try await store.replaceAllNotes(with: [
-            FloorpNote(id: "first", title: "First", content: "", createdAt: 1, updatedAt: 1),
-            FloorpNote(id: "second", title: "Second", content: "", createdAt: 2, updatedAt: 2),
-            FloorpNote(id: "third", title: "Third", content: "", createdAt: 3, updatedAt: 3),
+            makeFloorpTestNote(id: "first", title: "First", content: "", createdAt: 1, updatedAt: 1),
+            makeFloorpTestNote(id: "second", title: "Second", content: "", createdAt: 2, updatedAt: 2),
+            makeFloorpTestNote(id: "third", title: "Third", content: "", createdAt: 3, updatedAt: 3),
         ])
         await Task.yield()
 
@@ -686,6 +704,7 @@ final class FloorpNotesInteractionControllerTests: XCTestCase {
         _ expectedIDs: [String],
         in store: FloorpNotesStore
     ) async -> Bool {
+        let expectedIDs = makeFloorpTestNoteIDs(expectedIDs)
         for _ in 0..<100 {
             if (try? await store.loadNotes().map(\.id)) == expectedIDs { return true }
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -762,7 +781,7 @@ private final class ControlledFloorpNotesReorderWriter {
     private var shouldFail = false
     private(set) var isWaiting = false
 
-    func write(_: [String], _: [String], _: UInt64) async throws -> Bool {
+    func write(_: [FloorpNoteID], _: [FloorpNoteID], _: UInt64) async throws -> Bool {
         isWaiting = true
         await withCheckedContinuation { continuation in
             self.continuation = continuation
@@ -893,7 +912,7 @@ final class FloorpNoteEditorInteractionTests: XCTestCase {
         onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote
     ) -> FloorpNoteEditorViewController {
         FloorpNoteEditorViewController(
-            note: FloorpNote(
+            note: makeFloorpTestNote(
                 id: "draft",
                 title: "New Note",
                 content: "",

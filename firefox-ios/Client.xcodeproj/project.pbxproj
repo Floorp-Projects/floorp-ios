@@ -1435,6 +1435,9 @@
 		CEC2F0AF2F98000200D67401 /* FloorpNoteEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */; };
 		CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */; };
 		CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */; };
+		F10A00022FA9000000000001 /* FloorpNotesSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00012FA9000000000001 /* FloorpNotesSync.swift */; };
+		F10A00042FA9000000000001 /* FloorpNotesSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00032FA9000000000001 /* FloorpNotesSyncTests.swift */; };
+		F10A00062FA9000000000001 /* floorp-notes-merge-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = F10A00052FA9000000000001 /* floorp-notes-merge-v1.json */; };
 		CEC2F0B12FA8000300D67401 /* FloorpNotesInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0B2FA8000300D67401 /* FloorpNotesInteractionTests.swift */; };
 		CEC2F0B12F98000400D67401 /* Floorp.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = CE903B0B2F98000400D67401 /* Floorp.xcstrings */; };
 		CEC2F0B22F98000500D67401 /* FloorpPanelRegistryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0C2F98000500D67401 /* FloorpPanelRegistryViewController.swift */; };
@@ -11108,6 +11111,9 @@
 		CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNoteEditorViewController.swift; sourceTree = "<group>"; };
 		CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesTests.swift; sourceTree = "<group>"; };
 		CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanelPreferencesTests.swift; sourceTree = "<group>"; };
+		F10A00012FA9000000000001 /* FloorpNotesSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesSync.swift; sourceTree = "<group>"; };
+		F10A00032FA9000000000001 /* FloorpNotesSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesSyncTests.swift; sourceTree = "<group>"; };
+		F10A00052FA9000000000001 /* floorp-notes-merge-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../sync-fixtures/floorp-notes/floorp-notes-merge-v1.json"; sourceTree = SOURCE_ROOT; };
 		CE903B0B2FA8000300D67401 /* FloorpNotesInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesInteractionTests.swift; sourceTree = "<group>"; };
 		CE903B0B2F98000400D67401 /* Floorp.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Floorp.xcstrings; sourceTree = "<group>"; };
 		CE903B0C2F98000500D67401 /* FloorpPanelRegistryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanelRegistryViewController.swift; sourceTree = "<group>"; };
@@ -15715,6 +15721,7 @@
 		C27AB5D12F9B81710085439A /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
+				F10A00052FA9000000000001 /* floorp-notes-merge-v1.json */,
 				C2F55C622F9A441B00BE73E7 /* WorldCupCountryPickerView.swift */,
 				C2F55C612F9A441B00BE73E7 /* WorldCupCountry.swift */,
 			);
@@ -16396,6 +16403,7 @@
 				CE903B062F971B0100D67401 /* FloorpNotifications.swift */,
 				CE903B072F971B0200D67401 /* FloorpStrings.swift */,
 				CE903B082F98000100D67401 /* FloorpNotes.swift */,
+				F10A00012FA9000000000001 /* FloorpNotesSync.swift */,
 				CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */,
 				CE903B0D2FB0000100D67401 /* FloorpRichTextDocument.swift */,
 				CE903B0C2F98000500D67401 /* FloorpPanelRegistryViewController.swift */,
@@ -17585,6 +17593,7 @@
 				CE903B142F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift */,
 				CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */,
 				CE903B0F2F99000200D67401 /* FloorpLibraryPanelHostTests.swift */,
+				F10A00032FA9000000000001 /* FloorpNotesSyncTests.swift */,
 				CE903B0B2FA8000300D67401 /* FloorpNotesInteractionTests.swift */,
 				EC405C123007DC820003DE07 /* WaybackTests */,
 				EECF6B623006864D006FD44E /* SwipeGestureFeatureFlagProviderTests.swift */,
@@ -19051,6 +19060,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F10A00062FA9000000000001 /* floorp-notes-merge-v1.json in Resources */,
 				8A11C80F2731916E00AC7318 /* defaultOnlyTestList.json in Resources */,
 				C869915828917811007ACC5C /* wallpaperNoAvailabilityRange.json in Resources */,
 				8ABE9F1B2CB4620A0080E1DF /* RemoteSettingsFetchConfig.json in Resources */,
@@ -20099,6 +20109,7 @@
 				CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */,
 				CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */,
 				CEC2F0AE2F98000100D67401 /* FloorpNotes.swift in Sources */,
+				F10A00022FA9000000000001 /* FloorpNotesSync.swift in Sources */,
 				CEC2F0AF2F98000200D67401 /* FloorpNoteEditorViewController.swift in Sources */,
 				CEC2F0B32FB0000100D67401 /* FloorpRichTextDocument.swift in Sources */,
 				CEC2F0B22F98000500D67401 /* FloorpPanelRegistryViewController.swift in Sources */,
@@ -20944,6 +20955,7 @@
 				CEC2F0BA2F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift in Sources */,
 				CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */,
 				CEC2F0B52F99000200D67401 /* FloorpLibraryPanelHostTests.swift in Sources */,
+				F10A00042FA9000000000001 /* FloorpNotesSyncTests.swift in Sources */,
 				CEC2F0B12FA8000300D67401 /* FloorpNotesInteractionTests.swift in Sources */,
 				2151EF572F2AB94A007B67A6 /* BrowserViewControllerConstraintTests.swift in Sources */,
 				8C50DD752F56E1D00020E5C4 /* PreferredTranslationLanguagesManagerTests.swift in Sources */,

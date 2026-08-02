@@ -6,6 +6,44 @@ import Foundation
 
 // MARK: - Note model
 
+/// The byte-exact identity of a Floorp note.
+///
+/// Swift `String` equality treats canonically equivalent Unicode sequences as
+/// equal. Notes Sync instead follows the desktop wire contract, where IDs are
+/// opaque UTF-8 bytes. Keeping that policy in one value type prevents a
+/// `Set<String>` or `[String: Value]` from silently merging two distinct IDs.
+struct FloorpNoteID: Codable, Hashable, Comparable, Sendable {
+    let rawValue: String
+
+    init(_ rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue.utf8.elementsEqual(rhs.rawValue.utf8)
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(rawValue.utf8.count)
+        for byte in rawValue.utf8 {
+            hasher.combine(byte)
+        }
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue.utf8.lexicographicallyPrecedes(rhs.rawValue.utf8)
+    }
+
+    init(from decoder: Decoder) throws {
+        rawValue = try decoder.singleValueContainer().decode(String.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 /// A Floorp note as it is represented inside the iOS application.
 ///
 /// `content` is intentionally kept as an opaque string. Floorp desktop stores
@@ -24,7 +62,7 @@ enum FloorpNoteContentFormat: String, Codable, Equatable, Sendable {
 }
 
 struct FloorpNote: Codable, Equatable, Identifiable, Sendable {
-    let id: String
+    let id: FloorpNoteID
     var title: String
     var content: String
     let createdAt: Int64
@@ -32,7 +70,7 @@ struct FloorpNote: Codable, Equatable, Identifiable, Sendable {
     var contentFormat: FloorpNoteContentFormat
 
     init(
-        id: String,
+        id: FloorpNoteID,
         title: String,
         content: String,
         createdAt: Int64,
@@ -58,7 +96,7 @@ struct FloorpNote: Codable, Equatable, Identifiable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
+        id = try container.decode(FloorpNoteID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
         content = try container.decode(String.self, forKey: .content)
         createdAt = try container.decode(Int64.self, forKey: .createdAt)
@@ -116,11 +154,19 @@ struct FloorpNotesDesktopPayload: Codable, Equatable, Sendable {
     }
 
     init(notes: [FloorpNote]) {
-        ids = notes.map(\.id)
+        ids = notes.map(\.id.rawValue)
         titles = notes.map(\.title)
         contents = notes.map(\.content)
         createdAts = notes.map(\.createdAt)
         updatedAts = notes.map(\.updatedAt)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        byteExactIDsEqual(lhs.ids, rhs.ids)
+            && lhs.titles == rhs.titles
+            && lhs.contents == rhs.contents
+            && lhs.createdAts == rhs.createdAts
+            && lhs.updatedAts == rhs.updatedAts
     }
 
     func normalizedNotes(
@@ -138,15 +184,21 @@ struct FloorpNotesDesktopPayload: Codable, Equatable, Sendable {
             throw FloorpNotesStoreError.tooManyNotes(count)
         }
 
-        var usedIDs = Set<String>()
+        var usedIDs = Set<FloorpNoteID>()
         var notes = [FloorpNote]()
         notes.reserveCapacity(count)
 
         for index in 0..<count {
-            let candidateID = value(at: index, in: ids)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            var id = candidateID.flatMap { $0.isEmpty ? nil : $0 } ?? makeID()
-            while usedIDs.contains(id) {
-                id = makeID()
+            let candidateID = value(at: index, in: ids)
+            var id = candidateID.flatMap { rawValue -> FloorpNoteID? in
+                guard !rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return nil
+                }
+                return FloorpNoteID(rawValue)
+            } ?? FloorpNoteID(makeID())
+            while id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || usedIDs.contains(id) {
+                id = FloorpNoteID(makeID())
             }
             usedIDs.insert(id)
 
@@ -175,20 +227,34 @@ struct FloorpNotesDesktopPayload: Codable, Equatable, Sendable {
         guard let value, value > 0 else { return nil }
         return value
     }
+
+    private static func byteExactIDsEqual(_ lhs: [String]?, _ rhs: [String]?) -> Bool {
+        switch (lhs, rhs) {
+        case (.none, .none):
+            return true
+        case (.some(let lhs), .some(let rhs)):
+            guard lhs.count == rhs.count else { return false }
+            return zip(lhs, rhs).allSatisfy { left, right in
+                left.utf8.elementsEqual(right.utf8)
+            }
+        default:
+            return false
+        }
+    }
 }
 
 enum FloorpNotesListOrderError: Error, Equatable, Sendable {
-    case duplicateID(String)
+    case duplicateID(FloorpNoteID)
     case mismatchedVisibleIDs
-    case staleVisibleIDs([String])
+    case staleVisibleIDs([FloorpNoteID])
 }
 
 enum FloorpNotesListOrder {
     static func merge(
-        latestFullIDs: [String],
-        originalVisibleIDs: [String],
-        orderedVisibleIDs: [String]
-    ) throws -> [String] {
+        latestFullIDs: [FloorpNoteID],
+        originalVisibleIDs: [FloorpNoteID],
+        orderedVisibleIDs: [FloorpNoteID]
+    ) throws -> [FloorpNoteID] {
         try validateUnique(originalVisibleIDs)
         try validateUnique(orderedVisibleIDs)
 
@@ -210,8 +276,8 @@ enum FloorpNotesListOrder {
         }
     }
 
-    private static func validateUnique(_ ids: [String]) throws {
-        var seen = Set<String>()
+    private static func validateUnique(_ ids: [FloorpNoteID]) throws {
+        var seen = Set<FloorpNoteID>()
         for id in ids where !seen.insert(id).inserted {
             throw FloorpNotesListOrderError.duplicateID(id)
         }
@@ -485,11 +551,11 @@ enum FloorpNotesStoreError: Error, LocalizedError {
     case corruptArchiveCouldNotBePreserved
     case writesBlockedByCorruption(recoveryURL: URL)
     case invalidNoteID
-    case duplicateNoteID(String)
-    case noteNotFound(String)
-    case editConflict(String)
+    case duplicateNoteID(FloorpNoteID)
+    case noteNotFound(FloorpNoteID)
+    case editConflict(FloorpNoteID)
     case reorderConflict(expectedRevision: UInt64, actualRevision: UInt64)
-    case timestampExhausted(String)
+    case timestampExhausted(FloorpNoteID)
     case tooManyNotes(Int)
     case archiveTooLarge(actualBytes: Int, maximumBytes: Int)
 
@@ -609,15 +675,15 @@ actor FloorpNotesStore {
         title: String,
         content: String,
         contentFormat: FloorpNoteContentFormat,
-        candidateID: String = UUID().uuidString
+        candidateID: FloorpNoteID = FloorpNoteID(UUID().uuidString)
     ) throws {
         let archive = try loadArchiveForWriting()
         var id = candidateID
         let existingIDs = Set(archive.notes.map(\.id))
-        if id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            id = UUID().uuidString
+        if id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            id = FloorpNoteID(UUID().uuidString)
         }
-        while existingIDs.contains(id) { id = UUID().uuidString }
+        while existingIDs.contains(id) { id = FloorpNoteID(UUID().uuidString) }
         let note = FloorpNote(
             id: id,
             title: title,
@@ -630,7 +696,7 @@ actor FloorpNotesStore {
     }
 
     func preflightUpdateNote(
-        id: String,
+        id: FloorpNoteID,
         title: String,
         content: String,
         contentFormat: FloorpNoteContentFormat
@@ -660,10 +726,11 @@ actor FloorpNotesStore {
     ) throws -> FloorpNote {
         let archive = try loadArchiveForWriting()
         let timestamp = now()
-        var id = makeID()
+        var id = FloorpNoteID(makeID())
         let existingIDs = Set(archive.notes.map(\.id))
-        while id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || existingIDs.contains(id) {
-            id = makeID()
+        while id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || existingIDs.contains(id) {
+            id = FloorpNoteID(makeID())
         }
 
         let note = FloorpNote(
@@ -682,7 +749,7 @@ actor FloorpNotesStore {
 
     @discardableResult
     func updateNote(
-        id: String,
+        id: FloorpNoteID,
         title: String,
         content: String,
         contentFormat: FloorpNoteContentFormat? = nil,
@@ -710,7 +777,7 @@ actor FloorpNotesStore {
         return note
     }
 
-    func deleteNote(id: String) throws {
+    func deleteNote(id: FloorpNoteID) throws {
         let archive = try loadArchiveForWriting()
         guard archive.notes.contains(where: { $0.id == id }) else {
             throw FloorpNotesStoreError.noteNotFound(id)
@@ -720,10 +787,10 @@ actor FloorpNotesStore {
 
     /// Reorders known IDs and preserves all omitted notes at the end. This is
     /// important when an older client submits an order that predates new data.
-    func reorderNotes(orderedIDs: [String]) throws {
+    func reorderNotes(orderedIDs: [FloorpNoteID]) throws {
         let archive = try loadArchiveForWriting()
         let notesByID = Dictionary(uniqueKeysWithValues: archive.notes.map { ($0.id, $0) })
-        var seen = Set<String>()
+        var seen = Set<FloorpNoteID>()
         var reordered = orderedIDs.compactMap { id -> FloorpNote? in
             guard seen.insert(id).inserted else { return nil }
             return notesByID[id]
@@ -734,8 +801,8 @@ actor FloorpNotesStore {
 
     @discardableResult
     func reorderVisibleNotes(
-        originalVisibleIDs: [String],
-        orderedVisibleIDs: [String],
+        originalVisibleIDs: [FloorpNoteID],
+        orderedVisibleIDs: [FloorpNoteID],
         expectedRevision: UInt64
     ) throws -> Bool {
         let archive = try loadArchiveForWriting()
@@ -859,7 +926,7 @@ actor FloorpNotesStore {
                             migratedFormat = .plainText
                         }
                         return FloorpNote(
-                            id: $0.id,
+                            id: FloorpNoteID($0.id),
                             title: $0.title,
                             content: $0.content,
                             createdAt: $0.createdAt,
@@ -956,9 +1023,9 @@ actor FloorpNotesStore {
         guard notes.count <= Self.maximumNoteCount else {
             throw FloorpNotesStoreError.tooManyNotes(notes.count)
         }
-        var ids = Set<String>()
+        var ids = Set<FloorpNoteID>()
         for note in notes {
-            guard !note.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard !note.id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw FloorpNotesStoreError.invalidNoteID
             }
             guard ids.insert(note.id).inserted else {

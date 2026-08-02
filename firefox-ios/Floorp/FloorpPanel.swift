@@ -564,11 +564,11 @@ enum DrawerItemSource {
     case bookmark(guid: String)
     case history(url: String)
     case download(fileURL: URL)
-    case note(id: String)
+    case note(id: FloorpNoteID)
     case none
 }
 
-struct DrawerItem: Identifiable {
+struct DrawerItem {
     let id: String
     let title: String
     let url: String?
