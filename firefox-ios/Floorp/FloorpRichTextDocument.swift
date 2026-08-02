@@ -1526,15 +1526,18 @@ struct FloorpRichTextEditorSessionCursor: Codable, Equatable, Hashable, Sendable
 struct FloorpRichTextEditorEnvelope<Payload>: Codable, Equatable, Sendable
 where Payload: Codable & Equatable & Sendable {
     let schemaVersion: Int
+    let requestID: String?
     let session: FloorpRichTextEditorSessionCursor
     let payload: Payload
 
     init(
         schemaVersion: Int = FloorpRichTextBridgeProtocol.currentSchemaVersion,
+        requestID: String? = nil,
         session: FloorpRichTextEditorSessionCursor,
         payload: Payload
     ) {
         self.schemaVersion = schemaVersion
+        self.requestID = requestID
         self.session = session
         self.payload = payload
     }
