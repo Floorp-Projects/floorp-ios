@@ -91,6 +91,9 @@ successfully synchronized base, current local notes, and the decrypted remote
 snapshot.
 
 - Stable note IDs identify records; duplicate or blank IDs fail closed.
+- Note title/content equality and no-op payload checks compare exact UTF-8
+  bytes. Unicode canonical equivalence must not collapse distinct opaque rich
+  sources.
 - A one-sided edit wins over an unchanged value.
 - A one-sided deletion removes an unchanged value.
 - An edit wins over a concurrent deletion.

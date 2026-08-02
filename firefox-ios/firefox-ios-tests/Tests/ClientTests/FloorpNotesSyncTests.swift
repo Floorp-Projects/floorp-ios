@@ -225,6 +225,73 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testCanonicallyEquivalentRichSourcesRemainByteDistinctDuringMerge() throws {
+        let prefix = #"{"root":{"children":[{"type":"future-node","text":""#
+        let suffix = #""}],"type":"root","version":1}}"#
+        let composed = prefix + "é" + suffix
+        let decomposed = prefix + "e\u{301}" + suffix
+        let composedTitle = "Café"
+        let decomposedTitle = "Cafe\u{301}"
+        let base = [
+            note(
+                "rich",
+                title: composedTitle,
+                content: composed,
+                updatedAt: 10,
+                contentFormat: .automatic
+            ),
+        ]
+        let remote = [
+            note(
+                "rich",
+                title: decomposedTitle,
+                content: decomposed,
+                updatedAt: 20,
+                contentFormat: .automatic
+            ),
+        ]
+
+        XCTAssertEqual(composed, decomposed)
+        XCTAssertNotEqual(Data(composed.utf8), Data(decomposed.utf8))
+        XCTAssertEqual(composedTitle, decomposedTitle)
+        XCTAssertNotEqual(Data(composedTitle.utf8), Data(decomposedTitle.utf8))
+
+        let result = try FloorpNotesSyncMerger.merge(base: base, local: base, remote: remote)
+        let merged = try XCTUnwrap(result.notes.first)
+
+        XCTAssertEqual(Data(merged.title.utf8), Data(decomposedTitle.utf8))
+        XCTAssertEqual(Data(merged.content.utf8), Data(decomposed.utf8))
+        XCTAssertTrue(result.conflicts.isEmpty)
+    }
+
+    func testCanonicallyEquivalentLocalRichEditStillRequiresUpload() throws {
+        let prefix = #"{"type":"doc","content":[{"type":"text","text":""#
+        let suffix = #""}]}"#
+        let composed = prefix + "é" + suffix
+        let decomposed = prefix + "e\u{301}" + suffix
+        let base = [
+            note("rich", content: composed, updatedAt: 10, contentFormat: .automatic),
+        ]
+        let local = [
+            note("rich", content: decomposed, updatedAt: 10, contentFormat: .automatic),
+        ]
+        let plan = try FloorpNotesSyncPlanner.makePlan(
+            accountID: "account",
+            baseState: FloorpNotesSyncBaseState(accountID: "account", notes: base),
+            localNotes: local,
+            remoteRecord: try remoteRecord(FloorpNotesDesktopPayload(notes: base)),
+            now: 100
+        )
+
+        XCTAssertTrue(plan.requiresUpload)
+        let payload = try JSONDecoder().decode(
+            FloorpNotesDesktopPayload.self,
+            from: try XCTUnwrap(plan.uploadPayloadData)
+        )
+        let uploaded = try XCTUnwrap(payload.contents.first)
+        XCTAssertEqual(Data(uploaded.utf8), Data(decomposed.utf8))
+    }
+
     func testRetryDoesNotDuplicateConflictCopy() throws {
         let base = [note("shared", content: "base", updatedAt: 10)]
         let local = [note("shared", content: "local", updatedAt: 20)]
@@ -385,6 +452,33 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(payload.createdAts, [100, 100])
         XCTAssertEqual(payload.updatedAts, [100, 100])
         XCTAssertTrue(first.requiresUpload)
+    }
+
+    func testPlannerPreservesOpaqueLexicalAndTipTapSourcesByteForByte() throws {
+        let lexical = """
+        {"root":{"children":[{"type":"future-lexical","version":9,"text":"雪"}],"type":"root","version":1}}
+        """
+        let tipTap = """
+        {"type":"doc","content":[{"type":"futureBlock","attrs":{"opaque":true},"content":[]}]}
+        """
+        let remoteNotes = [
+            note("lexical", content: lexical, contentFormat: .automatic),
+            note("tiptap", content: tipTap, contentFormat: .automatic),
+        ]
+        let plan = try FloorpNotesSyncPlanner.makePlan(
+            accountID: "account",
+            baseState: nil,
+            localNotes: [],
+            remoteRecord: try remoteRecord(FloorpNotesDesktopPayload(notes: remoteNotes)),
+            now: 100
+        )
+
+        XCTAssertFalse(plan.requiresUpload)
+        XCTAssertNil(plan.uploadPayloadData)
+        XCTAssertEqual(
+            plan.mergedNotes.map { Data($0.content.utf8) },
+            remoteNotes.map { Data($0.content.utf8) }
+        )
     }
 
     func testPlannerRejectsMissingRemoteIDsAfterInitialSync() throws {
@@ -1360,13 +1454,11 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
                         }?.conflictCopyID
                     )
                     XCTAssertEqual(fromID, toID, sequence.name)
-                    let fromNote = fromResult.notes.first { $0.id == fromID }
-                    let toNote = toResult.notes.first { $0.id == toID }
-                    XCTAssertEqual(
-                        fromNote,
-                        toNote,
-                        sequence.name
+                    let fromNote = try XCTUnwrap(
+                        fromResult.notes.first { $0.id == fromID }
                     )
+                    let toNote = try XCTUnwrap(toResult.notes.first { $0.id == toID })
+                    assertWireNotesEqual([fromNote], [toNote], sequence.name)
                 }
             }
         }
@@ -1404,13 +1496,31 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(
+        assertWireNotesEqual(
             result.notes,
             fixtureCase.expectedNotes.map(\.note),
             fixtureCase.name
         )
         XCTAssertEqual(result.conflicts, expectedConflicts, fixtureCase.name)
         return result
+    }
+
+    private func assertWireNotesEqual(
+        _ actual: [FloorpNote],
+        _ expected: [FloorpNote],
+        _ message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(actual.count, expected.count, message, file: file, line: line)
+        for (actual, expected) in zip(actual, expected) {
+            XCTAssertEqual(Data(actual.id.utf8), Data(expected.id.utf8), message, file: file, line: line)
+            XCTAssertEqual(Data(actual.title.utf8), Data(expected.title.utf8), message, file: file, line: line)
+            XCTAssertEqual(Data(actual.content.utf8), Data(expected.content.utf8), message, file: file, line: line)
+            XCTAssertEqual(actual.createdAt, expected.createdAt, message, file: file, line: line)
+            XCTAssertEqual(actual.updatedAt, expected.updatedAt, message, file: file, line: line)
+            XCTAssertEqual(actual.contentFormat, expected.contentFormat, message, file: file, line: line)
+        }
     }
 
     private func observedFixtureError(

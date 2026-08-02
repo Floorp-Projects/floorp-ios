@@ -234,6 +234,42 @@ struct FloorpNotesSyncRunResult: Equatable, Sendable {
     let didUpload: Bool
 }
 
+private enum FloorpNotesSyncWire {
+    static func stringsAreEqual(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf8.elementsEqual(rhs.utf8)
+    }
+
+    static func stringArraysAreEqual(_ lhs: [String], _ rhs: [String]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { stringsAreEqual($0.0, $0.1) }
+    }
+
+    static func optionalStringArraysAreEqual(
+        _ lhs: [String]?,
+        _ rhs: [String]?
+    ) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case (.some(let lhs), .some(let rhs)):
+            return stringArraysAreEqual(lhs, rhs)
+        default:
+            return false
+        }
+    }
+
+    static func payloadsAreEqual(
+        _ lhs: FloorpNotesDesktopPayload,
+        _ rhs: FloorpNotesDesktopPayload
+    ) -> Bool {
+        optionalStringArraysAreEqual(lhs.ids, rhs.ids)
+            && stringArraysAreEqual(lhs.titles, rhs.titles)
+            && stringArraysAreEqual(lhs.contents, rhs.contents)
+            && lhs.createdAts == rhs.createdAts
+            && lhs.updatedAts == rhs.updatedAts
+    }
+}
+
 /// `prepareSuccessfulSync` must compare the expected local revision and fully
 /// serialize/validate the candidate Notes archive and base without mutating
 /// either. `commitSuccessfulSync` must authenticate the store token, compare
@@ -378,7 +414,10 @@ enum FloorpNotesSyncPlanner {
             remote: normalizedRemote.notes
         )
         let requiresUpload = normalizedRemote.payload.map {
-            FloorpNotesDesktopPayload(notes: mergeResult.notes) != $0
+            !FloorpNotesSyncWire.payloadsAreEqual(
+                FloorpNotesDesktopPayload(notes: mergeResult.notes),
+                $0
+            )
         } ?? !mergeResult.notes.isEmpty
         let payloadData = requiresUpload
             ? try encodedPayload(
@@ -806,7 +845,8 @@ enum FloorpNotesSyncMerger {
     }
 
     private static func sameUserContent(_ lhs: FloorpNote, _ rhs: FloorpNote) -> Bool {
-        lhs.title == rhs.title && lhs.content == rhs.content
+        FloorpNotesSyncWire.stringsAreEqual(lhs.title, rhs.title)
+            && FloorpNotesSyncWire.stringsAreEqual(lhs.content, rhs.content)
     }
 
     private static func precedes(_ lhs: FloorpNote, _ rhs: FloorpNote) -> Bool {
@@ -864,9 +904,9 @@ enum FloorpNotesSyncMerger {
     }
 
     private static func sameWireNote(_ lhs: FloorpNote, _ rhs: FloorpNote) -> Bool {
-        lhs.id == rhs.id
-            && lhs.title == rhs.title
-            && lhs.content == rhs.content
+        FloorpNotesSyncWire.stringsAreEqual(lhs.id, rhs.id)
+            && FloorpNotesSyncWire.stringsAreEqual(lhs.title, rhs.title)
+            && FloorpNotesSyncWire.stringsAreEqual(lhs.content, rhs.content)
             && lhs.createdAt == rhs.createdAt
             && lhs.updatedAt == rhs.updatedAt
     }
