@@ -46,6 +46,20 @@ struct FloorpWebPanelSessionState: Equatable {
     }
 }
 
+enum FloorpWebPanelRestorationPolicy {
+    static func safeWebURL(_ url: URL?) -> URL? {
+        guard let url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              FloorpWebPanelNavigationPolicy.decision(
+                for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+              ) == .allow else {
+            return nil
+        }
+        return url
+    }
+}
+
 @MainActor
 protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
@@ -64,6 +78,12 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     func reload()
     func stopLoading()
     func openCurrentPageInMainBrowser()
+    func setVisible(_ isVisible: Bool)
+    /// Returns a synchronous, safe URL candidate immediately before unload.
+    /// Implementations backed by an asynchronous runtime should prefer its
+    /// latest value over observer-derived state.
+    func restorationURLForUnload() -> URL?
+    func unload()
     func invalidate()
 }
 
@@ -85,12 +105,28 @@ extension FloorpWebPanelSessionProtocol {
     func reload() {}
     func stopLoading() {}
     func openCurrentPageInMainBrowser() {}
+    func restorationURLForUnload() -> URL? {
+        FloorpWebPanelRestorationPolicy.safeWebURL(state.currentURL)
+    }
+    func unload() {
+        invalidate()
+    }
 }
 
 @MainActor
 protocol FloorpWebPanelSessionFactory {
     func makeSession(
         for key: FloorpWebPanelSessionKey,
-        configuration: FloorpWebPanelSessionConfiguration
+        configuration: FloorpWebPanelSessionConfiguration,
+        restorationURL: URL?
     ) throws -> any FloorpWebPanelSessionProtocol
+}
+
+extension FloorpWebPanelSessionFactory {
+    func makeSession(
+        for key: FloorpWebPanelSessionKey,
+        configuration: FloorpWebPanelSessionConfiguration
+    ) throws -> any FloorpWebPanelSessionProtocol {
+        try makeSession(for: key, configuration: configuration, restorationURL: nil)
+    }
 }

@@ -349,6 +349,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var displayedPanelIDs = [String]()
     private var activeWebPanelSession: (any FloorpWebPanelSessionProtocol)?
     private var webPanelStateObserverID: UUID?
+    private var explicitlyUnloadedWebPanelKey: FloorpWebPanelSessionKey?
     private var pendingRegistryFallbackIndex: Int?
     private var pendingRegistryFallbackRetryTask: Task<Void, Never>?
     private var pendingRegistryFallbackRetryID: UUID?
@@ -1308,6 +1309,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         guard let panelId = sender.accessibilityIdentifier,
               let panel = panelManager.panel(for: panelId),
               canSelectPanel(panel) else { return }
+        if explicitlyUnloadedWebPanelKey?.panelID == panelId {
+            explicitlyUnloadedWebPanelKey = nil
+        }
         selectPanel(panelId)
         loadCurrentPanel()
     }
@@ -1563,7 +1567,10 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private func loadCurrentPanel() {
         panelLoadTask?.cancel()
         notesLoadGeneration = UUID()
-        detachWebPanelContent()
+        let keepsActiveWebPanelVisible = currentPanelType == .web
+            && activeWebPanelSession?.key.panelID == presentationState.selectedPanelId
+            && activeWebPanelSession?.key.isPrivate == isPrivateProvider()
+        detachWebPanelContent(applyHiddenLifecycle: !keepsActiveWebPanelVisible)
         endNotesReordering(reload: false)
         setWebPanelToolbarVisible(currentPanelType == .web)
         items = []
@@ -1618,6 +1625,15 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         }
 
         let isPrivate = isPrivateProvider()
+        let requestedKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: panel.id,
+            isPrivate: isPrivate
+        )
+        guard explicitlyUnloadedWebPanelKey != requestedKey else {
+            showWebPanelUnloaded()
+            return
+        }
         do {
             let session = try sessionStore.session(for: panel, isPrivate: isPrivate)
             guard session.key.windowUUID == windowUUID,
@@ -1629,6 +1645,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             }
 
             activeWebPanelSession = session
+            session.setVisible(true)
             contentView.removeFromSuperview()
             contentView.translatesAutoresizingMaskIntoConstraints = false
             webPanelContainerView.addSubview(contentView)
@@ -1664,16 +1681,49 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         renderWebPanelToolbarState(state)
     }
 
-    private func detachWebPanelContent() {
+    private func detachWebPanelContent(applyHiddenLifecycle: Bool = true) {
+        let session = activeWebPanelSession
         if let webPanelStateObserverID {
-            activeWebPanelSession?.removeStateObserver(webPanelStateObserverID)
+            session?.removeStateObserver(webPanelStateObserverID)
         }
         webPanelStateObserverID = nil
-        activeWebPanelSession?.contentView?.removeFromSuperview()
+        session?.contentView?.removeFromSuperview()
+        if applyHiddenLifecycle, let session {
+            let wasHandled = presentationState.webPanelSessionStore?.hideSession(
+                session,
+                autoUnload: panelManager.config.autoUnload
+            ) == true
+            if !wasHandled {
+                session.setVisible(false)
+            }
+        }
         activeWebPanelSession = nil
         webPanelContainerView.isHidden = true
         webPanelContainerView.accessibilityValue = nil
         renderWebPanelToolbarState(nil)
+    }
+
+    /// Unloads the attached runtime without leaving stale observer, content,
+    /// or toolbar state behind. A future user-facing action can call this
+    /// boundary without reaching into the window-scoped session store.
+    @discardableResult
+    func unloadActiveWebPanel() -> Bool {
+        guard currentPanelType == .web,
+              let session = activeWebPanelSession,
+              let sessionStore = presentationState.webPanelSessionStore else {
+            return false
+        }
+
+        let key = session.key
+        detachWebPanelContent(applyHiddenLifecycle: false)
+        guard sessionStore.unloadSession(for: key) else {
+            showWebPanelUnavailable()
+            return false
+        }
+
+        explicitlyUnloadedWebPanelKey = key
+        showWebPanelUnloaded()
+        return true
     }
 
     /// Drops every reference to an invalidated private session immediately.
@@ -1728,6 +1778,13 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         searchTextField.isHidden = true
         tableView.isHidden = false
         showEmptyState(message: FloorpStrings.Drawer.webPanelUnavailable)
+    }
+
+    private func showWebPanelUnloaded() {
+        searchTextField.isHidden = true
+        tableView.isHidden = false
+        webPanelContainerView.isHidden = true
+        showEmptyState(message: FloorpStrings.Drawer.webPanelUnloaded)
     }
 
     private var canLeaveCurrentPanel: Bool {

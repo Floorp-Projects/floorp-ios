@@ -61,6 +61,10 @@ protocol FloorpWebPanelWebViewRuntime: AnyObject {
     func goForward()
     func reload()
     func stopLoading()
+    func setMediaPlaybackSuppressed(
+        _ isSuppressed: Bool,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    )
     func invalidate()
 }
 
@@ -96,6 +100,7 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
     var stateDidChange: (@MainActor () -> Void)?
     private var tabWebView: TabWebView?
     private var observations = [NSKeyValueObservation]()
+    private var mediaPlaybackController: FloorpWebPanelMediaPlaybackController?
 
     var contentView: UIView? { tabWebView }
     var webView: WKWebView? { tabWebView }
@@ -126,6 +131,7 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
             webView.isInspectable = true
         }
         tabWebView = webView
+        mediaPlaybackController = FloorpWebPanelMediaPlaybackController(webView: webView)
         observe(webView)
     }
 
@@ -154,8 +160,21 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
         tabWebView?.stopLoading()
     }
 
+    func setMediaPlaybackSuppressed(
+        _ isSuppressed: Bool,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        guard let mediaPlaybackController else {
+            completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
+            return
+        }
+        mediaPlaybackController.setSuppressed(isSuppressed, completion: completion)
+    }
+
     func invalidate() {
         stateDidChange = nil
+        mediaPlaybackController?.invalidate()
+        mediaPlaybackController = nil
         observations.forEach { $0.invalidate() }
         observations.removeAll()
         tabWebView?.stopLoading()
@@ -212,6 +231,163 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
 }
 
 @MainActor
+final class FloorpWebPanelMediaPlaybackTransitioner {
+    typealias Completion = @MainActor (Result<Void, Error>) -> Void
+    typealias NativeCallback = @MainActor () -> Void
+    typealias NativeSetter = @MainActor (
+        _ webView: WKWebView,
+        _ isSuppressed: Bool,
+        _ callback: NativeCallbackBox?
+    ) -> Void
+
+    @MainActor
+    final class NativeCallbackBox {
+        private var callback: NativeCallback?
+
+        init(_ callback: @escaping NativeCallback) {
+            self.callback = callback
+        }
+
+        func call() {
+            let callback = callback
+            self.callback = nil
+            callback?()
+        }
+    }
+
+    private let nativeSetter: NativeSetter
+
+    init(
+        nativeSetter: @escaping NativeSetter = { webView, isSuppressed, callback in
+            webView.setAllMediaPlaybackSuspended(isSuppressed) {
+                callback?.call()
+            }
+        }
+    ) {
+        self.nativeSetter = nativeSetter
+    }
+
+    func transition(
+        on webView: WKWebView,
+        isSuppressed: Bool,
+        completion: @escaping Completion
+    ) {
+        let callback = NativeCallbackBox {
+            completion(.success(()))
+        }
+        nativeSetter(webView, isSuppressed, callback)
+    }
+
+    func enforceFinalSuppression(on webView: WKWebView) {
+        nativeSetter(webView, true, nil)
+    }
+}
+
+@MainActor
+private final class FloorpWebPanelMediaPlaybackTransition {
+    private weak var webView: WKWebView?
+    private let transitioner: FloorpWebPanelMediaPlaybackTransitioner
+    private var completion: FloorpWebPanelMediaPlaybackTransitioner.Completion?
+    private var isInvalidated = false
+
+    init(
+        webView: WKWebView,
+        transitioner: FloorpWebPanelMediaPlaybackTransitioner,
+        completion: @escaping FloorpWebPanelMediaPlaybackTransitioner.Completion
+    ) {
+        self.webView = webView
+        self.transitioner = transitioner
+        self.completion = completion
+    }
+
+    func finish(with result: Result<Void, Error>) {
+        guard !isInvalidated else {
+            if let webView {
+                transitioner.enforceFinalSuppression(on: webView)
+            }
+            return
+        }
+        let completion = completion
+        self.completion = nil
+        completion?(result)
+    }
+
+    func invalidate() {
+        guard !isInvalidated else { return }
+        isInvalidated = true
+        completion = nil
+        if let webView {
+            transitioner.enforceFinalSuppression(on: webView)
+        }
+    }
+}
+
+@MainActor
+final class FloorpWebPanelMediaPlaybackController {
+    private weak var webView: WKWebView?
+    private let transitioner: FloorpWebPanelMediaPlaybackTransitioner
+    private var isSuppressed = false
+    private var transitionGeneration = UUID()
+    private var activeTransition: FloorpWebPanelMediaPlaybackTransition?
+
+    init(
+        webView: WKWebView,
+        transitioner: FloorpWebPanelMediaPlaybackTransitioner = .init()
+    ) {
+        self.webView = webView
+        self.transitioner = transitioner
+    }
+
+    func setSuppressed(
+        _ isSuppressed: Bool,
+        completion: @escaping FloorpWebPanelMediaPlaybackTransitioner.Completion
+    ) {
+        guard self.isSuppressed != isSuppressed else {
+            completion(.success(()))
+            return
+        }
+        guard let webView, activeTransition == nil else {
+            completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
+            return
+        }
+
+        self.isSuppressed = isSuppressed
+        let generation = UUID()
+        transitionGeneration = generation
+        let transition = FloorpWebPanelMediaPlaybackTransition(
+            webView: webView,
+            transitioner: transitioner
+        ) { [weak self] result in
+            guard let self, transitionGeneration == generation else { return }
+            activeTransition = nil
+            completion(result)
+        }
+        activeTransition = transition
+        transitioner.transition(
+            on: webView,
+            isSuppressed: isSuppressed
+        ) { [transition] result in
+            transition.finish(with: result)
+        }
+    }
+
+    func invalidate() {
+        transitionGeneration = UUID()
+        if let activeTransition {
+            activeTransition.invalidate()
+        } else if let webView {
+            transitioner.enforceFinalSuppression(on: webView)
+        }
+        activeTransition = nil
+        self.webView = nil
+    }
+}
+
+private enum FloorpWebPanelMediaPlaybackError: Error {
+    case runtimeUnavailable
+}
+
+@MainActor
 final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     let key: FloorpWebPanelSessionKey
     private(set) var state: FloorpWebPanelSessionState
@@ -223,8 +399,14 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private var observers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
     private var installationGeneration = UUID()
     private var areContentRulesReady = false
-    private var hasPendingHomeLoad = true
+    private var pendingInitialLoadURL: URL?
+    private var pendingRestorationCandidateURL: URL?
     private var isInvalidated = false
+    private var isVisible = true
+    private var desiredMediaPlaybackSuppression = false
+    private var appliedMediaPlaybackSuppression = false
+    private var isMediaPlaybackTransitionInFlight = false
+    private var mediaPlaybackTransitionGeneration = UUID()
 
     var contentView: UIView? {
         runtime?.contentView
@@ -236,12 +418,16 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         runtime: any FloorpWebPanelWebViewRuntime,
         contentRuleInstallerFactory: any FloorpWebPanelContentRuleInstallerFactory,
         navigationExecutor: FloorpWebPanelNavigationExecutor,
+        restorationURL: URL? = nil,
         privateBrowsingSessionLease: WKPrivateBrowsingSessionLease? = nil
     ) {
         self.key = key
         self.state = FloorpWebPanelSessionState(configuration: configuration)
         self.runtime = runtime
         self.navigationExecutor = navigationExecutor
+        let safeRestorationURL = FloorpWebPanelRestorationPolicy.safeWebURL(restorationURL)
+        self.pendingInitialLoadURL = safeRestorationURL ?? configuration.homeURL
+        self.pendingRestorationCandidateURL = safeRestorationURL
         self.privateBrowsingSessionLease = privateBrowsingSessionLease
 
         runtime.setNavigationExecutor(navigationExecutor)
@@ -283,11 +469,12 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
     func loadHome() {
         guard !isInvalidated else { return }
+        pendingRestorationCandidateURL = nil
         guard areContentRulesReady else {
-            hasPendingHomeLoad = true
+            pendingInitialLoadURL = state.configuration.homeURL
             return
         }
-        performHomeLoad()
+        performLoad(state.configuration.homeURL)
     }
 
     func goBack() {
@@ -315,11 +502,33 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         navigationExecutor?.openInMainBrowserIfSafe(currentURL)
     }
 
+    func setVisible(_ isVisible: Bool) {
+        guard !isInvalidated, self.isVisible != isVisible else { return }
+        self.isVisible = isVisible
+        updateMediaPlaybackSuppression()
+    }
+
+    func restorationURLForUnload() -> URL? {
+        guard !isInvalidated else { return nil }
+        if let runtimeURL = runtime?.currentURL {
+            // A non-nil runtime URL is authoritative. In particular, do not
+            // fall back to stale safe state when the latest URL is unsafe.
+            return FloorpWebPanelRestorationPolicy.safeWebURL(runtimeURL)
+        }
+        if let pendingRestorationCandidateURL {
+            return pendingRestorationCandidateURL
+        }
+        return FloorpWebPanelRestorationPolicy.safeWebURL(state.currentURL)
+    }
+
     func invalidate() {
         guard !isInvalidated else { return }
         isInvalidated = true
         installationGeneration = UUID()
-        hasPendingHomeLoad = false
+        mediaPlaybackTransitionGeneration = UUID()
+        pendingInitialLoadURL = nil
+        pendingRestorationCandidateURL = nil
+        isMediaPlaybackTransitionInFlight = false
         observers.removeAll()
         contentRuleInstaller?.invalidate()
         contentRuleInstaller = nil
@@ -353,18 +562,52 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private func finishContentRuleInstallation() {
         guard !isInvalidated, !areContentRulesReady else { return }
         areContentRulesReady = true
-        guard hasPendingHomeLoad else { return }
-        hasPendingHomeLoad = false
-        performHomeLoad()
+        guard let initialLoadURL = pendingInitialLoadURL else { return }
+        pendingInitialLoadURL = nil
+        performLoad(initialLoadURL)
     }
 
-    private func performHomeLoad() {
-        runtime?.load(URLRequest(url: state.configuration.homeURL))
+    private func performLoad(_ url: URL) {
+        runtime?.load(URLRequest(url: url))
+    }
+
+    private func updateMediaPlaybackSuppression() {
+        let shouldSuppress = !isVisible
+        guard desiredMediaPlaybackSuppression != shouldSuppress else { return }
+        desiredMediaPlaybackSuppression = shouldSuppress
+        startMediaPlaybackTransitionIfNeeded()
+    }
+
+    private func startMediaPlaybackTransitionIfNeeded() {
+        guard !isInvalidated,
+              !isMediaPlaybackTransitionInFlight,
+              desiredMediaPlaybackSuppression != appliedMediaPlaybackSuppression,
+              let runtime else {
+            return
+        }
+
+        let target = desiredMediaPlaybackSuppression
+        let generation = mediaPlaybackTransitionGeneration
+        isMediaPlaybackTransitionInFlight = true
+        runtime.setMediaPlaybackSuppressed(target) { [weak self] _ in
+            guard let self,
+                  !self.isInvalidated,
+                  self.mediaPlaybackTransitionGeneration == generation else {
+                return
+            }
+            self.isMediaPlaybackTransitionInFlight = false
+            self.appliedMediaPlaybackSuppression = target
+            self.startMediaPlaybackTransitionIfNeeded()
+        }
     }
 
     private func synchronizeState() {
         guard !isInvalidated, let runtime else { return }
-        state.currentURL = runtime.currentURL
+        let currentURL = runtime.currentURL
+        if currentURL != nil {
+            pendingRestorationCandidateURL = nil
+        }
+        state.currentURL = currentURL
         state.pageTitle = runtime.pageTitle
         state.canGoBack = runtime.canGoBack
         state.canGoForward = runtime.canGoForward
@@ -411,7 +654,8 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
 
     func makeSession(
         for key: FloorpWebPanelSessionKey,
-        configuration: FloorpWebPanelSessionConfiguration
+        configuration: FloorpWebPanelSessionConfiguration,
+        restorationURL: URL?
     ) throws -> any FloorpWebPanelSessionProtocol {
         let privateBrowsingSessionLease = key.isPrivate
             ? privateBrowsingSessionCoordinator.acquireLease()
@@ -432,6 +676,7 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
                 isPrivate: key.isPrivate,
                 openInMainBrowser: openInMainBrowser
             ),
+            restorationURL: restorationURL,
             privateBrowsingSessionLease: privateBrowsingSessionLease
         )
     }
