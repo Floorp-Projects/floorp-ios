@@ -49,6 +49,7 @@ extension BrowserViewController {
 
     func setupFloorp() {
         guard FloorpFlags.isOverlayDrawerEnabled else { return }
+        floorpPanelPresentationState.observePrivateTabLifecycle(in: tabManager)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(floorpToggleDrawerNotification(_:)),

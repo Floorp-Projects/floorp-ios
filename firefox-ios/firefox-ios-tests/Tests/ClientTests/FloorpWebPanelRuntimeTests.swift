@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
+import TestKit
 import UIKit
 import XCTest
 @testable import Client
@@ -129,6 +130,131 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         let replacementPrivate = try mockSession(from: store.session(for: panel, isPrivate: true))
         XCTAssertTrue(regular === reusedRegular)
         XCTAssertFalse(privateSession === replacementPrivate)
+    }
+
+    func testPresentationStatePurgesPrivateSessionsWhenLastPrivateTabCloses() throws {
+        let windowUUID = WindowUUID()
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(windowUUID: windowUUID, factory: factory)
+        let panel = makePanel(id: "portal")
+        let regular = try mockSession(from: store.session(for: panel, isPrivate: false))
+        let privateSession = try mockSession(from: store.session(for: panel, isPrivate: true))
+        let state = FloorpPanelPresentationState(
+            windowUUID: windowUUID,
+            webPanelSessionStore: store
+        )
+        let tabManager = MockTabManager(windowUUID: windowUUID)
+        let closedPrivateTab = Tab(
+            profile: MockProfile(),
+            isPrivate: true,
+            windowUUID: windowUUID,
+            documentLogger: DocumentLogger(logger: MockLogger())
+        )
+
+        tabManager.privateTabs = [closedPrivateTab]
+        state.observePrivateTabLifecycle(in: tabManager)
+        tabManager.privateTabs = []
+        state.tabManager(tabManager, didRemoveTab: closedPrivateTab, isRestoring: false)
+
+        XCTAssertEqual(regular.invalidationCount, 0)
+        XCTAssertEqual(privateSession.invalidationCount, 1)
+        XCTAssertEqual(store.cachedSessionKeys, [regular.key])
+    }
+
+    func testPresentationStateKeepsPrivateSessionsWhileAnotherPrivateTabExists() throws {
+        let windowUUID = WindowUUID()
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(windowUUID: windowUUID, factory: factory)
+        let privateSession = try mockSession(
+            from: store.session(for: makePanel(id: "portal"), isPrivate: true)
+        )
+        let state = FloorpPanelPresentationState(
+            windowUUID: windowUUID,
+            webPanelSessionStore: store
+        )
+        let tabManager = MockTabManager(windowUUID: windowUUID)
+        let remainingPrivateTab = Tab(
+            profile: MockProfile(),
+            isPrivate: true,
+            windowUUID: windowUUID,
+            documentLogger: DocumentLogger(logger: MockLogger())
+        )
+        tabManager.privateTabs = [remainingPrivateTab]
+
+        state.observePrivateTabLifecycle(in: tabManager)
+        state.tabManager(tabManager, didRemoveTab: remainingPrivateTab, isRestoring: false)
+
+        XCTAssertEqual(privateSession.invalidationCount, 0)
+        XCTAssertEqual(store.cachedSessionKeys, [privateSession.key])
+    }
+
+    func testPresentationStateRegistersAndRemovesPrivateTabLifecycleObserver() {
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        let tabManager = FloorpRecordingTabManager()
+
+        state.observePrivateTabLifecycle(in: tabManager)
+        XCTAssertTrue(tabManager.addedDelegate === state)
+
+        state.invalidateWebPanelRuntime()
+        XCTAssertTrue(tabManager.removedDelegate === state)
+    }
+
+    func testPresentationStateIgnoresCallbacksFromPreviouslyObservedManager() throws {
+        let windowUUID = WindowUUID()
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(windowUUID: windowUUID, factory: factory)
+        let privateSession = try mockSession(
+            from: store.session(for: makePanel(id: "portal"), isPrivate: true)
+        )
+        let state = FloorpPanelPresentationState(
+            windowUUID: windowUUID,
+            webPanelSessionStore: store
+        )
+        let previousManager = MockTabManager(windowUUID: windowUUID)
+        let currentManager = MockTabManager(windowUUID: windowUUID)
+        let closedPrivateTab = Tab(
+            profile: MockProfile(),
+            isPrivate: true,
+            windowUUID: windowUUID,
+            documentLogger: DocumentLogger(logger: MockLogger())
+        )
+        previousManager.privateTabs = [closedPrivateTab]
+        currentManager.privateTabs = [closedPrivateTab]
+
+        state.observePrivateTabLifecycle(in: previousManager)
+        state.observePrivateTabLifecycle(in: currentManager)
+        previousManager.privateTabs = []
+        currentManager.privateTabs = []
+        state.tabManager(previousManager, didRemoveTab: closedPrivateTab, isRestoring: false)
+
+        XCTAssertEqual(privateSession.invalidationCount, 0)
+        XCTAssertEqual(store.cachedSessionKeys, [privateSession.key])
+
+        state.tabManager(currentManager, didRemoveTab: closedPrivateTab, isRestoring: false)
+
+        XCTAssertEqual(privateSession.invalidationCount, 1)
+        XCTAssertTrue(store.cachedSessionKeys.isEmpty)
+    }
+
+    func testPresentationStateRejectsForeignWindowLifecycleObserver() throws {
+        let windowUUID = WindowUUID()
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(windowUUID: windowUUID, factory: factory)
+        let privateSession = try mockSession(
+            from: store.session(for: makePanel(id: "portal"), isPrivate: true)
+        )
+        let state = FloorpPanelPresentationState(
+            windowUUID: windowUUID,
+            webPanelSessionStore: store
+        )
+        let foreignManager = FloorpRecordingTabManager(windowUUID: WindowUUID())
+        foreignManager.privateTabs = []
+
+        state.observePrivateTabLifecycle(in: foreignManager)
+
+        XCTAssertNil(foreignManager.addedDelegate)
+        XCTAssertEqual(privateSession.invalidationCount, 0)
+        XCTAssertEqual(store.cachedSessionKeys, [privateSession.key])
     }
 
     func testReconcileRemovesMissingInvalidAndDuplicatePanels() throws {
@@ -319,7 +445,129 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
 }
 
 @MainActor
+private final class FloorpRecordingTabManager: MockTabManager {
+    private(set) weak var addedDelegate: (any TabManagerDelegate)?
+    private(set) weak var removedDelegate: (any TabManagerDelegate)?
+
+    override func addDelegate(_ delegate: any TabManagerDelegate) {
+        addedDelegate = delegate
+    }
+
+    override func removeDelegate(
+        _ delegate: any TabManagerDelegate,
+        completion: (() -> Void)?
+    ) {
+        removedDelegate = delegate
+        completion?()
+    }
+}
+
+@MainActor
+private final class FloorpMutablePrivacyState {
+    var isPrivate: Bool
+
+    init(isPrivate: Bool) {
+        self.isPrivate = isPrivate
+    }
+}
+
+@MainActor
 final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
+    func testLastPrivateTabCloseRebindsVisibleWebPanelToRegularSession() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let privacyState = FloorpMutablePrivacyState(isPrivate: true)
+        let drawer = fixture.makeDrawer(isPrivateProvider: { privacyState.isPrivate })
+        let tabManager = MockTabManager(windowUUID: .XCTestDefaultUUID)
+        let privateTab = Tab(
+            profile: MockProfile(),
+            isPrivate: true,
+            windowUUID: .XCTestDefaultUUID,
+            documentLogger: DocumentLogger(logger: MockLogger())
+        )
+        tabManager.privateTabs = [privateTab]
+        fixture.presentationState.observePrivateTabLifecycle(in: tabManager)
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let presented = expectation(description: "Private web panel drawer presented")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        let privateSession = try XCTUnwrap(fixture.factory.sessions.first)
+        XCTAssertTrue(privateSession.key.isPrivate)
+        XCTAssertEqual(privateSession.stateObserverCount, 1)
+
+        privacyState.isPrivate = false
+        tabManager.privateTabs = []
+        fixture.presentationState.tabManager(
+            tabManager,
+            didRemoveTab: privateTab,
+            isRestoring: false
+        )
+
+        XCTAssertEqual(privateSession.invalidationCount, 1)
+        XCTAssertEqual(privateSession.stateObserverCount, 0)
+        XCTAssertNil(privateSession.contentView?.superview)
+        XCTAssertEqual(fixture.factory.sessions.count, 2)
+        let regularSession = try XCTUnwrap(fixture.factory.sessions.last)
+        XCTAssertFalse(regularSession.key.isPrivate)
+        XCTAssertEqual(regularSession.stateObserverCount, 1)
+        XCTAssertNotNil(regularSession.contentView?.superview)
+
+        let dismissed = expectation(description: "Rebound drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+    }
+
+    func testLastPrivateTabCloseDismissesDrawerUntilSelectionLeavesPrivateMode() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: true)
+        let tabManager = MockTabManager(windowUUID: .XCTestDefaultUUID)
+        let privateTab = Tab(
+            profile: MockProfile(),
+            isPrivate: true,
+            windowUUID: .XCTestDefaultUUID,
+            documentLogger: DocumentLogger(logger: MockLogger())
+        )
+        tabManager.privateTabs = [privateTab]
+        fixture.presentationState.observePrivateTabLifecycle(in: tabManager)
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let presented = expectation(description: "Private web panel drawer presented")
+        let dismissed = expectation(description: "Stale private drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        let privateSession = try XCTUnwrap(fixture.factory.sessions.first)
+
+        tabManager.privateTabs = []
+        fixture.presentationState.tabManager(
+            tabManager,
+            didRemoveTab: privateTab,
+            isRestoring: false
+        )
+
+        await fulfillment(of: [dismissed], timeout: 1)
+        XCTAssertEqual(privateSession.invalidationCount, 1)
+        XCTAssertEqual(privateSession.stateObserverCount, 0)
+        XCTAssertNil(privateSession.contentView?.superview)
+        XCTAssertNil(fixture.presentationState.activeDrawer)
+        XCTAssertEqual(fixture.factory.sessions.count, 1)
+    }
+
     func testFailedPresentationDetachesWebPanelContentAndObserver() throws {
         let fixture = try makeDrawerFixture()
         defer { fixture.cleanup() }
@@ -846,13 +1094,19 @@ private struct FloorpWebPanelDrawerFixture {
     let factory: MockFloorpWebPanelSessionFactory
 
     func makeDrawer(isPrivate: Bool) -> FloorpOverlayDrawerViewController {
+        makeDrawer(isPrivateProvider: { isPrivate })
+    }
+
+    func makeDrawer(
+        isPrivateProvider: @escaping @MainActor () -> Bool
+    ) -> FloorpOverlayDrawerViewController {
         FloorpOverlayDrawerViewController(
             panelManager: manager,
             notesStore: .shared,
             presentationState: presentationState,
             themeManager: MockThemeManager(),
             notificationCenter: MockNotificationCenter(),
-            isPrivateProvider: { isPrivate }
+            isPrivateProvider: isPrivateProvider
         )
     }
 

@@ -69,9 +69,11 @@ final class FloorpWebPanelSessionStore {
         return try makeSession(for: key, configuration: configuration)
     }
 
-    func closePrivateSessions() {
+    @discardableResult
+    func closePrivateSessions() -> Bool {
         let keys = entries.keys.filter(\.isPrivate)
         keys.forEach(removeSession)
+        return !keys.isEmpty
     }
 
     func reconcile(with panels: [FloorpPanel]) {
