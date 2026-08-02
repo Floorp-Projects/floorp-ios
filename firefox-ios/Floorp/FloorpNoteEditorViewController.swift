@@ -172,12 +172,15 @@ final class FloorpNoteSaveCoordinator {
     private(set) var draft: FloorpNote
     private(set) var changeVersion = 0
     private(set) var savedVersion = 0
+    private(set) var contentChangeVersion = 0
+    private(set) var savedContentVersion = 0
     private(set) var hasPersistedNote: Bool
     private(set) var lastFailure: Failure?
     private var isSaving = false
     private var saveWaiters = [CheckedContinuation<Void, Never>]()
 
     var hasUnsavedChanges: Bool { savedVersion != changeVersion }
+    var hasUnsavedContentChanges: Bool { savedContentVersion != contentChangeVersion }
 
     init(draft: FloorpNote, isPersisted: Bool, persistence: FloorpNotePersistence) {
         self.draft = draft
@@ -202,6 +205,7 @@ final class FloorpNoteSaveCoordinator {
         guard draft.content != content || draft.contentFormat != nextFormat else { return false }
         draft.content = content
         draft.contentFormat = nextFormat
+        contentChangeVersion += 1
         markChanged()
         return true
     }
@@ -282,10 +286,12 @@ final class FloorpNoteSaveCoordinator {
 
         repeat {
             let versionToSave = changeVersion
+            let contentVersionToSave = contentChangeVersion
             let noteToSave = draft
             do {
                 let persistedNote = try await persistence.save(noteToSave)
                 savedVersion = versionToSave
+                savedContentVersion = contentVersionToSave
                 hasPersistedNote = true
                 lastFailure = nil
                 adoptPersistenceIdentity(from: persistedNote)
@@ -321,6 +327,8 @@ final class FloorpNoteSaveCoordinator {
         draft = note
         changeVersion = 0
         savedVersion = 0
+        contentChangeVersion = 0
+        savedContentVersion = 0
         hasPersistedNote = true
         lastFailure = nil
         return note
@@ -330,10 +338,12 @@ final class FloorpNoteSaveCoordinator {
         await waitUntilIdle()
         isSaving = true
         let versionToSave = changeVersion
+        let contentVersionToSave = contentChangeVersion
         let noteToSave = draft
         do {
             let persistedNote = try await persistence.saveAsCopy(noteToSave)
             savedVersion = versionToSave
+            savedContentVersion = contentVersionToSave
             hasPersistedNote = true
             lastFailure = nil
             adoptPersistenceIdentity(from: persistedNote)
@@ -521,6 +531,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private var queuedRichCommands = [FloorpRichTextCommand]()
     private var isProcessingRichUpdates = false
     private var richCommandInFlight: RichCommandFlight?
+    private var richCommandFailure: Error?
     private var richCommandQuiescenceWaiters = [CheckedContinuation<Void, Never>]()
     private var richUpdateDrainTask: Task<Void, Never>?
     private var richAuthoritativeFlushTask: Task<Void, Error>?
@@ -555,7 +566,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     private var recoverableRichSource: String? {
         if let richRecoveryDraft { return richRecoveryDraft.source }
-        guard editorMode == .richText, saveCoordinator.hasUnsavedChanges else { return nil }
+        guard editorMode == .richText,
+              saveCoordinator.hasUnsavedContentChanges else {
+            return nil
+        }
         return saveCoordinator.draft.content
     }
 
@@ -1450,6 +1464,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         queuedRichStates.removeAll()
         queuedRichCommands.removeAll()
         richCommandInFlight = nil
+        richCommandFailure = nil
         resumeRichCommandQuiescenceWaitersIfNeeded()
         latestRichEditorState = nil
         richBridgeRecoverySession = nil
@@ -1460,7 +1475,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         editor.load(
             document: document,
             session: session,
-            isDirty: saveCoordinator.hasUnsavedChanges
+            isDirty: saveCoordinator.hasUnsavedContentChanges
         )
     }
 
@@ -1493,6 +1508,14 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         !richCommandQuiescenceWaiters.isEmpty
     }
 
+    var hasImageImportWaitersForTesting: Bool {
+        !imageImportWaiters.isEmpty
+    }
+
+    var hasPendingRichBridgeRecoveryForTesting: Bool {
+        richBridgeRecoverySession != nil
+    }
+
     var isClosingForTesting: Bool {
         isClosing
     }
@@ -1512,6 +1535,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     func beginImageImportForTesting() -> UUID {
         cancelImageImport()
         imageImportFailure = nil
+        richCommandFailure = nil
         let importID = UUID()
         imageImportID = importID
         imageImportCancellation = FloorpRichTextImageImportCancellation()
@@ -1564,6 +1588,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         queuedRichStates.removeAll()
         queuedRichCommands.removeAll()
         richCommandInFlight = nil
+        richCommandFailure = nil
         resumeRichCommandQuiescenceWaitersIfNeeded()
         invalidateRichEditor()
     }
@@ -1649,6 +1674,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         queuedRichStates.removeAll()
         queuedRichCommands.removeAll()
         richCommandInFlight = nil
+        richCommandFailure = nil
         resumeRichCommandQuiescenceWaitersIfNeeded()
         latestRichEditorState = nil
         richRecoveryDraft = nil
@@ -1832,6 +1858,12 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
                 sendNextRichCommandIfPossible()
                 resumeRichCommandQuiescenceWaitersIfNeeded()
             }
+        } catch let error as FloorpRichTextCommandError {
+            richCommandInFlight = nil
+            richCommandFailure = error
+            updateSaveState(.failed)
+            resumeRichCommandQuiescenceWaitersIfNeeded()
+            sendNextRichCommandIfPossible()
         } catch {
             richCommandInFlight = nil
             recoverRichEditorAfterBridgeFailure(error)
@@ -2151,8 +2183,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     private func recoverRichEditorAfterBridgeFailure(_ error: Error) {
         guard !isEditorSessionTerminated,
-              editorMode == .richText,
-              richBridgeRecoverySession == nil else {
+              editorMode == .richText else {
+            return
+        }
+        guard isClosing || richBridgeRecoverySession == nil else {
             return
         }
         richBridgeFailureVersion += 1
@@ -2169,7 +2203,11 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         // Closing must fail instead of resurrecting a web-content process.
         // Once the failed close re-enables the session, it retries this
         // recorded recovery through the normal replacement path.
-        guard !isClosing else { return }
+        guard !isClosing else {
+            richBridgeRecoverySession = nil
+            invalidateRichEditor()
+            return
+        }
 
         guard let document = richDocument,
               let session = richSession,
@@ -2190,7 +2228,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         replaceRichEditor(
             document: document,
             session: replacement,
-            isDirty: saveCoordinator.hasUnsavedChanges
+            isDirty: saveCoordinator.hasUnsavedContentChanges
         )
     }
 
@@ -2236,6 +2274,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         try await waitForImageImportToQuiesce()
         await waitForRichCommandsToQuiesce()
         await waitForRichUpdateDrain()
+        if let failure = richCommandFailure {
+            richCommandFailure = nil
+            throw failure
+        }
         guard startingBridgeFailureVersion == richBridgeFailureVersion,
               richBridgeRecoverySession == nil else {
             throw richBridgeFailure ?? FloorpRichTextFlushError.editorUnavailable
@@ -2281,6 +2323,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         try await waitForImageImportToQuiesce()
         await waitForRichCommandsToQuiesce()
         await waitForRichUpdateDrain()
+        if let failure = richCommandFailure {
+            richCommandFailure = nil
+            throw failure
+        }
         guard startingBridgeFailureVersion == richBridgeFailureVersion,
               richBridgeRecoverySession == nil else {
             throw richBridgeFailure ?? FloorpRichTextFlushError.editorUnavailable
@@ -2463,6 +2509,7 @@ extension FloorpNoteEditorViewController: PHPickerViewControllerDelegate {
         }
         cancelImageImport()
         imageImportFailure = nil
+        richCommandFailure = nil
         let importID = UUID()
         let cancellation = FloorpRichTextImageImportCancellation()
         imageImportID = importID
@@ -2496,20 +2543,24 @@ extension FloorpNoteEditorViewController: PHPickerViewControllerDelegate {
 
 enum FloorpRichTextImageEncoder {
     static let maximumSourceBytes = 64 * 1_024 * 1_024
+    static let maximumSourcePixelDimension: UInt64 = 16_384
+    static let maximumSourcePixels: UInt64 = 64 * 1_024 * 1_024
 
     static func encode(_ data: Data) -> FloorpRichTextImage? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard !data.isEmpty,
               data.count <= maximumSourceBytes,
-              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+              let source = CGImageSourceCreateWithData(data as CFData, options) else {
             return nil
         }
         return encode(source)
     }
 
     static func encodeFile(at url: URL) -> FloorpRichTextImage? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard !Task.isCancelled,
               isAllowedImageFile(at: url),
-              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+              let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
             return nil
         }
         return encode(source)
@@ -2550,6 +2601,7 @@ enum FloorpRichTextImageEncoder {
     }
 
     private static func encode(_ source: CGImageSource) -> FloorpRichTextImage? {
+        guard sourceMetadataIsSafe(source) else { return nil }
         var maximumDimension: CGFloat = 1_600
         var quality: CGFloat = 0.82
 
@@ -2586,6 +2638,76 @@ enum FloorpRichTextImageEncoder {
             }
         }
         return nil
+    }
+
+    private static func sourceMetadataIsSafe(_ source: CGImageSource) -> Bool {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard CGImageSourceGetStatus(source) == .statusComplete,
+              CGImageSourceGetCount(source) > 0,
+              let sourceProperties = CGImageSourceCopyProperties(
+                source,
+                options
+              ) as? [CFString: Any],
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              let frameProperties = CGImageSourceCopyPropertiesAtIndex(
+                source,
+                0,
+                options
+              ) as? [CFString: Any],
+              dimensionsAreSafe(
+                frameProperties,
+                widthKey: kCGImagePropertyPixelWidth,
+                heightKey: kCGImagePropertyPixelHeight
+              ) else {
+            return false
+        }
+        let canvasKeys: [CFString: (width: CFString, height: CFString)] = [
+            kCGImagePropertyGIFDictionary: (
+                kCGImagePropertyGIFCanvasPixelWidth,
+                kCGImagePropertyGIFCanvasPixelHeight
+            ),
+            kCGImagePropertyPNGDictionary: (
+                kCGImagePropertyAPNGCanvasPixelWidth,
+                kCGImagePropertyAPNGCanvasPixelHeight
+            ),
+            kCGImagePropertyWebPDictionary: (
+                kCGImagePropertyWebPCanvasPixelWidth,
+                kCGImagePropertyWebPCanvasPixelHeight
+            ),
+            kCGImagePropertyHEICSDictionary: (
+                kCGImagePropertyHEICSCanvasPixelWidth,
+                kCGImagePropertyHEICSCanvasPixelHeight
+            ),
+        ]
+        return canvasKeys.allSatisfy { dictionaryKey, dimensionKeys in
+            guard let dictionary = sourceProperties[dictionaryKey] as? [CFString: Any],
+                  dictionary[dimensionKeys.width] != nil
+                    || dictionary[dimensionKeys.height] != nil else {
+                return true
+            }
+            return dimensionsAreSafe(
+                dictionary,
+                widthKey: dimensionKeys.width,
+                heightKey: dimensionKeys.height
+            )
+        }
+    }
+
+    private static func dimensionsAreSafe(
+        _ properties: [CFString: Any],
+        widthKey: CFString,
+        heightKey: CFString
+    ) -> Bool {
+        guard let width = (properties[widthKey] as? NSNumber)?.uint64Value,
+              let height = (properties[heightKey] as? NSNumber)?.uint64Value,
+              width > 0,
+              height > 0,
+              width <= maximumSourcePixelDimension,
+              height <= maximumSourcePixelDimension else {
+            return false
+        }
+        let (pixels, didOverflow) = width.multipliedReportingOverflow(by: height)
+        return !didOverflow && pixels <= maximumSourcePixels
     }
 
     private static func downsample(
@@ -2750,6 +2872,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     private var suspendsUpdateDeliveryForTesting = false
     private var bufferedUpdatesForTesting = [FloorpRichTextUpdateEnvelope]()
     private var stalledInitialNavigationAttemptsForTesting = 0
+    private var initialNavigationStartCountForTesting = 0
 #endif
 
     override init(frame: CGRect) {
@@ -2974,6 +3097,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         initialNavigation != nil || initialNavigationWatchdogTask != nil
     }
 
+    var startedInitialNavigationCountForTesting: Int {
+        initialNavigationStartCountForTesting
+    }
+
     func setUpdateDeliverySuspendedForTesting(_ isSuspended: Bool) {
         suspendsUpdateDeliveryForTesting = isSuspended
         guard !isSuspended else { return }
@@ -3132,6 +3259,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         isPageReady = false
         didAuthorizeInitialNavigation = false
 #if TESTING
+        initialNavigationStartCountForTesting += 1
         if stalledInitialNavigationAttemptsForTesting > 0 {
             stalledInitialNavigationAttemptsForTesting -= 1
             initialNavigation = nil

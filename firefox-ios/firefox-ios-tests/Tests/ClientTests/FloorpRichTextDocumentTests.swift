@@ -462,6 +462,10 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         let document = try FloorpRichTextCodec.decode(minimalDocument())
         let currentSession = try session()
         let dataPayload = safePNGDataURL.split(separator: ",", maxSplits: 1)[1]
+        let safeJPEGDataURL = rasterDataURL(
+            mime: "jpeg",
+            data: try jpegData(width: 1, height: 1)
+        )
         let images: [(input: FloorpRichTextImage, normalizedSource: String)] = [
             (
                 FloorpRichTextImage(source: safePNGDataURL, alt: "pixel", width: 40),
@@ -473,6 +477,10 @@ final class FloorpRichTextDocumentTests: XCTestCase {
                     alt: "uppercase metadata"
                 ),
                 "data:image/png;base64," + dataPayload
+            ),
+            (
+                FloorpRichTextImage(source: safeJPEGDataURL, alt: "jpeg pixel"),
+                safeJPEGDataURL
             ),
         ]
 
@@ -537,7 +545,7 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         )
         let tooManyCumulativePixels = rasterDataURL(
             mime: "gif",
-            data: try gifData(width: 1_000, height: 1_000, frameCount: 17)
+            data: try gifData(width: 1_000, height: 1_000, frameCount: 16)
         )
 
         XCTAssertLessThan(
@@ -550,6 +558,25 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         )
         XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(tooManyFrames))
         XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(tooManyCumulativePixels))
+    }
+
+    func testImagePolicyAccountsForAnimatedCanvasWithoutRewritingSource() throws {
+        let canvasFrameMismatch = rasterDataURL(
+            mime: "gif",
+            data: animatedGIF(width: 4_096, height: 4_096, frameCount: 1)
+        )
+        XCTAssertLessThan(
+            canvasFrameMismatch.utf8.count,
+            FloorpRichTextImagePolicy.maximumPersistedSourceBytes
+        )
+        XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(canvasFrameMismatch))
+
+        let source = #"{"type":"doc","content":[{"type":"image","attrs":{"src":"\#(canvasFrameMismatch)"}}]}"#
+        let document = try FloorpRichTextCodec.decode(source)
+
+        XCTAssertFalse(document.compatibility.isEditable)
+        XCTAssertTrue(document.compatibility.issues.contains { $0.kind == .unsafeImageSource })
+        XCTAssertEqual(try FloorpRichTextCodec.encode(document), source)
     }
 
     func testImagePolicyRejectsZeroAndPerFramePixelBudgets() throws {
@@ -590,6 +617,33 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         XCTAssertFalse(excessiveDocument.compatibility.isEditable)
         XCTAssertTrue(excessiveDocument.compatibility.issues.contains { $0.kind == .resourceLimit })
         XCTAssertEqual(try FloorpRichTextCodec.encode(excessiveDocument), excessiveSource)
+    }
+
+    func testImageCommandRejectsProjectedDocumentAggregateLimit() throws {
+        let imageSource = rasterDataURL(
+            mime: "png",
+            data: try encodedRasterData(width: 2_048, height: 2_048, type: .png)
+        )
+        let imageNode = #"{"type":"image","attrs":{"src":"\#(imageSource)"}}"#
+        let boundarySource = "{\"type\":\"doc\",\"content\":["
+            + Array(repeating: imageNode, count: 4).joined(separator: ",")
+            + "]}"
+        let document = try FloorpRichTextCodec.decode(boundarySource)
+        XCTAssertTrue(document.compatibility.isEditable)
+
+        XCTAssertThrowsError(
+            try FloorpRichTextCommandPlanner.plan(
+                .insertImage(FloorpRichTextImage(source: safePNGDataURL)),
+                for: document,
+                session: try session()
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpRichTextCommandError,
+                .imageResourceLimitExceeded
+            )
+        }
+        XCTAssertEqual(try FloorpRichTextCodec.encode(document), boundarySource)
     }
 
     func testImageCommandRejectsObjectURLsVectorsAndMismatchedData() throws {
@@ -859,6 +913,34 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         XCTAssertEqual(list["type"] as? String, "orderedList")
         XCTAssertEqual((list["attrs"] as? [String: Any])?["start"] as? Int, 3)
         XCTAssertEqual((list["content"] as? [[String: Any]])?.count, 2)
+    }
+
+    func testOrderedListStartOutsideSigned32BitRemainsReadOnlyAndByteExact() throws {
+        let unsupportedStarts = [Int(Int32.min) - 1, Int(Int32.max) + 1]
+
+        for start in unsupportedStarts {
+            let tipTapSource = """
+            { "type":"doc", "content":[{
+              "type":"orderedList", "attrs":{"start":\(start)}, "content":[{
+                "type":"listItem", "content":[{"type":"paragraph"}]
+              }]
+            }] }
+            """
+            let document = try FloorpRichTextCodec.decode(tipTapSource)
+            XCTAssertFalse(document.compatibility.isEditable, tipTapSource)
+            XCTAssertEqual(try FloorpRichTextCodec.encode(document), tipTapSource)
+
+            let lexicalSource = lexicalListFixture(
+                listType: "number",
+                start: start,
+                tag: "ol",
+                value: start
+            )
+            let migration = try FloorpLexicalMigrator.migrate(lexicalSource)
+            XCTAssertFalse(migration.isEditable, lexicalSource)
+            XCTAssertNil(migration.document, lexicalSource)
+            XCTAssertEqual(migration.originalSource, lexicalSource)
+        }
     }
 
     func testLexicalNonDefaultMetadataAndListSemanticsRemainReadOnly() throws {

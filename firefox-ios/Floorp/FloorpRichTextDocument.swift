@@ -840,9 +840,7 @@ enum FloorpLexicalMigrator {
                 append(.invalidShape("Lexical list start must be an integer"), path: path + "/start")
                 return nil
             }
-            let maximumSafeStart = FloorpRichTextBridgeProtocol.maximumSafeSequenceNumber
-            let safeRange = (-maximumSafeStart)...maximumSafeStart
-            guard safeRange.contains(start) else {
+            guard FloorpRichTextListPolicy.allowedStartRange.contains(start) else {
                 append(.unsupportedField("start"), path: path + "/start")
                 return nil
             }
@@ -1207,11 +1205,9 @@ private enum FloorpRichTextSchema {
             case "orderedList":
                 allowedKeys = ["start", "type"]
                 if let start = attributes["start"], start != .null {
-                    let maximumSafeStart = FloorpRichTextBridgeProtocol.maximumSafeSequenceNumber
-                    let safeRange = (-maximumSafeStart)...maximumSafeStart
-                    if start.integerValue.map(safeRange.contains) != true {
+                    if start.integerValue.map(FloorpRichTextListPolicy.allowedStartRange.contains) != true {
                         append(
-                            .invalidShape("ordered-list start must be a safe integer"),
+                            .invalidShape("ordered-list start must be a signed 32-bit integer"),
                             path: path + "/start"
                         )
                     }
@@ -1486,6 +1482,10 @@ enum FloorpRichTextBridgeProtocol {
     static let maximumDocumentIDBytes = 128
 }
 
+enum FloorpRichTextListPolicy {
+    static let allowedStartRange = Int(Int32.min)...Int(Int32.max)
+}
+
 enum FloorpRichTextEditorSessionError: Error, Equatable, Sendable {
     case invalidNoteID
     case invalidDocumentID
@@ -1691,6 +1691,7 @@ enum FloorpRichTextCommandError: Error, Equatable, Sendable {
     case documentRequiresExplicitConversion([FloorpRichTextCompatibilityIssue])
     case invalidHeadingLevel(Int)
     case unsafeImageSource
+    case imageResourceLimitExceeded
     case invalidImageWidth(Int)
     case imageMetadataTooLong
 }
@@ -1740,14 +1741,16 @@ enum FloorpRichTextCommandPlanner {
             }) else {
                 throw FloorpRichTextCommandError.imageMetadataTooLong
             }
-            plannedCommand = .insertImage(
-                FloorpRichTextImage(
-                    source: normalizedSource,
-                    alt: image.alt,
-                    title: image.title,
-                    width: image.width
-                )
+            let normalizedImage = FloorpRichTextImage(
+                source: normalizedSource,
+                alt: image.alt,
+                title: image.title,
+                width: image.width
             )
+            guard projectedDocumentAccepts(image: normalizedImage, document: document) else {
+                throw FloorpRichTextCommandError.imageResourceLimitExceeded
+            }
+            plannedCommand = .insertImage(normalizedImage)
         }
         return FloorpRichTextCommandEnvelope(
             session: session,
@@ -1756,6 +1759,26 @@ enum FloorpRichTextCommandPlanner {
                 exclusiveMarkToUnset: exclusiveMarkToUnset
             )
         )
+    }
+
+    private static func projectedDocumentAccepts(
+        image: FloorpRichTextImage,
+        document: FloorpRichTextDocument
+    ) -> Bool {
+        guard var root = document.root.objectValue else { return false }
+        var attributes: [String: FloorpRichTextJSONValue] = [
+            "src": .string(image.source),
+        ]
+        if let alt = image.alt { attributes["alt"] = .string(alt) }
+        if let title = image.title { attributes["title"] = .string(title) }
+        if let width = image.width { attributes["width"] = .number(String(width)) }
+        var content = root["content"]?.arrayValue ?? []
+        content.append(.object([
+            "type": .string("image"),
+            "attrs": .object(attributes),
+        ]))
+        root["content"] = .array(content)
+        return FloorpRichTextSchema.analyze(.object(root)).isEditable
     }
 }
 
@@ -1876,7 +1899,45 @@ enum FloorpRichTextImagePolicy {
             return nil
         }
         let frameCount = CGImageSourceGetCount(source)
-        guard (1...maximumFrameCount).contains(frameCount) else { return nil }
+        guard (1...maximumFrameCount).contains(frameCount),
+              let sourceProperties = CGImageSourceCopyProperties(
+                source,
+                options
+              ) as? [CFString: Any],
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              let firstFrameProperties = CGImageSourceCopyPropertiesAtIndex(
+                source,
+                0,
+                options
+              ) as? [CFString: Any],
+              let canvas = declaredCanvasDimensions(
+                sourceProperties,
+                firstFrameProperties: firstFrameProperties,
+                mime: mime,
+                frameCount: frameCount
+              ),
+              canvas.width > 0,
+              canvas.height > 0,
+              canvas.width <= maximumPixelDimension,
+              canvas.height <= maximumPixelDimension else {
+            return nil
+        }
+        let (canvasPixels, canvasDidOverflow) = canvas.width.multipliedReportingOverflow(
+            by: canvas.height
+        )
+        guard !canvasDidOverflow,
+              canvasPixels <= maximumCumulativePixels else {
+            return nil
+        }
+
+        guard let firstFrameWidth = (
+            firstFrameProperties[kCGImagePropertyPixelWidth] as? NSNumber
+        )?.uint64Value,
+              let firstFrameHeight = (
+                firstFrameProperties[kCGImagePropertyPixelHeight] as? NSNumber
+              )?.uint64Value else {
+            return nil
+        }
 
         var cumulativePixels: UInt64 = 0
         for index in 0..<frameCount {
@@ -1891,7 +1952,9 @@ enum FloorpRichTextImagePolicy {
                   width > 0,
                   height > 0,
                   width <= maximumPixelDimension,
-                  height <= maximumPixelDimension else {
+                  height <= maximumPixelDimension,
+                  width <= canvas.width,
+                  height <= canvas.height else {
                 return nil
             }
             let (framePixels, didOverflow) = width.multipliedReportingOverflow(by: height)
@@ -1905,7 +1968,65 @@ enum FloorpRichTextImagePolicy {
             }
             cumulativePixels = nextCumulativePixels
         }
-        return RasterMetadata(frameCount: frameCount, cumulativePixels: cumulativePixels)
+        if frameCount == 1,
+           firstFrameWidth == canvas.width,
+           firstFrameHeight == canvas.height {
+            return RasterMetadata(frameCount: frameCount, cumulativePixels: cumulativePixels)
+        }
+        let (totalPixels, totalDidOverflow) = cumulativePixels.addingReportingOverflow(canvasPixels)
+        guard !totalDidOverflow,
+              totalPixels <= maximumCumulativePixels else {
+            return nil
+        }
+        return RasterMetadata(frameCount: frameCount, cumulativePixels: totalPixels)
+    }
+
+    private static func declaredCanvasDimensions(
+        _ properties: [CFString: Any],
+        firstFrameProperties: [CFString: Any],
+        mime: String,
+        frameCount: Int
+    ) -> (width: UInt64, height: UInt64)? {
+        let formatKeys: (
+            dictionary: CFString,
+            dimensions: (width: CFString, height: CFString)
+        )?
+        switch mime {
+        case "gif":
+            formatKeys = (
+                kCGImagePropertyGIFDictionary,
+                (kCGImagePropertyGIFCanvasPixelWidth, kCGImagePropertyGIFCanvasPixelHeight)
+            )
+        case "png" where frameCount > 1:
+            formatKeys = (
+                kCGImagePropertyPNGDictionary,
+                (kCGImagePropertyAPNGCanvasPixelWidth, kCGImagePropertyAPNGCanvasPixelHeight)
+            )
+        case "webp":
+            formatKeys = (
+                kCGImagePropertyWebPDictionary,
+                (kCGImagePropertyWebPCanvasPixelWidth, kCGImagePropertyWebPCanvasPixelHeight)
+            )
+        default:
+            formatKeys = nil
+        }
+        if let formatKeys {
+            guard let dictionary = properties[formatKeys.dictionary] as? [CFString: Any],
+                  let width = (
+                    dictionary[formatKeys.dimensions.width] as? NSNumber
+                  )?.uint64Value,
+                  let height = (
+                    dictionary[formatKeys.dimensions.height] as? NSNumber
+                  )?.uint64Value else {
+                return nil
+            }
+            return (width, height)
+        }
+        guard let width = (firstFrameProperties[kCGImagePropertyPixelWidth] as? NSNumber)?.uint64Value,
+              let height = (firstFrameProperties[kCGImagePropertyPixelHeight] as? NSNumber)?.uint64Value else {
+            return nil
+        }
+        return (width, height)
     }
 
     private static func hasExpectedSignature(_ data: Data, mime: String) -> Bool {
