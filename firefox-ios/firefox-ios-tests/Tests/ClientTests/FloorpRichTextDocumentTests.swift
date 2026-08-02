@@ -659,11 +659,13 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         {
           "root": {
             "type": "root",
+            "direction": "ltr",
             "version": 1,
             "children": [
               {
                 "type": "heading",
                 "tag": "h2",
+                "direction": "ltr",
                 "format": "center",
                 "version": 1,
                 "children": [
@@ -672,6 +674,7 @@ final class FloorpRichTextDocumentTests: XCTestCase {
               },
               {
                 "type": "paragraph",
+                "direction": "ltr",
                 "format": "right",
                 "version": 1,
                 "children": [
@@ -683,15 +686,17 @@ final class FloorpRichTextDocumentTests: XCTestCase {
               {
                 "type": "list",
                 "listType": "number",
+                "direction": "ltr",
                 "version": 1,
                 "children": [
-                  {"type":"listitem","value":1,"version":1,"children":[
+                  {"type":"listitem","value":1,"direction":"ltr","version":1,"children":[
                     {"type":"text","text":"One","format":0,"version":1}
                   ]}
                 ]
               },
               {
                 "type": "quote",
+                "direction": "ltr",
                 "version": 1,
                 "children": [
                   {"type":"text","text":"Quote","format":0,"version":1}
@@ -724,6 +729,65 @@ final class FloorpRichTextDocumentTests: XCTestCase {
             (paragraphText["marks"] as? [[String: Any]])?.compactMap { $0["type"] as? String },
             ["strike", "underline"]
         )
+    }
+
+    func testLexicalOrderedListPreservesStartAndAcceptsOnlyDefaultMetadata() throws {
+        let source = """
+        {
+          "root": {
+            "type":"root", "version":1, "direction":"ltr", "format":"",
+            "indent":0, "textFormat":0, "textStyle":"",
+            "children":[{
+              "type":"list", "listType":"number", "start":3, "tag":"ol",
+              "version":1, "direction":null, "format":"", "indent":0,
+              "textFormat":0, "textStyle":"", "children":[
+                {"type":"listitem", "value":3, "version":1, "children":[
+                  {"type":"text", "text":"Three", "format":0, "detail":0,
+                   "mode":"normal", "style":"", "version":1}
+                ]},
+                {"type":"listitem", "value":4, "version":1, "children":[
+                  {"type":"text", "text":"Four", "format":0, "detail":0,
+                   "mode":"normal", "style":"", "version":1}
+                ]}
+              ]
+            }]
+          }
+        }
+        """
+
+        let migration = try FloorpLexicalMigrator.migrate(source)
+
+        XCTAssertTrue(migration.isEditable, "\(migration.compatibility.issues)")
+        let encoded = try FloorpRichTextCodec.encode(try XCTUnwrap(migration.document))
+        let root = try XCTUnwrap(try semanticJSON(encoded) as? [String: Any])
+        let list = try XCTUnwrap((root["content"] as? [[String: Any]])?.first)
+        XCTAssertEqual(list["type"] as? String, "orderedList")
+        XCTAssertEqual((list["attrs"] as? [String: Any])?["start"] as? Int, 3)
+        XCTAssertEqual((list["content"] as? [[String: Any]])?.count, 2)
+    }
+
+    func testLexicalNonDefaultMetadataAndListSemanticsRemainReadOnly() throws {
+        let fixtures = [
+            #"{"root":{"type":"root","indent":1,"children":[]}}"#,
+            #"{"root":{"children":[{"type":"paragraph","direction":"rtl","children":[]}]}}"#,
+            #"{"root":{"children":[{"type":"paragraph","textFormat":1,"children":[]}]}}"#,
+            #"{"root":{"children":[{"type":"paragraph","textStyle":"color:red","children":[]}]}}"#,
+            #"{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"x","format":0,"detail":1}]}]}}"#,
+            #"{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"x","format":0,"style":"color:red"}]}]}}"#,
+            #"{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"x","format":0,"mode":"token"}]}]}}"#,
+            #"{"root":{"children":[{"type":"list","listType":"number","start":3,"tag":"ul","children":[{"type":"listitem","value":3,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
+            #"{"root":{"children":[{"type":"list","listType":"bullet","start":2,"tag":"ul","children":[{"type":"listitem","value":1,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
+            #"{"root":{"children":[{"type":"list","listType":"number","start":1,"tag":"ol","children":[{"type":"listitem","value":7,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
+            #"{"root":{"children":[{"type":"list","listType":"number","start":9007199254740992,"tag":"ol","children":[{"type":"listitem","value":9007199254740992,"children":[{"type":"text","text":"x","format":0}]}]}]}}"#,
+        ]
+
+        for source in fixtures {
+            let migration = try FloorpLexicalMigrator.migrate(source)
+            XCTAssertFalse(migration.isEditable, source)
+            XCTAssertNil(migration.document, source)
+            XCTAssertEqual(migration.originalSource, source)
+            XCTAssertFalse(migration.compatibility.issues.isEmpty, source)
+        }
     }
 
     func testLexicalUnknownNodeOrFieldKeepsOriginalSourceReadOnly() throws {

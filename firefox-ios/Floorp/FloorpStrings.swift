@@ -896,6 +896,11 @@ enum FloorpStrings {
             value: "Edits are saved automatically",
             comment: "Accessibility hint for the note editor"
         )
+        static let contentPlaceholder = string(
+            "Floorp.Notes.ContentPlaceholder.v1",
+            value: "Write a note…",
+            comment: "Placeholder shown in an empty Floorp rich-text note"
+        )
         static let enableRichText = string(
             "Floorp.Notes.EnableRichText.v1",
             value: "Use Rich Text",
@@ -980,6 +985,11 @@ enum FloorpStrings {
             "Floorp.Notes.InsertImage.v1",
             value: "Insert Image",
             comment: "Image insertion action in the rich-text note editor"
+        )
+        static let exportRecovery = string(
+            "Floorp.Notes.ExportRecovery.v1",
+            value: "Export Recovery Copy",
+            comment: "Exports the newest rich-text source that could not be saved"
         )
         static let close = string(
             "Floorp.Notes.Close.v1",

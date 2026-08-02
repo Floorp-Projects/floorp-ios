@@ -457,6 +457,7 @@ enum FloorpLexicalMigrator {
                 allowed: Self.commonElementFields,
                 path: "/root"
             )
+            validateElementMetadata(root, permitsAlignment: false, path: "/root")
             if let type = root["type"]?.stringValue, type != "root" {
                 append(.invalidShape("Lexical root type must be root"), path: "/root/type")
             }
@@ -479,14 +480,20 @@ enum FloorpLexicalMigrator {
             depth: Int
         ) -> [FloorpRichTextJSONValue] {
             children.enumerated().flatMap { index, child in
-                convertNode(child, path: "\(path)/\(index)", depth: depth)
+                convertNode(
+                    child,
+                    path: "\(path)/\(index)",
+                    depth: depth,
+                    expectedListItemValue: nil
+                )
             }
         }
 
         private mutating func convertNode(
             _ value: FloorpRichTextJSONValue,
             path: String,
-            depth: Int
+            depth: Int,
+            expectedListItemValue: Int?
         ) -> [FloorpRichTextJSONValue] {
             guard depth <= FloorpRichTextCodec.maximumDepth,
                   nodeCount < FloorpRichTextCodec.maximumNodeCount else {
@@ -508,6 +515,7 @@ enum FloorpLexicalMigrator {
                 return [.object(["type": .string("hardBreak")])]
             case "paragraph":
                 validateFields(node, allowed: Self.commonElementFields, path: path)
+                validateElementMetadata(node, permitsAlignment: true, path: path)
                 let content = convertNodeChildren(node, path: path, depth: depth)
                 return [paragraph(content: content, alignment: alignment(node["format"], path: path))]
             case "heading":
@@ -516,6 +524,7 @@ enum FloorpLexicalMigrator {
                     allowed: Self.commonElementFields.union(["tag"]),
                     path: path
                 )
+                validateElementMetadata(node, permitsAlignment: true, path: path)
                 let tag = node["tag"]?.stringValue ?? "h1"
                 guard tag.count == 2,
                       tag.first == "h",
@@ -541,25 +550,61 @@ enum FloorpLexicalMigrator {
                     allowed: Self.commonElementFields.union(["listType", "start", "tag"]),
                     path: path
                 )
+                validateElementMetadata(node, permitsAlignment: false, path: path)
                 let listType = node["listType"]?.stringValue ?? "bullet"
                 guard ["bullet", "number"].contains(listType) else {
                     append(.invalidShape("Unsupported Lexical list type"), path: path + "/listType")
                     return []
                 }
-                let content = convertNodeChildren(node, path: path, depth: depth)
+                let start = validatedListStart(node, listType: listType, path: path)
+                validateListTag(node["tag"], listType: listType, path: path + "/tag")
+                guard let children = node["children"]?.arrayValue else {
+                    append(.invalidShape("Lexical list requires children"), path: path + "/children")
+                    return []
+                }
+                let content = children.enumerated().flatMap { index, child in
+                    let expectedValue: Int?
+                    if let start {
+                        let addition = start.addingReportingOverflow(index)
+                        if addition.overflow {
+                            append(.resourceLimit, path: path + "/children/\(index)/value")
+                            expectedValue = nil
+                        } else {
+                            expectedValue = addition.partialValue
+                        }
+                    } else {
+                        expectedValue = nil
+                    }
+                    return convertNode(
+                        child,
+                        path: path + "/children/\(index)",
+                        depth: depth + 1,
+                        expectedListItemValue: expectedValue
+                    )
+                }
                 guard !content.isEmpty else {
                     append(.invalidShape("Lexical list requires an item"), path: path + "/children")
                     return []
                 }
-                return [.object([
+                var result: [String: FloorpRichTextJSONValue] = [
                     "type": .string(listType == "number" ? "orderedList" : "bulletList"),
                     "content": .array(content),
-                ])]
+                ]
+                if listType == "number", let start {
+                    result["attrs"] = .object(["start": .number(String(start))])
+                }
+                return [.object(result)]
             case "listitem":
                 validateFields(
                     node,
                     allowed: Self.commonElementFields.union(["value"]),
                     path: path
+                )
+                validateElementMetadata(node, permitsAlignment: false, path: path)
+                validateListItemValue(
+                    node["value"],
+                    expected: expectedListItemValue,
+                    path: path + "/value"
                 )
                 let converted = convertNodeChildren(node, path: path, depth: depth)
                 let itemContent: [FloorpRichTextJSONValue]
@@ -580,6 +625,7 @@ enum FloorpLexicalMigrator {
                 ])]
             case "quote":
                 validateFields(node, allowed: Self.commonElementFields, path: path)
+                validateElementMetadata(node, permitsAlignment: false, path: path)
                 let converted = convertNodeChildren(node, path: path, depth: depth)
                 let blocks = converted.allSatisfy(Self.isInlineNode)
                     ? [paragraph(content: converted)]
@@ -603,6 +649,7 @@ enum FloorpLexicalMigrator {
             path: String
         ) -> FloorpRichTextJSONValue? {
             validateFields(node, allowed: Self.textFields, path: path)
+            validateTextMetadata(node, path: path)
             guard let text = node["text"]?.stringValue else {
                 append(.invalidShape("Lexical text node requires text"), path: path + "/text")
                 return nil
@@ -648,13 +695,122 @@ enum FloorpLexicalMigrator {
             path: String
         ) -> String? {
             guard let value, value != .null else { return nil }
-            if value.integerValue != nil { return nil }
+            if value.integerValue == 0 { return nil }
+            if value.stringValue == "" { return nil }
             guard let alignment = value.stringValue,
                   ["left", "center", "right"].contains(alignment) else {
                 append(.invalidShape("Unsupported Lexical text alignment"), path: path + "/format")
                 return nil
             }
             return alignment
+        }
+
+        private mutating func validateElementMetadata(
+            _ node: [String: FloorpRichTextJSONValue],
+            permitsAlignment: Bool,
+            path: String
+        ) {
+            validateDefaultInteger(node["indent"], key: "indent", path: path)
+            validateDefaultInteger(node["textFormat"], key: "textFormat", path: path)
+            validateDefaultString(node["textStyle"], key: "textStyle", path: path)
+            if let direction = node["direction"],
+               direction != .null,
+               direction.stringValue != "",
+               direction.stringValue != "ltr" {
+                append(.unsupportedField("direction"), path: path + "/direction")
+            }
+            if !permitsAlignment,
+               let format = node["format"],
+               format != .null,
+               format.integerValue != 0,
+               format.stringValue != "" {
+                append(.unsupportedField("format"), path: path + "/format")
+            }
+        }
+
+        private mutating func validateTextMetadata(
+            _ node: [String: FloorpRichTextJSONValue],
+            path: String
+        ) {
+            validateDefaultInteger(node["detail"], key: "detail", path: path)
+            validateDefaultString(node["style"], key: "style", path: path)
+            if let mode = node["mode"],
+               mode != .null,
+               mode.stringValue != "normal" {
+                append(.unsupportedField("mode"), path: path + "/mode")
+            }
+        }
+
+        private mutating func validateDefaultInteger(
+            _ value: FloorpRichTextJSONValue?,
+            key: String,
+            path: String
+        ) {
+            guard let value, value != .null else { return }
+            guard value.integerValue == 0 else {
+                append(.unsupportedField(key), path: path + "/" + key)
+                return
+            }
+        }
+
+        private mutating func validateDefaultString(
+            _ value: FloorpRichTextJSONValue?,
+            key: String,
+            path: String
+        ) {
+            guard let value, value != .null else { return }
+            guard value.stringValue == "" else {
+                append(.unsupportedField(key), path: path + "/" + key)
+                return
+            }
+        }
+
+        private mutating func validatedListStart(
+            _ node: [String: FloorpRichTextJSONValue],
+            listType: String,
+            path: String
+        ) -> Int? {
+            guard let value = node["start"], value != .null else { return 1 }
+            guard let start = value.integerValue else {
+                append(.invalidShape("Lexical list start must be an integer"), path: path + "/start")
+                return nil
+            }
+            let maximumSafeStart = FloorpRichTextBridgeProtocol.maximumSafeSequenceNumber
+            let safeRange = (-maximumSafeStart)...maximumSafeStart
+            guard safeRange.contains(start) else {
+                append(.unsupportedField("start"), path: path + "/start")
+                return nil
+            }
+            if listType != "number", start != 1 {
+                append(.unsupportedField("start"), path: path + "/start")
+                return nil
+            }
+            return start
+        }
+
+        private mutating func validateListTag(
+            _ value: FloorpRichTextJSONValue?,
+            listType: String,
+            path: String
+        ) {
+            guard let value, value != .null else { return }
+            let expected = listType == "number" ? "ol" : "ul"
+            guard value.stringValue == expected else {
+                append(.unsupportedField("tag"), path: path)
+                return
+            }
+        }
+
+        private mutating func validateListItemValue(
+            _ value: FloorpRichTextJSONValue?,
+            expected: Int?,
+            path: String
+        ) {
+            guard let value, value != .null else { return }
+            guard let expected, value.integerValue == expected else {
+                append(.unsupportedField("value"), path: path)
+                return
+            }
         }
 
         private mutating func validateFields(
@@ -972,9 +1128,15 @@ private enum FloorpRichTextSchema {
                 validateAlignment(attributes["textAlign"], path: path + "/textAlign")
             case "orderedList":
                 allowedKeys = ["start", "type"]
-                if let start = attributes["start"], start != .null,
-                   start.integerValue == nil {
-                    append(.invalidShape("ordered-list start must be an integer"), path: path + "/start")
+                if let start = attributes["start"], start != .null {
+                    let maximumSafeStart = FloorpRichTextBridgeProtocol.maximumSafeSequenceNumber
+                    let safeRange = (-maximumSafeStart)...maximumSafeStart
+                    if start.integerValue.map(safeRange.contains) != true {
+                        append(
+                            .invalidShape("ordered-list start must be a safe integer"),
+                            path: path + "/start"
+                        )
+                    }
                 }
                 if let markerType = attributes["type"], markerType != .null,
                    markerType.stringValue.map({ $0.utf8.count <= 16 }) != true {
@@ -1340,6 +1502,12 @@ struct FloorpRichTextEditorState: Codable, Equatable, Sendable {
 
 struct FloorpRichTextEditorUpdate: Codable, Equatable, Sendable {
     let source: String
+    let isDirty: Bool
+
+    init(source: String, isDirty: Bool = true) {
+        self.source = source
+        self.isDirty = isDirty
+    }
 }
 
 typealias FloorpRichTextCommandEnvelope = FloorpRichTextEditorEnvelope<FloorpRichTextPlannedCommand>

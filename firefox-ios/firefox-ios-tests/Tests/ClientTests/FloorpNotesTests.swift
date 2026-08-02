@@ -872,6 +872,171 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         )
     }
 
+    func testDelayedPlainToRichPreflightRebuildsFromTheNewestLockedBody() async throws {
+        let note = FloorpNote(
+            id: "delayed-conversion",
+            title: "Plain",
+            content: "First body",
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .plainText
+        )
+        let persistence = FloorpRichTextTestPersistence(blocksFirstPreflight: true)
+        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        editor.loadViewIfNeeded()
+        let textView = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.Editor.Body"
+        ) as? UITextView)
+        let enable = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.Editor.EnableRichText"
+        ) as? UIButton)
+        let status = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.Editor.Status.Idle"
+        ) as? UILabel)
+
+        enable.sendActions(for: .touchUpInside)
+        try await waitUntil { persistence.didStartFirstPreflight }
+
+        XCTAssertFalse(textView.isEditable)
+        XCTAssertFalse(enable.isEnabled)
+        XCTAssertEqual(status.accessibilityIdentifier, "Floorp.Notes.Editor.Status.Saving")
+        XCTAssertFalse(editor.textView(
+            textView,
+            shouldChangeTextIn: NSRange(location: 0, length: 0),
+            replacementText: "x"
+        ))
+
+        // Simulate a final delegate callback that was already queued when the
+        // conversion button locked the UIKit control.
+        textView.text = "Newest body"
+        editor.textViewDidChange(textView)
+        persistence.resumeFirstPreflight()
+
+        try await waitUntil { editor.currentRichTextSession != nil }
+        XCTAssertEqual(persistence.preflightDrafts.count, 2)
+        XCTAssertEqual(
+            FloorpNoteContent.plainText(
+                from: persistence.preflightDrafts[0].content,
+                contentFormat: .automatic
+            ),
+            "First body"
+        )
+        XCTAssertEqual(
+            FloorpNoteContent.plainText(
+                from: persistence.preflightDrafts[1].content,
+                contentFormat: .automatic
+            ),
+            "Newest body"
+        )
+
+        let didSave = await editor.saveForExplicitRequest()
+        XCTAssertTrue(didSave)
+        XCTAssertEqual(
+            FloorpNoteContent.plainText(
+                from: try XCTUnwrap(persistence.savedDrafts.last).content,
+                contentFormat: .automatic
+            ),
+            "Newest body"
+        )
+    }
+
+    func testImmediateSaveFlushesUnsentWebEditorInput() async throws {
+        let originalSource = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
+        let note = FloorpNote(
+            id: "flush-before-save",
+            title: "Flush",
+            content: originalSource,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        let persistence = FloorpRichTextTestPersistence()
+        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        editor.loadViewIfNeeded()
+        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ) as? FloorpRichTextWebEditorView)
+        let session = try XCTUnwrap(editor.currentRichTextSession)
+        _ = try await richView.snapshot(expectedSession: session)
+
+        _ = try await richView.evaluateJavaScriptForTesting(
+            """
+            const paragraph = document.querySelector('#editor p');
+            paragraph.textContent = 'Saved immediately';
+            document.getElementById('editor').dispatchEvent(
+              new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'Saved immediately' })
+            );
+            true;
+            """
+        )
+        let didSave = await editor.saveForExplicitRequest()
+        XCTAssertTrue(didSave)
+
+        let saved = try XCTUnwrap(persistence.savedDrafts.last)
+        XCTAssertEqual(
+            FloorpNoteContent.plainText(from: saved.content, contentFormat: .automatic),
+            "Saved immediately"
+        )
+    }
+
+    func testOverflowAndDeletedNoteRecoveryKeepsNewestEnvelopeForReeditAndCopy() async throws {
+        let originalSource = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
+        let note = FloorpNote(
+            id: "deleted-rich-note",
+            title: "Recovery",
+            content: originalSource,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        let persistence = FloorpRichTextTestPersistence(
+            blocksFirstPreflight: true,
+            firstPreflightError: FloorpNotesStoreError.noteNotFound(note.id)
+        )
+        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        editor.loadViewIfNeeded()
+        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ) as? FloorpRichTextWebEditorView)
+        let initialSession = try XCTUnwrap(editor.currentRichTextSession)
+        var newestSource = originalSource
+
+        for revision in 1...130 {
+            newestSource = """
+            {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Value \(revision)"}]}]}
+            """
+            editor.richTextEditor(
+                richView,
+                received: FloorpRichTextUpdateEnvelope(
+                    session: try initialSession.advancing(to: revision),
+                    payload: FloorpRichTextEditorUpdate(source: newestSource)
+                )
+            )
+        }
+
+        try await waitUntil { persistence.didStartFirstPreflight }
+        persistence.resumeFirstPreflight()
+        try await waitUntil {
+            guard let current = editor.currentRichTextSession else { return false }
+            return current.documentID != initialSession.documentID
+        }
+
+        let recovery = try XCTUnwrap(editor.currentRichTextRecoveryDraft)
+        XCTAssertEqual(recovery.source, newestSource)
+        XCTAssertFalse(richView.isHidden)
+        let replacementSession = try XCTUnwrap(editor.currentRichTextSession)
+        let reeditable = try await richView.snapshot(expectedSession: replacementSession)
+        XCTAssertEqual(reeditable.payload.source, newestSource)
+        XCTAssertTrue(reeditable.payload.isDirty)
+
+        let didSaveCopy = await editor.saveRecoveryDraftAsCopyForTesting()
+        XCTAssertTrue(didSaveCopy)
+        XCTAssertEqual(persistence.preflightCopyDrafts.last?.content, newestSource)
+        XCTAssertEqual(persistence.savedCopyDrafts.last?.content, newestSource)
+        XCTAssertNil(editor.currentRichTextRecoveryDraft)
+        XCTAssertEqual(editor.currentRichTextSession?.noteID, "recovery-copy")
+    }
+
     func testUnknownLexicalContentRemainsReadOnlyAndSourceIsNotRewritten() async throws {
         let source = """
           { "root" : { "children" : [
@@ -1020,6 +1185,16 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         }
         XCTAssertEqual(editor.currentRichTextSession?.revision, 2)
         let currentSession = try XCTUnwrap(editor.currentRichTextSession)
+
+        // Direct delegate delivery above models messages that the web editor
+        // has already emitted. Keep the test double's DOM/session in the same
+        // accepted state before exercising the authoritative save flush.
+        richView.load(
+            document: try FloorpRichTextCodec.decode(secondSource),
+            session: currentSession,
+            isDirty: false
+        )
+        _ = try await richView.snapshot(expectedSession: currentSession)
         editor.richTextEditor(
             richView,
             received: FloorpRichTextStateEnvelope(
@@ -1073,6 +1248,35 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         )
     }
 
+    private func makeEditor(
+        note: FloorpNote,
+        isPersisted: Bool,
+        persistence: FloorpNotePersistence
+    ) -> FloorpNoteEditorViewController {
+        FloorpNoteEditorViewController(
+            note: note,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            isPersisted: isPersisted,
+            persistence: persistence
+        )
+    }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 3_000_000_000,
+        _ condition: @escaping @MainActor () -> Bool
+    ) async throws {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while !condition() {
+            guard DispatchTime.now().uptimeNanoseconds < deadline else {
+                XCTFail("Timed out waiting for condition")
+                return
+            }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
     private func makeDraft() -> FloorpNote {
         FloorpNote(
             id: "draft-id",
@@ -1085,6 +1289,358 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     private enum SaveError: Error {
         case expected
+    }
+}
+
+@MainActor
+private final class FloorpRichTextTestPersistence: FloorpNotePersistence {
+    private let blocksFirstPreflight: Bool
+    private let firstPreflightError: Error?
+    private var firstPreflightContinuation: CheckedContinuation<Void, Never>?
+    private(set) var didStartFirstPreflight = false
+    private(set) var preflightDrafts = [FloorpNote]()
+    private(set) var preflightCopyDrafts = [FloorpNote]()
+    private(set) var savedDrafts = [FloorpNote]()
+    private(set) var savedCopyDrafts = [FloorpNote]()
+
+    init(
+        blocksFirstPreflight: Bool = false,
+        firstPreflightError: Error? = nil
+    ) {
+        self.blocksFirstPreflight = blocksFirstPreflight
+        self.firstPreflightError = firstPreflightError
+    }
+
+    func preflight(_ draft: FloorpNote) async throws {
+        preflightDrafts.append(draft)
+        if preflightDrafts.count == 1 {
+            didStartFirstPreflight = true
+            if blocksFirstPreflight {
+                await withCheckedContinuation { continuation in
+                    firstPreflightContinuation = continuation
+                }
+            }
+            if let firstPreflightError { throw firstPreflightError }
+        }
+    }
+
+    func preflightCopy(_ draft: FloorpNote) async throws {
+        preflightCopyDrafts.append(draft)
+    }
+
+    func save(_ draft: FloorpNote) async throws -> FloorpNote {
+        savedDrafts.append(draft)
+        return draft
+    }
+
+    func reload() async throws -> FloorpNote? { nil }
+
+    func acceptReloaded(_ note: FloorpNote) {}
+
+    func saveAsCopy(_ draft: FloorpNote) async throws -> FloorpNote {
+        savedCopyDrafts.append(draft)
+        return FloorpNote(
+            id: "recovery-copy",
+            title: draft.title,
+            content: draft.content,
+            createdAt: draft.createdAt,
+            updatedAt: draft.updatedAt,
+            contentFormat: draft.contentFormat
+        )
+    }
+
+    func resumeFirstPreflight() {
+        firstPreflightContinuation?.resume()
+        firstPreflightContinuation = nil
+    }
+}
+
+@MainActor
+final class FloorpRichTextWebEditorViewTests: XCTestCase {
+    private let safePNGDataURL = "data:image/png;base64,"
+        + "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+    func testMarkedHardBreakAndWidthlessImageSurviveExecutableRoundTrip() async throws {
+        let source = """
+        {"type":"doc","content":[
+          {"type":"paragraph","content":[
+            {"type":"text","text":"A","marks":[{"type":"bold"}]},
+            {"type":"hardBreak","marks":[{"type":"bold"},{"type":"italic"}]},
+            {"type":"text","text":"B","marks":[{"type":"bold"}]}
+          ]},
+          {"type":"image","attrs":{"src":"\(safePNGDataURL)","alt":"pixel"}}
+        ]}
+        """
+        let document = try FloorpRichTextCodec.decode(source)
+        let session = try makeSession(noteID: "round-trip")
+        let editor = FloorpRichTextWebEditorView()
+        editor.load(document: document, session: session, isDirty: false)
+
+        let snapshot = try await editor.snapshot(expectedSession: session)
+        let content = try contentNodes(snapshot.payload.source)
+        let paragraph = try XCTUnwrap(content.first)
+        let inline = try XCTUnwrap(paragraph["content"] as? [[String: Any]])
+        let hardBreak = try XCTUnwrap(inline.first { $0["type"] as? String == "hardBreak" })
+        XCTAssertEqual(
+            (hardBreak["marks"] as? [[String: Any]])?.compactMap { $0["type"] as? String },
+            ["bold", "italic"]
+        )
+        let image = try XCTUnwrap(content.first { $0["type"] as? String == "image" })
+        let imageAttrs = try XCTUnwrap(image["attrs"] as? [String: Any])
+        XCTAssertEqual(imageAttrs["alt"] as? String, "pixel")
+        XCTAssertNil(imageAttrs["width"])
+        XCTAssertFalse(snapshot.payload.isDirty)
+    }
+
+    func testImageInsertionTargetsCursorAndFailureLeavesExistingImagesUntouched() async throws {
+        let source = """
+        {"type":"doc","content":[
+          {"type":"paragraph","content":[{"type":"text","text":"Anchor"}]},
+          {"type":"image","attrs":{"src":"\(safePNGDataURL)","alt":"one","title":"keep","width":200}},
+          {"type":"image","attrs":{"src":"\(safePNGDataURL)","alt":"two"}}
+        ]}
+        """
+        let document = try FloorpRichTextCodec.decode(source)
+        let session = try makeSession(noteID: "image-insert")
+        let editor = FloorpRichTextWebEditorView()
+        editor.load(document: document, session: session, isDirty: false)
+        _ = try await editor.snapshot(expectedSession: session)
+        _ = try await editor.evaluateJavaScriptForTesting(
+            """
+            const editor = document.getElementById('editor');
+            const range = document.createRange();
+            range.setStart(editor, 1);
+            range.collapse(true);
+            const selection = document.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new Event('selectionchange'));
+            true;
+            """
+        )
+        let command = try FloorpRichTextCommandPlanner.plan(
+            .insertImage(
+                FloorpRichTextImage(
+                    source: safePNGDataURL,
+                    alt: "new",
+                    title: "",
+                    width: 40
+                )
+            ),
+            for: document,
+            session: session
+        )
+
+        let didInsert = await send(command, to: editor)
+        XCTAssertTrue(didInsert)
+        let inserted = try await editor.snapshot(expectedSession: session)
+        let images = try contentNodes(inserted.payload.source).filter {
+            $0["type"] as? String == "image"
+        }
+        XCTAssertEqual(images.count, 3)
+        let attrs = try images.map { try XCTUnwrap($0["attrs"] as? [String: Any]) }
+        XCTAssertEqual(attrs.compactMap { $0["alt"] as? String }, ["new", "one", "two"])
+        XCTAssertEqual(attrs[0]["title"] as? String, "")
+        XCTAssertEqual(attrs[0]["width"] as? Int, 40)
+        XCTAssertEqual(attrs[1]["title"] as? String, "keep")
+        XCTAssertEqual(attrs[1]["width"] as? Int, 200)
+        XCTAssertNil(attrs[2]["width"])
+
+        let failureSession = try makeSession(noteID: "image-failure")
+        let failureEditor = FloorpRichTextWebEditorView()
+        failureEditor.load(document: document, session: failureSession, isDirty: false)
+        _ = try await failureEditor.snapshot(expectedSession: failureSession)
+        _ = try await failureEditor.evaluateJavaScriptForTesting(
+            """
+            const range = document.createRange();
+            range.setStart(document.body, 0);
+            range.collapse(true);
+            const selection = document.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new Event('selectionchange'));
+            true;
+            """
+        )
+        let failureCommand = try FloorpRichTextCommandPlanner.plan(
+            .insertImage(FloorpRichTextImage(source: safePNGDataURL, alt: "must-not-appear", width: 40)),
+            for: document,
+            session: failureSession
+        )
+        let didInsertWithoutSelection = await send(failureCommand, to: failureEditor)
+        XCTAssertFalse(didInsertWithoutSelection)
+        let unchanged = try await failureEditor.snapshot(expectedSession: failureSession)
+        let unchangedImages = try contentNodes(unchanged.payload.source).filter {
+            $0["type"] as? String == "image"
+        }
+        XCTAssertEqual(
+            unchangedImages.compactMap { ($0["attrs"] as? [String: Any])?["alt"] as? String },
+            ["one", "two"]
+        )
+        XCTAssertFalse(unchanged.payload.isDirty)
+    }
+
+    func testTogglingActiveHeadingReturnsItToParagraph() async throws {
+        let source = #"{"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Heading"}]}]}"#
+        let document = try FloorpRichTextCodec.decode(source)
+        let session = try makeSession(noteID: "heading-toggle")
+        let editor = FloorpRichTextWebEditorView()
+        editor.load(document: document, session: session, isDirty: false)
+        _ = try await editor.snapshot(expectedSession: session)
+        _ = try await editor.evaluateJavaScriptForTesting(
+            """
+            const text = document.querySelector('#editor h2').firstChild;
+            const range = document.createRange();
+            range.setStart(text, 1);
+            range.collapse(true);
+            const selection = document.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new Event('selectionchange'));
+            true;
+            """
+        )
+        let command = try FloorpRichTextCommandPlanner.plan(
+            .toggleHeading(level: 2),
+            for: document,
+            session: session
+        )
+
+        let didToggle = await send(command, to: editor)
+        XCTAssertTrue(didToggle)
+        let snapshot = try await editor.snapshot(expectedSession: session)
+        XCTAssertEqual(try contentNodes(snapshot.payload.source).first?["type"] as? String, "paragraph")
+    }
+
+    func testLocalizedAccessiblePageAcceptsOnlyItsOwnedNavigationAndMainFrameBridge() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Bridge"}]}]}"#
+        let document = try FloorpRichTextCodec.decode(source)
+        let session = try makeSession(noteID: "navigation")
+        let editor = FloorpRichTextWebEditorView()
+        let delegate = FloorpRichTextWebEditorDelegateSpy()
+        editor.delegate = delegate
+        editor.load(document: document, session: session, isDirty: false)
+        _ = try await editor.snapshot(expectedSession: session)
+
+        let accessibilityLabel = try await editor.evaluateJavaScriptForTesting(
+            "document.getElementById('editor').getAttribute('aria-label')"
+        ) as? String
+        let placeholder = try await editor.evaluateJavaScriptForTesting(
+            "document.getElementById('editor').dataset.placeholder"
+        ) as? String
+        let origin = try await editor.evaluateJavaScriptForTesting("window.location.origin") as? String
+        XCTAssertEqual(accessibilityLabel, FloorpStrings.Notes.contentAccessibilityLabel)
+        XCTAssertEqual(placeholder, FloorpStrings.Notes.contentPlaceholder)
+        XCTAssertEqual(origin, "null")
+        let viewport = try await editor.evaluateJavaScriptForTesting(
+            "document.querySelector('meta[name=viewport]').content"
+        ) as? String
+        XCTAssertFalse(viewport?.contains("maximum-scale") == true)
+        XCTAssertFalse(viewport?.contains("user-scalable") == true)
+
+        _ = try await editor.evaluateJavaScriptForTesting(
+            "document.getElementById('editor').dispatchEvent(new InputEvent('input', { bubbles: true })); true;"
+        )
+        try await waitUntil { !delegate.updates.isEmpty }
+        XCTAssertEqual(delegate.updates.last?.session.noteID, session.noteID)
+
+        let acceptedUpdateCount = delegate.updates.count
+        let subframePosted = try await editor.evaluateJavaScriptForTesting(
+            """
+            const frame = document.createElement('iframe');
+            document.body.appendChild(frame);
+            const bridge = frame.contentWindow.webkit?.messageHandlers?.floorpRichTextUpdate;
+            if (bridge) {
+              bridge.postMessage({
+                schemaVersion: 1,
+                session: {
+                  noteID: 'navigation',
+                  documentID: '\(session.documentID)',
+                  generation: 0,
+                  revision: 2
+                },
+                payload: {
+                  source: '{"type":"doc","content":[{"type":"paragraph"}]}',
+                  isDirty: true
+                }
+              });
+            }
+            Boolean(bridge);
+            """
+        ) as? Bool
+        XCTAssertEqual(subframePosted, true)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(delegate.updates.count, acceptedUpdateCount)
+
+        _ = try? await editor.evaluateJavaScriptForTesting("window.location.href = 'about:blank'; true;")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let afterRejectedNavigation = try await editor.snapshot(expectedSession: session)
+        XCTAssertEqual(
+            FloorpNoteContent.plainText(
+                from: afterRejectedNavigation.payload.source,
+                contentFormat: .automatic
+            ),
+            "Bridge"
+        )
+    }
+
+    private func makeSession(noteID: String) throws -> FloorpRichTextEditorSessionCursor {
+        try FloorpRichTextEditorSessionCursor(
+            noteID: noteID,
+            documentID: UUID().uuidString,
+            generation: 0,
+            revision: 0
+        )
+    }
+
+    private func send(
+        _ command: FloorpRichTextCommandEnvelope,
+        to editor: FloorpRichTextWebEditorView
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            editor.send(command) { continuation.resume(returning: $0) }
+        }
+    }
+
+    private func contentNodes(_ source: String) throws -> [[String: Any]] {
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any]
+        )
+        return try XCTUnwrap(object["content"] as? [[String: Any]])
+    }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 3_000_000_000,
+        _ condition: @escaping @MainActor () -> Bool
+    ) async throws {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while !condition() {
+            guard DispatchTime.now().uptimeNanoseconds < deadline else {
+                XCTFail("Timed out waiting for condition")
+                return
+            }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+}
+
+@MainActor
+private final class FloorpRichTextWebEditorDelegateSpy: FloorpRichTextWebEditorDelegate {
+    private(set) var updates = [FloorpRichTextUpdateEnvelope]()
+    private(set) var states = [FloorpRichTextStateEnvelope]()
+
+    func richTextEditor(
+        _ editor: FloorpRichTextWebEditorView,
+        received update: FloorpRichTextUpdateEnvelope
+    ) {
+        updates.append(update)
+    }
+
+    func richTextEditor(
+        _ editor: FloorpRichTextWebEditorView,
+        received state: FloorpRichTextStateEnvelope
+    ) {
+        states.append(state)
     }
 }
 
