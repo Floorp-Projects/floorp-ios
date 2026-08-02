@@ -818,6 +818,302 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         }
     }
 
+    func testRichEditorFactoryRunsOnlyForEditableRichNotes() throws {
+        var factoryCount = 0
+        let factory: @MainActor () -> FloorpRichTextWebEditorView = {
+            factoryCount += 1
+            return FloorpRichTextWebEditorView()
+        }
+        let plainNote = FloorpNote(
+            id: "factory-plain",
+            title: "Plain",
+            content: "Plain body",
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .plainText
+        )
+        let plainEditor = makeEditor(
+            note: plainNote,
+            isPersisted: true,
+            richTextEditorFactory: factory
+        ) { $0 }
+        plainEditor.loadViewIfNeeded()
+        XCTAssertEqual(factoryCount, 0)
+        XCTAssertNil(plainEditor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ))
+
+        let remoteSource = """
+          { "type" : "doc", "content" : [
+            {"type":"image","attrs":{"src":"https://images.example.test/photo.png"}}
+          ] }
+        """
+        let readOnlyNote = FloorpNote(
+            id: "factory-read-only",
+            title: "Remote",
+            content: remoteSource,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        let readOnlyEditor = makeEditor(
+            note: readOnlyNote,
+            isPersisted: true,
+            richTextEditorFactory: factory
+        ) { $0 }
+        readOnlyEditor.loadViewIfNeeded()
+        XCTAssertEqual(factoryCount, 0)
+        XCTAssertNil(readOnlyEditor.currentRichTextSession)
+        XCTAssertEqual(readOnlyEditor.currentDraftForTesting.content, remoteSource)
+        XCTAssertNil(readOnlyEditor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ))
+        let readOnlyBody = try XCTUnwrap(readOnlyEditor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.Editor.Body"
+        ) as? UITextView)
+        XCTAssertFalse(readOnlyBody.isEditable)
+
+        let richSource = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
+        let richNote = FloorpNote(
+            id: "factory-rich",
+            title: "Rich",
+            content: richSource,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        let richEditor = makeEditor(
+            note: richNote,
+            isPersisted: true,
+            richTextEditorFactory: factory
+        ) { $0 }
+        richEditor.loadViewIfNeeded()
+        XCTAssertEqual(factoryCount, 1)
+        XCTAssertNotNil(richEditor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ))
+    }
+
+    func testCloseInvalidatesAndReleasesRichEditorWithPendingJavaScript() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
+        let note = FloorpNote(
+            id: "close-release",
+            title: "Close",
+            content: source,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        var factoryCount = 0
+        weak var weakRichEditor: FloorpRichTextWebEditorView?
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                factoryCount += 1
+                let richEditor = FloorpRichTextWebEditorView()
+                weakRichEditor = richEditor
+                return richEditor
+            },
+            persistence: FloorpRichTextTestPersistence()
+        )
+        editor.loadViewIfNeeded()
+        var richEditor: FloorpRichTextWebEditorView? = try XCTUnwrap(weakRichEditor)
+        let session = try XCTUnwrap(editor.currentRichTextSession)
+        _ = try await richEditor?.snapshot(expectedSession: session)
+        richEditor?.setJavaScriptRequestTimeoutForTesting(5_000_000_000)
+        var pendingRequest: Task<Bool, Never>? = Task { @MainActor [weak richEditor] in
+            guard let richEditor else { return false }
+            do {
+                try await richEditor.waitForNeverResolvingJavaScriptForTesting()
+                return false
+            } catch {
+                return true
+            }
+        }
+        try await waitUntil { richEditor?.pendingJavaScriptRequestCountForTesting == 1 }
+
+        let didClose = await editor.closeForTesting()
+
+        XCTAssertTrue(didClose)
+        XCTAssertEqual(factoryCount, 1)
+        XCTAssertTrue(richEditor?.isInvalidatedForTesting == true)
+        let pendingRequestDidFail = await pendingRequest?.value
+        XCTAssertEqual(pendingRequestDidFail, true)
+        pendingRequest = nil
+        richEditor = nil
+        try await waitUntil { weakRichEditor == nil }
+        XCTAssertNil(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ))
+    }
+
+    func testControllerDeinitInvalidatesRichEditorWithPendingJavaScript() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
+        let note = FloorpNote(
+            id: "deinit-release",
+            title: "Deinit",
+            content: source,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        weak var weakRichEditor: FloorpRichTextWebEditorView?
+        var editor: FloorpNoteEditorViewController? = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                let richEditor = FloorpRichTextWebEditorView()
+                weakRichEditor = richEditor
+                return richEditor
+            },
+            persistence: FloorpRichTextTestPersistence()
+        )
+        editor?.loadViewIfNeeded()
+        var richEditor: FloorpRichTextWebEditorView? = try XCTUnwrap(weakRichEditor)
+        let session = try XCTUnwrap(editor?.currentRichTextSession)
+        _ = try await richEditor?.snapshot(expectedSession: session)
+        richEditor?.setJavaScriptRequestTimeoutForTesting(5_000_000_000)
+        var pendingRequest: Task<Bool, Never>? = Task { @MainActor [weak richEditor] in
+            guard let richEditor else { return false }
+            do {
+                try await richEditor.waitForNeverResolvingJavaScriptForTesting()
+                return false
+            } catch {
+                return true
+            }
+        }
+        try await waitUntil { richEditor?.pendingJavaScriptRequestCountForTesting == 1 }
+        weak let weakEditor = editor
+
+        editor = nil
+
+        try await waitUntil { weakEditor == nil }
+        try await waitUntil { richEditor?.isInvalidatedForTesting == true }
+        let pendingRequestDidFail = await pendingRequest?.value
+        XCTAssertEqual(pendingRequestDidFail, true)
+        pendingRequest = nil
+        richEditor = nil
+        try await waitUntil { weakRichEditor == nil }
+    }
+
+    func testBridgeRecoveryInvalidatesAndReleasesReplacedRichEditor() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
+        let note = FloorpNote(
+            id: "recovery-release",
+            title: "Recovery",
+            content: source,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        var factoryCount = 0
+        weak var firstWeakEditor: FloorpRichTextWebEditorView?
+        weak var secondWeakEditor: FloorpRichTextWebEditorView?
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                factoryCount += 1
+                let richEditor = FloorpRichTextWebEditorView()
+                if factoryCount == 1 {
+                    firstWeakEditor = richEditor
+                } else if factoryCount == 2 {
+                    secondWeakEditor = richEditor
+                }
+                return richEditor
+            },
+            persistence: FloorpRichTextTestPersistence()
+        )
+        editor.loadViewIfNeeded()
+        var firstEditor: FloorpRichTextWebEditorView? = try XCTUnwrap(firstWeakEditor)
+        let initialSession = try XCTUnwrap(editor.currentRichTextSession)
+        _ = try await firstEditor?.snapshot(expectedSession: initialSession)
+        firstEditor?.setJavaScriptRequestTimeoutForTesting(5_000_000_000)
+        var pendingRequest: Task<Bool, Never>? = Task { @MainActor [weak firstEditor] in
+            guard let firstEditor else { return false }
+            do {
+                try await firstEditor.waitForNeverResolvingJavaScriptForTesting()
+                return false
+            } catch {
+                return true
+            }
+        }
+        try await waitUntil { firstEditor?.pendingJavaScriptRequestCountForTesting == 1 }
+
+        firstEditor?.simulateWebContentProcessTerminationForTesting()
+        try await waitUntil {
+            factoryCount == 2 && editor.currentRichTextSession?.generation == 1
+        }
+
+        XCTAssertTrue(firstEditor?.isInvalidatedForTesting == true)
+        let pendingRequestDidFail = await pendingRequest?.value
+        XCTAssertEqual(pendingRequestDidFail, true)
+        pendingRequest = nil
+        firstEditor = nil
+        try await waitUntil { firstWeakEditor == nil }
+        let replacement = try XCTUnwrap(secondWeakEditor)
+        let replacementSession = try XCTUnwrap(editor.currentRichTextSession)
+        _ = try await replacement.snapshot(expectedSession: replacementSession)
+        XCTAssertFalse(replacement.isInvalidatedForTesting)
+        let didClose = await editor.closeForTesting()
+        XCTAssertTrue(didClose)
+    }
+
+    func testTerminatedPreflightCannotRecreateReleasedRichEditor() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
+        let note = FloorpNote(
+            id: "terminated-preflight",
+            title: "Termination",
+            content: source,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        let persistence = FloorpRichTextTestPersistence(
+            blocksFirstPreflight: true,
+            firstPreflightError: FloorpRichTextFlushError.updateRejected
+        )
+        var factoryCount = 0
+        weak var weakRichEditor: FloorpRichTextWebEditorView?
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                factoryCount += 1
+                let richEditor = FloorpRichTextWebEditorView()
+                weakRichEditor = richEditor
+                return richEditor
+            },
+            persistence: persistence
+        )
+        editor.loadViewIfNeeded()
+        var richEditor: FloorpRichTextWebEditorView? = try XCTUnwrap(weakRichEditor)
+        let session = try XCTUnwrap(editor.currentRichTextSession)
+        _ = try await richEditor?.snapshot(expectedSession: session)
+        let update = FloorpRichTextUpdateEnvelope(
+            session: try session.advancing(to: 1),
+            payload: FloorpRichTextEditorUpdate(
+                source: #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"New"}]}]}"#
+            )
+        )
+        editor.richTextEditor(try XCTUnwrap(richEditor), received: update)
+        try await waitUntil { persistence.didStartFirstPreflight }
+
+        editor.terminateEditorSessionForTesting()
+        XCTAssertTrue(richEditor?.isInvalidatedForTesting == true)
+        persistence.resumeFirstPreflight()
+        try await waitUntil { !editor.hasPendingRichUpdateDrainForTesting }
+
+        XCTAssertTrue(editor.hasTerminatedEditorSessionForTesting)
+        XCTAssertEqual(factoryCount, 1)
+        richEditor = nil
+        try await waitUntil { weakRichEditor == nil }
+        XCTAssertNil(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ))
+    }
+
     func testOversizedDesktopNoteIdentityShowsRichBodyReadOnlyInsteadOfBlank() throws {
         let source = """
         {"type":"doc","content":[
@@ -832,15 +1128,24 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             updatedAt: 1,
             contentFormat: .automatic
         )
-        let editor = makeEditor(note: note, isPersisted: true) { $0 }
+        var factoryCount = 0
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                factoryCount += 1
+                return FloorpRichTextWebEditorView()
+            }
+        ) { $0 }
 
         editor.loadViewIfNeeded()
 
         XCTAssertNil(editor.currentRichTextSession)
-        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
-            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        XCTAssertEqual(factoryCount, 0)
+        let richHost = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Host"
         ))
-        XCTAssertTrue(richView.isHidden)
+        XCTAssertTrue(richHost.isHidden)
         let textView = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.Editor.Body"
         ) as? UITextView)
@@ -1224,6 +1529,86 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         XCTAssertEqual(persistence.savedDrafts, [saved])
     }
 
+    func testCloseCommandFailureResumesWaiterAndRecoversOnlyAfterClosing() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Format me"}]}]}"#
+        let note = FloorpNote(
+            id: "failed-command-close",
+            title: "Commands",
+            content: source,
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .automatic
+        )
+        var createdEditors = [FloorpRichTextWebEditorView]()
+        var createdWhileClosing = false
+        weak var editorForFactory: FloorpNoteEditorViewController?
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                createdWhileClosing = createdWhileClosing
+                    || editorForFactory?.isClosingForTesting == true
+                let richEditor = FloorpRichTextWebEditorView()
+                createdEditors.append(richEditor)
+                return richEditor
+            },
+            persistence: FloorpRichTextTestPersistence()
+        )
+        editorForFactory = editor
+        editor.loadViewIfNeeded()
+        let richView = try XCTUnwrap(createdEditors.first)
+        let session = try XCTUnwrap(editor.currentRichTextSession)
+        _ = try await richView.snapshot(expectedSession: session)
+        richView.setJavaScriptRequestTimeoutForTesting(200_000_000)
+        _ = try await richView.evaluateJavaScriptForTesting(
+            "window.floorpApplyCommand = () => new Promise(() => {}); true;"
+        )
+        _ = try await richView.evaluateJavaScriptForTesting(
+            """
+            const text = document.querySelector('#editor p').firstChild;
+            const range = document.createRange();
+            range.setStart(text, 0);
+            range.setEnd(text, text.length);
+            const selection = document.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new Event('selectionchange'));
+            true;
+            """
+        )
+        let bold = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Bold"
+        ) as? UIButton)
+
+        bold.sendActions(for: .touchUpInside)
+        try await waitUntil { editor.pendingRichCommandCountForTesting == 1 }
+        let closeTask = Task { @MainActor in
+            await editor.closeForTesting()
+        }
+        try await waitUntil {
+            editor.isClosingForTesting
+                && editor.hasRichCommandQuiescenceWaitersForTesting
+        }
+        try await waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            !editor.isClosingForTesting
+        }
+        if editor.isClosingForTesting {
+            editor.terminateEditorSessionForTesting()
+        }
+        let didClose = await closeTask.value
+
+        XCTAssertFalse(didClose)
+        XCTAssertFalse(editor.hasTerminatedEditorSessionForTesting)
+        XCTAssertFalse(createdWhileClosing)
+        XCTAssertEqual(createdEditors.count, 2)
+        XCTAssertTrue(richView.isInvalidatedForTesting)
+        XCTAssertEqual(editor.pendingRichCommandCountForTesting, 0)
+        XCTAssertFalse(editor.hasRichCommandQuiescenceWaitersForTesting)
+        let replacement = try XCTUnwrap(createdEditors.last)
+        let replacementSession = try XCTUnwrap(editor.currentRichTextSession)
+        _ = try await replacement.snapshot(expectedSession: replacementSession)
+    }
+
     func testInputImmediatelyFollowedByBoldItalicAndCloseKeepsLatestDOM() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
         let note = FloorpNote(
@@ -1364,7 +1749,23 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             contentFormat: .automatic
         )
         let persistence = FloorpRichTextTestPersistence()
-        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        var createdEditors = [FloorpRichTextWebEditorView]()
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                let richEditor = FloorpRichTextWebEditorView()
+                if !createdEditors.isEmpty {
+                    richEditor.restartWithStalledInitialNavigationForTesting(
+                        attempts: 1,
+                        timeoutNanoseconds: 40_000_000
+                    )
+                }
+                createdEditors.append(richEditor)
+                return richEditor
+            },
+            persistence: persistence
+        )
         editor.loadViewIfNeeded()
         let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.RichEditor.Container"
@@ -1396,6 +1797,8 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         bold.sendActions(for: .touchUpInside)
         try await waitUntil { editor.currentRichTextSession == nil }
 
+        XCTAssertEqual(createdEditors.count, 2)
+        XCTAssertTrue(createdEditors.allSatisfy(\.isInvalidatedForTesting))
         XCTAssertEqual(editor.pendingRichCommandCountForTesting, 0)
         let didClose = await editor.closeForTesting()
         XCTAssertTrue(didClose)
@@ -1416,9 +1819,21 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             updatedAt: 1,
             contentFormat: .automatic
         )
+        var createdEditors = [FloorpRichTextWebEditorView]()
         let editor = makeEditor(
             note: note,
             isPersisted: true,
+            richTextEditorFactory: {
+                let richEditor = FloorpRichTextWebEditorView()
+                if !createdEditors.isEmpty {
+                    richEditor.restartWithStalledInitialNavigationForTesting(
+                        attempts: 1,
+                        timeoutNanoseconds: 40_000_000
+                    )
+                }
+                createdEditors.append(richEditor)
+                return richEditor
+            },
             persistence: FloorpRichTextTestPersistence()
         )
         editor.loadViewIfNeeded()
@@ -1430,14 +1845,18 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         _ = try await richView.snapshot(expectedSession: session)
 
         richView.restartWithStalledInitialNavigationForTesting(
-            attempts: 2,
+            attempts: 1,
             timeoutNanoseconds: 40_000_000
         )
         richView.load(document: document, session: session, isDirty: false)
         try await waitUntil { editor.currentRichTextSession == nil }
 
-        XCTAssertTrue(richView.isHidden)
-        XCTAssertEqual(richView.pendingJavaScriptRequestCountForTesting, 0)
+        XCTAssertEqual(createdEditors.count, 2)
+        for createdEditor in createdEditors {
+            XCTAssertTrue(createdEditor.isHidden)
+            XCTAssertTrue(createdEditor.isInvalidatedForTesting)
+            XCTAssertEqual(createdEditor.pendingJavaScriptRequestCountForTesting, 0)
+        }
         let textView = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.Editor.Body"
         ) as? UITextView)
@@ -1446,7 +1865,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         XCTAssertEqual(textView.text, "Visible fallback")
     }
 
-    func testLateRichLoadRestartsAfterIdleInitialNavigationFailureAndCanSaveAndClose() async throws {
+    func testLateRichLoadCreatesEditorAfterConversionAndCanSaveAndClose() async throws {
         let note = FloorpNote(
             id: "late-rich-load",
             title: "Late navigation",
@@ -1456,26 +1875,28 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             contentFormat: .plainText
         )
         let persistence = FloorpRichTextTestPersistence()
-        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        var factoryCount = 0
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                factoryCount += 1
+                return FloorpRichTextWebEditorView()
+            },
+            persistence: persistence
+        )
         editor.loadViewIfNeeded()
-        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
-            withIdentifier: "Floorp.Notes.RichEditor.Container"
-        ) as? FloorpRichTextWebEditorView)
         let enable = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.Editor.EnableRichText"
         ) as? UIButton)
-        try await waitUntil { richView.isPageReadyForTesting }
-
-        richView.restartWithStalledInitialNavigationForTesting(
-            attempts: 1,
-            timeoutNanoseconds: 40_000_000
-        )
-        try await waitUntil { !richView.hasPendingInitialNavigationForTesting }
-        XCTAssertFalse(richView.isPageReadyForTesting)
+        XCTAssertEqual(factoryCount, 0)
         XCTAssertNil(editor.currentRichTextSession)
 
         enable.sendActions(for: .touchUpInside)
-        try await waitUntil { editor.currentRichTextSession != nil }
+        try await waitUntil { factoryCount == 1 && editor.currentRichTextSession != nil }
+        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ) as? FloorpRichTextWebEditorView)
         let session = try XCTUnwrap(editor.currentRichTextSession)
         let snapshot = try await richView.snapshot(expectedSession: session)
         XCTAssertEqual(
@@ -1491,7 +1912,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         XCTAssertTrue(editor.hasTerminatedEditorSessionForTesting)
     }
 
-    func testLateRichLoadBoundsTwoRecoveryNavigationFailuresWithoutLingeringWork() async throws {
+    func testLazyRichLoadBoundsTwoRecoveryNavigationFailuresWithoutLingeringWork() async throws {
         let note = FloorpNote(
             id: "bounded-late-rich-load",
             title: "Bounded navigation",
@@ -1500,39 +1921,43 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             updatedAt: 1,
             contentFormat: .plainText
         )
+        var createdEditors = [FloorpRichTextWebEditorView]()
         let editor = makeEditor(
             note: note,
             isPersisted: true,
+            richTextEditorFactory: {
+                let richEditor = FloorpRichTextWebEditorView()
+                richEditor.restartWithStalledInitialNavigationForTesting(
+                    attempts: 1,
+                    timeoutNanoseconds: 40_000_000
+                )
+                createdEditors.append(richEditor)
+                return richEditor
+            },
             persistence: FloorpRichTextTestPersistence()
         )
         editor.loadViewIfNeeded()
-        let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
-            withIdentifier: "Floorp.Notes.RichEditor.Container"
-        ) as? FloorpRichTextWebEditorView)
         let enable = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.Editor.EnableRichText"
         ) as? UIButton)
-        try await waitUntil { richView.isPageReadyForTesting }
-
-        richView.restartWithStalledInitialNavigationForTesting(
-            attempts: 1,
-            timeoutNanoseconds: 40_000_000
-        )
-        try await waitUntil { !richView.hasPendingInitialNavigationForTesting }
-        richView.stallNextInitialNavigationAttemptsForTesting(
-            attempts: 2,
-            timeoutNanoseconds: 40_000_000
-        )
+        XCTAssertTrue(createdEditors.isEmpty)
 
         enable.sendActions(for: .touchUpInside)
-        try await waitUntil { editor.currentRichTextSession?.generation == 0 }
-        try await waitUntil { editor.currentRichTextSession?.generation == 1 }
-        try await waitUntil { editor.currentRichTextSession == nil }
+        try await waitUntil {
+            createdEditors.count == 2 && editor.currentRichTextSession == nil
+        }
 
-        XCTAssertFalse(richView.isPageReadyForTesting)
-        XCTAssertFalse(richView.hasPendingInitialNavigationForTesting)
-        XCTAssertEqual(richView.pendingJavaScriptRequestCountForTesting, 0)
-        XCTAssertTrue(richView.isHidden)
+        XCTAssertEqual(createdEditors.count, 2)
+        for richEditor in createdEditors {
+            XCTAssertFalse(richEditor.isPageReadyForTesting)
+            XCTAssertFalse(richEditor.hasPendingInitialNavigationForTesting)
+            XCTAssertEqual(richEditor.pendingJavaScriptRequestCountForTesting, 0)
+            XCTAssertTrue(richEditor.isHidden)
+            XCTAssertTrue(richEditor.isInvalidatedForTesting)
+        }
+        XCTAssertNil(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        ))
         let textView = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.Editor.Body"
         ) as? UITextView)
@@ -1555,7 +1980,17 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             blocksFirstPreflight: true,
             firstPreflightError: FloorpNotesStoreError.noteNotFound(note.id)
         )
-        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        var createdEditors = [FloorpRichTextWebEditorView]()
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                let richEditor = FloorpRichTextWebEditorView()
+                createdEditors.append(richEditor)
+                return richEditor
+            },
+            persistence: persistence
+        )
         editor.loadViewIfNeeded()
         let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.RichEditor.Container"
@@ -1585,9 +2020,13 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
         let recovery = try XCTUnwrap(editor.currentRichTextRecoveryDraft)
         XCTAssertEqual(recovery.source, newestSource)
-        XCTAssertFalse(richView.isHidden)
+        XCTAssertTrue(richView.isHidden)
+        XCTAssertTrue(richView.isInvalidatedForTesting)
+        XCTAssertEqual(createdEditors.count, 2)
+        let replacementView = try XCTUnwrap(createdEditors.last)
+        XCTAssertFalse(replacementView.isHidden)
         let replacementSession = try XCTUnwrap(editor.currentRichTextSession)
-        let reeditable = try await richView.snapshot(expectedSession: replacementSession)
+        let reeditable = try await replacementView.snapshot(expectedSession: replacementSession)
         XCTAssertEqual(reeditable.payload.source, newestSource)
         XCTAssertTrue(reeditable.payload.isDirty)
 
@@ -1663,7 +2102,17 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             firstPreflightError: FloorpNotesStoreError.noteNotFound(note.id),
             copyError: CocoaError(.fileWriteUnknown)
         )
-        let editor = makeEditor(note: note, isPersisted: true, persistence: persistence)
+        var createdEditors = [FloorpRichTextWebEditorView]()
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                let richEditor = FloorpRichTextWebEditorView()
+                createdEditors.append(richEditor)
+                return richEditor
+            },
+            persistence: persistence
+        )
         editor.loadViewIfNeeded()
         let richView = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.RichEditor.Container"
@@ -1682,8 +2131,11 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             return current.documentID != initialSession.documentID
         }
         let recoverySession = try XCTUnwrap(editor.currentRichTextSession)
-        _ = try await richView.snapshot(expectedSession: recoverySession)
-        _ = try await richView.evaluateJavaScriptForTesting(
+        XCTAssertTrue(richView.isInvalidatedForTesting)
+        XCTAssertEqual(createdEditors.count, 2)
+        let replacementView = try XCTUnwrap(createdEditors.last)
+        _ = try await replacementView.snapshot(expectedSession: recoverySession)
+        _ = try await replacementView.evaluateJavaScriptForTesting(
             """
             document.querySelector('#editor p').textContent = 'Divergent Web';
             true;
@@ -1713,7 +2165,15 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             contentFormat: .automatic
         )
         var savedDrafts = [FloorpNote]()
-        let editor = makeEditor(note: note, isPersisted: true) {
+        var factoryCount = 0
+        let editor = makeEditor(
+            note: note,
+            isPersisted: true,
+            richTextEditorFactory: {
+                factoryCount += 1
+                return FloorpRichTextWebEditorView()
+            }
+        ) {
             savedDrafts.append($0)
             return $0
         }
@@ -1723,10 +2183,11 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             withIdentifier: "Floorp.Notes.Editor.Body"
         ) as? UITextView)
         XCTAssertFalse(textView.isEditable)
-        let richEditor = try XCTUnwrap(editor.view.floorpNotesDescendant(
-            withIdentifier: "Floorp.Notes.RichEditor.Container"
+        XCTAssertEqual(factoryCount, 0)
+        let richHost = try XCTUnwrap(editor.view.floorpNotesDescendant(
+            withIdentifier: "Floorp.Notes.RichEditor.Host"
         ))
-        XCTAssertTrue(richEditor.isHidden)
+        XCTAssertTrue(richHost.isHidden)
 
         let title = try XCTUnwrap(editor.view.floorpNotesDescendant(
             withIdentifier: "Floorp.Notes.Editor.Title"
@@ -1908,6 +2369,9 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
     private func makeEditor(
         note: FloorpNote,
         isPersisted: Bool,
+        richTextEditorFactory: @escaping @MainActor () -> FloorpRichTextWebEditorView = {
+            FloorpRichTextWebEditorView()
+        },
         onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote
     ) -> FloorpNoteEditorViewController {
         FloorpNoteEditorViewController(
@@ -1916,13 +2380,17 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             themeManager: MockThemeManager(),
             notificationCenter: MockNotificationCenter(),
             isPersisted: isPersisted,
-            onSave: onSave
+            onSave: onSave,
+            richTextEditorFactory: richTextEditorFactory
         )
     }
 
     private func makeEditor(
         note: FloorpNote,
         isPersisted: Bool,
+        richTextEditorFactory: @escaping @MainActor () -> FloorpRichTextWebEditorView = {
+            FloorpRichTextWebEditorView()
+        },
         persistence: FloorpNotePersistence
     ) -> FloorpNoteEditorViewController {
         FloorpNoteEditorViewController(
@@ -1931,7 +2399,8 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             themeManager: MockThemeManager(),
             notificationCenter: MockNotificationCenter(),
             isPersisted: isPersisted,
-            persistence: persistence
+            persistence: persistence,
+            richTextEditorFactory: richTextEditorFactory
         )
     }
 
@@ -2111,6 +2580,112 @@ final class FloorpRichTextWebEditorViewTests: XCTestCase {
         let attributes = try XCTUnwrap(image["attrs"] as? [String: Any])
 
         XCTAssertEqual(attributes["src"] as? String, remoteSource)
+    }
+
+    func testPasteAndDropStayPlainTextOnlyAndNeverCreateImages() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Anchor"}]}]}"#
+        let document = try FloorpRichTextCodec.decode(source)
+        let session = try makeSession(noteID: "plain-transfer")
+        let editor = FloorpRichTextWebEditorView()
+        editor.load(document: document, session: session, isDirty: false)
+        _ = try await editor.snapshot(expectedSession: session)
+
+        let rawResult = try await editor.evaluateJavaScriptForTesting(
+            """
+            const body = document.getElementById('editor');
+            const text = body.querySelector('p').firstChild;
+            const selection = document.getSelection();
+            const range = document.createRange();
+            range.setStart(text, text.length);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new Event('selectionchange'));
+
+            const transferEvent = (type, transfer) => {
+              const event = new Event(type, { bubbles: true, cancelable: true });
+              Object.defineProperty(
+                event,
+                type === 'paste' ? 'clipboardData' : 'dataTransfer',
+                { value: transfer }
+              );
+              body.dispatchEvent(event);
+              return event.defaultPrevented;
+            };
+            const imagePaste = new DataTransfer();
+            imagePaste.setData(
+              'text/html',
+              `<img src="data:image/png;base64,${'A'.repeat(180000)}">`
+            );
+            const didBlockDataImage = transferEvent('paste', imagePaste);
+
+            const remoteURL = `https://images.invalid/floorp-drop-${Date.now()}.png`;
+            const remoteDrop = new DataTransfer();
+            remoteDrop.setData('text/html', `<img src="${remoteURL}">`);
+            const didBlockRemoteImage = transferEvent('drop', remoteDrop);
+
+            const imageFilePaste = new DataTransfer();
+            imageFilePaste.setData('text/plain', ' must-not-insert');
+            imageFilePaste.items.add(new File(['image'], 'unsafe.png', { type: 'image/png' }));
+            const didBlockImageFile = transferEvent('paste', imageFilePaste);
+
+            const plainPaste = new DataTransfer();
+            plainPaste.setData('text/plain', ' Pasted');
+            const didInsertPlainPaste = transferEvent('paste', plainPaste);
+            const plainDrop = new DataTransfer();
+            plainDrop.setData('text/plain', ' Dropped');
+            const didInsertPlainDrop = transferEvent('drop', plainDrop);
+
+            const beforePaste = new InputEvent('beforeinput', {
+              bubbles: true,
+              cancelable: true,
+              inputType: 'insertFromPaste',
+              data: '<img src="https://images.invalid/before-input.png">',
+            });
+            body.dispatchEvent(beforePaste);
+            const beforeDrop = new InputEvent('beforeinput', {
+              bubbles: true,
+              cancelable: true,
+              inputType: 'insertFromDrop',
+            });
+            body.dispatchEvent(beforeDrop);
+
+            ({
+              didBlockDataImage,
+              didBlockRemoteImage,
+              didBlockImageFile,
+              didInsertPlainPaste,
+              didInsertPlainDrop,
+              didBlockBeforePaste: beforePaste.defaultPrevented,
+              didBlockBeforeDrop: beforeDrop.defaultPrevented,
+              imageCount: body.querySelectorAll('img').length,
+              remoteRequestCount: performance.getEntriesByName(remoteURL).length,
+              text: body.textContent,
+            });
+            """
+        )
+        let result = try XCTUnwrap(rawResult as? [String: Any])
+
+        XCTAssertEqual(result["didBlockDataImage"] as? Bool, true)
+        XCTAssertEqual(result["didBlockRemoteImage"] as? Bool, true)
+        XCTAssertEqual(result["didBlockImageFile"] as? Bool, true)
+        XCTAssertEqual(result["didInsertPlainPaste"] as? Bool, true)
+        XCTAssertEqual(result["didInsertPlainDrop"] as? Bool, true)
+        XCTAssertEqual(result["didBlockBeforePaste"] as? Bool, true)
+        XCTAssertEqual(result["didBlockBeforeDrop"] as? Bool, true)
+        XCTAssertEqual(result["imageCount"] as? Int, 0)
+        XCTAssertEqual(result["remoteRequestCount"] as? Int, 0)
+        let transferredText = try XCTUnwrap(result["text"] as? String)
+        XCTAssertEqual(
+            transferredText.split(separator: " ").sorted(),
+            ["Anchor", "Dropped", "Pasted"]
+        )
+
+        let snapshot = try await editor.snapshot(expectedSession: session)
+        XCTAssertEqual(
+            FloorpNoteContent.plainText(from: snapshot.payload.source, contentFormat: .automatic),
+            transferredText
+        )
     }
 
     func testCommandQueuedBeforeEditorLoadExecutesAfterReady() async throws {

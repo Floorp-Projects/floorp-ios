@@ -510,6 +510,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private let notificationCenter: NotificationProtocol
+    private let richTextEditorFactory: @MainActor () -> FloorpRichTextWebEditorView
     private let saveCoordinator: FloorpNoteSaveCoordinator
     private var contentAnalysis: FloorpNoteContent.Analysis
     private var editorMode: ContentEditorMode
@@ -643,13 +644,12 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         return button
     }()
 
-    private lazy var richEditorView: FloorpRichTextWebEditorView = {
-        let editor = FloorpRichTextWebEditorView()
-        editor.delegate = self
-        editor.layer.cornerRadius = 12
-        editor.layer.borderWidth = 1
-        editor.clipsToBounds = true
-        return editor
+    private var richEditorView: FloorpRichTextWebEditorView?
+
+    private lazy var richEditorContainerView: UIView = {
+        let container = UIView()
+        container.accessibilityIdentifier = "Floorp.Notes.RichEditor.Host"
+        return container
     }()
 
     private lazy var richToolbarStackView: UIStackView = {
@@ -685,7 +685,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             enableRichTextButton,
             richToolbarScrollView,
             textView,
-            richEditorView,
+            richEditorContainerView,
         ])
         stack.axis = .vertical
         stack.spacing = 8
@@ -814,7 +814,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default,
         isPersisted: Bool = true,
-        persistence: FloorpNotePersistence
+        persistence: FloorpNotePersistence,
+        richTextEditorFactory: @escaping @MainActor () -> FloorpRichTextWebEditorView = {
+            FloorpRichTextWebEditorView()
+        }
     ) {
         let contentAnalysis = FloorpNoteContent.analyze(
             note.content,
@@ -845,6 +848,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         self.windowUUID = windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
+        self.richTextEditorFactory = richTextEditorFactory
         self.shouldFocusTitleOnFirstAppearance = !isPersisted
         self.saveCoordinator = FloorpNoteSaveCoordinator(
             draft: note,
@@ -860,7 +864,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default,
         isPersisted: Bool = true,
-        onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote
+        onSave: @escaping @MainActor (FloorpNote) async throws -> FloorpNote,
+        richTextEditorFactory: @escaping @MainActor () -> FloorpRichTextWebEditorView = {
+            FloorpRichTextWebEditorView()
+        }
     ) {
         self.init(
             note: note,
@@ -868,7 +875,8 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             themeManager: themeManager,
             notificationCenter: notificationCenter,
             isPersisted: isPersisted,
-            persistence: FloorpNoteClosurePersistence(onSave: onSave)
+            persistence: FloorpNoteClosurePersistence(onSave: onSave),
+            richTextEditorFactory: richTextEditorFactory
         )
     }
 
@@ -952,6 +960,11 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         imageProviderProgress?.cancel()
         imageEncodingTask?.cancel()
         imageImportTimeoutTask?.cancel()
+        if let richEditorView {
+            Task { @MainActor [richEditorView] in
+                richEditorView.invalidate()
+            }
+        }
         notificationCenter.removeObserver(self)
     }
 
@@ -1016,8 +1029,9 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         textView.layer.borderColor = colors.borderPrimary.cgColor
         enableRichTextButton.tintColor = colors.actionPrimary
         richToolbarButtons.forEach { $0.tintColor = colors.actionPrimary }
-        richEditorView.backgroundColor = colors.layer3
-        richEditorView.layer.borderColor = colors.borderPrimary.cgColor
+        richEditorContainerView.backgroundColor = colors.layer3
+        richEditorView?.backgroundColor = colors.layer3
+        richEditorView?.layer.borderColor = colors.borderPrimary.cgColor
     }
 
     @objc private func titleChanged() {
@@ -1074,6 +1088,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         let outcome = await saveLatestDraft()
         if case .failed(let failure) = outcome {
             isClosing = false
+            if let deferredBridgeFailure = richBridgeFailure,
+               richBridgeRecoverySession == nil {
+                recoverRichEditorAfterBridgeFailure(deferredBridgeFailure)
+            }
             setReloadInteractionEnabled(true)
             presentSaveFailure(failure)
             return false
@@ -1134,6 +1152,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         guard saveCoordinator.hasUnsavedChanges else { return .noChanges }
         updateSaveState(.saving)
         let outcome = await saveCoordinator.saveLatest()
+        guard !isEditorSessionTerminated else { return .noChanges }
         setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
         switch outcome {
         case .noChanges:
@@ -1318,6 +1337,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             defer { setReloadInteractionEnabled(true) }
             do {
                 let note = try await saveCoordinator.reload()
+                guard !isEditorSessionTerminated, !isClosing else { return }
                 applyReloadedNote(note)
             } catch FloorpNotesStoreError.editConflict(let id) {
                 updateSaveState(.failed)
@@ -1343,7 +1363,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         titleField.isEnabled = isEnabled
         textView.isEditable = isEnabled && editorMode == .plainText
         if updatesRichEditor {
-            richEditorView.setEditable(isEnabled && editorMode == .richText)
+            richEditorView?.setEditable(isEnabled && editorMode == .richText)
         }
         richToolbarButtons.forEach { $0.isEnabled = isEnabled }
         if isEnabled {
@@ -1409,7 +1429,9 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func rebindRichEditorAfterPersistenceIdentityChangeIfNeeded() {
-        guard editorMode == .richText,
+        guard !isEditorSessionTerminated,
+              !isClosing,
+              editorMode == .richText,
               let document = richDocument,
               let currentSession = richSession,
               currentSession.noteID != saveCoordinator.draft.id else {
@@ -1434,7 +1456,8 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         richBridgeFailure = nil
         richDocument = document
         richSession = session
-        richEditorView.load(
+        guard let editor = installRichEditorIfNeeded() else { return }
+        editor.load(
             document: document,
             session: session,
             isDirty: saveCoordinator.hasUnsavedChanges
@@ -1462,6 +1485,14 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         plainToRichConversionTask != nil
     }
 
+    var hasPendingRichUpdateDrainForTesting: Bool {
+        richUpdateDrainTask != nil
+    }
+
+    var hasRichCommandQuiescenceWaitersForTesting: Bool {
+        !richCommandQuiescenceWaiters.isEmpty
+    }
+
     var isClosingForTesting: Bool {
         isClosing
     }
@@ -1472,6 +1503,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     var currentDraftForTesting: FloorpNote {
         saveCoordinator.draft
+    }
+
+    func terminateEditorSessionForTesting() {
+        terminateEditorSession()
     }
 
     func beginImageImportForTesting() -> UUID {
@@ -1496,6 +1531,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 #endif
 
     private func applyReloadedNote(_ note: FloorpNote) {
+        guard !isEditorSessionTerminated, !isClosing else { return }
         autosaveTask?.cancel()
         contentAnalysis = FloorpNoteContent.analyze(
             note.content,
@@ -1529,13 +1565,14 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         queuedRichCommands.removeAll()
         richCommandInFlight = nil
         resumeRichCommandQuiescenceWaitersIfNeeded()
+        invalidateRichEditor()
     }
 
     private func configureContentEditor() {
         let showsRichEditor = editorMode == .richText
         enableRichTextButton.isHidden = editorMode != .plainText
         richToolbarScrollView.isHidden = !showsRichEditor
-        richEditorView.isHidden = !showsRichEditor
+        richEditorContainerView.isHidden = !showsRichEditor
         textView.isHidden = showsRichEditor
         textView.isEditable = editorMode == .plainText
         textView.accessibilityHint = editorMode == .readOnly
@@ -1543,13 +1580,65 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             : FloorpStrings.Notes.contentAccessibilityHint
 
         if showsRichEditor, let richDocument, let richSession {
-            richEditorView.load(document: richDocument, session: richSession, isDirty: false)
-            richEditorView.setEditable(richEditingLockCount == 0)
+            guard let editor = installRichEditorIfNeeded() else {
+                richEditorContainerView.isHidden = true
+                return
+            }
+            editor.load(document: richDocument, session: richSession, isDirty: false)
+            editor.setEditable(richEditingLockCount == 0)
+        } else {
+            invalidateRichEditor()
         }
         latestRichEditorState = nil
         undoButton.isEnabled = false
         redoButton.isEnabled = false
         setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
+    }
+
+    private func installRichEditorIfNeeded() -> FloorpRichTextWebEditorView? {
+        guard !isEditorSessionTerminated,
+              !isClosing,
+              editorMode == .richText else {
+            return nil
+        }
+        if let richEditorView { return richEditorView }
+        let editor = richTextEditorFactory()
+        editor.delegate = self
+        editor.layer.cornerRadius = 12
+        editor.layer.borderWidth = 1
+        editor.clipsToBounds = true
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        richEditorContainerView.addSubview(editor)
+        NSLayoutConstraint.activate([
+            editor.topAnchor.constraint(equalTo: richEditorContainerView.topAnchor),
+            editor.leadingAnchor.constraint(equalTo: richEditorContainerView.leadingAnchor),
+            editor.trailingAnchor.constraint(equalTo: richEditorContainerView.trailingAnchor),
+            editor.bottomAnchor.constraint(equalTo: richEditorContainerView.bottomAnchor),
+        ])
+        let colors = themeManager.getCurrentTheme(for: windowUUID).colors
+        editor.backgroundColor = colors.layer3
+        editor.layer.borderColor = colors.borderPrimary.cgColor
+        richEditorView = editor
+        return editor
+    }
+
+    private func replaceRichEditor(
+        document: FloorpRichTextDocument,
+        session: FloorpRichTextEditorSessionCursor,
+        isDirty: Bool
+    ) {
+        invalidateRichEditor()
+        guard let editor = installRichEditorIfNeeded() else { return }
+        editor.load(document: document, session: session, isDirty: isDirty)
+        editor.setEditable(richEditingLockCount == 0)
+    }
+
+    private func invalidateRichEditor() {
+        guard let editor = richEditorView else { return }
+        richEditorView = nil
+        editor.isHidden = true
+        editor.invalidate()
+        editor.removeFromSuperview()
     }
 
     private func applyRichPreparation(
@@ -1703,6 +1792,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
               !queuedRichCommands.isEmpty else {
             return
         }
+        guard let editor = richEditorView else {
+            recoverRichEditorAfterBridgeFailure(FloorpRichTextFlushError.editorUnavailable)
+            return
+        }
         let command = queuedRichCommands.removeFirst()
         do {
             let envelope = try FloorpRichTextCommandPlanner.plan(
@@ -1715,7 +1808,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
                 session: session
             )
             richCommandInFlight = flight
-            richEditorView.send(envelope, requestID: flight.requestID) { [weak self] result in
+            editor.send(envelope, requestID: flight.requestID) { [weak self] result in
                 guard let self else { return }
                 guard richCommandInFlight == flight else { return }
                 richCommandInFlight = nil
@@ -1732,6 +1825,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
                         error = FloorpRichTextFlushError.updateRejected
                     }
                     recoverRichEditorAfterBridgeFailure(error)
+                    resumeRichCommandQuiescenceWaitersIfNeeded()
                     return
                 }
                 enqueueRichUpdate(update)
@@ -1741,6 +1835,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         } catch {
             richCommandInFlight = nil
             recoverRichEditorAfterBridgeFailure(error)
+            resumeRichCommandQuiescenceWaitersIfNeeded()
         }
     }
 
@@ -1919,6 +2014,11 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
                 }
                 applyQueuedRichStateIfPossible()
             } catch {
+                guard !Task.isCancelled,
+                      !isEditorSessionTerminated,
+                      !isClosing else {
+                    return
+                }
                 recoverFromRejectedRichUpdate(envelope, error: error)
                 presentPreflightFailure(error)
                 return
@@ -2002,6 +2102,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         _ rejected: FloorpRichTextUpdateEnvelope,
         error: Error
     ) {
+        guard !isEditorSessionTerminated, !isClosing else { return }
         let recoveryEnvelope = (queuedRichUpdates + [rejected]).max {
             $0.session.revision < $1.session.revision
         } ?? rejected
@@ -2045,7 +2146,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             contentFormat: recovery.contentFormat,
             session: replacement
         )
-        richEditorView.load(document: document, session: replacement, isDirty: true)
+        replaceRichEditor(document: document, session: replacement, isDirty: true)
     }
 
     private func recoverRichEditorAfterBridgeFailure(_ error: Error) {
@@ -2065,6 +2166,11 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         resumeRichCommandQuiescenceWaitersIfNeeded()
         updateSaveState(.failed)
 
+        // Closing must fail instead of resurrecting a web-content process.
+        // Once the failed close re-enables the session, it retries this
+        // recorded recovery through the normal replacement path.
+        guard !isClosing else { return }
+
         guard let document = richDocument,
               let session = richSession,
               session.generation < FloorpRichTextBridgeProtocol.maximumSafeSequenceNumber,
@@ -2081,7 +2187,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         }
         richSession = replacement
         richBridgeRecoverySession = replacement
-        richEditorView.load(
+        replaceRichEditor(
             document: document,
             session: replacement,
             isDirty: saveCoordinator.hasUnsavedChanges
@@ -2140,11 +2246,12 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             }
             return
         }
-        guard let requestedSession = richSession else {
+        guard let requestedSession = richSession,
+              let editor = richEditorView else {
             throw FloorpRichTextFlushError.editorUnavailable
         }
-        try await richEditorView.setEditableAndWait(false)
-        let envelope = try await richEditorView.flush(expectedSession: requestedSession)
+        try await editor.setEditableAndWait(false)
+        let envelope = try await editor.flush(expectedSession: requestedSession)
         guard envelope.session.noteID == requestedSession.noteID,
               envelope.session.documentID == requestedSession.documentID,
               envelope.session.generation == requestedSession.generation,
@@ -2188,8 +2295,11 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         guard editorMode == .richText, let session = richSession else {
             return nil
         }
-        try await richEditorView.setEditableAndWait(false)
-        let envelope = try await richEditorView.snapshot(expectedSession: session)
+        guard let editor = richEditorView else {
+            throw FloorpRichTextFlushError.editorUnavailable
+        }
+        try await editor.setEditableAndWait(false)
+        let envelope = try await editor.snapshot(expectedSession: session)
         guard envelope.session.noteID == session.noteID,
               envelope.session.documentID == session.documentID,
               envelope.session.generation == session.generation,
@@ -2258,7 +2368,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 extension FloorpNoteEditorViewController: UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if editorMode == .richText {
-            richEditorView.focus()
+            richEditorView?.focus()
         } else {
             textView.becomeFirstResponder()
         }
@@ -2568,6 +2678,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     }
 
     private enum EditorError: Error {
+        case editorInvalidated
         case pageNotReady
         case sessionWasReplaced
         case invalidJavaScriptResult
@@ -2626,6 +2737,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     private var loadedSession: FloorpRichTextEditorSessionCursor?
     private var requestedEditable = true
     private var isPageReady = false
+    private var isInvalidated = false
     private var didAuthorizeInitialNavigation = false
     private var initialNavigation: WKNavigation?
     private var initialNavigationAttemptVersion = 0
@@ -2682,6 +2794,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         session: FloorpRichTextEditorSessionCursor,
         isDirty: Bool
     ) {
+        guard !isInvalidated else { return }
         failPendingJavaScriptRequests(with: EditorError.sessionWasReplaced)
         loadRequestVersion += 1
         pendingDocument = document
@@ -2698,6 +2811,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         requestID: String,
         completion: @escaping @MainActor (Result<FloorpRichTextUpdateEnvelope, Error>) -> Void
     ) {
+        guard !isInvalidated else {
+            completion(.failure(EditorError.editorInvalidated))
+            return
+        }
         guard requestID.utf8.count <= FloorpRichTextBridgeProtocol.maximumDocumentIDBytes,
               var commandObject = jsonObject(command) as? [String: Any] else {
             completion(.failure(EditorError.invalidJavaScriptResult))
@@ -2734,7 +2851,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 
     func setEditable(_ isEditable: Bool) {
         requestedEditable = isEditable
-        guard isPageReady else { return }
+        guard !isInvalidated, isPageReady else { return }
         webView.callAsyncJavaScript(
             "return window.floorpSetEditable(isEditable);",
             arguments: ["isEditable": isEditable],
@@ -2744,6 +2861,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     }
 
     func setEditableAndWait(_ isEditable: Bool) async throws {
+        guard !isInvalidated else { throw EditorError.editorInvalidated }
         requestedEditable = isEditable
         let requestedProcessGeneration = webContentProcessGeneration
         for _ in 0..<600 where !isPageReady {
@@ -2761,7 +2879,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     }
 
     func focus() {
-        guard isPageReady else { return }
+        guard !isInvalidated, isPageReady else { return }
         webView.callAsyncJavaScript(
             "document.getElementById('editor').focus(); return true;",
             arguments: [:],
@@ -2788,9 +2906,48 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         )
     }
 
+    func invalidate() {
+        guard !isInvalidated else { return }
+        isInvalidated = true
+        isHidden = true
+        initialNavigationWatchdogTask?.cancel()
+        initialNavigationWatchdogTask = nil
+        initialNavigationAttemptVersion += 1
+        loadRequestVersion += 1
+        pendingLoadRequestVersion = loadRequestVersion
+        webContentProcessGeneration += 1
+        isPageReady = false
+        didAuthorizeInitialNavigation = false
+        initialNavigation = nil
+        loadedSession = nil
+        pendingDocument = nil
+        pendingSession = nil
+        pendingDocumentIsDirty = false
+        failPendingJavaScriptRequests(with: EditorError.editorInvalidated)
+#if TESTING
+        bufferedUpdatesForTesting.removeAll()
+#endif
+        let userContentController = webView.configuration.userContentController
+        userContentController.removeScriptMessageHandler(forName: BridgeName.update)
+        userContentController.removeScriptMessageHandler(forName: BridgeName.state)
+        messageHandlerProxy?.target = nil
+        messageHandlerProxy = nil
+        webView.navigationDelegate = nil
+        webView.stopLoading()
+        delegate = nil
+    }
+
 #if TESTING
     func evaluateJavaScriptForTesting(_ script: String) async throws -> Any? {
-        try await evaluateJavaScript(script)
+        guard !isInvalidated else { throw EditorError.editorInvalidated }
+        return try await evaluateJavaScript(script)
+    }
+
+    func waitForNeverResolvingJavaScriptForTesting() async throws {
+        _ = try await callAsyncJavaScript(
+            "return new Promise(() => {});",
+            arguments: [:]
+        )
     }
 
     func setJavaScriptRequestTimeoutForTesting(_ nanoseconds: UInt64) {
@@ -2803,6 +2960,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 
     var pendingJavaScriptRequestCountForTesting: Int {
         pendingJavaScriptRequests.count
+    }
+
+    var isInvalidatedForTesting: Bool {
+        isInvalidated
     }
 
     var isPageReadyForTesting: Bool {
@@ -2850,7 +3011,11 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 #endif
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
-        guard navigation === initialNavigation, didAuthorizeInitialNavigation else { return }
+        guard !isInvalidated,
+              navigation === initialNavigation,
+              didAuthorizeInitialNavigation else {
+            return
+        }
         initialNavigationWatchdogTask?.cancel()
         initialNavigationWatchdogTask = nil
         initialNavigation = nil
@@ -2864,7 +3029,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         didFail navigation: WKNavigation?,
         withError error: Error
     ) {
-        guard navigation === initialNavigation else { return }
+        guard !isInvalidated, navigation === initialNavigation else { return }
         failInitialNavigationAttempt(error, version: initialNavigationAttemptVersion)
     }
 
@@ -2873,11 +3038,12 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: Error
     ) {
-        guard navigation === initialNavigation else { return }
+        guard !isInvalidated, navigation === initialNavigation else { return }
         failInitialNavigationAttempt(error, version: initialNavigationAttemptVersion)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !isInvalidated else { return }
         webContentProcessGeneration += 1
         initialNavigationWatchdogTask?.cancel()
         initialNavigationWatchdogTask = nil
@@ -2896,6 +3062,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        guard !isInvalidated else {
+            decisionHandler(.cancel)
+            return
+        }
         let isOwnedInitialNavigation = !didAuthorizeInitialNavigation
             && navigationAction.targetFrame?.isMainFrame == true
             && navigationAction.navigationType == .other
@@ -2913,7 +3083,8 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         didReceive message: WKScriptMessage
     ) {
         let origin = message.frameInfo.securityOrigin
-        guard message.webView === webView,
+        guard !isInvalidated,
+              message.webView === webView,
               message.frameInfo.isMainFrame,
               message.frameInfo.request.url == Self.editorDocumentURL,
               origin.`protocol`.isEmpty,
@@ -2950,7 +3121,8 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     }
 
     private func startInitialNavigationIfNeeded() {
-        guard !isPageReady,
+        guard !isInvalidated,
+              !isPageReady,
               initialNavigation == nil,
               initialNavigationWatchdogTask == nil else {
             return
@@ -2984,7 +3156,11 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     }
 
     private func failInitialNavigationAttempt(_ error: Error, version: Int) {
-        guard version == initialNavigationAttemptVersion, !isPageReady else { return }
+        guard !isInvalidated,
+              version == initialNavigationAttemptVersion,
+              !isPageReady else {
+            return
+        }
         initialNavigationWatchdogTask?.cancel()
         initialNavigationWatchdogTask = nil
         initialNavigationAttemptVersion += 1
@@ -3011,7 +3187,8 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     }
 
     private func loadPendingDocumentIfPossible() {
-        guard isPageReady,
+        guard !isInvalidated,
+              isPageReady,
               let document = pendingDocument,
               let session = pendingSession,
               let source = try? FloorpRichTextCodec.encode(document),
@@ -3089,8 +3266,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     private func waitUntilLoaded(
         expectedSession: FloorpRichTextEditorSessionCursor
     ) async throws {
+        guard !isInvalidated else { throw EditorError.editorInvalidated }
         let requestedProcessGeneration = webContentProcessGeneration
         for _ in 0..<600 {
+            guard !isInvalidated else { throw EditorError.editorInvalidated }
             guard requestedProcessGeneration == webContentProcessGeneration else {
                 throw EditorError.webContentProcessTerminated
             }
@@ -3115,6 +3294,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         _ body: String,
         arguments: [String: Any]
     ) async throws -> Any? {
+        guard !isInvalidated else { throw EditorError.editorInvalidated }
         let requestID = UUID()
         let result: JavaScriptValue = try await withTaskCancellationHandler {
             try Task.checkCancellation()
@@ -3148,6 +3328,7 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     }
 
     private func evaluateJavaScript(_ script: String) async throws -> Any? {
+        guard !isInvalidated else { throw EditorError.editorInvalidated }
         let requestID = UUID()
         let result: JavaScriptValue = try await withTaskCancellationHandler {
             try Task.checkCancellation()
@@ -3204,7 +3385,8 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     <head>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <meta http-equiv="Content-Security-Policy"
-            content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+            content="default-src 'none'; img-src data:; connect-src 'none';
+                     style-src 'unsafe-inline'; script-src 'unsafe-inline'">
       <style>
         :root { color-scheme: light dark; }
         html, body { min-height: 100%; margin: 0; padding: 0; background: transparent; }
@@ -3788,6 +3970,53 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
           return emitUpdate(requestID);
         };
 
+        const transferContainsImage = (transfer) => {
+          if (!transfer) return false;
+          const items = [...(transfer.items || [])];
+          const files = [...(transfer.files || [])];
+          return items.some((item) => (item.type || '').toLowerCase().startsWith('image/')) ||
+            files.some((file) => (file.type || '').toLowerCase().startsWith('image/'));
+        };
+        const insertTransferredPlainText = (transfer) => {
+          if (!transfer || transferContainsImage(transfer)) return false;
+          const text = transfer.getData('text/plain');
+          if (!text) return false;
+          const range = restoreEditorSelection() || insertionRange();
+          if (!range) return false;
+          const selection = document.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          if (document.execCommand('insertText', false, text)) return true;
+          range.deleteContents();
+          const textNode = document.createTextNode(text);
+          range.insertNode(textNode);
+          range.setStartAfter(textNode);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          savedRange = range.cloneRange();
+          savedTextSelection = textSelectionForRange(range);
+          editor.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertText',
+            data: text,
+          }));
+          return true;
+        };
+        const handleTransfer = (event, transfer) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!session || editor.contentEditable !== 'true') return;
+          insertTransferredPlainText(transfer);
+        };
+
+        editor.addEventListener('beforeinput', (event) => {
+          if (event.inputType === 'insertFromPaste' || event.inputType === 'insertFromDrop') {
+            event.preventDefault();
+          }
+        });
+        editor.addEventListener('paste', (event) => handleTransfer(event, event.clipboardData));
+        editor.addEventListener('drop', (event) => handleTransfer(event, event.dataTransfer));
         editor.addEventListener('input', emitUpdate);
         editor.addEventListener('keyup', emitState);
         editor.addEventListener('mouseup', emitState);

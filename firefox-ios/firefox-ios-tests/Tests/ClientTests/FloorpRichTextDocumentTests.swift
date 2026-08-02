@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import Client
 
@@ -455,7 +458,7 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         }
     }
 
-    func testImageCommandAcceptsSafeRasterDataAndHTTPS() throws {
+    func testImageCommandAcceptsSafeRasterData() throws {
         let document = try FloorpRichTextCodec.decode(minimalDocument())
         let currentSession = try session()
         let dataPayload = safePNGDataURL.split(separator: ",", maxSplits: 1)[1]
@@ -470,15 +473,6 @@ final class FloorpRichTextDocumentTests: XCTestCase {
                     alt: "uppercase metadata"
                 ),
                 "data:image/png;base64," + dataPayload
-            ),
-            (
-                FloorpRichTextImage(
-                    source: "HTTPS://images.example.test/photo.webp",
-                    alt: "remote",
-                    title: "Photo",
-                    width: 800
-                ),
-                "https://images.example.test/photo.webp"
             ),
         ]
 
@@ -499,12 +493,112 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         }
     }
 
+    func testImagePolicyRejectsDeclaredHugeRasterMetadataWithoutRewritingSource() throws {
+        let oversizedDimension = UInt32(FloorpRichTextImagePolicy.maximumPixelDimension + 1)
+        let fixtures = [
+            (
+                "png",
+                try pngData(width: oversizedDimension, height: 1)
+            ),
+            (
+                "jpeg",
+                try jpegData(width: UInt16(oversizedDimension), height: 1)
+            ),
+            (
+                "gif",
+                try gifData(width: Int(oversizedDimension), height: 1, frameCount: 1)
+            ),
+            (
+                "webp",
+                try webPData(width: UInt16(oversizedDimension), height: 1)
+            ),
+        ]
+
+        for (mime, data) in fixtures {
+            let dataURL = rasterDataURL(mime: mime, data: data)
+            XCTAssertLessThan(dataURL.utf8.count, FloorpRichTextImagePolicy.maximumPersistedSourceBytes)
+            XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(dataURL), mime)
+            let source = #"{"type":"doc","content":[{"type":"image","attrs":{"src":"\#(dataURL)"}}]}"#
+            let document = try FloorpRichTextCodec.decode(source)
+
+            XCTAssertFalse(document.compatibility.isEditable, mime)
+            XCTAssertTrue(
+                document.compatibility.issues.contains { $0.kind == .unsafeImageSource },
+                mime
+            )
+            XCTAssertEqual(try FloorpRichTextCodec.encode(document), source, mime)
+        }
+    }
+
+    func testImagePolicyRejectsAnimatedFrameAndCumulativePixelBudgets() throws {
+        let tooManyFrames = rasterDataURL(
+            mime: "gif",
+            data: try gifData(width: 1, height: 1, frameCount: 121)
+        )
+        let tooManyCumulativePixels = rasterDataURL(
+            mime: "gif",
+            data: try gifData(width: 1_000, height: 1_000, frameCount: 17)
+        )
+
+        XCTAssertLessThan(
+            tooManyFrames.utf8.count,
+            FloorpRichTextImagePolicy.maximumPersistedSourceBytes
+        )
+        XCTAssertLessThan(
+            tooManyCumulativePixels.utf8.count,
+            FloorpRichTextImagePolicy.maximumPersistedSourceBytes
+        )
+        XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(tooManyFrames))
+        XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(tooManyCumulativePixels))
+    }
+
+    func testImagePolicyRejectsZeroAndPerFramePixelBudgets() throws {
+        let zeroDimension = rasterDataURL(
+            mime: "gif",
+            data: animatedGIF(width: 0, height: 1, frameCount: 1)
+        )
+        let tooManyPixels = rasterDataURL(
+            mime: "png",
+            data: try pngData(width: 3_000, height: 2_000)
+        )
+
+        XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(zeroDimension))
+        XCTAssertFalse(FloorpRichTextImagePolicy.isSafePersistedSource(tooManyPixels))
+        XCTAssertTrue(FloorpRichTextImagePolicy.isSafePersistedSource(safePNGDataURL))
+    }
+
+    func testImagePolicyEnforcesDocumentAggregatePixelBudgetWithoutRewritingSource() throws {
+        let imageSource = rasterDataURL(
+            mime: "png",
+            data: try encodedRasterData(width: 2_048, height: 2_048, type: .png)
+        )
+        let imageNode = #"{"type":"image","attrs":{"src":"\#(imageSource)"}}"#
+        let boundarySource = "{\"type\":\"doc\",\"content\":["
+            + Array(repeating: imageNode, count: 4).joined(separator: ",")
+            + "]}"
+        let excessiveSource = "{\"type\":\"doc\",\"content\":["
+            + Array(repeating: imageNode, count: 5).joined(separator: ",")
+            + "]}"
+
+        let metadata = try XCTUnwrap(FloorpRichTextImagePolicy.safePersistedMetadata(imageSource))
+        XCTAssertEqual(metadata.cumulativePixels, FloorpRichTextImagePolicy.maximumPixelsPerFrame)
+        let boundaryDocument = try FloorpRichTextCodec.decode(boundarySource)
+        XCTAssertTrue(boundaryDocument.compatibility.isEditable)
+        XCTAssertEqual(try FloorpRichTextCodec.encode(boundaryDocument), boundarySource)
+
+        let excessiveDocument = try FloorpRichTextCodec.decode(excessiveSource)
+        XCTAssertFalse(excessiveDocument.compatibility.isEditable)
+        XCTAssertTrue(excessiveDocument.compatibility.issues.contains { $0.kind == .resourceLimit })
+        XCTAssertEqual(try FloorpRichTextCodec.encode(excessiveDocument), excessiveSource)
+    }
+
     func testImageCommandRejectsObjectURLsVectorsAndMismatchedData() throws {
         let document = try FloorpRichTextCodec.decode(minimalDocument())
         let currentSession = try session()
         let unsafeSources = [
             "blob:https://example.test/temporary-object",
             "http://example.test/image.png",
+            "https://images.example.test/image.png",
             "https://user:secret@example.test/image.png",
             "javascript:alert(1)",
             "file:///tmp/image.png",
@@ -577,6 +671,7 @@ final class FloorpRichTextDocumentTests: XCTestCase {
     func testUnsafeOrNonCanonicalPersistedImageBlocksEditingWithoutRewritingSource() throws {
         let sources = [
             "blob:https://example.test/temporary",
+            "https://images.example.test/photo.webp",
             "HTTPS://images.example.test/photo.webp",
             "DATA:IMAGE/PNG;BASE64," + safePNGDataURL.split(separator: ",", maxSplits: 1)[1],
         ]
@@ -988,6 +1083,149 @@ final class FloorpRichTextDocumentTests: XCTestCase {
 
     private func minimalDocument() -> String {
         #"{"type":"doc","content":[{"type":"paragraph"}]}"#
+    }
+
+    private func rasterDataURL(mime: String, data: Data) -> String {
+        "data:image/\(mime);base64," + data.base64EncodedString()
+    }
+
+    private func pngData(width: UInt32, height: UInt32) throws -> Data {
+        let payload = try XCTUnwrap(safePNGDataURL.split(separator: ",", maxSplits: 1).last)
+        var data = try XCTUnwrap(Data(base64Encoded: String(payload)))
+        writeBigEndian(width, to: &data, at: 16)
+        writeBigEndian(height, to: &data, at: 20)
+        let checksum = crc32(Data(data[12..<29]))
+        writeBigEndian(checksum, to: &data, at: 29)
+        return data
+    }
+
+    private func jpegData(width: UInt16, height: UInt16) throws -> Data {
+        let base64 = [
+            "/9j/4AAQSkZJRgABAQAASABIAAD/4QBARXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAAAAaADAAQA",
+            "AAABAAAAAQAAAAD/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIE",
+            "AwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpT",
+            "VFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ",
+            "2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3",
+            "AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpj",
+            "ZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn",
+            "6Onq8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgICAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8P",
+            "Dw8PDw8PDw8P/9sAQwECAgIEBAQHBAQHEAsJCxAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+            "EBAQ/90ABAAB/9oADAMBAAIRAxEAPwD4vooor+Uz/fw//9k=",
+        ].joined()
+        var data = try XCTUnwrap(Data(base64Encoded: base64))
+        let startOfFrameMarkers: Set<UInt8> = [
+            0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+            0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
+        ]
+        let markerOffset = try XCTUnwrap((0..<(data.count - 8)).first { offset in
+            data[offset] == 0xFF && startOfFrameMarkers.contains(data[offset + 1])
+        })
+        writeBigEndian(height, to: &data, at: markerOffset + 5)
+        writeBigEndian(width, to: &data, at: markerOffset + 7)
+        return data
+    }
+
+    private func animatedGIF(width: UInt16, height: UInt16, frameCount: Int) -> Data {
+        var data = Data("GIF89a".utf8)
+        appendLittleEndian(width, to: &data)
+        appendLittleEndian(height, to: &data)
+        data.append(contentsOf: [0x80, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF])
+        let frame: [UInt8] = [
+            0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0,
+            2, 1, 0x4C, 0,
+        ]
+        for _ in 0..<frameCount {
+            data.append(contentsOf: frame)
+        }
+        data.append(0x3B)
+        return data
+    }
+
+    private func gifData(width: Int, height: Int, frameCount: Int) throws -> Data {
+        try encodedRasterData(
+            width: width,
+            height: height,
+            type: .gif,
+            frameCount: frameCount
+        )
+    }
+
+    private func encodedRasterData(
+        width: Int,
+        height: Int,
+        type: UTType,
+        frameCount: Int = 1
+    ) throws -> Data {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = try XCTUnwrap(CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(red: 0.25, green: 0.5, blue: 0.75, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let image = try XCTUnwrap(context.makeImage())
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(
+            data,
+            type.identifier as CFString,
+            frameCount,
+            nil
+        ))
+        for _ in 0..<frameCount {
+            CGImageDestinationAddImage(destination, image, nil)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    private func webPData(width: UInt16, height: UInt16) throws -> Data {
+        let base64 = "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEALmk0mk0iIiIiIgBoSygABc6zbAAA"
+        var data = try XCTUnwrap(Data(base64Encoded: base64))
+        let signature = Data([0x9D, 0x01, 0x2A])
+        let signatureRange = try XCTUnwrap(data.range(of: signature))
+        writeLittleEndian(width, to: &data, at: signatureRange.upperBound)
+        writeLittleEndian(height, to: &data, at: signatureRange.upperBound + 2)
+        return data
+    }
+
+    private func appendLittleEndian(_ value: UInt16, to data: inout Data) {
+        data.append(UInt8(value & 0xFF))
+        data.append(UInt8(value >> 8))
+    }
+
+    private func writeLittleEndian(_ value: UInt16, to data: inout Data, at offset: Int) {
+        data[offset] = UInt8(value & 0xFF)
+        data[offset + 1] = UInt8(value >> 8)
+    }
+
+    private func writeBigEndian(_ value: UInt16, to data: inout Data, at offset: Int) {
+        data[offset] = UInt8(value >> 8)
+        data[offset + 1] = UInt8(value & 0xFF)
+    }
+
+    private func writeBigEndian(_ value: UInt32, to data: inout Data, at offset: Int) {
+        data[offset] = UInt8((value >> 24) & 0xFF)
+        data[offset + 1] = UInt8((value >> 16) & 0xFF)
+        data[offset + 2] = UInt8((value >> 8) & 0xFF)
+        data[offset + 3] = UInt8(value & 0xFF)
+    }
+
+    private func crc32(_ data: Data) -> UInt32 {
+        var checksum: UInt32 = 0xFFFF_FFFF
+        for byte in data {
+            checksum ^= UInt32(byte)
+            for _ in 0..<8 {
+                checksum = (checksum & 1) == 1
+                    ? (checksum >> 1) ^ 0xEDB8_8320
+                    : checksum >> 1
+            }
+        }
+        return ~checksum
     }
 
     /// Captured from `Editor.getJSON()` with TipTap 2.27.2 and reloaded through

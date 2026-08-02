@@ -4,6 +4,8 @@
 
 import CoreFoundation
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 indirect enum FloorpRichTextJSONValue: Equatable, Sendable {
     case object([String: FloorpRichTextJSONValue])
@@ -1061,6 +1063,9 @@ private enum FloorpRichTextSchema {
         var issues = [FloorpRichTextCompatibilityIssue]()
         var nodeCount = 0
         var reachedResourceLimit = false
+        var declaredImagePixels: UInt64 = 0
+        var imageMetadataBySource = [String: FloorpRichTextImagePolicy.RasterMetadata]()
+        var rejectedImageSources = Set<String>()
 
         mutating func analyzeNode(
             _ value: FloorpRichTextJSONValue,
@@ -1254,10 +1259,19 @@ private enum FloorpRichTextSchema {
             path: String
         ) {
             guard let source = attributes["src"]?.stringValue,
-                  FloorpRichTextImagePolicy.isSafePersistedSource(source) else {
+                  let metadata = rasterMetadata(for: source) else {
                 append(.unsafeImageSource, path: path + "/src")
                 return
             }
+            let (nextDeclaredImagePixels, didOverflow) = declaredImagePixels.addingReportingOverflow(
+                metadata.cumulativePixels
+            )
+            guard !didOverflow,
+                  nextDeclaredImagePixels <= FloorpRichTextImagePolicy.maximumCumulativePixels else {
+                append(.resourceLimit, path: path + "/src")
+                return
+            }
+            declaredImagePixels = nextDeclaredImagePixels
             for key in ["alt", "title"] {
                 if let value = attributes[key], value != .null,
                    value.stringValue.map({
@@ -1273,6 +1287,19 @@ private enum FloorpRichTextSchema {
                width.integerValue.map(FloorpRichTextImagePolicy.allowedDisplayWidth.contains) != true {
                 append(.invalidShape("image width is outside the supported range"), path: path + "/width")
             }
+        }
+
+        private mutating func rasterMetadata(
+            for source: String
+        ) -> FloorpRichTextImagePolicy.RasterMetadata? {
+            if let metadata = imageMetadataBySource[source] { return metadata }
+            guard !rejectedImageSources.contains(source),
+                  let metadata = FloorpRichTextImagePolicy.safePersistedMetadata(source) else {
+                rejectedImageSources.insert(source)
+                return nil
+            }
+            imageMetadataBySource[source] = metadata
+            return metadata
         }
 
         private mutating func validateMarks(
@@ -1768,65 +1795,117 @@ enum FloorpRichTextEditorUpdatePolicy {
 }
 
 enum FloorpRichTextImagePolicy {
+    struct RasterMetadata: Equatable, Sendable {
+        let frameCount: Int
+        let cumulativePixels: UInt64
+    }
+
+    private struct NormalizedRasterSource {
+        let source: String
+        let metadata: RasterMetadata
+    }
+
     static let maximumPersistedSourceBytes = 200 * 1_024
-    static let maximumRemoteURLBytes = 4_096
     static let maximumMetadataBytes = 1_024
     static let allowedDisplayWidth = 40...8_192
+    static let maximumPixelDimension: UInt64 = 4_096
+    static let maximumPixelsPerFrame: UInt64 = 4_194_304
+    static let maximumFrameCount = 120
+    static let maximumCumulativePixels: UInt64 = 16_777_216
 
     private static let rasterMIMETypes = ["jpeg", "png", "gif", "webp"]
 
     static func isSafePersistedSource(_ source: String) -> Bool {
-        normalizedSourceForDesktop(source) == source
+        safePersistedMetadata(source) != nil
+    }
+
+    static func safePersistedMetadata(_ source: String) -> RasterMetadata? {
+        guard let normalized = normalizedRasterDataURL(source),
+              normalized.source == source else {
+            return nil
+        }
+        return normalized.metadata
     }
 
     static func normalizedSourceForDesktop(_ source: String) -> String? {
-        if source.range(of: "https://", options: [.anchored, .caseInsensitive]) != nil {
-            let normalized = "https://" + source.dropFirst("https://".count)
-            return isSafeRemoteURL(normalized) ? normalized : nil
-        }
         if source.range(of: "data:image/", options: [.anchored, .caseInsensitive]) != nil {
-            return normalizedRasterDataURL(source)
+            return normalizedRasterDataURL(source)?.source
         }
         return nil
     }
 
-    private static func isSafeRemoteURL(_ source: String) -> Bool {
-        guard source.utf8.count <= maximumRemoteURLBytes,
-              source.unicodeScalars.allSatisfy({
-                  !CharacterSet.whitespacesAndNewlines.contains($0)
-                      && !CharacterSet.controlCharacters.contains($0)
-              }),
-              let components = URLComponents(string: source),
-              components.scheme?.lowercased() == "https",
-              components.host?.isEmpty == false,
-              components.user == nil,
-              components.password == nil else {
-            return false
-        }
-        return true
-    }
-
-    private static func normalizedRasterDataURL(_ source: String) -> String? {
+    private static func normalizedRasterDataURL(_ source: String) -> NormalizedRasterSource? {
         guard source.utf8.count <= maximumPersistedSourceBytes,
               let commaIndex = source.firstIndex(of: ",") else {
             return nil
         }
         let metadata = source[..<commaIndex]
         let payload = source[source.index(after: commaIndex)...]
+        let prefix = "data:image/"
+        let suffix = ";base64"
         guard !payload.isEmpty,
               !payload.contains(where: { $0.isWhitespace }),
-              metadata.lowercased().hasSuffix(";base64") else {
+              metadata.range(of: prefix, options: [.anchored, .caseInsensitive]) != nil,
+              metadata.lowercased().hasSuffix(suffix),
+              metadata.count > prefix.count + suffix.count else {
             return nil
         }
-        let mimeStart = metadata.index(metadata.startIndex, offsetBy: "data:image/".count)
-        let mimeEnd = metadata.index(metadata.endIndex, offsetBy: -";base64".count)
+        let mimeStart = metadata.index(metadata.startIndex, offsetBy: prefix.count)
+        let mimeEnd = metadata.index(metadata.endIndex, offsetBy: -suffix.count)
         let mime = String(metadata[mimeStart..<mimeEnd]).lowercased()
         guard rasterMIMETypes.contains(mime),
               let decoded = Data(base64Encoded: String(payload)),
-              hasExpectedSignature(decoded, mime: mime) else {
+              hasExpectedSignature(decoded, mime: mime),
+              let rasterMetadata = safeRasterMetadata(decoded, mime: mime) else {
             return nil
         }
-        return "data:image/\(mime);base64,\(payload)"
+        return NormalizedRasterSource(
+            source: "data:image/\(mime);base64,\(payload)",
+            metadata: rasterMetadata
+        )
+    }
+
+    private static func safeRasterMetadata(_ data: Data, mime: String) -> RasterMetadata? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, options),
+              CGImageSourceGetStatus(source) == .statusComplete,
+              let typeIdentifier = CGImageSourceGetType(source),
+              let actualType = UTType(typeIdentifier as String),
+              let expectedType = UTType(mimeType: "image/\(mime)"),
+              actualType.conforms(to: expectedType) else {
+            return nil
+        }
+        let frameCount = CGImageSourceGetCount(source)
+        guard (1...maximumFrameCount).contains(frameCount) else { return nil }
+
+        var cumulativePixels: UInt64 = 0
+        for index in 0..<frameCount {
+            guard CGImageSourceGetStatusAtIndex(source, index) == .statusComplete,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(
+                    source,
+                    index,
+                    options
+                  ) as? [CFString: Any],
+                  let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.uint64Value,
+                  let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.uint64Value,
+                  width > 0,
+                  height > 0,
+                  width <= maximumPixelDimension,
+                  height <= maximumPixelDimension else {
+                return nil
+            }
+            let (framePixels, didOverflow) = width.multipliedReportingOverflow(by: height)
+            guard !didOverflow, framePixels <= maximumPixelsPerFrame else { return nil }
+            let (nextCumulativePixels, cumulativeDidOverflow) = cumulativePixels.addingReportingOverflow(
+                framePixels
+            )
+            guard !cumulativeDidOverflow,
+                  nextCumulativePixels <= maximumCumulativePixels else {
+                return nil
+            }
+            cumulativePixels = nextCumulativePixels
+        }
+        return RasterMetadata(frameCount: frameCount, cumulativePixels: cumulativePixels)
     }
 
     private static func hasExpectedSignature(_ data: Data, mime: String) -> Bool {
