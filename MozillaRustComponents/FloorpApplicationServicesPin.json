@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "repository": "Floorp-Projects/application-services",
+  "artifactVersion": "155.0.20260731050244",
+  "release": {
+    "id": 363785367,
+    "tag": "floorp-ios-155.20260731050244.1",
+    "revision": 1,
+    "url": "https://github.com/Floorp-Projects/application-services/releases/tag/floorp-ios-155.20260731050244.1",
+    "immutable": true,
+    "prerelease": true,
+    "sourceCommit": "b464b71951cd07c89f2b4c0f219e3e222b0c1eec",
+    "sourceTree": "457e554b632b7dc9e39543c470b5fc6787c3ae62",
+    "sourceConfiguration": "automation/floorp/ios-xcframework-release-config.json"
+  },
+  "upstream": {
+    "repository": "mozilla/application-services",
+    "commit": "b21da19867ff58b1cfd8c83fceba8dac1f243c44",
+    "sourceVersion": "155.0a1"
+  },
+  "assets": {
+    "FocusRustComponents.xcframework.zip": {
+      "sha256": "25f430ff11807ab2b87604a972658f0e5d004ff4efec418ff6e4cc354648f147",
+      "size": 43710260,
+      "swiftPMChecksum": "25f430ff11807ab2b87604a972658f0e5d004ff4efec418ff6e4cc354648f147"
+    },
+    "MozillaRustComponents.xcframework.zip": {
+      "sha256": "2651756d755abab0806f88e852332eb13f49d18e602a9565b8b53c0e5bba3514",
+      "size": 221338944,
+      "swiftPMChecksum": "2651756d755abab0806f88e852332eb13f49d18e602a9565b8b53c0e5bba3514"
+    },
+    "release-manifest.json": {
+      "sha256": "ad0cbbee17cb10eec913b1d6de3447c1033a8e7a6e6bb7f39bda9ba7d2aa57f8",
+      "size": 545674
+    },
+    "SHA256SUMS": {
+      "sha256": "28e29d43ab5659f138154aa3d74442c75b4623375d03fca3940168427dce853e",
+      "size": 384
+    },
+    "swift-components.tar.xz": {
+      "sha256": "1e8c6a086fbbd27cb10ece665101257a6a5879b201c6fab002c9d854f7ff7feb",
+      "size": 155724
+    }
+  }
+}

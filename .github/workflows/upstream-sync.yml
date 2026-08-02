@@ -84,6 +84,8 @@ jobs:
             --check
           node --test scripts/l10n/__tests__/*.test.mjs
           ./scripts/ci/test-rebrand-dry-run.sh
+          ./scripts/ci/check-application-services-pin.sh
+          ./scripts/ci/test-application-services-pin-sync.sh
 
       - name: Merge upstream
         if: steps.check.outputs.has_changes == 'true'
@@ -98,14 +100,24 @@ jobs:
           upstream_ref="upstream/$UPSTREAM_BRANCH"
           protected_conflict_count=0
           l10n_conflict_count=0
+          application_services_conflict_count=0
 
           restore_floorp_automation() {
-            git rm -r -f --ignore-unmatch -- .github/workflows floorp/l10n scripts/l10n
+            git rm -r -f --ignore-unmatch -- \
+              .github/workflows \
+              floorp/l10n \
+              scripts/l10n \
+              MozillaRustComponents/FloorpApplicationServicesPin.json \
+              scripts/ci/check-application-services-pin.sh \
+              scripts/ci/test-application-services-pin-sync.sh
             git checkout "$floorp_base" -- \
               .github/workflows \
               floorp/l10n \
               scripts/l10n \
-              scripts/rebrand-to-floorp.sh
+              scripts/rebrand-to-floorp.sh \
+              MozillaRustComponents/FloorpApplicationServicesPin.json \
+              scripts/ci/check-application-services-pin.sh \
+              scripts/ci/test-application-services-pin-sync.sh
           }
 
           write_merge_diagnostics() {
@@ -116,6 +128,7 @@ jobs:
               echo "upstream_ref=$upstream_ref"
               echo "upstream_sha=$(git rev-parse "$upstream_ref")"
               echo "merge_base=$(git merge-base "$floorp_base" "$upstream_ref")"
+              echo "application_services_conflict_count=$application_services_conflict_count"
             } > "$diagnostics/metadata.txt"
             git status --short > "$diagnostics/status.txt"
             git ls-files -u > "$diagnostics/unmerged-index.txt"
@@ -131,13 +144,33 @@ jobs:
           if ! git merge "$upstream_ref" --no-edit; then
             while IFS= read -r -d '' file; do
               case "$file" in
+                MozillaRustComponents/Package.swift)
+                  application_services_conflict_count=$((application_services_conflict_count + 1))
+                  ;;
                 .github/workflows/*|floorp/l10n/*|scripts/l10n/*|scripts/rebrand-to-floorp.sh)
+                  protected_conflict_count=$((protected_conflict_count + 1))
+                  ;;
+                MozillaRustComponents/FloorpApplicationServicesPin.json|scripts/ci/check-application-services-pin.sh|scripts/ci/test-application-services-pin-sync.sh)
                   protected_conflict_count=$((protected_conflict_count + 1))
                   ;;
               esac
             done < <(git diff --name-only --diff-filter=U -z)
 
             restore_floorp_automation
+
+            if (( application_services_conflict_count > 0 )); then
+              if ! git checkout --theirs -- MozillaRustComponents/Package.swift; then
+                echo "Unable to recover the upstream Application Services package manifest." \
+                  >> "$GITHUB_STEP_SUMMARY"
+                abort_merge
+              fi
+              if ! ./scripts/ci/check-application-services-pin.sh --apply; then
+                echo "Unable to reapply the trusted Floorp Application Services pin." \
+                  >> "$GITHUB_STEP_SUMMARY"
+                abort_merge
+              fi
+              git add MozillaRustComponents/Package.swift
+            fi
 
             while IFS= read -r -d '' _; do
               l10n_conflict_count=$((l10n_conflict_count + 1))
@@ -160,11 +193,18 @@ jobs:
           fi
 
           restore_floorp_automation
+          if ! ./scripts/ci/check-application-services-pin.sh --apply; then
+            echo "Unable to reapply the trusted Floorp Application Services pin." \
+              >> "$GITHUB_STEP_SUMMARY"
+            write_merge_diagnostics
+            exit 1
+          fi
 
           {
             echo "branch=${SYNC_BRANCH}"
             echo "protected_conflict_count=${protected_conflict_count}"
             echo "l10n_conflict_count=${l10n_conflict_count}"
+            echo "application_services_conflict_count=${application_services_conflict_count}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload merge diagnostics
@@ -213,7 +253,7 @@ jobs:
           body: |
             ## Upstream Sync
 
-            This PR merges `mozilla-mobile/firefox-ios:main` into Floorp and reapplies the Floorp branding script.
+            This PR merges `mozilla-mobile/firefox-ios:main` into Floorp and reapplies the trusted Floorp branding, localization, and Application Services pin controls.
 
             - Upstream commits: ${{ steps.check.outputs.commit_count }}
             - Upstream SHA: `${{ steps.check.outputs.upstream_sha }}`
@@ -221,6 +261,7 @@ jobs:
             - Files changed by Floorp restoration and branding: ${{ steps.verify.outputs.file_count }}
             - Protected Floorp automation conflicts restored: ${{ steps.merge.outputs.protected_conflict_count }}
             - Localization conflicts resolved from the reviewed overlay: ${{ steps.merge.outputs.l10n_conflict_count }}
+            - Application Services package conflicts resolved from the immutable Floorp pin: ${{ steps.merge.outputs.application_services_conflict_count }}
             - Other merge conflicts: none (unexpected conflicts abort with a diagnostics artifact)
 
             The `automation/upstream-sync` branch is generated. Manual edits will be replaced by the next sync run.
