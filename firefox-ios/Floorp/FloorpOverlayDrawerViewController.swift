@@ -42,6 +42,8 @@ final class FloorpPanelPresentationState: NSObject {
     private weak var observedTabManager: (any TabManager)?
     private(set) var hasPendingNotesOperationError = false
     var libraryPanelHost: (any FloorpLibraryPanelHosting)?
+    private var browserContentLayoutGuides: FloorpBrowserContentLayoutGuides?
+    private var panelWidths = [String: CGFloat]()
 
     var activeDrawer: FloorpOverlayDrawerViewController? {
         activePresentation as? FloorpOverlayDrawerViewController
@@ -86,6 +88,43 @@ final class FloorpPanelPresentationState: NSObject {
     func detach(_ presentation: any FloorpPanelPrivacyModePresenting) {
         guard activePresentation === presentation else { return }
         activePresentation = nil
+    }
+
+    func contentLayoutGuides(in parentView: UIView) -> FloorpBrowserContentLayoutGuides {
+        if let browserContentLayoutGuides {
+            return browserContentLayoutGuides
+        }
+        let guides = FloorpBrowserContentLayoutGuides(parentView: parentView)
+        browserContentLayoutGuides = guides
+        return guides
+    }
+
+    func preferredPanelWidth(for panel: FloorpPanel) -> CGFloat {
+        if let panelWidth = panelWidths[panel.id] {
+            return panelWidth
+        }
+        if let contentWidth = panel.effectiveWebPreferences?.contentWidth {
+            return CGFloat(contentWidth)
+        }
+        return CGFloat(FloorpWebPanelPreferences.defaultContentWidth)
+    }
+
+    func setPreferredPanelWidth(_ width: CGFloat, for panelID: String) {
+        panelWidths[panelID] = width
+    }
+
+    func invalidateWebPanelWidths() {
+        panelWidths = panelWidths.filter { panelID, _ in
+            FloorpPanel.isReservedIdentifier(panelID)
+        }
+    }
+
+    func resetBrowserContentReservation() {
+        guard let browserContentLayoutGuides else { return }
+        _ = browserContentLayoutGuides.reserveSidebar(
+            width: 0,
+            layoutDirection: browserContentLayoutGuides.layoutDirection
+        )
     }
 
     func recordPendingNotesOperationError() {
@@ -169,6 +208,9 @@ final class FloorpPanelPresentationState: NSObject {
 
     @objc private func panelRegistryDidChange() {
         guard let panelManager else { return }
+        if activeDrawer == nil {
+            invalidateWebPanelWidths()
+        }
         webPanelSessionStore?.reconcile(with: panelManager.panels)
     }
 }
@@ -212,6 +254,7 @@ struct FloorpDrawerLayoutMetrics {
     static let compactMaximumWidth: CGFloat = 420
     static let regularMinimumWidth: CGFloat = 360
     static let regularMaximumWidth: CGFloat = 480
+    static let resizeStep: CGFloat = 20
 
     static func drawerWidth(
         availableWidth: CGFloat,
@@ -257,6 +300,29 @@ struct FloorpDrawerLayoutMetrics {
 
     static func sidebarWidth(configuredWidth: Int) -> CGFloat {
         CGFloat(min(max(configuredWidth, 44), 72))
+    }
+
+    static func pinnedWidth(preferredWidth: CGFloat, availableWidth: CGFloat) -> CGFloat {
+        let maximumWidth = min(
+            regularMaximumWidth,
+            availableWidth - FloorpPanelPresentationModeResolver.minimumUsableBrowserWidth
+        )
+        return min(max(preferredWidth, regularMinimumWidth), max(regularMinimumWidth, maximumWidth))
+    }
+
+    static func resizedPinnedWidth(
+        initialWidth: CGFloat,
+        translationX: CGFloat,
+        availableWidth: CGFloat,
+        layoutDirection: UIUserInterfaceLayoutDirection
+    ) -> CGFloat {
+        let directionalTranslation = layoutDirection == .rightToLeft
+            ? translationX
+            : -translationX
+        return pinnedWidth(
+            preferredWidth: initialWidth + directionalTranslation,
+            availableWidth: availableWidth
+        )
     }
 }
 
@@ -359,12 +425,16 @@ final class FloorpOverlayDrawerViewController:
     private let notesSnapshotLoader: FloorpNotesSnapshotLoader
     private let notesReorderWriter: FloorpNotesReorderWriter
     private let noteAccessibilityFocusPoster: FloorpNoteAccessibilityFocusPoster
+    private let presentationModeProvider: FloorpPanelPresentationModeProvider
 
     /// Callback when user taps a bookmark/history item.
     var onItemSelected: ((URL) -> Void)?
 
     /// Callback when drawer is dismissed.
     var onDismissed: (() -> Void)?
+
+    /// Reserves the matching edge of the main browser while the drawer is pinned.
+    var onPinnedLayoutChanged: ((CGFloat, UIUserInterfaceLayoutDirection) -> Void)?
 
     /// Supplies a safe, non-private current page suggestion for a new web panel.
     var webPanelSuggestionProvider: (() -> FloorpWebPanelDraft?)?
@@ -383,8 +453,26 @@ final class FloorpOverlayDrawerViewController:
     private var panelLoadTask: Task<Void, Never>?
     private var notesLoadGeneration = UUID()
     private var isTransitioningDrawer = false
+    private var isMigratingPresentation = false
+    private var presentationMigrationRetainer: FloorpOverlayDrawerViewController?
     private var didFinishDismissal = false
     private var dismissWhenPresentationFinishes = false
+    private var isPresentationTransitionScheduled = false
+    private var presentationTransitionGeneration: UInt = 0
+    private(set) var presentationMode: FloorpPanelPresentationMode?
+    var isPresentationTransitionSettled: Bool {
+        !isTransitioningDrawer
+            && !isMigratingPresentation
+            && !isPresentationTransitionScheduled
+            && pendingPresentationMode == nil
+    }
+    private weak var presentationHost: UIViewController?
+    private var pinnedHostConstraints = [NSLayoutConstraint]()
+    private var isPinnedContainmentRemovalPrepared = false
+    private var pinnedRemovalForwardsAppearance = false
+    private var pendingPresentationMode: FloorpPanelPresentationMode?
+    private var resizeGestureInitialWidth: CGFloat?
+    private var resizeGestureInitialPreferredWidth: CGFloat?
     private var displayedPanelIDs = [String]()
     private var activeWebPanelSession: (any FloorpWebPanelSessionProtocol)?
     private var webPanelFindController: FloorpWebPanelFindController?
@@ -427,12 +515,31 @@ final class FloorpOverlayDrawerViewController:
     private var sidebarWidthConstraint: NSLayoutConstraint?
     private var sidebarStackWidthConstraint: NSLayoutConstraint?
     private var webPanelToolbarHeightConstraint: NSLayoutConstraint?
+    private var resizeHandleLTRConstraint: NSLayoutConstraint?
+    private var resizeHandleRTLConstraint: NSLayoutConstraint?
 
     // Sidebar (icon column)
     private lazy var sidebarView: UIView = {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
         return view
+    }()
+
+    private lazy var resizeHandleView: FloorpPanelResizeHandleView = {
+        let handle = FloorpPanelResizeHandleView()
+        handle.accessibilityLabel = FloorpStrings.Drawer.resizeAccessibilityLabel
+        handle.accessibilityHint = FloorpStrings.Drawer.resizeAccessibilityHint
+        handle.addGestureRecognizer(
+            UIPanGestureRecognizer(target: self, action: #selector(handleResizePan(_:)))
+        )
+        handle.onAccessibilityIncrement = { [weak self] in
+            self?.resizePinnedDrawer(by: FloorpDrawerLayoutMetrics.resizeStep)
+        }
+        handle.onAccessibilityDecrement = { [weak self] in
+            self?.resizePinnedDrawer(by: -FloorpDrawerLayoutMetrics.resizeStep)
+        }
+        handle.isHidden = true
+        return handle
     }()
 
     private lazy var sidebarScrollView: UIScrollView = {
@@ -712,6 +819,13 @@ final class FloorpOverlayDrawerViewController:
          notificationCenter: NotificationProtocol = NotificationCenter.default,
          isPrivateProvider: @escaping @MainActor () -> Bool = { false },
          registryFallbackRetryDelayNanoseconds: UInt64 = 250_000_000,
+         presentationModeProvider: @escaping FloorpPanelPresentationModeProvider = { width, sizeClass in
+             FloorpPanelPresentationModeResolver.resolve(
+                 availableWidth: width,
+                 horizontalSizeClass: sizeClass,
+                 userInterfaceIdiom: UIDevice.current.userInterfaceIdiom
+             )
+         },
          notesSnapshotLoader: FloorpNotesSnapshotLoader? = nil,
          notesReorderWriter: FloorpNotesReorderWriter? = nil,
          noteAccessibilityFocusPoster: @escaping FloorpNoteAccessibilityFocusPoster = {
@@ -730,6 +844,7 @@ final class FloorpOverlayDrawerViewController:
         self.notificationCenter = notificationCenter
         self.isPrivateProvider = isPrivateProvider
         self.registryFallbackRetryDelayNanoseconds = registryFallbackRetryDelayNanoseconds
+        self.presentationModeProvider = presentationModeProvider
         self.notesSnapshotLoader = notesSnapshotLoader ?? {
             try await notesStore.loadSnapshot()
         }
@@ -757,6 +872,10 @@ final class FloorpOverlayDrawerViewController:
     }
 
     // MARK: - Lifecycle
+
+    override func loadView() {
+        view = FloorpDrawerRootView()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -797,13 +916,16 @@ final class FloorpOverlayDrawerViewController:
         // modal is presented. Release its associated drawer in those paths as
         // well as in dismissDrawer(), without treating a child editor as a
         // drawer dismissal.
-        if isBeingDismissed || presentingViewController == nil {
+        if !isMigratingPresentation,
+           presentationMode != .pinned,
+           isBeingDismissed || presentingViewController == nil {
             finishDismissal()
         }
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        updatePresentationEnvironmentIfNeeded()
         guard !presentPendingNotesOperationErrorIfPossible() else { return }
         applyPendingNoteAccessibilityFocus()
     }
@@ -811,6 +933,7 @@ final class FloorpOverlayDrawerViewController:
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateDrawerGeometry(availableWidth: view.bounds.width)
+        updatePresentationEnvironmentIfNeeded()
     }
 
     override func viewWillTransition(
@@ -885,6 +1008,11 @@ final class FloorpOverlayDrawerViewController:
         // Dimming overlay behind the drawer
         view.addSubview(dimmingView)
         view.addSubview(containerView)
+        view.addSubview(resizeHandleView)
+        if let rootView = view as? FloorpDrawerRootView {
+            rootView.drawerContainerView = containerView
+            rootView.resizeHandleView = resizeHandleView
+        }
 
         // Container layout: sidebar | content
         containerView.addSubview(sidebarView)
@@ -928,11 +1056,19 @@ final class FloorpOverlayDrawerViewController:
         let webPanelToolbarHeightConstraint = webPanelToolbarView.heightAnchor.constraint(
             equalToConstant: 0
         )
+        let resizeHandleLTRConstraint = resizeHandleView.rightAnchor.constraint(
+            equalTo: containerView.leftAnchor
+        )
+        let resizeHandleRTLConstraint = resizeHandleView.leftAnchor.constraint(
+            equalTo: containerView.rightAnchor
+        )
         tableSafeAreaBottomConstraint.priority = .defaultHigh
         self.containerWidthConstraint = containerWidthConstraint
         self.sidebarWidthConstraint = sidebarWidthConstraint
         self.sidebarStackWidthConstraint = sidebarStackWidthConstraint
         self.webPanelToolbarHeightConstraint = webPanelToolbarHeightConstraint
+        self.resizeHandleLTRConstraint = resizeHandleLTRConstraint
+        self.resizeHandleRTLConstraint = resizeHandleRTLConstraint
 
         let constraints = [
             // Dimming view fills entire screen
@@ -950,6 +1086,11 @@ final class FloorpOverlayDrawerViewController:
                 constant: FloorpDrawerLayoutMetrics.outsideDismissWidth
             ),
             containerWidthConstraint,
+
+            resizeHandleView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            resizeHandleView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            resizeHandleView.widthAnchor.constraint(equalToConstant: 44),
+            resizeHandleLTRConstraint,
 
             // Sidebar
             sidebarView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
@@ -1153,10 +1294,16 @@ final class FloorpOverlayDrawerViewController:
 
     private func updateDrawerGeometry(availableWidth: CGFloat) {
         let layoutDirection = view.effectiveUserInterfaceLayoutDirection
-        containerWidthConstraint?.constant = FloorpDrawerLayoutMetrics.drawerWidth(
-            availableWidth: availableWidth,
-            horizontalSizeClass: traitCollection.horizontalSizeClass
-        )
+        let drawerWidth: CGFloat
+        if presentationMode == .pinned {
+            drawerWidth = currentPinnedDrawerWidth(availableWidth: availableWidth)
+        } else {
+            drawerWidth = FloorpDrawerLayoutMetrics.drawerWidth(
+                availableWidth: availableWidth,
+                horizontalSizeClass: traitCollection.horizontalSizeClass
+            )
+        }
+        containerWidthConstraint?.constant = drawerWidth
         let sidebarWidth = FloorpDrawerLayoutMetrics.sidebarWidth(
             configuredWidth: panelManager.config.sidebarWidth
         )
@@ -1165,9 +1312,54 @@ final class FloorpOverlayDrawerViewController:
         dismissSwipeGesture.direction = FloorpDrawerLayoutMetrics.dismissalSwipeDirection(
             layoutDirection: layoutDirection
         )
-        containerView.layer.maskedCorners = FloorpDrawerLayoutMetrics.exposedCornerMask(
-            layoutDirection: layoutDirection
+        updateResizeHandleConstraint(layoutDirection: layoutDirection)
+        if presentationMode == .pinned {
+            containerView.layer.cornerRadius = 0
+            containerView.layer.maskedCorners = []
+            resizeHandleView.accessibilityValue = "\(Int(drawerWidth.rounded())) pt"
+            onPinnedLayoutChanged?(drawerWidth, layoutDirection)
+        } else {
+            containerView.layer.cornerRadius = UX.cornerRadius
+            containerView.layer.maskedCorners = FloorpDrawerLayoutMetrics.exposedCornerMask(
+                layoutDirection: layoutDirection
+            )
+        }
+    }
+
+    private func currentPinnedDrawerWidth(availableWidth: CGFloat) -> CGFloat {
+        guard let selectedPanel = presentationState.selectedPanel(in: panelManager.panels) else {
+            return FloorpDrawerLayoutMetrics.pinnedWidth(
+                preferredWidth: CGFloat(FloorpWebPanelPreferences.defaultContentWidth),
+                availableWidth: availableWidth
+            )
+        }
+        return FloorpDrawerLayoutMetrics.pinnedWidth(
+            preferredWidth: presentationState.preferredPanelWidth(for: selectedPanel),
+            availableWidth: availableWidth
         )
+    }
+
+    private func updateResizeHandleConstraint(layoutDirection: UIUserInterfaceLayoutDirection) {
+        if layoutDirection == .rightToLeft {
+            guard resizeHandleRTLConstraint?.isActive != true else { return }
+            resizeHandleLTRConstraint?.isActive = false
+            resizeHandleRTLConstraint?.isActive = true
+        } else {
+            guard resizeHandleLTRConstraint?.isActive != true else { return }
+            resizeHandleRTLConstraint?.isActive = false
+            resizeHandleLTRConstraint?.isActive = true
+        }
+    }
+
+    private func applyPresentationAppearance(_ mode: FloorpPanelPresentationMode) {
+        let isPinned = mode == .pinned
+        dimmingView.isHidden = isPinned
+        dimmingView.isUserInteractionEnabled = !isPinned
+        dismissSwipeGesture.isEnabled = !isPinned
+        resizeHandleView.isHidden = !isPinned
+        view.accessibilityViewIsModal = !isPinned
+        view.layer.zPosition = isPinned ? 10_000 : 0
+        (view as? FloorpDrawerRootView)?.passesTouchesOutsideDrawer = isPinned
     }
 
     // MARK: - Themeable
@@ -1185,6 +1377,7 @@ final class FloorpOverlayDrawerViewController:
         containerView.backgroundColor = colors.layer1
         containerView.layer.borderColor = colors.borderPrimary.cgColor
         containerView.layer.borderWidth = 0.5
+        resizeHandleView.applyColor(colors.borderPrimary)
 
         // Sidebar
         sidebarView.backgroundColor = colors.layer3
@@ -1524,11 +1717,28 @@ final class FloorpOverlayDrawerViewController:
         present(alert, animated: true)
     }
 
-    @objc private func panelRegistryDidChange() {
+    @objc private func panelRegistryDidChange(_ notification: Notification) {
         guard isViewLoaded else { return }
         presentationState.webPanelSessionStore?.reconcile(with: panelManager.panels)
+        if case .webPanelContentWidth(let panelID) = notification.floorpPanelRegistryChange {
+            presentationState.invalidateWebPanelWidths()
+            if let changedPanel = panelManager.panel(for: panelID) {
+                presentationState.setPreferredPanelWidth(
+                    presentationState.preferredPanelWidth(for: changedPanel),
+                    for: panelID
+                )
+            }
+            if presentationMode == .pinned, let presentationHost {
+                updateDrawerGeometry(availableWidth: presentationHost.view.bounds.width)
+                presentationHost.view.layoutIfNeeded()
+            }
+            return
+        }
         let previousPanelIDs = displayedPanelIDs
         let previousSelection = presentationState.selectedPanelId
+        if resizeGestureInitialWidth == nil {
+            presentationState.invalidateWebPanelWidths()
+        }
         buildSidebarButtons()
 
         if let previousSelection,
@@ -1605,6 +1815,10 @@ final class FloorpOverlayDrawerViewController:
             : "Floorp.Drawer.Search"
         updateNotesReorderControls()
         updateSidebarSelection()
+        if presentationMode == .pinned, let presentationHost {
+            updateDrawerGeometry(availableWidth: presentationHost.view.bounds.width)
+            presentationHost.view.layoutIfNeeded()
+        }
     }
 
     private func schedulePendingRegistryFallbackRetry() {
@@ -1979,7 +2193,7 @@ final class FloorpOverlayDrawerViewController:
             libraryViewController.endAppearanceTransition()
         }
         libraryPanelHost.onRequestDrawerDismiss = { [weak self] in
-            self?.performDrawerDismissal()
+            self?.dismissAfterOpeningMainContentIfNeeded()
         }
         return true
     }
@@ -2730,8 +2944,22 @@ final class FloorpOverlayDrawerViewController:
     }
 
     private var canPresentNotesOperationError: Bool {
-        presentedViewController == nil
-            && presentingViewController != nil
+        let isAttachedToPresentationHost: Bool
+        if let presentationHost {
+            switch presentationMode {
+            case .overlay:
+                isAttachedToPresentationHost = presentingViewController === presentationHost
+            case .pinned:
+                isAttachedToPresentationHost = parent === presentationHost
+                    && view.superview === presentationHost.view
+            case nil:
+                isAttachedToPresentationHost = false
+            }
+        } else {
+            isAttachedToPresentationHost = false
+        }
+        return presentedViewController == nil
+            && isAttachedToPresentationHost
             && viewIfLoaded?.window != nil
             && !isBeingDismissed
             && !didFinishDismissal
@@ -2746,10 +2974,18 @@ final class FloorpOverlayDrawerViewController:
         )
         alert.addAction(
             UIAlertAction(title: FloorpStrings.Notes.close, style: .default) { [weak self] _ in
-                self?.presentationState.consumePendingNotesOperationError()
+                _ = self?.acknowledgePendingNotesOperationError()
             }
         )
         present(alert, animated: true)
+    }
+
+    /// Shared acknowledgement boundary used by the alert action and unit
+    /// tests. The pending flag is intentionally retained while the alert is
+    /// visible so an interrupted presentation can surface the error again.
+    @discardableResult
+    func acknowledgePendingNotesOperationError() -> Bool {
+        presentationState.consumePendingNotesOperationError()
     }
 
     @objc private func webPanelBackTapped() {
@@ -2802,7 +3038,7 @@ final class FloorpOverlayDrawerViewController:
             return
         }
         activeWebPanelSession.openCurrentPageInMainBrowser()
-        dismissDrawer()
+        dismissAfterOpeningMainContentIfNeeded()
     }
 
     @objc private func closeTapped() {
@@ -2817,16 +3053,134 @@ final class FloorpOverlayDrawerViewController:
         dismissDrawer()
     }
 
+    private func dismissAfterOpeningMainContentIfNeeded() {
+        guard presentationMode == .overlay else { return }
+        performDrawerDismissal()
+    }
+
+    @objc private func handleResizePan(_ gesture: UIPanGestureRecognizer) {
+        guard presentationMode == .pinned, let presentationHost else { return }
+        let availableWidth = presentationHost.view.bounds.width
+        switch gesture.state {
+        case .began:
+            resizeGestureInitialWidth = containerWidthConstraint?.constant
+            if let panel = presentationState.selectedPanel(in: panelManager.panels) {
+                resizeGestureInitialPreferredWidth = presentationState.preferredPanelWidth(for: panel)
+            }
+        case .changed:
+            guard let resizeGestureInitialWidth else { return }
+            let width = FloorpDrawerLayoutMetrics.resizedPinnedWidth(
+                initialWidth: resizeGestureInitialWidth,
+                translationX: gesture.translation(in: view).x,
+                availableWidth: availableWidth,
+                layoutDirection: view.effectiveUserInterfaceLayoutDirection
+            )
+            applyPinnedDrawerWidth(width, persistsWebPreference: false)
+        case .ended:
+            let initialWidth = resizeGestureInitialWidth
+            let initialPreferredWidth = resizeGestureInitialPreferredWidth
+            let finalWidth = containerWidthConstraint?.constant
+            resizeGestureInitialWidth = nil
+            resizeGestureInitialPreferredWidth = nil
+            if let initialWidth,
+               let finalWidth,
+               abs(finalWidth - initialWidth) > 0.5 {
+                persistCurrentPinnedDrawerWidth()
+            } else {
+                restorePreferredWidthAfterCancelledResize(initialPreferredWidth)
+            }
+        case .cancelled, .failed:
+            let initialPreferredWidth = resizeGestureInitialPreferredWidth
+            resizeGestureInitialWidth = nil
+            resizeGestureInitialPreferredWidth = nil
+            restorePreferredWidthAfterCancelledResize(initialPreferredWidth)
+        default:
+            break
+        }
+    }
+
+    private func resizePinnedDrawer(by delta: CGFloat) {
+        guard presentationMode == .pinned, let presentationHost else { return }
+        let currentWidth = containerWidthConstraint?.constant
+            ?? currentPinnedDrawerWidth(availableWidth: presentationHost.view.bounds.width)
+        let width = FloorpDrawerLayoutMetrics.pinnedWidth(
+            preferredWidth: currentWidth + delta,
+            availableWidth: presentationHost.view.bounds.width
+        )
+        guard abs(width - currentWidth) > 0.5 else { return }
+        applyPinnedDrawerWidth(width, persistsWebPreference: true)
+        UIAccessibility.post(notification: .layoutChanged, argument: resizeHandleView)
+    }
+
+    private func restorePreferredWidthAfterCancelledResize(_ preferredWidth: CGFloat?) {
+        guard let presentationHost,
+              let panel = presentationState.selectedPanel(in: panelManager.panels) else { return }
+        if panel.type == .web {
+            presentationState.invalidateWebPanelWidths()
+        } else if let preferredWidth {
+            presentationState.setPreferredPanelWidth(preferredWidth, for: panel.id)
+        }
+        updateDrawerGeometry(availableWidth: presentationHost.view.bounds.width)
+        presentationHost.view.layoutIfNeeded()
+    }
+
+    private func applyPinnedDrawerWidth(_ width: CGFloat, persistsWebPreference: Bool) {
+        guard presentationMode == .pinned,
+              let presentationHost,
+              let panel = presentationState.selectedPanel(in: panelManager.panels) else { return }
+        let clampedWidth = FloorpDrawerLayoutMetrics.pinnedWidth(
+            preferredWidth: width,
+            availableWidth: presentationHost.view.bounds.width
+        )
+        presentationState.setPreferredPanelWidth(clampedWidth, for: panel.id)
+        containerWidthConstraint?.constant = clampedWidth
+        resizeHandleView.accessibilityValue = "\(Int(clampedWidth.rounded())) pt"
+        onPinnedLayoutChanged?(clampedWidth, view.effectiveUserInterfaceLayoutDirection)
+        presentationHost.view.layoutIfNeeded()
+        if persistsWebPreference {
+            persistCurrentPinnedDrawerWidth()
+        }
+    }
+
+    private func persistCurrentPinnedDrawerWidth() {
+        guard presentationMode == .pinned,
+              let panelID = presentationState.selectedPanelId,
+              panelManager.panel(for: panelID)?.type == .web,
+              let width = containerWidthConstraint?.constant else { return }
+        do {
+            let revision = try panelManager.webPanelPreferencesRevision(for: panelID)
+            _ = try panelManager.setWebPanelContentWidth(
+                Int(width.rounded()),
+                for: panelID,
+                expectedRevision: revision
+            )
+        } catch {
+            presentationState.invalidateWebPanelWidths()
+            if let presentationHost {
+                updateDrawerGeometry(availableWidth: presentationHost.view.bounds.width)
+                presentationHost.view.layoutIfNeeded()
+            }
+            logger.log(
+                "Floorp: Failed to persist panel width: \(error.localizedDescription)",
+                level: .warning,
+                category: .setup
+            )
+        }
+    }
+
     // MARK: - Present / Dismiss
 
-    /// Presents above the browser chrome so later toolbar z-order updates
-    /// cannot move the address bar in front of the drawer.
+    /// Uses a modal overlay on compact layouts and a browser-adjacent child on
+    /// sufficiently wide iPad layouts. Both paths keep the same controller so
+    /// resizing a window does not recreate the active panel or WebView.
     @discardableResult
     func show(
         from parentVC: UIViewController,
         onPresented: (() -> Void)? = nil
     ) -> Bool {
-        guard presentingViewController == nil,
+        guard presentationMode == nil,
+              presentingViewController == nil,
+              parent == nil,
               !isTransitioningDrawer,
               parentVC.presentedViewController == nil else { return false }
 
@@ -2834,17 +3188,35 @@ final class FloorpOverlayDrawerViewController:
         guard parentVC.view.window != nil,
               presentationState.attach(self) else { return false }
 
+        presentationHost = parentVC
         loadViewIfNeeded()
+        let requestedMode = presentationModeProvider(
+            parentVC.view.bounds.width,
+            parentVC.traitCollection.horizontalSizeClass
+        )
+        let didPresent: Bool
+        switch requestedMode {
+        case .overlay:
+            didPresent = presentOverlay(from: parentVC, onPresented: onPresented)
+        case .pinned:
+            didPresent = embedPinned(in: parentVC, animated: true, onPresented: onPresented)
+        }
+        if !didPresent {
+            failedToStartPresentation()
+        }
+        return didPresent
+    }
+
+    private func presentOverlay(
+        from parentVC: UIViewController,
+        onPresented: (() -> Void)?
+    ) -> Bool {
+        presentationMode = .overlay
+        applyPresentationAppearance(.overlay)
+        dimmingView.alpha = 0
         updateDrawerGeometry(availableWidth: parentVC.view.bounds.width)
         view.layoutIfNeeded()
-        containerView.transform = CGAffineTransform(
-            translationX: FloorpDrawerLayoutMetrics.dismissalTranslation(
-                drawerWidth: containerWidthConstraint?.constant ?? parentVC.view.bounds.width,
-                layoutDirection: view.effectiveUserInterfaceLayoutDirection
-            ),
-            y: 0
-        )
-        view.accessibilityViewIsModal = true
+        containerView.transform = dismissalTransform
         isTransitioningDrawer = true
 
         parentVC.present(self, animated: false) { [weak self] in
@@ -2854,26 +3226,293 @@ final class FloorpOverlayDrawerViewController:
                 self.dimmingView.alpha = 1
                 self.containerView.transform = .identity
             } completion: { _ in
-                self.isTransitioningDrawer = false
-                onPresented?()
-                if self.dismissWhenPresentationFinishes {
-                    self.dismissWhenPresentationFinishes = false
-                    self.dismissDrawer()
-                    return
-                }
-                if self.presentPendingNotesOperationErrorIfPossible() {
-                    return
-                }
-                UIAccessibility.post(notification: .screenChanged, argument: self.titleLabel)
+                self.completePresentation(onPresented: onPresented)
             }
         }
-        let didPresent = presentingViewController === parentVC
-        if !didPresent {
-            isTransitioningDrawer = false
-            detachWebPanelContent()
-            presentationState.detach(self)
+        return presentingViewController === parentVC
+    }
+
+    private func embedPinned(
+        in parentVC: UIViewController,
+        animated: Bool,
+        onPresented: (() -> Void)?
+    ) -> Bool {
+        guard parent == nil, view.superview == nil else { return false }
+        presentationMode = .pinned
+        applyPresentationAppearance(.pinned)
+        dimmingView.alpha = 0
+        isTransitioningDrawer = true
+        let duration = animated && !UIAccessibility.isReduceMotionEnabled ? UX.animationDuration : 0
+
+        parentVC.addChild(self)
+        let forwardsAppearance = parentVC.viewIfLoaded?.window != nil
+        if forwardsAppearance {
+            beginAppearanceTransition(true, animated: duration > 0)
         }
-        return didPresent
+        view.translatesAutoresizingMaskIntoConstraints = false
+        parentVC.view.addSubview(view)
+        pinnedHostConstraints = [
+            view.topAnchor.constraint(equalTo: parentVC.view.topAnchor),
+            view.leadingAnchor.constraint(equalTo: parentVC.view.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: parentVC.view.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: parentVC.view.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(pinnedHostConstraints)
+        didMove(toParent: parentVC)
+        updateDrawerGeometry(availableWidth: parentVC.view.bounds.width)
+        parentVC.view.layoutIfNeeded()
+        containerView.transform = animated ? dismissalTransform : .identity
+
+        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut) {
+            self.containerView.transform = .identity
+            parentVC.view.layoutIfNeeded()
+        } completion: { _ in
+            if forwardsAppearance {
+                self.endAppearanceTransition()
+            }
+            self.completePresentation(onPresented: onPresented)
+        }
+        return parent === parentVC && view.superview === parentVC.view
+    }
+
+    private var dismissalTransform: CGAffineTransform {
+        CGAffineTransform(
+            translationX: FloorpDrawerLayoutMetrics.dismissalTranslation(
+                drawerWidth: containerWidthConstraint?.constant ?? view.bounds.width,
+                layoutDirection: view.effectiveUserInterfaceLayoutDirection
+            ),
+            y: 0
+        )
+    }
+
+    private func completePresentation(onPresented: (() -> Void)?) {
+        isTransitioningDrawer = false
+        onPresented?()
+        if dismissWhenPresentationFinishes {
+            dismissWhenPresentationFinishes = false
+            dismissDrawer()
+            return
+        }
+        if pendingPresentationMode == presentationMode {
+            pendingPresentationMode = nil
+        }
+        updatePresentationEnvironmentIfNeeded()
+        guard !isTransitioningDrawer, !isPresentationTransitionScheduled else { return }
+        if presentPendingNotesOperationErrorIfPossible() {
+            return
+        }
+        let notification: UIAccessibility.Notification = presentationMode == .overlay
+            ? .screenChanged
+            : .layoutChanged
+        UIAccessibility.post(notification: notification, argument: titleLabel)
+    }
+
+    private func failedToStartPresentation() {
+        cancelScheduledPresentationTransition()
+        isTransitioningDrawer = false
+        isMigratingPresentation = false
+        presentationMigrationRetainer = nil
+        onPinnedLayoutChanged?(0, view.effectiveUserInterfaceLayoutDirection)
+        if parent != nil {
+            removePinnedContainment()
+        }
+        presentationMode = nil
+        presentationHost = nil
+        pendingPresentationMode = nil
+        detachWebPanelContent()
+        presentationState.detach(self)
+    }
+
+    private func updatePresentationEnvironmentIfNeeded() {
+        guard !didFinishDismissal,
+              let presentationHost,
+              let currentMode = presentationMode else { return }
+        let requestedMode = presentationModeProvider(
+            presentationHost.view.bounds.width,
+            presentationHost.traitCollection.horizontalSizeClass
+        )
+        guard requestedMode != currentMode else {
+            pendingPresentationMode = nil
+            guard !isTransitioningDrawer, !isMigratingPresentation else { return }
+            if currentMode == .pinned {
+                ensurePinnedPresentationZOrder()
+                updateDrawerGeometry(availableWidth: presentationHost.view.bounds.width)
+            }
+            return
+        }
+        pendingPresentationMode = requestedMode
+        guard !isTransitioningDrawer,
+              !isMigratingPresentation,
+              presentedViewController == nil else { return }
+        schedulePendingPresentationTransition()
+    }
+
+    private func schedulePendingPresentationTransition() {
+        guard !isPresentationTransitionScheduled,
+              !isTransitioningDrawer,
+              !isMigratingPresentation,
+              !didFinishDismissal,
+              presentedViewController == nil,
+              let pendingPresentationMode,
+              pendingPresentationMode != presentationMode else { return }
+        isPresentationTransitionScheduled = true
+        presentationTransitionGeneration &+= 1
+        let generation = presentationTransitionGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.presentationTransitionGeneration == generation else { return }
+            self.isPresentationTransitionScheduled = false
+            guard !self.isTransitioningDrawer,
+                  !self.isMigratingPresentation,
+                  !self.didFinishDismissal,
+                  self.presentedViewController == nil,
+                  let presentationHost = self.presentationHost,
+                  let currentMode = self.presentationMode else { return }
+            let requestedMode = self.presentationModeProvider(
+                presentationHost.view.bounds.width,
+                presentationHost.traitCollection.horizontalSizeClass
+            )
+            guard requestedMode != currentMode else {
+                self.pendingPresentationMode = nil
+                if currentMode == .pinned {
+                    self.ensurePinnedPresentationZOrder()
+                    self.updateDrawerGeometry(availableWidth: presentationHost.view.bounds.width)
+                }
+                return
+            }
+            self.pendingPresentationMode = requestedMode
+            self.transitionPresentation(to: requestedMode)
+        }
+    }
+
+    private func cancelScheduledPresentationTransition() {
+        presentationTransitionGeneration &+= 1
+        isPresentationTransitionScheduled = false
+    }
+
+    func ensurePinnedPresentationZOrder() {
+        guard presentationMode == .pinned,
+              let presentationHost,
+              parent === presentationHost,
+              view.superview === presentationHost.view else { return }
+        presentationHost.view.bringSubviewToFront(view)
+    }
+
+    private func transitionPresentation(to requestedMode: FloorpPanelPresentationMode) {
+        guard requestedMode != presentationMode,
+              let presentationHost,
+              presentationHost.presentedViewController == nil ||
+                presentationHost.presentedViewController === self else { return }
+        pendingPresentationMode = nil
+        isTransitioningDrawer = true
+        isMigratingPresentation = true
+        presentationMigrationRetainer = self
+
+        switch (presentationMode, requestedMode) {
+        case (.overlay, .pinned):
+            dismiss(animated: false) { [weak self, weak presentationHost] in
+                guard let self else { return }
+                guard let presentationHost else {
+                    self.failedToStartPresentation()
+                    return
+                }
+                self.isMigratingPresentation = false
+                self.isTransitioningDrawer = false
+                guard self.embedPinned(
+                    in: presentationHost,
+                    animated: false,
+                    onPresented: nil
+                ) else {
+                    self.failedToStartPresentation()
+                    return
+                }
+                self.presentationMigrationRetainer = nil
+            }
+        case (.pinned, .overlay):
+            onPinnedLayoutChanged?(0, view.effectiveUserInterfaceLayoutDirection)
+            presentationHost.view.layoutIfNeeded()
+            removePinnedContainment()
+            presentationMode = .overlay
+            applyPresentationAppearance(.overlay)
+            updateDrawerGeometry(availableWidth: presentationHost.view.bounds.width)
+            view.layoutIfNeeded()
+            containerView.transform = .identity
+            dimmingView.alpha = 1
+            DispatchQueue.main.async { [weak self, weak presentationHost] in
+                guard let self else { return }
+                guard let presentationHost else {
+                    self.failedToStartPresentation()
+                    return
+                }
+                self.presentOverlayAfterPinnedMigration(from: presentationHost)
+            }
+        default:
+            isMigratingPresentation = false
+            isTransitioningDrawer = false
+            presentationMigrationRetainer = nil
+        }
+    }
+
+    private func presentOverlayAfterPinnedMigration(from presentationHost: UIViewController) {
+        guard presentationHost.presentedViewController == nil else {
+            restorePinnedAfterFailedOverlayMigration(in: presentationHost)
+            return
+        }
+        presentationHost.present(self, animated: false) { [weak self] in
+            guard let self else { return }
+            self.isMigratingPresentation = false
+            self.presentationMigrationRetainer = nil
+            self.completePresentation(onPresented: nil)
+        }
+        guard presentingViewController === presentationHost else {
+            restorePinnedAfterFailedOverlayMigration(in: presentationHost)
+            return
+        }
+    }
+
+    private func restorePinnedAfterFailedOverlayMigration(in presentationHost: UIViewController) {
+        isMigratingPresentation = false
+        isTransitioningDrawer = false
+        if embedPinned(in: presentationHost, animated: false, onPresented: nil) {
+            presentationMigrationRetainer = nil
+        } else {
+            failedToStartPresentation()
+        }
+    }
+
+    private func preparePinnedContainmentRemoval(animated: Bool) {
+        guard !isPinnedContainmentRemovalPrepared,
+              parent != nil || view.superview != nil else { return }
+        isPinnedContainmentRemovalPrepared = true
+        willMove(toParent: nil)
+        pinnedRemovalForwardsAppearance = viewIfLoaded?.window != nil
+        if pinnedRemovalForwardsAppearance {
+            beginAppearanceTransition(false, animated: animated)
+        }
+    }
+
+    private func finishPinnedContainmentRemoval() {
+        guard isPinnedContainmentRemovalPrepared || parent != nil || view.superview != nil else {
+            return
+        }
+        if !isPinnedContainmentRemovalPrepared {
+            preparePinnedContainmentRemoval(animated: false)
+        }
+        NSLayoutConstraint.deactivate(pinnedHostConstraints)
+        pinnedHostConstraints.removeAll()
+        view.removeFromSuperview()
+        if pinnedRemovalForwardsAppearance {
+            endAppearanceTransition()
+        }
+        removeFromParent()
+        view.translatesAutoresizingMaskIntoConstraints = true
+        pinnedRemovalForwardsAppearance = false
+        isPinnedContainmentRemovalPrepared = false
+    }
+
+    private func removePinnedContainment() {
+        preparePinnedContainmentRemoval(animated: false)
+        finishPinnedContainmentRemoval()
     }
 
     /// Dismisses the drawer with animation.
@@ -2890,7 +3529,7 @@ final class FloorpOverlayDrawerViewController:
         // Do not let an external toolbar toggle tear down that presentation.
         guard !isCommittingNotesReorder,
               presentedViewController == nil,
-              presentingViewController != nil,
+              presentationMode != nil,
               !didFinishDismissal else { return }
         if isTransitioningDrawer {
             dismissWhenPresentationFinishes = true
@@ -2901,23 +3540,30 @@ final class FloorpOverlayDrawerViewController:
 
         isTransitioningDrawer = true
         let duration = UIAccessibility.isReduceMotionEnabled ? 0 : UX.animationDuration
+        let dismissesPinnedContainment = presentationMode == .pinned
+        if dismissesPinnedContainment {
+            preparePinnedContainmentRemoval(animated: duration > 0)
+        }
         UIView.animate(
             withDuration: duration,
             delay: 0,
             options: .curveEaseIn,
             animations: {
                 self.dimmingView.alpha = 0
-                self.containerView.transform = CGAffineTransform(
-                    translationX: FloorpDrawerLayoutMetrics.dismissalTranslation(
-                        drawerWidth: self.containerView.bounds.width,
-                        layoutDirection: self.view.effectiveUserInterfaceLayoutDirection
-                    ),
-                    y: 0
-                )
+                self.containerView.transform = self.dismissalTransform
+                if self.presentationMode == .pinned {
+                    self.onPinnedLayoutChanged?(0, self.view.effectiveUserInterfaceLayoutDirection)
+                    self.presentationHost?.view.layoutIfNeeded()
+                }
             },
             completion: { _ in
-                self.dismiss(animated: false) { [weak self] in
-                    self?.finishDismissal()
+                if dismissesPinnedContainment {
+                    self.finishPinnedContainmentRemoval()
+                    self.finishDismissal()
+                } else {
+                    self.dismiss(animated: false) { [weak self] in
+                        self?.finishDismissal()
+                    }
                 }
             }
         )
@@ -2926,14 +3572,21 @@ final class FloorpOverlayDrawerViewController:
     private func finishDismissal() {
         guard !didFinishDismissal else { return }
         didFinishDismissal = true
+        cancelScheduledPresentationTransition()
         isTransitioningDrawer = false
+        isMigratingPresentation = false
+        presentationMigrationRetainer = nil
         clearPendingRegistryFallback()
+        onPinnedLayoutChanged?(0, view.effectiveUserInterfaceLayoutDirection)
         detachWebPanelContent()
         presentationState.detach(self)
         if libraryPanelHost?.viewController.parent === self {
             hideNativeLibraryPanel()
         }
         libraryPanelHost?.onRequestDrawerDismiss = nil
+        presentationMode = nil
+        presentationHost = nil
+        pendingPresentationMode = nil
         onDismissed?()
     }
 }
@@ -3069,11 +3722,11 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
         case .history(let urlString):
             guard let url = URL(string: urlString) else { return }
             onItemSelected?(url)
-            dismissDrawer()
+            dismissAfterOpeningMainContentIfNeeded()
         case .bookmark, .none:
             guard let urlString = item.url, let url = URL(string: urlString) else { return }
             onItemSelected?(url)
-            dismissDrawer()
+            dismissAfterOpeningMainContentIfNeeded()
         }
     }
 

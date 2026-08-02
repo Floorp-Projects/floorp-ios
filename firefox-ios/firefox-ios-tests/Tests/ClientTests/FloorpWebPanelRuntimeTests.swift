@@ -941,6 +941,235 @@ final class FloorpWebPanelFindControllerTests: XCTestCase {
 
 @MainActor
 final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
+    func testAdaptivePresentationMigrationPreservesLoadedWebPanelSessionAndContent() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let requestedMode = FloorpMutableWebPanelPresentationMode(.pinned)
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: fixture.manager,
+            notesStore: .shared,
+            presentationState: fixture.presentationState,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            isPrivateProvider: { false },
+            presentationModeProvider: { _, _ in requestedMode.value }
+        )
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let presented = expectation(description: "Pinned web panel drawer presented")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let contentView = try XCTUnwrap(session.contentView)
+        let contentSuperview = try XCTUnwrap(contentView.superview)
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/retained"))
+        session.recordRuntimeState(currentURL: currentURL, pageTitle: "Retained")
+        let visibilityChanges = session.visibilityChanges
+
+        requestedMode.value = .overlay
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        let becameOverlay = await waitForPresentationState {
+            drawer.presentationMode == .overlay
+                && drawer.isPresentationTransitionSettled
+                && parent.presentedViewController === drawer
+        }
+        XCTAssertTrue(becameOverlay)
+
+        requestedMode.value = .pinned
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        let becamePinned = await waitForPresentationState {
+            drawer.presentationMode == .pinned
+                && drawer.isPresentationTransitionSettled
+                && drawer.parent === parent
+        }
+        XCTAssertTrue(becamePinned)
+
+        XCTAssertEqual(fixture.factory.makeCallCount, 1)
+        XCTAssertTrue(fixture.factory.sessions.first === session)
+        XCTAssertTrue(session.contentView === contentView)
+        XCTAssertTrue(contentView.superview === contentSuperview)
+        XCTAssertEqual(session.stateObserverCount, 1)
+        XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertEqual(session.state.currentURL, currentURL)
+        XCTAssertEqual(session.visibilityChanges, visibilityChanges)
+
+        let dismissed = expectation(description: "Migrated web panel drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testPinnedWidthChangePreservesFindStateInEveryVisibleWindow() async throws {
+        let suiteName = "FloorpPinnedFindResizeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let notificationCenter = NotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+        let panel = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Resizable", urlText: "https://example.com/panel")
+        )
+        let firstFactory = MockFloorpWebPanelSessionFactory()
+        let secondFactory = MockFloorpWebPanelSessionFactory()
+        let firstWindowUUID = WindowUUID()
+        let secondWindowUUID = WindowUUID()
+        let firstState = FloorpPanelPresentationState(
+            windowUUID: firstWindowUUID,
+            selectedPanelId: panel.id,
+            webPanelSessionStore: FloorpWebPanelSessionStore(
+                windowUUID: firstWindowUUID,
+                factory: firstFactory
+            )
+        )
+        let secondState = FloorpPanelPresentationState(
+            windowUUID: secondWindowUUID,
+            selectedPanelId: panel.id,
+            webPanelSessionStore: FloorpWebPanelSessionStore(
+                windowUUID: secondWindowUUID,
+                factory: secondFactory
+            )
+        )
+        let firstDrawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: .shared,
+            presentationState: firstState,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            presentationModeProvider: { _, _ in .pinned }
+        )
+        let secondDrawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: .shared,
+            presentationState: secondState,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            presentationModeProvider: { _, _ in .pinned }
+        )
+        let firstParent = UIViewController()
+        let secondParent = UIViewController()
+        let firstWindow = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        let secondWindow = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        firstWindow.rootViewController = firstParent
+        secondWindow.rootViewController = secondParent
+        firstWindow.makeKeyAndVisible()
+        secondWindow.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            firstWindow.isHidden = true
+            secondWindow.isHidden = true
+        }
+
+        let firstPresented = expectation(description: "First pinned Web panel presented")
+        let secondPresented = expectation(description: "Second pinned Web panel presented")
+        XCTAssertTrue(firstDrawer.show(from: firstParent) { firstPresented.fulfill() })
+        XCTAssertTrue(secondDrawer.show(from: secondParent) { secondPresented.fulfill() })
+        await fulfillment(of: [firstPresented, secondPresented], timeout: 1)
+
+        let firstSession = try XCTUnwrap(firstFactory.sessions.first)
+        let secondSession = try XCTUnwrap(secondFactory.sessions.first)
+        let firstContent = try XCTUnwrap(firstSession.contentView)
+        let secondContent = try XCTUnwrap(secondSession.contentView)
+        let firstContentSuperview = try XCTUnwrap(firstContent.superview)
+        let secondContentSuperview = try XCTUnwrap(secondContent.superview)
+        let firstFindButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: firstDrawer.view) as? UIButton
+        )
+        let secondFindButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: secondDrawer.view) as? UIButton
+        )
+        firstFindButton.sendActions(for: .touchUpInside)
+        secondFindButton.sendActions(for: .touchUpInside)
+        let firstFindToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: firstDrawer.view)
+        )
+        let secondFindToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: secondDrawer.view)
+        )
+        let firstQuery = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: firstDrawer.view) as? UITextField
+        )
+        let secondQuery = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: secondDrawer.view) as? UITextField
+        )
+        firstQuery.text = "first needle"
+        secondQuery.text = "second needle"
+        firstQuery.sendActions(for: .editingChanged)
+        secondQuery.sendActions(for: .editingChanged)
+        let firstVisibilityChanges = firstSession.visibilityChanges
+        let secondVisibilityChanges = secondSession.visibilityChanges
+        let firstEndFindCount = firstSession.findTargetMock.endSessionCount
+        let secondEndFindCount = secondSession.findTargetMock.endSessionCount
+
+        let resizeHandle = try XCTUnwrap(
+            findView(
+                identifier: "Floorp.Drawer.ResizeHandle",
+                in: firstDrawer.view
+            ) as? FloorpPanelResizeHandleView
+        )
+        resizeHandle.accessibilityIncrement()
+        firstParent.view.layoutIfNeeded()
+        secondParent.view.layoutIfNeeded()
+
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).contentWidth, 420)
+        for drawer in [firstDrawer, secondDrawer] {
+            let container = try XCTUnwrap(
+                findView(identifier: "Floorp.Drawer.Container", in: drawer.view)
+            )
+            XCTAssertEqual(container.frame.width, 420, accuracy: 0.5)
+        }
+        XCTAssertTrue(firstSession.contentView === firstContent)
+        XCTAssertTrue(secondSession.contentView === secondContent)
+        XCTAssertTrue(firstContent.superview === firstContentSuperview)
+        XCTAssertTrue(secondContent.superview === secondContentSuperview)
+        XCTAssertTrue(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: firstDrawer.view)
+                === firstFindToolbar
+        )
+        XCTAssertTrue(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: secondDrawer.view)
+                === secondFindToolbar
+        )
+        XCTAssertFalse(firstFindToolbar.isHidden)
+        XCTAssertFalse(secondFindToolbar.isHidden)
+        XCTAssertEqual(firstQuery.text, "first needle")
+        XCTAssertEqual(secondQuery.text, "second needle")
+        XCTAssertEqual(firstSession.stateObserverCount, 1)
+        XCTAssertEqual(secondSession.stateObserverCount, 1)
+        XCTAssertEqual(firstSession.visibilityChanges, firstVisibilityChanges)
+        XCTAssertEqual(secondSession.visibilityChanges, secondVisibilityChanges)
+        XCTAssertEqual(firstSession.findTargetMock.endSessionCount, firstEndFindCount)
+        XCTAssertEqual(secondSession.findTargetMock.endSessionCount, secondEndFindCount)
+        XCTAssertEqual(firstSession.findTargetMock.invalidationCount, 0)
+        XCTAssertEqual(secondSession.findTargetMock.invalidationCount, 0)
+        XCTAssertEqual(firstSession.findTargetMock.requests.map(\.query), ["first needle"])
+        XCTAssertEqual(secondSession.findTargetMock.requests.map(\.query), ["second needle"])
+
+        let firstDismissed = expectation(description: "First pinned Web panel dismissed")
+        let secondDismissed = expectation(description: "Second pinned Web panel dismissed")
+        firstDrawer.onDismissed = { firstDismissed.fulfill() }
+        secondDrawer.onDismissed = { secondDismissed.fulfill() }
+        firstDrawer.dismissDrawer()
+        secondDrawer.dismissDrawer()
+        await fulfillment(of: [firstDismissed, secondDismissed], timeout: 1)
+    }
+
     func testSelectedTabModeChangesRebindBothDirectionsWithoutReplacingDrawer() async throws {
         let fixture = try makeDrawerFixture()
         defer { fixture.cleanup() }
@@ -1235,6 +1464,38 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         )
         XCTAssertFalse(replacement === state)
         FloorpPanelPresentationStateAssociation.invalidateState(for: owner)
+    }
+
+    func testClosedWindowStateReloadsWebPanelWidthAfterRegistryChange() throws {
+        let suiteName = "FloorpWebPanelWidthInvalidationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let manager = FloorpPanelManager(defaults: defaults)
+        let panel = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Portal", urlText: "https://example.com/panel")
+        )
+        let state = FloorpPanelPresentationState(
+            windowUUID: .XCTestDefaultUUID,
+            selectedPanelId: panel.id
+        )
+        state.configureWebPanelRuntime(
+            profile: MockProfile(),
+            panelManager: manager,
+            openInMainBrowser: { _ in }
+        )
+        defer { state.invalidateWebPanelRuntime() }
+        state.setPreferredPanelWidth(420, for: panel.id)
+        XCTAssertEqual(state.preferredPanelWidth(for: panel), 420)
+
+        let revision = try manager.webPanelPreferencesRevision(for: panel.id)
+        _ = try manager.setWebPanelContentWidth(
+            380,
+            for: panel.id,
+            expectedRevision: revision
+        )
+
+        let updatedPanel = try XCTUnwrap(manager.panel(for: panel.id))
+        XCTAssertEqual(state.preferredPanelWidth(for: updatedPanel), 380)
     }
 
     func testRegularAndPrivateSessionsSurviveDrawerHideAndRemainSeparated() throws {
@@ -1692,6 +1953,18 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         )
     }
 
+    private func waitForPresentationState(
+        _ predicate: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        for _ in 0..<100 {
+            if predicate() {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return false
+    }
+
     private func makeTab(isPrivate: Bool) -> Tab {
         Tab(
             profile: MockProfile(),
@@ -2080,6 +2353,15 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private func notifyStateObservers() {
         let currentState = state
         Array(stateObservers.values).forEach { $0(currentState) }
+    }
+}
+
+@MainActor
+private final class FloorpMutableWebPanelPresentationMode {
+    var value: FloorpPanelPresentationMode
+
+    init(_ value: FloorpPanelPresentationMode) {
+        self.value = value
     }
 }
 

@@ -43,6 +43,22 @@ enum FloorpStrings {
             comment: "Accessibility label for the close button in the overlay drawer"
         )
 
+        static let resizeAccessibilityLabel = NSLocalizedString(
+            "Floorp.Drawer.ResizeAccessibilityLabel.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Resize sidebar",
+            comment: "Accessibility label for the pinned sidebar resize handle"
+        )
+
+        static let resizeAccessibilityHint = NSLocalizedString(
+            "Floorp.Drawer.ResizeAccessibilityHint.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Swipe up or down to change the sidebar width",
+            comment: "Accessibility hint for the pinned sidebar resize handle"
+        )
+
         static let bookmarksTab = NSLocalizedString(
             "Floorp.Drawer.BookmarksTab.v1",
             tableName: "Floorp",

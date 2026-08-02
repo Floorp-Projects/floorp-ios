@@ -1437,6 +1437,7 @@
 		CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */; };
 		F10A00022FA9000000000001 /* FloorpNotesSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00012FA9000000000001 /* FloorpNotesSync.swift */; };
 		F10A00042FA9000000000001 /* FloorpNotesSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00032FA9000000000001 /* FloorpNotesSyncTests.swift */; };
+		F10A00112FA9000000000001 /* FloorpAdaptivePanelPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00102FA9000000000001 /* FloorpAdaptivePanelPresentation.swift */; };
 		F10A00062FA9000000000001 /* floorp-notes-merge-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = F10A00052FA9000000000001 /* floorp-notes-merge-v1.json */; };
 		CEC2F0B12FA8000300D67401 /* FloorpNotesInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0B2FA8000300D67401 /* FloorpNotesInteractionTests.swift */; };
 		CEC2F0B12F98000400D67401 /* Floorp.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = CE903B0B2F98000400D67401 /* Floorp.xcstrings */; };
@@ -11113,6 +11114,7 @@
 		CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanelPreferencesTests.swift; sourceTree = "<group>"; };
 		F10A00012FA9000000000001 /* FloorpNotesSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesSync.swift; sourceTree = "<group>"; };
 		F10A00032FA9000000000001 /* FloorpNotesSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesSyncTests.swift; sourceTree = "<group>"; };
+		F10A00102FA9000000000001 /* FloorpAdaptivePanelPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpAdaptivePanelPresentation.swift; sourceTree = "<group>"; };
 		F10A00052FA9000000000001 /* floorp-notes-merge-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../sync-fixtures/floorp-notes/floorp-notes-merge-v1.json"; sourceTree = SOURCE_ROOT; };
 		CE903B0B2FA8000300D67401 /* FloorpNotesInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesInteractionTests.swift; sourceTree = "<group>"; };
 		CE903B0B2F98000400D67401 /* Floorp.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Floorp.xcstrings; sourceTree = "<group>"; };
@@ -16404,6 +16406,7 @@
 				CE903B072F971B0200D67401 /* FloorpStrings.swift */,
 				CE903B082F98000100D67401 /* FloorpNotes.swift */,
 				F10A00012FA9000000000001 /* FloorpNotesSync.swift */,
+				F10A00102FA9000000000001 /* FloorpAdaptivePanelPresentation.swift */,
 				CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */,
 				CE903B0D2FB0000100D67401 /* FloorpRichTextDocument.swift */,
 				CE903B0C2F98000500D67401 /* FloorpPanelRegistryViewController.swift */,
@@ -20110,6 +20113,7 @@
 				CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */,
 				CEC2F0AE2F98000100D67401 /* FloorpNotes.swift in Sources */,
 				F10A00022FA9000000000001 /* FloorpNotesSync.swift in Sources */,
+				F10A00112FA9000000000001 /* FloorpAdaptivePanelPresentation.swift in Sources */,
 				CEC2F0AF2F98000200D67401 /* FloorpNoteEditorViewController.swift in Sources */,
 				CEC2F0B32FB0000100D67401 /* FloorpRichTextDocument.swift in Sources */,
 				CEC2F0B22F98000500D67401 /* FloorpPanelRegistryViewController.swift in Sources */,

@@ -45,6 +45,14 @@ extension BrowserViewController {
         )
     }
 
+    var floorpBrowserContentLayoutGuide: UILayoutGuide {
+        floorpPanelPresentationState.contentLayoutGuides(in: view).fullWidth
+    }
+
+    var floorpBrowserSafeAreaContentLayoutGuide: UILayoutGuide {
+        floorpPanelPresentationState.contentLayoutGuides(in: view).safeArea
+    }
+
     // MARK: - Setup (called from patched setupEssentialUI)
 
     func setupFloorp() {
@@ -59,7 +67,12 @@ extension BrowserViewController {
     }
 
     func teardownFloorp() {
+        floorpPanelPresentationState.resetBrowserContentReservation()
         FloorpPanelPresentationStateAssociation.invalidateState(for: self)
+    }
+
+    func maintainFloorpPinnedDrawerZOrder() {
+        floorpPanelPresentationState.activeDrawer?.ensurePinnedPresentationZOrder()
     }
 
     // MARK: - Notification Handler
@@ -120,6 +133,12 @@ extension BrowserViewController {
         }
         drawer.webPanelSuggestionProvider = { [weak self] in
             self?.floorpCurrentPageWebPanelSuggestion()
+        }
+        drawer.onPinnedLayoutChanged = { [weak self] width, layoutDirection in
+            guard let self else { return }
+            let guides = self.floorpPanelPresentationState.contentLayoutGuides(in: self.view)
+            guard guides.reserveSidebar(width: width, layoutDirection: layoutDirection) else { return }
+            self.view.setNeedsLayout()
         }
         if !drawer.show(from: self) {
             // Keep the window state for its selected-panel identity. The

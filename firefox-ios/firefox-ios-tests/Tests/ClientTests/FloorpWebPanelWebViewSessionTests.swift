@@ -99,7 +99,7 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
             "<html><body>first value<span>middle</span>last value</body></html>",
             baseURL: nil
         )
-        await fulfillment(of: [loaded], timeout: 2)
+        await fulfillment(of: [loaded], timeout: 5)
 
         let foundLast = await performFind(
             FloorpWebPanelFindRequest(

@@ -1,6 +1,18 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Floorp.Drawer.ResizeAccessibilityHint.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Swipe up or down to change the sidebar width" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "上または下にスワイプしてサイドバーの幅を変更します" } }
+      }
+    },
+    "Floorp.Drawer.ResizeAccessibilityLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Resize sidebar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーの幅を変更" } }
+      }
+    },
     "Floorp.PanelRegistry.RegistryReadOnlyMessage.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "These panel settings were created by a newer Floorp version and were left unchanged." } },

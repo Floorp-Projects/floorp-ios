@@ -448,6 +448,8 @@ class BrowserViewController: UIViewController,
             overKeyboardContainer: overKeyboardContainer,
             bottomContentStackView: bottomContentStackView,
             navigationToolbarContainer: navigationToolbarContainer,
+            contentLayoutGuide: floorpBrowserContentLayoutGuide,
+            safeAreaContentLayoutGuide: floorpBrowserSafeAreaContentLayoutGuide,
         )
     }()
 
@@ -1511,6 +1513,9 @@ class BrowserViewController: UIViewController,
 
         // Update available height for the homepage
         dispatchAvailableContentHeightChangedAction()
+
+        // Floorp: Keep the pinned sidebar and its resize target above browser chrome.
+        maintainFloorpPinnedDrawerZOrder()
     }
 
     func checkForJSAlerts() {
@@ -1629,8 +1634,8 @@ class BrowserViewController: UIViewController,
 
     private func setupConstraints() {
         NSLayoutConstraint.activate([
-            contentContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: floorpBrowserContentLayoutGuide.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: floorpBrowserContentLayoutGuide.trailingAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: overKeyboardContainer.topAnchor),
 
             topTouchArea.topAnchor.constraint(equalTo: view.topAnchor),
@@ -1650,8 +1655,8 @@ class BrowserViewController: UIViewController,
         if isSwipingTabsEnabled {
             NSLayoutConstraint.activate([
                 webPagePreview.topAnchor.constraint(equalTo: view.topAnchor),
-                webPagePreview.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                webPagePreview.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                webPagePreview.leadingAnchor.constraint(equalTo: floorpBrowserContentLayoutGuide.leadingAnchor),
+                webPagePreview.trailingAnchor.constraint(equalTo: floorpBrowserContentLayoutGuide.trailingAnchor),
                 webPagePreview.bottomAnchor.constraint(equalTo: view.bottomAnchor)
             ])
         }
@@ -1778,7 +1783,7 @@ class BrowserViewController: UIViewController,
             // Apple Developer Forums: https://developer.apple.com/forums/thread/798014
             let topConstraint = (isNavToolbar || shouldShowTopTabs) ? view.safeArea.top : view.snp.top
             if isBottomSearchBar {
-                make.left.right.equalTo(view)
+                make.leading.trailing.equalTo(floorpBrowserContentLayoutGuide)
                 make.top.equalTo(view.safeArea.top)
                 // The status bar is covered by the statusBarOverlay,
                 // if we don't have the URL bar at the top then header height is 0
@@ -1790,7 +1795,7 @@ class BrowserViewController: UIViewController,
                 } else {
                     headerTopConstraint = ConstraintReference(snapKit: make.top.equalTo(topConstraint).constraint)
                 }
-                make.left.right.equalTo(view)
+                make.leading.trailing.equalTo(floorpBrowserContentLayoutGuide)
             }
         }
     }
@@ -1840,7 +1845,7 @@ class BrowserViewController: UIViewController,
             } else if !isBottomSearchBar {
                 make.height.equalTo(0)
             }
-            make.leading.trailing.equalTo(view)
+            make.leading.trailing.equalTo(floorpBrowserContentLayoutGuide)
         }
     }
 
@@ -1857,7 +1862,7 @@ class BrowserViewController: UIViewController,
             } else {
                 bottomContainerConstraint = constraintReference
             }
-            make.leading.trailing.equalTo(view)
+            make.leading.trailing.equalTo(floorpBrowserContentLayoutGuide)
         }
     }
 
@@ -1912,10 +1917,7 @@ class BrowserViewController: UIViewController,
     private func adjustSnapKitBottomContentStackView(_ remake: ConstraintMaker) {
         guard !isSnapKitRemovalEnabled else { return }
 
-        remake.left.equalTo(view.safeArea.left)
-        remake.right.equalTo(view.safeArea.right)
-        remake.centerX.equalTo(view)
-        remake.width.equalTo(view.safeArea.width)
+        remake.leading.trailing.equalTo(floorpBrowserSafeAreaContentLayoutGuide)
 
         // Height is set by content - this removes run time error
         remake.height.greaterThanOrEqualTo(0)
@@ -2341,8 +2343,8 @@ class BrowserViewController: UIViewController,
         searchControllerBottomConstraint = bottomConstraint
         NSLayoutConstraint.activate([
             searchController.view.topAnchor.constraint(equalTo: header.bottomAnchor),
-            searchController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            searchController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            searchController.view.leadingAnchor.constraint(equalTo: floorpBrowserContentLayoutGuide.leadingAnchor),
+            searchController.view.trailingAnchor.constraint(equalTo: floorpBrowserContentLayoutGuide.trailingAnchor),
             bottomConstraint
         ])
 

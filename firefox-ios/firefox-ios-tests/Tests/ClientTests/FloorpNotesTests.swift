@@ -4235,6 +4235,104 @@ private final class MockFloorpNotePersistence: FloorpNotePersistence {
 }
 
 @MainActor
+final class FloorpBrowserChromeLayoutTests: XCTestCase {
+    func testDefaultGuidesPreserveOriginalFullWidthAndSafeAreaAnchors() {
+        let parentView = UIView(frame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let headerView = UIView()
+        let bottomContainer = BaseAlphaStackView()
+        let overKeyboardContainer = BaseAlphaStackView()
+        let bottomContentStackView = BaseAlphaStackView()
+        let navigationToolbarContainer = UIView()
+        [headerView, bottomContainer, overKeyboardContainer, bottomContentStackView].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            parentView.addSubview($0)
+        }
+        let subject = BrowserViewControllerLayoutManager(
+            parentView: parentView,
+            headerView: headerView,
+            bottomContainer: bottomContainer,
+            overKeyboardContainer: overKeyboardContainer,
+            bottomContentStackView: bottomContentStackView,
+            navigationToolbarContainer: navigationToolbarContainer,
+            toolbarHelper: MockToolbarHelper()
+        )
+
+        subject.setupHeaderConstraints(isBottomSearchBar: true)
+        subject.setupBottomContentStackViewConstraints()
+
+        XCTAssertTrue(parentView.constraints.contains { constraint in
+            constraint.firstItem === headerView
+                && constraint.firstAttribute == .leading
+                && constraint.secondItem === parentView
+                && constraint.secondAttribute == .leading
+        })
+        XCTAssertTrue(parentView.constraints.contains { constraint in
+            constraint.firstItem === bottomContentStackView
+                && constraint.firstAttribute == .leading
+                && constraint.secondItem === parentView.safeAreaLayoutGuide
+                && constraint.secondAttribute == .leading
+        })
+    }
+
+    func testCustomGuidesReserveManagedBrowserChromeSurfacesInLTRAndRTL() {
+        let parentView = UIView(frame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let headerView = UIView()
+        let bottomContainer = BaseAlphaStackView()
+        let overKeyboardContainer = BaseAlphaStackView()
+        let bottomContentStackView = BaseAlphaStackView()
+        let navigationToolbarContainer = UIView()
+        let managedChromeViews = [
+            headerView,
+            bottomContainer,
+            overKeyboardContainer,
+            bottomContentStackView,
+        ]
+        managedChromeViews.forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            parentView.addSubview($0)
+        }
+        let guides = FloorpBrowserContentLayoutGuides(parentView: parentView)
+        let subject = BrowserViewControllerLayoutManager(
+            parentView: parentView,
+            headerView: headerView,
+            bottomContainer: bottomContainer,
+            overKeyboardContainer: overKeyboardContainer,
+            bottomContentStackView: bottomContentStackView,
+            navigationToolbarContainer: navigationToolbarContainer,
+            contentLayoutGuide: guides.fullWidth,
+            safeAreaContentLayoutGuide: guides.safeArea,
+            toolbarHelper: MockToolbarHelper()
+        )
+        subject.setupHeaderConstraints(isBottomSearchBar: true)
+        subject.setupBottomContainerConstraints()
+        subject.setupOverKeyboardContainerConstraints()
+        subject.setupBottomContentStackViewConstraints()
+
+        XCTAssertTrue(guides.reserveSidebar(width: 100, layoutDirection: .leftToRight))
+        parentView.layoutIfNeeded()
+        assertChromeFrames(managedChromeViews, minX: 0, maxX: 275)
+
+        parentView.semanticContentAttribute = .forceRightToLeft
+        XCTAssertTrue(guides.reserveSidebar(width: 100, layoutDirection: .rightToLeft))
+        parentView.layoutIfNeeded()
+        assertChromeFrames(managedChromeViews, minX: 100, maxX: 375)
+    }
+
+    private func assertChromeFrames(
+        _ views: [UIView],
+        minX: CGFloat,
+        maxX: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for view in views {
+            XCTAssertEqual(view.frame.minX, minX, accuracy: 0.5, file: file, line: line)
+            XCTAssertEqual(view.frame.maxX, maxX, accuracy: 0.5, file: file, line: line)
+        }
+    }
+}
+
+@MainActor
 final class FloorpOverlayDrawerPresentationTests: XCTestCase {
     func testWindowScopedPresentationStatesRemainIndependentAndFallback() throws {
         let panels = FloorpPanel.defaultPanels()
@@ -4308,6 +4406,716 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
             480,
             accuracy: 0.001
         )
+    }
+
+    func testAdaptivePresentationResolverRequiresWideRegularIPadGeometry() {
+        XCTAssertEqual(
+            FloorpPanelPresentationModeResolver.resolve(
+                availableWidth: 1_366,
+                horizontalSizeClass: .regular,
+                userInterfaceIdiom: .phone
+            ),
+            .overlay
+        )
+        XCTAssertEqual(
+            FloorpPanelPresentationModeResolver.resolve(
+                availableWidth: 1_024,
+                horizontalSizeClass: .compact,
+                userInterfaceIdiom: .pad
+            ),
+            .overlay
+        )
+        XCTAssertEqual(
+            FloorpPanelPresentationModeResolver.resolve(
+                availableWidth: 859,
+                horizontalSizeClass: .regular,
+                userInterfaceIdiom: .pad
+            ),
+            .overlay
+        )
+        XCTAssertEqual(
+            FloorpPanelPresentationModeResolver.resolve(
+                availableWidth: 860,
+                horizontalSizeClass: .regular,
+                userInterfaceIdiom: .pad
+            ),
+            .pinned
+        )
+        XCTAssertEqual(
+            FloorpPanelPresentationModeResolver.resolve(
+                availableWidth: 1_024,
+                horizontalSizeClass: .regular,
+                userInterfaceIdiom: .pad
+            ),
+            .pinned
+        )
+    }
+
+    func testPinnedWidthClampsToBrowserGeometryAndUsesDirectionalResize() {
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.pinnedWidth(preferredWidth: 400, availableWidth: 1_024),
+            400
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.pinnedWidth(preferredWidth: 480, availableWidth: 900),
+            400
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.resizedPinnedWidth(
+                initialWidth: 400,
+                translationX: -30,
+                availableWidth: 1_024,
+                layoutDirection: .leftToRight
+            ),
+            430
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.resizedPinnedWidth(
+                initialWidth: 400,
+                translationX: 30,
+                availableWidth: 1_024,
+                layoutDirection: .rightToLeft
+            ),
+            430
+        )
+    }
+
+    func testBrowserContentGuidesReserveThePhysicalSidebarEdge() {
+        let parentView = UIView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        let guides = FloorpBrowserContentLayoutGuides(parentView: parentView)
+        let browserContent = UIView()
+        browserContent.translatesAutoresizingMaskIntoConstraints = false
+        parentView.addSubview(browserContent)
+        NSLayoutConstraint.activate([
+            browserContent.leadingAnchor.constraint(equalTo: guides.fullWidth.leadingAnchor),
+            browserContent.trailingAnchor.constraint(equalTo: guides.fullWidth.trailingAnchor),
+            browserContent.topAnchor.constraint(equalTo: parentView.topAnchor),
+            browserContent.heightAnchor.constraint(equalToConstant: 44),
+        ])
+
+        XCTAssertTrue(guides.reserveSidebar(width: 400, layoutDirection: .leftToRight))
+        parentView.layoutIfNeeded()
+        XCTAssertEqual(browserContent.frame.minX, 0, accuracy: 0.5)
+        XCTAssertEqual(browserContent.frame.maxX, 624, accuracy: 0.5)
+        XCTAssertFalse(guides.reserveSidebar(width: 400, layoutDirection: .leftToRight))
+
+        parentView.semanticContentAttribute = .forceRightToLeft
+        XCTAssertTrue(guides.reserveSidebar(width: 400, layoutDirection: .rightToLeft))
+        parentView.layoutIfNeeded()
+        XCTAssertEqual(browserContent.frame.minX, 400, accuracy: 0.5)
+        XCTAssertEqual(browserContent.frame.maxX, 1_024, accuracy: 0.5)
+
+        XCTAssertTrue(guides.reserveSidebar(width: 0, layoutDirection: .rightToLeft))
+        parentView.layoutIfNeeded()
+        XCTAssertEqual(browserContent.frame.minX, parentView.bounds.minX, accuracy: 0.5)
+        XCTAssertEqual(browserContent.frame.maxX, parentView.bounds.maxX, accuracy: 0.5)
+    }
+
+    func testBrowserSafeAreaGuideIntersectsReservedBrowserGeometry() {
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        parent.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 24, bottom: 0, right: 24)
+        parent.view.layoutIfNeeded()
+
+        let guides = FloorpBrowserContentLayoutGuides(parentView: parent.view)
+        let safeContent = UIView()
+        safeContent.translatesAutoresizingMaskIntoConstraints = false
+        parent.view.addSubview(safeContent)
+        NSLayoutConstraint.activate([
+            safeContent.leftAnchor.constraint(equalTo: guides.safeArea.leftAnchor),
+            safeContent.rightAnchor.constraint(equalTo: guides.safeArea.rightAnchor),
+            safeContent.topAnchor.constraint(equalTo: parent.view.topAnchor),
+            safeContent.heightAnchor.constraint(equalToConstant: 44),
+        ])
+
+        XCTAssertTrue(guides.reserveSidebar(width: 400, layoutDirection: .leftToRight))
+        parent.view.layoutIfNeeded()
+        XCTAssertEqual(
+            safeContent.frame.minX,
+            parent.view.safeAreaLayoutGuide.layoutFrame.minX,
+            accuracy: 0.5
+        )
+        XCTAssertEqual(safeContent.frame.maxX, guides.fullWidth.layoutFrame.maxX, accuracy: 0.5)
+
+        parent.view.semanticContentAttribute = .forceRightToLeft
+        XCTAssertTrue(guides.reserveSidebar(width: 400, layoutDirection: .rightToLeft))
+        parent.view.layoutIfNeeded()
+        XCTAssertEqual(safeContent.frame.minX, guides.fullWidth.layoutFrame.minX, accuracy: 0.5)
+        XCTAssertEqual(
+            safeContent.frame.maxX,
+            parent.view.safeAreaLayoutGuide.layoutFrame.maxX,
+            accuracy: 0.5
+        )
+    }
+
+    func testWideRegularPresentationPinsBesideBrowserChromeAndResetsLayoutOnClose() async throws {
+        let suiteName = "FloorpPinnedDrawerPresentationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpPinnedDrawerPresentationTests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let manager = FloorpPanelManager(defaults: defaults)
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(manager.panel(for: "floorp//notes")))
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            presentationModeProvider: { _, _ in .pinned }
+        )
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+        }
+
+        let guides = state.contentLayoutGuides(in: parent.view)
+        let simulatedAddressBar = UIView()
+        simulatedAddressBar.translatesAutoresizingMaskIntoConstraints = false
+        parent.view.addSubview(simulatedAddressBar)
+        NSLayoutConstraint.activate([
+            simulatedAddressBar.leadingAnchor.constraint(equalTo: guides.fullWidth.leadingAnchor),
+            simulatedAddressBar.trailingAnchor.constraint(equalTo: guides.fullWidth.trailingAnchor),
+            simulatedAddressBar.topAnchor.constraint(equalTo: parent.view.topAnchor),
+            simulatedAddressBar.heightAnchor.constraint(equalToConstant: 80),
+        ])
+        drawer.onPinnedLayoutChanged = { width, direction in
+            _ = guides.reserveSidebar(width: width, layoutDirection: direction)
+        }
+
+        let presented = expectation(description: "Pinned drawer presentation completed")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        parent.view.layoutIfNeeded()
+
+        let dimmingView = try XCTUnwrap(
+            drawer.view.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.Dimming" })
+        )
+        let containerView = try XCTUnwrap(
+            drawer.view.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.Container" })
+        )
+        let resizeHandle = try XCTUnwrap(
+            drawer.view.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.ResizeHandle" })
+        )
+        XCTAssertEqual(drawer.presentationMode, .pinned)
+        XCTAssertTrue(drawer.parent === parent)
+        XCTAssertNil(parent.presentedViewController)
+        XCTAssertFalse(drawer.view.accessibilityViewIsModal)
+        XCTAssertTrue(dimmingView.isHidden)
+        XCTAssertFalse(resizeHandle.isHidden)
+        XCTAssertEqual(containerView.frame.width, 400, accuracy: 0.5)
+        XCTAssertEqual(simulatedAddressBar.frame.maxX, containerView.frame.minX, accuracy: 0.5)
+        XCTAssertNil(drawer.view.hitTest(CGPoint(x: 100, y: 384), with: nil))
+        parent.view.bringSubviewToFront(simulatedAddressBar)
+        drawer.ensurePinnedPresentationZOrder()
+        XCTAssertGreaterThan(drawer.view.layer.zPosition, simulatedAddressBar.layer.zPosition)
+        XCTAssertTrue(
+            parent.view.hitTest(
+                CGPoint(x: resizeHandle.frame.midX, y: simulatedAddressBar.frame.midY),
+                with: nil
+            ) === resizeHandle
+        )
+        XCTAssertTrue(
+            parent.view.hitTest(
+                CGPoint(x: 100, y: simulatedAddressBar.frame.midY),
+                with: nil
+            ) === simulatedAddressBar
+        )
+
+        let dismissed = expectation(description: "Pinned drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+        parent.view.layoutIfNeeded()
+        XCTAssertNil(drawer.parent)
+        XCTAssertNil(state.activeDrawer)
+        XCTAssertEqual(simulatedAddressBar.frame, CGRect(x: 0, y: 0, width: 1_024, height: 80))
+    }
+
+    func testPinnedRTLReservesLeftEdgeAndKeepsResizeHandleInteractive() async throws {
+        let suiteName = "FloorpPinnedRTLPresentationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpPinnedRTLPresentationTests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let manager = FloorpPanelManager(defaults: defaults)
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(manager.panel(for: "floorp//notes")))
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            presentationModeProvider: { _, _ in .pinned }
+        )
+        let parent = UIViewController()
+        parent.loadViewIfNeeded()
+        parent.view.semanticContentAttribute = .forceRightToLeft
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.semanticContentAttribute = .forceRightToLeft
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        drawer.loadViewIfNeeded()
+        drawer.view.semanticContentAttribute = .forceRightToLeft
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+        }
+
+        let guides = state.contentLayoutGuides(in: parent.view)
+        let simulatedAddressBar = UIView()
+        simulatedAddressBar.translatesAutoresizingMaskIntoConstraints = false
+        parent.view.addSubview(simulatedAddressBar)
+        NSLayoutConstraint.activate([
+            simulatedAddressBar.leadingAnchor.constraint(equalTo: guides.fullWidth.leadingAnchor),
+            simulatedAddressBar.trailingAnchor.constraint(equalTo: guides.fullWidth.trailingAnchor),
+            simulatedAddressBar.topAnchor.constraint(equalTo: parent.view.topAnchor),
+            simulatedAddressBar.heightAnchor.constraint(equalToConstant: 80),
+        ])
+        drawer.onPinnedLayoutChanged = { width, direction in
+            _ = guides.reserveSidebar(width: width, layoutDirection: direction)
+        }
+
+        let presented = expectation(description: "RTL pinned drawer presentation completed")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        parent.view.layoutIfNeeded()
+
+        let containerView = try XCTUnwrap(
+            descendant(in: drawer.view, withIdentifier: "Floorp.Drawer.Container")
+        )
+        let resizeHandle = try XCTUnwrap(
+            descendant(in: drawer.view, withIdentifier: "Floorp.Drawer.ResizeHandle")
+        )
+        XCTAssertEqual(drawer.view.effectiveUserInterfaceLayoutDirection, .rightToLeft)
+        XCTAssertEqual(containerView.frame.minX, 0, accuracy: 0.5)
+        XCTAssertEqual(containerView.frame.maxX, 400, accuracy: 0.5)
+        XCTAssertEqual(simulatedAddressBar.frame.minX, containerView.frame.maxX, accuracy: 0.5)
+        XCTAssertEqual(simulatedAddressBar.frame.maxX, 1_024, accuracy: 0.5)
+        XCTAssertEqual(resizeHandle.frame.minX, containerView.frame.maxX, accuracy: 0.5)
+
+        parent.view.bringSubviewToFront(simulatedAddressBar)
+        drawer.ensurePinnedPresentationZOrder()
+        XCTAssertTrue(
+            parent.view.hitTest(
+                CGPoint(x: resizeHandle.frame.midX, y: simulatedAddressBar.frame.midY),
+                with: nil
+            ) === resizeHandle
+        )
+        XCTAssertTrue(
+            parent.view.hitTest(
+                CGPoint(x: 900, y: simulatedAddressBar.frame.midY),
+                with: nil
+            ) === simulatedAddressBar
+        )
+
+        let dismissed = expectation(description: "RTL pinned drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+    }
+
+    func testPinnedWebPanelResizePersistsWithoutReplacingWideWindowPreference() async throws {
+        let suiteName = "FloorpPinnedResizePersistenceTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpPinnedResizePersistenceTests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let notificationCenter = NotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+        let panel = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Resizable", urlText: "example.com")
+        )
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(panel)
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            presentationModeProvider: { _, _ in .pinned }
+        )
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+        }
+
+        let presented = expectation(description: "Resizable pinned drawer presented")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        parent.view.layoutIfNeeded()
+        let containerView = try XCTUnwrap(
+            descendant(in: drawer.view, withIdentifier: "Floorp.Drawer.Container")
+        )
+        let resizeHandle = try XCTUnwrap(
+            descendant(
+                in: drawer.view,
+                withIdentifier: "Floorp.Drawer.ResizeHandle"
+            ) as? FloorpPanelResizeHandleView
+        )
+        XCTAssertEqual(containerView.frame.width, 400, accuracy: 0.5)
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).revision, 0)
+
+        resizeHandle.accessibilityIncrement()
+        parent.view.layoutIfNeeded()
+        XCTAssertEqual(containerView.frame.width, 420, accuracy: 0.5)
+        XCTAssertEqual(resizeHandle.accessibilityValue, "420 pt")
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).contentWidth, 420)
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).revision, 1)
+        XCTAssertEqual(
+            try FloorpPanelManager(defaults: defaults)
+                .webPanelPreferences(for: panel.id)
+                .contentWidth,
+            420
+        )
+
+        window.frame.size.width = 880
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        parent.view.layoutIfNeeded()
+        XCTAssertEqual(containerView.frame.width, 380, accuracy: 0.5)
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).contentWidth, 420)
+        resizeHandle.accessibilityIncrement()
+        XCTAssertEqual(containerView.frame.width, 380, accuracy: 0.5)
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).contentWidth, 420)
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).revision, 1)
+
+        window.frame.size.width = 1_024
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        parent.view.layoutIfNeeded()
+        XCTAssertEqual(containerView.frame.width, 420, accuracy: 0.5)
+
+        let dismissed = expectation(description: "Resizable pinned drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+    }
+
+    func testPresentationModeMigrationPreservesDrawerAndLoadedContentIdentity() async throws {
+        let suiteName = "FloorpDrawerMigrationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpDrawerMigrationTests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let manager = FloorpPanelManager(defaults: defaults)
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(manager.panel(for: "floorp//notes")))
+        let mode = FloorpMutablePanelPresentationMode(.pinned)
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            presentationModeProvider: { _, _ in mode.value }
+        )
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+        }
+
+        let presented = expectation(description: "Pinned drawer presented before migration")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        let contentView = try XCTUnwrap(
+            descendant(
+                in: drawer.view,
+                withIdentifier: "Floorp.Drawer.Content"
+            )
+        )
+        let dimmingView = try XCTUnwrap(
+            descendant(
+                in: drawer.view,
+                withIdentifier: "Floorp.Drawer.Dimming"
+            )
+        )
+        let resizeHandle = try XCTUnwrap(
+            descendant(
+                in: drawer.view,
+                withIdentifier: "Floorp.Drawer.ResizeHandle"
+            )
+        )
+        XCTAssertTrue(dimmingView.isHidden)
+        XCTAssertFalse(resizeHandle.isHidden)
+        XCTAssertFalse(drawer.view.accessibilityViewIsModal)
+
+        mode.value = .overlay
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        let becameOverlay = await waitForPresentationState {
+            drawer.presentationMode == .overlay
+                && drawer.isPresentationTransitionSettled
+                && parent.presentedViewController === drawer
+        }
+        XCTAssertTrue(becameOverlay)
+        XCTAssertTrue(state.activeDrawer === drawer)
+        XCTAssertFalse(dimmingView.isHidden)
+        XCTAssertTrue(resizeHandle.isHidden)
+        XCTAssertTrue(drawer.view.accessibilityViewIsModal)
+        XCTAssertTrue(
+            descendant(
+                in: drawer.view,
+                withIdentifier: "Floorp.Drawer.Content"
+            ) === contentView
+        )
+
+        mode.value = .pinned
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        let becamePinned = await waitForPresentationState {
+            drawer.presentationMode == .pinned
+                && drawer.isPresentationTransitionSettled
+                && drawer.parent === parent
+        }
+        XCTAssertTrue(becamePinned)
+        XCTAssertNil(parent.presentedViewController)
+        XCTAssertTrue(state.activeDrawer === drawer)
+        XCTAssertTrue(dimmingView.isHidden)
+        XCTAssertFalse(resizeHandle.isHidden)
+        XCTAssertFalse(drawer.view.accessibilityViewIsModal)
+        XCTAssertTrue(
+            descendant(
+                in: drawer.view,
+                withIdentifier: "Floorp.Drawer.Content"
+            ) === contentView
+        )
+
+        let dismissed = expectation(description: "Migrated drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testPinnedLibraryAppearanceLifecycleStaysBalancedAcrossMigrationAndClose() async throws {
+        let suiteName = "FloorpPinnedAppearanceTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpPinnedAppearanceTests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let manager = FloorpPanelManager(defaults: defaults)
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(manager.panel(for: "floorp//bookmarks")))
+        let mode = FloorpMutablePanelPresentationMode(.pinned)
+        let libraryHost = FloorpAppearanceLibraryHost()
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            libraryPanelHost: libraryHost,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            presentationModeProvider: { _, _ in mode.value }
+        )
+        let parent = FloorpAppearanceRecordingViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+        }
+        let parentDidAppear = await waitForPresentationState {
+            parent.events.contains(.didAppear)
+        }
+        XCTAssertTrue(parentDidAppear)
+
+        let presented = expectation(description: "Pinned library drawer presented")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        XCTAssertEqual(libraryHost.recorder.events, [.willAppear, .didAppear])
+
+        mode.value = .overlay
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        let becameOverlay = await waitForPresentationState {
+            drawer.presentationMode == .overlay
+                && drawer.isPresentationTransitionSettled
+                && parent.presentedViewController === drawer
+        }
+        XCTAssertTrue(becameOverlay)
+        XCTAssertEqual(
+            libraryHost.recorder.events,
+            [
+                .willAppear, .didAppear,
+                .willDisappear, .didDisappear,
+                .willAppear, .didAppear
+            ]
+        )
+
+        mode.value = .pinned
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        let becamePinned = await waitForPresentationState {
+            drawer.presentationMode == .pinned
+                && drawer.isPresentationTransitionSettled
+                && drawer.parent === parent
+        }
+        XCTAssertTrue(becamePinned)
+        XCTAssertEqual(
+            libraryHost.recorder.events,
+            [
+                .willAppear, .didAppear,
+                .willDisappear, .didDisappear,
+                .willAppear, .didAppear,
+                .willDisappear, .didDisappear,
+                .willAppear, .didAppear
+            ]
+        )
+
+        let dismissed = expectation(description: "Pinned library drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+        XCTAssertEqual(
+            libraryHost.recorder.events,
+            [
+                .willAppear, .didAppear,
+                .willDisappear, .didDisappear,
+                .willAppear, .didAppear,
+                .willDisappear, .didDisappear,
+                .willAppear, .didAppear,
+                .willDisappear, .didDisappear
+            ]
+        )
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testPinnedDrawerPresentsAndAcknowledgesPendingNotesOperationError() async throws {
+        let suiteName = "FloorpPinnedNotesErrorTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpPinnedNotesErrorTests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let manager = FloorpPanelManager(defaults: defaults)
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(manager.panel(for: "floorp//notes")))
+        state.recordPendingNotesOperationError()
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            presentationModeProvider: { _, _ in .pinned }
+        )
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+        }
+
+        let presented = expectation(description: "Pinned Notes drawer presented")
+        XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        let presentedError = await waitForPresentationState {
+            drawer.presentedViewController is UIAlertController
+        }
+        XCTAssertTrue(presentedError)
+
+        let alert = try XCTUnwrap(drawer.presentedViewController as? UIAlertController)
+        XCTAssertEqual(alert.title, FloorpStrings.Notes.operationFailedTitle)
+        XCTAssertEqual(alert.actions.count, 1)
+        XCTAssertEqual(alert.actions.first?.title, FloorpStrings.Notes.close)
+        XCTAssertTrue(state.hasPendingNotesOperationError)
+        XCTAssertTrue(drawer.acknowledgePendingNotesOperationError())
+        XCTAssertFalse(state.hasPendingNotesOperationError)
+
+        let alertDismissed = expectation(description: "Pinned Notes error dismissed")
+        alert.dismiss(animated: false) { alertDismissed.fulfill() }
+        await fulfillment(of: [alertDismissed], timeout: 1)
+        let drawerDismissed = expectation(description: "Pinned Notes drawer dismissed")
+        drawer.onDismissed = { drawerDismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [drawerDismissed], timeout: 1)
+    }
+
+    private func waitForPresentationState(
+        _ predicate: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        for _ in 0..<100 {
+            if predicate() {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return false
+    }
+
+    private func descendant(
+        in view: UIView,
+        withIdentifier identifier: String
+    ) -> UIView? {
+        if view.accessibilityIdentifier == identifier {
+            return view
+        }
+        for subview in view.subviews {
+            if let match = descendant(in: subview, withIdentifier: identifier) {
+                return match
+            }
+        }
+        return nil
     }
 
     func testDirectionalLayoutMetricsAndSidebarClamp() {
@@ -4601,6 +5409,68 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         let blockerDismissed = expectation(description: "Blocking modal dismissed")
         parent.dismiss(animated: false) { blockerDismissed.fulfill() }
         await fulfillment(of: [blockerDismissed], timeout: 1)
+    }
+}
+
+@MainActor
+private final class FloorpMutablePanelPresentationMode {
+    var value: FloorpPanelPresentationMode
+
+    init(_ value: FloorpPanelPresentationMode) {
+        self.value = value
+    }
+}
+
+@MainActor
+private final class FloorpAppearanceRecordingViewController: UIViewController {
+    enum Event: Equatable {
+        case willAppear
+        case didAppear
+        case willDisappear
+        case didDisappear
+    }
+
+    private(set) var events = [Event]()
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        events.append(.willAppear)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        events.append(.didAppear)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        events.append(.willDisappear)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        events.append(.didDisappear)
+    }
+}
+
+@MainActor
+private final class FloorpAppearanceLibraryHost: FloorpLibraryPanelHosting {
+    let recorder = FloorpAppearanceRecordingViewController()
+    var selectedPanelType: FloorpPanelType?
+    var allowsPanelSwitching = true
+    var onRequestDrawerDismiss: (() -> Void)?
+
+    var viewController: UIViewController {
+        recorder
+    }
+
+    func select(panelType: FloorpPanelType) -> Bool {
+        selectedPanelType = panelType
+        return true
+    }
+
+    func prepareForDrawerDismissal() -> FloorpLibraryPanelDismissalDisposition {
+        .allow
     }
 }
 

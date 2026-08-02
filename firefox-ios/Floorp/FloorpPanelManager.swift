@@ -508,7 +508,11 @@ final class FloorpPanelManager {
         for id: String,
         expectedRevision: FloorpWebPanelPreferencesRevision
     ) throws -> FloorpWebPanelPreferences {
-        try mutateWebPanelPreferences(id: id, expectedRevision: expectedRevision) { current in
+        try mutateWebPanelPreferences(
+            id: id,
+            expectedRevision: expectedRevision,
+            registryChange: .webPanelContentWidth(panelID: id)
+        ) { current in
             FloorpWebPanelPreferences(
                 revision: current.revision,
                 contentWidth: contentWidth,
@@ -588,6 +592,7 @@ final class FloorpPanelManager {
     private func mutateWebPanelPreferences(
         id: String,
         expectedRevision: FloorpWebPanelPreferencesRevision,
+        registryChange: FloorpPanelRegistryChange? = nil,
         mutation: (FloorpWebPanelPreferences) -> FloorpWebPanelPreferences
     ) throws -> FloorpWebPanelPreferences {
         let snapshot = try latestMutableSnapshot()
@@ -618,7 +623,7 @@ final class FloorpPanelManager {
         )
         var updatedPanels = snapshot.panels
         updatedPanels[index].webPreferences = updatedPreferences
-        try commitPanels(updatedPanels)
+        try commitPanels(updatedPanels, registryChange: registryChange)
         return updatedPreferences
     }
 
@@ -687,7 +692,10 @@ final class FloorpPanelManager {
         return snapshot
     }
 
-    private func commitPanels(_ candidatePanels: [FloorpPanel]) throws {
+    private func commitPanels(
+        _ candidatePanels: [FloorpPanel],
+        registryChange: FloorpPanelRegistryChange? = nil
+    ) throws {
         try ensureRegistryIsMutable()
         var normalizedPanels = candidatePanels
         Self.assignSortOrder(&normalizedPanels)
@@ -704,7 +712,9 @@ final class FloorpPanelManager {
         notificationCenter.post(
             name: .FloorpPanelRegistryDidChange,
             withObject: self,
-            withUserInfo: nil
+            withUserInfo: registryChange.map {
+                [FloorpPanelRegistryNotification.changeUserInfoKey: $0]
+            }
         )
     }
 
