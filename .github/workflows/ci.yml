@@ -40,6 +40,9 @@ jobs:
           # ubuntu runners don't guarantee ripgrep; exercise the portable path.
           FLOORP_BRANDING_SEARCH_BACKEND: grep
 
+      - name: Check Floorp Application Services pin
+        run: ./scripts/ci/check-application-services-pin.sh
+
       - name: Run actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12

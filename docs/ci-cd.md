@@ -25,7 +25,7 @@ The upload reported a non-blocking missing dSYM warning for `Glean.framework`. R
 
 The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and performs these steps:
 
-1. Validate active workflow files with a checksum-pinned Actionlint binary.
+1. Validate Floorp branding, the Floorp-owned Application Services binary pin, and active workflow files.
 2. Select the Xcode version in `.xcode-version` and Node.js version in `.nvmrc`.
 3. Re-extract the localization policy from immutable reviewed commits, run its tests, and verify generated resources against the newest upstream commit already contained by the branch.
 4. Install Node dependencies with `npm ci`, generate web assets, and reject high-severity npm advisories.
@@ -38,6 +38,8 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 `FloorpCI.xctestplan` is an explicit baseline of 15 test targets: 14 currently reliable suites plus 16 selected Floorp Notes cases and five release-service-policy cases from `ClientTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
 SwiftPM checkouts and Derived Data use job-local directories. This avoids shared-cache corruption and keeps untrusted pull-request code out of persistent caches.
+
+`MozillaRustComponents/Package.swift` obtains both binary targets from a published immutable release in `Floorp-Projects/application-services`, rather than Mozilla's mutable Taskcluster index. `FloorpApplicationServicesPin.json` records the release tag, source commit, complete asset inventory, and SwiftPM checksums. CI checks that the package manifest still matches that lock. Before changing the lock, run `./scripts/ci/check-application-services-pin.sh --verify-remote`; this additionally verifies the live release is published and immutable, the tag resolves to the recorded commit, its complete asset metadata matches, the small release manifest and SHA256SUMS downloads match their recorded digests, and both binary download URLs resolve without downloading the XCFramework archives.
 
 Dependabot checks GitHub Actions and npm dependencies monthly. External actions remain pinned to immutable commit SHAs.
 
