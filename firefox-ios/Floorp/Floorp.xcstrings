@@ -715,6 +715,120 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモの内容" } }
       }
     },
+    "Floorp.Notes.AlignCenter.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Align Center" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "中央揃え" } }
+      }
+    },
+    "Floorp.Notes.AlignLeft.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Align Left" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "左揃え" } }
+      }
+    },
+    "Floorp.Notes.AlignRight.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Align Right" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "右揃え" } }
+      }
+    },
+    "Floorp.Notes.Bold.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bold" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "太字" } }
+      }
+    },
+    "Floorp.Notes.BulletList.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bulleted List" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "箇条書き" } }
+      }
+    },
+    "Floorp.Notes.ContentPlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Write a note…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモを入力…" } }
+      }
+    },
+    "Floorp.Notes.EnableRichText.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use Rich Text" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "リッチテキストを使用" } }
+      }
+    },
+    "Floorp.Notes.ExportRecovery.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Export Recovery Copy" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "復旧用コピーを書き出す" } }
+      }
+    },
+    "Floorp.Notes.Heading1.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Heading 1" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "見出し 1" } }
+      }
+    },
+    "Floorp.Notes.Heading2.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Heading 2" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "見出し 2" } }
+      }
+    },
+    "Floorp.Notes.Heading3.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Heading 3" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "見出し 3" } }
+      }
+    },
+    "Floorp.Notes.InsertImage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Insert Image" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "画像を挿入" } }
+      }
+    },
+    "Floorp.Notes.Italic.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Italic" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "斜体" } }
+      }
+    },
+    "Floorp.Notes.OrderedList.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Numbered List" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "番号付きリスト" } }
+      }
+    },
+    "Floorp.Notes.Redo.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Redo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "やり直す" } }
+      }
+    },
+    "Floorp.Notes.RichTextToolbar.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rich text formatting" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "リッチテキストの書式設定" } }
+      }
+    },
+    "Floorp.Notes.Strikethrough.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Strikethrough" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "取り消し線" } }
+      }
+    },
+    "Floorp.Notes.Underline.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Underline" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "下線" } }
+      }
+    },
+    "Floorp.Notes.Undo.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Undo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "元に戻す" } }
+      }
+    },
     "Floorp.Notes.Convert.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Convert and Edit" } },
