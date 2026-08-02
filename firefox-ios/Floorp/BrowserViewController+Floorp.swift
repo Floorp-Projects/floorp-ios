@@ -5,29 +5,36 @@
 import UIKit
 import Common
 
+@MainActor
+enum FloorpPanelPresentationStateAssociation {
+    nonisolated(unsafe) private static var key: UInt8 = 0
+
+    static func state(
+        for owner: AnyObject,
+        windowUUID: WindowUUID
+    ) -> FloorpPanelPresentationState {
+        if let state = objc_getAssociatedObject(owner, &key) as? FloorpPanelPresentationState {
+            return state
+        }
+        let state = FloorpPanelPresentationState(windowUUID: windowUUID)
+        objc_setAssociatedObject(owner, &key, state, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return state
+    }
+}
+
 // MARK: - Floorp Overlay Drawer Integration
 extension BrowserViewController {
     // MARK: - Properties
 
-    private struct FloorpAssociatedKeys {
-        nonisolated(unsafe) static var overlayDrawer: UInt8 = 0
+    var floorpOverlayDrawer: FloorpOverlayDrawerViewController? {
+        floorpPanelPresentationState.activeDrawer
     }
 
-    var floorpOverlayDrawer: FloorpOverlayDrawerViewController? {
-        get {
-            objc_getAssociatedObject(
-                self,
-                &FloorpAssociatedKeys.overlayDrawer
-            ) as? FloorpOverlayDrawerViewController
-        }
-        set {
-            objc_setAssociatedObject(
-                self,
-                &FloorpAssociatedKeys.overlayDrawer,
-                newValue,
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
-        }
+    private var floorpPanelPresentationState: FloorpPanelPresentationState {
+        FloorpPanelPresentationStateAssociation.state(
+            for: self,
+            windowUUID: windowUUID
+        )
     }
 
     // MARK: - Setup (called from patched setupEssentialUI)
@@ -54,18 +61,18 @@ extension BrowserViewController {
     // MARK: - Overlay Drawer
 
     func showFloorpOverlayDrawer() {
-        guard floorpOverlayDrawer == nil else { return }
+        let presentationState = floorpPanelPresentationState
+        guard FloorpPanelManager.shared.config.isEnabled,
+              !presentationState.hasActivePresentation else { return }
 
-        let drawer = FloorpOverlayDrawerViewController(windowUUID: windowUUID)
+        let drawer = FloorpOverlayDrawerViewController(presentationState: presentationState)
         drawer.onItemSelected = { [weak self] url in
             self?.floorpOpenURLInNewTabOrCurrent(url)
         }
-        drawer.onDismissed = { [weak self] in
-            self?.floorpOverlayDrawer = nil
-        }
-        self.floorpOverlayDrawer = drawer
         if !drawer.show(from: self) {
-            floorpOverlayDrawer = nil
+            // Keep the window state for its selected-panel identity. The
+            // drawer detaches itself when presentation cannot start.
+            return
         }
     }
 

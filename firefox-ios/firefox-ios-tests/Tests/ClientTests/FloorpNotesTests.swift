@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import XCTest
+import Common
 @testable import Client
 
 final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
@@ -1185,7 +1186,184 @@ private final class MockFloorpNotePersistence: FloorpNotePersistence {
 
 @MainActor
 final class FloorpOverlayDrawerPresentationTests: XCTestCase {
-    func testDrawerUsesModalOverlayOutsideBrowserSubviewZOrder() async {
+    func testWindowScopedPresentationStatesRemainIndependentAndFallback() throws {
+        let panels = FloorpPanel.defaultPanels()
+        let notes = try XCTUnwrap(panels.first(where: { $0.id == "floorp//notes" }))
+        let history = try XCTUnwrap(panels.first(where: { $0.id == "floorp//history" }))
+        let firstOwner = NSObject()
+        let secondOwner = NSObject()
+        let firstWindowUUID = WindowUUID()
+        let secondWindowUUID = WindowUUID()
+        let firstWindowState = FloorpPanelPresentationStateAssociation.state(
+            for: firstOwner,
+            windowUUID: firstWindowUUID
+        )
+        let secondWindowState = FloorpPanelPresentationStateAssociation.state(
+            for: secondOwner,
+            windowUUID: secondWindowUUID
+        )
+
+        firstWindowState.select(notes)
+        secondWindowState.select(history)
+
+        XCTAssertEqual(firstWindowState.windowUUID, firstWindowUUID)
+        XCTAssertEqual(secondWindowState.windowUUID, secondWindowUUID)
+        XCTAssertFalse(firstWindowState === secondWindowState)
+        XCTAssertTrue(
+            firstWindowState === FloorpPanelPresentationStateAssociation.state(
+                for: firstOwner,
+                windowUUID: WindowUUID()
+            )
+        )
+        XCTAssertEqual(firstWindowState.selectedPanel(in: panels)?.id, notes.id)
+        XCTAssertEqual(secondWindowState.selectedPanel(in: panels)?.id, history.id)
+
+        let panelsAfterDeletingNotes = panels.filter { $0.id != notes.id }
+        XCTAssertEqual(
+            firstWindowState.selectedPanel(in: panelsAfterDeletingNotes)?.id,
+            "floorp//bookmarks"
+        )
+        XCTAssertEqual(firstWindowState.selectedPanelId, "floorp//bookmarks")
+        XCTAssertEqual(secondWindowState.selectedPanel(in: panelsAfterDeletingNotes)?.id, history.id)
+    }
+
+    func testAdaptiveLayoutMetricsForCompactAndRegularWidths() {
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.drawerWidth(availableWidth: 390, horizontalSizeClass: .compact),
+            346,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.drawerWidth(availableWidth: 430, horizontalSizeClass: .compact),
+            386,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.drawerWidth(availableWidth: 844, horizontalSizeClass: .compact),
+            420,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.drawerWidth(availableWidth: 768, horizontalSizeClass: .regular),
+            360,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.drawerWidth(availableWidth: 1_024, horizontalSizeClass: .regular),
+            430.08,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.drawerWidth(availableWidth: 1_366, horizontalSizeClass: .regular),
+            480,
+            accuracy: 0.001
+        )
+    }
+
+    func testDirectionalLayoutMetricsAndSidebarClamp() {
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.dismissalTranslation(
+                drawerWidth: 346,
+                layoutDirection: .leftToRight
+            ),
+            346
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.dismissalTranslation(
+                drawerWidth: 346,
+                layoutDirection: .rightToLeft
+            ),
+            -346
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.dismissalSwipeDirection(layoutDirection: .leftToRight),
+            .right
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.dismissalSwipeDirection(layoutDirection: .rightToLeft),
+            .left
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.exposedCornerMask(layoutDirection: .leftToRight),
+            [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+        )
+        XCTAssertEqual(
+            FloorpDrawerLayoutMetrics.exposedCornerMask(layoutDirection: .rightToLeft),
+            [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+        )
+        XCTAssertEqual(FloorpDrawerLayoutMetrics.sidebarWidth(configuredWidth: -1), 44)
+        XCTAssertEqual(FloorpDrawerLayoutMetrics.sidebarWidth(configuredWidth: 50), 50)
+        XCTAssertEqual(FloorpDrawerLayoutMetrics.sidebarWidth(configuredWidth: 100), 72)
+    }
+
+    func testRegularRTLDrawerResizesWithoutLosingOutsideHitRegion() throws {
+        let suiteName = "FloorpOverlayDrawerRegularRTLTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpOverlayDrawerRegularRTLTests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        let manager = FloorpPanelManager(defaults: defaults)
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(manager.panel(for: "floorp//notes")))
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter()
+        )
+        let host = UIViewController()
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 1_024, height: 768)
+        host.addChild(drawer)
+        host.setOverrideTraitCollection(
+            UITraitCollection(horizontalSizeClass: .regular),
+            forChild: drawer
+        )
+        drawer.view.frame = host.view.bounds
+        drawer.view.semanticContentAttribute = .forceRightToLeft
+        host.view.addSubview(drawer.view)
+        drawer.didMove(toParent: host)
+        drawer.view.layoutIfNeeded()
+
+        let dimmingView = try XCTUnwrap(
+            drawer.view.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.Dimming" })
+        )
+        let containerView = try XCTUnwrap(
+            drawer.view.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.Container" })
+        )
+        let contentView = try XCTUnwrap(
+            containerView.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.Content" })
+        )
+        dimmingView.alpha = 1
+        XCTAssertEqual(containerView.frame.width, 430.08, accuracy: 0.5)
+        XCTAssertEqual(containerView.frame.minX, 0, accuracy: 0.5)
+        XCTAssertTrue(drawer.view.hitTest(CGPoint(x: 900, y: 384), with: nil) === dimmingView)
+        XCTAssertFalse(drawer.view.hitTest(CGPoint(x: 100, y: 384), with: nil) === dimmingView)
+        XCTAssertEqual(
+            containerView.layer.maskedCorners,
+            [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+        )
+        XCTAssertFalse(containerView.hasAmbiguousLayout)
+        XCTAssertLessThanOrEqual(
+            contentView.frame.maxY,
+            containerView.safeAreaLayoutGuide.layoutFrame.maxY + 0.5
+        )
+
+        host.view.frame.size.width = 768
+        drawer.view.frame = host.view.bounds
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        XCTAssertEqual(containerView.frame.width, 360, accuracy: 0.5)
+        XCTAssertEqual(containerView.frame.minX, 0, accuracy: 0.5)
+        XCTAssertTrue(drawer.view.hitTest(CGPoint(x: 700, y: 384), with: nil) === dimmingView)
+    }
+
+    func testDrawerUsesModalOverlayOutsideBrowserSubviewZOrder() async throws {
         let suiteName = "FloorpOverlayDrawerPresentationTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             return XCTFail("Could not create isolated defaults")
@@ -1198,11 +1376,12 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         }
 
         let panelManager = FloorpPanelManager(defaults: defaults)
-        panelManager.selectPanel(id: "floorp//notes")
+        let presentationState = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        presentationState.select(try XCTUnwrap(panelManager.panel(for: "floorp//notes")))
         let drawer = FloorpOverlayDrawerViewController(
             panelManager: panelManager,
             notesStore: FloorpNotesStore(fileURL: archiveDirectory.appendingPathComponent("notes.json")),
-            windowUUID: .XCTestDefaultUUID,
+            presentationState: presentationState,
             themeManager: MockThemeManager(),
             notificationCenter: MockNotificationCenter()
         )
@@ -1227,9 +1406,29 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
         await fulfillment(of: [presented], timeout: 1)
 
+        drawer.view.semanticContentAttribute = .forceLeftToRight
         XCTAssertEqual(drawer.modalPresentationStyle, .overFullScreen)
         XCTAssertTrue(parent.presentedViewController === drawer)
         XCTAssertFalse(parent.view.subviews.contains(where: { $0 === drawer.view }))
+        XCTAssertTrue(presentationState.activeDrawer === drawer)
+
+        drawer.view.setNeedsLayout()
+        drawer.view.layoutIfNeeded()
+        let dimmingView = try XCTUnwrap(
+            drawer.view.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.Dimming" })
+        )
+        let containerView = try XCTUnwrap(
+            drawer.view.subviews.first(where: { $0.accessibilityIdentifier == "Floorp.Drawer.Container" })
+        )
+        XCTAssertTrue(dimmingView is UIControl)
+        XCTAssertEqual(containerView.frame.width, 346, accuracy: 0.5)
+        XCTAssertEqual(containerView.frame.minX, FloorpDrawerLayoutMetrics.outsideDismissWidth, accuracy: 0.5)
+        XCTAssertTrue(drawer.view.hitTest(CGPoint(x: 22, y: 422), with: nil) === dimmingView)
+        XCTAssertFalse(drawer.view.hitTest(CGPoint(x: 100, y: 422), with: nil) === dimmingView)
+        XCTAssertLessThan(
+            try XCTUnwrap(drawer.view.subviews.firstIndex(where: { $0 === dimmingView })),
+            try XCTUnwrap(drawer.view.subviews.firstIndex(where: { $0 === containerView }))
+        )
 
         let simulatedAddressBar = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 80))
         parent.view.addSubview(simulatedAddressBar)
@@ -1240,9 +1439,10 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         drawer.dismissDrawer()
         await fulfillment(of: [dismissed], timeout: 1)
         XCTAssertEqual(dismissalCount, 1)
+        XCTAssertNil(presentationState.activeDrawer)
     }
 
-    func testExternalDismissalFinishesOnceAndAllowsReplacementDrawer() async {
+    func testExternalDismissalFinishesOnceAndAllowsReplacementDrawer() async throws {
         let suiteName = "FloorpOverlayDrawerExternalDismissalTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             return XCTFail("Could not create isolated defaults")
@@ -1264,15 +1464,17 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
             window.isHidden = true
         }
 
+        let presentationState = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        let initialManager = FloorpPanelManager(defaults: defaults)
+        presentationState.select(try XCTUnwrap(initialManager.panel(for: "floorp//notes")))
         let makeDrawer = {
             let manager = FloorpPanelManager(defaults: defaults)
-            manager.selectPanel(id: "floorp//notes")
             return FloorpOverlayDrawerViewController(
                 panelManager: manager,
                 notesStore: FloorpNotesStore(
                     fileURL: archiveDirectory.appendingPathComponent("notes.json")
                 ),
-                windowUUID: .XCTestDefaultUUID,
+                presentationState: presentationState,
                 themeManager: MockThemeManager(),
                 notificationCenter: MockNotificationCenter()
             )
@@ -1287,11 +1489,13 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         }
         XCTAssertTrue(drawer.show(from: parent) { presented.fulfill() })
         await fulfillment(of: [presented], timeout: 1)
+        XCTAssertTrue(presentationState.activeDrawer === drawer)
 
         parent.dismiss(animated: false)
         drawer.dismissDrawer()
         await fulfillment(of: [dismissed], timeout: 1)
         XCTAssertEqual(dismissalCount, 1)
+        XCTAssertNil(presentationState.activeDrawer)
 
         let replacement = makeDrawer()
         let replacementPresented = expectation(description: "Replacement drawer presented")
@@ -1299,8 +1503,11 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         replacement.onDismissed = { replacementDismissed.fulfill() }
         XCTAssertTrue(replacement.show(from: parent) { replacementPresented.fulfill() })
         await fulfillment(of: [replacementPresented], timeout: 1)
+        XCTAssertTrue(presentationState.activeDrawer === replacement)
+        XCTAssertEqual(presentationState.selectedPanelId, "floorp//notes")
         replacement.dismissDrawer()
         await fulfillment(of: [replacementDismissed], timeout: 1)
+        XCTAssertNil(presentationState.activeDrawer)
     }
 
     func testPresentationIsRejectedWhileParentAlreadyOwnsAModal() async {
@@ -1320,25 +1527,39 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         parent.present(blocker, animated: false) { blockerPresented.fulfill() }
         await fulfillment(of: [blockerPresented], timeout: 1)
         let manager = FloorpPanelManager(defaults: defaults)
-        manager.selectPanel(id: "floorp//notes")
+        let presentationState = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        if let notesPanel = manager.panel(for: "floorp//notes") {
+            presentationState.select(notesPanel)
+        } else {
+            XCTFail("Expected the default Notes panel")
+        }
         let drawer = FloorpOverlayDrawerViewController(
             panelManager: manager,
             notesStore: FloorpNotesStore(
                 fileURL: FileManager.default.temporaryDirectory
                     .appendingPathComponent("unused-\(UUID().uuidString).json")
             ),
-            windowUUID: .XCTestDefaultUUID,
+            presentationState: presentationState,
             themeManager: MockThemeManager(),
             notificationCenter: MockNotificationCenter()
         )
 
         XCTAssertFalse(drawer.show(from: parent))
         XCTAssertNil(drawer.presentingViewController)
+        XCTAssertNil(presentationState.activeDrawer)
 
         let blockerDismissed = expectation(description: "Blocking modal dismissed")
         parent.dismiss(animated: false) { blockerDismissed.fulfill() }
         await fulfillment(of: [blockerDismissed], timeout: 1)
     }
+}
+
+private struct LegacyFloorpOverlayDrawerConfig: Encodable {
+    let selectedPanelId: String?
+    let panelOrder: [String]
+    let isDisplayed: Bool
+    let isEnabled: Bool
+    let sidebarWidth: Int
 }
 
 @MainActor
@@ -1351,16 +1572,52 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let legacyPanels = Array(FloorpPanel.defaultPanels().filter { $0.type != .notes })
-        var legacyConfig = FloorpOverlayDrawerConfig()
-        legacyConfig.panelOrder = legacyPanels.map(\.id)
+        let legacyConfig = LegacyFloorpOverlayDrawerConfig(
+            selectedPanelId: "floorp//history",
+            panelOrder: legacyPanels.map(\.id),
+            isDisplayed: true,
+            isEnabled: false,
+            sidebarWidth: 61
+        )
         defaults.set(try JSONEncoder().encode(legacyPanels), forKey: "floorp.overlayDrawer.panels")
         defaults.set(try JSONEncoder().encode(legacyConfig), forKey: "floorp.overlayDrawer.config")
+        XCTAssertEqual(defaults.integer(forKey: "floorp.overlayDrawer.schemaVersion"), 0)
 
         let migrated = FloorpPanelManager(defaults: defaults)
         XCTAssertEqual(migrated.panels.filter { $0.type == .notes }.count, 1)
-        XCTAssertTrue(migrated.config.panelOrder.contains("floorp//notes"))
+        XCTAssertFalse(migrated.config.isEnabled)
+        XCTAssertEqual(migrated.config.sidebarWidth, 61)
+        XCTAssertEqual(defaults.integer(forKey: "floorp.overlayDrawer.schemaVersion"), 2)
+        let migratedConfigData = try XCTUnwrap(
+            defaults.data(forKey: "floorp.overlayDrawer.config")
+        )
+        let migratedConfig = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: migratedConfigData) as? [String: Any]
+        )
+        XCTAssertEqual(Set(migratedConfig.keys), ["isEnabled", "sidebarWidth"])
 
-        try migrated.removePanel(id: "floorp//notes")
+        let restarted = FloorpPanelManager(defaults: defaults)
+        XCTAssertEqual(restarted.panels.filter { $0.type == .notes }.count, 1)
+    }
+
+    func testSchemaOneMigrationPreservesUserDeletedNotes() throws {
+        let suiteName = "FloorpPanelNotesSchemaOneMigrationTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let panelsAfterDeletingNotes = Array(FloorpPanel.defaultPanels().filter { $0.type != .notes })
+        defaults.set(
+            try JSONEncoder().encode(panelsAfterDeletingNotes),
+            forKey: "floorp.overlayDrawer.panels"
+        )
+        defaults.set(1, forKey: "floorp.overlayDrawer.schemaVersion")
+
+        let migrated = FloorpPanelManager(defaults: defaults)
+        XCTAssertFalse(migrated.panels.contains(where: { $0.type == .notes }))
+        XCTAssertEqual(defaults.integer(forKey: "floorp.overlayDrawer.schemaVersion"), 2)
+
         let restarted = FloorpPanelManager(defaults: defaults)
         XCTAssertFalse(restarted.panels.contains(where: { $0.type == .notes }))
     }
@@ -1375,8 +1632,17 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
         let manager = FloorpPanelManager(defaults: defaults)
         manager.reorderPanels(orderedIds: ["floorp//history", "floorp//bookmarks", "floorp//downloads"])
 
-        XCTAssertEqual(manager.panels.last?.id, "floorp//notes")
-        XCTAssertEqual(manager.panels.map(\.sortOrder), Array(manager.panels.indices))
+        let expectedOrder = [
+            "floorp//history",
+            "floorp//bookmarks",
+            "floorp//downloads",
+            "floorp//notes",
+        ]
+        XCTAssertEqual(manager.panels.map(\.id), expectedOrder)
+
+        let restarted = FloorpPanelManager(defaults: defaults)
+        XCTAssertEqual(restarted.panels.map(\.id), expectedOrder)
+        XCTAssertEqual(restarted.panels.map(\.sortOrder), Array(restarted.panels.indices))
     }
 
     func testNoteSearchUsesContentBeyondDisplayedPreview() {
