@@ -1645,6 +1645,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         regularDrawer.viewDidDisappear(false)
         let privateDrawer = fixture.makeDrawer(isPrivate: true)
         privateDrawer.loadViewIfNeeded()
+        XCTAssertTrue(fixture.presentationState.attach(privateDrawer))
         let sessions = fixture.factory.sessions
         XCTAssertEqual(sessions.count, 2)
         let findButton = try XCTUnwrap(
