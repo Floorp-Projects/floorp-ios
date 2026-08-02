@@ -10,11 +10,13 @@
     "immutable": true,
     "prerelease": true,
     "sourceCommit": "b464b71951cd07c89f2b4c0f219e3e222b0c1eec",
-    "sourceTree": "457e554b632b7dc9e39543c470b5fc6787c3ae62"
+    "sourceTree": "457e554b632b7dc9e39543c470b5fc6787c3ae62",
+    "sourceConfiguration": "automation/floorp/ios-xcframework-release-config.json"
   },
   "upstream": {
     "repository": "mozilla/application-services",
-    "commit": "b21da19867ff58b1cfd8c83fceba8dac1f243c44"
+    "commit": "b21da19867ff58b1cfd8c83fceba8dac1f243c44",
+    "sourceVersion": "155.0a1"
   },
   "assets": {
     "FocusRustComponents.xcframework.zip": {

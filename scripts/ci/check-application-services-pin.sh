@@ -3,16 +3,18 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-readonly PACKAGE_FILE="${PROJECT_ROOT}/MozillaRustComponents/Package.swift"
-readonly PIN_FILE="${PROJECT_ROOT}/MozillaRustComponents/FloorpApplicationServicesPin.json"
+readonly PACKAGE_FILE="${FLOORP_APPLICATION_SERVICES_PACKAGE_FILE:-${PROJECT_ROOT}/MozillaRustComponents/Package.swift}"
+readonly PIN_FILE="${FLOORP_APPLICATION_SERVICES_PIN_FILE:-${PROJECT_ROOT}/MozillaRustComponents/FloorpApplicationServicesPin.json}"
 readonly EXPECTED_REPOSITORY="Floorp-Projects/application-services"
 
+apply_pin=false
 verify_remote=false
 case "${1:-}" in
     "") ;;
+    --apply) apply_pin=true ;;
     --verify-remote) verify_remote=true ;;
     *)
-        echo "Usage: $0 [--verify-remote]" >&2
+        echo "Usage: $0 [--apply|--verify-remote]" >&2
         exit 2
         ;;
 esac
@@ -40,8 +42,10 @@ if ! jq -e --arg repository "${EXPECTED_REPOSITORY}" '
     and (.release.revision | type == "number")
     and (.release.sourceCommit | test("^[0-9a-f]{40}$"))
     and (.release.sourceTree | test("^[0-9a-f]{40}$"))
+    and .release.sourceConfiguration == "automation/floorp/ios-xcframework-release-config.json"
     and .upstream.repository == "mozilla/application-services"
     and (.upstream.commit | test("^[0-9a-f]{40}$"))
+    and (.upstream.sourceVersion | test("^[0-9]+\\.[0-9]+a[0-9]+$"))
     and ((.assets | keys | sort) == [
         "FocusRustComponents.xcframework.zip",
         "MozillaRustComponents.xcframework.zip",
@@ -97,6 +101,73 @@ assert_equal() {
     fi
 }
 
+apply_package_pin() {
+    local temporary_file
+
+    for command_name in awk chmod find mktemp mv; do
+        if ! command -v "${command_name}" >/dev/null 2>&1; then
+            echo "[FAIL] ${command_name} is required to apply the package pin." >&2
+            exit 2
+        fi
+    done
+    if [[ -L "${PACKAGE_FILE}" || -L "${PIN_FILE}" ]]; then
+        echo "[FAIL] Refusing to apply the package pin through a symbolic link." >&2
+        exit 1
+    fi
+
+    temporary_file="$(mktemp "${PACKAGE_FILE}.XXXXXX")"
+    if ! awk \
+        -v checksum="${mozilla_checksum}" \
+        -v version="${artifact_version}" \
+        -v url="${mozilla_url}" \
+        -v focus_checksum="${focus_checksum}" \
+        -v focus_url="${focus_url}" '
+        /^let checksum = "[^"]+"$/ {
+            print "let checksum = \"" checksum "\""
+            checksum_count++
+            next
+        }
+        /^let version = "[^"]+"$/ {
+            print "let version = \"" version "\""
+            version_count++
+            next
+        }
+        /^let url = "[^"]+"$/ {
+            print "let url = \"" url "\""
+            url_count++
+            next
+        }
+        /^let focusChecksum = "[^"]+"$/ {
+            print "let focusChecksum = \"" focus_checksum "\""
+            focus_checksum_count++
+            next
+        }
+        /^let focusUrl = "[^"]+"$/ {
+            print "let focusUrl = \"" focus_url "\""
+            focus_url_count++
+            next
+        }
+        { print }
+        END {
+            if (checksum_count != 1 || version_count != 1 || url_count != 1 ||
+                focus_checksum_count != 1 || focus_url_count != 1) {
+                exit 1
+            }
+        }
+    ' "${PACKAGE_FILE}" > "${temporary_file}"; then
+        find "${temporary_file}" -delete
+        echo "[FAIL] Package.swift must contain each managed literal exactly once." >&2
+        exit 1
+    fi
+    chmod 0644 "${temporary_file}"
+    mv "${temporary_file}" "${PACKAGE_FILE}"
+    printf '[PASS] Reapplied the five Floorp Application Services package literals.\n'
+}
+
+if [[ "${apply_pin}" == true ]]; then
+    apply_package_pin
+fi
+
 assert_equal "artifact version" "$(extract_swift_value version)" "${artifact_version}"
 assert_equal \
     "release tag" \
@@ -123,7 +194,7 @@ if [[ "${verify_remote}" != true ]]; then
     exit 0
 fi
 
-for command_name in curl diff; do
+for command_name in awk curl diff find mktemp sort; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "[FAIL] ${command_name} is required for remote verification." >&2
         exit 2
@@ -138,12 +209,10 @@ trap cleanup EXIT
 
 api_curl_args=(
     --proto '=https'
-    --proto-redir '=https'
     --tlsv1.2
     --fail
     --silent
     --show-error
-    --location
     --header 'Accept: application/vnd.github+json'
     --header 'X-GitHub-Api-Version: 2022-11-28'
 )
@@ -163,8 +232,21 @@ download_curl_args=(
 
 release_api="https://api.github.com/repos/${repository}/releases/tags/${release_tag}"
 ref_api="https://api.github.com/repos/${repository}/git/ref/tags/${release_tag}"
+source_commit="$(jq -er '.release.sourceCommit' "${PIN_FILE}")"
+source_commit_api="https://api.github.com/repos/${repository}/git/commits/${source_commit}"
+source_configuration="$(jq -er '.release.sourceConfiguration' "${PIN_FILE}")"
+source_configuration_url="https://raw.githubusercontent.com/${repository}/${release_tag}/${source_configuration}"
+upstream_repository="$(jq -er '.upstream.repository' "${PIN_FILE}")"
+upstream_commit="$(jq -er '.upstream.commit' "${PIN_FILE}")"
+upstream_commit_api="https://api.github.com/repos/${upstream_repository}/git/commits/${upstream_commit}"
 curl "${api_curl_args[@]}" "${release_api}" --output "${remote_temp}/release.json"
 curl "${api_curl_args[@]}" "${ref_api}" --output "${remote_temp}/ref.json"
+curl "${api_curl_args[@]}" "${source_commit_api}" \
+    --output "${remote_temp}/source-commit.json"
+curl "${api_curl_args[@]}" "${upstream_commit_api}" \
+    --output "${remote_temp}/upstream-commit.json"
+curl "${download_curl_args[@]}" "${source_configuration_url}" \
+    --output "${remote_temp}/source-configuration.json"
 
 if ! jq -e --slurpfile pin "${PIN_FILE}" '
     $pin[0] as $pin
@@ -188,6 +270,47 @@ if ! jq -e --slurpfile pin "${PIN_FILE}" '
     echo "[FAIL] Published release tag does not resolve to the pinned source commit." >&2
     exit 1
 fi
+
+if ! jq -e --slurpfile pin "${PIN_FILE}" '
+    $pin[0] as $pin
+    | .sha == $pin.release.sourceCommit
+    and .tree.sha == $pin.release.sourceTree
+' "${remote_temp}/source-commit.json" >/dev/null; then
+    echo "[FAIL] Tagged source commit or its actual Git tree does not match the pin." >&2
+    exit 1
+fi
+
+if ! jq -e --slurpfile pin "${PIN_FILE}" '
+    $pin[0] as $pin
+    | .sha == $pin.upstream.commit
+' "${remote_temp}/upstream-commit.json" >/dev/null; then
+    echo "[FAIL] Configured Mozilla upstream commit does not exist at the pinned repository." >&2
+    exit 1
+fi
+
+if ! jq -e --slurpfile pin "${PIN_FILE}" '
+    . as $configuration
+    | $pin[0] as $pin
+    | .schema_version == 1
+    and .distribution_repository == $pin.repository
+    and ($pin.release.tag | test($configuration.release_tag_pattern))
+    and .release_tag_example == $pin.release.tag
+    and .upstream.repository == $pin.upstream.repository
+    and .upstream.commit == $pin.upstream.commit
+    and .upstream.source_version == $pin.upstream.sourceVersion
+    and .upstream.artifact_version == $pin.artifactVersion
+    and .immutable_releases_required == true
+    and ((.artifacts | sort) == [
+        "FocusRustComponents.xcframework.zip",
+        "MozillaRustComponents.xcframework.zip",
+        "swift-components.tar.xz"
+    ])
+' "${remote_temp}/source-configuration.json" >/dev/null; then
+    echo "[FAIL] Tagged source release configuration does not match the trusted pin." >&2
+    exit 1
+fi
+printf '[PASS] Tagged source tree and release configuration pin upstream %s at %s.\n' \
+    "${upstream_repository}" "${upstream_commit}"
 
 if ! diff -u \
     <(jq -r '.assets | keys[]' "${PIN_FILE}" | LC_ALL=C sort) \

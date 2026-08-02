@@ -41,7 +41,9 @@ jobs:
           FLOORP_BRANDING_SEARCH_BACKEND: grep
 
       - name: Check Floorp Application Services pin
-        run: ./scripts/ci/check-application-services-pin.sh
+        run: |
+          ./scripts/ci/check-application-services-pin.sh
+          ./scripts/ci/test-application-services-pin-sync.sh
 
       - name: Run actionlint
         env:
