@@ -26,10 +26,16 @@ import MozillaAppServices
 import Shared
 
 @MainActor
+protocol FloorpPanelPrivacyModePresenting: AnyObject {
+    func rebindActiveContent(forSelectedTabIsPrivate isPrivate: Bool)
+    func privateWebPanelSessionsDidClose(selectedTabIsPrivate: Bool?)
+}
+
+@MainActor
 final class FloorpPanelPresentationState: NSObject {
     let windowUUID: WindowUUID
     private(set) var selectedPanelId: String?
-    private(set) weak var activeDrawer: FloorpOverlayDrawerViewController?
+    private weak var activePresentation: (any FloorpPanelPrivacyModePresenting)?
     private(set) var webPanelSessionStore: FloorpWebPanelSessionStore?
     private var panelManager: FloorpPanelManager?
     private var observesPanelRegistry = false
@@ -37,8 +43,12 @@ final class FloorpPanelPresentationState: NSObject {
     private(set) var hasPendingNotesOperationError = false
     var libraryPanelHost: (any FloorpLibraryPanelHosting)?
 
+    var activeDrawer: FloorpOverlayDrawerViewController? {
+        activePresentation as? FloorpOverlayDrawerViewController
+    }
+
     var hasActivePresentation: Bool {
-        activeDrawer != nil
+        activePresentation != nil
     }
 
     init(
@@ -65,15 +75,17 @@ final class FloorpPanelPresentationState: NSObject {
         selectedPanelId = panel.id
     }
 
-    func attach(_ drawer: FloorpOverlayDrawerViewController) -> Bool {
-        guard activeDrawer == nil || activeDrawer === drawer else { return false }
-        activeDrawer = drawer
+    func attach(_ presentation: any FloorpPanelPrivacyModePresenting) -> Bool {
+        guard activePresentation == nil || activePresentation === presentation else {
+            return false
+        }
+        activePresentation = presentation
         return true
     }
 
-    func detach(_ drawer: FloorpOverlayDrawerViewController) {
-        guard activeDrawer === drawer else { return }
-        activeDrawer = nil
+    func detach(_ presentation: any FloorpPanelPrivacyModePresenting) {
+        guard activePresentation === presentation else { return }
+        activePresentation = nil
     }
 
     func recordPendingNotesOperationError() {
@@ -116,7 +128,10 @@ final class FloorpPanelPresentationState: NSObject {
         observedTabManager?.removeDelegate(self, completion: nil)
         observedTabManager = tabManager
         tabManager.addDelegate(self)
-        closePrivateWebPanelSessionsIfNeeded(in: tabManager)
+        closePrivateWebPanelSessionsIfNeeded(
+            in: tabManager,
+            selectedTabIsPrivate: tabManager.selectedTab?.isPrivate
+        )
     }
 
     func invalidateWebPanelRuntime() {
@@ -135,14 +150,20 @@ final class FloorpPanelPresentationState: NSObject {
         webPanelSessionStore = nil
     }
 
-    private func closePrivateWebPanelSessionsIfNeeded(in tabManager: any TabManager) {
+    private func closePrivateWebPanelSessionsIfNeeded(
+        in tabManager: any TabManager,
+        selectedTabIsPrivate: Bool?
+    ) {
         guard observedTabManager === tabManager,
               tabManager.windowUUID == windowUUID,
+              selectedTabIsPrivate != true,
               tabManager.privateTabs.isEmpty,
               webPanelSessionStore?.closePrivateSessions() == true else {
             return
         }
-        activeDrawer?.privateWebPanelSessionsDidClose()
+        activePresentation?.privateWebPanelSessionsDidClose(
+            selectedTabIsPrivate: selectedTabIsPrivate
+        )
     }
 
     @objc private func panelRegistryDidChange() {
@@ -158,7 +179,18 @@ extension FloorpPanelPresentationState: TabManagerDelegate {
         previousTab: Tab?,
         isRestoring: Bool
     ) {
-        closePrivateWebPanelSessionsIfNeeded(in: tabManager)
+        guard observedTabManager === tabManager,
+              tabManager.windowUUID == windowUUID,
+              selectedTab.windowUUID == windowUUID else {
+            return
+        }
+        activePresentation?.rebindActiveContent(
+            forSelectedTabIsPrivate: selectedTab.isPrivate
+        )
+        closePrivateWebPanelSessionsIfNeeded(
+            in: tabManager,
+            selectedTabIsPrivate: selectedTab.isPrivate
+        )
     }
 
     func tabManager(
@@ -167,7 +199,10 @@ extension FloorpPanelPresentationState: TabManagerDelegate {
         isRestoring: Bool
     ) {
         guard tab.isPrivate else { return }
-        closePrivateWebPanelSessionsIfNeeded(in: tabManager)
+        closePrivateWebPanelSessionsIfNeeded(
+            in: tabManager,
+            selectedTabIsPrivate: tabManager.selectedTab?.isPrivate
+        )
     }
 }
 
@@ -288,7 +323,10 @@ typealias FloorpNotesReorderWriter = @MainActor (
 typealias FloorpNoteAccessibilityFocusPoster = @MainActor (_ argument: Any?) -> Void
 
 @MainActor
-final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
+final class FloorpOverlayDrawerViewController:
+    UIViewController,
+    Themeable,
+    FloorpPanelPrivacyModePresenting {
     var themeManager: ThemeManager
     var themeListenerCancellable: Any?
     let windowUUID: WindowUUID
@@ -1564,12 +1602,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     // MARK: - Data Loading
 
-    private func loadCurrentPanel() {
+    private func loadCurrentPanel(webPanelPrivacyMode: Bool? = nil) {
         panelLoadTask?.cancel()
         notesLoadGeneration = UUID()
+        let requestedWebPanelPrivacyMode = webPanelPrivacyMode
+            ?? (currentPanelType == .web ? isPrivateProvider() : false)
         let keepsActiveWebPanelVisible = currentPanelType == .web
             && activeWebPanelSession?.key.panelID == presentationState.selectedPanelId
-            && activeWebPanelSession?.key.isPrivate == isPrivateProvider()
+            && activeWebPanelSession?.key.isPrivate == requestedWebPanelPrivacyMode
         detachWebPanelContent(applyHiddenLifecycle: !keepsActiveWebPanelVisible)
         endNotesReordering(reload: false)
         setWebPanelToolbarVisible(currentPanelType == .web)
@@ -1606,11 +1646,11 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         case .notes:
             loadNotes()
         case .web:
-            loadWebPanel()
+            loadWebPanel(isPrivate: requestedWebPanelPrivacyMode)
         }
     }
 
-    private func loadWebPanel() {
+    private func loadWebPanel(isPrivate: Bool) {
         searchTextField.isHidden = true
         tableView.isHidden = true
         emptyStateLabel.isHidden = true
@@ -1624,7 +1664,6 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             return
         }
 
-        let isPrivate = isPrivateProvider()
         let requestedKey = FloorpWebPanelSessionKey(
             windowUUID: windowUUID,
             panelID: panel.id,
@@ -1726,18 +1765,31 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         return true
     }
 
-    /// Drops every reference to an invalidated private session immediately.
-    /// If tab selection has already settled on a regular tab, the same panel is
-    /// rebound to its isolated regular session; otherwise the drawer closes.
-    fileprivate func privateWebPanelSessionsDidClose() {
-        guard activeWebPanelSession?.key.isPrivate == true else { return }
-        detachWebPanelContent()
+    func rebindActiveContent(forSelectedTabIsPrivate isPrivate: Bool) {
+        guard isViewLoaded,
+              currentPanelType == .web else {
+            return
+        }
+        if activeWebPanelSession?.key.isPrivate == isPrivate {
+            return
+        }
+        if activeWebPanelSession == nil,
+           explicitlyUnloadedWebPanelKey?.panelID == presentationState.selectedPanelId,
+           explicitlyUnloadedWebPanelKey?.isPrivate == isPrivate {
+            return
+        }
+        loadCurrentPanel(webPanelPrivacyMode: isPrivate)
+    }
 
-        guard !isPrivateProvider() else {
+    func privateWebPanelSessionsDidClose(selectedTabIsPrivate: Bool?) {
+        guard activeWebPanelSession?.key.isPrivate == true else { return }
+        detachWebPanelContent(applyHiddenLifecycle: false)
+
+        guard selectedTabIsPrivate == false else {
             dismissDrawer()
             return
         }
-        loadCurrentPanel()
+        loadCurrentPanel(webPanelPrivacyMode: false)
     }
 
     private func setWebPanelToolbarVisible(_ isVisible: Bool) {

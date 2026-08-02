@@ -441,6 +441,105 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         XCTAssertEqual(store.cachedSessionKeys, [privateSession.key])
     }
 
+    func testSelectedTabPrivacyBoundaryIsManagerScopedAndPrecedesPrivatePurge() throws {
+        let windowUUID = WindowUUID()
+        let store = FloorpWebPanelSessionStore(
+            windowUUID: windowUUID,
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let privateSession = try mockSession(
+            from: store.session(for: makePanel(id: "portal"), isPrivate: true)
+        )
+        let state = FloorpPanelPresentationState(
+            windowUUID: windowUUID,
+            webPanelSessionStore: store
+        )
+        let currentManager = MockTabManager(windowUUID: windowUUID)
+        let otherManager = MockTabManager(windowUUID: windowUUID)
+        let otherWindowManager = MockTabManager(windowUUID: WindowUUID())
+        let privateTab = makeTab(isPrivate: true, windowUUID: windowUUID)
+        let regularTab = makeTab(isPrivate: false, windowUUID: windowUUID)
+        let otherWindowTab = makeTab(
+            isPrivate: false,
+            windowUUID: otherWindowManager.windowUUID
+        )
+        currentManager.selectedTab = privateTab
+        currentManager.privateTabs = [privateTab]
+        state.observePrivateTabLifecycle(in: currentManager)
+        let presentation = FloorpPrivacyModePresentationSpy()
+        XCTAssertTrue(state.attach(presentation))
+
+        state.tabManager(
+            otherManager,
+            didSelectedTabChange: regularTab,
+            previousTab: privateTab,
+            isRestoring: false
+        )
+        state.tabManager(
+            otherWindowManager,
+            didSelectedTabChange: regularTab,
+            previousTab: privateTab,
+            isRestoring: false
+        )
+        state.tabManager(
+            currentManager,
+            didSelectedTabChange: otherWindowTab,
+            previousTab: privateTab,
+            isRestoring: false
+        )
+        XCTAssertTrue(presentation.events.isEmpty)
+        XCTAssertEqual(privateSession.invalidationCount, 0)
+
+        currentManager.selectedTab = regularTab
+        currentManager.privateTabs = []
+        state.tabManager(
+            currentManager,
+            didSelectedTabChange: regularTab,
+            previousTab: privateTab,
+            isRestoring: false
+        )
+
+        XCTAssertEqual(presentation.events, [.rebind(false), .privateSessionsClosed(false)])
+        XCTAssertEqual(privateSession.invalidationCount, 1)
+        state.detach(presentation)
+    }
+
+    func testSelectedPrivateTabDefersPurgeWhenPrivateListIsTransientlyEmpty() throws {
+        let windowUUID = WindowUUID()
+        let store = FloorpWebPanelSessionStore(
+            windowUUID: windowUUID,
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let privateSession = try mockSession(
+            from: store.session(for: makePanel(id: "portal"), isPrivate: true)
+        )
+        let state = FloorpPanelPresentationState(
+            windowUUID: windowUUID,
+            webPanelSessionStore: store
+        )
+        let tabManager = MockTabManager(windowUUID: windowUUID)
+        let privateTab = makeTab(isPrivate: true, windowUUID: windowUUID)
+        let regularTab = makeTab(isPrivate: false, windowUUID: windowUUID)
+        tabManager.selectedTab = privateTab
+        tabManager.privateTabs = [privateTab]
+        state.observePrivateTabLifecycle(in: tabManager)
+        let presentation = FloorpPrivacyModePresentationSpy()
+        XCTAssertTrue(state.attach(presentation))
+
+        tabManager.privateTabs = []
+        state.tabManager(
+            tabManager,
+            didSelectedTabChange: privateTab,
+            previousTab: regularTab,
+            isRestoring: true
+        )
+
+        XCTAssertEqual(presentation.events, [.rebind(true)])
+        XCTAssertEqual(privateSession.invalidationCount, 0)
+        XCTAssertEqual(store.cachedSessionKeys, [privateSession.key])
+        state.detach(presentation)
+    }
+
     func testReconcileRemovesMissingInvalidAndDuplicatePanels() throws {
         let factory = MockFloorpWebPanelSessionFactory()
         let store = FloorpWebPanelSessionStore(windowUUID: UUID(), factory: factory)
@@ -653,6 +752,15 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
     ) throws -> MockFloorpWebPanelSession {
         try XCTUnwrap(session as? MockFloorpWebPanelSession)
     }
+
+    private func makeTab(isPrivate: Bool, windowUUID: WindowUUID) -> Tab {
+        Tab(
+            profile: MockProfile(),
+            isPrivate: isPrivate,
+            windowUUID: windowUUID,
+            documentLogger: DocumentLogger(logger: MockLogger())
+        )
+    }
 }
 
 @MainActor
@@ -674,6 +782,24 @@ private final class FloorpRecordingTabManager: MockTabManager {
 }
 
 @MainActor
+private final class FloorpPrivacyModePresentationSpy: FloorpPanelPrivacyModePresenting {
+    enum Event: Equatable {
+        case rebind(Bool)
+        case privateSessionsClosed(Bool?)
+    }
+
+    private(set) var events = [Event]()
+
+    func rebindActiveContent(forSelectedTabIsPrivate isPrivate: Bool) {
+        events.append(.rebind(isPrivate))
+    }
+
+    func privateWebPanelSessionsDidClose(selectedTabIsPrivate: Bool?) {
+        events.append(.privateSessionsClosed(selectedTabIsPrivate))
+    }
+}
+
+@MainActor
 private final class FloorpMutablePrivacyState {
     var isPrivate: Bool
 
@@ -684,6 +810,139 @@ private final class FloorpMutablePrivacyState {
 
 @MainActor
 final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
+    func testSelectedTabModeChangesRebindBothDirectionsWithoutReplacingDrawer() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let privacyState = FloorpMutablePrivacyState(isPrivate: false)
+        let tabManager = MockTabManager(windowUUID: .XCTestDefaultUUID)
+        let regularTab = makeTab(isPrivate: false)
+        let privateTab = makeTab(isPrivate: true)
+        tabManager.selectedTab = regularTab
+        tabManager.privateTabs = [privateTab]
+        fixture.presentationState.observePrivateTabLifecycle(in: tabManager)
+        let drawer = fixture.makeDrawer(isPrivateProvider: { privacyState.isPrivate })
+        let presentation = try await present(drawer: drawer)
+        defer { presentation.cleanup() }
+        let container = try XCTUnwrap(
+            findView(identifier: "Floorp.Drawer.Container", in: drawer.view)
+        )
+        let originalFrame = container.frame
+        let regularSession = try XCTUnwrap(fixture.factory.sessions.first)
+        regularSession.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/regular-current")),
+            pageTitle: "Regular"
+        )
+
+        privacyState.isPrivate = true
+        tabManager.selectedTab = privateTab
+        fixture.presentationState.tabManager(
+            tabManager,
+            didSelectedTabChange: privateTab,
+            previousTab: regularTab,
+            isRestoring: false
+        )
+        let privateSession = try XCTUnwrap(fixture.factory.sessions.last)
+        privateSession.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/private-current")),
+            pageTitle: "Private"
+        )
+        XCTAssertTrue(privateSession.key.isPrivate)
+        XCTAssertEqual(regularSession.visibilityChanges, [false])
+        XCTAssertNil(regularSession.contentView?.superview)
+
+        privacyState.isPrivate = false
+        tabManager.selectedTab = regularTab
+        fixture.presentationState.tabManager(
+            tabManager,
+            didSelectedTabChange: regularTab,
+            previousTab: privateTab,
+            isRestoring: false
+        )
+        drawer.view.layoutIfNeeded()
+
+        XCTAssertEqual(fixture.factory.makeCallCount, 2)
+        XCTAssertTrue(fixture.presentationState.activeDrawer === drawer)
+        XCTAssertTrue(presentation.parent.presentedViewController === drawer)
+        XCTAssertEqual(container.frame, originalFrame)
+        XCTAssertEqual(regularSession.visibilityChanges, [false, true])
+        XCTAssertEqual(privateSession.visibilityChanges, [false])
+        XCTAssertNil(privateSession.contentView?.superview)
+        XCTAssertNotNil(regularSession.contentView?.superview)
+        XCTAssertEqual(regularSession.invalidationCount, 0)
+        XCTAssertEqual(privateSession.invalidationCount, 0)
+
+        fixture.presentationState.tabManager(
+            tabManager,
+            didSelectedTabChange: regularTab,
+            previousTab: regularTab,
+            isRestoring: false
+        )
+        XCTAssertEqual(fixture.factory.makeCallCount, 2)
+        XCTAssertEqual(regularSession.visibilityChanges, [false, true])
+
+        let openButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.OpenInMainBrowser", in: drawer.view) as? UIButton
+        )
+        let dismissed = expectation(description: "Rebound web panel drawer dismissed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        openButton.sendActions(for: .touchUpInside)
+        await fulfillment(of: [dismissed], timeout: 1)
+        XCTAssertEqual(regularSession.openInMainBrowserCallCount, 1)
+        XCTAssertEqual(privateSession.openInMainBrowserCallCount, 0)
+    }
+
+    func testPrivacyModeRebindAutoUnloadKeepsRestorationModeScoped() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.manager.setAutoUnload(
+            true,
+            expectedRevision: FloorpOverlayDrawerConfigRevision(config: fixture.manager.config)
+        )
+        let privacyState = FloorpMutablePrivacyState(isPrivate: false)
+        let tabManager = MockTabManager(windowUUID: .XCTestDefaultUUID)
+        let regularTab = makeTab(isPrivate: false)
+        let privateTab = makeTab(isPrivate: true)
+        tabManager.selectedTab = regularTab
+        tabManager.privateTabs = [privateTab]
+        fixture.presentationState.observePrivateTabLifecycle(in: tabManager)
+        let drawer = fixture.makeDrawer(isPrivateProvider: { privacyState.isPrivate })
+        let presentation = try await present(drawer: drawer)
+        defer { presentation.cleanup() }
+        let regularSession = try XCTUnwrap(fixture.factory.sessions.first)
+        let regularURL = try XCTUnwrap(URL(string: "https://example.com/regular-current"))
+        let privateURL = try XCTUnwrap(URL(string: "https://example.com/private-current"))
+        regularSession.recordRuntimeState(currentURL: regularURL, pageTitle: "Regular")
+
+        privacyState.isPrivate = true
+        tabManager.selectedTab = privateTab
+        fixture.presentationState.tabManager(
+            tabManager,
+            didSelectedTabChange: privateTab,
+            previousTab: regularTab,
+            isRestoring: false
+        )
+        let privateSession = try XCTUnwrap(fixture.factory.sessions.last)
+        privateSession.recordRuntimeState(currentURL: privateURL, pageTitle: "Private")
+        XCTAssertEqual(regularSession.invalidationCount, 1)
+
+        privacyState.isPrivate = false
+        tabManager.selectedTab = regularTab
+        fixture.presentationState.tabManager(
+            tabManager,
+            didSelectedTabChange: regularTab,
+            previousTab: privateTab,
+            isRestoring: false
+        )
+        let restoredRegularSession = try XCTUnwrap(fixture.factory.sessions.last)
+
+        XCTAssertEqual(privateSession.invalidationCount, 1)
+        XCTAssertFalse(restoredRegularSession.key.isPrivate)
+        XCTAssertEqual(restoredRegularSession.restorationURL, regularURL)
+        XCTAssertNotEqual(restoredRegularSession.restorationURL, privateURL)
+        XCTAssertNotNil(restoredRegularSession.contentView?.superview)
+        XCTAssertNil(privateSession.contentView)
+    }
+
     func testLastPrivateTabCloseRebindsVisibleWebPanelToRegularSession() async throws {
         let fixture = try makeDrawerFixture()
         defer { fixture.cleanup() }
@@ -713,8 +972,16 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertTrue(privateSession.key.isPrivate)
         XCTAssertEqual(privateSession.stateObserverCount, 1)
 
+        let regularTab = makeTab(isPrivate: false)
         privacyState.isPrivate = false
+        tabManager.selectedTab = regularTab
         tabManager.privateTabs = []
+        fixture.presentationState.tabManager(
+            tabManager,
+            didSelectedTabChange: regularTab,
+            previousTab: privateTab,
+            isRestoring: false
+        )
         fixture.presentationState.tabManager(
             tabManager,
             didRemoveTab: privateTab,
@@ -1188,6 +1455,32 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         )
     }
 
+    private func makeTab(isPrivate: Bool) -> Tab {
+        Tab(
+            profile: MockProfile(),
+            isPrivate: isPrivate,
+            windowUUID: .XCTestDefaultUUID,
+            documentLogger: DocumentLogger(logger: MockLogger())
+        )
+    }
+
+    private func present(
+        drawer: FloorpOverlayDrawerViewController
+    ) async throws -> FloorpDrawerPresentationFixture {
+        let parent = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        let presented = expectation(description: "Web panel drawer presented")
+        guard drawer.show(from: parent, onPresented: { presented.fulfill() }) else {
+            window.isHidden = true
+            window.rootViewController = nil
+            throw FloorpDrawerPresentationFixture.PresentationError.rejected
+        }
+        await fulfillment(of: [presented], timeout: 1)
+        return FloorpDrawerPresentationFixture(parent: parent, window: window)
+    }
+
     private func findView(identifier: String, in rootView: UIView) -> UIView? {
         if rootView.accessibilityIdentifier == identifier {
             return rootView
@@ -1210,6 +1503,22 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             }
         }
         return nil
+    }
+}
+
+@MainActor
+private struct FloorpDrawerPresentationFixture {
+    enum PresentationError: Error {
+        case rejected
+    }
+
+    let parent: UIViewController
+    let window: UIWindow
+
+    func cleanup() {
+        parent.dismiss(animated: false)
+        window.isHidden = true
+        window.rootViewController = nil
     }
 }
 
