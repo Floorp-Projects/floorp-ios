@@ -255,15 +255,17 @@ final class BookmarksViewController: SiteTableViewController,
     }
 
     private func updateParentViewControllerTitle() {
+        var userInfo = windowUUID.userInfo
         if !viewModel.isRootNode, let folderTitle = viewModel.bookmarkFolder?.title {
+            userInfo["title"] = folderTitle
             notificationCenter.post(name: .LibraryPanelBookmarkTitleChanged,
                                     withObject: nil,
-                                    withUserInfo: ["title": folderTitle])
+                                    withUserInfo: userInfo)
         } else {
             // This will set the title to the default one
             notificationCenter.post(name: .LibraryPanelBookmarkTitleChanged,
                                     withObject: nil,
-                                    withUserInfo: nil)
+                                    withUserInfo: userInfo)
         }
     }
 
@@ -351,8 +353,13 @@ final class BookmarksViewController: SiteTableViewController,
     }
 
     private func sendPanelChangeNotification() {
-        let userInfo: [String: Any] = ["state": state]
-        NotificationCenter.default.post(name: .LibraryPanelStateDidChange, object: nil, userInfo: userInfo)
+        var userInfo = windowUUID.userInfo
+        userInfo["state"] = state
+        notificationCenter.post(
+            name: .LibraryPanelStateDidChange,
+            withObject: nil,
+            withUserInfo: userInfo
+        )
     }
 
     // MARK: - Utility

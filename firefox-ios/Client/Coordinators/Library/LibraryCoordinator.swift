@@ -4,6 +4,7 @@
 
 import Common
 import Foundation
+import Storage
 import UIKit
 
 import enum MozillaAppServices.VisitType
@@ -31,7 +32,8 @@ class LibraryCoordinator: BaseCoordinator,
                           ShareSheetCoordinatorDelegate {
     private let profile: Profile
     private let tabManager: TabManager
-    private var libraryViewController: LibraryViewController?
+    private let bookmarksHandler: BookmarksHandler
+    private(set) var libraryViewController: LibraryViewController?
     weak var parentCoordinator: LibraryCoordinatorDelegate?
     override var isDismissible: Bool { false }
     private var windowUUID: WindowUUID { return tabManager.windowUUID }
@@ -43,16 +45,23 @@ class LibraryCoordinator: BaseCoordinator,
     init(
         router: Router,
         profile: Profile = AppContainer.shared.resolve(),
-        tabManager: TabManager
+        tabManager: TabManager,
+        presentationMode: LibraryPresentationMode = .modal,
+        bookmarksHandler: BookmarksHandler? = nil
     ) {
         self.profile = profile
         self.tabManager = tabManager
+        self.bookmarksHandler = bookmarksHandler ?? profile.places
         super.init(router: router)
-        initializeLibraryViewController()
+        initializeLibraryViewController(presentationMode: presentationMode)
     }
 
-    private func initializeLibraryViewController() {
-        let libraryViewController = LibraryViewController(profile: profile, tabManager: tabManager)
+    private func initializeLibraryViewController(presentationMode: LibraryPresentationMode) {
+        let libraryViewController = LibraryViewController(
+            profile: profile,
+            tabManager: tabManager,
+            presentationMode: presentationMode
+        )
         router.setRootViewController(libraryViewController)
         libraryViewController.childPanelControllers = makeChildPanels()
         libraryViewController.delegate = self
@@ -68,7 +77,7 @@ class LibraryCoordinator: BaseCoordinator,
     private func makeChildPanels() -> [UINavigationController] {
         let bookmarksPanel: UIViewController
         bookmarksPanel = BookmarksViewController(viewModel: BookmarksPanelViewModel(profile: profile,
-                                                                                    bookmarksHandler: profile.places),
+                                                                                    bookmarksHandler: bookmarksHandler),
                                                  windowUUID: windowUUID)
         let historyPanel = HistoryPanel(profile: profile, windowUUID: windowUUID)
         let downloadsPanel = DownloadsPanel(windowUUID: windowUUID)

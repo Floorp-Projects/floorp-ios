@@ -6,6 +6,11 @@ import Common
 import Shared
 import UIKit
 
+enum LibraryPresentationMode: Equatable {
+    case modal
+    case externalSwitcher
+}
+
 class LibraryViewController: UIViewController, Themeable {
     struct UX {
         struct NavigationMenu {
@@ -25,6 +30,8 @@ class LibraryViewController: UIViewController, Themeable {
     var logger: Logger
     let windowUUID: WindowUUID
     var currentWindowUUID: UUID? { windowUUID }
+    let presentationMode: LibraryPresentationMode
+    var onRequestHostDismiss: (() -> Void)?
 
     // Views
     private var controllerContainerView: UIView = .build { view in }
@@ -57,6 +64,7 @@ class LibraryViewController: UIViewController, Themeable {
     // MARK: - Initializers
     init(profile: Profile,
          tabManager: TabManager,
+         presentationMode: LibraryPresentationMode = .modal,
          notificationCenter: NotificationProtocol = NotificationCenter.default,
          themeManager: ThemeManager = AppContainer.shared.resolve(),
          logger: Logger = DefaultLogger.shared) {
@@ -65,6 +73,7 @@ class LibraryViewController: UIViewController, Themeable {
         self.themeManager = themeManager
         self.logger = logger
         self.windowUUID = tabManager.windowUUID
+        self.presentationMode = presentationMode
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -89,7 +98,9 @@ class LibraryViewController: UIViewController, Themeable {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        setupSegmentControl()
+        if presentationMode == .modal {
+            setupSegmentControl()
+        }
         librarySegmentControl.selectedSegmentIndex = viewModel.selectedPanel?.rawValue ?? 0
         applyTheme()
     }
@@ -109,6 +120,12 @@ class LibraryViewController: UIViewController, Themeable {
             controllerContainerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             controllerContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
+
+        if presentationMode == .externalSwitcher {
+            controllerContainerView.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor
+            ).isActive = true
+        }
     }
 
     private func makeSegmentControl() -> UISegmentedControl {
@@ -252,7 +269,9 @@ class LibraryViewController: UIViewController, Themeable {
         addChild(libraryPanel)
         libraryPanel.beginAppearanceTransition(true, animated: false)
         controllerContainerView.addSubview(libraryPanel.view)
-        view.bringSubviewToFront(librarySegmentControl)
+        if presentationMode == .modal {
+            view.bringSubviewToFront(librarySegmentControl)
+        }
         libraryPanel.endAppearanceTransition()
 
         libraryPanel.view.translatesAutoresizingMaskIntoConstraints = false
@@ -332,10 +351,61 @@ class LibraryViewController: UIViewController, Themeable {
         guard let panel = getCurrentPanel() else { return }
 
         if panel.shouldDismissOnDone() {
-            dismiss(animated: true, completion: nil)
+            finishLibraryPresentation()
         }
 
         panel.handleRightTopButton()
+    }
+
+    func finishLibraryPresentation() {
+        if presentationMode == .externalSwitcher {
+            onRequestHostDismiss?()
+        } else {
+            dismiss(animated: true, completion: nil)
+        }
+    }
+
+    var allowsExternalPanelSwitching: Bool {
+        guard presentationMode == .externalSwitcher else { return true }
+        guard !hasExternalEditorOnSelectedPanel else { return false }
+
+        switch getCurrentPanelState() {
+        case .bookmarks(state: .inFolderEditMode),
+             .bookmarks(state: .itemEditMode),
+             .bookmarks(state: .itemEditModeInvalidField):
+            return false
+        default:
+            return true
+        }
+    }
+
+    func prepareForExternalDismissal() -> Bool {
+        guard presentationMode == .externalSwitcher else { return true }
+        guard !hasExternalEditorOnSelectedPanel,
+              let panel = getCurrentPanel() else { return false }
+
+        switch getCurrentPanelState() {
+        case .bookmarks(state: .itemEditMode),
+             .bookmarks(state: .itemEditModeInvalidField):
+            return false
+        default:
+            break
+        }
+
+        guard panel.shouldDismissOnDone() else {
+            panel.handleRightTopButton()
+            updateViewWithState()
+            return false
+        }
+        return true
+    }
+
+    private var hasExternalEditorOnSelectedPanel: Bool {
+        guard presentationMode == .externalSwitcher,
+              let index = viewModel.selectedPanel?.rawValue,
+              let navigationController = childPanelControllers[safe: index],
+              let topViewController = navigationController.topViewController else { return false }
+        return !(topViewController is LibraryPanel)
     }
 
     private func getCurrentPanelState() -> LibraryPanelMainState {
@@ -375,7 +445,8 @@ class LibraryViewController: UIViewController, Themeable {
     }
 
     private func updateSegmentControl() {
-        guard librarySegmentControl.numberOfSegments > 0 else { return }
+        guard presentationMode == .modal,
+              librarySegmentControl.numberOfSegments > 0 else { return }
 
         let panelState = getCurrentPanelState()
 
@@ -434,9 +505,11 @@ class LibraryViewController: UIViewController, Themeable {
     func setNavigationBarHidden(_ value: Bool) {
         navigationController?.setToolbarHidden(value, animated: true)
         navigationController?.setNavigationBarHidden(value, animated: false)
-        let controlbarHeight = librarySegmentControl.frame.height
-        librarySegmentControl.transform = value ? .init(translationX: 0, y: -controlbarHeight) : .identity
-        controllerContainerView.transform = value ? .init(translationX: 0, y: -controlbarHeight) : .identity
+        if presentationMode == .modal {
+            let controlbarHeight = librarySegmentControl.frame.height
+            librarySegmentControl.transform = value ? .init(translationX: 0, y: -controlbarHeight) : .identity
+            controllerContainerView.transform = value ? .init(translationX: 0, y: -controlbarHeight) : .identity
+        }
 
         // Reload the current panel
         guard let index = viewModel.selectedPanel?.rawValue,
@@ -450,12 +523,14 @@ extension LibraryViewController: Notifiable {
     func handleNotifications(_ notification: Notification) {
         switch notification.name {
         case .LibraryPanelStateDidChange:
+            guard notification.windowUUID == windowUUID else { return }
             ensureMainThread {
                 self.setupButtons()
                 self.updateSegmentControl()
             }
 
         case .LibraryPanelBookmarkTitleChanged:
+            guard notification.windowUUID == windowUUID else { return }
             let title = notification.userInfo?["title"] as? String
 
             ensureMainThread {

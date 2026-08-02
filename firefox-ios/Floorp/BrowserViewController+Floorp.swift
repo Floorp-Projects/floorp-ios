@@ -84,8 +84,26 @@ extension BrowserViewController {
             }
         )
 
+        let libraryPanelHost: any FloorpLibraryPanelHosting
+        if let existingHost = presentationState.libraryPanelHost {
+            libraryPanelHost = existingHost
+        } else {
+            let host = FloorpLibraryPanelHost(
+                profile: profile,
+                tabManager: tabManager,
+                actionDelegate: self,
+                themeManager: themeManager,
+                notificationCenter: notificationCenter
+            )
+            presentationState.libraryPanelHost = host
+            libraryPanelHost = host
+        }
+
         let drawer = FloorpOverlayDrawerViewController(
             presentationState: presentationState,
+            libraryPanelHost: libraryPanelHost,
+            themeManager: themeManager,
+            notificationCenter: notificationCenter,
             isPrivateProvider: { [weak self] in
                 self?.tabManager.selectedTab?.isPrivate ?? false
             }
