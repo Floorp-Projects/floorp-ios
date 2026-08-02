@@ -12,4 +12,11 @@ extension Notification.Name {
 
     /// Posted after a local Floorp Notes transaction has been committed.
     static let FloorpNotesDidChange = Notification.Name("FloorpNotesDidChange")
+
+    /// Posted after the profile-wide Floorp panel registry has changed.
+    ///
+    /// Presentation state remains window-scoped; each visible drawer uses this
+    /// notification to reconcile its rail and selected panel against the new
+    /// registry without persisting window UI state globally.
+    static let FloorpPanelRegistryDidChange = Notification.Name("FloorpPanelRegistryDidChange")
 }

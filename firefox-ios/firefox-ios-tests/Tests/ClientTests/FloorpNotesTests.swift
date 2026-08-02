@@ -1622,7 +1622,7 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
         XCTAssertFalse(restarted.panels.contains(where: { $0.type == .notes }))
     }
 
-    func testReorderPreservesPanelsMissingFromOlderOrderList() {
+    func testReorderPreservesPanelsMissingFromOlderOrderList() throws {
         let suiteName = "FloorpPanelNotesReorderTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             return XCTFail("Could not create isolated defaults")
@@ -1630,7 +1630,9 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let manager = FloorpPanelManager(defaults: defaults)
-        manager.reorderPanels(orderedIds: ["floorp//history", "floorp//bookmarks", "floorp//downloads"])
+        try manager.reorderPanels(
+            orderedIds: ["floorp//history", "floorp//bookmarks", "floorp//downloads"]
+        )
 
         let expectedOrder = [
             "floorp//history",
@@ -1661,5 +1663,797 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
 
         let localizedItem = DrawerItem(id: "localized", title: "Café Ｆｌｏｏｒｐ")
         XCTAssertTrue(localizedItem.matchesSearchQuery("cafe floorp"))
+    }
+}
+
+final class FloorpWebPanelValidatorTests: XCTestCase {
+    func testCanonicalizesTitleAndHTTPURL() throws {
+        let validated = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(
+                title: "  Floorp Portal  ",
+                urlText: "HTTP://Example.COM:8080/path?q=1#section",
+                iconName: "star"
+            )
+        )
+
+        XCTAssertEqual(validated.title, "Floorp Portal")
+        XCTAssertEqual(validated.url.absoluteString, "http://example.com:8080/path?q=1#section")
+        XCTAssertEqual(validated.iconName, "star")
+    }
+
+    func testCompletesSchemeForHostAndProtocolRelativeURL() throws {
+        let host = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "Local", urlText: "localhost:8080/status")
+        )
+        let protocolRelative = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "Floorp", urlText: "//Floorp.APP/notes")
+        )
+
+        XCTAssertEqual(host.url.absoluteString, "https://localhost:8080/status")
+        XCTAssertEqual(protocolRelative.url.absoluteString, "https://floorp.app/notes")
+    }
+
+    func testRejectsUnsupportedOrUnsafeURLs() {
+        let invalidURLs = [
+            ("javascript:alert(1)", FloorpWebPanelValidationError.unsupportedScheme),
+            ("javascript:1", .unsupportedScheme),
+            ("file:///tmp/panel", .unsupportedScheme),
+            ("about:config", .unsupportedScheme),
+            ("data:text/plain,panel", .unsupportedScheme),
+            ("data:123", .unsupportedScheme),
+            ("https://user:secret@example.com", .credentialsNotAllowed),
+            ("https://%75ser@example.com", .credentialsNotAllowed),
+            ("https://user%40name@example.com", .credentialsNotAllowed),
+            ("https://example.com%40evil.com", .credentialsNotAllowed),
+            ("https:///path-only", .missingHost),
+            ("https://example.com/\u{0000}panel", .urlContainsControlCharacters),
+            ("https://example.com:0", .invalidURL),
+            ("https://example.com:65536", .invalidURL),
+            ("https://example.com:999999999999999999999", .invalidURL),
+            ("https://example.com:", .invalidURL),
+        ]
+
+        for (urlText, expectedError) in invalidURLs {
+            XCTAssertThrowsError(
+                try FloorpWebPanelValidator.validate(
+                    FloorpWebPanelDraft(title: "Panel", urlText: urlText)
+                ),
+                "Expected rejection for \(urlText)"
+            ) { error in
+                XCTAssertEqual(error as? FloorpWebPanelValidationError, expectedError)
+            }
+        }
+    }
+
+    func testEnforcesTitleAndIconPolicy() throws {
+        let validTitle = String(repeating: "a", count: FloorpWebPanelValidator.maximumTitleLength)
+        XCTAssertNoThrow(
+            try FloorpWebPanelValidator.validate(
+                FloorpWebPanelDraft(title: validTitle, urlText: "example.com")
+            )
+        )
+
+        let cases: [(FloorpWebPanelDraft, FloorpWebPanelValidationError)] = [
+            (FloorpWebPanelDraft(title: "   ", urlText: "example.com"), .emptyTitle),
+            (
+                FloorpWebPanelDraft(title: validTitle + "a", urlText: "example.com"),
+                .titleTooLong(maximum: FloorpWebPanelValidator.maximumTitleLength)
+            ),
+            (
+                FloorpWebPanelDraft(title: "Panel\u{0007}", urlText: "example.com"),
+                .titleContainsControlCharacters
+            ),
+            (
+                FloorpWebPanelDraft(title: "Panel\u{0085}Title", urlText: "example.com"),
+                .titleContainsControlCharacters
+            ),
+            (
+                FloorpWebPanelDraft(title: "Panel\u{202E}Title", urlText: "example.com"),
+                .titleContainsControlCharacters
+            ),
+            (
+                FloorpWebPanelDraft(title: "Panel", urlText: "example.com", iconName: "lock.fill"),
+                .unsupportedIcon
+            ),
+        ]
+        for (draft, expectedError) in cases {
+            XCTAssertThrowsError(try FloorpWebPanelValidator.validate(draft)) { error in
+                XCTAssertEqual(error as? FloorpWebPanelValidationError, expectedError)
+            }
+        }
+
+        let normalized = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "Cafe\u{0301}", urlText: "example.com")
+        )
+        let joiners = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "A\u{200C}B\u{200D}C", urlText: "example.com")
+        )
+        XCTAssertEqual(normalized.title, "Café")
+        XCTAssertEqual(joiners.title, "A\u{200C}B\u{200D}C")
+
+        for invisibleTitle in ["\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{200C}\u{200D}"] {
+            XCTAssertThrowsError(
+                try FloorpWebPanelValidator.validate(
+                    FloorpWebPanelDraft(title: invisibleTitle, urlText: "example.com")
+                )
+            ) { error in
+                XCTAssertEqual(error as? FloorpWebPanelValidationError, .emptyTitle)
+            }
+            XCTAssertNil(FloorpWebPanelValidator.safeDisplayTitle(invisibleTitle))
+        }
+
+        let oversizedSingleCharacter = "a" + String(repeating: "\u{0300}", count: 4_096)
+        XCTAssertThrowsError(
+            try FloorpWebPanelValidator.validate(
+                FloorpWebPanelDraft(title: oversizedSingleCharacter, urlText: "example.com")
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpWebPanelValidationError,
+                .titleTooLong(maximum: FloorpWebPanelValidator.maximumTitleLength)
+            )
+        }
+    }
+
+    func testEnforcesLimitAfterAddingDefaultScheme() {
+        let schemelessURL = String(repeating: "a", count: FloorpWebPanelValidator.maximumURLLength - 4) + ".com"
+
+        XCTAssertThrowsError(
+            try FloorpWebPanelValidator.validate(
+                FloorpWebPanelDraft(title: "Panel", urlText: schemelessURL)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpWebPanelValidationError,
+                .urlTooLong(maximum: FloorpWebPanelValidator.maximumURLLength)
+            )
+        }
+    }
+
+    func testAcceptsPortBoundariesIDNAndIPv6() throws {
+        let minimumPort = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "Minimum", urlText: "example.com:1")
+        )
+        let maximumPort = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "Maximum", urlText: "https://example.com:65535")
+        )
+        let idn = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "IDN", urlText: "https://例え.テスト/path")
+        )
+        let ipv6 = try FloorpWebPanelValidator.validate(
+            FloorpWebPanelDraft(title: "IPv6", urlText: "https://[2001:db8::1]:443/path")
+        )
+
+        XCTAssertEqual(minimumPort.url.port, 1)
+        XCTAssertEqual(maximumPort.url.port, 65_535)
+        XCTAssertNotNil(idn.url.host)
+        XCTAssertEqual(ipv6.url.host, "2001:db8::1")
+        XCTAssertEqual(ipv6.url.port, 443)
+    }
+
+    func testSafeDisplayTitleNeverReturnsUnboundedOrUnsafeLegacyContent() {
+        let safePanel = FloorpPanel(
+            id: "safe-display",
+            type: .web,
+            title: "  Cafe\u{0301}  ",
+            url: "javascript:1",
+            iconName: "legacy-icon",
+            sortOrder: 0
+        )
+        let unsafePanel = FloorpPanel(
+            id: "unsafe-display",
+            type: .web,
+            title: "Spoof\u{202E}Title",
+            url: "https://example.com",
+            iconName: "globe",
+            sortOrder: 1
+        )
+
+        XCTAssertEqual(safePanel.safeDisplayTitle, "Café")
+        XCTAssertNil(unsafePanel.safeDisplayTitle)
+        XCTAssertEqual(
+            FloorpPanel.defaultPanels().first?.safeDisplayTitle,
+            FloorpPanelType.bookmarks.localizedBuiltInTitle
+        )
+    }
+}
+
+@MainActor
+final class FloorpPanelManagerRegistryTests: XCTestCase {
+    private let panelsKey = "floorp.overlayDrawer.panels"
+    private let schemaVersionKey = "floorp.overlayDrawer.schemaVersion"
+
+    func testAddUpdateMoveAndPersistenceUseSafeValuesAndNotify() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let notificationCenter = MockNotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+
+        let added = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(
+                title: "  Portal  ",
+                urlText: "Example.COM/path",
+                iconName: "link"
+            )
+        )
+        XCTAssertEqual(added.type, .web)
+        XCTAssertFalse(FloorpPanel.isReservedIdentifier(added.id))
+        XCTAssertNotNil(UUID(uuidString: added.id))
+        XCTAssertEqual(added.title, "Portal")
+        XCTAssertEqual(added.url, "https://example.com/path")
+        XCTAssertEqual(added.sortOrder, 4)
+        XCTAssertEqual(notificationCenter.postCallCount, 1)
+        XCTAssertEqual(notificationCenter.savePostName, .FloorpPanelRegistryDidChange)
+        XCTAssertTrue((notificationCenter.savePostObject as? FloorpPanelManager) === manager)
+        XCTAssertNil(notificationCenter.saveUserInfo)
+
+        try manager.updateWebPanel(
+            id: added.id,
+            draft: FloorpWebPanelDraft(
+                title: "Updated",
+                urlText: "http://floorp.app/updated",
+                iconName: "star"
+            ),
+            expectedRevision: FloorpWebPanelRevision(panel: added)
+        )
+        let updated = try XCTUnwrap(manager.panel(for: added.id))
+        XCTAssertEqual(updated.id, added.id)
+        XCTAssertEqual(updated.type, .web)
+        XCTAssertEqual(updated.sortOrder, added.sortOrder)
+        XCTAssertEqual(updated.title, "Updated")
+        XCTAssertEqual(updated.url, "http://floorp.app/updated")
+        XCTAssertEqual(notificationCenter.postCallCount, 2)
+        XCTAssertEqual(try manager.validatedWebURL(for: added.id).absoluteString, updated.url)
+
+        try manager.movePanel(id: added.id, to: 0)
+        XCTAssertEqual(manager.panels.first?.id, added.id)
+        XCTAssertEqual(manager.panels.map(\.sortOrder), Array(manager.panels.indices))
+        XCTAssertEqual(notificationCenter.postCallCount, 3)
+        try manager.movePanel(id: added.id, to: 0)
+        XCTAssertEqual(notificationCenter.postCallCount, 3)
+
+        let restarted = FloorpPanelManager(defaults: defaults)
+        XCTAssertEqual(restarted.panels.first?.id, added.id)
+        XCTAssertEqual(restarted.panel(for: added.id)?.title, "Updated")
+        XCTAssertEqual(restarted.panel(for: added.id)?.url, "http://floorp.app/updated")
+    }
+
+    func testConcurrentWebPanelEditCannotOverwriteNewerValues() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let notificationCenter = MockNotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+        let added = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Original", urlText: "example.com")
+        )
+        let staleRevision = FloorpWebPanelRevision(panel: added)
+
+        try manager.updateWebPanel(
+            id: added.id,
+            draft: FloorpWebPanelDraft(title: "First Window", urlText: "first.example.com"),
+            expectedRevision: staleRevision
+        )
+        XCTAssertThrowsError(
+            try manager.updateWebPanel(
+                id: added.id,
+                draft: FloorpWebPanelDraft(title: "Second Window", urlText: "second.example.com"),
+                expectedRevision: staleRevision
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpPanelError, .editConflict(id: added.id))
+        }
+
+        XCTAssertEqual(manager.panel(for: added.id)?.title, "First Window")
+        XCTAssertEqual(manager.panel(for: added.id)?.url, "https://first.example.com")
+        XCTAssertEqual(notificationCenter.postCallCount, 2)
+
+        let latestPanel = try XCTUnwrap(manager.panel(for: added.id))
+        try manager.removePanel(id: added.id)
+        XCTAssertThrowsError(
+            try manager.updateWebPanel(
+                id: added.id,
+                draft: FloorpWebPanelDraft(title: "Deleted Elsewhere", urlText: "deleted.example.com"),
+                expectedRevision: FloorpWebPanelRevision(panel: latestPanel)
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpPanelError, .editConflict(id: added.id))
+        }
+        XCTAssertNil(manager.panel(for: added.id))
+    }
+
+    func testReservedUpdateAndInvalidMoveFailWithoutNotification() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let notificationCenter = MockNotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+
+        XCTAssertThrowsError(
+            try manager.updateWebPanel(
+                id: "floorp//bookmarks",
+                draft: FloorpWebPanelDraft(title: "Spoof", urlText: "example.com"),
+                expectedRevision: FloorpWebPanelRevision(
+                    panel: try XCTUnwrap(manager.panel(for: "floorp//bookmarks"))
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpPanelError,
+                .reservedIdentifier(id: "floorp//bookmarks")
+            )
+        }
+        XCTAssertThrowsError(try manager.movePanel(id: "floorp//bookmarks", to: -1)) { error in
+            XCTAssertEqual(error as? FloorpPanelError, .invalidMoveDestination(index: -1))
+        }
+        XCTAssertThrowsError(try manager.movePanel(id: "missing", to: 0)) { error in
+            XCTAssertEqual(error as? FloorpPanelError, .panelNotFound(id: "missing"))
+        }
+        XCTAssertEqual(notificationCenter.postCallCount, 0)
+    }
+
+    func testRemoveLastPanelFailsAndRestoreBuiltInsIsIdempotent() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let customPanel = FloorpPanel(
+            id: "custom-only",
+            type: .web,
+            title: "Only Panel",
+            url: "https://example.com",
+            iconName: "globe",
+            sortOrder: 0
+        )
+        try store([customPanel], in: defaults)
+        let notificationCenter = MockNotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+
+        XCTAssertThrowsError(try manager.removePanel(id: customPanel.id)) { error in
+            XCTAssertEqual(error as? FloorpPanelError, .cannotRemoveLastPanel)
+        }
+        XCTAssertEqual(notificationCenter.postCallCount, 0)
+
+        let restored = try manager.restoreMissingBuiltIns()
+        XCTAssertEqual(restored.map(\.id), FloorpPanel.defaultPanels().map(\.id))
+        XCTAssertEqual(notificationCenter.postCallCount, 1)
+        XCTAssertEqual(try manager.restoreMissingBuiltIns(), [])
+        XCTAssertEqual(notificationCenter.postCallCount, 1)
+
+        try manager.removePanel(id: "floorp//history")
+        XCTAssertNil(manager.panel(for: "floorp//history"))
+        XCTAssertEqual(notificationCenter.postCallCount, 2)
+
+        let restarted = FloorpPanelManager(defaults: defaults)
+        XCTAssertNil(restarted.panel(for: "floorp//history"))
+        XCTAssertEqual(restarted.panels.map(\.sortOrder), Array(restarted.panels.indices))
+    }
+
+    func testPanelLimitRejectsAddWithoutMutationOrNotification() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fullRegistry = (0..<FloorpPanelManager.maximumPanelCount).map { index in
+            FloorpPanel(
+                id: "custom-\(index)",
+                type: .web,
+                title: "Panel \(index)",
+                url: "https://example.com/\(index)",
+                iconName: "globe",
+                sortOrder: index
+            )
+        }
+        try store(fullRegistry, in: defaults)
+        let notificationCenter = MockNotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+
+        XCTAssertThrowsError(
+            try manager.addWebPanel(
+                draft: FloorpWebPanelDraft(title: "Overflow", urlText: "example.com")
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpPanelError,
+                .panelLimitReached(maximum: FloorpPanelManager.maximumPanelCount)
+            )
+        }
+        XCTAssertEqual(manager.panels, fullRegistry)
+        XCTAssertEqual(notificationCenter.postCallCount, 0)
+    }
+
+    func testLoadSanitizesStructureButPreservesInvalidWebPanelsForRepair() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let canonicalBookmark = try XCTUnwrap(
+            FloorpPanel.defaultPanels().first(where: { $0.type == .bookmarks })
+        )
+        let persisted = [
+            FloorpPanel(
+                id: canonicalBookmark.id,
+                type: .web,
+                title: "Spoof",
+                url: "https://attacker.example",
+                iconName: "globe",
+                sortOrder: 0
+            ),
+            FloorpPanel(
+                id: canonicalBookmark.id,
+                type: canonicalBookmark.type,
+                title: "Tampered built-in",
+                url: "https://attacker.example",
+                iconName: "star",
+                sortOrder: 1
+            ),
+            canonicalBookmark,
+            FloorpPanel(
+                id: "floorp//unknown",
+                type: .web,
+                title: "Unknown reserved",
+                url: "https://example.com",
+                iconName: "globe",
+                sortOrder: 3
+            ),
+            FloorpPanel(
+                id: "safe-custom",
+                type: .web,
+                title: "  Safe  ",
+                url: "Example.COM/panel",
+                iconName: "star",
+                sortOrder: 4
+            ),
+            FloorpPanel(
+                id: "safe-custom",
+                type: .web,
+                title: "Duplicate",
+                url: "https://duplicate.example",
+                iconName: "globe",
+                sortOrder: 5
+            ),
+            FloorpPanel(
+                id: "unsafe-custom",
+                type: .web,
+                title: "Unsafe",
+                url: "javascript:alert(1)",
+                iconName: "globe",
+                sortOrder: 6
+            ),
+            FloorpPanel(
+                id: "non-reserved-built-in",
+                type: .history,
+                title: "History spoof",
+                url: nil,
+                iconName: "clock.arrow.circlepath",
+                sortOrder: 7
+            ),
+        ]
+        try store(persisted, in: defaults)
+        let notificationCenter = MockNotificationCenter()
+
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+
+        XCTAssertEqual(
+            manager.panels.map(\.id),
+            [canonicalBookmark.id, "safe-custom", "unsafe-custom"]
+        )
+        XCTAssertEqual(manager.panel(for: canonicalBookmark.id)?.title, canonicalBookmark.title)
+        XCTAssertNil(manager.panel(for: canonicalBookmark.id)?.url)
+        XCTAssertEqual(manager.panel(for: "safe-custom")?.title, "  Safe  ")
+        XCTAssertEqual(manager.panel(for: "safe-custom")?.url, "Example.COM/panel")
+        XCTAssertEqual(
+            try manager.validatedWebURL(for: "safe-custom").absoluteString,
+            "https://example.com/panel"
+        )
+        XCTAssertEqual(manager.panel(for: "unsafe-custom")?.url, "javascript:alert(1)")
+        XCTAssertThrowsError(try manager.validatedWebURL(for: "unsafe-custom")) { error in
+            XCTAssertEqual(error as? FloorpWebPanelValidationError, .unsupportedScheme)
+        }
+        XCTAssertEqual(manager.panels.map(\.sortOrder), [0, 1, 2])
+        XCTAssertEqual(notificationCenter.postCallCount, 0)
+
+        try manager.movePanel(id: "unsafe-custom", to: 0)
+        let added = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Added", urlText: "floorp.app")
+        )
+        try manager.removePanel(id: "safe-custom")
+        XCTAssertEqual(notificationCenter.postCallCount, 3)
+
+        let restarted = FloorpPanelManager(defaults: defaults)
+        XCTAssertEqual(restarted.panels.map(\.id), ["unsafe-custom", canonicalBookmark.id, added.id])
+        XCTAssertEqual(restarted.panel(for: "unsafe-custom")?.url, "javascript:alert(1)")
+        XCTAssertThrowsError(try restarted.validatedWebURL(for: "unsafe-custom"))
+    }
+
+    func testLoadFallsBackToDefaultsWhenEveryPersistedPanelIsStructurallyInvalid() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        try store(
+            [
+                FloorpPanel(
+                    id: "floorp//bookmarks",
+                    type: .web,
+                    title: "Spoof",
+                    url: "https://example.com",
+                    iconName: "globe",
+                    sortOrder: 0
+                ),
+                FloorpPanel(
+                    id: "non-reserved-built-in",
+                    type: .history,
+                    title: "Invalid structure",
+                    url: nil,
+                    iconName: "clock.arrow.circlepath",
+                    sortOrder: 1
+                ),
+            ],
+            in: defaults
+        )
+
+        let manager = FloorpPanelManager(defaults: defaults)
+
+        XCTAssertEqual(manager.panels, FloorpPanel.defaultPanels())
+        XCTAssertFalse(manager.panels.isEmpty)
+    }
+
+    func testLoadKeepsDecodablePanelsWhenAnotherElementUsesFutureSchema() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let bookmark = try XCTUnwrap(
+            FloorpPanel.defaultPanels().first(where: { $0.type == .bookmarks })
+        )
+        let invalidLegacyWebPanel = FloorpPanel(
+            id: "legacy-invalid-web",
+            type: .web,
+            title: "",
+            url: "javascript:alert(1)",
+            iconName: "legacy-icon",
+            sortOrder: 1
+        )
+        let bookmarkObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(bookmark)) as? [String: Any]
+        )
+        let legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(invalidLegacyWebPanel)) as? [String: Any]
+        )
+        let futurePanel: [String: Any] = [
+            "id": "future-panel",
+            "type": "future-native-panel",
+            "title": "Future",
+            "iconName": "sparkles",
+            "sortOrder": 2,
+        ]
+        let missingRequiredFields: [String: Any] = [
+            "id": "malformed-panel",
+            "type": "web",
+        ]
+        let rawData = try JSONSerialization.data(
+            withJSONObject: [bookmarkObject, legacyObject, futurePanel, missingRequiredFields]
+        )
+        defaults.set(rawData, forKey: panelsKey)
+
+        let manager = FloorpPanelManager(defaults: defaults)
+
+        XCTAssertEqual(manager.panels.map(\.id), [bookmark.id, invalidLegacyWebPanel.id])
+        XCTAssertEqual(manager.panel(for: invalidLegacyWebPanel.id), invalidLegacyWebPanel)
+        XCTAssertTrue(manager.isRegistryReadOnly)
+        XCTAssertEqual(defaults.data(forKey: panelsKey), rawData)
+        XCTAssertThrowsError(try manager.validatedWebURL(for: invalidLegacyWebPanel.id)) { error in
+            XCTAssertEqual(error as? FloorpWebPanelValidationError, .emptyTitle)
+        }
+
+        let mutationAttempts: [() throws -> Void] = [
+            {
+                _ = try manager.addWebPanel(
+                    draft: FloorpWebPanelDraft(title: "Added", urlText: "example.com")
+                )
+            },
+            {
+                try manager.updateWebPanel(
+                    id: invalidLegacyWebPanel.id,
+                    draft: FloorpWebPanelDraft(title: "Repaired", urlText: "example.com"),
+                    expectedRevision: FloorpWebPanelRevision(panel: invalidLegacyWebPanel)
+                )
+            },
+            { try manager.movePanel(id: bookmark.id, to: 1) },
+            { try manager.removePanel(id: bookmark.id) },
+            { _ = try manager.restoreMissingBuiltIns() },
+            { try manager.reorderPanels(orderedIds: [invalidLegacyWebPanel.id, bookmark.id]) },
+        ]
+        for mutation in mutationAttempts {
+            XCTAssertThrowsError(try mutation()) { error in
+                XCTAssertEqual(error as? FloorpPanelError, .registryReadOnly)
+            }
+            XCTAssertEqual(defaults.data(forKey: panelsKey), rawData)
+        }
+
+        let restarted = FloorpPanelManager(defaults: defaults)
+        XCTAssertEqual(restarted.panels, manager.panels)
+        XCTAssertEqual(defaults.data(forKey: panelsKey), rawData)
+    }
+
+    func testLoadDoesNotRewriteRegistryFromNewerSchema() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let panel = FloorpPanel(
+            id: "future-schema-web",
+            type: .web,
+            title: "Future schema",
+            url: "https://example.com",
+            iconName: "globe",
+            sortOrder: 42
+        )
+        let rawData = try JSONEncoder().encode([panel])
+        defaults.set(rawData, forKey: panelsKey)
+        defaults.set(99, forKey: schemaVersionKey)
+
+        let manager = FloorpPanelManager(defaults: defaults)
+
+        XCTAssertEqual(manager.panels.first?.sortOrder, 0)
+        XCTAssertTrue(manager.isRegistryReadOnly)
+        XCTAssertEqual(defaults.data(forKey: panelsKey), rawData)
+        XCTAssertEqual(defaults.integer(forKey: schemaVersionKey), 99)
+        XCTAssertThrowsError(
+            try manager.addWebPanel(
+                draft: FloorpWebPanelDraft(title: "Added", urlText: "example.com")
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpPanelError, .registryReadOnly)
+        }
+        XCTAssertEqual(defaults.data(forKey: panelsKey), rawData)
+    }
+
+    private func makeDefaults() throws -> (defaults: UserDefaults, suiteName: String) {
+        let suiteName = "FloorpPanelManagerRegistryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.set(2, forKey: schemaVersionKey)
+        return (defaults, suiteName)
+    }
+
+    private func store(_ panels: [FloorpPanel], in defaults: UserDefaults) throws {
+        defaults.set(try JSONEncoder().encode(panels), forKey: panelsKey)
+    }
+}
+
+@MainActor
+final class FloorpPanelRegistryUIHelperTests: XCTestCase {
+    func testReorderMapsSingleDragToOneMove() {
+        let initial: [FloorpPanelRegistryItem] = [
+            .panel("first"),
+            .panel("second"),
+            .panel("third"),
+            .restoreBuiltIns,
+        ]
+        let final: [FloorpPanelRegistryItem] = [
+            .panel("second"),
+            .panel("third"),
+            .panel("first"),
+            .restoreBuiltIns,
+        ]
+        let difference = final.difference(from: initial).inferringMoves()
+
+        XCTAssertEqual(
+            FloorpPanelRegistryReorder.move(
+                in: difference,
+                finalPanelIDs: ["second", "third", "first"]
+            ),
+            FloorpPanelRegistryMove(panelID: "first", destinationIndex: 2)
+        )
+    }
+
+    func testReorderRejectsNoOpAndMultipleMoves() {
+        let unchanged: [FloorpPanelRegistryItem] = [
+            .panel("first"),
+            .panel("second"),
+            .restoreBuiltIns,
+        ]
+        XCTAssertNil(
+            FloorpPanelRegistryReorder.move(
+                in: unchanged.difference(from: unchanged).inferringMoves(),
+                finalPanelIDs: ["first", "second"]
+            )
+        )
+
+        let initial: [FloorpPanelRegistryItem] = [
+            .panel("first"),
+            .panel("second"),
+            .panel("third"),
+            .panel("fourth"),
+        ]
+        let multipleMoves: [FloorpPanelRegistryItem] = [
+            .panel("second"),
+            .panel("first"),
+            .panel("fourth"),
+            .panel("third"),
+        ]
+        XCTAssertNil(
+            FloorpPanelRegistryReorder.move(
+                in: multipleMoves.difference(from: initial).inferringMoves(),
+                finalPanelIDs: ["second", "first", "fourth", "third"]
+            )
+        )
+    }
+
+    func testWebPanelAddressSummaryDistinguishesHTTPSHTTPAndInvalidInput() {
+        XCTAssertEqual(
+            FloorpWebPanelAddressSummary.make(urlText: "https://Example.COM/path"),
+            FloorpWebPanelAddressSummary(host: "example.com", status: .secure)
+        )
+        XCTAssertEqual(
+            FloorpWebPanelAddressSummary.make(urlText: "http://Example.COM/path"),
+            FloorpWebPanelAddressSummary(host: "example.com", status: .insecureHTTP)
+        )
+        XCTAssertEqual(
+            FloorpWebPanelAddressSummary.make(urlText: "javascript:alert(1)"),
+            FloorpWebPanelAddressSummary(host: nil, status: .needsAttention)
+        )
+    }
+
+    func testIconPickerUsesHumanReadableLocalizedNames() {
+        for systemName in FloorpWebPanelValidator.curatedIconNames {
+            let displayName = FloorpStrings.PanelRegistry.iconDisplayName(for: systemName)
+            XCTAssertFalse(displayName.isEmpty)
+            XCTAssertNotEqual(displayName, systemName)
+        }
+    }
+
+    func testPanelRegistryErrorMapperUsesLocalizedSpecificMessages() {
+        XCTAssertEqual(
+            FloorpPanelRegistryErrorMapper.presentation(
+                for: FloorpPanelError.panelLimitReached(maximum: FloorpPanelManager.maximumPanelCount)
+            ),
+            FloorpPanelRegistryErrorPresentation(
+                title: FloorpStrings.PanelRegistry.panelLimitTitle,
+                message: FloorpStrings.PanelRegistry.panelLimitMessage
+            )
+        )
+        XCTAssertEqual(
+            FloorpPanelRegistryErrorMapper.presentation(for: FloorpPanelError.cannotRemoveLastPanel),
+            FloorpPanelRegistryErrorPresentation(
+                title: FloorpStrings.PanelRegistry.lastPanelTitle,
+                message: FloorpStrings.PanelRegistry.lastPanelMessage
+            )
+        )
+        XCTAssertEqual(
+            FloorpPanelRegistryErrorMapper.presentation(for: FloorpPanelError.registryReadOnly),
+            FloorpPanelRegistryErrorPresentation(
+                title: FloorpStrings.PanelRegistry.registryReadOnlyTitle,
+                message: FloorpStrings.PanelRegistry.registryReadOnlyMessage
+            )
+        )
+        XCTAssertEqual(
+            FloorpPanelRegistryErrorMapper.presentation(for: FloorpPanelError.editConflict(id: "panel")),
+            FloorpPanelRegistryErrorPresentation(
+                title: FloorpStrings.PanelRegistry.editConflictTitle,
+                message: FloorpStrings.PanelRegistry.editConflictMessage
+            )
+        )
+        XCTAssertEqual(
+            FloorpPanelRegistryErrorMapper.presentation(
+                for: FloorpWebPanelValidationError.unsupportedScheme
+            ),
+            FloorpPanelRegistryErrorPresentation(
+                title: FloorpStrings.PanelRegistry.validationFailedTitle,
+                message: FloorpStrings.PanelRegistry.unsupportedSchemeMessage
+            )
+        )
+        XCTAssertEqual(
+            FloorpPanelRegistryErrorMapper.presentation(for: FloorpWebPanelValidationError.emptyTitle),
+            FloorpPanelRegistryErrorPresentation(
+                title: FloorpStrings.PanelRegistry.validationFailedTitle,
+                message: FloorpStrings.PanelRegistry.invalidTitleMessage
+            )
+        )
     }
 }

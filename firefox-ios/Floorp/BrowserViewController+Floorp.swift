@@ -69,6 +69,9 @@ extension BrowserViewController {
         drawer.onItemSelected = { [weak self] url in
             self?.floorpOpenURLInNewTabOrCurrent(url)
         }
+        drawer.webPanelSuggestionProvider = { [weak self] in
+            self?.floorpCurrentPageWebPanelSuggestion()
+        }
         if !drawer.show(from: self) {
             // Keep the window state for its selected-panel identity. The
             // drawer detaches itself when presentation cannot start.
@@ -90,6 +93,36 @@ extension BrowserViewController {
             return
         }
         tab.loadRequest(URLRequest(url: url))
+    }
+
+    /// Returns a persistence-safe suggestion for the panel editor. Private and
+    /// internal pages are deliberately excluded so opening the editor cannot
+    /// leak them into profile-wide panel configuration.
+    private func floorpCurrentPageWebPanelSuggestion() -> FloorpWebPanelDraft? {
+        guard let tab = tabManager.selectedTab,
+              !tab.isPrivate,
+              let url = tab.currentURL(),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil else { return nil }
+
+        let titleCandidates = [tab.title, url.host, FloorpStrings.PanelRegistry.webPanel]
+            .compactMap { $0 }
+        for titleCandidate in titleCandidates {
+            let draft = FloorpWebPanelDraft(
+                title: String(titleCandidate.prefix(FloorpWebPanelValidator.maximumTitleLength)),
+                urlText: url.absoluteString,
+                iconName: FloorpPanelType.web.systemIconName
+            )
+            if let validated = try? FloorpWebPanelValidator.validate(draft) {
+                return FloorpWebPanelDraft(
+                    title: validated.title,
+                    urlText: validated.url.absoluteString,
+                    iconName: validated.iconName
+                )
+            }
+        }
+        return nil
     }
 
     // MARK: - Keyboard Shortcut

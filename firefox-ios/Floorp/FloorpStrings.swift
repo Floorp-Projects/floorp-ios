@@ -180,6 +180,422 @@ enum FloorpStrings {
         )
     }
 
+    // MARK: - Panel Registry
+
+    enum PanelRegistry {
+        static let title = string(
+            "Floorp.PanelRegistry.Title.v1",
+            value: "Manage Panels",
+            comment: "Navigation title of the Floorp panel registry"
+        )
+        static let panelsSection = string(
+            "Floorp.PanelRegistry.PanelsSection.v1",
+            value: "Panels",
+            comment: "Section heading for registered Floorp panels"
+        )
+        static let recoverySection = string(
+            "Floorp.PanelRegistry.RecoverySection.v1",
+            value: "Recovery",
+            comment: "Section heading for panel recovery actions"
+        )
+        static let addWebPanel = string(
+            "Floorp.PanelRegistry.AddWebPanel.v1",
+            value: "Add Web Panel",
+            comment: "Action and title for adding a custom Web panel"
+        )
+        static let editWebPanel = string(
+            "Floorp.PanelRegistry.EditWebPanel.v1",
+            value: "Edit Web Panel",
+            comment: "Title of the custom Web panel editor"
+        )
+        static let done = string(
+            "Floorp.PanelRegistry.Done.v1",
+            value: "Done",
+            comment: "Action that finishes panel management"
+        )
+        static let doneEditing = string(
+            "Floorp.PanelRegistry.DoneEditing.v1",
+            value: "Done Editing",
+            comment: "Accessibility label for leaving panel edit mode"
+        )
+        static let edit = string(
+            "Floorp.PanelRegistry.Edit.v1",
+            value: "Edit",
+            comment: "Action that edits a Web panel or enters panel edit mode"
+        )
+        static let cancel = string(
+            "Floorp.PanelRegistry.Cancel.v1",
+            value: "Cancel",
+            comment: "Action that cancels Web panel editing"
+        )
+        static let saveAccessibilityLabel = string(
+            "Floorp.PanelRegistry.SaveAccessibilityLabel.v1",
+            value: "Save web panel",
+            comment: "Accessibility label for the Web panel save button"
+        )
+        static let detailsSection = string(
+            "Floorp.PanelRegistry.DetailsSection.v1",
+            value: "Web Panel",
+            comment: "Section heading for editable Web panel details"
+        )
+        static let builtInPanel = string(
+            "Floorp.PanelRegistry.BuiltInPanel.v1",
+            value: "Built-in Panel",
+            comment: "Description of a built-in Floorp panel"
+        )
+        static let webPanel = string(
+            "Floorp.PanelRegistry.WebPanel.v1",
+            value: "Web Panel",
+            comment: "Description of a custom Web panel"
+        )
+        static let removeFromSidebar = string(
+            "Floorp.PanelRegistry.RemoveFromSidebar.v1",
+            value: "Remove from Sidebar",
+            comment: "Action that hides a built-in panel from the sidebar"
+        )
+        static let delete = string(
+            "Floorp.PanelRegistry.Delete.v1",
+            value: "Delete",
+            comment: "Destructive action that deletes a custom Web panel"
+        )
+        static let restoreBuiltIns = string(
+            "Floorp.PanelRegistry.RestoreBuiltIns.v1",
+            value: "Restore Built-in Panels",
+            comment: "Action that restores removed built-in panels"
+        )
+        static let restoreBuiltInsDescription = string(
+            "Floorp.PanelRegistry.RestoreBuiltInsDescription.v1",
+            value: "Add any missing built-in panels back to the sidebar.",
+            comment: "Description of the built-in panel restoration action"
+        )
+        static let allBuiltInsVisible = string(
+            "Floorp.PanelRegistry.AllBuiltInsVisible.v1",
+            value: "All built-in panels are already in the sidebar.",
+            comment: "Status shown when no built-in panels need restoration"
+        )
+        static let removeBuiltInTitle = string(
+            "Floorp.PanelRegistry.RemoveBuiltInTitle.v1",
+            value: "Remove from Sidebar?",
+            comment: "Title confirming removal of a built-in panel"
+        )
+        private static let removeBuiltInMessageFormat = string(
+            "Floorp.PanelRegistry.RemoveBuiltInMessage.v1",
+            value: "Removing this panel does not delete its data. You can restore “%@” later from Manage Panels.",
+            comment: "Message confirming removal of a built-in panel; argument is its title"
+        )
+        static let deleteWebPanelTitle = string(
+            "Floorp.PanelRegistry.DeleteWebPanelTitle.v1",
+            value: "Delete Web Panel?",
+            comment: "Title confirming deletion of a custom Web panel"
+        )
+        private static let deleteWebPanelMessageFormat = string(
+            "Floorp.PanelRegistry.DeleteWebPanelMessage.v1",
+            value: "“%@” will be permanently removed from the sidebar.",
+            comment: "Message confirming Web panel deletion; argument is its title"
+        )
+        static let panelLimitTitle = string(
+            "Floorp.PanelRegistry.PanelLimitTitle.v1",
+            value: "Panel Limit Reached",
+            comment: "Title shown when the sidebar has the maximum number of panels"
+        )
+        static let panelLimitMessage = string(
+            "Floorp.PanelRegistry.PanelLimitMessage.v1",
+            value: "You can add up to 32 panels. Remove a panel before adding another.",
+            comment: "Message shown when the 32-panel limit is reached"
+        )
+        static let lastPanelTitle = string(
+            "Floorp.PanelRegistry.LastPanelTitle.v1",
+            value: "Keep One Panel",
+            comment: "Title shown when removal would leave the sidebar empty"
+        )
+        static let lastPanelMessage = string(
+            "Floorp.PanelRegistry.LastPanelMessage.v1",
+            value: "At least one panel must remain in the sidebar.",
+            comment: "Message shown when the user tries to remove the last panel"
+        )
+        static let registryReadOnlyTitle = string(
+            "Floorp.PanelRegistry.RegistryReadOnlyTitle.v1",
+            value: "Newer Floorp Version Required",
+            comment: "Title shown when a future panel registry cannot be changed"
+        )
+        static let registryReadOnlyMessage = string(
+            "Floorp.PanelRegistry.RegistryReadOnlyMessage.v1",
+            value: "These panel settings were created by a newer Floorp version and were left unchanged.",
+            comment: "Message shown when a future panel registry is kept read-only"
+        )
+        static let editConflictTitle = string(
+            "Floorp.PanelRegistry.EditConflictTitle.v1",
+            value: "Panel Changed Elsewhere",
+            comment: "Title shown when another window changed a Web panel during editing"
+        )
+        static let editConflictMessage = string(
+            "Floorp.PanelRegistry.EditConflictMessage.v1",
+            value: "This panel changed in another window. Close this editor and reopen it before saving.",
+            comment: "Message preventing a stale Web panel edit from overwriting a newer edit"
+        )
+        static let operationFailedTitle = string(
+            "Floorp.PanelRegistry.OperationFailedTitle.v1",
+            value: "Couldn’t Update Panels",
+            comment: "Title of a generic panel registry operation error"
+        )
+        static let operationFailedMessage = string(
+            "Floorp.PanelRegistry.OperationFailedMessage.v1",
+            value: "Your panels were not changed. Please try again.",
+            comment: "Message shown when a panel registry operation fails"
+        )
+        static let validationFailedTitle = string(
+            "Floorp.PanelRegistry.ValidationFailedTitle.v1",
+            value: "Check Panel Details",
+            comment: "Title shown when Web panel input is invalid"
+        )
+        static let invalidTitleMessage = string(
+            "Floorp.PanelRegistry.InvalidTitleMessage.v1",
+            value: "Enter a panel name of 100 characters or fewer.",
+            comment: "Validation message for an invalid Web panel title"
+        )
+        static let invalidURLMessage = string(
+            "Floorp.PanelRegistry.InvalidURLMessage.v1",
+            value: "Enter a valid website address of 2,048 characters or fewer.",
+            comment: "Validation message for an invalid Web panel URL"
+        )
+        static let unsupportedSchemeMessage = string(
+            "Floorp.PanelRegistry.UnsupportedSchemeMessage.v1",
+            value: "Web panels support only HTTP and HTTPS addresses.",
+            comment: "Validation message for a Web panel URL with an unsupported scheme"
+        )
+        static let credentialsNotAllowedMessage = string(
+            "Floorp.PanelRegistry.CredentialsNotAllowedMessage.v1",
+            value: "Remove the username and password from the website address.",
+            comment: "Validation message for credentials embedded in a Web panel URL"
+        )
+        static let unsupportedIconMessage = string(
+            "Floorp.PanelRegistry.UnsupportedIconMessage.v1",
+            value: "Choose one of the available panel icons.",
+            comment: "Validation message for an unsupported Web panel icon"
+        )
+        static let titleField = string(
+            "Floorp.PanelRegistry.TitleField.v1",
+            value: "Name",
+            comment: "Label for a custom Web panel name field"
+        )
+        static let titlePlaceholder = string(
+            "Floorp.PanelRegistry.TitlePlaceholder.v1",
+            value: "Panel name",
+            comment: "Placeholder for a custom Web panel name field"
+        )
+        static let urlField = string(
+            "Floorp.PanelRegistry.URLField.v1",
+            value: "Website Address",
+            comment: "Label for a custom Web panel URL field"
+        )
+        static let urlPlaceholder = string(
+            "Floorp.PanelRegistry.URLPlaceholder.v1",
+            value: "example.com",
+            comment: "Placeholder for a custom Web panel URL field"
+        )
+        static let iconField = string(
+            "Floorp.PanelRegistry.IconField.v1",
+            value: "Icon",
+            comment: "Label for a custom Web panel icon picker"
+        )
+        static let iconPlaceholder = string(
+            "Floorp.PanelRegistry.IconPlaceholder.v1",
+            value: "Choose an icon",
+            comment: "Placeholder for a custom Web panel icon picker"
+        )
+        static let iconHelp = string(
+            "Floorp.PanelRegistry.IconHelp.v1",
+            value: "Choose an icon for the panel button in the sidebar.",
+            comment: "Help text for the custom Web panel icon picker"
+        )
+        private static let globeIcon = string(
+            "Floorp.PanelRegistry.Icon.Globe.v1",
+            value: "Globe",
+            comment: "Display name for the globe Web panel icon"
+        )
+        private static let linkIcon = string(
+            "Floorp.PanelRegistry.Icon.Link.v1",
+            value: "Link",
+            comment: "Display name for the link Web panel icon"
+        )
+        private static let messageIcon = string(
+            "Floorp.PanelRegistry.Icon.Message.v1",
+            value: "Message",
+            comment: "Display name for the message Web panel icon"
+        )
+        private static let mailIcon = string(
+            "Floorp.PanelRegistry.Icon.Mail.v1",
+            value: "Mail",
+            comment: "Display name for the mail Web panel icon"
+        )
+        private static let calendarIcon = string(
+            "Floorp.PanelRegistry.Icon.Calendar.v1",
+            value: "Calendar",
+            comment: "Display name for the calendar Web panel icon"
+        )
+        private static let documentIcon = string(
+            "Floorp.PanelRegistry.Icon.Document.v1",
+            value: "Document",
+            comment: "Display name for the document Web panel icon"
+        )
+        private static let videoIcon = string(
+            "Floorp.PanelRegistry.Icon.Video.v1",
+            value: "Video",
+            comment: "Display name for the video Web panel icon"
+        )
+        private static let starIcon = string(
+            "Floorp.PanelRegistry.Icon.Star.v1",
+            value: "Star",
+            comment: "Display name for the star Web panel icon"
+        )
+        static let needsAttention = string(
+            "Floorp.PanelRegistry.NeedsAttention.v1",
+            value: "Needs Attention",
+            comment: "Status shown for a legacy Web panel with invalid details"
+        )
+        private static let attentionHostFormat = string(
+            "Floorp.PanelRegistry.AttentionHost.v1",
+            value: "%1$@ · %2$@",
+            comment: "Web panel subtitle containing a host and the Needs Attention status"
+        )
+        static let insecureHTTPStatus = string(
+            "Floorp.PanelRegistry.InsecureHTTPStatus.v1",
+            value: "Not Secure",
+            comment: "Short status shown for a Web panel that uses HTTP"
+        )
+        private static let insecureHostFormat = string(
+            "Floorp.PanelRegistry.InsecureHost.v1",
+            value: "%1$@ · %2$@",
+            comment: "Web panel subtitle containing a host and the Not Secure status"
+        )
+        static let insecureHTTPWarning = string(
+            "Floorp.PanelRegistry.InsecureHTTPWarning.v1",
+            value: "This site uses HTTP. Information sent to it is not encrypted.",
+            comment: "Warning shown while editing a Web panel that uses HTTP"
+        )
+        static let moveUp = string(
+            "Floorp.PanelRegistry.MoveUp.v1",
+            value: "Move Up",
+            comment: "Accessibility action that moves a panel earlier"
+        )
+        static let moveDown = string(
+            "Floorp.PanelRegistry.MoveDown.v1",
+            value: "Move Down",
+            comment: "Accessibility action that moves a panel later"
+        )
+        static let reorderAccessibilityHint = string(
+            "Floorp.PanelRegistry.ReorderAccessibilityHint.v1",
+            value: "Use the reorder control or accessibility actions to move this panel.",
+            comment: "Accessibility hint for a reorderable built-in panel"
+        )
+        static let webPanelAccessibilityHint = string(
+            "Floorp.PanelRegistry.WebPanelAccessibilityHint.v1",
+            value: "Double-tap to edit. Use the reorder control or accessibility actions to move this panel.",
+            comment: "Accessibility hint for an editable and reorderable Web panel"
+        )
+        static let insecureHTTPAccessibilityHint = string(
+            "Floorp.PanelRegistry.InsecureHTTPAccessibilityHint.v1",
+            value: "Not secure. Double-tap to edit this HTTP panel.",
+            comment: "Accessibility hint for a Web panel that uses HTTP"
+        )
+        static let needsAttentionAccessibilityHint = string(
+            "Floorp.PanelRegistry.NeedsAttentionAccessibilityHint.v1",
+            value: "This panel has invalid details. Double-tap to fix them.",
+            comment: "Accessibility hint for a legacy Web panel that needs repair"
+        )
+        static let discardChangesTitle = string(
+            "Floorp.PanelRegistry.DiscardChangesTitle.v1",
+            value: "Discard Changes?",
+            comment: "Title confirming dismissal of a modified Web panel draft"
+        )
+        static let discardChangesMessage = string(
+            "Floorp.PanelRegistry.DiscardChangesMessage.v1",
+            value: "Your unsaved Web panel changes will be lost.",
+            comment: "Message confirming dismissal of a modified Web panel draft"
+        )
+        static let keepEditing = string(
+            "Floorp.PanelRegistry.KeepEditing.v1",
+            value: "Keep Editing",
+            comment: "Action that returns to a modified Web panel draft"
+        )
+        static let discardChanges = string(
+            "Floorp.PanelRegistry.DiscardChanges.v1",
+            value: "Discard Changes",
+            comment: "Destructive action that dismisses a modified Web panel draft"
+        )
+        private static let panelAccessibilityLabelFormat = string(
+            "Floorp.PanelRegistry.PanelAccessibilityLabel.v1",
+            value: "%1$@, %2$@",
+            comment: "Accessibility label containing a panel title and panel kind"
+        )
+        static let restoredAnnouncement = string(
+            "Floorp.PanelRegistry.RestoredAnnouncement.v1",
+            value: "Built-in panels restored.",
+            comment: "Accessibility announcement after restoring built-in panels"
+        )
+        private static let removedAnnouncementFormat = string(
+            "Floorp.PanelRegistry.RemovedAnnouncement.v1",
+            value: "%@ removed from the sidebar.",
+            comment: "Accessibility announcement after removing a panel; argument is its title"
+        )
+        private static let moveAnnouncementFormat = string(
+            "Floorp.PanelRegistry.MoveAnnouncement.v1",
+            value: "%1$@ moved to position %2$d.",
+            comment: "Accessibility announcement after moving a panel; arguments are title and position"
+        )
+
+        static func removeBuiltInMessage(title: String) -> String {
+            String.localizedStringWithFormat(removeBuiltInMessageFormat, title)
+        }
+
+        static func deleteWebPanelMessage(title: String) -> String {
+            String.localizedStringWithFormat(deleteWebPanelMessageFormat, title)
+        }
+
+        static func panelAccessibilityLabel(title: String, kind: String) -> String {
+            String.localizedStringWithFormat(panelAccessibilityLabelFormat, title, kind)
+        }
+
+        static func insecureHost(host: String) -> String {
+            String.localizedStringWithFormat(insecureHostFormat, host, insecureHTTPStatus)
+        }
+
+        static func attentionHost(host: String) -> String {
+            String.localizedStringWithFormat(attentionHostFormat, host, needsAttention)
+        }
+
+        static func iconDisplayName(for systemName: String) -> String {
+            switch systemName {
+            case "link": return linkIcon
+            case "bubble.left": return messageIcon
+            case "envelope": return mailIcon
+            case "calendar": return calendarIcon
+            case "doc": return documentIcon
+            case "play.rectangle": return videoIcon
+            case "star": return starIcon
+            default: return globeIcon
+            }
+        }
+
+        static func removedAnnouncement(title: String) -> String {
+            String.localizedStringWithFormat(removedAnnouncementFormat, title)
+        }
+
+        static func moveAnnouncement(title: String, position: Int) -> String {
+            String.localizedStringWithFormat(moveAnnouncementFormat, title, position)
+        }
+
+        private static func string(_ key: String, value: String, comment: String) -> String {
+            NSLocalizedString(
+                key,
+                tableName: "Floorp",
+                bundle: .main,
+                value: value,
+                comment: comment
+            )
+        }
+    }
+
     // MARK: - Notes
 
     enum Notes {

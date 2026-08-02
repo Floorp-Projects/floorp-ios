@@ -1,6 +1,438 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Floorp.PanelRegistry.RegistryReadOnlyMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "These panel settings were created by a newer Floorp version and were left unchanged." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "これらのパネル設定は新しいバージョンの Floorp で作成されているため、変更せずに保持しました。" } }
+      }
+    },
+    "Floorp.PanelRegistry.RegistryReadOnlyTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Newer Floorp Version Required" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいバージョンの Floorp が必要です" } }
+      }
+    },
+    "Floorp.PanelRegistry.EditConflictTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Panel Changed Elsewhere" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "別のウインドウでパネルが変更されました" } }
+      }
+    },
+    "Floorp.PanelRegistry.EditConflictMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This panel changed in another window. Close this editor and reopen it before saving." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このパネルは別のウインドウで変更されました。保存する前に、この編集画面を閉じて開き直してください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.Title.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Manage Panels" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルを管理" } }
+      }
+    },
+    "Floorp.PanelRegistry.PanelsSection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Panels" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネル" } }
+      }
+    },
+    "Floorp.PanelRegistry.RecoverySection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recovery" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "復元" } }
+      }
+    },
+    "Floorp.PanelRegistry.AddWebPanel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add Web Panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルを追加" } }
+      }
+    },
+    "Floorp.PanelRegistry.EditWebPanel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edit Web Panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルを編集" } }
+      }
+    },
+    "Floorp.PanelRegistry.Done.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "完了" } }
+      }
+    },
+    "Floorp.PanelRegistry.DoneEditing.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Done Editing" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "編集を完了" } }
+      }
+    },
+    "Floorp.PanelRegistry.Edit.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edit" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "編集" } }
+      }
+    },
+    "Floorp.PanelRegistry.Cancel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャンセル" } }
+      }
+    },
+    "Floorp.PanelRegistry.SaveAccessibilityLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Save web panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルを保存" } }
+      }
+    },
+    "Floorp.PanelRegistry.DetailsSection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web Panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネル" } }
+      }
+    },
+    "Floorp.PanelRegistry.BuiltInPanel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Built-in Panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "標準パネル" } }
+      }
+    },
+    "Floorp.PanelRegistry.WebPanel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web Panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネル" } }
+      }
+    },
+    "Floorp.PanelRegistry.RemoveFromSidebar.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove from Sidebar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーから削除" } }
+      }
+    },
+    "Floorp.PanelRegistry.Delete.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } }
+      }
+    },
+    "Floorp.PanelRegistry.RestoreBuiltIns.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore Built-in Panels" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "標準パネルを復元" } }
+      }
+    },
+    "Floorp.PanelRegistry.RestoreBuiltInsDescription.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add any missing built-in panels back to the sidebar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "不足している標準パネルをサイドバーに戻します。" } }
+      }
+    },
+    "Floorp.PanelRegistry.AllBuiltInsVisible.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All built-in panels are already in the sidebar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべての標準パネルはすでにサイドバーにあります。" } }
+      }
+    },
+    "Floorp.PanelRegistry.RemoveBuiltInTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove from Sidebar?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーから削除しますか？" } }
+      }
+    },
+    "Floorp.PanelRegistry.RemoveBuiltInMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Removing this panel does not delete its data. You can restore “%@” later from Manage Panels." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このパネルを削除してもデータは削除されません。「%@」は後で［パネルを管理］から復元できます。" } }
+      }
+    },
+    "Floorp.PanelRegistry.DeleteWebPanelTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete Web Panel?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルを削除しますか？" } }
+      }
+    },
+    "Floorp.PanelRegistry.DeleteWebPanelMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "“%@” will be permanently removed from the sidebar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」はサイドバーから完全に削除されます。" } }
+      }
+    },
+    "Floorp.PanelRegistry.PanelLimitTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Panel Limit Reached" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネル数が上限に達しました" } }
+      }
+    },
+    "Floorp.PanelRegistry.PanelLimitMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "You can add up to 32 panels. Remove a panel before adding another." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルは最大32個まで追加できます。別のパネルを追加する前に、いずれかのパネルを削除してください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.LastPanelTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep One Panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルを1つ残してください" } }
+      }
+    },
+    "Floorp.PanelRegistry.LastPanelMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "At least one panel must remain in the sidebar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーには少なくとも1つのパネルが必要です。" } }
+      }
+    },
+    "Floorp.PanelRegistry.OperationFailedTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t Update Panels" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルを更新できませんでした" } }
+      }
+    },
+    "Floorp.PanelRegistry.OperationFailedMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your panels were not changed. Please try again." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルは変更されていません。もう一度お試しください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.ValidationFailedTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Check Panel Details" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルの設定を確認してください" } }
+      }
+    },
+    "Floorp.PanelRegistry.InvalidTitleMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a panel name of 100 characters or fewer." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "100文字以内のパネル名を入力してください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.InvalidURLMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a valid website address of 2,048 characters or fewer." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "2,048文字以内の有効なWebサイトアドレスを入力してください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.UnsupportedSchemeMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web panels support only HTTP and HTTPS addresses." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルで使用できるアドレスは HTTP と HTTPS のみです。" } }
+      }
+    },
+    "Floorp.PanelRegistry.CredentialsNotAllowedMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove the username and password from the website address." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Webサイトアドレスからユーザー名とパスワードを削除してください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.UnsupportedIconMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose one of the available panel icons." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利用可能なパネルアイコンから選択してください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.TitleField.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Name" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "名前" } }
+      }
+    },
+    "Floorp.PanelRegistry.TitlePlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Panel name" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネル名" } }
+      }
+    },
+    "Floorp.PanelRegistry.URLField.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Website Address" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Webサイトのアドレス" } }
+      }
+    },
+    "Floorp.PanelRegistry.URLPlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "example.com" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "example.com" } }
+      }
+    },
+    "Floorp.PanelRegistry.IconField.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Icon" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アイコン" } }
+      }
+    },
+    "Floorp.PanelRegistry.IconPlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose an icon" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アイコンを選択" } }
+      }
+    },
+    "Floorp.PanelRegistry.IconHelp.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose an icon for the panel button in the sidebar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーのパネルボタンに表示するアイコンを選択してください。" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Globe.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Globe" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "地球" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Link.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Link" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "リンク" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Message.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Message" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メッセージ" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Mail.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Mail" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メール" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Calendar.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Calendar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カレンダー" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Document.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Document" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "書類" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Video.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Video" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "動画" } }
+      }
+    },
+    "Floorp.PanelRegistry.Icon.Star.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Star" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "星" } }
+      }
+    },
+    "Floorp.PanelRegistry.NeedsAttention.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Needs Attention" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "要確認" } }
+      }
+    },
+    "Floorp.PanelRegistry.AttentionHost.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ · %2$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ · %2$@" } }
+      }
+    },
+    "Floorp.PanelRegistry.InsecureHTTPStatus.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not Secure" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "安全ではありません" } }
+      }
+    },
+    "Floorp.PanelRegistry.InsecureHost.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ · %2$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ · %2$@" } }
+      }
+    },
+    "Floorp.PanelRegistry.InsecureHTTPWarning.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This site uses HTTP. Information sent to it is not encrypted." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このサイトは HTTP を使用しています。送信される情報は暗号化されません。" } }
+      }
+    },
+    "Floorp.PanelRegistry.MoveUp.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Move Up" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "上へ移動" } }
+      }
+    },
+    "Floorp.PanelRegistry.MoveDown.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Move Down" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "下へ移動" } }
+      }
+    },
+    "Floorp.PanelRegistry.ReorderAccessibilityHint.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use the reorder control or accessibility actions to move this panel." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "並べ替えコントロールまたはアクセシビリティアクションを使用して、このパネルを移動します。" } }
+      }
+    },
+    "Floorp.PanelRegistry.WebPanelAccessibilityHint.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Double-tap to edit. Use the reorder control or accessibility actions to move this panel." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダブルタップして編集します。並べ替えコントロールまたはアクセシビリティアクションを使用して、このパネルを移動します。" } }
+      }
+    },
+    "Floorp.PanelRegistry.InsecureHTTPAccessibilityHint.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not secure. Double-tap to edit this HTTP panel." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "安全ではありません。ダブルタップしてこの HTTP パネルを編集します。" } }
+      }
+    },
+    "Floorp.PanelRegistry.NeedsAttentionAccessibilityHint.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This panel has invalid details. Double-tap to fix them." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このパネルの設定は無効です。ダブルタップして修正します。" } }
+      }
+    },
+    "Floorp.PanelRegistry.DiscardChangesTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Discard Changes?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更を破棄しますか？" } }
+      }
+    },
+    "Floorp.PanelRegistry.DiscardChangesMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your unsaved Web panel changes will be lost." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存されていない Web パネルの変更内容は失われます。" } }
+      }
+    },
+    "Floorp.PanelRegistry.KeepEditing.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep Editing" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "編集を続ける" } }
+      }
+    },
+    "Floorp.PanelRegistry.DiscardChanges.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Discard Changes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更を破棄" } }
+      }
+    },
+    "Floorp.PanelRegistry.PanelAccessibilityLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@、%2$@" } }
+      }
+    },
+    "Floorp.PanelRegistry.RestoredAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Built-in panels restored." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "標準パネルを復元しました。" } }
+      }
+    },
+    "Floorp.PanelRegistry.RemovedAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ removed from the sidebar." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@をサイドバーから削除しました。" } }
+      }
+    },
+    "Floorp.PanelRegistry.MoveAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ moved to position %2$d." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@を%2$d番目に移動しました。" } }
+      }
+    },
     "Floorp.Notes.ArchiveTooLargeSaveMessage.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Shorten this note or remove another note, then try again. Your changes are still here." } },
