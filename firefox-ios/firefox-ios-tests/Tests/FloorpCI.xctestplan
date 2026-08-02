@@ -308,6 +308,8 @@
         "FloorpWebPanelWebViewSessionTests\/testInitialLoadWaitsForContentRules()",
         "FloorpWebPanelWebViewSessionTests\/testInvalidateCancelsPendingLoadAndReleasesResources()",
         "FloorpWebPanelWebViewSessionTests\/testInvalidateCleanupOrdersFinalSuppressionAfterDelayedResume()",
+        "FloorpWebPanelWebViewSessionTests\/testInvalidateReleasesWebViewWhenJavaScriptTransitionNeverCompletes()",
+        "FloorpWebPanelWebViewSessionTests\/testInvalidateReleasesWebViewWhenNativeMediaTransitionNeverCompletes()",
         "FloorpWebPanelWebViewSessionTests\/testInvalidateReleasesSessionAndRuntimeBeforeLateMediaCompletion()",
         "FloorpWebPanelWebViewSessionTests\/testMetadataUpdatePreservesRuntimeAndNotifies()",
         "FloorpWebPanelWebViewSessionTests\/testObserverCanRemoveItselfDuringNotification()",

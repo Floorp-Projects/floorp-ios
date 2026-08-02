@@ -100,9 +100,7 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
     var stateDidChange: (@MainActor () -> Void)?
     private var tabWebView: TabWebView?
     private var observations = [NSKeyValueObservation]()
-    private var isMediaPlaybackSuppressed = false
-    private var mediaPlaybackTransitionGeneration = UUID()
-    private var mediaPlaybackTransitionTask: Task<Void, Never>?
+    private var mediaPlaybackController: FloorpWebPanelMediaPlaybackController?
 
     var contentView: UIView? { tabWebView }
     var webView: WKWebView? { tabWebView }
@@ -133,6 +131,7 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
             webView.isInspectable = true
         }
         tabWebView = webView
+        mediaPlaybackController = FloorpWebPanelMediaPlaybackController(webView: webView)
         observe(webView)
     }
 
@@ -165,58 +164,17 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
         _ isSuppressed: Bool,
         completion: @escaping @MainActor (Result<Void, Error>) -> Void
     ) {
-        guard isMediaPlaybackSuppressed != isSuppressed else {
-            completion(.success(()))
-            return
-        }
-        guard let webView = tabWebView else {
+        guard let mediaPlaybackController else {
             completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
             return
         }
-        guard mediaPlaybackTransitionTask == nil else {
-            completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
-            return
-        }
-
-        isMediaPlaybackSuppressed = isSuppressed
-        let generation = UUID()
-        mediaPlaybackTransitionGeneration = generation
-        mediaPlaybackTransitionTask = Task { @MainActor [weak self, weak webView] in
-            guard !Task.isCancelled,
-                  let webView,
-                  self?.isCurrentMediaPlaybackTransition(
-                    generation,
-                    webView: webView
-                  ) == true else {
-                completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
-                return
-            }
-
-            let result = await Self.performMediaPlaybackTransition(
-                on: webView,
-                isSuppressed: isSuppressed
-            )
-            guard !Task.isCancelled,
-                  self?.isCurrentMediaPlaybackTransition(
-                    generation,
-                    webView: webView
-                  ) == true else {
-                completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
-                return
-            }
-
-            self?.mediaPlaybackTransitionDidFinish(generation)
-            completion(result)
-        }
+        mediaPlaybackController.setSuppressed(isSuppressed, completion: completion)
     }
 
     func invalidate() {
         stateDidChange = nil
-        let pendingMediaPlaybackTransition = mediaPlaybackTransitionTask
-        let webViewForFinalSuppression = tabWebView
-        mediaPlaybackTransitionGeneration = UUID()
-        pendingMediaPlaybackTransition?.cancel()
-        mediaPlaybackTransitionTask = nil
+        mediaPlaybackController?.invalidate()
+        mediaPlaybackController = nil
         observations.forEach { $0.invalidate() }
         observations.removeAll()
         tabWebView?.stopLoading()
@@ -226,51 +184,6 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
         tabWebView?.configuration.userContentController.removeAllContentRuleLists()
         tabWebView?.removeFromSuperview()
         tabWebView = nil
-
-        if let webViewForFinalSuppression {
-            FloorpWebPanelMediaPlaybackCleanupScheduler.schedule(
-                after: pendingMediaPlaybackTransition
-            ) { [weak webViewForFinalSuppression] in
-                guard let webViewForFinalSuppression else { return }
-                await webViewForFinalSuppression.setAllMediaPlaybackSuspended(true)
-            }
-        }
-    }
-
-    private func isCurrentMediaPlaybackTransition(
-        _ generation: UUID,
-        webView: WKWebView
-    ) -> Bool {
-        mediaPlaybackTransitionGeneration == generation && tabWebView === webView
-    }
-
-    private func mediaPlaybackTransitionDidFinish(_ generation: UUID) {
-        guard mediaPlaybackTransitionGeneration == generation else { return }
-        mediaPlaybackTransitionTask = nil
-    }
-
-    private static func performMediaPlaybackTransition(
-        on webView: WKWebView,
-        isSuppressed: Bool
-    ) async -> Result<Void, Error> {
-        await webView.setAllMediaPlaybackSuspended(isSuppressed)
-        guard !Task.isCancelled else {
-            return .failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable)
-        }
-        guard isSuppressed else { return .success(()) }
-
-        // Native suspension remains authoritative. This one-shot pause is
-        // best effort and deliberately avoids persistent DOM mutations.
-        do {
-            _ = try await webView.evaluateJavaScript(
-                FloorpWebPanelMediaPlaybackScript.suppress,
-                in: nil,
-                contentWorld: .defaultClient
-            )
-            return .success(())
-        } catch {
-            return .failure(error)
-        }
     }
 
     func tabWebView(
@@ -318,20 +231,197 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
 }
 
 @MainActor
-enum FloorpWebPanelMediaPlaybackCleanupScheduler {
-    /// The cleanup task does not own the WebView; its caller supplies a weak
-    /// final-suppression closure. Waiting without a timeout is intentional:
-    /// racing the already-issued resume could leave it as the last native
-    /// transition, while a timeout cannot cancel that WebKit side effect.
-    @discardableResult
-    static func schedule(
-        after pendingTransition: Task<Void, Never>?,
-        finalSuppression: @escaping @MainActor () async -> Void
-    ) -> Task<Void, Never> {
-        Task { @MainActor in
-            await pendingTransition?.value
-            await finalSuppression()
+final class FloorpWebPanelMediaPlaybackTransitioner {
+    typealias Completion = @MainActor (Result<Void, Error>) -> Void
+    typealias NativeCallback = @MainActor () -> Void
+    typealias NativeSetter = @MainActor (
+        _ webView: WKWebView,
+        _ isSuppressed: Bool,
+        _ callback: NativeCallbackBox?
+    ) -> Void
+    typealias ScriptEvaluator = @MainActor (
+        _ webView: WKWebView,
+        _ completion: CompletionBox
+    ) -> Void
+
+    @MainActor
+    final class NativeCallbackBox {
+        private var callback: NativeCallback?
+
+        init(_ callback: @escaping NativeCallback) {
+            self.callback = callback
         }
+
+        func call() {
+            let callback = callback
+            self.callback = nil
+            callback?()
+        }
+    }
+
+    @MainActor
+    final class CompletionBox {
+        private var completion: Completion?
+
+        init(_ completion: @escaping Completion) {
+            self.completion = completion
+        }
+
+        func finish(with result: Result<Void, Error>) {
+            let completion = completion
+            self.completion = nil
+            completion?(result)
+        }
+    }
+
+    private let nativeSetter: NativeSetter
+    private let scriptEvaluator: ScriptEvaluator
+
+    init(
+        nativeSetter: @escaping NativeSetter = { webView, isSuppressed, callback in
+            webView.setAllMediaPlaybackSuspended(isSuppressed) {
+                callback?.call()
+            }
+        },
+        scriptEvaluator: @escaping ScriptEvaluator = { webView, completion in
+            webView.evaluateJavaScript(
+                FloorpWebPanelMediaPlaybackScript.suppress,
+                in: nil,
+                in: .defaultClient
+            ) { result in
+                completion.finish(with: result.map { _ in () })
+            }
+        }
+    ) {
+        self.nativeSetter = nativeSetter
+        self.scriptEvaluator = scriptEvaluator
+    }
+
+    func transition(
+        on webView: WKWebView,
+        isSuppressed: Bool,
+        completion: @escaping Completion
+    ) {
+        let scriptEvaluator = scriptEvaluator
+        let callback = NativeCallbackBox { [weak webView] in
+            guard isSuppressed else {
+                completion(.success(()))
+                return
+            }
+            guard let webView else {
+                completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
+                return
+            }
+
+            // Native suspension remains authoritative. This one-shot pause is
+            // best effort and deliberately avoids persistent DOM mutations.
+            scriptEvaluator(webView, CompletionBox(completion))
+        }
+        nativeSetter(webView, isSuppressed, callback)
+    }
+
+    func enforceFinalSuppression(on webView: WKWebView) {
+        nativeSetter(webView, true, nil)
+    }
+}
+
+@MainActor
+private final class FloorpWebPanelMediaPlaybackTransition {
+    private weak var webView: WKWebView?
+    private let transitioner: FloorpWebPanelMediaPlaybackTransitioner
+    private var completion: FloorpWebPanelMediaPlaybackTransitioner.Completion?
+    private var isInvalidated = false
+
+    init(
+        webView: WKWebView,
+        transitioner: FloorpWebPanelMediaPlaybackTransitioner,
+        completion: @escaping FloorpWebPanelMediaPlaybackTransitioner.Completion
+    ) {
+        self.webView = webView
+        self.transitioner = transitioner
+        self.completion = completion
+    }
+
+    func finish(with result: Result<Void, Error>) {
+        guard !isInvalidated else {
+            if let webView {
+                transitioner.enforceFinalSuppression(on: webView)
+            }
+            return
+        }
+        let completion = completion
+        self.completion = nil
+        completion?(result)
+    }
+
+    func invalidate() {
+        guard !isInvalidated else { return }
+        isInvalidated = true
+        completion = nil
+        if let webView {
+            transitioner.enforceFinalSuppression(on: webView)
+        }
+    }
+}
+
+@MainActor
+final class FloorpWebPanelMediaPlaybackController {
+    private weak var webView: WKWebView?
+    private let transitioner: FloorpWebPanelMediaPlaybackTransitioner
+    private var isSuppressed = false
+    private var transitionGeneration = UUID()
+    private var activeTransition: FloorpWebPanelMediaPlaybackTransition?
+
+    init(
+        webView: WKWebView,
+        transitioner: FloorpWebPanelMediaPlaybackTransitioner = .init()
+    ) {
+        self.webView = webView
+        self.transitioner = transitioner
+    }
+
+    func setSuppressed(
+        _ isSuppressed: Bool,
+        completion: @escaping FloorpWebPanelMediaPlaybackTransitioner.Completion
+    ) {
+        guard self.isSuppressed != isSuppressed else {
+            completion(.success(()))
+            return
+        }
+        guard let webView, activeTransition == nil else {
+            completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
+            return
+        }
+
+        self.isSuppressed = isSuppressed
+        let generation = UUID()
+        transitionGeneration = generation
+        let transition = FloorpWebPanelMediaPlaybackTransition(
+            webView: webView,
+            transitioner: transitioner
+        ) { [weak self] result in
+            guard let self, transitionGeneration == generation else { return }
+            activeTransition = nil
+            completion(result)
+        }
+        activeTransition = transition
+        transitioner.transition(
+            on: webView,
+            isSuppressed: isSuppressed
+        ) { [transition] result in
+            transition.finish(with: result)
+        }
+    }
+
+    func invalidate() {
+        transitionGeneration = UUID()
+        if let activeTransition {
+            activeTransition.invalidate()
+        } else if let webView {
+            transitioner.enforceFinalSuppression(on: webView)
+        }
+        activeTransition = nil
+        self.webView = nil
     }
 }
 

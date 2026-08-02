@@ -259,40 +259,102 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertNil(references.runtime.value)
     }
 
-    func testInvalidateCleanupOrdersFinalSuppressionAfterDelayedResume() async {
-        let gate = MockFloorpWebPanelAsyncGate()
-        var events = [String]()
-        let resumeTask = Task { @MainActor in
-            events.append("resume-started")
-            await gate.wait()
-            events.append("resume-finished")
-        }
-        await Task.yield()
-        XCTAssertTrue(gate.isWaiting)
-
-        let cleanupTask = FloorpWebPanelMediaPlaybackCleanupScheduler.schedule(
-            after: resumeTask
-        ) {
-            events.append("final-suppression")
-        }
-        events.append("invalidate-cancelled-resume")
-        resumeTask.cancel()
-        await Task.yield()
-
-        XCTAssertEqual(events, ["resume-started", "invalidate-cancelled-resume"])
-
-        gate.open()
-        await cleanupTask.value
-
-        XCTAssertEqual(
-            events,
-            [
-                "resume-started",
-                "invalidate-cancelled-resume",
-                "resume-finished",
-                "final-suppression",
-            ]
+    func testInvalidateCleanupOrdersFinalSuppressionAfterDelayedResume() {
+        let nativeSetter = MockFloorpWebPanelNativeMediaSetter()
+        let transitioner = makeMediaPlaybackTransitioner(nativeSetter: nativeSetter)
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let controller = FloorpWebPanelMediaPlaybackController(
+            webView: webView,
+            transitioner: transitioner
         )
+        var results = [Result<Void, Error>]()
+
+        controller.setSuppressed(true) { results.append($0) }
+        nativeSetter.completeNextTransition()
+        controller.setSuppressed(false) { results.append($0) }
+
+        XCTAssertEqual(nativeSetter.requests, [true, false])
+        XCTAssertEqual(nativeSetter.pendingCompletionCount, 1)
+
+        controller.invalidate()
+
+        XCTAssertEqual(nativeSetter.requests, [true, false, true])
+        XCTAssertEqual(nativeSetter.pendingCompletionCount, 1)
+
+        nativeSetter.completeNextTransition()
+
+        XCTAssertEqual(nativeSetter.requests, [true, false, true, true])
+        XCTAssertEqual(nativeSetter.pendingCompletionCount, 0)
+        XCTAssertEqual(results.count, 1)
+        if case .failure = results[0] {
+            XCTFail("Initial suppression should complete successfully")
+        }
+    }
+
+    func testInvalidateReleasesWebViewWhenNativeMediaTransitionNeverCompletes() async {
+        let nativeSetter = MockFloorpWebPanelNativeMediaSetter()
+        let transitioner = makeMediaPlaybackTransitioner(nativeSetter: nativeSetter)
+        var webViewReference: WeakReference<WKWebView>?
+        var controllerReference: WeakReference<FloorpWebPanelMediaPlaybackController>?
+        var completionOwnerReference: WeakReference<MockFloorpWebPanelCompletionOwner>?
+
+        autoreleasepool {
+            let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+            let completionOwner = MockFloorpWebPanelCompletionOwner()
+            let controller = FloorpWebPanelMediaPlaybackController(
+                webView: webView,
+                transitioner: transitioner
+            )
+            webViewReference = WeakReference(webView)
+            controllerReference = WeakReference(controller)
+            completionOwnerReference = WeakReference(completionOwner)
+            controller.setSuppressed(true) { [completionOwner] _ in
+                completionOwner.callCount += 1
+            }
+            controller.invalidate()
+        }
+        await waitForDeallocation(webViewReference)
+
+        XCTAssertEqual(nativeSetter.requests, [true, true])
+        XCTAssertEqual(nativeSetter.pendingCompletionCount, 1)
+        XCTAssertNil(webViewReference?.value)
+        XCTAssertNil(controllerReference?.value)
+        XCTAssertNil(completionOwnerReference?.value)
+    }
+
+    func testInvalidateReleasesWebViewWhenJavaScriptTransitionNeverCompletes() async {
+        let nativeSetter = MockFloorpWebPanelNativeMediaSetter(completesImmediately: true)
+        let scriptEvaluator = MockFloorpWebPanelMediaScriptEvaluator()
+        let transitioner = makeMediaPlaybackTransitioner(
+            nativeSetter: nativeSetter,
+            scriptEvaluator: scriptEvaluator
+        )
+        var webViewReference: WeakReference<WKWebView>?
+        var controllerReference: WeakReference<FloorpWebPanelMediaPlaybackController>?
+        var completionOwnerReference: WeakReference<MockFloorpWebPanelCompletionOwner>?
+
+        autoreleasepool {
+            let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+            let completionOwner = MockFloorpWebPanelCompletionOwner()
+            let controller = FloorpWebPanelMediaPlaybackController(
+                webView: webView,
+                transitioner: transitioner
+            )
+            webViewReference = WeakReference(webView)
+            controllerReference = WeakReference(controller)
+            completionOwnerReference = WeakReference(completionOwner)
+            controller.setSuppressed(true) { [completionOwner] _ in
+                completionOwner.callCount += 1
+            }
+            controller.invalidate()
+        }
+        await waitForDeallocation(webViewReference)
+
+        XCTAssertEqual(nativeSetter.requests, [true, true])
+        XCTAssertEqual(scriptEvaluator.pendingCompletionCount, 1)
+        XCTAssertNil(webViewReference?.value)
+        XCTAssertNil(controllerReference?.value)
+        XCTAssertNil(completionOwnerReference?.value)
     }
 
     func testOpenCurrentPageInMainBrowserAllowsOnlySafeCurrentURL() throws {
@@ -485,6 +547,36 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         fixture.session.invalidate()
         XCTAssertEqual(fixture.runtime.invalidateCallCount, 1)
         return (session, runtime)
+    }
+
+    private func makeMediaPlaybackTransitioner(
+        nativeSetter: MockFloorpWebPanelNativeMediaSetter,
+        scriptEvaluator: MockFloorpWebPanelMediaScriptEvaluator? = nil
+    ) -> FloorpWebPanelMediaPlaybackTransitioner {
+        FloorpWebPanelMediaPlaybackTransitioner(
+            nativeSetter: { webView, isSuppressed, callback in
+                nativeSetter.setSuppressed(
+                    isSuppressed,
+                    on: webView,
+                    callback: callback
+                )
+            },
+            scriptEvaluator: { webView, completion in
+                if let scriptEvaluator {
+                    scriptEvaluator.evaluate(on: webView, completion: completion)
+                } else {
+                    completion.finish(with: .success(()))
+                }
+            }
+        )
+    }
+
+    private func waitForDeallocation<Object: AnyObject>(
+        _ reference: WeakReference<Object>?
+    ) async {
+        for _ in 0..<50 where reference?.value != nil {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 
     private struct Fixture {
@@ -764,23 +856,61 @@ private final class MockFloorpWebPanelMediaPlaybackCompletionRelay {
 }
 
 @MainActor
-private final class MockFloorpWebPanelAsyncGate {
-    private var continuation: CheckedContinuation<Void, Never>?
+private final class MockFloorpWebPanelNativeMediaSetter {
+    private var completions = [FloorpWebPanelMediaPlaybackTransitioner.NativeCallbackBox]()
+    private(set) var requests = [Bool]()
+    private(set) var webViews = [WeakReference<WKWebView>]()
+    private let completesImmediately: Bool
 
-    var isWaiting: Bool {
-        continuation != nil
+    var pendingCompletionCount: Int {
+        completions.count
     }
 
-    func wait() async {
-        await withCheckedContinuation { continuation in
-            self.continuation = continuation
+    init(completesImmediately: Bool = false) {
+        self.completesImmediately = completesImmediately
+    }
+
+    func setSuppressed(
+        _ isSuppressed: Bool,
+        on webView: WKWebView,
+        callback: FloorpWebPanelMediaPlaybackTransitioner.NativeCallbackBox?
+    ) {
+        requests.append(isSuppressed)
+        webViews.append(WeakReference(webView))
+        guard let callback else { return }
+        if completesImmediately {
+            callback.call()
+        } else {
+            completions.append(callback)
         }
     }
 
-    func open() {
-        continuation?.resume()
-        continuation = nil
+    func completeNextTransition() {
+        guard !completions.isEmpty else { return }
+        completions.removeFirst().call()
     }
+}
+
+@MainActor
+private final class MockFloorpWebPanelMediaScriptEvaluator {
+    private var completions = [FloorpWebPanelMediaPlaybackTransitioner.CompletionBox]()
+    private(set) var webViews = [WeakReference<WKWebView>]()
+
+    var pendingCompletionCount: Int {
+        completions.count
+    }
+
+    func evaluate(
+        on webView: WKWebView,
+        completion: FloorpWebPanelMediaPlaybackTransitioner.CompletionBox
+    ) {
+        webViews.append(WeakReference(webView))
+        completions.append(completion)
+    }
+}
+
+private final class MockFloorpWebPanelCompletionOwner {
+    var callCount = 0
 }
 
 private final class WeakReference<Object: AnyObject> {
