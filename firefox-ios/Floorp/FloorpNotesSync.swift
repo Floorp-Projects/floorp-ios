@@ -17,12 +17,12 @@ enum FloorpNotesSyncError: Error, Equatable, Sendable {
     case baseAccountMismatch(expected: String, actual: String)
     case invalidRecordLimit(Int)
     case invalidNoteID(source: FloorpNotesSyncSource, index: Int)
-    case duplicateNoteID(source: FloorpNotesSyncSource, id: String)
+    case duplicateNoteID(source: FloorpNotesSyncSource, id: FloorpNoteID)
     case invalidRemotePayload
     case invalidApplicationServicesBoundary
     case unsupportedRemoteFields([String])
     case missingRemoteIDsAfterInitialSync
-    case conflictIDExhausted(String)
+    case conflictIDExhausted(FloorpNoteID)
     case tooManyNotes(Int)
     case recordTooLarge(actualBytes: Int, maximumBytes: Int)
 }
@@ -191,8 +191,8 @@ protocol FloorpNotesSyncTransport: Sendable {
 }
 
 struct FloorpNotesSyncConflict: Equatable, Sendable {
-    let originalNoteID: String
-    let conflictCopyID: String
+    let originalNoteID: FloorpNoteID
+    let conflictCopyID: FloorpNoteID
 }
 
 struct FloorpNotesSyncMergeResult: Equatable, Sendable {
@@ -557,14 +557,14 @@ enum FloorpNotesSyncPlanner {
         var notes = [FloorpNote]()
         notes.reserveCapacity(count)
         for index in 0..<count {
-            let id: String
+            let id: FloorpNoteID
             if let ids {
                 id = ids[index]
             } else {
                 let digest = deterministicDigest(
                     strings: [accountID, record.revision ?? "", payloadDigest, String(index)]
                 )
-                id = "floorp-sync-legacy-\(digest)"
+                id = FloorpNoteID("floorp-sync-legacy-\(digest)")
             }
             let createdAt = validTimestamp(payload.createdAts, at: index) ?? now
             let updatedAt = max(
@@ -587,19 +587,20 @@ enum FloorpNotesSyncPlanner {
 
     private static func validatedExplicitRemoteIDs(
         _ payload: FloorpNotesDesktopPayload
-    ) throws -> [String]? {
+    ) throws -> [FloorpNoteID]? {
         guard let ids = payload.ids else { return nil }
         guard ids.count == payload.titles.count else {
             throw FloorpNotesSyncError.invalidRemotePayload
         }
 
-        var seen = Set<String>()
-        var validated = [String]()
+        var seen = Set<FloorpNoteID>()
+        var validated = [FloorpNoteID]()
         validated.reserveCapacity(ids.count)
-        for (index, id) in ids.enumerated() {
-            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        for (index, rawID) in ids.enumerated() {
+            guard !rawID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw FloorpNotesSyncError.invalidNoteID(source: .remote, index: index)
             }
+            let id = FloorpNoteID(rawID)
             guard seen.insert(id).inserted else {
                 throw FloorpNotesSyncError.duplicateNoteID(source: .remote, id: id)
             }
@@ -638,8 +639,8 @@ enum FloorpNotesSyncPlanner {
 
 enum FloorpNotesSyncMerger {
     private struct IndexedNotes {
-        let order: [String]
-        let byID: [String: FloorpNote]
+        let order: [FloorpNoteID]
+        let byID: [FloorpNoteID: FloorpNote]
     }
 
     private struct ConflictResolution {
@@ -673,9 +674,9 @@ enum FloorpNotesSyncMerger {
                 )
             )
         })
-        var mergedByID = [String: FloorpNote]()
-        var generatedConflictCopies = [String: FloorpNote]()
-        var conflictIDByOriginal = [String: String]()
+        var mergedByID = [FloorpNoteID: FloorpNote]()
+        var generatedConflictCopies = [FloorpNoteID: FloorpNote]()
+        var conflictIDByOriginal = [FloorpNoteID: FloorpNoteID]()
         var conflicts = [FloorpNotesSyncConflict]()
 
         for id in originalIDs {
@@ -730,8 +731,8 @@ enum FloorpNotesSyncMerger {
             ? localIndex.order
             : remoteIndex.order
 
-        var orderedIDs = [String]()
-        var appendedIDs = Set<String>()
+        var orderedIDs = [FloorpNoteID]()
+        var appendedIDs = Set<FloorpNoteID>()
         appendOrder(
             primaryOrder,
             availableIDs: availableIDs,
@@ -858,9 +859,9 @@ enum FloorpNotesSyncMerger {
 
     private static func availableConflictCopy(
         losingNote: FloorpNote,
-        existingIDs: inout Set<String>,
-        originalResolutions: [String: Resolution],
-        generatedConflictCopies: [String: FloorpNote]
+        existingIDs: inout Set<FloorpNoteID>,
+        originalResolutions: [FloorpNoteID: Resolution],
+        generatedConflictCopies: [FloorpNoteID: FloorpNote]
     ) throws -> AvailableConflictCopy {
         for probe in 0...FloorpNotesStore.maximumNoteCount {
             let candidate = FloorpNote(
@@ -904,7 +905,7 @@ enum FloorpNotesSyncMerger {
     }
 
     private static func sameWireNote(_ lhs: FloorpNote, _ rhs: FloorpNote) -> Bool {
-        FloorpNotesSyncWire.stringsAreEqual(lhs.id, rhs.id)
+        lhs.id == rhs.id
             && FloorpNotesSyncWire.stringsAreEqual(lhs.title, rhs.title)
             && FloorpNotesSyncWire.stringsAreEqual(lhs.content, rhs.content)
             && lhs.createdAt == rhs.createdAt
@@ -914,24 +915,24 @@ enum FloorpNotesSyncMerger {
     private static func conflictCopyID(
         losingNote: FloorpNote,
         probe: Int
-    ) -> String {
+    ) -> FloorpNoteID {
         var data = Data()
         // Preserve the pre-v1 candidate-ID layout while making its dependency
         // explicit: both this prefix and the canonical bytes come from the
         // losing note, never from the winner or the current merge clock.
-        FloorpNotesSyncPlanner.append(losingNote.id, to: &data)
+        FloorpNotesSyncPlanner.append(losingNote.id.rawValue, to: &data)
         data.append(canonicalData(for: losingNote))
         if probe > 0 {
             FloorpNotesSyncPlanner.append(String(probe), to: &data)
         }
-        return "floorp-sync-conflict-\(SHA256.hash(data: data).hexString)"
+        return FloorpNoteID("floorp-sync-conflict-\(SHA256.hash(data: data).hexString)")
     }
 
     private static func canonicalData(for note: FloorpNote) -> Data {
         var data = Data()
         // Only fields represented by the desktop parallel-array payload
         // participate so iOS and Desktop derive identical winners and IDs.
-        for string in [note.id, note.title, note.content] {
+        for string in [note.id.rawValue, note.title, note.content] {
             FloorpNotesSyncPlanner.append(string, to: &data)
         }
         var createdAt = note.createdAt.bigEndian
@@ -945,11 +946,11 @@ enum FloorpNotesSyncMerger {
         _ notes: [FloorpNote],
         source: FloorpNotesSyncSource
     ) throws -> IndexedNotes {
-        var byID = [String: FloorpNote]()
-        var order = [String]()
+        var byID = [FloorpNoteID: FloorpNote]()
+        var order = [FloorpNoteID]()
         order.reserveCapacity(notes.count)
         for (index, note) in notes.enumerated() {
-            guard !note.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard !note.id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw FloorpNotesSyncError.invalidNoteID(source: source, index: index)
             }
             guard byID[note.id] == nil else {
@@ -961,9 +962,9 @@ enum FloorpNotesSyncMerger {
         return IndexedNotes(order: order, byID: byID)
     }
 
-    private static func stableUnion(_ orders: [String]...) -> [String] {
-        var ids = [String]()
-        var seen = Set<String>()
+    private static func stableUnion(_ orders: [FloorpNoteID]...) -> [FloorpNoteID] {
+        var ids = [FloorpNoteID]()
+        var seen = Set<FloorpNoteID>()
         for order in orders {
             for id in order where seen.insert(id).inserted {
                 ids.append(id)
@@ -973,9 +974,9 @@ enum FloorpNotesSyncMerger {
     }
 
     private static func orderChanged(
-        candidate: [String],
-        base: [String],
-        availableIDs: Set<String>
+        candidate: [FloorpNoteID],
+        base: [FloorpNoteID],
+        availableIDs: Set<FloorpNoteID>
     ) -> Bool {
         let baseIDs = Set(base)
         let candidateBaseOrder = candidate.filter {
@@ -989,11 +990,11 @@ enum FloorpNotesSyncMerger {
     }
 
     private static func appendOrder(
-        _ source: [String],
-        availableIDs: Set<String>,
-        conflictIDByOriginal: [String: String],
-        orderedIDs: inout [String],
-        appendedIDs: inout Set<String>
+        _ source: [FloorpNoteID],
+        availableIDs: Set<FloorpNoteID>,
+        conflictIDByOriginal: [FloorpNoteID: FloorpNoteID],
+        orderedIDs: inout [FloorpNoteID],
+        appendedIDs: inout Set<FloorpNoteID>
     ) {
         for id in source where availableIDs.contains(id) {
             if appendedIDs.insert(id).inserted {

@@ -9,6 +9,46 @@ import UIKit
 import UniformTypeIdentifiers
 @testable import Client
 
+func makeFloorpTestNote(
+    id: FloorpNoteID,
+    title: String,
+    content: String,
+    createdAt: Int64,
+    updatedAt: Int64,
+    contentFormat: FloorpNoteContentFormat = .automatic
+) -> FloorpNote {
+    FloorpNote(
+        id: id,
+        title: title,
+        content: content,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        contentFormat: contentFormat
+    )
+}
+
+func makeFloorpTestNote(
+    id: String,
+    title: String,
+    content: String,
+    createdAt: Int64,
+    updatedAt: Int64,
+    contentFormat: FloorpNoteContentFormat = .automatic
+) -> FloorpNote {
+    makeFloorpTestNote(
+        id: FloorpNoteID(id),
+        title: title,
+        content: content,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        contentFormat: contentFormat
+    )
+}
+
+func makeFloorpTestNoteIDs(_ rawValues: [String]) -> [FloorpNoteID] {
+    rawValues.map(FloorpNoteID.init)
+}
+
 final class FloorpNoteIDTests: XCTestCase {
     func testEqualityHashingAndOrderingUseExactUTF8Bytes() {
         let composed = FloorpNoteID("\u{00E9}")
@@ -25,7 +65,7 @@ final class FloorpNoteIDTests: XCTestCase {
         let original = FloorpNoteID(" note-e\u{0301} ")
         let data = try JSONEncoder().encode(original)
 
-        XCTAssertEqual(try JSONSerialization.jsonObject(with: data) as? String, original.rawValue)
+        XCTAssertEqual(try JSONDecoder().decode(String.self, from: data), original.rawValue)
         let decoded = try JSONDecoder().decode(FloorpNoteID.self, from: data)
         XCTAssertEqual(Data(decoded.rawValue.utf8), Data(original.rawValue.utf8))
     }
@@ -233,9 +273,88 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         }
 
         XCTAssertEqual(notes.map(\.title), ["One", "Two"])
-        XCTAssertEqual(notes.map(\.id), ["duplicate", "generated-id"])
+        XCTAssertEqual(notes.map(\.id), makeFloorpTestNoteIDs(["duplicate", "generated-id"]))
         XCTAssertEqual(notes.map(\.createdAt), [1_000, 1_000])
         XCTAssertEqual(FloorpNotesDesktopPayload(notes: notes).contents, ["A", "B"])
+    }
+
+    func testDesktopPayloadPreservesCanonicallyEquivalentIDsAndUsesByteExactEquality() throws {
+        let composed = "note-\u{00E9}"
+        let decomposed = "note-e\u{0301}"
+        let payload = FloorpNotesDesktopPayload(
+            ids: [composed, decomposed],
+            titles: ["Composed", "Decomposed"],
+            contents: ["A", "B"]
+        )
+        var generatedIDCount = 0
+
+        let notes = try payload.normalizedNotes(now: 1_000) {
+            generatedIDCount += 1
+            return "unexpected-generated-id"
+        }
+
+        XCTAssertEqual(generatedIDCount, 0)
+        XCTAssertEqual(notes.map(\.id), [FloorpNoteID(composed), FloorpNoteID(decomposed)])
+        XCTAssertEqual(
+            FloorpNotesDesktopPayload(notes: notes).ids?.map { Data($0.utf8) },
+            [Data(composed.utf8), Data(decomposed.utf8)]
+        )
+        XCTAssertNotEqual(
+            payload,
+            FloorpNotesDesktopPayload(
+                ids: [composed, composed],
+                titles: payload.titles,
+                contents: payload.contents
+            )
+        )
+    }
+
+    func testCanonicallyEquivalentIDsPersistReorderUpdateAndDeleteIndependentlyAcrossRestarts() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        let composedID = FloorpNoteID("note-\u{00E9}")
+        let decomposedID = FloorpNoteID("note-e\u{0301}")
+        let notes = [
+            makeFloorpTestNote(
+                id: composedID,
+                title: "Composed",
+                content: "A",
+                createdAt: 1,
+                updatedAt: 1
+            ),
+            makeFloorpTestNote(
+                id: decomposedID,
+                title: "Decomposed",
+                content: "B",
+                createdAt: 2,
+                updatedAt: 2
+            ),
+        ]
+
+        try await FloorpNotesStore(fileURL: location.archive).replaceAllNotes(with: notes)
+        let reorderStore = FloorpNotesStore(fileURL: location.archive)
+        let initiallyRestartedIDs = try await reorderStore.loadNotes().map(\.id)
+        XCTAssertEqual(initiallyRestartedIDs, [composedID, decomposedID])
+
+        try await reorderStore.reorderNotes(orderedIDs: [decomposedID, composedID])
+        let updateStore = FloorpNotesStore(fileURL: location.archive)
+        let reorderedRestartedIDs = try await updateStore.loadNotes().map(\.id)
+        XCTAssertEqual(reorderedRestartedIDs, [decomposedID, composedID])
+
+        _ = try await updateStore.updateNote(
+            id: composedID,
+            title: "Updated composed",
+            content: "A2"
+        )
+        let deleteStore = FloorpNotesStore(fileURL: location.archive)
+        let updatedNotes = try await deleteStore.loadNotes()
+        XCTAssertEqual(updatedNotes.first(where: { $0.id == composedID })?.title, "Updated composed")
+        XCTAssertEqual(updatedNotes.first(where: { $0.id == decomposedID })?.title, "Decomposed")
+
+        try await deleteStore.deleteNote(id: decomposedID)
+        let finalNotes = try await FloorpNotesStore(fileURL: location.archive).loadNotes()
+        XCTAssertEqual(finalNotes.map(\.id), [composedID])
+        XCTAssertEqual(finalNotes.first?.content, "A2")
     }
 
     func testPlainJSONCreatedOnIOSRemainsEditableAfterRestart() async throws {
@@ -503,14 +622,14 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         let second = try await store.createNote(title: "Second", content: "B")
         let third = try await store.createNote(title: "Third", content: "C")
 
-        try await store.reorderNotes(orderedIDs: [first.id, first.id, "missing"])
+        try await store.reorderNotes(orderedIDs: [first.id, first.id, FloorpNoteID("missing")])
         let reorderedIDs = try await store.loadNotes().map(\.id)
         XCTAssertEqual(reorderedIDs, [first.id, third.id, second.id])
 
         try await store.replaceAllNotes(with: [second, first])
         let payloadData = try await store.desktopPayloadData()
         let payload = try JSONDecoder().decode(FloorpNotesDesktopPayload.self, from: payloadData)
-        XCTAssertEqual(payload.ids, [second.id, first.id])
+        XCTAssertEqual(payload.ids, [second.id.rawValue, first.id.rawValue])
         XCTAssertEqual(payload.contents, ["B", "A"])
 
         let restartedStore = FloorpNotesStore(fileURL: location.archive)
@@ -522,7 +641,7 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         let location = try makeTemporaryArchiveLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }
         let store = FloorpNotesStore(fileURL: location.archive)
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "duplicate",
             title: "One",
             content: "",
@@ -538,7 +657,7 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         }
 
         let tooMany = (0...FloorpNotesStore.maximumNoteCount).map { index in
-            FloorpNote(
+            makeFloorpTestNote(
                 id: "note-\(index)",
                 title: "Note",
                 content: "",
@@ -700,7 +819,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         var savedDrafts = [FloorpNote]()
         let editor = makeEditor(note: draft, isPersisted: false) { note in
             savedDrafts.append(note)
-            return FloorpNote(
+            return makeFloorpTestNote(
                 id: "persisted-id",
                 title: note.title,
                 content: note.content,
@@ -735,7 +854,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         let editor = makeEditor(note: makeDraft(), isPersisted: false) { note in
             saveCount += 1
             guard saveCount > 1 else { throw SaveError.expected }
-            return FloorpNote(
+            return makeFloorpTestNote(
                 id: "persisted-id",
                 title: note.title,
                 content: note.content,
@@ -795,7 +914,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testRichNoteExposesAccessibleDesktopFormattingControls() throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Hello"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "rich-note",
             title: "Rich",
             content: source,
@@ -848,7 +967,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             factoryCount += 1
             return FloorpRichTextWebEditorView()
         }
-        let plainNote = FloorpNote(
+        let plainNote = makeFloorpTestNote(
             id: "factory-plain",
             title: "Plain",
             content: "Plain body",
@@ -872,7 +991,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             {"type":"image","attrs":{"src":"https://images.example.test/photo.png"}}
           ] }
         """
-        let readOnlyNote = FloorpNote(
+        let readOnlyNote = makeFloorpTestNote(
             id: "factory-read-only",
             title: "Remote",
             content: remoteSource,
@@ -898,7 +1017,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         XCTAssertFalse(readOnlyBody.isEditable)
 
         let richSource = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
-        let richNote = FloorpNote(
+        let richNote = makeFloorpTestNote(
             id: "factory-rich",
             title: "Rich",
             content: richSource,
@@ -920,7 +1039,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testCloseInvalidatesAndReleasesRichEditorWithPendingJavaScript() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "close-release",
             title: "Close",
             content: source,
@@ -974,7 +1093,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testControllerDeinitInvalidatesRichEditorWithPendingJavaScript() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "deinit-release",
             title: "Deinit",
             content: source,
@@ -1023,7 +1142,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testBridgeRecoveryInvalidatesAndReleasesReplacedRichEditor() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "recovery-release",
             title: "Recovery",
             content: source,
@@ -1086,7 +1205,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testTerminatedPreflightCannotRecreateReleasedRichEditor() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "terminated-preflight",
             title: "Termination",
             content: source,
@@ -1144,7 +1263,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
           {"type":"paragraph","content":[{"type":"text","text":"Visible desktop body"}]}
         ]}
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: String(repeating: "é", count: 600),
             title: "Long identity",
             content: source,
@@ -1184,7 +1303,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             {"type":"paragraph","content":[{"type":"text","text":"Opaque spacing"}]}
           ] }
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "temporary-rich-id",
             title: "New rich",
             content: source,
@@ -1205,7 +1324,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
         XCTAssertTrue(didSave)
         let rebound = try XCTUnwrap(editor.currentRichTextSession)
-        XCTAssertEqual(rebound.noteID, "persisted-rich-id")
+        XCTAssertEqual(rebound.noteID, FloorpNoteID("persisted-rich-id"))
         XCTAssertNotEqual(rebound.documentID, initialSession.documentID)
         XCTAssertEqual(editor.currentDraftForTesting.content, source)
         let snapshot = try await richView.snapshot(expectedSession: rebound)
@@ -1223,7 +1342,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             ]}
           ] } }
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "lexical-copy-source",
             title: "Lexical",
             content: source,
@@ -1243,7 +1362,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
         XCTAssertTrue(didCopy)
         let rebound = try XCTUnwrap(editor.currentRichTextSession)
-        XCTAssertEqual(rebound.noteID, "lexical-copy-target")
+        XCTAssertEqual(rebound.noteID, FloorpNoteID("lexical-copy-target"))
         XCTAssertEqual(editor.currentDraftForTesting.content, source)
         XCTAssertEqual(persistence.savedCopyDrafts.last?.content, source)
         let snapshot = try await richView.snapshot(expectedSession: rebound)
@@ -1363,7 +1482,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
     }
 
     func testPlainNoteCanEnterRichEditorWithoutLosingItsText() async throws {
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "plain-to-rich",
             title: "Plain",
             content: "First\n\nThird",
@@ -1404,7 +1523,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
     }
 
     func testDelayedPlainToRichPreflightRebuildsFromTheNewestLockedBody() async throws {
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "delayed-conversion",
             title: "Plain",
             content: "First body",
@@ -1472,7 +1591,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
     }
 
     func testCloseCancelsPendingPlainToRichConversionBeforeDismissal() async throws {
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "cancel-conversion",
             title: "Plain",
             content: "Must remain plain",
@@ -1505,7 +1624,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testImmediateSaveFlushesUnsentWebEditorInput() async throws {
         let originalSource = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "flush-before-save",
             title: "Flush",
             content: originalSource,
@@ -1544,7 +1663,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testRapidRichCommandsQuiesceBeforeImmediateCloseAndDoNotRunAfterFlush() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Format me"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "rapid-close",
             title: "Commands",
             content: source,
@@ -1595,7 +1714,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testCloseCommandFailureResumesWaiterAndRecoversOnlyAfterClosing() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Format me"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "failed-command-close",
             title: "Commands",
             content: source,
@@ -1675,7 +1794,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testCloseProcessTerminationDoesNotRestartWebContentWhileClosing() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Format me"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "terminated-command-close",
             title: "Commands",
             content: source,
@@ -1759,7 +1878,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testCloseInvalidatesTerminatedActiveRecoveryBeforeRestarting() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Recover"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "terminated-recovery-close",
             title: "Recovery",
             content: source,
@@ -1844,7 +1963,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testInputImmediatelyFollowedByBoldItalicAndCloseKeepsLatestDOM() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "input-command-close",
             title: "Immediate",
             content: source,
@@ -1902,7 +2021,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testCloseWaitsForSelectedImageInsteadOfSilentlyCancellingIt() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Image"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "image-close",
             title: "Image",
             content: source,
@@ -1942,7 +2061,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         let source = "{\"type\":\"doc\",\"content\":["
             + Array(repeating: imageNode, count: 4).joined(separator: ",")
             + "]}"
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "image-aggregate-rejection",
             title: "Images",
             content: source,
@@ -1998,7 +2117,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testImageImportTimeoutKeepsEditorOpenWithExplicitFailure() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Wait"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "image-timeout",
             title: "Image",
             content: source,
@@ -2033,7 +2152,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testStalledRecoveryLoadFailsClosedWithoutPermanentlyBlockingClose() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Recover"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "stalled-load",
             title: "Recovery",
             content: source,
@@ -2104,7 +2223,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
           {"type":"paragraph","content":[{"type":"text","text":"Visible fallback"}]}
         ]}
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "initial-navigation-stall",
             title: "Navigation",
             content: source,
@@ -2159,7 +2278,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
     }
 
     func testLateRichLoadCreatesEditorAfterConversionAndCanSaveAndClose() async throws {
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "late-rich-load",
             title: "Late navigation",
             content: "Body after navigation failure",
@@ -2206,7 +2325,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
     }
 
     func testLazyRichLoadBoundsTwoRecoveryNavigationFailuresWithoutLingeringWork() async throws {
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "bounded-late-rich-load",
             title: "Bounded navigation",
             content: "Visible bounded fallback",
@@ -2261,7 +2380,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
 
     func testOverflowAndDeletedNoteRecoveryKeepsNewestEnvelopeForReeditAndCopy() async throws {
         let originalSource = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "deleted-rich-note",
             title: "Recovery",
             content: originalSource,
@@ -2328,12 +2447,12 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         XCTAssertEqual(persistence.preflightCopyDrafts.last?.content, newestSource)
         XCTAssertEqual(persistence.savedCopyDrafts.last?.content, newestSource)
         XCTAssertNil(editor.currentRichTextRecoveryDraft)
-        XCTAssertEqual(editor.currentRichTextSession?.noteID, "recovery-copy")
+        XCTAssertEqual(editor.currentRichTextSession?.noteID, FloorpNoteID("recovery-copy"))
     }
 
     func testFailedRichSaveAsCopyDoesNotAdvanceWebRevision() async throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]}]}"#
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "copy-revision",
             title: "Copy",
             content: source,
@@ -2383,7 +2502,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
           {"type":"paragraph","content":[{"type":"text","text":"Recovery"}]}
         ]}
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "copy-recovery-precedence",
             title: "Recovery",
             content: originalSource,
@@ -2449,7 +2568,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             {"type":"futureWidget","opaque":{"keep":"exactly"}}
           ] } }
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "unknown-lexical",
             title: "Preserve",
             content: source,
@@ -2501,7 +2620,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
             ]}
           ] } }
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "known-lexical",
             title: "Before",
             content: source,
@@ -2548,7 +2667,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         ]
 
         for (index, source) in fixtures.enumerated() {
-            let note = FloorpNote(
+            let note = makeFloorpTestNote(
                 id: "title-recovery-\(index)",
                 title: "Before",
                 content: source,
@@ -2605,7 +2724,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
           {"type":"paragraph","content":[{"type":"text","text":"Original"}]}
         ]}
         """
-        let note = FloorpNote(
+        let note = makeFloorpTestNote(
             id: "bridge-note",
             title: "Bridge",
             content: originalSource,
@@ -2828,7 +2947,7 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
     }
 
     private func makeDraft() -> FloorpNote {
-        FloorpNote(
+        makeFloorpTestNote(
             id: "draft-id",
             title: "New Note",
             content: "",
@@ -2890,7 +3009,7 @@ private final class FloorpRichTextTestPersistence: FloorpNotePersistence {
     func save(_ draft: FloorpNote) async throws -> FloorpNote {
         savedDrafts.append(draft)
         guard let savedNoteID else { return draft }
-        return FloorpNote(
+        return makeFloorpTestNote(
             id: savedNoteID,
             title: draft.title,
             content: draft.content,
@@ -2907,7 +3026,7 @@ private final class FloorpRichTextTestPersistence: FloorpNotePersistence {
     func saveAsCopy(_ draft: FloorpNote) async throws -> FloorpNote {
         savedCopyDrafts.append(draft)
         if let copyError { throw copyError }
-        return FloorpNote(
+        return makeFloorpTestNote(
             id: copyNoteID,
             title: draft.title,
             content: draft.content,
@@ -3584,7 +3703,7 @@ final class FloorpRichTextWebEditorViewTests: XCTestCase {
 
     private func makeSession(noteID: String) throws -> FloorpRichTextEditorSessionCursor {
         try FloorpRichTextEditorSessionCursor(
-            noteID: noteID,
+            noteID: FloorpNoteID(noteID),
             documentID: UUID().uuidString,
             generation: 0,
             revision: 0
@@ -3690,7 +3809,7 @@ final class FloorpNotePersistenceSessionTests: XCTestCase {
         var draft = makeDraft(title: "First", content: "Body")
 
         let created = try await session.save(draft)
-        XCTAssertEqual(created.id, "persisted-id")
+        XCTAssertEqual(created.id, FloorpNoteID("persisted-id"))
 
         draft.title = "Updated"
         draft.content = "New body"
@@ -3708,7 +3827,7 @@ final class FloorpNotePersistenceSessionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: location.directory) }
 
         let store = FloorpNotesStore(fileURL: location.archive)
-        var reportedIDs = [String]()
+        var reportedIDs = [FloorpNoteID]()
         let session = FloorpNotePersistenceSession(
             notesStore: store,
             persistedNote: nil,
@@ -3785,7 +3904,7 @@ final class FloorpNotePersistenceSessionTests: XCTestCase {
         let saved = try await session.save(draft)
         let notesAfterRetry = try await store.loadNotes()
 
-        XCTAssertEqual(saved.id, "persisted-id")
+        XCTAssertEqual(saved.id, FloorpNoteID("persisted-id"))
         XCTAssertEqual(notesAfterRetry, [saved])
     }
 
@@ -3821,7 +3940,7 @@ final class FloorpNotePersistenceSessionTests: XCTestCase {
     }
 
     private func makeDraft(title: String, content: String) -> FloorpNote {
-        FloorpNote(
+        makeFloorpTestNote(
             id: "draft-id",
             title: title,
             content: content,
@@ -3876,7 +3995,7 @@ final class FloorpNoteSaveCoordinatorTests: XCTestCase {
             throw FloorpNotesStoreError.noteNotFound(original.id)
         }
         persistence.copyHandler = { draft in
-            FloorpNote(
+            makeFloorpTestNote(
                 id: copy.id,
                 title: draft.title,
                 content: draft.content,
@@ -3974,11 +4093,11 @@ final class FloorpNoteSaveCoordinatorTests: XCTestCase {
         var copyContinuation: CheckedContinuation<Void, Never>?
         var operations = [String]()
         persistence.copyHandler = { draft in
-            operations.append("copy:\(draft.id)")
+            operations.append("copy:\(draft.id.rawValue)")
             await withCheckedContinuation { continuation in
                 copyContinuation = continuation
             }
-            return FloorpNote(
+            return makeFloorpTestNote(
                 id: "copy",
                 title: draft.title,
                 content: draft.content,
@@ -3988,7 +4107,7 @@ final class FloorpNoteSaveCoordinatorTests: XCTestCase {
             )
         }
         persistence.saveHandler = { draft in
-            operations.append("save:\(draft.id)")
+            operations.append("save:\(draft.id.rawValue)")
             var saved = draft
             saved.updatedAt += 1
             return saved
@@ -4020,7 +4139,7 @@ final class FloorpNoteSaveCoordinatorTests: XCTestCase {
         }
         _ = await saveTask.value
         XCTAssertEqual(operations, ["copy:original", "save:copy"])
-        XCTAssertEqual(coordinator.draft.id, "copy")
+        XCTAssertEqual(coordinator.draft.id, FloorpNoteID("copy"))
         XCTAssertEqual(coordinator.draft.content, "Edit during copy")
         XCTAssertFalse(coordinator.hasUnsavedChanges)
     }
@@ -4080,7 +4199,7 @@ final class FloorpNoteSaveCoordinatorTests: XCTestCase {
     }
 
     private func makeNote(id: String, title: String, updatedAt: Int64) -> FloorpNote {
-        FloorpNote(
+        makeFloorpTestNote(
             id: id,
             title: title,
             content: "",
@@ -4590,7 +4709,7 @@ final class FloorpPanelNotesMigrationTests: XCTestCase {
             title: "Title",
             subtitle: String(fullContent.prefix(160)),
             searchText: fullContent,
-            source: .note(id: "note-id")
+            source: .note(id: FloorpNoteID("note-id"))
         )
 
         XCTAssertTrue(item.matchesSearchQuery("DEEP NEEDLE"))

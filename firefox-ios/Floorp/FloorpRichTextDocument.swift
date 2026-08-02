@@ -1494,14 +1494,14 @@ enum FloorpRichTextEditorSessionError: Error, Equatable, Sendable {
 }
 
 struct FloorpRichTextEditorSessionCursor: Codable, Equatable, Hashable, Sendable {
-    let noteID: String
+    let noteID: FloorpNoteID
     let documentID: String
     let generation: Int
     let revision: Int
 
-    init(noteID: String, documentID: String, generation: Int, revision: Int) throws {
-        guard !noteID.isEmpty,
-              noteID.utf8.count <= FloorpRichTextBridgeProtocol.maximumNoteIDBytes else {
+    init(noteID: FloorpNoteID, documentID: String, generation: Int, revision: Int) throws {
+        guard !noteID.rawValue.isEmpty,
+              noteID.rawValue.utf8.count <= FloorpRichTextBridgeProtocol.maximumNoteIDBytes else {
             throw FloorpRichTextEditorSessionError.invalidNoteID
         }
         guard !documentID.isEmpty,
@@ -1533,7 +1533,7 @@ struct FloorpRichTextEditorSessionCursor: Codable, Equatable, Hashable, Sendable
         let container = try decoder.container(keyedBy: CodingKeys.self)
         do {
             try self.init(
-                noteID: container.decode(String.self, forKey: .noteID),
+                noteID: container.decode(FloorpNoteID.self, forKey: .noteID),
                 documentID: container.decode(String.self, forKey: .documentID),
                 generation: container.decode(Int.self, forKey: .generation),
                 revision: container.decode(Int.self, forKey: .revision)
@@ -1619,7 +1619,7 @@ typealias FloorpRichTextUpdateEnvelope = FloorpRichTextEditorEnvelope<FloorpRich
 
 enum FloorpRichTextEnvelopeValidationError: Error, Equatable, Sendable {
     case unsupportedSchemaVersion(Int)
-    case noteIdentityMismatch(expected: String, actual: String)
+    case noteIdentityMismatch(expected: FloorpNoteID, actual: FloorpNoteID)
     case documentIdentityMismatch(expected: String, actual: String)
     case generationMismatch(expected: Int, actual: Int)
     case revisionMismatch(expected: Int, actual: Int)

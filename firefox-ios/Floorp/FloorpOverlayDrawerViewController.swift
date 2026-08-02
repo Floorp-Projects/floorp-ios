@@ -278,11 +278,11 @@ struct FloorpDrawerLayoutMetrics {
 /// └─────────┴──────────────────┘
 /// ```
 struct FloorpNotesReorderSession: Equatable {
-    let originalVisibleIDs: [String]
+    let originalVisibleIDs: [FloorpNoteID]
     let expectedRevision: UInt64
-    private(set) var orderedVisibleIDs: [String]
+    private(set) var orderedVisibleIDs: [FloorpNoteID]
 
-    init(visibleIDs: [String], expectedRevision: UInt64) {
+    init(visibleIDs: [FloorpNoteID], expectedRevision: UInt64) {
         self.originalVisibleIDs = visibleIDs
         self.expectedRevision = expectedRevision
         self.orderedVisibleIDs = visibleIDs
@@ -301,7 +301,7 @@ struct FloorpNotesReorderSession: Equatable {
         return true
     }
 
-    mutating func move(id: String, offset: Int) -> Int? {
+    mutating func move(id: FloorpNoteID, offset: Int) -> Int? {
         guard let sourceIndex = orderedVisibleIDs.firstIndex(of: id) else { return nil }
         let destinationIndex = sourceIndex + offset
         guard orderedVisibleIDs.indices.contains(destinationIndex) else { return nil }
@@ -310,15 +310,15 @@ struct FloorpNotesReorderSession: Equatable {
 }
 
 private struct FloorpNoteMoveAnnouncement {
-    let id: String
+    let id: FloorpNoteID
     let position: Int
     let total: Int
 }
 
 typealias FloorpNotesSnapshotLoader = @MainActor () async throws -> FloorpNotesSnapshot
 typealias FloorpNotesReorderWriter = @MainActor (
-    _ originalVisibleIDs: [String],
-    _ orderedVisibleIDs: [String],
+    _ originalVisibleIDs: [FloorpNoteID],
+    _ orderedVisibleIDs: [FloorpNoteID],
     _ expectedRevision: UInt64
 ) async throws -> Bool
 typealias FloorpNoteAccessibilityFocusPoster = @MainActor (_ argument: Any?) -> Void
@@ -377,7 +377,7 @@ final class FloorpOverlayDrawerViewController:
     private var notesRevision: UInt64?
     private var notesReorderSession: FloorpNotesReorderSession?
     private var isCommittingNotesReorder = false
-    private var pendingNoteAccessibilityFocusID: String?
+    private var pendingNoteAccessibilityFocusID: FloorpNoteID?
     private var pendingNoteAccessibilityFocusRequiresReload = false
     private var shouldFocusAddNoteButton = false
     private var panelLoadTask: Task<Void, Never>?
@@ -2142,7 +2142,7 @@ final class FloorpOverlayDrawerViewController:
             )
             let subtitle = preview.isEmpty ? nil : String(preview.prefix(160))
             return DrawerItem(
-                id: note.id,
+                id: note.id.rawValue,
                 title: note.title.isEmpty ? FloorpStrings.Notes.untitled : note.title,
                 icon: UIImage(systemName: "note.text"),
                 subtitle: subtitle,
@@ -2304,11 +2304,16 @@ final class FloorpOverlayDrawerViewController:
         isSearching ? filteredItems : items
     }
 
-    private var displayedNoteIDs: [String] {
+    private var displayedNoteIDs: [FloorpNoteID] {
         displayedItems.compactMap { item in
             if case .note(let id) = item.source { return id }
             return nil
         }
+    }
+
+    private func noteID(for item: DrawerItem) -> FloorpNoteID? {
+        guard case .note(let id) = item.source else { return nil }
+        return id
     }
 
     private var notesInteractionsLocked: Bool {
@@ -2411,8 +2416,10 @@ final class FloorpOverlayDrawerViewController:
         )
     }
 
-    private func restoreDisplayedNoteOrder(_ orderedIDs: [String]) {
-        let itemsByID = Dictionary(uniqueKeysWithValues: displayedItems.map { ($0.id, $0) })
+    private func restoreDisplayedNoteOrder(_ orderedIDs: [FloorpNoteID]) {
+        let itemsByID = Dictionary(uniqueKeysWithValues: displayedItems.compactMap { item in
+            noteID(for: item).map { ($0, item) }
+        })
         let restoredItems = orderedIDs.compactMap { itemsByID[$0] }
         guard restoredItems.count == orderedIDs.count else { return }
         if isSearching {
@@ -2424,7 +2431,7 @@ final class FloorpOverlayDrawerViewController:
     }
 
     @discardableResult
-    func performNoteAccessibilityMove(id: String, offset: Int) -> Bool {
+    func performNoteAccessibilityMove(id: FloorpNoteID, offset: Int) -> Bool {
         guard currentPanelType == .notes, !isCommittingNotesReorder else { return false }
 
         if var session = notesReorderSession {
@@ -2457,10 +2464,10 @@ final class FloorpOverlayDrawerViewController:
     }
 
     @discardableResult
-    func performNoteAccessibilityDelete(id: String) -> Bool {
+    func performNoteAccessibilityDelete(id: FloorpNoteID) -> Bool {
         guard notesReorderSession == nil,
               !isCommittingNotesReorder,
-              let item = displayedItems.first(where: { $0.id == id }),
+              let item = displayedItems.first(where: { noteID(for: $0) == id }),
               itemIsNote(item) else { return false }
         confirmNoteDeletion(item)
         return true
@@ -2468,7 +2475,7 @@ final class FloorpOverlayDrawerViewController:
 
     private func persistNotesOrder(
         _ session: FloorpNotesReorderSession,
-        focusNoteID: String?,
+        focusNoteID: FloorpNoteID?,
         completesStagedReorder: Bool,
         announcement: FloorpNoteMoveAnnouncement? = nil
     ) {
@@ -2535,8 +2542,8 @@ final class FloorpOverlayDrawerViewController:
         }
     }
 
-    private func announceNoteMove(id: String, position: Int, total: Int) {
-        guard let item = displayedItems.first(where: { $0.id == id }) else { return }
+    private func announceNoteMove(id: FloorpNoteID, position: Int, total: Int) {
+        guard let item = displayedItems.first(where: { noteID(for: $0) == id }) else { return }
         UIAccessibility.post(
             notification: .announcement,
             argument: FloorpStrings.Notes.moveAnnouncement(
@@ -2553,7 +2560,7 @@ final class FloorpOverlayDrawerViewController:
         view.layoutIfNeeded()
 
         if let id = pendingNoteAccessibilityFocusID {
-            guard let row = displayedItems.firstIndex(where: { $0.id == id }) else {
+            guard let row = displayedItems.firstIndex(where: { noteID(for: $0) == id }) else {
                 handleMissingPendingNoteAccessibilityFocus()
                 return
             }
@@ -2571,7 +2578,7 @@ final class FloorpOverlayDrawerViewController:
     }
 
     private func setPendingNoteAccessibilityFocus(
-        _ id: String?,
+        _ id: FloorpNoteID?,
         requiresReload: Bool = false
     ) {
         pendingNoteAccessibilityFocusID = id
@@ -2611,7 +2618,7 @@ final class FloorpOverlayDrawerViewController:
 
         let timestamp = FloorpNotesStore.currentTimeInMilliseconds()
         let draft = FloorpNote(
-            id: UUID().uuidString,
+            id: FloorpNoteID(UUID().uuidString),
             title: FloorpStrings.Notes.newNote,
             content: "",
             createdAt: timestamp,
@@ -2632,7 +2639,7 @@ final class FloorpOverlayDrawerViewController:
         loadNotes()
     }
 
-    private func openNote(id: String) {
+    private func openNote(id: FloorpNoteID) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -2977,7 +2984,7 @@ extension FloorpOverlayDrawerViewController: UITableViewDataSource {
         let accessibilityIdentifier: String
         switch item.source {
         case .note(let id):
-            accessibilityIdentifier = "Floorp.Notes.Row.\(id)"
+            accessibilityIdentifier = "Floorp.Notes.Row.\(id.rawValue)"
         default:
             accessibilityIdentifier = "Floorp.Drawer.Row.\(item.id)"
         }
@@ -3189,6 +3196,7 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
     }
 
     private func confirmNoteDeletion(_ item: DrawerItem) {
+        guard case .note(let noteID) = item.source else { return }
         let alert = UIAlertController(
             title: FloorpStrings.Notes.deleteTitle,
             message: FloorpStrings.Notes.deleteMessage,
@@ -3201,7 +3209,7 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
                     guard let self else { return }
                     do {
                         try await self.deleteItem(item)
-                        self.removeItemFromUI(id: item.id)
+                        self.removeNoteFromUI(id: noteID)
                     } catch {
                         self.presentOperationError()
                     }
@@ -3212,19 +3220,25 @@ extension FloorpOverlayDrawerViewController: UITableViewDelegate {
     }
 
     private func removeItemFromUI(id: String) {
-        if currentPanelType == .notes,
-           let removedIndex = displayedItems.firstIndex(where: { $0.id == id }) {
-            let remainingItems = displayedItems.filter { $0.id != id }
+        items.removeAll { $0.id == id }
+        filteredItems.removeAll { $0.id == id }
+        updateUI()
+        applyPendingNoteAccessibilityFocus()
+    }
+
+    private func removeNoteFromUI(id: FloorpNoteID) {
+        if let removedIndex = displayedItems.firstIndex(where: { noteID(for: $0) == id }) {
+            let remainingItems = displayedItems.filter { noteID(for: $0) != id }
             if remainingItems.isEmpty {
                 setPendingNoteAccessibilityFocus(nil)
                 shouldFocusAddNoteButton = true
             } else {
                 let focusIndex = min(removedIndex, remainingItems.count - 1)
-                setPendingNoteAccessibilityFocus(remainingItems[focusIndex].id)
+                setPendingNoteAccessibilityFocus(noteID(for: remainingItems[focusIndex]))
             }
         }
-        items.removeAll { $0.id == id }
-        filteredItems.removeAll { $0.id == id }
+        items.removeAll { noteID(for: $0) == id }
+        filteredItems.removeAll { noteID(for: $0) == id }
         updateUI()
         applyPendingNoteAccessibilityFocus()
     }

@@ -14,7 +14,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
 
         let result = try FloorpNotesSyncMerger.merge(base: [], local: local, remote: remote)
 
-        XCTAssertEqual(result.notes.map(\.id), ["local-b", "local-a", "remote-c"])
+        XCTAssertEqual(result.notes.map(\.id.rawValue), ["local-b", "local-a", "remote-c"])
         XCTAssertTrue(result.conflicts.isEmpty)
     }
 
@@ -38,7 +38,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
 
         let result = try FloorpNotesSyncMerger.merge(base: base, local: local, remote: remote)
 
-        XCTAssertEqual(result.notes.map(\.id), ["local-edit", "remote-edit"])
+        XCTAssertEqual(result.notes.map(\.id.rawValue), ["local-edit", "remote-edit"])
         XCTAssertEqual(result.notes.first?.content, "local")
         XCTAssertEqual(result.notes.last?.content, "remote")
         XCTAssertTrue(result.conflicts.isEmpty)
@@ -51,7 +51,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
 
         let result = try FloorpNotesSyncMerger.merge(base: base, local: local, remote: remote)
 
-        XCTAssertEqual(result.notes.map(\.id), ["remote-deleted", "local-deleted"])
+        XCTAssertEqual(result.notes.map(\.id.rawValue), ["remote-deleted", "local-deleted"])
         XCTAssertEqual(result.notes.map(\.content), ["local edit", "remote edit"])
         XCTAssertTrue(result.conflicts.isEmpty)
     }
@@ -70,7 +70,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(result.notes[1].updatedAt, local[0].updatedAt)
         XCTAssertEqual(result.conflicts.count, 1)
         XCTAssertEqual(result.notes[1].id, result.conflicts[0].conflictCopyID)
-        XCTAssertTrue(result.notes[1].id.hasPrefix("floorp-sync-conflict-"))
+        XCTAssertTrue(result.notes[1].id.rawValue.hasPrefix("floorp-sync-conflict-"))
     }
 
     func testConflictCopyIDCollisionPreservesBothNotesWithDeterministicProbe() throws {
@@ -135,7 +135,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         let sharedFirstByID = Dictionary(uniqueKeysWithValues: sharedFirst.notes.map { ($0.id, $0) })
         let candidateFirstByID = Dictionary(uniqueKeysWithValues: candidateFirst.notes.map { ($0.id, $0) })
         let sharedConflict = try XCTUnwrap(
-            sharedFirst.conflicts.first(where: { $0.originalNoteID == "shared" })
+            sharedFirst.conflicts.first(where: { $0.originalNoteID == FloorpNoteID("shared") })
         )
 
         XCTAssertEqual(sharedFirstByID, candidateFirstByID)
@@ -180,7 +180,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(result.notes.count, FloorpNotesStore.maximumNoteCount)
         XCTAssertEqual(result.notes.filter { $0.id == collidingID }, [candidateWinner])
         XCTAssertEqual(
-            result.conflicts.first { $0.originalNoteID == "shared" }?.conflictCopyID,
+            result.conflicts.first { $0.originalNoteID == FloorpNoteID("shared") }?.conflictCopyID,
             collidingID
         )
         XCTAssertNotNil(result.conflicts.first { $0.originalNoteID == collidingID })
@@ -264,6 +264,42 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(result.conflicts.isEmpty)
     }
 
+    func testCanonicalEquivalentNoteIDsRemainDistinctAcrossRemoteNormalizationAndMerge() throws {
+        let composedID = "note-\u{00E9}"
+        let decomposedID = "note-e\u{0301}"
+        let remotePayload = FloorpNotesDesktopPayload(
+            ids: [composedID, decomposedID],
+            titles: ["Composed", "Decomposed"],
+            contents: ["A", "B"],
+            createdAts: [1, 2],
+            updatedAts: [1, 2]
+        )
+
+        let plan = try FloorpNotesSyncPlanner.makePlan(
+            accountID: "account",
+            baseState: nil,
+            localNotes: [],
+            remoteRecord: try remoteRecord(remotePayload),
+            now: 100
+        )
+        XCTAssertEqual(
+            plan.mergedNotes.map(\.id),
+            [FloorpNoteID(composedID), FloorpNoteID(decomposedID)]
+        )
+        XCTAssertFalse(plan.requiresUpload)
+
+        let directMerge = try FloorpNotesSyncMerger.merge(
+            base: [],
+            local: [note(composedID)],
+            remote: [note(decomposedID)]
+        )
+        XCTAssertEqual(
+            directMerge.notes.map(\.id),
+            [FloorpNoteID(composedID), FloorpNoteID(decomposedID)]
+        )
+        XCTAssertTrue(directMerge.conflicts.isEmpty)
+    }
+
     func testCanonicallyEquivalentLocalRichEditStillRequiresUpload() throws {
         let prefix = #"{"type":"doc","content":[{"type":"text","text":""#
         let suffix = #""}]}"#
@@ -323,7 +359,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         let conflictID = try XCTUnwrap(first.conflicts.first?.conflictCopyID)
         let uploadedConflict = try XCTUnwrap(first.notes.first { $0.id == conflictID })
         let remoteAfterWinnerEdit = first.notes.map { candidate in
-            candidate.id == "shared"
+            candidate.id == FloorpNoteID("shared")
                 ? note("shared", content: "remote edited again", updatedAt: 40)
                 : candidate
         }
@@ -349,7 +385,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
 
         let result = try FloorpNotesSyncMerger.merge(base: base, local: base, remote: remote)
 
-        XCTAssertEqual(result.notes.map(\.id), ["c", "a", "b"])
+        XCTAssertEqual(result.notes.map(\.id.rawValue), ["c", "a", "b"])
     }
 
     func testConcurrentReorderPrefersLocalAndAppendsRemoteNew() throws {
@@ -359,7 +395,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
 
         let result = try FloorpNotesSyncMerger.merge(base: base, local: local, remote: remote)
 
-        XCTAssertEqual(result.notes.map(\.id), ["b", "a", "c", "local-new", "remote-new"])
+        XCTAssertEqual(result.notes.map(\.id.rawValue), ["b", "a", "c", "local-new", "remote-new"])
     }
 
     func testDuplicateAndBlankIDsAreRejectedBySource() {
@@ -372,7 +408,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         ) { error in
             XCTAssertEqual(
                 error as? FloorpNotesSyncError,
-                .duplicateNoteID(source: .base, id: "duplicate")
+                .duplicateNoteID(source: .base, id: FloorpNoteID("duplicate"))
             )
         }
         XCTAssertThrowsError(
@@ -396,7 +432,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         ) { error in
             XCTAssertEqual(
                 error as? FloorpNotesSyncError,
-                .duplicateNoteID(source: .remote, id: "duplicate")
+                .duplicateNoteID(source: .remote, id: FloorpNoteID("duplicate"))
             )
         }
     }
@@ -446,7 +482,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         )
 
         XCTAssertEqual(first, second)
-        XCTAssertEqual(payload.ids, first.mergedNotes.map(\.id))
+        XCTAssertEqual(payload.ids, first.mergedNotes.map(\.id.rawValue))
         XCTAssertEqual(payload.titles, ["One", "Two"])
         XCTAssertEqual(payload.contents, ["First", "Second"])
         XCTAssertEqual(payload.createdAts, [100, 100])
@@ -539,7 +575,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
             now: 100
         )
 
-        XCTAssertEqual(plan.mergedNotes.map(\.id), ["one"])
+        XCTAssertEqual(plan.mergedNotes.map(\.id.rawValue), ["one"])
         XCTAssertEqual(plan.mergedNotes.map(\.content), ["Body"])
         XCTAssertEqual(plan.mergedNotes.map(\.createdAt), [10])
         XCTAssertEqual(plan.mergedNotes.map(\.updatedAt), [11])
@@ -623,7 +659,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         ) { error in
             XCTAssertEqual(
                 error as? FloorpNotesSyncError,
-                .duplicateNoteID(source: .remote, id: "same")
+                .duplicateNoteID(source: .remote, id: FloorpNoteID("same"))
             )
         }
     }
@@ -639,7 +675,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
             now: 100
         )
 
-        XCTAssertEqual(plan.mergedNotes.map(\.id), [exactID])
+        XCTAssertEqual(plan.mergedNotes.map(\.id.rawValue), [exactID])
         XCTAssertFalse(plan.requiresUpload)
         XCTAssertNil(plan.uploadPayloadData)
     }
@@ -976,7 +1012,7 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         let candidate = commits[0].prepared.candidate
         XCTAssertEqual(candidate.accountID, "account")
         XCTAssertEqual(candidate.expectedLocalRevision, 42)
-        XCTAssertEqual(candidate.notes.map(\.id), ["local"])
+        XCTAssertEqual(candidate.notes.map(\.id.rawValue), ["local"])
         XCTAssertEqual(candidate.baseState.notes, candidate.notes)
         XCTAssertEqual(commits[0].confirmedRemoteRevision, "uploaded-2")
         XCTAssertTrue(commits[0].didUpload)
@@ -1123,7 +1159,25 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         updatedAt: Int64 = 1,
         contentFormat: FloorpNoteContentFormat = .plainText
     ) -> FloorpNote {
-        FloorpNote(
+        note(
+            FloorpNoteID(id),
+            title: title,
+            content: content,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            contentFormat: contentFormat
+        )
+    }
+
+    private func note(
+        _ id: FloorpNoteID,
+        title: String = "Title",
+        content: String = "Body",
+        createdAt: Int64 = 1,
+        updatedAt: Int64 = 1,
+        contentFormat: FloorpNoteContentFormat = .plainText
+    ) -> FloorpNote {
+        makeFloorpTestNote(
             id: id,
             title: title,
             content: content,
@@ -1222,7 +1276,7 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
 
     func testOuterJSONStringEscapingDefinesApplicationServicesBudget() throws {
         let notes = [
-            FloorpNote(
+            makeFloorpTestNote(
                 id: "escaped",
                 title: "Quote \" slash / backslash \\",
                 content: "first\nsecond\t\"quoted\"\\tail",
@@ -1445,12 +1499,12 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
                     let toResult = try XCTUnwrap(resultsByStep[invariant.toStep])
                     let fromID = try XCTUnwrap(
                         fromResult.conflicts.first {
-                            $0.originalNoteID == invariant.originalNoteID
+                            $0.originalNoteID == FloorpNoteID(invariant.originalNoteID)
                         }?.conflictCopyID
                     )
                     let toID = try XCTUnwrap(
                         toResult.conflicts.first {
-                            $0.originalNoteID == invariant.originalNoteID
+                            $0.originalNoteID == FloorpNoteID(invariant.originalNoteID)
                         }?.conflictCopyID
                     )
                     XCTAssertEqual(fromID, toID, sequence.name)
@@ -1491,8 +1545,8 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
         )
         let expectedConflicts = fixtureCase.expectedConflicts.map {
             FloorpNotesSyncConflict(
-                originalNoteID: $0.originalNoteID,
-                conflictCopyID: $0.conflictCopyID
+                originalNoteID: FloorpNoteID($0.originalNoteID),
+                conflictCopyID: FloorpNoteID($0.conflictCopyID)
             )
         }
 
@@ -1514,7 +1568,13 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
     ) {
         XCTAssertEqual(actual.count, expected.count, message, file: file, line: line)
         for (actual, expected) in zip(actual, expected) {
-            XCTAssertEqual(Data(actual.id.utf8), Data(expected.id.utf8), message, file: file, line: line)
+            XCTAssertEqual(
+                Data(actual.id.rawValue.utf8),
+                Data(expected.id.rawValue.utf8),
+                message,
+                file: file,
+                line: line
+            )
             XCTAssertEqual(Data(actual.title.utf8), Data(expected.title.utf8), message, file: file, line: line)
             XCTAssertEqual(Data(actual.content.utf8), Data(expected.content.utf8), message, file: file, line: line)
             XCTAssertEqual(actual.createdAt, expected.createdAt, message, file: file, line: line)
@@ -1532,7 +1592,7 @@ final class FloorpNotesSyncCompatibilityFixtureTests: XCTestCase {
             return FloorpNotesMergeFixture.ExpectedError(
                 code: .duplicateNoteID,
                 source: source,
-                id: id
+                id: id.rawValue
             )
         default:
             return nil
@@ -1614,7 +1674,7 @@ private struct FloorpNotesMergeFixture: Decodable {
         let updatedAt: Int64
 
         var note: FloorpNote {
-            FloorpNote(
+            makeFloorpTestNote(
                 id: id,
                 title: title,
                 content: content,

@@ -90,7 +90,9 @@ iOS checks that exact byte count on incoming and outgoing values.
 successfully synchronized base, current local notes, and the decrypted remote
 snapshot.
 
-- Stable note IDs identify records; duplicate or blank IDs fail closed.
+- Stable note IDs identify records as opaque UTF-8 bytes. They are never
+  trimmed or Unicode-normalized; canonically equivalent byte sequences remain
+  distinct IDs, while duplicate or blank IDs fail closed.
 - Note title/content equality and no-op payload checks compare exact UTF-8
   bytes. Unicode canonical equivalence must not collapse distinct opaque rich
   sources.

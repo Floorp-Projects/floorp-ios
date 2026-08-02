@@ -1561,7 +1561,10 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             note.content,
             contentFormat: note.contentFormat
         )
-        applyRichPreparation(FloorpRichTextEditorPreparation.prepare(note), noteID: note.id)
+        applyRichPreparation(
+            FloorpRichTextEditorPreparation.prepare(note),
+            noteID: note.id
+        )
         titleField.text = note.title
         textView.text = contentAnalysis.editorText
         configureContentEditor()
@@ -1668,7 +1671,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     private func applyRichPreparation(
         _ preparation: FloorpRichTextEditorPreparation,
-        noteID: String
+        noteID: FloorpNoteID
     ) {
         queuedRichUpdates.removeAll()
         queuedRichStates.removeAll()

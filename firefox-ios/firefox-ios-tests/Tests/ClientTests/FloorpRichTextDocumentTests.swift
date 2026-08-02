@@ -179,7 +179,7 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try FloorpRichTextEditorSessionCursor(
-                noteID: "",
+                noteID: FloorpNoteID(""),
                 documentID: "document-a",
                 generation: 3,
                 revision: 7
@@ -221,7 +221,10 @@ final class FloorpRichTextDocumentTests: XCTestCase {
                     invalidSource,
                     session: try session(noteID: "note-b", revision: nextSession.revision)
                 ),
-                .noteIdentityMismatch(expected: currentSession.noteID, actual: "note-b")
+                .noteIdentityMismatch(
+                    expected: currentSession.noteID,
+                    actual: FloorpNoteID("note-b")
+                )
             ),
             (
                 updateEnvelope(
@@ -275,6 +278,41 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         )
         XCTAssertTrue(accepted.document.compatibility.isEditable)
         XCTAssertEqual(accepted.session, nextSession)
+    }
+
+    func testUpdateRejectsCanonicallyEquivalentButByteDistinctNoteIdentity() throws {
+        let composedID = "note-\u{00E9}"
+        let decomposedID = "note-e\u{0301}"
+        let currentSession = try session(noteID: composedID)
+        let incomingSession = try session(
+            noteID: decomposedID,
+            revision: currentSession.revision + 1
+        )
+        let original = try FloorpRichTextCodec.decode(minimalDocument())
+        let envelope = updateEnvelope(minimalDocument(), session: incomingSession)
+
+        XCTAssertEqual(composedID, decomposedID)
+        XCTAssertNotEqual(Data(composedID.utf8), Data(decomposedID.utf8))
+        XCTAssertThrowsError(
+            try FloorpRichTextEditorUpdatePolicy.accept(
+                envelope,
+                for: currentSession,
+                replacing: original
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpRichTextEnvelopeValidationError,
+                .noteIdentityMismatch(
+                    expected: FloorpNoteID(composedID),
+                    actual: FloorpNoteID(decomposedID)
+                )
+            )
+        }
+
+        let encoded = try JSONEncoder().encode(incomingSession)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let encodedNoteID = try XCTUnwrap(object["noteID"] as? String)
+        XCTAssertEqual(Data(encodedNoteID.utf8), Data(decomposedID.utf8))
     }
 
     func testPlainTextConversionPreservesLinesAndEscaping() throws {
@@ -1089,7 +1127,7 @@ final class FloorpRichTextDocumentTests: XCTestCase {
             XCTAssertNil(migration.document)
             XCTAssertEqual(migration.originalSource, source)
 
-            let note = FloorpNote(
+            let note = makeFloorpTestNote(
                 id: "lexical",
                 title: "Preserve",
                 content: source,
@@ -1146,7 +1184,7 @@ final class FloorpRichTextDocumentTests: XCTestCase {
         revision: Int = 7
     ) throws -> FloorpRichTextEditorSessionCursor {
         try FloorpRichTextEditorSessionCursor(
-            noteID: noteID,
+            noteID: FloorpNoteID(noteID),
             documentID: documentID,
             generation: generation,
             revision: revision
