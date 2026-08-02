@@ -119,8 +119,8 @@ enum FloorpStrings {
             "Floorp.Drawer.WebPanelUnavailable.v1",
             tableName: "Floorp",
             bundle: .main,
-            value: "Web panels are not available yet",
-            comment: "Empty state for an unsupported custom web panel"
+            value: "Unable to open this web panel",
+            comment: "Error shown when a custom web panel cannot be opened"
         )
 
         static let searchPlaceholder = NSLocalizedString(

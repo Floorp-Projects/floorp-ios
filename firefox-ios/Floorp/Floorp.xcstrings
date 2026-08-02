@@ -525,8 +525,8 @@
     },
     "Floorp.Drawer.WebPanelUnavailable.v1" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web panels are not available yet" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルはまだ利用できません" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unable to open this web panel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この Web パネルを開けませんでした" } }
       }
     },
     "Floorp.Notes.ArchiveTooLargeMessage.v1" : {

@@ -20,6 +20,14 @@ enum FloorpPanelPresentationStateAssociation {
         objc_setAssociatedObject(owner, &key, state, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return state
     }
+
+    static func invalidateState(for owner: AnyObject) {
+        guard let state = objc_getAssociatedObject(owner, &key) as? FloorpPanelPresentationState else {
+            return
+        }
+        state.invalidateWebPanelRuntime()
+        objc_setAssociatedObject(owner, &key, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
 }
 
 // MARK: - Floorp Overlay Drawer Integration
@@ -49,6 +57,10 @@ extension BrowserViewController {
         )
     }
 
+    func teardownFloorp() {
+        FloorpPanelPresentationStateAssociation.invalidateState(for: self)
+    }
+
     // MARK: - Notification Handler
 
     @objc private func floorpToggleDrawerNotification(_ notification: Notification) {
@@ -65,7 +77,19 @@ extension BrowserViewController {
         guard FloorpPanelManager.shared.config.isEnabled,
               !presentationState.hasActivePresentation else { return }
 
-        let drawer = FloorpOverlayDrawerViewController(presentationState: presentationState)
+        presentationState.configureWebPanelRuntime(
+            profile: profile,
+            openInMainBrowser: { [weak self] url in
+                self?.floorpOpenURLInNewTabOrCurrent(url)
+            }
+        )
+
+        let drawer = FloorpOverlayDrawerViewController(
+            presentationState: presentationState,
+            isPrivateProvider: { [weak self] in
+                self?.tabManager.selectedTab?.isPrivate ?? false
+            }
+        )
         drawer.onItemSelected = { [weak self] url in
             self?.floorpOpenURLInNewTabOrCurrent(url)
         }

@@ -13,7 +13,7 @@ import WebKit
 @MainActor
 final class WKEngineConfigurationProviderIntegrationTests: XCTestCase {
     func testPrivateCookies_areClearedAfterSessionBoundary() async {
-        let subject = createSubject()
+        let subject = createSubject(coordinator: WKPrivateBrowsingSessionCoordinator())
 
         let firstStore = subject.createConfiguration(parameters: privateParams())
             .webViewConfiguration.websiteDataStore
@@ -30,7 +30,7 @@ final class WKEngineConfigurationProviderIntegrationTests: XCTestCase {
     }
 
     func testPrivateCookies_areVisibleAcrossSiblingTabsWithinSession() async {
-        let subject = createSubject()
+        let subject = createSubject(coordinator: WKPrivateBrowsingSessionCoordinator())
 
         let firstStore = subject.createConfiguration(parameters: privateParams())
             .webViewConfiguration.websiteDataStore
@@ -44,8 +44,12 @@ final class WKEngineConfigurationProviderIntegrationTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func createSubject() -> DefaultWKEngineConfigurationProvider {
-        return DefaultWKEngineConfigurationProvider()
+    private func createSubject(
+        coordinator: WKPrivateBrowsingSessionCoordinator
+    ) -> DefaultWKEngineConfigurationProvider {
+        return DefaultWKEngineConfigurationProvider(
+            privateBrowsingSessionCoordinator: coordinator
+        )
     }
 
     private func privateParams() -> WKWebViewParameters {

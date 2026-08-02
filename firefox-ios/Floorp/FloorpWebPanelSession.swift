@@ -4,6 +4,7 @@
 
 import Common
 import Foundation
+import UIKit
 
 struct FloorpWebPanelSessionKey: Hashable {
     let windowUUID: WindowUUID
@@ -49,9 +50,39 @@ struct FloorpWebPanelSessionState: Equatable {
 protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
     var state: FloorpWebPanelSessionState { get }
+    var contentView: UIView? { get }
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration)
+    @discardableResult
+    func addStateObserver(
+        _ observer: @escaping @MainActor (FloorpWebPanelSessionState) -> Void
+    ) -> UUID?
+    func removeStateObserver(_ identifier: UUID)
+    func loadHome()
+    func goBack()
+    func goForward()
+    func reload()
+    func stopLoading()
     func invalidate()
+}
+
+extension FloorpWebPanelSessionProtocol {
+    var contentView: UIView? { nil }
+
+    @discardableResult
+    func addStateObserver(
+        _ observer: @escaping @MainActor (FloorpWebPanelSessionState) -> Void
+    ) -> UUID? {
+        observer(state)
+        return nil
+    }
+
+    func removeStateObserver(_ identifier: UUID) {}
+    func loadHome() {}
+    func goBack() {}
+    func goForward() {}
+    func reload() {}
+    func stopLoading() {}
 }
 
 @MainActor

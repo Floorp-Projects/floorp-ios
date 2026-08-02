@@ -26,18 +26,27 @@ import MozillaAppServices
 import Shared
 
 @MainActor
-final class FloorpPanelPresentationState {
+final class FloorpPanelPresentationState: NSObject {
     let windowUUID: WindowUUID
     private(set) var selectedPanelId: String?
     private(set) weak var activeDrawer: FloorpOverlayDrawerViewController?
+    private(set) var webPanelSessionStore: FloorpWebPanelSessionStore?
+    private var panelManager: FloorpPanelManager?
+    private var observesPanelRegistry = false
 
     var hasActivePresentation: Bool {
         activeDrawer != nil
     }
 
-    init(windowUUID: WindowUUID, selectedPanelId: String? = nil) {
+    init(
+        windowUUID: WindowUUID,
+        selectedPanelId: String? = nil,
+        webPanelSessionStore: FloorpWebPanelSessionStore? = nil
+    ) {
         self.windowUUID = windowUUID
         self.selectedPanelId = selectedPanelId
+        self.webPanelSessionStore = webPanelSessionStore
+        super.init()
     }
 
     func selectedPanel(in panels: [FloorpPanel]) -> FloorpPanel? {
@@ -62,6 +71,48 @@ final class FloorpPanelPresentationState {
     func detach(_ drawer: FloorpOverlayDrawerViewController) {
         guard activeDrawer === drawer else { return }
         activeDrawer = nil
+    }
+
+    func configureWebPanelRuntime(
+        profile: Profile,
+        panelManager: FloorpPanelManager = .shared,
+        openInMainBrowser: @escaping FloorpWebPanelNavigationExecutor.OpenInMainBrowser
+    ) {
+        guard webPanelSessionStore == nil else { return }
+        webPanelSessionStore = FloorpWebPanelSessionStore(
+            windowUUID: windowUUID,
+            factory: DefaultFloorpWebPanelSessionFactory(
+                profile: profile,
+                openInMainBrowser: openInMainBrowser
+            )
+        )
+        self.panelManager = panelManager
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(panelRegistryDidChange),
+            name: .FloorpPanelRegistryDidChange,
+            object: nil
+        )
+        observesPanelRegistry = true
+    }
+
+    func invalidateWebPanelRuntime() {
+        if observesPanelRegistry {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: .FloorpPanelRegistryDidChange,
+                object: nil
+            )
+        }
+        observesPanelRegistry = false
+        panelManager = nil
+        webPanelSessionStore?.invalidateAll()
+        webPanelSessionStore = nil
+    }
+
+    @objc private func panelRegistryDidChange() {
+        guard let panelManager else { return }
+        webPanelSessionStore?.reconcile(with: panelManager.panels)
     }
 }
 
@@ -161,6 +212,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private let presentationState: FloorpPanelPresentationState
     private let notesStore: FloorpNotesStore
     private let logger: Logger
+    private let isPrivateProvider: @MainActor () -> Bool
 
     /// Callback when user taps a bookmark/history item.
     var onItemSelected: ((URL) -> Void)?
@@ -181,6 +233,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var didFinishDismissal = false
     private var dismissWhenPresentationFinishes = false
     private var displayedPanelIDs = [String]()
+    private var activeWebPanelSession: (any FloorpWebPanelSessionProtocol)?
+    private var webPanelStateObserverID: UUID?
 
     // MARK: - UI Components
 
@@ -332,6 +386,15 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         return tv
     }()
 
+    private lazy var webPanelContainerView: UIView = {
+        let view = UIView()
+        view.isHidden = true
+        view.clipsToBounds = true
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.accessibilityIdentifier = "Floorp.Drawer.WebPanelContent"
+        return view
+    }()
+
     // Empty state
     private lazy var emptyStateLabel: UILabel = {
         let label = UILabel()
@@ -365,7 +428,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
          logger: Logger = DefaultLogger.shared,
          presentationState: FloorpPanelPresentationState? = nil,
          themeManager: ThemeManager = AppContainer.shared.resolve(),
-         notificationCenter: NotificationProtocol = NotificationCenter.default) {
+         notificationCenter: NotificationProtocol = NotificationCenter.default,
+         isPrivateProvider: @escaping @MainActor () -> Bool = { false }) {
         let presentationState = presentationState ?? FloorpPanelPresentationState(
             windowUUID: WindowUUID.XCTestDefaultUUID
         )
@@ -376,6 +440,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         self.windowUUID = presentationState.windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
+        self.isPrivateProvider = isPrivateProvider
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .overFullScreen
         modalTransitionStyle = .crossDissolve
@@ -396,6 +461,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         super.viewDidLoad()
         setupView()
         setupConstraints()
+        presentationState.webPanelSessionStore?.reconcile(with: panelManager.panels)
         buildSidebarButtons()
         if let selectedPanel = presentationState.selectedPanel(in: panelManager.panels) {
             selectPanel(selectedPanel.id)
@@ -482,6 +548,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         containerView.addSubview(headerView)
         containerView.addSubview(searchTextField)
         containerView.addSubview(tableView)
+        containerView.addSubview(webPanelContainerView)
         containerView.addSubview(emptyStateLabel)
         containerView.addSubview(retryButton)
 
@@ -594,6 +661,17 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             ),
             tableSafeAreaBottomConstraint,
 
+            // Web panel content stays inside the drawer and below its header,
+            // independently from the browser's address toolbar hierarchy.
+            webPanelContainerView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            webPanelContainerView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
+            webPanelContainerView.trailingAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.trailingAnchor
+            ),
+            webPanelContainerView.bottomAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.bottomAnchor
+            ),
+
             // Empty state
             emptyStateLabel.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
             emptyStateLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor, constant: -20),
@@ -701,6 +779,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         // Table view — use layer5 for cell-like background
         tableView.backgroundColor = colors.layer5
         tableView.separatorColor = colors.borderPrimary
+        webPanelContainerView.backgroundColor = colors.layer1
 
         // Empty state
         emptyStateLabel.textColor = colors.textSecondary
@@ -975,6 +1054,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     @objc private func panelRegistryDidChange() {
         guard isViewLoaded else { return }
+        presentationState.webPanelSessionStore?.reconcile(with: panelManager.panels)
         let previousPanelIDs = displayedPanelIDs
         let previousSelection = presentationState.selectedPanelId
         buildSidebarButtons()
@@ -1024,6 +1104,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
     private func loadCurrentPanel() {
         panelLoadTask?.cancel()
+        detachWebPanelContent()
         items = []
         filteredItems = []
         searchTextField.text = nil
@@ -1033,6 +1114,9 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         emptyStateLabel.isHidden = true
         retryButton.isHidden = true
         currentRetryAction = nil
+        searchTextField.isHidden = false
+        tableView.isHidden = false
+        webPanelContainerView.isHidden = true
         tableView.reloadData()
 
         switch currentPanelType {
@@ -1045,8 +1129,86 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         case .notes:
             loadNotes()
         case .web:
-            showEmptyState(message: FloorpStrings.Drawer.webPanelUnavailable)
+            loadWebPanel()
         }
+    }
+
+    private func loadWebPanel() {
+        searchTextField.isHidden = true
+        tableView.isHidden = true
+        emptyStateLabel.isHidden = true
+        retryButton.isHidden = true
+
+        guard let panelID = presentationState.selectedPanelId,
+              let panel = panelManager.panel(for: panelID),
+              panel.type == .web,
+              let sessionStore = presentationState.webPanelSessionStore else {
+            showWebPanelUnavailable()
+            return
+        }
+
+        let isPrivate = isPrivateProvider()
+        do {
+            let session = try sessionStore.session(for: panel, isPrivate: isPrivate)
+            guard session.key.windowUUID == windowUUID,
+                  session.key.panelID == panel.id,
+                  session.key.isPrivate == isPrivate,
+                  let contentView = session.contentView else {
+                showWebPanelUnavailable()
+                return
+            }
+
+            activeWebPanelSession = session
+            contentView.removeFromSuperview()
+            contentView.translatesAutoresizingMaskIntoConstraints = false
+            webPanelContainerView.addSubview(contentView)
+            NSLayoutConstraint.activate([
+                contentView.topAnchor.constraint(equalTo: webPanelContainerView.topAnchor),
+                contentView.leadingAnchor.constraint(equalTo: webPanelContainerView.leadingAnchor),
+                contentView.trailingAnchor.constraint(equalTo: webPanelContainerView.trailingAnchor),
+                contentView.bottomAnchor.constraint(equalTo: webPanelContainerView.bottomAnchor),
+            ])
+            webPanelContainerView.isHidden = false
+            let sessionKey = session.key
+            renderWebPanelState(session.state, expectedKey: sessionKey)
+            webPanelStateObserverID = session.addStateObserver { [weak self] state in
+                self?.renderWebPanelState(state, expectedKey: sessionKey)
+            }
+        } catch {
+            showWebPanelUnavailable()
+        }
+    }
+
+    private func renderWebPanelState(
+        _ state: FloorpWebPanelSessionState,
+        expectedKey: FloorpWebPanelSessionKey
+    ) {
+        guard activeWebPanelSession?.key == expectedKey else { return }
+        // The persisted, validated panel title is safe for initial rendering;
+        // arbitrary document titles are deliberately not promoted into chrome.
+        titleLabel.text = state.configuration.panelTitle
+        titleLabel.accessibilityValue = nil
+        webPanelContainerView.accessibilityValue = state.isLoading
+            ? String(Int(state.estimatedProgress * 100)) + "%"
+            : nil
+    }
+
+    private func detachWebPanelContent() {
+        if let webPanelStateObserverID {
+            activeWebPanelSession?.removeStateObserver(webPanelStateObserverID)
+        }
+        webPanelStateObserverID = nil
+        activeWebPanelSession?.contentView?.removeFromSuperview()
+        activeWebPanelSession = nil
+        webPanelContainerView.isHidden = true
+        webPanelContainerView.accessibilityValue = nil
+    }
+
+    private func showWebPanelUnavailable() {
+        detachWebPanelContent()
+        searchTextField.isHidden = true
+        tableView.isHidden = false
+        showEmptyState(message: FloorpStrings.Drawer.webPanelUnavailable)
     }
 
     private func loadBookmarks() {
@@ -1460,6 +1622,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         let didPresent = presentingViewController === parentVC
         if !didPresent {
             isTransitioningDrawer = false
+            detachWebPanelContent()
             presentationState.detach(self)
         }
         return didPresent
@@ -1505,6 +1668,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         guard !didFinishDismissal else { return }
         didFinishDismissal = true
         isTransitioningDrawer = false
+        detachWebPanelContent()
         presentationState.detach(self)
         onDismissed?()
     }

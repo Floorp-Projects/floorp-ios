@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
+import UIKit
 import XCTest
 @testable import Client
 
@@ -317,6 +318,161 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
     }
 }
 
+@MainActor
+final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
+    func testFailedPresentationDetachesWebPanelContentAndObserver() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        let parent = RejectingPresentationViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        XCTAssertFalse(drawer.show(from: parent))
+
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        XCTAssertEqual(session.stateObserverCount, 0)
+        XCTAssertNil(session.contentView?.superview)
+        XCTAssertEqual(session.invalidationCount, 0)
+    }
+
+    func testWindowAssociationTeardownInvalidatesAndRemovesRuntimeState() throws {
+        let suiteName = "FloorpWebPanelWindowTeardownTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let owner = NSObject()
+        let windowUUID = WindowUUID()
+        let state = FloorpPanelPresentationStateAssociation.state(
+            for: owner,
+            windowUUID: windowUUID
+        )
+        state.configureWebPanelRuntime(
+            profile: MockProfile(),
+            panelManager: FloorpPanelManager(defaults: defaults),
+            openInMainBrowser: { _ in }
+        )
+        XCTAssertNotNil(state.webPanelSessionStore)
+
+        FloorpPanelPresentationStateAssociation.invalidateState(for: owner)
+
+        XCTAssertNil(state.webPanelSessionStore)
+        let replacement = FloorpPanelPresentationStateAssociation.state(
+            for: owner,
+            windowUUID: windowUUID
+        )
+        XCTAssertFalse(replacement === state)
+        FloorpPanelPresentationStateAssociation.invalidateState(for: owner)
+    }
+
+    func testRegularAndPrivateSessionsSurviveDrawerHideAndRemainSeparated() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+
+        let regularDrawer = fixture.makeDrawer(isPrivate: false)
+        regularDrawer.loadViewIfNeeded()
+        let regularSession = try XCTUnwrap(fixture.factory.sessions.first)
+        XCTAssertEqual(regularSession.key.isPrivate, false)
+        XCTAssertEqual(regularSession.stateObserverCount, 1)
+        XCTAssertEqual(
+            regularSession.contentView?.superview?.accessibilityIdentifier,
+            "Floorp.Drawer.WebPanelContent"
+        )
+
+        regularDrawer.viewDidDisappear(false)
+        XCTAssertEqual(regularSession.stateObserverCount, 0)
+        XCTAssertNil(regularSession.contentView?.superview)
+        XCTAssertEqual(regularSession.invalidationCount, 0)
+
+        let reopenedRegularDrawer = fixture.makeDrawer(isPrivate: false)
+        reopenedRegularDrawer.loadViewIfNeeded()
+        XCTAssertEqual(fixture.factory.makeCallCount, 1)
+        XCTAssertTrue(fixture.factory.sessions.first === regularSession)
+        XCTAssertEqual(regularSession.stateObserverCount, 1)
+
+        reopenedRegularDrawer.viewDidDisappear(false)
+        let privateDrawer = fixture.makeDrawer(isPrivate: true)
+        privateDrawer.loadViewIfNeeded()
+        let privateSession = try XCTUnwrap(fixture.factory.sessions.last)
+        XCTAssertEqual(fixture.factory.makeCallCount, 2)
+        XCTAssertTrue(privateSession.key.isPrivate)
+        XCTAssertFalse(privateSession === regularSession)
+        XCTAssertNil(regularSession.contentView?.superview)
+        XCTAssertEqual(
+            privateSession.contentView?.superview?.accessibilityIdentifier,
+            "Floorp.Drawer.WebPanelContent"
+        )
+
+        privateDrawer.viewDidDisappear(false)
+        let reopenedPrivateDrawer = fixture.makeDrawer(isPrivate: true)
+        reopenedPrivateDrawer.loadViewIfNeeded()
+        XCTAssertEqual(fixture.factory.makeCallCount, 2)
+        XCTAssertTrue(fixture.factory.sessions.last === privateSession)
+        XCTAssertEqual(privateSession.invalidationCount, 0)
+    }
+
+    func testWindowRuntimeTeardownPurgesEveryPrivacyModeAndDetachesContent() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+
+        let regularDrawer = fixture.makeDrawer(isPrivate: false)
+        regularDrawer.loadViewIfNeeded()
+        regularDrawer.viewDidDisappear(false)
+        let privateDrawer = fixture.makeDrawer(isPrivate: true)
+        privateDrawer.loadViewIfNeeded()
+        let sessions = fixture.factory.sessions
+        XCTAssertEqual(sessions.count, 2)
+
+        fixture.presentationState.invalidateWebPanelRuntime()
+
+        XCTAssertNil(fixture.presentationState.webPanelSessionStore)
+        XCTAssertTrue(sessions.allSatisfy { $0.invalidationCount == 1 })
+        XCTAssertTrue(sessions.allSatisfy { $0.contentView?.superview == nil })
+        XCTAssertTrue(sessions.allSatisfy { $0.stateObserverCount == 0 })
+    }
+
+    private func makeDrawerFixture() throws -> FloorpWebPanelDrawerFixture {
+        let suiteName = "FloorpWebPanelDrawerRuntimeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let manager = FloorpPanelManager(defaults: defaults)
+        let webPanel = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Portal", urlText: "https://example.com/panel")
+        )
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(
+            windowUUID: .XCTestDefaultUUID,
+            factory: factory
+        )
+        let presentationState = FloorpPanelPresentationState(
+            windowUUID: .XCTestDefaultUUID,
+            selectedPanelId: webPanel.id,
+            webPanelSessionStore: store
+        )
+        return FloorpWebPanelDrawerFixture(
+            suiteName: suiteName,
+            defaults: defaults,
+            manager: manager,
+            presentationState: presentationState,
+            factory: factory
+        )
+    }
+}
+
+@MainActor
+private final class RejectingPresentationViewController: UIViewController {
+    override func present(
+        _ viewControllerToPresent: UIViewController,
+        animated flag: Bool,
+        completion: (() -> Void)? = nil
+    ) {
+        // Simulates UIKit rejecting a late presentation during a transition.
+    }
+}
+
 final class FloorpWebPanelNavigationPolicyTests: XCTestCase {
     func testAllowsSafeHTTPAndHTTPSInExistingFrames() throws {
         let urls = [
@@ -423,6 +579,11 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private(set) var state: FloorpWebPanelSessionState
     private(set) var configurationUpdateCount = 0
     private(set) var invalidationCount = 0
+    private let hostedContentView = UIView()
+    private var stateObservers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
+
+    var contentView: UIView? { hostedContentView }
+    var stateObserverCount: Int { stateObservers.count }
 
     init(
         key: FloorpWebPanelSessionKey,
@@ -435,10 +596,26 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration) {
         state.configuration = configuration
         configurationUpdateCount += 1
+        notifyStateObservers()
+    }
+
+    func addStateObserver(
+        _ observer: @escaping @MainActor (FloorpWebPanelSessionState) -> Void
+    ) -> UUID? {
+        let identifier = UUID()
+        stateObservers[identifier] = observer
+        observer(state)
+        return identifier
+    }
+
+    func removeStateObserver(_ identifier: UUID) {
+        stateObservers.removeValue(forKey: identifier)
     }
 
     func invalidate() {
         invalidationCount += 1
+        stateObservers.removeAll()
+        hostedContentView.removeFromSuperview()
     }
 
     func recordRuntimeState(currentURL: URL, pageTitle: String) {
@@ -447,6 +624,37 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         state.canGoBack = true
         state.isLoading = true
         state.estimatedProgress = 0.5
+        notifyStateObservers()
+    }
+
+    private func notifyStateObservers() {
+        let currentState = state
+        Array(stateObservers.values).forEach { $0(currentState) }
+    }
+}
+
+@MainActor
+private struct FloorpWebPanelDrawerFixture {
+    let suiteName: String
+    let defaults: UserDefaults
+    let manager: FloorpPanelManager
+    let presentationState: FloorpPanelPresentationState
+    let factory: MockFloorpWebPanelSessionFactory
+
+    func makeDrawer(isPrivate: Bool) -> FloorpOverlayDrawerViewController {
+        FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: .shared,
+            presentationState: presentationState,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            isPrivateProvider: { isPrivate }
+        )
+    }
+
+    func cleanup() {
+        presentationState.invalidateWebPanelRuntime()
+        defaults.removePersistentDomain(forName: suiteName)
     }
 }
 

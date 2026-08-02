@@ -18,13 +18,20 @@ class TabConfigurationProvider {
         configuration(from: profile, isPrivate: true)
     }
 
-    private let configurationProvider = DefaultWKEngineConfigurationProvider()
+    private let configurationProvider: DefaultWKEngineConfigurationProvider
     private let profile: Profile
     private weak let tabManager: TabManager?
 
-    init(profile: Profile, tabManager: TabManager) {
+    init(
+        profile: Profile,
+        tabManager: TabManager,
+        privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator = .shared
+    ) {
         self.profile = profile
         self.tabManager = tabManager
+        self.configurationProvider = DefaultWKEngineConfigurationProvider(
+            privateBrowsingSessionCoordinator: privateBrowsingSessionCoordinator
+        )
     }
 
     func configuration(isPrivate: Bool) -> WKEngineConfiguration {
@@ -43,10 +50,6 @@ class TabConfigurationProvider {
     func updateMediaTypesRequiringUserActionForPlayback(_ mediaType: WKAudiovisualMediaTypes) {
         configuration.webViewConfiguration.mediaTypesRequiringUserActionForPlayback = mediaType
         privateConfiguration.webViewConfiguration.mediaTypesRequiringUserActionForPlayback = mediaType
-    }
-
-    func endPrivateBrowsingSession() {
-        configurationProvider.endPrivateBrowsingSession()
     }
 
     private func configuration(from profile: Profile, isPrivate: Bool) -> WKEngineConfiguration {

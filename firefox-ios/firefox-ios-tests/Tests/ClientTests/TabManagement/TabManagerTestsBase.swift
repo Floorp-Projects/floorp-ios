@@ -6,6 +6,7 @@ import Foundation
 import XCTest
 import TabDataStore
 import Common
+import WebEngine
 @testable import Client
 
 // Note: Some tests are annotated with @MainActor because a new Tab is created without the zombie flag set to true.
@@ -52,6 +53,7 @@ class TabManagerTestsBase: XCTestCase {
     @MainActor
     func createSubject(tabs: [Tab] = [],
                        windowUUID: WindowUUID? = nil,
+                       privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator = .shared,
                        file: StaticString = #filePath,
                        line: UInt = #line) -> TabManagerImplementation {
         let subject = TabManagerImplementation(
@@ -60,6 +62,7 @@ class TabManagerTestsBase: XCTestCase {
             uuid: ReservedWindowUUID(uuid: windowUUID ?? tabWindowUUID, isNew: false),
             tabDataStore: mockTabStore,
             tabSessionStore: mockSessionStore,
+            privateBrowsingSessionCoordinator: privateBrowsingSessionCoordinator,
             tabs: tabs
         )
         trackForMemoryLeaks(subject, file: file, line: line)

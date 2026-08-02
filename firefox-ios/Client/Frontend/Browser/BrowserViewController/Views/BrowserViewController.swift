@@ -508,6 +508,7 @@ class BrowserViewController: UIViewController,
 
         MainActor.assumeIsolated {
             logger.log("BVC deallocating (window: \(windowUUID))", level: .info, category: .lifecycle)
+            teardownFloorp()
             unsubscribeFromRedux()
             stopObservingAllWebViews()
         }
