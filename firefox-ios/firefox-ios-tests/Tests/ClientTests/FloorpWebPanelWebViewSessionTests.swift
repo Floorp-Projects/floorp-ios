@@ -68,7 +68,9 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         let restorationURL = try XCTUnwrap(URL(string: "https://example.com/restored"))
         let restoredFixture = makeFixture(restorationURL: restorationURL)
 
+        XCTAssertEqual(restoredFixture.session.restorationURLForUnload(), restorationURL)
         restoredFixture.installer.completeInstallation()
+        XCTAssertEqual(restoredFixture.session.restorationURLForUnload(), restorationURL)
         restoredFixture.installer.completeInstallation()
 
         XCTAssertEqual(restoredFixture.runtime.loadedRequests.map(\.url), [restorationURL])
@@ -87,6 +89,24 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
             unsafeFixture.runtime.loadedRequests.map(\.url),
             [unsafeFixture.configuration.homeURL]
         )
+    }
+
+    func testRestorationCandidatePrefersLatestRuntimeURLAndRejectsUnsafeLatestURL() throws {
+        let fixture = makeFixture()
+        let staleStateURL = try XCTUnwrap(URL(string: "https://example.com/stale-state"))
+        let latestRuntimeURL = try XCTUnwrap(URL(string: "https://example.com/latest-runtime"))
+        fixture.runtime.currentURL = staleStateURL
+        fixture.runtime.stateDidChange?()
+
+        fixture.runtime.currentURL = latestRuntimeURL
+        XCTAssertEqual(fixture.session.state.currentURL, staleStateURL)
+        XCTAssertEqual(fixture.session.restorationURLForUnload(), latestRuntimeURL)
+
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "javascript:alert(1)"))
+        XCTAssertNil(fixture.session.restorationURLForUnload())
+
+        fixture.runtime.currentURL = nil
+        XCTAssertEqual(fixture.session.restorationURLForUnload(), staleStateURL)
     }
 
     func testHiddenSessionContinuesPendingLoadAndRequestsMediaSuppression() {
@@ -194,16 +214,22 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertEqual(fixture.runtime.invalidateCallCount, 0)
     }
 
-    func testDelayedMediaCallbacksDoNotOverrideLatestStateAfterInvalidate() {
+    func testDelayedMediaTransitionsCoalesceAndIgnoreCompletionAfterInvalidate() {
         let fixture = makeFixture()
         fixture.runtime.delaysMediaPlaybackCompletions = true
 
         fixture.session.setVisible(false)
         fixture.session.setVisible(true)
-        fixture.session.setAudioMuted(true)
 
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+        XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 1)
+        fixture.runtime.completePendingMediaPlaybackTransitions()
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false])
+
+        fixture.session.setAudioMuted(true)
+        fixture.runtime.completePendingMediaPlaybackTransitions()
         XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false, true])
-        XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 3)
+        XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 1)
         XCTAssertTrue(fixture.session.isAudioMuted)
 
         fixture.session.invalidate()
@@ -216,6 +242,57 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false, true])
         XCTAssertTrue(fixture.session.isAudioMuted)
         XCTAssertEqual(fixture.runtime.invalidateCallCount, 1)
+    }
+
+    func testInvalidateReleasesSessionAndRuntimeBeforeLateMediaCompletion() {
+        let relay = MockFloorpWebPanelMediaPlaybackCompletionRelay()
+
+        let references = makeInvalidatedMediaReferences(relay: relay)
+
+        XCTAssertEqual(relay.pendingCompletionCount, 1)
+        XCTAssertNil(references.session.value)
+        XCTAssertNil(references.runtime.value)
+
+        relay.completePendingTransitions(with: .success(()))
+        XCTAssertEqual(relay.pendingCompletionCount, 0)
+        XCTAssertNil(references.session.value)
+        XCTAssertNil(references.runtime.value)
+    }
+
+    func testInvalidateCleanupOrdersFinalSuppressionAfterDelayedResume() async {
+        let gate = MockFloorpWebPanelAsyncGate()
+        var events = [String]()
+        let resumeTask = Task { @MainActor in
+            events.append("resume-started")
+            await gate.wait()
+            events.append("resume-finished")
+        }
+        await Task.yield()
+        XCTAssertTrue(gate.isWaiting)
+
+        let cleanupTask = FloorpWebPanelMediaPlaybackCleanupScheduler.schedule(
+            after: resumeTask
+        ) {
+            events.append("final-suppression")
+        }
+        events.append("invalidate-cancelled-resume")
+        resumeTask.cancel()
+        await Task.yield()
+
+        XCTAssertEqual(events, ["resume-started", "invalidate-cancelled-resume"])
+
+        gate.open()
+        await cleanupTask.value
+
+        XCTAssertEqual(
+            events,
+            [
+                "resume-started",
+                "invalidate-cancelled-resume",
+                "resume-finished",
+                "final-suppression",
+            ]
+        )
     }
 
     func testOpenCurrentPageInMainBrowserAllowsOnlySafeCurrentURL() throws {
@@ -390,6 +467,24 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
             installer: installer,
             configuration: configuration
         )
+    }
+
+    private func makeInvalidatedMediaReferences(
+        relay: MockFloorpWebPanelMediaPlaybackCompletionRelay
+    ) -> (
+        session: WeakReference<FloorpWebPanelWebViewSession>,
+        runtime: WeakReference<MockFloorpWebPanelWebViewRuntime>
+    ) {
+        let fixture = makeFixture()
+        fixture.runtime.mediaPlaybackCompletionRelay = relay
+        fixture.session.setVisible(false)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+
+        let session = WeakReference(fixture.session)
+        let runtime = WeakReference(fixture.runtime)
+        fixture.session.invalidate()
+        XCTAssertEqual(fixture.runtime.invalidateCallCount, 1)
+        return (session, runtime)
     }
 
     private struct Fixture {
@@ -579,6 +674,7 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
         @MainActor (Result<Void, Error>) -> Void
     ]()
     var delaysMediaPlaybackCompletions = false
+    var mediaPlaybackCompletionRelay: MockFloorpWebPanelMediaPlaybackCompletionRelay?
     var mediaPlaybackError: Error?
 
     var pendingMediaPlaybackCompletionCount: Int {
@@ -615,6 +711,10 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
         completion: @escaping @MainActor (Result<Void, Error>) -> Void
     ) {
         mediaPlaybackSuppressionRequests.append(isSuppressed)
+        if let mediaPlaybackCompletionRelay {
+            mediaPlaybackCompletionRelay.append(completion)
+            return
+        }
         if delaysMediaPlaybackCompletions {
             pendingMediaPlaybackCompletions.append(completion)
             return
@@ -641,6 +741,53 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
     func invalidate() {
         invalidateCallCount += 1
         stateDidChange = nil
+    }
+}
+
+@MainActor
+private final class MockFloorpWebPanelMediaPlaybackCompletionRelay {
+    private var completions = [@MainActor (Result<Void, Error>) -> Void]()
+
+    var pendingCompletionCount: Int {
+        completions.count
+    }
+
+    func append(_ completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
+        completions.append(completion)
+    }
+
+    func completePendingTransitions(with result: Result<Void, Error>) {
+        let pendingCompletions = completions
+        completions.removeAll()
+        pendingCompletions.forEach { $0(result) }
+    }
+}
+
+@MainActor
+private final class MockFloorpWebPanelAsyncGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    var isWaiting: Bool {
+        continuation != nil
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func open() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private final class WeakReference<Object: AnyObject> {
+    private(set) weak var value: Object?
+
+    init(_ value: Object) {
+        self.value = value
     }
 }
 

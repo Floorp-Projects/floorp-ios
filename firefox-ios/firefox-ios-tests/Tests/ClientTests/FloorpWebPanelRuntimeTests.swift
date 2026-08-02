@@ -120,7 +120,35 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         let replacementBeforeCommit = try mockSession(
             from: firstStore.session(for: panel, isPrivate: false)
         )
-        XCTAssertNil(replacementBeforeCommit.restorationURL)
+        XCTAssertEqual(replacementBeforeCommit.restorationURL, currentURL)
+    }
+
+    func testUnloadUsesLatestSynchronousRestorationCandidateAndRejectsUnsafeURL() throws {
+        let store = FloorpWebPanelSessionStore(
+            windowUUID: WindowUUID(),
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let panel = makePanel(id: "latest-runtime")
+        let session = try mockSession(from: store.session(for: panel, isPrivate: false))
+        let staleStateURL = try XCTUnwrap(URL(string: "https://example.com/stale-state"))
+        let latestRuntimeURL = try XCTUnwrap(URL(string: "https://example.com/latest-runtime"))
+        session.recordRuntimeState(currentURL: staleStateURL, pageTitle: "Stale")
+        session.setLatestRuntimeURLForRestoration(latestRuntimeURL)
+
+        XCTAssertTrue(store.unloadSession(for: session.key))
+
+        let restored = try mockSession(from: store.session(for: panel, isPrivate: false))
+        XCTAssertEqual(restored.restorationURL, latestRuntimeURL)
+
+        let unsafeURL = try XCTUnwrap(URL(string: "javascript:alert(1)"))
+        restored.recordRuntimeState(currentURL: staleStateURL, pageTitle: "Still stale")
+        restored.setLatestRuntimeURLForRestoration(unsafeURL)
+        XCTAssertTrue(store.unloadSession(for: restored.key))
+
+        let unsafeReplacement = try mockSession(
+            from: store.session(for: panel, isPrivate: false)
+        )
+        XCTAssertNil(unsafeReplacement.restorationURL)
     }
 
     func testRestorationSnapshotsStayWindowAndPrivacyScopedAndPrivatePurgeClearsThem() throws {
@@ -1321,6 +1349,9 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private let hostedContentView = UIView()
     private var stateObservers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
     private var isVisible = true
+    private var latestRuntimeURL: URL?
+    private var hasLatestRuntimeURL = false
+    private var pendingRestorationCandidateURL: URL?
 
     var contentView: UIView? { invalidationCount == 0 ? hostedContentView : nil }
     var stateObserverCount: Int { stateObservers.count }
@@ -1333,6 +1364,7 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         self.key = key
         self.restorationURL = restorationURL
         self.state = FloorpWebPanelSessionState(configuration: configuration)
+        self.pendingRestorationCandidateURL = restorationURL
     }
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration) {
@@ -1396,6 +1428,22 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         audioMuteChanges.append(isMuted)
     }
 
+    func restorationURLForUnload() -> URL? {
+        if hasLatestRuntimeURL {
+            return FloorpWebPanelRestorationPolicy.safeWebURL(latestRuntimeURL)
+        }
+        if let pendingRestorationCandidateURL {
+            return FloorpWebPanelRestorationPolicy.safeWebURL(pendingRestorationCandidateURL)
+        }
+        return FloorpWebPanelRestorationPolicy.safeWebURL(state.currentURL)
+    }
+
+    func setLatestRuntimeURLForRestoration(_ url: URL?) {
+        latestRuntimeURL = url
+        hasLatestRuntimeURL = true
+        pendingRestorationCandidateURL = nil
+    }
+
     func recordRuntimeState(
         currentURL: URL,
         pageTitle: String,
@@ -1403,6 +1451,7 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         canGoForward: Bool = false,
         isLoading: Bool = true
     ) {
+        setLatestRuntimeURLForRestoration(currentURL)
         state.currentURL = currentURL
         state.pageTitle = pageTitle
         state.canGoBack = canGoBack

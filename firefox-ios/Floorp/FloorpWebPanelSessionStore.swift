@@ -214,7 +214,7 @@ final class FloorpWebPanelSessionStore {
         }
         if preservingRestoration {
             if let currentURL = FloorpWebPanelRestorationPolicy.safeWebURL(
-                entry.session.state.currentURL
+                entry.session.restorationURLForUnload()
             ) {
                 restorationSnapshots[key] = RestorationSnapshot(
                     homeURL: entry.configuration.homeURL,

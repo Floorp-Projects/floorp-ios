@@ -81,6 +81,10 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     func openCurrentPageInMainBrowser()
     func setVisible(_ isVisible: Bool)
     func setAudioMuted(_ isMuted: Bool)
+    /// Returns a synchronous, safe URL candidate immediately before unload.
+    /// Implementations backed by an asynchronous runtime should prefer its
+    /// latest value over observer-derived state.
+    func restorationURLForUnload() -> URL?
     func unload()
     func invalidate()
 }
@@ -103,6 +107,9 @@ extension FloorpWebPanelSessionProtocol {
     func reload() {}
     func stopLoading() {}
     func openCurrentPageInMainBrowser() {}
+    func restorationURLForUnload() -> URL? {
+        FloorpWebPanelRestorationPolicy.safeWebURL(state.currentURL)
+    }
     func unload() {
         invalidate()
     }
