@@ -239,10 +239,6 @@ final class FloorpWebPanelMediaPlaybackTransitioner {
         _ isSuppressed: Bool,
         _ callback: NativeCallbackBox?
     ) -> Void
-    typealias ScriptEvaluator = @MainActor (
-        _ webView: WKWebView,
-        _ completion: CompletionBox
-    ) -> Void
 
     @MainActor
     final class NativeCallbackBox {
@@ -259,42 +255,16 @@ final class FloorpWebPanelMediaPlaybackTransitioner {
         }
     }
 
-    @MainActor
-    final class CompletionBox {
-        private var completion: Completion?
-
-        init(_ completion: @escaping Completion) {
-            self.completion = completion
-        }
-
-        func finish(with result: Result<Void, Error>) {
-            let completion = completion
-            self.completion = nil
-            completion?(result)
-        }
-    }
-
     private let nativeSetter: NativeSetter
-    private let scriptEvaluator: ScriptEvaluator
 
     init(
         nativeSetter: @escaping NativeSetter = { webView, isSuppressed, callback in
             webView.setAllMediaPlaybackSuspended(isSuppressed) {
                 callback?.call()
             }
-        },
-        scriptEvaluator: @escaping ScriptEvaluator = { webView, completion in
-            webView.evaluateJavaScript(
-                FloorpWebPanelMediaPlaybackScript.suppress,
-                in: nil,
-                in: .defaultClient
-            ) { result in
-                completion.finish(with: result.map { _ in () })
-            }
         }
     ) {
         self.nativeSetter = nativeSetter
-        self.scriptEvaluator = scriptEvaluator
     }
 
     func transition(
@@ -302,20 +272,8 @@ final class FloorpWebPanelMediaPlaybackTransitioner {
         isSuppressed: Bool,
         completion: @escaping Completion
     ) {
-        let scriptEvaluator = scriptEvaluator
-        let callback = NativeCallbackBox { [weak webView] in
-            guard isSuppressed else {
-                completion(.success(()))
-                return
-            }
-            guard let webView else {
-                completion(.failure(FloorpWebPanelMediaPlaybackError.runtimeUnavailable))
-                return
-            }
-
-            // Native suspension remains authoritative. This one-shot pause is
-            // best effort and deliberately avoids persistent DOM mutations.
-            scriptEvaluator(webView, CompletionBox(completion))
+        let callback = NativeCallbackBox {
+            completion(.success(()))
         }
         nativeSetter(webView, isSuppressed, callback)
     }
@@ -429,17 +387,6 @@ private enum FloorpWebPanelMediaPlaybackError: Error {
     case runtimeUnavailable
 }
 
-private enum FloorpWebPanelMediaPlaybackScript {
-    static let suppress = #"""
-    (() => {
-      for (const element of document.querySelectorAll("audio, video")) {
-        element.pause();
-      }
-      return true;
-    })();
-    """#
-}
-
 @MainActor
 final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     let key: FloorpWebPanelSessionKey
@@ -460,7 +407,6 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private var appliedMediaPlaybackSuppression = false
     private var isMediaPlaybackTransitionInFlight = false
     private var mediaPlaybackTransitionGeneration = UUID()
-    private(set) var isAudioMuted = false
 
     var contentView: UIView? {
         runtime?.contentView
@@ -562,12 +508,6 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         updateMediaPlaybackSuppression()
     }
 
-    func setAudioMuted(_ isMuted: Bool) {
-        guard !isInvalidated, isAudioMuted != isMuted else { return }
-        isAudioMuted = isMuted
-        updateMediaPlaybackSuppression()
-    }
-
     func restorationURLForUnload() -> URL? {
         guard !isInvalidated else { return nil }
         if let runtimeURL = runtime?.currentURL {
@@ -632,7 +572,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     }
 
     private func updateMediaPlaybackSuppression() {
-        let shouldSuppress = !isVisible || isAudioMuted
+        let shouldSuppress = !isVisible
         guard desiredMediaPlaybackSuppression != shouldSuppress else { return }
         desiredMediaPlaybackSuppression = shouldSuppress
         startMediaPlaybackTransitionIfNeeded()

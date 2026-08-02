@@ -71,7 +71,7 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         XCTAssertFalse(privateSession === otherWindow)
     }
 
-    func testMuteHideAndUnloadAPIsAreWindowScopedAndIdempotent() throws {
+    func testHideAndUnloadAPIsAreWindowScopedAndIdempotent() throws {
         let firstWindow = WindowUUID()
         let secondWindow = WindowUUID()
         let firstFactory = MockFloorpWebPanelSessionFactory()
@@ -88,16 +88,10 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         let first = try mockSession(from: firstStore.session(for: panel, isPrivate: false))
         let second = try mockSession(from: secondStore.session(for: panel, isPrivate: false))
 
-        XCTAssertFalse(firstStore.setAudioMuted(true, for: second.key))
         XCTAssertFalse(firstStore.unloadSession(for: second.key))
         XCTAssertFalse(firstStore.hideSession(second, autoUnload: true))
-        XCTAssertFalse(second.isAudioMuted)
         XCTAssertEqual(second.invalidationCount, 0)
 
-        XCTAssertTrue(firstStore.setAudioMuted(true, for: first.key))
-        XCTAssertTrue(firstStore.setAudioMuted(true, for: first.key))
-        XCTAssertTrue(first.isAudioMuted)
-        XCTAssertEqual(first.audioMuteChanges, [true])
         XCTAssertTrue(firstStore.hideSession(first, autoUnload: false))
         XCTAssertTrue(firstStore.hideSession(first, autoUnload: false))
         XCTAssertEqual(first.visibilityChanges, [false])
@@ -1344,8 +1338,6 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private(set) var stopLoadingCallCount = 0
     private(set) var openInMainBrowserCallCount = 0
     private(set) var visibilityChanges = [Bool]()
-    private(set) var audioMuteChanges = [Bool]()
-    private(set) var isAudioMuted = false
     private let hostedContentView = UIView()
     private var stateObservers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
     private var isVisible = true
@@ -1420,12 +1412,6 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         guard self.isVisible != isVisible else { return }
         self.isVisible = isVisible
         visibilityChanges.append(isVisible)
-    }
-
-    func setAudioMuted(_ isMuted: Bool) {
-        guard isAudioMuted != isMuted else { return }
-        isAudioMuted = isMuted
-        audioMuteChanges.append(isMuted)
     }
 
     func restorationURLForUnload() -> URL? {

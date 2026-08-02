@@ -65,7 +65,6 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
     var state: FloorpWebPanelSessionState { get }
     var contentView: UIView? { get }
-    var isAudioMuted: Bool { get }
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration)
     @discardableResult
@@ -80,7 +79,6 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     func stopLoading()
     func openCurrentPageInMainBrowser()
     func setVisible(_ isVisible: Bool)
-    func setAudioMuted(_ isMuted: Bool)
     /// Returns a synchronous, safe URL candidate immediately before unload.
     /// Implementations backed by an asynchronous runtime should prefer its
     /// latest value over observer-derived state.

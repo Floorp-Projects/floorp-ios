@@ -193,24 +193,15 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertEqual(fixture.runtime.stopLoadingCallCount, 1)
     }
 
-    func testVisibilityAndExplicitMuteRemainIdempotentWhenJavaScriptFails() {
+    func testVisibilityTransitionsRemainIdempotent() {
         let fixture = makeFixture()
-        fixture.runtime.mediaPlaybackError = MockMediaPlaybackError.javaScriptFailure
 
         fixture.session.setVisible(false)
         fixture.session.setVisible(false)
         fixture.session.setVisible(true)
-        fixture.session.setAudioMuted(true)
-        fixture.session.setAudioMuted(true)
-        fixture.session.setVisible(false)
         fixture.session.setVisible(true)
-        fixture.session.setAudioMuted(false)
 
-        XCTAssertEqual(
-            fixture.runtime.mediaPlaybackSuppressionRequests,
-            [true, false, true, false]
-        )
-        XCTAssertFalse(fixture.session.isAudioMuted)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false])
         XCTAssertEqual(fixture.runtime.invalidateCallCount, 0)
     }
 
@@ -226,21 +217,18 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         fixture.runtime.completePendingMediaPlaybackTransitions()
         XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false])
 
-        fixture.session.setAudioMuted(true)
+        fixture.session.setVisible(false)
         fixture.runtime.completePendingMediaPlaybackTransitions()
         XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false, true])
         XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 1)
-        XCTAssertTrue(fixture.session.isAudioMuted)
 
         fixture.session.invalidate()
-        fixture.runtime.mediaPlaybackError = MockMediaPlaybackError.javaScriptFailure
         fixture.runtime.completePendingMediaPlaybackTransitions()
-        fixture.session.setAudioMuted(false)
+        fixture.session.setVisible(true)
         fixture.session.setVisible(false)
 
         XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 0)
         XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false, true])
-        XCTAssertTrue(fixture.session.isAudioMuted)
         XCTAssertEqual(fixture.runtime.invalidateCallCount, 1)
     }
 
@@ -317,41 +305,6 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
 
         XCTAssertEqual(nativeSetter.requests, [true, true])
         XCTAssertEqual(nativeSetter.pendingCompletionCount, 1)
-        XCTAssertNil(webViewReference?.value)
-        XCTAssertNil(controllerReference?.value)
-        XCTAssertNil(completionOwnerReference?.value)
-    }
-
-    func testInvalidateReleasesWebViewWhenJavaScriptTransitionNeverCompletes() async {
-        let nativeSetter = MockFloorpWebPanelNativeMediaSetter(completesImmediately: true)
-        let scriptEvaluator = MockFloorpWebPanelMediaScriptEvaluator()
-        let transitioner = makeMediaPlaybackTransitioner(
-            nativeSetter: nativeSetter,
-            scriptEvaluator: scriptEvaluator
-        )
-        var webViewReference: WeakReference<WKWebView>?
-        var controllerReference: WeakReference<FloorpWebPanelMediaPlaybackController>?
-        var completionOwnerReference: WeakReference<MockFloorpWebPanelCompletionOwner>?
-
-        autoreleasepool {
-            let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-            let completionOwner = MockFloorpWebPanelCompletionOwner()
-            let controller = FloorpWebPanelMediaPlaybackController(
-                webView: webView,
-                transitioner: transitioner
-            )
-            webViewReference = WeakReference(webView)
-            controllerReference = WeakReference(controller)
-            completionOwnerReference = WeakReference(completionOwner)
-            controller.setSuppressed(true) { [completionOwner] _ in
-                completionOwner.callCount += 1
-            }
-            controller.invalidate()
-        }
-        await waitForDeallocation(webViewReference)
-
-        XCTAssertEqual(nativeSetter.requests, [true, true])
-        XCTAssertEqual(scriptEvaluator.pendingCompletionCount, 1)
         XCTAssertNil(webViewReference?.value)
         XCTAssertNil(controllerReference?.value)
         XCTAssertNil(completionOwnerReference?.value)
@@ -550,8 +503,7 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
     }
 
     private func makeMediaPlaybackTransitioner(
-        nativeSetter: MockFloorpWebPanelNativeMediaSetter,
-        scriptEvaluator: MockFloorpWebPanelMediaScriptEvaluator? = nil
+        nativeSetter: MockFloorpWebPanelNativeMediaSetter
     ) -> FloorpWebPanelMediaPlaybackTransitioner {
         FloorpWebPanelMediaPlaybackTransitioner(
             nativeSetter: { webView, isSuppressed, callback in
@@ -560,13 +512,6 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
                     on: webView,
                     callback: callback
                 )
-            },
-            scriptEvaluator: { webView, completion in
-                if let scriptEvaluator {
-                    scriptEvaluator.evaluate(on: webView, completion: completion)
-                } else {
-                    completion.finish(with: .success(()))
-                }
             }
         )
     }
@@ -767,7 +712,6 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
     ]()
     var delaysMediaPlaybackCompletions = false
     var mediaPlaybackCompletionRelay: MockFloorpWebPanelMediaPlaybackCompletionRelay?
-    var mediaPlaybackError: Error?
 
     var pendingMediaPlaybackCompletionCount: Int {
         pendingMediaPlaybackCompletions.count
@@ -811,23 +755,13 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
             pendingMediaPlaybackCompletions.append(completion)
             return
         }
-        if let mediaPlaybackError {
-            completion(.failure(mediaPlaybackError))
-        } else {
-            completion(.success(()))
-        }
+        completion(.success(()))
     }
 
     func completePendingMediaPlaybackTransitions() {
         let completions = pendingMediaPlaybackCompletions
         pendingMediaPlaybackCompletions.removeAll()
-        completions.forEach { completion in
-            if let mediaPlaybackError {
-                completion(.failure(mediaPlaybackError))
-            } else {
-                completion(.success(()))
-            }
-        }
+        completions.forEach { $0(.success(())) }
     }
 
     func invalidate() {
@@ -860,14 +794,9 @@ private final class MockFloorpWebPanelNativeMediaSetter {
     private var completions = [FloorpWebPanelMediaPlaybackTransitioner.NativeCallbackBox]()
     private(set) var requests = [Bool]()
     private(set) var webViews = [WeakReference<WKWebView>]()
-    private let completesImmediately: Bool
 
     var pendingCompletionCount: Int {
         completions.count
-    }
-
-    init(completesImmediately: Bool = false) {
-        self.completesImmediately = completesImmediately
     }
 
     func setSuppressed(
@@ -878,34 +807,12 @@ private final class MockFloorpWebPanelNativeMediaSetter {
         requests.append(isSuppressed)
         webViews.append(WeakReference(webView))
         guard let callback else { return }
-        if completesImmediately {
-            callback.call()
-        } else {
-            completions.append(callback)
-        }
+        completions.append(callback)
     }
 
     func completeNextTransition() {
         guard !completions.isEmpty else { return }
         completions.removeFirst().call()
-    }
-}
-
-@MainActor
-private final class MockFloorpWebPanelMediaScriptEvaluator {
-    private var completions = [FloorpWebPanelMediaPlaybackTransitioner.CompletionBox]()
-    private(set) var webViews = [WeakReference<WKWebView>]()
-
-    var pendingCompletionCount: Int {
-        completions.count
-    }
-
-    func evaluate(
-        on webView: WKWebView,
-        completion: FloorpWebPanelMediaPlaybackTransitioner.CompletionBox
-    ) {
-        webViews.append(WeakReference(webView))
-        completions.append(completion)
     }
 }
 
@@ -919,10 +826,6 @@ private final class WeakReference<Object: AnyObject> {
     init(_ value: Object) {
         self.value = value
     }
-}
-
-private enum MockMediaPlaybackError: Error {
-    case javaScriptFailure
 }
 
 @MainActor

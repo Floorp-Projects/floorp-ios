@@ -95,16 +95,6 @@ final class FloorpWebPanelSessionStore {
     }
 
     @discardableResult
-    func setAudioMuted(
-        _ isMuted: Bool,
-        for key: FloorpWebPanelSessionKey
-    ) -> Bool {
-        guard key.windowUUID == windowUUID, let entry = entries[key] else { return false }
-        entry.session.setAudioMuted(isMuted)
-        return true
-    }
-
-    @discardableResult
     func unloadSession(for key: FloorpWebPanelSessionKey) -> Bool {
         guard key.windowUUID == windowUUID, entries[key] != nil else { return false }
         removeSession(for: key, preservingRestoration: true)
