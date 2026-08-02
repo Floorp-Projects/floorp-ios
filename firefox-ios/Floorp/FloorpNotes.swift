@@ -6,6 +6,44 @@ import Foundation
 
 // MARK: - Note model
 
+/// The byte-exact identity of a Floorp note.
+///
+/// Swift `String` equality treats canonically equivalent Unicode sequences as
+/// equal. Notes Sync instead follows the desktop wire contract, where IDs are
+/// opaque UTF-8 bytes. Keeping that policy in one value type prevents a
+/// `Set<String>` or `[String: Value]` from silently merging two distinct IDs.
+struct FloorpNoteID: Codable, Hashable, Comparable, Sendable {
+    let rawValue: String
+
+    init(_ rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue.utf8.elementsEqual(rhs.rawValue.utf8)
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(rawValue.utf8.count)
+        for byte in rawValue.utf8 {
+            hasher.combine(byte)
+        }
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue.utf8.lexicographicallyPrecedes(rhs.rawValue.utf8)
+    }
+
+    init(from decoder: Decoder) throws {
+        rawValue = try decoder.singleValueContainer().decode(String.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 /// A Floorp note as it is represented inside the iOS application.
 ///
 /// `content` is intentionally kept as an opaque string. Floorp desktop stores

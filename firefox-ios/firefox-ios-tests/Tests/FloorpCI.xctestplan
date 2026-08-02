@@ -190,6 +190,8 @@
         "FloorpNoteEditorViewControllerTests\/testTerminatedPreflightCannotRecreateReleasedRichEditor()",
         "FloorpNoteEditorViewControllerTests\/testTitleOnlyProcessRecoveryPreservesLexicalAndTipTapSourceBytes()",
         "FloorpNoteEditorViewControllerTests\/testUnknownLexicalContentRemainsReadOnlyAndSourceIsNotRewritten()",
+        "FloorpNoteIDTests\/testCodableUsesSingleJSONStringAndPreservesRawValue()",
+        "FloorpNoteIDTests\/testEqualityHashingAndOrderingUseExactUTF8Bytes()",
         "FloorpNotePersistenceSessionTests\/testConcurrentFirstSavesCreateOneNote()",
         "FloorpNotePersistenceSessionTests\/testCreationCallbackReportsInitialCreateAndSaveAsCopyOnly()",
         "FloorpNotePersistenceSessionTests\/testExistingNoteSessionPreservesConflictDetection()",

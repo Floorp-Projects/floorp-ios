@@ -9,6 +9,28 @@ import UIKit
 import UniformTypeIdentifiers
 @testable import Client
 
+final class FloorpNoteIDTests: XCTestCase {
+    func testEqualityHashingAndOrderingUseExactUTF8Bytes() {
+        let composed = FloorpNoteID("\u{00E9}")
+        let decomposed = FloorpNoteID("e\u{0301}")
+
+        XCTAssertNotEqual(Data(composed.rawValue.utf8), Data(decomposed.rawValue.utf8))
+        XCTAssertNotEqual(composed, decomposed)
+        XCTAssertEqual(Set([composed, decomposed]).count, 2)
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: [(composed, 1), (decomposed, 2)]).count, 2)
+        XCTAssertLessThan(decomposed, composed)
+    }
+
+    func testCodableUsesSingleJSONStringAndPreservesRawValue() throws {
+        let original = FloorpNoteID(" note-e\u{0301} ")
+        let data = try JSONEncoder().encode(original)
+
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: data) as? String, original.rawValue)
+        let decoded = try JSONDecoder().decode(FloorpNoteID.self, from: data)
+        XCTAssertEqual(Data(decoded.rawValue.utf8), Data(original.rawValue.utf8))
+    }
+}
+
 final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
     func testCRUDPersistsAcrossStoreInstancesIncludingEmptyArchive() async throws {
         let location = try makeTemporaryArchiveLocation()
