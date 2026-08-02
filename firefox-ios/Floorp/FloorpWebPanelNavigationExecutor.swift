@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import Common
 import Foundation
 @preconcurrency import WebKit
 
@@ -11,25 +12,58 @@ enum FloorpWebPanelNavigationExecution: Equatable {
     case cancel
 }
 
+struct FloorpWebPanelMainBrowserRequest: Equatable {
+    let url: URL
+    let windowUUID: WindowUUID
+    let isPrivate: Bool
+}
+
+@MainActor
+struct FloorpWebPanelMainBrowserRouter {
+    typealias OpenURLInNewTab = @MainActor (URL, Bool) -> Void
+
+    private let windowUUID: WindowUUID
+    private let openURLInNewTab: OpenURLInNewTab
+
+    init(
+        windowUUID: WindowUUID,
+        openURLInNewTab: @escaping OpenURLInNewTab
+    ) {
+        self.windowUUID = windowUUID
+        self.openURLInNewTab = openURLInNewTab
+    }
+
+    func open(_ request: FloorpWebPanelMainBrowserRequest) {
+        guard request.windowUUID == windowUUID else { return }
+        openURLInNewTab(request.url, request.isPrivate)
+    }
+}
+
 @MainActor
 final class FloorpWebPanelNavigationExecutor: NSObject, WKNavigationDelegate, WKUIDelegate {
-    typealias OpenInMainBrowser = @MainActor (URL) -> Void
+    typealias OpenInMainBrowser = @MainActor (FloorpWebPanelMainBrowserRequest) -> Void
     typealias CurrentTime = @MainActor () -> TimeInterval
 
+    private let windowUUID: WindowUUID
+    private let isPrivate: Bool
     private let minimumPopupInterval: TimeInterval
     private let currentTime: CurrentTime
-    private let openInMainBrowser: OpenInMainBrowser
+    private let openInMainBrowserHandler: OpenInMainBrowser
     private var lastPopupOpenTime: TimeInterval?
     private var isInvalidated = false
 
     init(
+        windowUUID: WindowUUID,
+        isPrivate: Bool,
         minimumPopupInterval: TimeInterval = 0.75,
         currentTime: @escaping CurrentTime = { ProcessInfo.processInfo.systemUptime },
         openInMainBrowser: @escaping OpenInMainBrowser
     ) {
+        self.windowUUID = windowUUID
+        self.isPrivate = isPrivate
         self.minimumPopupInterval = max(0, minimumPopupInterval)
         self.currentTime = currentTime
-        self.openInMainBrowser = openInMainBrowser
+        self.openInMainBrowserHandler = openInMainBrowser
     }
 
     func execution(
@@ -57,6 +91,16 @@ final class FloorpWebPanelNavigationExecutor: NSObject, WKNavigationDelegate, WK
 
     func invalidate() {
         isInvalidated = true
+    }
+
+    func openInMainBrowserIfSafe(_ url: URL) {
+        guard !isInvalidated,
+              case .openInMainBrowser(let safeURL) = FloorpWebPanelNavigationPolicy.decision(
+                  for: FloorpWebPanelNavigationRequest(url: url, target: .newWindow)
+              ) else {
+            return
+        }
+        openInMainBrowser(safeURL)
     }
 
     func webView(
@@ -120,5 +164,15 @@ final class FloorpWebPanelNavigationExecutor: NSObject, WKNavigationDelegate, WK
             decisionHandler(.cancel)
             openInMainBrowser(url)
         }
+    }
+
+    private func openInMainBrowser(_ url: URL) {
+        openInMainBrowserHandler(
+            FloorpWebPanelMainBrowserRequest(
+                url: url,
+                windowUUID: windowUUID,
+                isPrivate: isPrivate
+            )
+        )
     }
 }

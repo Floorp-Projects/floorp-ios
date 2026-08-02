@@ -77,10 +77,16 @@ extension BrowserViewController {
         guard FloorpPanelManager.shared.config.isEnabled,
               !presentationState.hasActivePresentation else { return }
 
+        let mainBrowserRouter = FloorpWebPanelMainBrowserRouter(
+            windowUUID: windowUUID,
+            openURLInNewTab: { [weak self] url, isPrivate in
+                self?.openURLInNewTab(url, isPrivate: isPrivate)
+            }
+        )
         presentationState.configureWebPanelRuntime(
             profile: profile,
-            openInMainBrowser: { [weak self] url in
-                self?.floorpOpenURLInNewTabOrCurrent(url)
+            openInMainBrowser: { request in
+                mainBrowserRouter.open(request)
             }
         )
 

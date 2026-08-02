@@ -258,6 +258,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         static let animationDuration: TimeInterval = 0.3
         static let cornerRadius: CGFloat = 16
         static let headerHeight: CGFloat = 52
+        static let webPanelToolbarHeight: CGFloat = 44
         static let searchBarHeight: CGFloat = 44
         static let rowHeight: CGFloat = 56
         static let iconSize: CGFloat = 28
@@ -342,6 +343,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
     private var containerWidthConstraint: NSLayoutConstraint?
     private var sidebarWidthConstraint: NSLayoutConstraint?
     private var sidebarStackWidthConstraint: NSLayoutConstraint?
+    private var webPanelToolbarHeightConstraint: NSLayoutConstraint?
 
     // Sidebar (icon column)
     private lazy var sidebarView: UIView = {
@@ -457,6 +459,74 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         ])
         stackView.axis = .horizontal
         stackView.alignment = .center
+        stackView.spacing = 4
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        return stackView
+    }()
+
+    private lazy var webPanelToolbarView: UIView = {
+        let view = UIView()
+        view.isHidden = true
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.accessibilityIdentifier = "Floorp.WebPanel.Toolbar"
+        return view
+    }()
+
+    private lazy var webPanelToolbarScrollView: UIScrollView = {
+        let scrollView = UIScrollView()
+        scrollView.alwaysBounceHorizontal = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        return scrollView
+    }()
+
+    private lazy var webPanelBackButton = makeWebPanelToolbarButton(
+        systemImageName: "chevron.backward",
+        accessibilityLabel: FloorpStrings.Drawer.webPanelBack,
+        accessibilityIdentifier: "Floorp.WebPanel.Back",
+        action: #selector(webPanelBackTapped)
+    )
+
+    private lazy var webPanelForwardButton = makeWebPanelToolbarButton(
+        systemImageName: "chevron.forward",
+        accessibilityLabel: FloorpStrings.Drawer.webPanelForward,
+        accessibilityIdentifier: "Floorp.WebPanel.Forward",
+        action: #selector(webPanelForwardTapped)
+    )
+
+    private lazy var webPanelReloadButton = makeWebPanelToolbarButton(
+        systemImageName: "arrow.clockwise",
+        accessibilityLabel: FloorpStrings.Drawer.webPanelReload,
+        accessibilityIdentifier: "Floorp.WebPanel.ReloadOrStop",
+        action: #selector(webPanelReloadOrStopTapped)
+    )
+
+    private lazy var webPanelHomeButton = makeWebPanelToolbarButton(
+        systemImageName: "house",
+        accessibilityLabel: FloorpStrings.Drawer.webPanelHome,
+        accessibilityIdentifier: "Floorp.WebPanel.Home",
+        action: #selector(webPanelHomeTapped)
+    )
+
+    private lazy var webPanelOpenInMainButton = makeWebPanelToolbarButton(
+        systemImageName: "arrow.up.right.square",
+        accessibilityLabel: FloorpStrings.Drawer.webPanelOpenInMainBrowser,
+        accessibilityIdentifier: "Floorp.WebPanel.OpenInMainBrowser",
+        action: #selector(webPanelOpenInMainBrowserTapped)
+    )
+
+    private lazy var webPanelToolbarStackView: UIStackView = {
+        let stackView = UIStackView(arrangedSubviews: [
+            webPanelBackButton,
+            webPanelForwardButton,
+            webPanelReloadButton,
+            webPanelHomeButton,
+            webPanelOpenInMainButton,
+        ])
+        stackView.axis = .horizontal
+        stackView.alignment = .fill
+        stackView.distribution = .fill
         stackView.spacing = 4
         stackView.translatesAutoresizingMaskIntoConstraints = false
         return stackView
@@ -699,6 +769,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         // Container layout: sidebar | content
         containerView.addSubview(sidebarView)
         containerView.addSubview(headerView)
+        containerView.addSubview(webPanelToolbarView)
         containerView.addSubview(searchTextField)
         containerView.addSubview(tableView)
         containerView.addSubview(webPanelContainerView)
@@ -708,6 +779,8 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
         headerView.addSubview(titleLabel)
         headerView.addSubview(headerActionsStackView)
+        webPanelToolbarView.addSubview(webPanelToolbarScrollView)
+        webPanelToolbarScrollView.addSubview(webPanelToolbarStackView)
 
         sidebarView.addSubview(sidebarScrollView)
         sidebarScrollView.addSubview(sidebarStackView)
@@ -732,12 +805,16 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         let tableSafeAreaBottomConstraint = tableView.bottomAnchor.constraint(
             equalTo: containerView.safeAreaLayoutGuide.bottomAnchor
         )
+        let webPanelToolbarHeightConstraint = webPanelToolbarView.heightAnchor.constraint(
+            equalToConstant: 0
+        )
         tableSafeAreaBottomConstraint.priority = .defaultHigh
         self.containerWidthConstraint = containerWidthConstraint
         self.sidebarWidthConstraint = sidebarWidthConstraint
         self.sidebarStackWidthConstraint = sidebarStackWidthConstraint
+        self.webPanelToolbarHeightConstraint = webPanelToolbarHeightConstraint
 
-        NSLayoutConstraint.activate([
+        let constraints = [
             // Dimming view fills entire screen
             dimmingView.topAnchor.constraint(equalTo: view.topAnchor),
             dimmingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -781,10 +858,28 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
                 constant: -UX.horizontalPadding
             ),
             headerActionsStackView.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-        ] + headerActionConstraints + [
+        ]
+        NSLayoutConstraint.activate(constraints)
+        NSLayoutConstraint.activate(headerActionConstraints)
+        NSLayoutConstraint.activate(contentConstraints(
+            tableSafeAreaBottomConstraint: tableSafeAreaBottomConstraint
+        ))
+        NSLayoutConstraint.activate(nativeContentConstraints)
+        NSLayoutConstraint.activate(webPanelToolbarConstraints(
+            heightConstraint: webPanelToolbarHeightConstraint
+        ))
+        NSLayoutConstraint.activate(panelRailConstraints(
+            sidebarStackWidthConstraint: sidebarStackWidthConstraint
+        ))
+    }
+
+    private func contentConstraints(
+        tableSafeAreaBottomConstraint: NSLayoutConstraint
+    ) -> [NSLayoutConstraint] {
+        [
             // Search bar
             searchTextField.topAnchor.constraint(
-                equalTo: headerView.bottomAnchor, constant: 4
+                equalTo: webPanelToolbarView.bottomAnchor, constant: 4
             ),
             searchTextField.leadingAnchor.constraint(
                 equalTo: sidebarView.trailingAnchor,
@@ -813,7 +908,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
 
             // Web panel content stays inside the drawer and below its header,
             // independently from the browser's address toolbar hierarchy.
-            webPanelContainerView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            webPanelContainerView.topAnchor.constraint(equalTo: webPanelToolbarView.bottomAnchor),
             webPanelContainerView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
             webPanelContainerView.trailingAnchor.constraint(
                 equalTo: containerView.safeAreaLayoutGuide.trailingAnchor
@@ -821,13 +916,6 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             webPanelContainerView.bottomAnchor.constraint(
                 equalTo: containerView.safeAreaLayoutGuide.bottomAnchor
             ),
-
-            nativeContentContainerView.topAnchor.constraint(
-                equalTo: containerView.safeAreaLayoutGuide.topAnchor
-            ),
-            nativeContentContainerView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
-            nativeContentContainerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            nativeContentContainerView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
 
             // Empty state
             emptyStateLabel.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
@@ -844,7 +932,47 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             // Retry button
             retryButton.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
             retryButton.topAnchor.constraint(equalTo: emptyStateLabel.bottomAnchor, constant: 12),
-        ] + panelRailConstraints(sidebarStackWidthConstraint: sidebarStackWidthConstraint))
+        ]
+    }
+
+    private func webPanelToolbarConstraints(
+        heightConstraint: NSLayoutConstraint
+    ) -> [NSLayoutConstraint] {
+        [
+            webPanelToolbarView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            webPanelToolbarView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
+            webPanelToolbarView.trailingAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.trailingAnchor
+            ),
+            heightConstraint,
+            webPanelToolbarScrollView.topAnchor.constraint(equalTo: webPanelToolbarView.topAnchor),
+            webPanelToolbarScrollView.leadingAnchor.constraint(
+                equalTo: webPanelToolbarView.leadingAnchor
+            ),
+            webPanelToolbarScrollView.trailingAnchor.constraint(
+                equalTo: webPanelToolbarView.trailingAnchor
+            ),
+            webPanelToolbarScrollView.bottomAnchor.constraint(
+                equalTo: webPanelToolbarView.bottomAnchor
+            ),
+            webPanelToolbarStackView.topAnchor.constraint(
+                equalTo: webPanelToolbarScrollView.contentLayoutGuide.topAnchor
+            ),
+            webPanelToolbarStackView.leadingAnchor.constraint(
+                equalTo: webPanelToolbarScrollView.contentLayoutGuide.leadingAnchor,
+                constant: 8
+            ),
+            webPanelToolbarStackView.trailingAnchor.constraint(
+                equalTo: webPanelToolbarScrollView.contentLayoutGuide.trailingAnchor,
+                constant: -8
+            ),
+            webPanelToolbarStackView.bottomAnchor.constraint(
+                equalTo: webPanelToolbarScrollView.contentLayoutGuide.bottomAnchor
+            ),
+            webPanelToolbarStackView.heightAnchor.constraint(
+                equalTo: webPanelToolbarScrollView.frameLayoutGuide.heightAnchor
+            ),
+        ]
     }
 
     private var headerActionConstraints: [NSLayoutConstraint] {
@@ -857,6 +985,17 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             cancelNotesReorderButton.heightAnchor.constraint(equalToConstant: 44),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             closeButton.heightAnchor.constraint(equalToConstant: 44),
+        ]
+    }
+
+    private var nativeContentConstraints: [NSLayoutConstraint] {
+        [
+            nativeContentContainerView.topAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.topAnchor
+            ),
+            nativeContentContainerView.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
+            nativeContentContainerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            nativeContentContainerView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
         ]
     }
 
@@ -937,6 +1076,14 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         titleLabel.textColor = colors.textPrimary
         closeButton.tintColor = colors.iconSecondary
         addNoteButton.tintColor = colors.actionPrimary
+        webPanelToolbarView.backgroundColor = colors.layer1
+        [
+            webPanelBackButton,
+            webPanelForwardButton,
+            webPanelReloadButton,
+            webPanelHomeButton,
+            webPanelOpenInMainButton,
+        ].forEach { $0.tintColor = colors.iconPrimary }
 
         // Search bar
         searchTextField.backgroundColor = colors.layer3
@@ -997,6 +1144,24 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             button.widthAnchor.constraint(equalToConstant: 44),
             button.heightAnchor.constraint(equalToConstant: 44),
         ])
+        return button
+    }
+
+    private func makeWebPanelToolbarButton(
+        systemImageName: String,
+        accessibilityLabel: String,
+        accessibilityIdentifier: String,
+        action: Selector
+    ) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: systemImageName), for: .normal)
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = accessibilityLabel
+        button.accessibilityIdentifier = accessibilityIdentifier
+        button.isEnabled = false
+        button.isPointerInteractionEnabled = true
+        button.widthAnchor.constraint(equalToConstant: 44).isActive = true
         return button
     }
 
@@ -1358,6 +1523,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         notesLoadGeneration = UUID()
         detachWebPanelContent()
         endNotesReordering(reload: false)
+        setWebPanelToolbarVisible(currentPanelType == .web)
         items = []
         filteredItems = []
         notesRevision = nil
@@ -1453,6 +1619,7 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         webPanelContainerView.accessibilityValue = state.isLoading
             ? String(Int(state.estimatedProgress * 100)) + "%"
             : nil
+        renderWebPanelToolbarState(state)
     }
 
     private func detachWebPanelContent() {
@@ -1464,6 +1631,40 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
         activeWebPanelSession = nil
         webPanelContainerView.isHidden = true
         webPanelContainerView.accessibilityValue = nil
+        renderWebPanelToolbarState(nil)
+    }
+
+    private func setWebPanelToolbarVisible(_ isVisible: Bool) {
+        webPanelToolbarView.isHidden = !isVisible
+        webPanelToolbarHeightConstraint?.constant = isVisible ? UX.webPanelToolbarHeight : 0
+    }
+
+    private func renderWebPanelToolbarState(_ state: FloorpWebPanelSessionState?) {
+        webPanelBackButton.isEnabled = state?.canGoBack == true
+        webPanelForwardButton.isEnabled = state?.canGoForward == true
+        webPanelReloadButton.isEnabled = state.map {
+            $0.isLoading || $0.currentURL != nil
+        } ?? false
+        webPanelHomeButton.isEnabled = state != nil
+        webPanelOpenInMainButton.isEnabled = state?.currentURL.map(isSafeMainBrowserURL) == true
+
+        let isLoading = state?.isLoading == true
+        webPanelReloadButton.setImage(
+            UIImage(systemName: isLoading ? "xmark" : "arrow.clockwise"),
+            for: .normal
+        )
+        webPanelReloadButton.accessibilityLabel = isLoading
+            ? FloorpStrings.Drawer.webPanelStopLoading
+            : FloorpStrings.Drawer.webPanelReload
+    }
+
+    private func isSafeMainBrowserURL(_ url: URL) -> Bool {
+        if case .openInMainBrowser = FloorpWebPanelNavigationPolicy.decision(
+            for: FloorpWebPanelNavigationRequest(url: url, target: .newWindow)
+        ) {
+            return true
+        }
+        return false
     }
 
     private func showWebPanelUnavailable() {
@@ -2276,6 +2477,37 @@ final class FloorpOverlayDrawerViewController: UIViewController, Themeable {
             }
         )
         present(alert, animated: true)
+    }
+
+    @objc private func webPanelBackTapped() {
+        activeWebPanelSession?.goBack()
+    }
+
+    @objc private func webPanelForwardTapped() {
+        activeWebPanelSession?.goForward()
+    }
+
+    @objc private func webPanelReloadOrStopTapped() {
+        guard let activeWebPanelSession else { return }
+        if activeWebPanelSession.state.isLoading {
+            activeWebPanelSession.stopLoading()
+        } else {
+            activeWebPanelSession.reload()
+        }
+    }
+
+    @objc private func webPanelHomeTapped() {
+        activeWebPanelSession?.loadHome()
+    }
+
+    @objc private func webPanelOpenInMainBrowserTapped() {
+        guard let activeWebPanelSession,
+              let currentURL = activeWebPanelSession.state.currentURL,
+              isSafeMainBrowserURL(currentURL) else {
+            return
+        }
+        activeWebPanelSession.openCurrentPageInMainBrowser()
+        dismissDrawer()
     }
 
     @objc private func closeTapped() {

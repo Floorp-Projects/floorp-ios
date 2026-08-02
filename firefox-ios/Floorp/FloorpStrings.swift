@@ -123,6 +123,54 @@ enum FloorpStrings {
             comment: "Error shown when a custom web panel cannot be opened"
         )
 
+        static let webPanelBack = NSLocalizedString(
+            "Floorp.Drawer.WebPanelBack.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Back",
+            comment: "Accessibility label for the web panel back button"
+        )
+
+        static let webPanelForward = NSLocalizedString(
+            "Floorp.Drawer.WebPanelForward.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Forward",
+            comment: "Accessibility label for the web panel forward button"
+        )
+
+        static let webPanelReload = NSLocalizedString(
+            "Floorp.Drawer.WebPanelReload.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Reload",
+            comment: "Accessibility label for the web panel reload button"
+        )
+
+        static let webPanelStopLoading = NSLocalizedString(
+            "Floorp.Drawer.WebPanelStopLoading.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Stop loading",
+            comment: "Accessibility label for the web panel stop-loading button"
+        )
+
+        static let webPanelHome = NSLocalizedString(
+            "Floorp.Drawer.WebPanelHome.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Home",
+            comment: "Accessibility label for the web panel home button"
+        )
+
+        static let webPanelOpenInMainBrowser = NSLocalizedString(
+            "Floorp.Drawer.WebPanelOpenInMainBrowser.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Open in main browser",
+            comment: "Accessibility label for opening the current web panel page in the main browser"
+        )
+
         static let searchPlaceholder = NSLocalizedString(
             "Floorp.Drawer.SearchPlaceholder.v1",
             tableName: "Floorp",

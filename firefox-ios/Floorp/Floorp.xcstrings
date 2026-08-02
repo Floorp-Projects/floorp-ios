@@ -529,6 +529,42 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "この Web パネルを開けませんでした" } }
       }
     },
+    "Floorp.Drawer.WebPanelBack.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "戻る" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelForward.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Forward" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "進む" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelReload.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reload" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再読み込み" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelStopLoading.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop loading" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込みを停止" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelHome.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Home" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホーム" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelOpenInMainBrowser.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open in main browser" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインブラウザーで開く" } }
+      }
+    },
     "Floorp.Notes.ArchiveTooLargeMessage.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "The notes archive is too large to open on this device and was left unchanged." } },
