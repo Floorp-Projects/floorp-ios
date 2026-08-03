@@ -577,6 +577,9 @@
       </CodeCoverageTargets>
       <TestPlans>
          <TestPlanReference
+            reference = "container:firefox-ios-tests/Tests/FloorpAdaptiveUI.xctestplan">
+         </TestPlanReference>
+         <TestPlanReference
             reference = "container:firefox-ios-tests/Tests/FloorpCI.xctestplan">
          </TestPlanReference>
          <TestPlanReference

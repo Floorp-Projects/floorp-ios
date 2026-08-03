@@ -5300,6 +5300,59 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
         XCTAssertNil(presentationState.activeDrawer)
     }
 
+    func testOverlayRemainsDismissibleWhenUIKitPromotesPresenterToNavigationController() async throws {
+        let suiteName = "FloorpOverlayDrawerPromotedPresenterTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpOverlayDrawerPromotedPresenterTests-\(UUID().uuidString)")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveDirectory)
+        }
+
+        let panelManager = FloorpPanelManager(defaults: defaults)
+        let presentationState = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        presentationState.select(try XCTUnwrap(panelManager.panel(for: "floorp//notes")))
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: panelManager,
+            notesStore: FloorpNotesStore(fileURL: archiveDirectory.appendingPathComponent("notes.json")),
+            presentationState: presentationState,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            presentationModeProvider: { _, _ in .overlay }
+        )
+        let browser = UIViewController()
+        let navigationController = UINavigationController(rootViewController: browser)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        navigationController.loadViewIfNeeded()
+        browser.loadViewIfNeeded()
+        window.rootViewController = navigationController
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.isHidden = true
+        }
+
+        let presented = expectation(description: "Promoted overlay presentation completed")
+        XCTAssertTrue(drawer.show(from: browser) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+
+        XCTAssertTrue(drawer.presentingViewController === navigationController)
+        XCTAssertEqual(drawer.presentationMode, .overlay)
+        XCTAssertTrue(presentationState.activeDrawer === drawer)
+
+        let dismissed = expectation(description: "Promoted overlay dismissal completed")
+        drawer.onDismissed = { dismissed.fulfill() }
+        drawer.dismissDrawer()
+        await fulfillment(of: [dismissed], timeout: 1)
+
+        XCTAssertNil(navigationController.presentedViewController)
+        XCTAssertNil(presentationState.activeDrawer)
+    }
+
     func testExternalDismissalFinishesOnceAndAllowsReplacementDrawer() async throws {
         let suiteName = "FloorpOverlayDrawerExternalDismissalTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {

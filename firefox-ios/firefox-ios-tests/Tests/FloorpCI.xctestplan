@@ -131,6 +131,7 @@
     },
     {
       "selectedTests" : [
+        "AddressBarStateTests\/test_numberOfTabsChangedAction_withoutNavToolbar_returnsExpectedState()",
         "FloorpBrowserChromeLayoutTests\/testCustomGuidesReserveManagedBrowserChromeSurfacesInLTRAndRTL()",
         "FloorpBrowserChromeLayoutTests\/testDefaultGuidesPreserveOriginalFullWidthAndSafeAreaAnchors()",
         "FloorpLibraryPanelHostTests\/testBookmarkEditModeBlocksExternalPanelSwitchingAndDismissal()",
@@ -356,6 +357,7 @@
         "FloorpOverlayDrawerPresentationTests\/testDirectionalLayoutMetricsAndSidebarClamp()",
         "FloorpOverlayDrawerPresentationTests\/testDrawerUsesModalOverlayOutsideBrowserSubviewZOrder()",
         "FloorpOverlayDrawerPresentationTests\/testExternalDismissalFinishesOnceAndAllowsReplacementDrawer()",
+        "FloorpOverlayDrawerPresentationTests\/testOverlayRemainsDismissibleWhenUIKitPromotesPresenterToNavigationController()",
         "FloorpOverlayDrawerPresentationTests\/testPresentationIsRejectedWhileParentAlreadyOwnsAModal()",
         "FloorpOverlayDrawerPresentationTests\/testPinnedRTLReservesLeftEdgeAndKeepsResizeHandleInteractive()",
         "FloorpOverlayDrawerPresentationTests\/testPinnedDrawerPresentsAndAcknowledgesPendingNotesOperationError()",

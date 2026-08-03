@@ -167,10 +167,13 @@ final class AddressBarStateTests: XCTestCase, StoreTestUtility {
         )
 
         XCTAssertEqual(newState.windowUUID, windowUUID)
-        XCTAssertEqual(newState.browserActions.count, 2)
-        XCTAssertEqual(newState.browserActions[0].actionType, .menu)
-        XCTAssertEqual(newState.browserActions[1].actionType, .tabs)
-        XCTAssertEqual(newState.browserActions[1].numberOfTabs, 2)
+        XCTAssertEqual(newState.browserActions.count, 3)
+        XCTAssertEqual(newState.browserActions[0].actionType, .floorpDrawer)
+        XCTAssertEqual(newState.browserActions[0].iconName, ImageIdentifiers.floorpDrawer)
+        XCTAssertEqual(newState.browserActions[0].a11yId, "floorpDrawerToolbarButton")
+        XCTAssertEqual(newState.browserActions[1].actionType, .menu)
+        XCTAssertEqual(newState.browserActions[2].actionType, .tabs)
+        XCTAssertEqual(newState.browserActions[2].numberOfTabs, 2)
     }
 
     func test_readerModeStateChangedAction_onHomepage_returnsExpectedState() {
@@ -454,10 +457,11 @@ final class AddressBarStateTests: XCTestCase, StoreTestUtility {
         XCTAssertEqual(newState.trailingPageActions[0].actionType, .reload)
         XCTAssertEqual(newState.leadingPageActions[0].actionType, .share)
 
-        XCTAssertEqual(newState.browserActions.count, 3)
+        XCTAssertEqual(newState.browserActions.count, 4)
         XCTAssertEqual(newState.browserActions[0].actionType, .newTab)
-        XCTAssertEqual(newState.browserActions[1].actionType, .menu)
-        XCTAssertEqual(newState.browserActions[2].actionType, .tabs)
+        XCTAssertEqual(newState.browserActions[1].actionType, .floorpDrawer)
+        XCTAssertEqual(newState.browserActions[2].actionType, .menu)
+        XCTAssertEqual(newState.browserActions[3].actionType, .tabs)
     }
 
     func test_backForwardButtonStateChangedAction_withNavigationToolbar_returnsExpectedState() {
@@ -764,9 +768,10 @@ final class AddressBarStateTests: XCTestCase, StoreTestUtility {
         XCTAssertEqual(newState.trailingPageActions.count, 0)
         XCTAssertEqual(newState.leadingPageActions.count, 0)
 
-        XCTAssertEqual(newState.browserActions.count, 2)
-        XCTAssertEqual(newState.browserActions[0].actionType, .menu)
-        XCTAssertEqual(newState.browserActions[1].actionType, .tabs)
+        XCTAssertEqual(newState.browserActions.count, 3)
+        XCTAssertEqual(newState.browserActions[0].actionType, .floorpDrawer)
+        XCTAssertEqual(newState.browserActions[1].actionType, .menu)
+        XCTAssertEqual(newState.browserActions[2].actionType, .tabs)
 
         XCTAssertEqual(newState.searchTerm, nil)
     }
@@ -792,11 +797,12 @@ final class AddressBarStateTests: XCTestCase, StoreTestUtility {
 
         XCTAssertEqual(newState.trailingPageActions.count, 0)
 
-        XCTAssertEqual(newState.browserActions.count, 2)
-        XCTAssertEqual(newState.browserActions[0].actionType, .menu)
-        XCTAssertNotNil(newState.browserActions[0].badgeImageName)
-        XCTAssertNotNil(newState.browserActions[0].maskImageName)
-        XCTAssertEqual(newState.browserActions[1].actionType, .tabs)
+        XCTAssertEqual(newState.browserActions.count, 3)
+        XCTAssertEqual(newState.browserActions[0].actionType, .floorpDrawer)
+        XCTAssertEqual(newState.browserActions[1].actionType, .menu)
+        XCTAssertNotNil(newState.browserActions[1].badgeImageName)
+        XCTAssertNotNil(newState.browserActions[1].maskImageName)
+        XCTAssertEqual(newState.browserActions[2].actionType, .tabs)
 
         XCTAssertEqual(newState.searchTerm, nil)
     }
