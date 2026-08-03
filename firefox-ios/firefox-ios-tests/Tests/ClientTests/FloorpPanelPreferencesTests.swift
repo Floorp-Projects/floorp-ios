@@ -205,6 +205,12 @@ final class FloorpPanelPreferencesTests: XCTestCase {
             expectedRevision: try manager.webPanelPreferencesRevision(for: panel.id)
         )
         XCTAssertEqual(desktop.contentMode, .desktop)
+        let userInfo = try XCTUnwrap(notificationCenter.saveUserInfo as? [AnyHashable: Any])
+        XCTAssertEqual(
+            userInfo[FloorpPanelRegistryNotification.changeUserInfoKey]
+                as? FloorpPanelRegistryChange,
+            .webPanelContentMode(panelID: panel.id)
+        )
         let panelDataAtDesktop = try XCTUnwrap(defaults.data(forKey: panelsKey))
         _ = try manager.setWebPanelContentMode(
             .desktop,

@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
+import Shared
 import TestKit
 import UIKit
 import XCTest
@@ -80,6 +81,35 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         XCTAssertTrue(try store.session(for: panel, isPrivate: true) === privateSession)
         XCTAssertEqual(replacement.state.configuration.zoomLevel, .oneHundredSeventyFivePercent)
         XCTAssertEqual(privateSession.state.configuration.zoomLevel, .oneHundredSeventyFivePercent)
+    }
+
+    func testContentModeUpdatesCachedPrivacySessionsAndSurvivesUnload() throws {
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(windowUUID: UUID(), factory: factory)
+        var panel = makePanel(id: "content-mode")
+        panel.webPreferences = FloorpWebPanelPreferences(contentMode: .mobile)
+        let regular = try mockSession(from: store.session(for: panel, isPrivate: false))
+        let privateSession = try mockSession(from: store.session(for: panel, isPrivate: true))
+
+        store.updateContentMode(.desktop, for: panel.id)
+        store.updateContentMode(.desktop, for: panel.id)
+
+        XCTAssertEqual(regular.state.configuration.contentMode, .desktop)
+        XCTAssertEqual(privateSession.state.configuration.contentMode, .desktop)
+        XCTAssertEqual(regular.configurationUpdateCount, 1)
+        XCTAssertEqual(privateSession.configurationUpdateCount, 1)
+        XCTAssertEqual(factory.makeCallCount, 2)
+
+        XCTAssertTrue(store.unloadSession(for: regular.key))
+        panel.webPreferences = FloorpWebPanelPreferences(
+            revision: 1,
+            contentMode: .desktop
+        )
+        let replacement = try mockSession(from: store.session(for: panel, isPrivate: false))
+
+        XCTAssertFalse(replacement === regular)
+        XCTAssertEqual(replacement.state.configuration.contentMode, .desktop)
+        XCTAssertEqual(privateSession.state.configuration.contentMode, .desktop)
     }
 
     func testSessionKeysSeparateWindowsAndPrivacyModes() throws {
@@ -287,6 +317,92 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         XCTAssertNil(safeReplacement.restorationURL)
     }
 
+    func testMemoryPressureEvictsOnlyInactiveSessionsAndRestoresSafeLatestURLs() throws {
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(windowUUID: WindowUUID(), factory: factory)
+        let active = try mockSession(
+            from: store.session(for: makePanel(id: "active"), isPrivate: false)
+        )
+        let activePrivate = try mockSession(
+            from: store.session(for: makePanel(id: "active-private"), isPrivate: true)
+        )
+        let hiddenPanel = makePanel(id: "hidden")
+        let hidden = try mockSession(from: store.session(for: hiddenPanel, isPrivate: false))
+        let privatePanel = makePanel(id: "private")
+        let hiddenPrivate = try mockSession(
+            from: store.session(for: privatePanel, isPrivate: true)
+        )
+        let safeURL = try XCTUnwrap(URL(string: "https://example.com/latest-safe"))
+        hidden.setLatestRuntimeURLForRestoration(safeURL)
+        hiddenPrivate.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/stale-safe")),
+            pageTitle: "Stale"
+        )
+        hiddenPrivate.setLatestRuntimeURLForRestoration(
+            try XCTUnwrap(URL(string: "javascript:alert(1)"))
+        )
+        XCTAssertTrue(store.hideSession(hidden, autoUnload: false))
+        XCTAssertTrue(store.hideSession(hiddenPrivate, autoUnload: false))
+
+        let evicted = store.evictInactiveSessionsForMemoryPressure()
+
+        XCTAssertEqual(evicted, [hidden.key, hiddenPrivate.key])
+        XCTAssertEqual(active.invalidationCount, 0)
+        XCTAssertEqual(activePrivate.invalidationCount, 0)
+        XCTAssertEqual(hidden.invalidationCount, 1)
+        XCTAssertEqual(hiddenPrivate.invalidationCount, 1)
+        XCTAssertEqual(store.cachedSessionKeys, [active.key, activePrivate.key])
+        XCTAssertTrue(store.evictInactiveSessionsForMemoryPressure().isEmpty)
+
+        let restored = try mockSession(
+            from: store.session(for: hiddenPanel, isPrivate: false)
+        )
+        let restoredPrivate = try mockSession(
+            from: store.session(for: privatePanel, isPrivate: true)
+        )
+        XCTAssertEqual(restored.restorationURL, safeURL)
+        XCTAssertNil(restoredPrivate.restorationURL)
+    }
+
+    func testMemoryPressureEvictionDoesNotMixWindowStores() throws {
+        let firstWindow = WindowUUID()
+        let secondWindow = WindowUUID()
+        let firstStore = FloorpWebPanelSessionStore(
+            windowUUID: firstWindow,
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let secondStore = FloorpWebPanelSessionStore(
+            windowUUID: secondWindow,
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let panel = makePanel(id: "portal")
+        let first = try mockSession(from: firstStore.session(for: panel, isPrivate: false))
+        let second = try mockSession(from: secondStore.session(for: panel, isPrivate: false))
+        XCTAssertTrue(firstStore.hideSession(first, autoUnload: false))
+        XCTAssertTrue(secondStore.hideSession(second, autoUnload: false))
+
+        XCTAssertEqual(firstStore.evictInactiveSessionsForMemoryPressure(), [first.key])
+
+        XCTAssertEqual(first.invalidationCount, 1)
+        XCTAssertEqual(second.invalidationCount, 0)
+        XCTAssertTrue(firstStore.cachedSessionKeys.isEmpty)
+        XCTAssertEqual(secondStore.cachedSessionKeys, [second.key])
+    }
+
+    func testMemoryPressureDoesNotDoubleUnloadAutoUnloadedSession() throws {
+        let store = FloorpWebPanelSessionStore(
+            windowUUID: WindowUUID(),
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let session = try mockSession(
+            from: store.session(for: makePanel(id: "auto-unload"), isPrivate: false)
+        )
+
+        XCTAssertTrue(store.hideSession(session, autoUnload: true))
+        XCTAssertTrue(store.evictInactiveSessionsForMemoryPressure().isEmpty)
+        XCTAssertEqual(session.invalidationCount, 1)
+    }
+
     func testRegularSessionsUseLeastRecentlyUsedEviction() throws {
         let factory = MockFloorpWebPanelSessionFactory()
         let store = FloorpWebPanelSessionStore(
@@ -301,12 +417,40 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         let second = try mockSession(from: store.session(for: secondPanel, isPrivate: false))
 
         _ = try store.session(for: firstPanel, isPrivate: false)
+        XCTAssertTrue(store.hideSession(second, autoUnload: false))
         let third = try mockSession(from: store.session(for: thirdPanel, isPrivate: false))
 
         XCTAssertEqual(first.invalidationCount, 0)
         XCTAssertEqual(second.invalidationCount, 1)
         XCTAssertEqual(third.invalidationCount, 0)
         XCTAssertEqual(store.cachedSessionKeys.map(\.panelID).sorted(), ["first", "third"])
+    }
+
+    func testRegularLRUAllowsVisibleOverflowUntilASessionIsHidden() throws {
+        let store = FloorpWebPanelSessionStore(
+            windowUUID: WindowUUID(),
+            regularSessionLimit: 2,
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let first = try mockSession(
+            from: store.session(for: makePanel(id: "first"), isPrivate: false)
+        )
+        let second = try mockSession(
+            from: store.session(for: makePanel(id: "second"), isPrivate: false)
+        )
+        let third = try mockSession(
+            from: store.session(for: makePanel(id: "third"), isPrivate: false)
+        )
+
+        XCTAssertEqual(store.cachedSessionCount, 3)
+        XCTAssertEqual(first.invalidationCount, 0)
+        XCTAssertEqual(second.invalidationCount, 0)
+        XCTAssertEqual(third.invalidationCount, 0)
+
+        XCTAssertTrue(store.hideSession(second, autoUnload: false))
+
+        XCTAssertEqual(second.invalidationCount, 1)
+        XCTAssertEqual(store.cachedSessionKeys, [first.key, third.key])
     }
 
     func testPrivateSessionsDoNotConsumeRegularLRUCapacity() throws {
@@ -322,12 +466,73 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         let regular = try mockSession(from: store.session(for: regularPanel, isPrivate: false))
         let privateSession = try mockSession(from: store.session(for: privatePanel, isPrivate: true))
 
+        XCTAssertTrue(store.hideSession(regular, autoUnload: false))
         _ = try store.session(for: nextRegularPanel, isPrivate: false)
 
         XCTAssertEqual(regular.invalidationCount, 1)
         XCTAssertEqual(privateSession.invalidationCount, 0)
         XCTAssertEqual(store.cachedSessionCount, 2)
         XCTAssertTrue(store.cachedSessionKeys.contains(privateSession.key))
+    }
+
+    func testMemoryWarningObservationIsIdempotentAndPreservesExplicitUnloadMarkers() throws {
+        let notificationCenter = FloorpMemoryPressureNotificationCenter()
+        let windowUUID = WindowUUID()
+        let store = FloorpWebPanelSessionStore(
+            windowUUID: windowUUID,
+            factory: MockFloorpWebPanelSessionFactory()
+        )
+        let active = try mockSession(
+            from: store.session(for: makePanel(id: "active"), isPrivate: false)
+        )
+        let hidden = try mockSession(
+            from: store.session(for: makePanel(id: "hidden"), isPrivate: false)
+        )
+        XCTAssertTrue(store.hideSession(hidden, autoUnload: false))
+        let state = FloorpPanelPresentationState(
+            windowUUID: windowUUID,
+            webPanelSessionStore: store,
+            notificationCenter: notificationCenter
+        )
+        let explicitlyUnloadedKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: "explicitly-unloaded",
+            isPrivate: false
+        )
+        XCTAssertTrue(state.markWebPanelExplicitlyUnloaded(explicitlyUnloadedKey))
+
+        state.configureWebPanelRuntime(profile: MockProfile(), openInMainBrowser: { _ in })
+        state.configureWebPanelRuntime(profile: MockProfile(), openInMainBrowser: { _ in })
+
+        XCTAssertEqual(
+            notificationCenter.addedNames.filter {
+                $0 == UIApplication.didReceiveMemoryWarningNotification
+            }.count,
+            1
+        )
+        XCTAssertEqual(
+            notificationCenter.addedNames.filter { $0 == .FloorpPanelRegistryDidChange }.count,
+            1
+        )
+
+        notificationCenter.post(
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            withObject: nil,
+            withUserInfo: nil
+        )
+
+        XCTAssertEqual(active.invalidationCount, 0)
+        XCTAssertEqual(hidden.invalidationCount, 1)
+        XCTAssertEqual(store.cachedSessionKeys, [active.key])
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(explicitlyUnloadedKey))
+
+        state.invalidateWebPanelRuntime()
+
+        XCTAssertEqual(
+            notificationCenter.removedNames,
+            [.FloorpPanelRegistryDidChange, UIApplication.didReceiveMemoryWarningNotification]
+        )
+        XCTAssertFalse(state.isWebPanelExplicitlyUnloaded(explicitlyUnloadedKey))
     }
 
     func testClosingPrivateSessionsPurgesOnlyPrivateState() throws {
@@ -906,6 +1111,54 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
     }
 }
 
+private final class FloorpMemoryPressureNotificationCenter: NotificationProtocol, @unchecked Sendable {
+    private let center = NotificationCenter()
+    private(set) var addedNames = [Notification.Name]()
+    private(set) var removedNames = [Notification.Name]()
+
+    func addObserver(
+        _ observer: Any,
+        selector aSelector: Selector,
+        name aName: Notification.Name?,
+        object anObject: Any?
+    ) {
+        if let aName {
+            addedNames.append(aName)
+        }
+        center.addObserver(observer, selector: aSelector, name: aName, object: anObject)
+    }
+
+    func removeObserver(_ observer: Any) {
+        center.removeObserver(observer)
+    }
+
+    func removeObserver(
+        _ observer: Any,
+        name aName: Notification.Name?,
+        object anObject: Any?
+    ) {
+        if let aName {
+            removedNames.append(aName)
+        }
+        center.removeObserver(observer, name: aName, object: anObject)
+    }
+
+    func post(
+        name: Notification.Name,
+        withObject object: Any?,
+        withUserInfo userInfo: [AnyHashable: Any]?
+    ) {
+        center.post(name: name, object: object, userInfo: userInfo)
+    }
+
+    func publisher(
+        for name: Notification.Name,
+        object: AnyObject?
+    ) -> NotificationCenter.Publisher {
+        center.publisher(for: name, object: object)
+    }
+}
+
 @MainActor
 private final class FloorpRecordingTabManager: MockTabManager {
     private(set) weak var addedDelegate: (any TabManagerDelegate)?
@@ -1147,6 +1400,11 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(session.invalidationCount, 0)
         XCTAssertEqual(session.state.currentURL, currentURL)
         XCTAssertEqual(session.visibilityChanges, visibilityChanges)
+        XCTAssertTrue(session.isVisible)
+        XCTAssertTrue(
+            fixture.presentationState.webPanelSessionStore?
+                .evictInactiveSessionsForMemoryPressure().isEmpty == true
+        )
 
         let dismissed = expectation(description: "Migrated web panel drawer dismissed")
         drawer.onDismissed = { dismissed.fulfill() }
@@ -1889,6 +2147,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             firstButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
                 FloorpStrings.Drawer.webPanelZoomReset,
@@ -1907,9 +2166,291 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             firstButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
             ]
+        )
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testContentModeMenuUpdatesEveryWindowInPlaceAndClosesFindBeforeReload() throws {
+        let suiteName = "FloorpWebPanelContentModeFastPathTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let notificationCenter = NotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+        let panel = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Mode", urlText: "https://example.com/mode")
+        )
+        let firstFactory = MockFloorpWebPanelSessionFactory()
+        let secondFactory = MockFloorpWebPanelSessionFactory()
+        let firstStore = FloorpWebPanelSessionStore(
+            windowUUID: .XCTestDefaultUUID,
+            factory: firstFactory
+        )
+        let secondWindowUUID = WindowUUID()
+        let secondStore = FloorpWebPanelSessionStore(
+            windowUUID: secondWindowUUID,
+            factory: secondFactory
+        )
+        let firstState = FloorpPanelPresentationState(
+            windowUUID: .XCTestDefaultUUID,
+            selectedPanelId: panel.id,
+            webPanelSessionStore: firstStore
+        )
+        let secondState = FloorpPanelPresentationState(
+            windowUUID: secondWindowUUID,
+            selectedPanelId: panel.id,
+            webPanelSessionStore: secondStore
+        )
+        defer {
+            firstState.invalidateWebPanelRuntime()
+            secondState.invalidateWebPanelRuntime()
+        }
+        let privateSession = try XCTUnwrap(
+            firstStore.session(for: panel, isPrivate: true) as? MockFloorpWebPanelSession
+        )
+        let firstDrawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: .shared,
+            presentationState: firstState,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            isPrivateProvider: { false }
+        )
+        let secondDrawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: .shared,
+            presentationState: secondState,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            isPrivateProvider: { false }
+        )
+        firstDrawer.loadViewIfNeeded()
+        secondDrawer.loadViewIfNeeded()
+        let firstSession = try XCTUnwrap(firstFactory.sessions.first(where: { !$0.key.isPrivate }))
+        let secondSession = try XCTUnwrap(secondFactory.sessions.first)
+        let firstContent = try XCTUnwrap(firstSession.contentView)
+        let secondContent = try XCTUnwrap(secondSession.contentView)
+        let firstSuperview = try XCTUnwrap(firstContent.superview)
+        let secondSuperview = try XCTUnwrap(secondContent.superview)
+        firstSession.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/first")),
+            pageTitle: "First"
+        )
+        secondSession.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/second")),
+            pageTitle: "Second"
+        )
+        privateSession.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/private")),
+            pageTitle: "Private"
+        )
+        let firstFindButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: firstDrawer.view) as? UIButton
+        )
+        let secondFindButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: secondDrawer.view) as? UIButton
+        )
+        firstFindButton.sendActions(for: .touchUpInside)
+        secondFindButton.sendActions(for: .touchUpInside)
+        let firstFindToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: firstDrawer.view)
+        )
+        let secondFindToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: secondDrawer.view)
+        )
+        XCTAssertFalse(firstFindToolbar.isHidden)
+        XCTAssertFalse(secondFindToolbar.isHidden)
+        let action = try XCTUnwrap(
+            firstDrawer.currentContentModeMenuElements(for: panel.id).first as? UIAction
+        )
+        XCTAssertEqual(
+            action.title,
+            String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString
+        )
+
+        invoke(action)
+
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).contentMode, .desktop)
+        for session in [firstSession, privateSession, secondSession] {
+            XCTAssertEqual(session.state.configuration.contentMode, .desktop)
+            XCTAssertEqual(session.invalidationCount, 0)
+        }
+        XCTAssertEqual(firstSession.contentModeReloadCount, 1)
+        XCTAssertEqual(secondSession.contentModeReloadCount, 1)
+        XCTAssertEqual(privateSession.contentModeReloadCount, 0)
+        XCTAssertEqual(
+            firstSession.contentModeEvents,
+            ["executor-desktop", "find-ended", "reload-from-origin"]
+        )
+        XCTAssertTrue(firstSession.contentView === firstContent)
+        XCTAssertTrue(secondSession.contentView === secondContent)
+        XCTAssertTrue(firstContent.superview === firstSuperview)
+        XCTAssertTrue(secondContent.superview === secondSuperview)
+        XCTAssertTrue(firstFindToolbar.isHidden)
+        XCTAssertTrue(secondFindToolbar.isHidden)
+        let mobileAction = try XCTUnwrap(
+            firstDrawer.currentContentModeMenuElements(for: panel.id).first as? UIAction
+        )
+        XCTAssertEqual(
+            mobileAction.title,
+            String.LegacyAppMenu.AppMenuViewMobileSiteTitleString
+        )
+        let firstButton = try XCTUnwrap(
+            findView(identifier: panel.id, in: firstDrawer.view) as? UIButton
+        )
+        let firstActionNames = firstButton.accessibilityCustomActions?.map(\.name) ?? []
+        XCTAssertEqual(
+            Array(firstActionNames.prefix(2)),
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewMobileSiteTitleString,
+            ]
+        )
+        let staleContext = try XCTUnwrap(
+            firstDrawer.currentWebPanelContentModeActionContext(for: panel.id)
+        )
+        XCTAssertFalse(firstDrawer.performWebPanelContentModeAction(
+            .desktop,
+            context: staleContext
+        ))
+        XCTAssertEqual(firstSession.contentModeReloadCount, 1)
+    }
+
+    func testGenericReconcileAppliesActiveContentModeWithoutReplacingSession() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        XCTAssertTrue(fixture.presentationState.attach(drawer))
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let preferences = try XCTUnwrap(panel.effectiveWebPreferences)
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let contentView = try XCTUnwrap(session.contentView)
+        let contentSuperview = try XCTUnwrap(contentView.superview)
+        session.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/reconciled")),
+            pageTitle: "Reconciled"
+        )
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        findButton.sendActions(for: .touchUpInside)
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
+        XCTAssertFalse(findToolbar.isHidden)
+        var reconciledPanel = panel
+        reconciledPanel.webPreferences = FloorpWebPanelPreferences(
+            revision: preferences.revision + 1,
+            contentWidth: preferences.contentWidth,
+            zoomLevel: preferences.zoomLevel,
+            contentMode: .desktop
+        )
+
+        fixture.presentationState.reconcileWebPanelRuntime(with: [reconciledPanel])
+
+        XCTAssertTrue(fixture.factory.sessions.first === session)
+        XCTAssertTrue(session.contentView === contentView)
+        XCTAssertTrue(contentView.superview === contentSuperview)
+        XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertEqual(session.state.configuration.contentMode, .desktop)
+        XCTAssertEqual(session.contentModeReloadCount, 1)
+        XCTAssertEqual(
+            session.contentModeEvents,
+            ["executor-desktop", "find-ended", "reload-from-origin"]
+        )
+        XCTAssertTrue(findToolbar.isHidden)
+    }
+
+    func testStaleContentModeActionCannotMutateReplacementSession() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let staleAction = try XCTUnwrap(
+            drawer.currentContentModeMenuElements(for: panel.id).first as? UIAction
+        )
+        let original = try XCTUnwrap(fixture.factory.sessions.first)
+
+        XCTAssertTrue(drawer.unloadWebPanelIfActive(panelID: panel.id))
+        let button = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        button.sendActions(for: .touchUpInside)
+        let replacement = try XCTUnwrap(fixture.factory.sessions.last)
+        XCTAssertFalse(replacement === original)
+
+        invoke(staleAction)
+
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).contentMode, .mobile)
+        XCTAssertEqual(replacement.state.configuration.contentMode, .mobile)
+        XCTAssertEqual(replacement.contentModeReloadCount, 0)
+    }
+
+    func testContentModeStorageFailureKeepsRuntimeAndShowsOperationError() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        var mutationCallCount = 0
+        let drawer = fixture.makeDrawer(
+            isPrivateProvider: { false },
+            webPanelContentModeMutation: { _, _, _ in
+                mutationCallCount += 1
+                throw FloorpPanelError.storageError("Injected content mode write failure")
+            }
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = drawer
+        window.makeKeyAndVisible()
+        defer {
+            drawer.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let content = try XCTUnwrap(session.contentView)
+        let contentSuperview = try XCTUnwrap(content.superview)
+        session.recordRuntimeState(
+            currentURL: try XCTUnwrap(URL(string: "https://example.com/error")),
+            pageTitle: "Error"
+        )
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        findButton.sendActions(for: .touchUpInside)
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
+        XCTAssertFalse(findToolbar.isHidden)
+        let context = try XCTUnwrap(
+            drawer.currentWebPanelContentModeActionContext(for: panel.id)
+        )
+
+        XCTAssertFalse(drawer.performWebPanelContentModeAction(.desktop, context: context))
+        let presentedError = await waitForPresentationState {
+            drawer.presentedViewController is UIAlertController
+        }
+
+        XCTAssertTrue(presentedError)
+        XCTAssertEqual(mutationCallCount, 1)
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).contentMode, .mobile)
+        XCTAssertEqual(session.state.configuration.contentMode, .mobile)
+        XCTAssertEqual(session.contentModeReloadCount, 0)
+        XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertFalse(findToolbar.isHidden)
+        XCTAssertTrue(session.contentView === content)
+        XCTAssertTrue(content.superview === contentSuperview)
+        XCTAssertEqual(
+            (drawer.presentedViewController as? UIAlertController)?.title,
+            FloorpStrings.PanelRegistry.operationFailedTitle
         )
     }
 
@@ -1939,6 +2480,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             button.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomReset,
             ]
@@ -1958,6 +2500,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             button.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomOut,
                 FloorpStrings.Drawer.webPanelZoomReset,
             ]
@@ -1970,6 +2513,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             button.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
             ]
@@ -2233,6 +2777,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             webPanelButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
             ]
@@ -2384,6 +2929,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             webPanelButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
             ]
@@ -2998,15 +3544,19 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private(set) var goBackCallCount = 0
     private(set) var goForwardCallCount = 0
     private(set) var reloadCallCount = 0
+    private(set) var contentModeReloadCount = 0
+    private(set) var contentModeEvents = [String]()
     private(set) var stopLoadingCallCount = 0
     private(set) var openInMainBrowserCallCount = 0
     private(set) var visibilityChanges = [Bool]()
     private let hostedContentView = UIView()
     private var stateObservers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
-    private var isVisible = true
+    private(set) var isVisible = true
     private var latestRuntimeURL: URL?
     private var hasLatestRuntimeURL = false
     private var pendingRestorationCandidateURL: URL?
+    private var loadedContentMode: FloorpWebPanelContentMode
+    private var hasPendingContentModeReload = false
     let findTargetMock = MockFloorpWebPanelFindTarget()
 
     var contentView: UIView? { invalidationCount == 0 ? hostedContentView : nil }
@@ -3014,6 +3564,7 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         invalidationCount == 0 ? findTargetMock : nil
     }
     var stateObserverCount: Int { stateObservers.count }
+    var isContentModeReloadPending: Bool { hasPendingContentModeReload }
 
     init(
         key: FloorpWebPanelSessionKey,
@@ -3023,12 +3574,23 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         self.key = key
         self.restorationURL = restorationURL
         self.state = FloorpWebPanelSessionState(configuration: configuration)
+        self.loadedContentMode = configuration.contentMode
         self.pendingRestorationCandidateURL = restorationURL
     }
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration) {
+        let previousContentMode = state.configuration.contentMode
         state.configuration = configuration
         configurationUpdateCount += 1
+        if previousContentMode != configuration.contentMode {
+            contentModeEvents.append("executor-\(configuration.contentMode.rawValue)")
+            if state.currentURL != nil {
+                hasPendingContentModeReload = loadedContentMode != configuration.contentMode
+            } else {
+                loadedContentMode = configuration.contentMode
+                hasPendingContentModeReload = false
+            }
+        }
         notifyStateObservers()
     }
 
@@ -3082,7 +3644,23 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         visibilityChanges.append(isVisible)
         if !isVisible {
             findTargetMock.endFindSession()
+        } else {
+            applyPendingContentModeReload()
         }
+    }
+
+    @discardableResult
+    func applyPendingContentModeReload() -> Bool {
+        guard isVisible, hasPendingContentModeReload, state.currentURL != nil else {
+            return false
+        }
+        findTargetMock.endFindSession()
+        contentModeEvents.append("find-ended")
+        loadedContentMode = state.configuration.contentMode
+        hasPendingContentModeReload = false
+        contentModeReloadCount += 1
+        contentModeEvents.append("reload-from-origin")
+        return true
     }
 
     func restorationURLForUnload() -> URL? {
@@ -3151,12 +3729,17 @@ private struct FloorpWebPanelDrawerFixture {
     let factory: MockFloorpWebPanelSessionFactory
 
     func makeDrawer(isPrivate: Bool) -> FloorpOverlayDrawerViewController {
-        makeDrawer(isPrivateProvider: { isPrivate }, webPanelZoomMutation: nil)
+        makeDrawer(
+            isPrivateProvider: { isPrivate },
+            webPanelZoomMutation: nil,
+            webPanelContentModeMutation: nil
+        )
     }
 
     func makeDrawer(
         isPrivateProvider: @escaping @MainActor () -> Bool,
-        webPanelZoomMutation: FloorpWebPanelZoomMutation? = nil
+        webPanelZoomMutation: FloorpWebPanelZoomMutation? = nil,
+        webPanelContentModeMutation: FloorpWebPanelContentModeMutation? = nil
     ) -> FloorpOverlayDrawerViewController {
         FloorpOverlayDrawerViewController(
             panelManager: manager,
@@ -3165,7 +3748,8 @@ private struct FloorpWebPanelDrawerFixture {
             themeManager: MockThemeManager(),
             notificationCenter: MockNotificationCenter(),
             isPrivateProvider: isPrivateProvider,
-            webPanelZoomMutation: webPanelZoomMutation
+            webPanelZoomMutation: webPanelZoomMutation,
+            webPanelContentModeMutation: webPanelContentModeMutation
         )
     }
 
