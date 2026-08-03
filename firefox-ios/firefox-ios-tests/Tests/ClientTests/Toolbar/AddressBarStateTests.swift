@@ -13,6 +13,8 @@ import SummarizeKit
 final class AddressBarStateTests: XCTestCase, StoreTestUtility {
     let storeUtilityHelper = StoreTestUtilityHelper()
     let windowUUID: WindowUUID = .XCTestDefaultUUID
+    // This upstream XCTest fixture is initialized and released for every test.
+    // swiftlint:disable:next implicitly_unwrapped_optional
     var mockProfile: MockProfile!
 
     override func setUp() async throws {
