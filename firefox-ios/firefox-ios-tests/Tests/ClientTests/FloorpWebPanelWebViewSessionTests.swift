@@ -944,8 +944,9 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         var requests = [FloorpWebPanelMainBrowserRequest]()
         let fixture = makeFixture(
             windowUUID: .XCTestDefaultUUID,
-            isPrivate: true
-        ) { requests.append($0) }
+            isPrivate: true,
+            openInMainBrowser: { requests.append($0) }
+        )
         let safeURL = try XCTUnwrap(URL(string: "https://example.com/current"))
         let unsafeURL = try XCTUnwrap(URL(string: "javascript:alert(1)"))
 
