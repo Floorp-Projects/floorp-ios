@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
+import Shared
 import Storage
 import WebEngine
 import WebKit
@@ -198,6 +199,500 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertEqual(fixture.runtime.pageZoomAssignments, [1.25, 1.5])
     }
 
+    func testContentModeUpdatePreservesRuntimeAndReloadsFromOriginExactlyOnce() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        let webView = fixture.runtime.retainedWebView
+        fixture.installer.completeInstallation()
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        fixture.runtime.stateDidChange?()
+        let desktopConfiguration = FloorpWebPanelSessionConfiguration(
+            panelTitle: fixture.configuration.panelTitle,
+            homeURL: fixture.configuration.homeURL,
+            iconName: fixture.configuration.iconName,
+            zoomLevel: fixture.configuration.zoomLevel,
+            contentMode: .desktop
+        )
+
+        fixture.session.updateConfiguration(desktopConfiguration)
+
+        XCTAssertEqual(fixture.navigationExecutor.contentMode, .desktop)
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 0)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        XCTAssertFalse(fixture.session.applyPendingContentModeReload())
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        try commitContentModeNavigation(in: fixture)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+        XCTAssertTrue(fixture.runtime.retainedWebView === webView)
+        XCTAssertEqual(fixture.session.state.configuration.contentMode, .desktop)
+    }
+
+    func testHiddenContentModeChangesCoalesceUntilVisible() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        fixture.installer.completeInstallation()
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        fixture.runtime.stateDidChange?()
+        fixture.session.setVisible(false)
+
+        func update(_ contentMode: FloorpWebPanelContentMode) {
+            fixture.session.updateConfiguration(FloorpWebPanelSessionConfiguration(
+                panelTitle: fixture.configuration.panelTitle,
+                homeURL: fixture.configuration.homeURL,
+                iconName: fixture.configuration.iconName,
+                zoomLevel: fixture.configuration.zoomLevel,
+                contentMode: contentMode
+            ))
+        }
+
+        update(.desktop)
+        update(.mobile)
+        update(.desktop)
+        update(.desktop)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 0)
+        fixture.session.setVisible(true)
+        fixture.session.setVisible(true)
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.navigationExecutor.contentMode, .desktop)
+        try commitContentModeNavigation(in: fixture)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+    }
+
+    func testContentModeChangedBeforeInitialLoadUsesLatestModeWithoutReload() {
+        let fixture = makeFixture(contentMode: .mobile)
+        let desktopConfiguration = FloorpWebPanelSessionConfiguration(
+            panelTitle: fixture.configuration.panelTitle,
+            homeURL: fixture.configuration.homeURL,
+            iconName: fixture.configuration.iconName,
+            zoomLevel: fixture.configuration.zoomLevel,
+            contentMode: .desktop
+        )
+
+        fixture.session.updateConfiguration(desktopConfiguration)
+        fixture.installer.completeInstallation()
+
+        XCTAssertEqual(fixture.navigationExecutor.contentMode, .desktop)
+        XCTAssertEqual(fixture.runtime.loadedRequests.map(\.url), [fixture.configuration.homeURL])
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 0)
+        XCTAssertFalse(fixture.session.applyPendingContentModeReload())
+    }
+
+    func testContentModeReloadNilKeepsPendingAndRetriesWhenShown() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        fixture.installer.completeInstallation()
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.reloadFromOriginSucceeds = false
+        updateContentMode(.desktop, in: fixture)
+
+        XCTAssertFalse(fixture.session.applyPendingContentModeReload())
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.stateDidChange?()
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+
+        fixture.session.setVisible(false)
+        fixture.runtime.reloadFromOriginSucceeds = true
+        fixture.session.setVisible(true)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 2)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        try commitContentModeNavigation(in: fixture)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+    }
+
+    func testFailedContentModeNavigationKeepsPendingAndRetriesWhenShown() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        fixture.installer.completeInstallation()
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        fixture.runtime.stateDidChange?()
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        let navigationID = try beginContentModeNavigation(in: fixture)
+        fixture.session.setVisible(false)
+
+        fixture.navigationExecutor.failContentModeNavigation(navigationID)
+
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        fixture.session.setVisible(true)
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 2)
+    }
+
+    func testFailedContentReloadDoesNotRetryFromKVOUntilExplicitRequest() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        finishInitialLoad(in: fixture)
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        let navigationID = try beginContentModeNavigation(in: fixture)
+
+        fixture.navigationExecutor.failContentModeNavigation(navigationID)
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.stateDidChange?()
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 2)
+        try commitContentModeNavigation(in: fixture)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+    }
+
+    func testContentModeChangesDuringReloadCoalesceAndStateCallbacksDoNotDoubleReload() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        fixture.installer.completeInstallation()
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.invokesStateChangeDuringReloadFromOrigin = true
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        let firstNavigationID = try beginContentModeNavigation(in: fixture)
+
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.stateDidChange?()
+        updateContentMode(.mobile, in: fixture)
+        updateContentMode(.desktop, in: fixture)
+        updateContentMode(.mobile, in: fixture)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        fixture.navigationExecutor.commitContentModeNavigation(firstNavigationID)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 2)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        try commitContentModeNavigation(in: fixture)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+        XCTAssertEqual(fixture.session.state.configuration.contentMode, .mobile)
+    }
+
+    func testSupersededNavigationCallbacksDoNotReleaseInFlightContentModeReload() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        fixture.installer.completeInstallation()
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "https://example.com/current"))
+        fixture.runtime.stateDidChange?()
+        let supersededCommitNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        _ = try beginContentModeNavigation(
+            in: fixture,
+            navigationID: supersededCommitNavigationID
+        )
+        let supersededFailureNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        _ = try beginContentModeNavigation(
+            in: fixture,
+            navigationID: supersededFailureNavigationID
+        )
+
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        let reloadNavigationID = try beginContentModeNavigation(in: fixture)
+
+        fixture.navigationExecutor.commitContentModeNavigation(supersededCommitNavigationID)
+        fixture.navigationExecutor.failContentModeNavigation(supersededFailureNavigationID)
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.stateDidChange?()
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+
+        fixture.navigationExecutor.commitContentModeNavigation(reloadNavigationID)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+        XCTAssertEqual(fixture.session.state.configuration.contentMode, .desktop)
+    }
+
+    func testManualReloadDoesNotSupersedeContentReloadBeforeNavigationBinding() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        finishInitialLoad(in: fixture)
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        let navigationID = try XCTUnwrap(
+            fixture.runtime.reloadFromOriginNavigationIDs.last
+        )
+
+        fixture.session.reload()
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        bindContentModeNavigation(navigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(navigationID)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+
+        fixture.session.reload()
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 1)
+        try commitReloadNavigation(in: fixture)
+    }
+
+    func testLoadHomeAdoptsInFlightContentReloadBeforeNavigationBinding() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        finishInitialLoad(in: fixture)
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+
+        fixture.session.loadHome()
+
+        let homeNavigationID = try XCTUnwrap(fixture.runtime.loadNavigationIDs.last)
+        XCTAssertEqual(fixture.runtime.loadedRequests.count, 2)
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        bindContentModeNavigation(homeNavigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(homeNavigationID)
+
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+    }
+
+    func testBackAndForwardAdoptInFlightContentReloadBeforeNavigationBinding() throws {
+        for usesBackNavigation in [true, false] {
+            let fixture = makeFixture(contentMode: .mobile)
+            finishInitialLoad(in: fixture)
+            updateContentMode(.desktop, in: fixture)
+            XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+            fixture.runtime.canGoBack = usesBackNavigation
+            fixture.runtime.canGoForward = !usesBackNavigation
+            fixture.runtime.stateDidChange?()
+
+            let navigationID: FloorpWebPanelNavigationIdentity
+            if usesBackNavigation {
+                fixture.session.goBack()
+                navigationID = try XCTUnwrap(fixture.runtime.goBackNavigationIDs.last)
+            } else {
+                fixture.session.goForward()
+                navigationID = try XCTUnwrap(fixture.runtime.goForwardNavigationIDs.last)
+            }
+
+            XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+            XCTAssertTrue(fixture.session.isContentModeReloadPending)
+            bindContentModeNavigation(navigationID, in: fixture)
+            fixture.navigationExecutor.commitContentModeNavigation(navigationID)
+            XCTAssertFalse(fixture.session.isContentModeReloadPending)
+            XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        }
+    }
+
+    func testFailedBackStartKeepsInFlightReloadIdentityAndReasons() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        finishInitialLoad(in: fixture)
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        let reloadNavigationID = try XCTUnwrap(
+            fixture.runtime.reloadFromOriginNavigationIDs.last
+        )
+        fixture.runtime.canGoBack = true
+        fixture.runtime.goBackSucceeds = false
+        fixture.runtime.stateDidChange?()
+
+        fixture.session.goBack()
+
+        XCTAssertEqual(fixture.runtime.goBackCallCount, 1)
+        XCTAssertTrue(fixture.runtime.goBackNavigationIDs.isEmpty)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+        bindContentModeNavigation(reloadNavigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(reloadNavigationID)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+    }
+
+    func testStopBeforeNavigationBindingRequeuesReasonsWithoutKVORetry() throws {
+        let fixture = makeFixture(contentMode: .mobile)
+        finishInitialLoad(in: fixture)
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+
+        fixture.session.stopLoading()
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.stateDidChange?()
+
+        XCTAssertEqual(fixture.runtime.stopLoadingCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+
+        fixture.session.setVisible(false)
+        fixture.session.setVisible(true)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 2)
+        try commitContentModeNavigation(in: fixture)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+    }
+
+    func testFailedManualReloadDoesNotRetryFromKVOUntilManualRequest() throws {
+        let fixture = makeFixture()
+        finishInitialLoad(in: fixture)
+        fixture.session.reload()
+        let failedNavigationID = try beginReloadNavigation(in: fixture)
+
+        fixture.navigationExecutor.failContentModeNavigation(failedNavigationID)
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.stateDidChange?()
+
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 1)
+        fixture.session.reload()
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 2)
+        try commitReloadNavigation(in: fixture)
+    }
+
+    func testAboutBlankManualAndImageReloadsRetireUnifiedArbiter() async throws {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let fixture = makeFixture(
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        finishInitialLoad(in: fixture)
+        fixture.runtime.currentURL = try XCTUnwrap(URL(string: "about:blank"))
+        fixture.runtime.stateDidChange?()
+
+        fixture.session.reload()
+        let firstManualNavigationID = try XCTUnwrap(
+            fixture.runtime.reloadNavigationIDs.last
+        )
+        bindAboutBlankNavigation(firstManualNavigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(firstManualNavigationID)
+
+        fixture.session.reload()
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 2)
+        let secondManualNavigationID = try XCTUnwrap(
+            fixture.runtime.reloadNavigationIDs.last
+        )
+        bindAboutBlankNavigation(secondManualNavigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(secondManualNavigationID)
+
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+        fixture.installer.completeNextRefresh()
+
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 3)
+        let imageNavigationID = try XCTUnwrap(fixture.runtime.reloadNavigationIDs.last)
+        bindAboutBlankNavigation(imageNavigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(imageNavigationID)
+
+        fixture.session.reload()
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 4)
+        let finalManualNavigationID = try XCTUnwrap(
+            fixture.runtime.reloadNavigationIDs.last
+        )
+        bindAboutBlankNavigation(finalManualNavigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(finalManualNavigationID)
+    }
+
+    func testImageRefreshWaitsForUnboundContentReloadThenReloadsExactlyOnce() async throws {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let fixture = makeFixture(
+            contentMode: .mobile,
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        finishInitialLoad(in: fixture)
+        updateContentMode(.desktop, in: fixture)
+        XCTAssertTrue(fixture.session.applyPendingContentModeReload())
+        let contentNavigationID = try XCTUnwrap(
+            fixture.runtime.reloadFromOriginNavigationIDs.last
+        )
+
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+        fixture.installer.completeNextRefresh()
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+        XCTAssertTrue(fixture.session.isContentModeReloadPending)
+
+        bindContentModeNavigation(contentNavigationID, in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(contentNavigationID)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 1)
+        try commitReloadNavigation(in: fixture)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+    }
+
+    func testHiddenContentAndImageChangesCoalesceIntoOneOriginReload() async throws {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let fixture = makeFixture(
+            contentMode: .mobile,
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        finishInitialLoad(in: fixture)
+        fixture.session.setVisible(false)
+        updateContentMode(.desktop, in: fixture)
+
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+        fixture.installer.completeNextRefresh()
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 0)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+
+        fixture.session.setVisible(true)
+
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+        try commitContentModeNavigation(in: fixture)
+        XCTAssertEqual(fixture.runtime.reloadFromOriginCallCount, 1)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+        XCTAssertFalse(fixture.session.isContentModeReloadPending)
+    }
+
+    func testNilAndFailedImageReloadsRemainRetryableWithoutManualSupersession() async throws {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let fixture = makeFixture(
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        finishInitialLoad(in: fixture)
+        fixture.runtime.reloadSucceeds = false
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+        fixture.installer.completeNextRefresh()
+
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 1)
+        XCTAssertTrue(fixture.runtime.reloadNavigationIDs.isEmpty)
+
+        fixture.session.setVisible(false)
+        fixture.runtime.reloadSucceeds = true
+        fixture.session.setVisible(true)
+        let failedNavigationID = try XCTUnwrap(fixture.runtime.reloadNavigationIDs.last)
+        fixture.session.reload()
+
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 2)
+        bindContentModeNavigation(failedNavigationID, in: fixture)
+        fixture.navigationExecutor.failContentModeNavigation(failedNavigationID)
+        fixture.runtime.stateDidChange?()
+        fixture.runtime.stateDidChange?()
+
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 2)
+
+        fixture.session.setVisible(false)
+        fixture.session.setVisible(true)
+
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 3)
+        try commitReloadNavigation(in: fixture)
+        fixture.session.reload()
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 4)
+        try commitReloadNavigation(in: fixture)
+    }
+
     func testRestorationURLLoadsExactlyOnceAfterContentRulesAndRejectsUnsafeURL() throws {
         let restorationURL = try XCTUnwrap(URL(string: "https://example.com/restored"))
         let restoredFixture = makeFixture(restorationURL: restorationURL)
@@ -315,6 +810,7 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
 
         fixture.runtime.canGoBack = true
         fixture.runtime.canGoForward = true
+        fixture.runtime.currentURL = fixture.configuration.homeURL
         fixture.runtime.stateDidChange?()
         fixture.session.goBack()
         fixture.session.goForward()
@@ -448,8 +944,9 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         var requests = [FloorpWebPanelMainBrowserRequest]()
         let fixture = makeFixture(
             windowUUID: .XCTestDefaultUUID,
-            isPrivate: true
-        ) { requests.append($0) }
+            isPrivate: true,
+            openInMainBrowser: { requests.append($0) }
+        )
         let safeURL = try XCTUnwrap(URL(string: "https://example.com/current"))
         let unsafeURL = try XCTUnwrap(URL(string: "javascript:alert(1)"))
 
@@ -526,16 +1023,325 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
 
     func testContentBlockerAdapterDetachesFromWebView() {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        let adapter = FloorpWebPanelContentBlockerTab(isPrivate: true, webView: webView)
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let adapter = FloorpWebPanelContentBlockerTab(
+            isPrivate: true,
+            webView: webView,
+            imageContentBlockingEnabled: { preference.isEnabled }
+        )
 
         XCTAssertTrue(adapter.isPrivate)
         XCTAssertTrue(adapter.currentWebView() === webView)
         XCTAssertFalse(adapter.imageContentBlockingEnabled())
 
+        preference.isEnabled = true
+        XCTAssertTrue(adapter.imageContentBlockingEnabled())
+
         adapter.detach()
 
         XCTAssertNil(adapter.currentWebView())
         XCTAssertNil(adapter.currentURL())
+    }
+
+    func testNoImageModeScriptMatchesNormalTabContractAndPreservesForeignScripts() throws {
+        let configuration = WKWebViewConfiguration()
+        let foreignScript = WKUserScript.createInDefaultContentWorld(
+            source: "window.foreignScript = true;",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        configuration.userContentController.addUserScript(foreignScript)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let controller = DefaultFloorpWebPanelNoImageModeScriptController(
+            webView: webView,
+            isEnabled: true
+        )
+
+        var scripts = configuration.userContentController.userScripts
+        XCTAssertEqual(scripts.count, 2)
+        XCTAssertTrue(scripts.contains { $0 === foreignScript })
+        var noImageScript = try XCTUnwrap(scripts.first { $0 !== foreignScript })
+        XCTAssertEqual(noImageScript.injectionTime, .atDocumentStart)
+        XCTAssertFalse(noImageScript.isForMainFrameOnly)
+        XCTAssertTrue(noImageScript.source.contains("const enabled = true"))
+        XCTAssertTrue(noImageScript.source.contains("__firefox__NoImageMode"))
+        XCTAssertTrue(noImageScript.source.contains(
+            "*{background-image:none !important;}img{visibility:hidden !important;}"
+        ))
+
+        controller.setEnabled(false)
+
+        scripts = configuration.userContentController.userScripts
+        XCTAssertEqual(scripts.count, 2)
+        XCTAssertTrue(scripts.contains { $0 === foreignScript })
+        noImageScript = try XCTUnwrap(scripts.first { $0 !== foreignScript })
+        XCTAssertFalse(noImageScript.isForMainFrameOnly)
+        XCTAssertTrue(noImageScript.source.contains("const enabled = false"))
+
+        controller.invalidate()
+
+        scripts = configuration.userContentController.userScripts
+        XCTAssertEqual(scripts.count, 1)
+        XCTAssertTrue(scripts.first === foreignScript)
+    }
+
+    func testDefaultFactoryAdapterReadsLiveProfileImageBlockingPreference() throws {
+        let profile = MockProfile()
+        profile.prefs.setBool(false, forKey: NoImageModePrefsKey.NoImageModeStatus)
+        let runtime = MockFloorpWebPanelWebViewRuntime()
+        let installer = MockFloorpWebPanelContentRuleInstaller()
+        let installerFactory = MockFloorpWebPanelContentRuleInstallerFactory(installer: installer)
+        let factory = DefaultFloorpWebPanelSessionFactory(
+            profile: profile,
+            runtimeFactory: MockFloorpWebPanelWebViewRuntimeFactory(runtime: runtime),
+            contentRuleInstallerFactory: installerFactory,
+            openInMainBrowser: { _ in }
+        )
+        let configuration = FloorpWebPanelSessionConfiguration(
+            panelTitle: "Panel",
+            homeURL: try XCTUnwrap(URL(string: "https://example.com/home")),
+            iconName: "globe"
+        )
+        let session = try factory.makeSession(
+            for: FloorpWebPanelSessionKey(
+                windowUUID: UUID(),
+                panelID: "panel",
+                isPrivate: false
+            ),
+            configuration: configuration
+        )
+        defer { session.invalidate() }
+        let adapter = try XCTUnwrap(installerFactory.tabs.first)
+
+        XCTAssertFalse(adapter.imageContentBlockingEnabled())
+
+        profile.prefs.setBool(true, forKey: NoImageModePrefsKey.NoImageModeStatus)
+
+        XCTAssertTrue(adapter.imageContentBlockingEnabled())
+    }
+
+    func testNoImageModeToggleBroadcastsWhenBoolSettingAlreadyPersistedValue() {
+        let profile = MockProfile()
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(injectedProfile: profile)
+        defer { dependencies.reset() }
+        let notificationCenter = MockNotificationCenter()
+        profile.prefs.setBool(true, forKey: NoImageModePrefsKey.NoImageModeStatus)
+
+        NoImageModeHelper.toggle(
+            isEnabled: true,
+            profile: profile,
+            notificationCenter: notificationCenter
+        )
+
+        XCTAssertTrue(NoImageModeHelper.isActivated(profile.prefs))
+        XCTAssertEqual(notificationCenter.postCallCount, 1)
+        XCTAssertEqual(
+            notificationCenter.savePostName,
+            .FloorpWebPanelImageBlockingPreferenceDidChange
+        )
+    }
+
+    func testImageBlockingPreferenceChangeRefreshesRegularAndPrivatePanelsExactlyOnce() async throws {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let regular = makeFixture(
+            isPrivate: false,
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        let privatePanel = makeFixture(
+            isPrivate: true,
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        finishInitialLoad(in: regular)
+        finishInitialLoad(in: privatePanel)
+        defer {
+            regular.session.invalidate()
+            privatePanel.session.invalidate()
+        }
+
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+
+        XCTAssertEqual(regular.installer.refreshCallCount, 1)
+        XCTAssertEqual(privatePanel.installer.refreshCallCount, 1)
+        XCTAssertEqual(regular.runtime.reloadCallCount, 0)
+        XCTAssertEqual(privatePanel.runtime.reloadCallCount, 0)
+
+        regular.installer.completeNextRefresh()
+        privatePanel.installer.completeNextRefresh()
+
+        XCTAssertEqual(regular.runtime.reloadCallCount, 1)
+        XCTAssertEqual(privatePanel.runtime.reloadCallCount, 1)
+        try commitReloadNavigation(in: regular)
+        try commitReloadNavigation(in: privatePanel)
+
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+
+        XCTAssertEqual(regular.installer.refreshCallCount, 1)
+        XCTAssertEqual(privatePanel.installer.refreshCallCount, 1)
+        XCTAssertEqual(regular.runtime.reloadCallCount, 1)
+        XCTAssertEqual(privatePanel.runtime.reloadCallCount, 1)
+
+        preference.isEnabled = false
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+        regular.installer.completeNextRefresh()
+        privatePanel.installer.completeNextRefresh()
+
+        XCTAssertEqual(regular.installer.refreshCallCount, 2)
+        XCTAssertEqual(privatePanel.installer.refreshCallCount, 2)
+        XCTAssertEqual(regular.runtime.reloadCallCount, 2)
+        XCTAssertEqual(privatePanel.runtime.reloadCallCount, 2)
+        XCTAssertEqual(regular.noImageModeScriptController.enabledValues, [false, true, false])
+        XCTAssertEqual(privatePanel.noImageModeScriptController.enabledValues, [false, true, false])
+        try commitReloadNavigation(in: regular)
+        try commitReloadNavigation(in: privatePanel)
+        privatePanel.session.invalidate()
+        XCTAssertEqual(privatePanel.noImageModeScriptController.invalidateCallCount, 1)
+    }
+
+    func testImageBlockingChangeBeforeInitialRulesRefreshesBeforeFirstLoad() async {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let fixture = makeFixture(
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        defer { fixture.session.invalidate() }
+
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+        fixture.installer.completeInstallation()
+        fixture.session.loadHome()
+        fixture.session.loadHome()
+
+        XCTAssertEqual(fixture.installer.refreshCallCount, 1)
+        XCTAssertTrue(fixture.runtime.loadedRequests.isEmpty)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+        XCTAssertEqual(fixture.noImageModeScriptController.enabledValues, [false, true])
+
+        fixture.installer.completeNextRefresh()
+
+        XCTAssertEqual(
+            fixture.runtime.loadedRequests.map(\.url),
+            [fixture.configuration.homeURL]
+        )
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+    }
+
+    func testImageBlockingChangesDuringRefreshAreSerializedWithoutDroppingIntent() async throws {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let fixture = makeFixture(
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        finishInitialLoad(in: fixture)
+        defer { fixture.session.invalidate() }
+
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+        preference.isEnabled = false
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+
+        XCTAssertEqual(fixture.installer.refreshCallCount, 1)
+        fixture.installer.completeNextRefresh()
+
+        XCTAssertEqual(fixture.installer.refreshCallCount, 2)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+
+        fixture.installer.completeNextRefresh()
+
+        XCTAssertEqual(fixture.installer.refreshCallCount, 2)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 1)
+        XCTAssertEqual(fixture.noImageModeScriptController.enabledValues, [false, true, false])
+        try commitReloadNavigation(in: fixture)
+    }
+
+    func testImageBlockingObserverIgnoresNoOpAndStopsAfterInvalidate() async {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let fixture = makeFixture(
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        fixture.installer.completeInstallation()
+
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+
+        XCTAssertEqual(fixture.installer.refreshCallCount, 0)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+
+        fixture.session.invalidate()
+        preference.isEnabled = true
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil
+        )
+        await Task.yield()
+
+        XCTAssertEqual(fixture.installer.refreshCallCount, 0)
+        XCTAssertEqual(fixture.runtime.reloadCallCount, 0)
+        XCTAssertEqual(fixture.installer.invalidateCallCount, 1)
+        XCTAssertEqual(fixture.noImageModeScriptController.enabledValues, [false])
+        XCTAssertEqual(fixture.noImageModeScriptController.invalidateCallCount, 1)
+    }
+
+    func testRecreatedSessionReadsLatestImageBlockingPreferenceAfterUnload() throws {
+        let notificationCenter = NotificationCenter()
+        let preference = MockFloorpWebPanelImageBlockingPreference()
+        let first = makeFixture(
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        let firstAdapter = try XCTUnwrap(first.installerFactory.tabs.first)
+        XCTAssertFalse(firstAdapter.imageContentBlockingEnabled())
+        XCTAssertEqual(first.noImageModeScriptController.enabledValues, [false])
+
+        first.session.unload()
+        preference.isEnabled = true
+
+        let recreated = makeFixture(
+            imageContentBlockingEnabled: { preference.isEnabled },
+            notificationCenter: notificationCenter
+        )
+        defer { recreated.session.invalidate() }
+        let recreatedAdapter = try XCTUnwrap(recreated.installerFactory.tabs.first)
+
+        XCTAssertTrue(recreatedAdapter.imageContentBlockingEnabled())
+        XCTAssertEqual(first.installer.invalidateCallCount, 1)
+        XCTAssertEqual(first.noImageModeScriptController.invalidateCallCount, 1)
+        XCTAssertEqual(recreated.noImageModeScriptController.enabledValues, [true])
     }
 
     func testPrivateFactoryLeaseSurvivesUntilSessionInvalidationAndIgnoresLateCallbacks() throws {
@@ -584,17 +1390,32 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         windowUUID: WindowUUID = UUID(),
         isPrivate: Bool = false,
         zoomLevel: FloorpWebPanelZoomLevel = .defaultLevel,
+        contentMode: FloorpWebPanelContentMode = .mobile,
         restorationURL: URL? = nil,
+        imageContentBlockingEnabled: @escaping @MainActor () -> Bool = { false },
+        notificationCenter: NotificationCenter = .default,
         openInMainBrowser: @escaping FloorpWebPanelNavigationExecutor.OpenInMainBrowser = { _ in }
     ) -> Fixture {
         let runtime = MockFloorpWebPanelWebViewRuntime()
         let installer = MockFloorpWebPanelContentRuleInstaller()
         let installerFactory = MockFloorpWebPanelContentRuleInstallerFactory(installer: installer)
+        let noImageModeScriptController = MockFloorpWebPanelNoImageModeScriptController()
+        let noImageModeScriptControllerFactory =
+            MockFloorpWebPanelNoImageModeScriptControllerFactory(
+                controller: noImageModeScriptController
+            )
         let configuration = FloorpWebPanelSessionConfiguration(
             panelTitle: "Panel",
             homeURL: URL(string: "https://example.com/home")!,
             iconName: "globe",
-            zoomLevel: zoomLevel
+            zoomLevel: zoomLevel,
+            contentMode: contentMode
+        )
+        let navigationExecutor = FloorpWebPanelNavigationExecutor(
+            windowUUID: windowUUID,
+            isPrivate: isPrivate,
+            contentMode: contentMode,
+            openInMainBrowser: openInMainBrowser
         )
         let session = FloorpWebPanelWebViewSession(
             key: FloorpWebPanelSessionKey(
@@ -605,19 +1426,107 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
             configuration: configuration,
             runtime: runtime,
             contentRuleInstallerFactory: installerFactory,
-            navigationExecutor: FloorpWebPanelNavigationExecutor(
-                windowUUID: windowUUID,
-                isPrivate: isPrivate,
-                openInMainBrowser: openInMainBrowser
-            ),
+            noImageModeScriptControllerFactory: noImageModeScriptControllerFactory,
+            navigationExecutor: navigationExecutor,
+            imageContentBlockingEnabled: imageContentBlockingEnabled,
+            notificationCenter: notificationCenter,
             restorationURL: restorationURL
         )
         return Fixture(
             session: session,
             runtime: runtime,
             installer: installer,
-            configuration: configuration
+            installerFactory: installerFactory,
+            noImageModeScriptController: noImageModeScriptController,
+            noImageModeScriptControllerFactory: noImageModeScriptControllerFactory,
+            configuration: configuration,
+            navigationExecutor: navigationExecutor
         )
+    }
+
+    private func updateContentMode(
+        _ contentMode: FloorpWebPanelContentMode,
+        in fixture: Fixture
+    ) {
+        fixture.session.updateConfiguration(FloorpWebPanelSessionConfiguration(
+            panelTitle: fixture.configuration.panelTitle,
+            homeURL: fixture.configuration.homeURL,
+            iconName: fixture.configuration.iconName,
+            zoomLevel: fixture.configuration.zoomLevel,
+            contentMode: contentMode
+        ))
+    }
+
+    @discardableResult
+    private func beginContentModeNavigation(
+        in fixture: Fixture,
+        navigationID: FloorpWebPanelNavigationIdentity? = nil
+    ) throws -> FloorpWebPanelNavigationIdentity {
+        let navigationID = try XCTUnwrap(
+            navigationID ?? fixture.runtime.reloadFromOriginNavigationIDs.last
+        )
+        return bindContentModeNavigation(navigationID, in: fixture)
+    }
+
+    @discardableResult
+    private func beginReloadNavigation(
+        in fixture: Fixture,
+        navigationID: FloorpWebPanelNavigationIdentity? = nil
+    ) throws -> FloorpWebPanelNavigationIdentity {
+        let navigationID = try XCTUnwrap(
+            navigationID ?? fixture.runtime.reloadNavigationIDs.last
+        )
+        return bindContentModeNavigation(navigationID, in: fixture)
+    }
+
+    @discardableResult
+    private func bindContentModeNavigation(
+        _ navigationID: FloorpWebPanelNavigationIdentity,
+        in fixture: Fixture
+    ) -> FloorpWebPanelNavigationIdentity {
+        let preferences = WKWebpagePreferences()
+        XCTAssertTrue(fixture.navigationExecutor.applyContentMode(
+            to: fixture.runtime.retainedWebView,
+            preferences: preferences,
+            for: FloorpWebPanelNavigationRequest(
+                url: fixture.runtime.currentURL,
+                target: .mainFrame
+            )
+        ))
+        fixture.navigationExecutor.bindPendingContentMode(to: navigationID)
+        return navigationID
+    }
+
+    private func bindAboutBlankNavigation(
+        _ navigationID: FloorpWebPanelNavigationIdentity,
+        in fixture: Fixture
+    ) {
+        let preferences = WKWebpagePreferences()
+        XCTAssertFalse(fixture.navigationExecutor.applyContentMode(
+            to: fixture.runtime.retainedWebView,
+            preferences: preferences,
+            for: FloorpWebPanelNavigationRequest(
+                url: fixture.runtime.currentURL,
+                target: .mainFrame
+            )
+        ))
+        fixture.navigationExecutor.bindPendingContentMode(to: navigationID)
+    }
+
+    private func commitContentModeNavigation(in fixture: Fixture) throws {
+        let navigationID = try beginContentModeNavigation(in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(navigationID)
+    }
+
+    private func commitReloadNavigation(in fixture: Fixture) throws {
+        let navigationID = try beginReloadNavigation(in: fixture)
+        fixture.navigationExecutor.commitContentModeNavigation(navigationID)
+    }
+
+    private func finishInitialLoad(in fixture: Fixture) {
+        fixture.installer.completeInstallation()
+        fixture.runtime.currentURL = fixture.configuration.homeURL
+        fixture.runtime.stateDidChange?()
     }
 
     private func makeInvalidatedMediaReferences(
@@ -664,12 +1573,200 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         let session: FloorpWebPanelWebViewSession
         let runtime: MockFloorpWebPanelWebViewRuntime
         let installer: MockFloorpWebPanelContentRuleInstaller
+        let installerFactory: MockFloorpWebPanelContentRuleInstallerFactory
+        let noImageModeScriptController: MockFloorpWebPanelNoImageModeScriptController
+        let noImageModeScriptControllerFactory:
+            MockFloorpWebPanelNoImageModeScriptControllerFactory
         let configuration: FloorpWebPanelSessionConfiguration
+        let navigationExecutor: FloorpWebPanelNavigationExecutor
     }
 }
 
 @MainActor
 final class FloorpWebPanelNavigationExecutorTests: XCTestCase {
+    func testMainFrameContentModeAppliesPreferredModeAndDomainUserAgent() throws {
+        let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: false,
+            contentMode: .desktop,
+            openInMainBrowser: { _ in }
+        )
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let preferences = WKWebpagePreferences()
+        let url = try XCTUnwrap(URL(string: "https://subdomain.google.com/path"))
+        var committedModes = [FloorpWebPanelContentMode]()
+        executor.contentModeDidCommit = { _, contentMode in
+            committedModes.append(contentMode)
+        }
+        let desktopNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+
+        XCTAssertTrue(executor.applyContentMode(
+            to: webView,
+            preferences: preferences,
+            for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+        ))
+        XCTAssertEqual(preferences.preferredContentMode, .desktop)
+        XCTAssertEqual(
+            webView.customUserAgent,
+            UserAgent.getUserAgent(
+                domain: url.baseDomain ?? "",
+                platform: .Desktop
+            )
+        )
+        XCTAssertTrue(committedModes.isEmpty)
+        executor.bindPendingContentMode(to: desktopNavigationID)
+        executor.commitContentModeNavigation(desktopNavigationID)
+        XCTAssertEqual(committedModes, [.desktop])
+
+        executor.updateContentMode(.mobile)
+        let mobileNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        XCTAssertTrue(executor.applyContentMode(
+            to: webView,
+            preferences: preferences,
+            for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+        ))
+        XCTAssertEqual(preferences.preferredContentMode, .mobile)
+        XCTAssertEqual(
+            webView.customUserAgent,
+            UserAgent.getUserAgent(
+                domain: url.baseDomain ?? "",
+                platform: .Mobile
+            )
+        )
+        XCTAssertEqual(committedModes, [.desktop])
+        executor.bindPendingContentMode(to: mobileNavigationID)
+        executor.commitContentModeNavigation(mobileNavigationID)
+        XCTAssertEqual(committedModes, [.desktop, .mobile])
+    }
+
+    func testAboutBlankTracksLifecycleWithoutApplyingHTTPContentMode() throws {
+        let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: false,
+            contentMode: .desktop,
+            openInMainBrowser: { _ in }
+        )
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.customUserAgent = "sentinel"
+        let preferences = WKWebpagePreferences()
+        let url = try XCTUnwrap(URL(string: "about:blank"))
+        let committedNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        let failedNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        var committed = [(FloorpWebPanelNavigationIdentity, FloorpWebPanelContentMode)]()
+        var failed = [FloorpWebPanelNavigationIdentity]()
+        executor.contentModeDidCommit = { committed.append(($0, $1)) }
+        executor.contentModeNavigationDidFail = { failed.append($0) }
+
+        XCTAssertFalse(executor.applyContentMode(
+            to: webView,
+            preferences: preferences,
+            for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+        ))
+        XCTAssertEqual(preferences.preferredContentMode, .recommended)
+        XCTAssertEqual(webView.customUserAgent, "sentinel")
+        executor.bindPendingContentMode(to: committedNavigationID)
+        executor.commitContentModeNavigation(committedNavigationID)
+
+        XCTAssertEqual(committed.map(\.0), [committedNavigationID])
+        XCTAssertEqual(committed.map(\.1), [.desktop])
+
+        XCTAssertFalse(executor.applyContentMode(
+            to: webView,
+            preferences: preferences,
+            for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+        ))
+        executor.bindPendingContentMode(to: failedNavigationID)
+        executor.failContentModeNavigation(failedNavigationID)
+        XCTAssertEqual(failed, [failedNavigationID])
+    }
+
+    func testContentModeCallbacksStayBoundToEachNavigationIdentity() throws {
+        let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: false,
+            contentMode: .mobile,
+            openInMainBrowser: { _ in }
+        )
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let url = try XCTUnwrap(URL(string: "https://example.com/path"))
+        let supersededNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        let latestNavigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        var committedIDs = [FloorpWebPanelNavigationIdentity]()
+        var committedModes = [FloorpWebPanelContentMode]()
+        var failedIDs = [FloorpWebPanelNavigationIdentity]()
+        executor.contentModeDidCommit = { navigationID, contentMode in
+            committedIDs.append(navigationID)
+            committedModes.append(contentMode)
+        }
+        executor.contentModeNavigationDidFail = { failedIDs.append($0) }
+
+        XCTAssertTrue(executor.applyContentMode(
+            to: webView,
+            preferences: WKWebpagePreferences(),
+            for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+        ))
+        executor.bindPendingContentMode(to: supersededNavigationID)
+        executor.updateContentMode(.desktop)
+        XCTAssertTrue(executor.applyContentMode(
+            to: webView,
+            preferences: WKWebpagePreferences(),
+            for: FloorpWebPanelNavigationRequest(url: url, target: .mainFrame)
+        ))
+        executor.bindPendingContentMode(to: latestNavigationID)
+
+        executor.webView(webView, didCommit: nil)
+        executor.webView(
+            webView,
+            didFailProvisionalNavigation: nil,
+            withError: URLError(.cancelled)
+        )
+        executor.failContentModeNavigation(supersededNavigationID)
+        executor.commitContentModeNavigation(latestNavigationID)
+        executor.commitContentModeNavigation(supersededNavigationID)
+
+        XCTAssertEqual(failedIDs, [supersededNavigationID])
+        XCTAssertEqual(committedIDs, [latestNavigationID])
+        XCTAssertEqual(committedModes, [.desktop])
+    }
+
+    func testContentModeDoesNotMutateSubframeNewWindowOrCancelledNavigation() throws {
+        let executor = FloorpWebPanelNavigationExecutor(
+            windowUUID: .XCTestDefaultUUID,
+            isPrivate: false,
+            contentMode: .desktop,
+            openInMainBrowser: { _ in }
+        )
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.customUserAgent = "sentinel"
+        let url = try XCTUnwrap(URL(string: "https://example.com/path"))
+
+        for target in [
+            FloorpWebPanelNavigationTarget.subframe,
+            FloorpWebPanelNavigationTarget.newWindow,
+        ] {
+            let preferences = WKWebpagePreferences()
+            XCTAssertFalse(executor.applyContentMode(
+                to: webView,
+                preferences: preferences,
+                for: FloorpWebPanelNavigationRequest(url: url, target: target)
+            ))
+            XCTAssertEqual(preferences.preferredContentMode, .recommended)
+            XCTAssertEqual(webView.customUserAgent, "sentinel")
+        }
+
+        let preferences = WKWebpagePreferences()
+        XCTAssertFalse(executor.applyContentMode(
+            to: webView,
+            preferences: preferences,
+            for: FloorpWebPanelNavigationRequest(
+                url: try XCTUnwrap(URL(string: "javascript:alert(1)")),
+                target: .mainFrame
+            )
+        ))
+        XCTAssertEqual(preferences.preferredContentMode, .recommended)
+        XCTAssertEqual(webView.customUserAgent, "sentinel")
+    }
+
     func testOpenRequestPreservesOwningWindowAndSourcePrivacy() throws {
         let windowUUID = WindowUUID()
         let url = try XCTUnwrap(URL(string: "https://example.com/private-panel"))
@@ -870,9 +1967,15 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
     private(set) var pageZoom: CGFloat = 1
     private(set) var pageZoomAssignments = [CGFloat]()
     private(set) var loadedRequests = [URLRequest]()
+    private(set) var loadNavigationIDs = [FloorpWebPanelNavigationIdentity]()
     private(set) var goBackCallCount = 0
+    private(set) var goBackNavigationIDs = [FloorpWebPanelNavigationIdentity]()
     private(set) var goForwardCallCount = 0
+    private(set) var goForwardNavigationIDs = [FloorpWebPanelNavigationIdentity]()
     private(set) var reloadCallCount = 0
+    private(set) var reloadNavigationIDs = [FloorpWebPanelNavigationIdentity]()
+    private(set) var reloadFromOriginCallCount = 0
+    private(set) var reloadFromOriginNavigationIDs = [FloorpWebPanelNavigationIdentity]()
     private(set) var stopLoadingCallCount = 0
     private(set) var invalidateCallCount = 0
     private(set) var mediaPlaybackSuppressionRequests = [Bool]()
@@ -880,6 +1983,10 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
         @MainActor (Result<Void, Error>) -> Void
     ]()
     var delaysMediaPlaybackCompletions = false
+    var goBackSucceeds = true
+    var reloadSucceeds = true
+    var reloadFromOriginSucceeds = true
+    var invokesStateChangeDuringReloadFromOrigin = false
     var mediaPlaybackCompletionRelay: MockFloorpWebPanelMediaPlaybackCompletionRelay?
 
     var pendingMediaPlaybackCompletionCount: Int {
@@ -891,20 +1998,56 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
 
     func setNavigationExecutor(_ executor: FloorpWebPanelNavigationExecutor?) {}
 
-    func load(_ request: URLRequest) {
+    @discardableResult
+    func load(_ request: URLRequest) -> FloorpWebPanelNavigationIdentity? {
         loadedRequests.append(request)
+        let navigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        loadNavigationIDs.append(navigationID)
+        return navigationID
     }
 
-    func goBack() {
+    @discardableResult
+    func goBack() -> FloorpWebPanelNavigationIdentity? {
         goBackCallCount += 1
+        guard goBackSucceeds else { return nil }
+        let navigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        goBackNavigationIDs.append(navigationID)
+        return navigationID
     }
 
-    func goForward() {
+    @discardableResult
+    func goForward() -> FloorpWebPanelNavigationIdentity? {
         goForwardCallCount += 1
+        let navigationID = FloorpWebPanelNavigationIdentity.synthetic()
+        goForwardNavigationIDs.append(navigationID)
+        return navigationID
     }
 
-    func reload() {
+    @discardableResult
+    func reload() -> FloorpWebPanelNavigationIdentity? {
         reloadCallCount += 1
+        let navigationID = reloadSucceeds
+            ? FloorpWebPanelNavigationIdentity.synthetic()
+            : nil
+        if let navigationID {
+            reloadNavigationIDs.append(navigationID)
+        }
+        return navigationID
+    }
+
+    @discardableResult
+    func reloadFromOrigin() -> FloorpWebPanelNavigationIdentity? {
+        reloadFromOriginCallCount += 1
+        let navigationID = reloadFromOriginSucceeds
+            ? FloorpWebPanelNavigationIdentity.synthetic()
+            : nil
+        if let navigationID {
+            reloadFromOriginNavigationIDs.append(navigationID)
+        }
+        if invokesStateChangeDuringReloadFromOrigin {
+            stateDidChange?()
+        }
+        return navigationID
     }
 
     func stopLoading() {
@@ -1024,6 +2167,7 @@ private final class MockFloorpWebPanelWebViewRuntimeFactory: FloorpWebPanelWebVi
 private final class MockFloorpWebPanelContentRuleInstallerFactory:
     FloorpWebPanelContentRuleInstallerFactory {
     private let installer: MockFloorpWebPanelContentRuleInstaller
+    private(set) var tabs = [ContentBlockerTab]()
 
     init(installer: MockFloorpWebPanelContentRuleInstaller) {
         self.installer = installer
@@ -1032,7 +2176,8 @@ private final class MockFloorpWebPanelContentRuleInstallerFactory:
     func makeInstaller(
         for tab: ContentBlockerTab
     ) -> any FloorpWebPanelContentRuleInstalling {
-        installer
+        tabs.append(tab)
+        return installer
     }
 }
 
@@ -1040,7 +2185,9 @@ private final class MockFloorpWebPanelContentRuleInstallerFactory:
 private final class MockFloorpWebPanelContentRuleInstaller:
     FloorpWebPanelContentRuleInstalling {
     private var completion: (@MainActor () -> Void)?
+    private var refreshCompletions = [@MainActor () -> Void]()
     private(set) var installCallCount = 0
+    private(set) var refreshCallCount = 0
     private(set) var invalidateCallCount = 0
 
     func install(completion: @escaping @MainActor () -> Void) {
@@ -1050,6 +2197,13 @@ private final class MockFloorpWebPanelContentRuleInstaller:
 
     func invalidate() {
         invalidateCallCount += 1
+        completion = nil
+        refreshCompletions.removeAll()
+    }
+
+    func refresh(completion: @escaping @MainActor () -> Void) {
+        refreshCallCount += 1
+        refreshCompletions.append(completion)
     }
 
     func completeInstallation() {
@@ -1057,4 +2211,51 @@ private final class MockFloorpWebPanelContentRuleInstaller:
         self.completion = nil
         completion?()
     }
+
+    func completeNextRefresh() {
+        guard !refreshCompletions.isEmpty else { return }
+        refreshCompletions.removeFirst()()
+    }
+}
+
+@MainActor
+private final class MockFloorpWebPanelNoImageModeScriptControllerFactory:
+    FloorpWebPanelNoImageModeScriptControllerFactory {
+    private let controller: MockFloorpWebPanelNoImageModeScriptController
+    private(set) var webViews = [WeakReference<WKWebView>]()
+    private(set) var initialEnabledValues = [Bool]()
+
+    init(controller: MockFloorpWebPanelNoImageModeScriptController) {
+        self.controller = controller
+    }
+
+    func makeController(
+        for webView: WKWebView,
+        isEnabled: Bool
+    ) -> any FloorpWebPanelNoImageModeScriptControlling {
+        webViews.append(WeakReference(webView))
+        initialEnabledValues.append(isEnabled)
+        controller.setEnabled(isEnabled)
+        return controller
+    }
+}
+
+@MainActor
+private final class MockFloorpWebPanelNoImageModeScriptController:
+    FloorpWebPanelNoImageModeScriptControlling {
+    private(set) var enabledValues = [Bool]()
+    private(set) var invalidateCallCount = 0
+
+    func setEnabled(_ isEnabled: Bool) {
+        enabledValues.append(isEnabled)
+    }
+
+    func invalidate() {
+        invalidateCallCount += 1
+    }
+}
+
+@MainActor
+private final class MockFloorpWebPanelImageBlockingPreference {
+    var isEnabled = false
 }

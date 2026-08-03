@@ -37,8 +37,10 @@ final class FloorpPanelPresentationState: NSObject {
     private(set) var selectedPanelId: String?
     private weak var activePresentation: (any FloorpPanelPrivacyModePresenting)?
     private(set) var webPanelSessionStore: FloorpWebPanelSessionStore?
+    private let notificationCenter: NotificationProtocol
     private var panelManager: FloorpPanelManager?
     private var observesPanelRegistry = false
+    private var observesMemoryWarnings = false
     private weak var observedTabManager: (any TabManager)?
     private(set) var hasPendingNotesOperationError = false
     var libraryPanelHost: (any FloorpLibraryPanelHosting)?
@@ -57,11 +59,13 @@ final class FloorpPanelPresentationState: NSObject {
     init(
         windowUUID: WindowUUID,
         selectedPanelId: String? = nil,
-        webPanelSessionStore: FloorpWebPanelSessionStore? = nil
+        webPanelSessionStore: FloorpWebPanelSessionStore? = nil,
+        notificationCenter: NotificationProtocol = NotificationCenter.default
     ) {
         self.windowUUID = windowUUID
         self.selectedPanelId = selectedPanelId
         self.webPanelSessionStore = webPanelSessionStore
+        self.notificationCenter = notificationCenter
         super.init()
     }
 
@@ -160,22 +164,36 @@ final class FloorpPanelPresentationState: NSObject {
         panelManager: FloorpPanelManager = .shared,
         openInMainBrowser: @escaping FloorpWebPanelNavigationExecutor.OpenInMainBrowser
     ) {
-        guard webPanelSessionStore == nil else { return }
-        webPanelSessionStore = FloorpWebPanelSessionStore(
-            windowUUID: windowUUID,
-            factory: DefaultFloorpWebPanelSessionFactory(
-                profile: profile,
-                openInMainBrowser: openInMainBrowser
+        if webPanelSessionStore == nil {
+            webPanelSessionStore = FloorpWebPanelSessionStore(
+                windowUUID: windowUUID,
+                factory: DefaultFloorpWebPanelSessionFactory(
+                    profile: profile,
+                    openInMainBrowser: openInMainBrowser
+                )
             )
-        )
-        self.panelManager = panelManager
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(panelRegistryDidChange),
-            name: .FloorpPanelRegistryDidChange,
-            object: nil
-        )
-        observesPanelRegistry = true
+            self.panelManager = panelManager
+        } else if self.panelManager == nil {
+            self.panelManager = panelManager
+        }
+        if !observesPanelRegistry {
+            notificationCenter.addObserver(
+                self,
+                selector: #selector(panelRegistryDidChange),
+                name: .FloorpPanelRegistryDidChange,
+                object: nil
+            )
+            observesPanelRegistry = true
+        }
+        if !observesMemoryWarnings {
+            notificationCenter.addObserver(
+                self,
+                selector: #selector(applicationDidReceiveMemoryWarning),
+                name: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil
+            )
+            observesMemoryWarnings = true
+        }
     }
 
     func observePrivateTabLifecycle(in tabManager: any TabManager) {
@@ -194,13 +212,21 @@ final class FloorpPanelPresentationState: NSObject {
         observedTabManager?.removeDelegate(self, completion: nil)
         observedTabManager = nil
         if observesPanelRegistry {
-            NotificationCenter.default.removeObserver(
+            notificationCenter.removeObserver(
                 self,
                 name: .FloorpPanelRegistryDidChange,
                 object: nil
             )
         }
         observesPanelRegistry = false
+        if observesMemoryWarnings {
+            notificationCenter.removeObserver(
+                self,
+                name: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil
+            )
+        }
+        observesMemoryWarnings = false
         panelManager = nil
         explicitlyUnloadedWebPanelKeys.removeAll()
         activeDrawer?.webPanelRuntimeWillInvalidate()
@@ -214,6 +240,9 @@ final class FloorpPanelPresentationState: NSObject {
             retainedPanelIDs.contains($0.panelID)
         }
         webPanelSessionStore?.reconcile(with: panels)
+        if let selectedPanelId {
+            activeDrawer?.applyPendingWebPanelContentModeReload(for: selectedPanelId)
+        }
     }
 
     func updateWebPanelZoom(
@@ -221,6 +250,14 @@ final class FloorpPanelPresentationState: NSObject {
         for panelID: String
     ) {
         webPanelSessionStore?.updateZoomLevel(zoomLevel, for: panelID)
+    }
+
+    func updateWebPanelContentMode(
+        _ contentMode: FloorpWebPanelContentMode,
+        for panelID: String
+    ) {
+        webPanelSessionStore?.updateContentMode(contentMode, for: panelID)
+        activeDrawer?.applyPendingWebPanelContentModeReload(for: panelID)
     }
 
     private func closePrivateWebPanelSessionsIfNeeded(
@@ -250,10 +287,20 @@ final class FloorpPanelPresentationState: NSObject {
             updateWebPanelZoom(zoomLevel, for: panelID)
             return
         }
+        if case .webPanelContentMode(let panelID) = notification.floorpPanelRegistryChange,
+           let contentMode = panelManager.panel(for: panelID)?
+            .effectiveWebPreferences?.contentMode {
+            updateWebPanelContentMode(contentMode, for: panelID)
+            return
+        }
         if activeDrawer == nil {
             invalidateWebPanelWidths()
         }
         reconcileWebPanelRuntime(with: panelManager.panels)
+    }
+
+    @objc private func applicationDidReceiveMemoryWarning(_ notification: Notification) {
+        webPanelSessionStore?.evictInactiveSessionsForMemoryPressure()
     }
 }
 
@@ -435,12 +482,24 @@ typealias FloorpWebPanelZoomMutation = @MainActor (
     _ change: FloorpWebPanelZoomChange,
     _ expectedRevision: FloorpWebPanelPreferencesRevision
 ) throws -> FloorpWebPanelPreferences
+typealias FloorpWebPanelContentModeMutation = @MainActor (
+    _ panelID: String,
+    _ contentMode: FloorpWebPanelContentMode,
+    _ expectedRevision: FloorpWebPanelPreferencesRevision
+) throws -> FloorpWebPanelPreferences
 
 struct FloorpWebPanelZoomActionContext: Equatable {
     let key: FloorpWebPanelSessionKey
     let sessionIdentifier: ObjectIdentifier
     let expectedRevision: FloorpWebPanelPreferencesRevision
     let zoomLevel: FloorpWebPanelZoomLevel
+}
+
+struct FloorpWebPanelContentModeActionContext: Equatable {
+    let key: FloorpWebPanelSessionKey
+    let sessionIdentifier: ObjectIdentifier
+    let expectedRevision: FloorpWebPanelPreferencesRevision
+    let contentMode: FloorpWebPanelContentMode
 }
 
 @MainActor
@@ -481,6 +540,7 @@ final class FloorpOverlayDrawerViewController:
     private let noteAccessibilityFocusPoster: FloorpNoteAccessibilityFocusPoster
     private let presentationModeProvider: FloorpPanelPresentationModeProvider
     private let webPanelZoomMutation: FloorpWebPanelZoomMutation
+    private let webPanelContentModeMutation: FloorpWebPanelContentModeMutation
 
     /// Callback when user taps a bookmark/history item.
     var onItemSelected: ((URL) -> Void)?
@@ -873,6 +933,7 @@ final class FloorpOverlayDrawerViewController:
          notificationCenter: NotificationProtocol = NotificationCenter.default,
          isPrivateProvider: @escaping @MainActor () -> Bool = { false },
          webPanelZoomMutation: FloorpWebPanelZoomMutation? = nil,
+         webPanelContentModeMutation: FloorpWebPanelContentModeMutation? = nil,
          registryFallbackRetryDelayNanoseconds: UInt64 = 250_000_000,
          presentationModeProvider: @escaping FloorpPanelPresentationModeProvider = { width, sizeClass in
              FloorpPanelPresentationModeResolver.resolve(
@@ -905,6 +966,14 @@ final class FloorpOverlayDrawerViewController:
                 expectedRevision: revision
             )
         }
+        self.webPanelContentModeMutation = webPanelContentModeMutation
+            ?? { panelID, contentMode, revision in
+                try panelManager.setWebPanelContentMode(
+                    contentMode,
+                    for: panelID,
+                    expectedRevision: revision
+                )
+            }
         self.registryFallbackRetryDelayNanoseconds = registryFallbackRetryDelayNanoseconds
         self.presentationModeProvider = presentationModeProvider
         self.notesSnapshotLoader = notesSnapshotLoader ?? {
@@ -1585,6 +1654,9 @@ final class FloorpOverlayDrawerViewController:
                 completion(self?.currentUnloadMenuElements(for: panel.id) ?? [])
             })
             actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.currentContentModeMenuElements(for: panel.id) ?? [])
+            })
+            actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
                 completion(self?.currentZoomMenuElements(for: panel.id) ?? [])
             })
             actions.append(UIAction(
@@ -1663,6 +1735,33 @@ final class FloorpOverlayDrawerViewController:
         )]
     }
 
+    func currentContentModeMenuElements(for panelID: String) -> [UIMenuElement] {
+        guard let context = currentWebPanelContentModeActionContext(for: panelID) else {
+            return []
+        }
+        let requestedMode: FloorpWebPanelContentMode = context.contentMode == .mobile
+            ? .desktop
+            : .mobile
+        return [UIAction(
+            title: webPanelContentModeActionTitle(for: requestedMode),
+            image: UIImage(systemName: requestedMode == .desktop ? "desktopcomputer" : "iphone"),
+            handler: { [weak self] _ in
+                _ = self?.performWebPanelContentModeAction(
+                    requestedMode,
+                    context: context
+                )
+            }
+        )]
+    }
+
+    private func webPanelContentModeActionTitle(
+        for contentMode: FloorpWebPanelContentMode
+    ) -> String {
+        contentMode == .desktop
+            ? String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString
+            : String.LegacyAppMenu.AppMenuViewMobileSiteTitleString
+    }
+
     private func displayTitle(for panel: FloorpPanel) -> String {
         if panel.type == .web {
             return panel.safeDisplayTitle ?? FloorpStrings.PanelRegistry.needsAttention
@@ -1700,7 +1799,10 @@ final class FloorpOverlayDrawerViewController:
         for button in sidebarButtons {
             guard let panelID = button.accessibilityIdentifier,
                   activeLoadedWebPanelKey(matching: panelID) != nil,
-                  let zoomContext = currentWebPanelZoomActionContext(for: panelID) else {
+                  let zoomContext = currentWebPanelZoomActionContext(for: panelID),
+                  let contentModeContext = currentWebPanelContentModeActionContext(
+                    for: panelID
+                  ) else {
                 button.accessibilityCustomActions = nil
                 continue
             }
@@ -1710,6 +1812,18 @@ final class FloorpOverlayDrawerViewController:
                     self?.performUnloadWebPanelAction(panelID: panelID) == true
                 }
             )]
+            let requestedMode: FloorpWebPanelContentMode = contentModeContext.contentMode == .mobile
+                ? .desktop
+                : .mobile
+            actions.append(UIAccessibilityCustomAction(
+                name: webPanelContentModeActionTitle(for: requestedMode),
+                actionHandler: { [weak self] _ in
+                    self?.performWebPanelContentModeAction(
+                        requestedMode,
+                        context: contentModeContext
+                    ) == true
+                }
+            ))
             if zoomContext.zoomLevel.applying(.increase) != zoomContext.zoomLevel {
                 actions.append(makeWebPanelZoomAccessibilityAction(
                     name: FloorpStrings.Drawer.webPanelZoomIn,
@@ -1886,6 +2000,11 @@ final class FloorpOverlayDrawerViewController:
         guard isViewLoaded else { return }
         if case .webPanelZoom(let panelID) = notification.floorpPanelRegistryChange {
             synchronizeWebPanelZoomFromManager(for: panelID)
+            updateSidebarWebPanelAccessibilityActions()
+            return
+        }
+        if case .webPanelContentMode(let panelID) = notification.floorpPanelRegistryChange {
+            synchronizeWebPanelContentModeFromManager(for: panelID)
             updateSidebarWebPanelAccessibilityActions()
             return
         }
@@ -2273,6 +2392,23 @@ final class FloorpOverlayDrawerViewController:
         )
     }
 
+    func currentWebPanelContentModeActionContext(
+        for panelID: String
+    ) -> FloorpWebPanelContentModeActionContext? {
+        guard let key = activeLoadedWebPanelKey(matching: panelID),
+              let session = activeWebPanelSession,
+              let panel = panelManager.panel(for: panelID),
+              let preferences = panel.effectiveWebPreferences else {
+            return nil
+        }
+        return FloorpWebPanelContentModeActionContext(
+            key: key,
+            sessionIdentifier: ObjectIdentifier(session),
+            expectedRevision: FloorpWebPanelPreferencesRevision(panel: panel),
+            contentMode: preferences.contentMode
+        )
+    }
+
     private func webPanelSessionKey(
         panelID: String,
         isPrivate: Bool
@@ -2336,10 +2472,74 @@ final class FloorpOverlayDrawerViewController:
         }
     }
 
+    @discardableResult
+    func performWebPanelContentModeAction(
+        _ contentMode: FloorpWebPanelContentMode,
+        context: FloorpWebPanelContentModeActionContext
+    ) -> Bool {
+        guard contentMode != context.contentMode,
+              let activeKey = activeLoadedWebPanelKey(matching: context.key.panelID),
+              activeKey == context.key,
+              let activeWebPanelSession,
+              ObjectIdentifier(activeWebPanelSession) == context.sessionIdentifier,
+              activeWebPanelSession.state.configuration.contentMode == context.contentMode,
+              let currentPanel = panelManager.panel(for: context.key.panelID),
+              let currentPreferences = currentPanel.effectiveWebPreferences,
+              currentPreferences.contentMode == context.contentMode,
+              FloorpWebPanelPreferencesRevision(panel: currentPanel)
+                == context.expectedRevision else {
+            return false
+        }
+
+        do {
+            let preferences = try webPanelContentModeMutation(
+                context.key.panelID,
+                contentMode,
+                context.expectedRevision
+            )
+            presentationState.updateWebPanelContentMode(
+                preferences.contentMode,
+                for: context.key.panelID
+            )
+            updateSidebarWebPanelAccessibilityActions()
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: FloorpStrings.Drawer.webPanelContentModeAnnouncement(
+                    preferences.contentMode
+                )
+            )
+            return true
+        } catch {
+            synchronizeWebPanelContentModeFromManager(for: context.key.panelID)
+            updateSidebarWebPanelAccessibilityActions()
+            DispatchQueue.main.async { [weak self] in
+                self?.presentPanelOperationError(error)
+            }
+            return false
+        }
+    }
+
     private func synchronizeWebPanelZoomFromManager(for panelID: String) {
         guard let zoomLevel = panelManager.panel(for: panelID)?
             .effectiveWebPreferences?.zoomLevel else { return }
         presentationState.updateWebPanelZoom(zoomLevel, for: panelID)
+    }
+
+    private func synchronizeWebPanelContentModeFromManager(for panelID: String) {
+        guard let contentMode = panelManager.panel(for: panelID)?
+            .effectiveWebPreferences?.contentMode else { return }
+        presentationState.updateWebPanelContentMode(contentMode, for: panelID)
+    }
+
+    @discardableResult
+    fileprivate func applyPendingWebPanelContentModeReload(for panelID: String) -> Bool {
+        guard activeLoadedWebPanelKey(matching: panelID) != nil,
+              let activeWebPanelSession,
+              activeWebPanelSession.isContentModeReloadPending else {
+            return false
+        }
+        _ = webPanelFindController?.dismissIfActive()
+        return activeWebPanelSession.applyPendingContentModeReload()
     }
 
     func rebindActiveContent(forSelectedTabIsPrivate isPrivate: Bool) {

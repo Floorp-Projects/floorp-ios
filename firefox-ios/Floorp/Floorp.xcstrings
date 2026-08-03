@@ -571,6 +571,18 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "アンロード" } }
       }
     },
+    "Floorp.Drawer.WebPanelDesktopModeAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Desktop site requested" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "デスクトップサイトに切り替えました" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelMobileModeAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Mobile site requested" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "モバイルサイトに切り替えました" } }
+      }
+    },
     "Floorp.Drawer.WebPanelZoomAnnouncement.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Zoom set to %d%%" } },

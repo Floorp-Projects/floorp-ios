@@ -155,6 +155,29 @@ enum FloorpStrings {
             comment: "Action that explicitly unloads the selected custom web panel"
         )
 
+        static func webPanelContentModeAnnouncement(
+            _ contentMode: FloorpWebPanelContentMode
+        ) -> String {
+            switch contentMode {
+            case .desktop:
+                return NSLocalizedString(
+                    "Floorp.Drawer.WebPanelDesktopModeAnnouncement.v1",
+                    tableName: "Floorp",
+                    bundle: .main,
+                    value: "Desktop site requested",
+                    comment: "VoiceOver announcement after a Web panel switches to desktop mode"
+                )
+            case .mobile:
+                return NSLocalizedString(
+                    "Floorp.Drawer.WebPanelMobileModeAnnouncement.v1",
+                    tableName: "Floorp",
+                    bundle: .main,
+                    value: "Mobile site requested",
+                    comment: "VoiceOver announcement after a Web panel switches to mobile mode"
+                )
+            }
+        }
+
         static let webPanelZoomIn = NSLocalizedString(
             "Floorp.Drawer.WebPanelZoomIn.v1",
             tableName: "Floorp",

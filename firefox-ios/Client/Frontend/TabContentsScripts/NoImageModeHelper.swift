@@ -38,7 +38,11 @@ class NoImageModeHelper: TabContentScript {
     }
 
     @MainActor
-    static func toggle(isEnabled: Bool, profile: Profile) {
+    static func toggle(
+        isEnabled: Bool,
+        profile: Profile,
+        notificationCenter: NotificationProtocol = NotificationCenter.default
+    ) {
         profile.prefs.setBool(isEnabled, forKey: NoImageModePrefsKey.NoImageModeStatus)
 
         // We need to ensure we update tabs across all open iPad windows since the
@@ -46,6 +50,15 @@ class NoImageModeHelper: TabContentScript {
         let windowManager: WindowManager = AppContainer.shared.resolve()
         let tabManagers = windowManager.allWindowTabManagers()
         tabManagers.forEach({ $0.tabs.forEach { $0.noImageMode = isEnabled } })
+
+        // BoolSetting persists the new value before invoking its change callback,
+        // so the previous value can no longer be inferred from profile.prefs here.
+        // Web panel sessions independently ignore notifications for unchanged values.
+        notificationCenter.post(
+            name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            withObject: nil,
+            withUserInfo: nil
+        )
 
         if isEnabled {
             TelemetryWrapper.recordEvent(category: .action, method: .tap, object: .blockImagesEnabled)
