@@ -1319,6 +1319,28 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertTrue(adapter.imageContentBlockingEnabled())
     }
 
+    func testNoImageModeToggleBroadcastsWhenBoolSettingAlreadyPersistedValue() {
+        let profile = MockProfile()
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(injectedProfile: profile)
+        defer { dependencies.reset() }
+        let notificationCenter = MockNotificationCenter()
+        profile.prefs.setBool(true, forKey: NoImageModePrefsKey.NoImageModeStatus)
+
+        NoImageModeHelper.toggle(
+            isEnabled: true,
+            profile: profile,
+            notificationCenter: notificationCenter
+        )
+
+        XCTAssertTrue(NoImageModeHelper.isActivated(profile.prefs))
+        XCTAssertEqual(notificationCenter.postCallCount, 1)
+        XCTAssertEqual(
+            notificationCenter.savePostName,
+            .FloorpWebPanelImageBlockingPreferenceDidChange
+        )
+    }
+
     func testImageBlockingPreferenceChangeRefreshesRegularAndPrivatePanelsExactlyOnce() async throws {
         let notificationCenter = NotificationCenter()
         let preference = MockFloorpWebPanelImageBlockingPreference()
