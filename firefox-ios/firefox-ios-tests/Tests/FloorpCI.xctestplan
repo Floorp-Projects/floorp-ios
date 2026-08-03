@@ -543,6 +543,7 @@
         "FloorpWebPanelWebViewSessionTests\/testMetadataUpdatePreservesRuntimeAndNotifies()",
         "FloorpWebPanelWebViewSessionTests\/testNilAndFailedImageReloadsRemainRetryableWithoutManualSupersession()",
         "FloorpWebPanelWebViewSessionTests\/testNoImageModeScriptMatchesNormalTabContractAndPreservesForeignScripts()",
+        "FloorpWebPanelWebViewSessionTests\/testNoImageModeToggleBroadcastsWhenBoolSettingAlreadyPersistedValue()",
         "FloorpWebPanelWebViewSessionTests\/testObserverCanRemoveItselfDuringNotification()",
         "FloorpWebPanelWebViewSessionTests\/testOpenCurrentPageInMainBrowserAllowsOnlySafeCurrentURL()",
         "FloorpWebPanelWebViewSessionTests\/testPrivateFactoryLeaseSurvivesUntilSessionInvalidationAndIgnoresLateCallbacks()",
