@@ -39,6 +39,7 @@ class NoImageModeHelper: TabContentScript {
 
     @MainActor
     static func toggle(isEnabled: Bool, profile: Profile) {
+        let didChange = isActivated(profile.prefs) != isEnabled
         profile.prefs.setBool(isEnabled, forKey: NoImageModePrefsKey.NoImageModeStatus)
 
         // We need to ensure we update tabs across all open iPad windows since the
@@ -46,6 +47,13 @@ class NoImageModeHelper: TabContentScript {
         let windowManager: WindowManager = AppContainer.shared.resolve()
         let tabManagers = windowManager.allWindowTabManagers()
         tabManagers.forEach({ $0.tabs.forEach { $0.noImageMode = isEnabled } })
+
+        if didChange {
+            NotificationCenter.default.post(
+                name: .FloorpWebPanelImageBlockingPreferenceDidChange,
+                object: nil
+            )
+        }
 
         if isEnabled {
             TelemetryWrapper.recordEvent(category: .action, method: .tap, object: .blockImagesEnabled)
