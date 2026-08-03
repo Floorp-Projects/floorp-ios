@@ -28,6 +28,11 @@ final class SceneDelegateTests: XCTestCase, FeatureFlaggable {
         try await super.tearDown()
     }
 
+    func testInitializationAfterDependencyTeardownDoesNotResolveDependencies() {
+        DependencyHelperMock().reset()
+        _ = SceneDelegate()
+    }
+
     // MARK: - handle(route:) - openedFromExternalSource
 
     func testHandleRoute_setsOpenedFromExternalSource_synchronously() throws {
