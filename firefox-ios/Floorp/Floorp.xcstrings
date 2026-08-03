@@ -547,6 +547,12 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルをアンロードしました。もう一度選択すると再読み込みします。" } }
       }
     },
+    "Floorp.Drawer.WebPanelUnload.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unload" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アンロード" } }
+      }
+    },
     "Floorp.Drawer.WebPanelBack.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } },

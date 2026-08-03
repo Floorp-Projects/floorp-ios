@@ -147,6 +147,14 @@ enum FloorpStrings {
             comment: "State shown after a custom web panel is explicitly unloaded"
         )
 
+        static let webPanelUnload = NSLocalizedString(
+            "Floorp.Drawer.WebPanelUnload.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Unload",
+            comment: "Action that explicitly unloads the selected custom web panel"
+        )
+
         static let webPanelBack = NSLocalizedString(
             "Floorp.Drawer.WebPanelBack.v1",
             tableName: "Floorp",

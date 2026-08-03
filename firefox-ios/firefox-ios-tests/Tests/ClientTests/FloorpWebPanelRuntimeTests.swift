@@ -316,6 +316,112 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         XCTAssertNil(replacementPrivate.restorationURL)
     }
 
+    func testExplicitUnloadMarkersAreExactAndRuntimeInvalidationClearsThem() {
+        let windowUUID = WindowUUID()
+        let state = FloorpPanelPresentationState(windowUUID: windowUUID)
+        let regularKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: "portal",
+            isPrivate: false
+        )
+        let privateKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: "portal",
+            isPrivate: true
+        )
+        let otherPanelKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: "other",
+            isPrivate: false
+        )
+        let foreignWindowKey = FloorpWebPanelSessionKey(
+            windowUUID: WindowUUID(),
+            panelID: "portal",
+            isPrivate: false
+        )
+
+        XCTAssertTrue(state.markWebPanelExplicitlyUnloaded(regularKey))
+        XCTAssertTrue(state.markWebPanelExplicitlyUnloaded(privateKey))
+        XCTAssertTrue(state.markWebPanelExplicitlyUnloaded(otherPanelKey))
+        XCTAssertFalse(state.markWebPanelExplicitlyUnloaded(foreignWindowKey))
+        XCTAssertFalse(state.markWebPanelExplicitlyUnloaded(regularKey))
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(regularKey))
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(privateKey))
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(otherPanelKey))
+        XCTAssertFalse(state.isWebPanelExplicitlyUnloaded(foreignWindowKey))
+
+        XCTAssertTrue(state.clearWebPanelExplicitlyUnloaded(regularKey))
+        XCTAssertFalse(state.clearWebPanelExplicitlyUnloaded(regularKey))
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(privateKey))
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(otherPanelKey))
+
+        state.invalidateWebPanelRuntime()
+
+        XCTAssertFalse(state.isWebPanelExplicitlyUnloaded(privateKey))
+        XCTAssertFalse(state.isWebPanelExplicitlyUnloaded(otherPanelKey))
+    }
+
+    func testExplicitUnloadMarkersPruneRemovedPanelsDuringRuntimeReconcile() {
+        let windowUUID = WindowUUID()
+        let state = FloorpPanelPresentationState(windowUUID: windowUUID)
+        let retainedPanel = makePanel(id: "retained")
+        let removedPanel = makePanel(id: "removed")
+        let retainedKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: retainedPanel.id,
+            isPrivate: false
+        )
+        let removedRegularKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: removedPanel.id,
+            isPrivate: false
+        )
+        let removedPrivateKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: removedPanel.id,
+            isPrivate: true
+        )
+        state.markWebPanelExplicitlyUnloaded(retainedKey)
+        state.markWebPanelExplicitlyUnloaded(removedRegularKey)
+        state.markWebPanelExplicitlyUnloaded(removedPrivateKey)
+
+        state.reconcileWebPanelRuntime(with: [retainedPanel])
+
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(retainedKey))
+        XCTAssertFalse(state.isWebPanelExplicitlyUnloaded(removedRegularKey))
+        XCTAssertFalse(state.isWebPanelExplicitlyUnloaded(removedPrivateKey))
+    }
+
+    func testLastPrivateTabCloseClearsPrivateMarkerWithoutCachedSession() {
+        let windowUUID = WindowUUID()
+        let state = FloorpPanelPresentationState(windowUUID: windowUUID)
+        let regularKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: "portal",
+            isPrivate: false
+        )
+        let privateKey = FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: "portal",
+            isPrivate: true
+        )
+        state.markWebPanelExplicitlyUnloaded(regularKey)
+        state.markWebPanelExplicitlyUnloaded(privateKey)
+        let tabManager = MockTabManager(windowUUID: windowUUID)
+        let privateTab = makeTab(isPrivate: true, windowUUID: windowUUID)
+        let regularTab = makeTab(isPrivate: false, windowUUID: windowUUID)
+        tabManager.selectedTab = privateTab
+        tabManager.privateTabs = [privateTab]
+        state.observePrivateTabLifecycle(in: tabManager)
+
+        tabManager.selectedTab = regularTab
+        tabManager.privateTabs = []
+        state.tabManager(tabManager, didRemoveTab: privateTab, isRestoring: false)
+
+        XCTAssertTrue(state.isWebPanelExplicitlyUnloaded(regularKey))
+        XCTAssertFalse(state.isWebPanelExplicitlyUnloaded(privateKey))
+    }
+
     func testPresentationStatePurgesPrivateSessionsWhenLastPrivateTabCloses() throws {
         let windowUUID = WindowUUID()
         let factory = MockFloorpWebPanelSessionFactory()
@@ -1607,6 +1713,12 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
     func testActiveExplicitUnloadDetachesRuntimeUntilSelectedAgain() throws {
         let fixture = try makeDrawerFixture()
         defer { fixture.cleanup() }
+        let otherWebPanel = try fixture.manager.addWebPanel(
+            draft: FloorpWebPanelDraft(
+                title: "Other",
+                urlText: "https://example.com/other"
+            )
+        )
         let drawer = fixture.makeDrawer(isPrivate: false)
         drawer.loadViewIfNeeded()
         let first = try XCTUnwrap(fixture.factory.sessions.first)
@@ -1629,7 +1741,37 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         findButton.sendActions(for: .touchUpInside)
         XCTAssertFalse(findToolbar.isHidden)
 
-        XCTAssertTrue(drawer.unloadActiveWebPanel())
+        let webPanel = try XCTUnwrap(fixture.manager.panels.first(where: {
+            $0.type == .web && $0.id != otherWebPanel.id
+        }))
+        let webPanelButton = try XCTUnwrap(
+            findView(identifier: webPanel.id, in: drawer.view) as? UIButton
+        )
+        let otherWebPanelButton = try XCTUnwrap(
+            findView(identifier: otherWebPanel.id, in: drawer.view) as? UIButton
+        )
+        XCTAssertTrue(webPanelButton.menu?.children.first is UIDeferredMenuElement)
+        let unloadMenuAction = try XCTUnwrap(
+            drawer.currentUnloadMenuElements(for: webPanel.id).first as? UIAction
+        )
+        XCTAssertEqual(
+            drawer.currentUnloadMenuElements(for: webPanel.id)
+                .compactMap { ($0 as? UIAction)?.title },
+            [FloorpStrings.Drawer.webPanelUnload]
+        )
+        XCTAssertTrue(drawer.currentUnloadMenuElements(for: otherWebPanel.id).isEmpty)
+        XCTAssertEqual(
+            webPanelButton.accessibilityCustomActions?.map(\.name),
+            [FloorpStrings.Drawer.webPanelUnload]
+        )
+        XCTAssertNil(otherWebPanelButton.accessibilityCustomActions)
+        XCTAssertFalse(drawer.unloadWebPanelIfActive(panelID: otherWebPanel.id))
+        XCTAssertEqual(first.invalidationCount, 0)
+
+        let unloadAccessibilityAction = try XCTUnwrap(
+            webPanelButton.accessibilityCustomActions?.first
+        )
+        XCTAssertTrue(unloadAccessibilityAction.actionHandler?(unloadAccessibilityAction) == true)
 
         XCTAssertEqual(first.stateObserverCount, 0)
         XCTAssertEqual(first.invalidationCount, 1)
@@ -1643,11 +1785,13 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertNotNil(
             findLabel(text: FloorpStrings.Drawer.webPanelUnloaded, in: drawer.view)
         )
+        XCTAssertTrue(drawer.currentUnloadMenuElements(for: webPanel.id).isEmpty)
+        XCTAssertNil(webPanelButton.accessibilityCustomActions)
+        let staleMenuActionSender = UIButton(type: .system)
+        staleMenuActionSender.addAction(unloadMenuAction, for: .touchUpInside)
+        staleMenuActionSender.sendActions(for: .touchUpInside)
+        XCTAssertEqual(first.invalidationCount, 1)
 
-        let webPanel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
-        let webPanelButton = try XCTUnwrap(
-            findView(identifier: webPanel.id, in: drawer.view) as? UIButton
-        )
         webPanelButton.sendActions(for: .touchUpInside)
 
         let restored = try XCTUnwrap(fixture.factory.sessions.last)
@@ -1659,6 +1803,113 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(
             restored.contentView?.superview?.accessibilityIdentifier,
             "Floorp.Drawer.WebPanelContent"
+        )
+
+        let activeMenuAction = try XCTUnwrap(
+            drawer.currentUnloadMenuElements(for: webPanel.id).first as? UIAction
+        )
+        let activeMenuActionSender = UIButton(type: .system)
+        activeMenuActionSender.addAction(activeMenuAction, for: .touchUpInside)
+        activeMenuActionSender.sendActions(for: .touchUpInside)
+
+        XCTAssertEqual(restored.invalidationCount, 1)
+        XCTAssertNotNil(
+            findLabel(text: FloorpStrings.Drawer.webPanelUnloaded, in: drawer.view)
+        )
+        XCTAssertTrue(drawer.currentUnloadMenuElements(for: webPanel.id).isEmpty)
+        XCTAssertNil(webPanelButton.accessibilityCustomActions)
+    }
+
+    func testExplicitUnloadSurvivesDrawerRecreationUntilExactPanelReselection() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let firstDrawer = fixture.makeDrawer(isPrivate: false)
+        firstDrawer.loadViewIfNeeded()
+        let webPanel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let key = FloorpWebPanelSessionKey(
+            windowUUID: fixture.presentationState.windowUUID,
+            panelID: webPanel.id,
+            isPrivate: false
+        )
+
+        XCTAssertTrue(firstDrawer.unloadWebPanelIfActive(panelID: webPanel.id))
+        XCTAssertTrue(fixture.presentationState.isWebPanelExplicitlyUnloaded(key))
+        XCTAssertEqual(fixture.factory.makeCallCount, 1)
+
+        let replacementDrawer = fixture.makeDrawer(isPrivate: false)
+        replacementDrawer.loadViewIfNeeded()
+
+        XCTAssertEqual(fixture.factory.makeCallCount, 1)
+        XCTAssertNotNil(
+            findLabel(
+                text: FloorpStrings.Drawer.webPanelUnloaded,
+                in: replacementDrawer.view
+            )
+        )
+        XCTAssertTrue(replacementDrawer.currentUnloadMenuElements(for: webPanel.id).isEmpty)
+
+        let webPanelButton = try XCTUnwrap(
+            findView(identifier: webPanel.id, in: replacementDrawer.view) as? UIButton
+        )
+        webPanelButton.sendActions(for: .touchUpInside)
+
+        XCTAssertFalse(fixture.presentationState.isWebPanelExplicitlyUnloaded(key))
+        XCTAssertEqual(fixture.factory.makeCallCount, 2)
+        XCTAssertEqual(
+            fixture.factory.sessions.last?.contentView?.superview?.accessibilityIdentifier,
+            "Floorp.Drawer.WebPanelContent"
+        )
+    }
+
+    func testReselectionClearsOnlyExactPrivacyMarkerAndRestoresEachMode() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let privacyMode = FloorpMutableWebPanelPrivacyMode(false)
+        let drawer = fixture.makeDrawer(isPrivateProvider: { privacyMode.value })
+        drawer.loadViewIfNeeded()
+        let webPanel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let regularKey = FloorpWebPanelSessionKey(
+            windowUUID: fixture.presentationState.windowUUID,
+            panelID: webPanel.id,
+            isPrivate: false
+        )
+        let privateKey = FloorpWebPanelSessionKey(
+            windowUUID: fixture.presentationState.windowUUID,
+            panelID: webPanel.id,
+            isPrivate: true
+        )
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/regular-current"))
+        fixture.factory.sessions.first?.recordRuntimeState(
+            currentURL: currentURL,
+            pageTitle: "Regular"
+        )
+        XCTAssertTrue(drawer.unloadWebPanelIfActive(panelID: webPanel.id))
+        fixture.presentationState.markWebPanelExplicitlyUnloaded(privateKey)
+        let webPanelButton = try XCTUnwrap(
+            findView(identifier: webPanel.id, in: drawer.view) as? UIButton
+        )
+
+        webPanelButton.sendActions(for: .touchUpInside)
+
+        XCTAssertFalse(fixture.presentationState.isWebPanelExplicitlyUnloaded(regularKey))
+        XCTAssertTrue(fixture.presentationState.isWebPanelExplicitlyUnloaded(privateKey))
+        XCTAssertEqual(fixture.factory.sessions.last?.restorationURL, currentURL)
+
+        privacyMode.value = true
+        drawer.rebindActiveContent(forSelectedTabIsPrivate: true)
+
+        XCTAssertEqual(fixture.factory.makeCallCount, 2)
+        XCTAssertNotNil(findLabel(text: FloorpStrings.Drawer.webPanelUnloaded, in: drawer.view))
+        XCTAssertNil(webPanelButton.accessibilityCustomActions)
+
+        webPanelButton.sendActions(for: .touchUpInside)
+
+        XCTAssertFalse(fixture.presentationState.isWebPanelExplicitlyUnloaded(privateKey))
+        XCTAssertEqual(fixture.factory.makeCallCount, 3)
+        XCTAssertEqual(fixture.factory.sessions.last?.key, privateKey)
+        XCTAssertEqual(
+            webPanelButton.accessibilityCustomActions?.map(\.name),
+            [FloorpStrings.Drawer.webPanelUnload]
         )
     }
 
@@ -1925,6 +2176,29 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertTrue(sessions.allSatisfy { $0.invalidationCount == 1 })
         XCTAssertTrue(sessions.allSatisfy { $0.contentView?.superview == nil })
         XCTAssertTrue(sessions.allSatisfy { $0.stateObserverCount == 0 })
+    }
+
+    func testRuntimeTeardownClearsMarkerOnlyDrawerStateAndShowsUnavailable() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let webPanel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let key = FloorpWebPanelSessionKey(
+            windowUUID: fixture.presentationState.windowUUID,
+            panelID: webPanel.id,
+            isPrivate: false
+        )
+        XCTAssertTrue(drawer.unloadWebPanelIfActive(panelID: webPanel.id))
+        XCTAssertTrue(fixture.presentationState.isWebPanelExplicitlyUnloaded(key))
+        XCTAssertTrue(fixture.presentationState.attach(drawer))
+
+        fixture.presentationState.invalidateWebPanelRuntime()
+
+        XCTAssertFalse(fixture.presentationState.isWebPanelExplicitlyUnloaded(key))
+        XCTAssertNil(findLabel(text: FloorpStrings.Drawer.webPanelUnloaded, in: drawer.view))
+        XCTAssertNotNil(findLabel(text: FloorpStrings.Drawer.webPanelUnavailable, in: drawer.view))
+        XCTAssertNil(fixture.presentationState.webPanelSessionStore)
     }
 
     private func makeDrawerFixture() throws -> FloorpWebPanelDrawerFixture {
@@ -2361,6 +2635,15 @@ private final class FloorpMutableWebPanelPresentationMode {
     var value: FloorpPanelPresentationMode
 
     init(_ value: FloorpPanelPresentationMode) {
+        self.value = value
+    }
+}
+
+@MainActor
+private final class FloorpMutableWebPanelPrivacyMode {
+    var value: Bool
+
+    init(_ value: Bool) {
         self.value = value
     }
 }
