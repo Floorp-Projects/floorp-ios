@@ -52,12 +52,15 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         let profile = MockProfile()
         let dependencies = DependencyHelperMock()
         dependencies.bootstrapDependencies(injectedProfile: profile)
-        defer { dependencies.reset() }
         let runtime = DefaultFloorpWebPanelWebViewRuntimeFactory().makeRuntime(
             configuration: WKWebViewConfiguration(),
             windowUUID: UUID(),
             certStore: profile.certStore
         )
+        defer {
+            runtime.invalidate()
+            dependencies.reset()
+        }
         let webView = try XCTUnwrap(runtime.webView)
 
         runtime.setPageZoom(1.25)
