@@ -2356,7 +2356,7 @@ private final class MockFloorpWebPanelContentRuleInstallerFactory:
         for tab: ContentBlockerTab
     ) -> any FloorpWebPanelContentRuleInstalling {
         tabs.append(tab)
-        installer
+        return installer
     }
 }
 
