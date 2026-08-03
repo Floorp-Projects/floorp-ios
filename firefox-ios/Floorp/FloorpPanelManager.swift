@@ -528,7 +528,11 @@ final class FloorpPanelManager {
         change: FloorpWebPanelZoomChange,
         expectedRevision: FloorpWebPanelPreferencesRevision
     ) throws -> FloorpWebPanelPreferences {
-        try mutateWebPanelPreferences(id: id, expectedRevision: expectedRevision) { current in
+        try mutateWebPanelPreferences(
+            id: id,
+            expectedRevision: expectedRevision,
+            registryChange: .webPanelZoom(panelID: id)
+        ) { current in
             FloorpWebPanelPreferences(
                 revision: current.revision,
                 contentWidth: current.contentWidth,

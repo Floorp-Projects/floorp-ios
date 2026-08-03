@@ -144,6 +144,12 @@ final class FloorpPanelPreferencesTests: XCTestCase {
             observedDecrease.append(preferences.zoomLevel)
         }
         XCTAssertEqual(observedDecrease, [.ninetyPercent, .seventyFivePercent, .fiftyPercent])
+        let userInfo = try XCTUnwrap(notificationCenter.saveUserInfo as? [AnyHashable: Any])
+        XCTAssertEqual(
+            userInfo[FloorpPanelRegistryNotification.changeUserInfoKey]
+                as? FloorpPanelRegistryChange,
+            .webPanelZoom(panelID: panel.id)
+        )
 
         let minimumRevision = try manager.webPanelPreferences(for: panel.id).revision
         _ = try manager.adjustWebPanelZoom(

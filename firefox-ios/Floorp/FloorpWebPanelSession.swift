@@ -16,6 +16,19 @@ struct FloorpWebPanelSessionConfiguration: Equatable {
     let panelTitle: String
     let homeURL: URL
     let iconName: String
+    let zoomLevel: FloorpWebPanelZoomLevel
+
+    init(
+        panelTitle: String,
+        homeURL: URL,
+        iconName: String,
+        zoomLevel: FloorpWebPanelZoomLevel = .defaultLevel
+    ) {
+        self.panelTitle = panelTitle
+        self.homeURL = homeURL
+        self.iconName = iconName
+        self.zoomLevel = zoomLevel
+    }
 }
 
 struct FloorpWebPanelSessionState: Equatable {

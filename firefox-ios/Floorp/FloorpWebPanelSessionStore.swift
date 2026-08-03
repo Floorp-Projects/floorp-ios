@@ -141,6 +141,28 @@ final class FloorpWebPanelSessionStore {
         }
     }
 
+    /// Applies a preference-only zoom update to every cached privacy-mode
+    /// session for this panel without recreating or reattaching its WebView.
+    func updateZoomLevel(
+        _ zoomLevel: FloorpWebPanelZoomLevel,
+        for panelID: String
+    ) {
+        for key in Array(entries.keys) where key.panelID == panelID {
+            guard var entry = entries[key], entry.configuration.zoomLevel != zoomLevel else {
+                continue
+            }
+            let configuration = FloorpWebPanelSessionConfiguration(
+                panelTitle: entry.configuration.panelTitle,
+                homeURL: entry.configuration.homeURL,
+                iconName: entry.configuration.iconName,
+                zoomLevel: zoomLevel
+            )
+            entry.session.updateConfiguration(configuration)
+            entry.configuration = configuration
+            entries[key] = entry
+        }
+    }
+
     func invalidateAll() {
         let sessions = entries.values.map(\.session)
         entries.removeAll()
@@ -226,7 +248,8 @@ final class FloorpWebPanelSessionStore {
         return FloorpWebPanelSessionConfiguration(
             panelTitle: validated.title,
             homeURL: validated.url,
-            iconName: validated.iconName
+            iconName: validated.iconName,
+            zoomLevel: panel.effectiveWebPreferences?.zoomLevel ?? .defaultLevel
         )
     }
 

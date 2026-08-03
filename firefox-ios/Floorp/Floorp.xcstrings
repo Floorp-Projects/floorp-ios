@@ -571,6 +571,36 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "アンロード" } }
       }
     },
+    "Floorp.Drawer.WebPanelZoomAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Zoom set to %d%%" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ズームを %d%% に設定しました" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelZoomIn.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Zoom In" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡大" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelZoomMenuTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Zoom · %d%%" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ズーム · %d%%" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelZoomOut.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Zoom Out" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "縮小" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelZoomReset.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset Zoom" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ズームをリセット" } }
+      }
+    },
     "Floorp.Drawer.WebPanelBack.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } },

@@ -6,6 +6,7 @@ import Foundation
 
 enum FloorpPanelRegistryChange: Equatable {
     case webPanelContentWidth(panelID: String)
+    case webPanelZoom(panelID: String)
 }
 
 enum FloorpPanelRegistryNotification {
@@ -32,8 +33,9 @@ extension Notification.Name {
     ///
     /// Presentation state remains window-scoped; each visible drawer uses this
     /// notification to reconcile its rail and selected panel against the new
-    /// registry without persisting window UI state globally. Width-only Web
-    /// panel changes are identified in `userInfo` so an active WebView is not
-    /// detached and rebuilt while the user resizes its pinned drawer.
+    /// registry without persisting window UI state globally. Preference-only
+    /// Web panel changes are identified in `userInfo` so an active WebView is
+    /// not detached and rebuilt while the user resizes its pinned drawer or
+    /// changes its zoom level.
     static let FloorpPanelRegistryDidChange = Notification.Name("FloorpPanelRegistryDidChange")
 }
