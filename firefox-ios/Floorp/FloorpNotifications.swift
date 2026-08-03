@@ -7,6 +7,7 @@ import Foundation
 enum FloorpPanelRegistryChange: Equatable {
     case webPanelContentWidth(panelID: String)
     case webPanelZoom(panelID: String)
+    case webPanelContentMode(panelID: String)
 }
 
 enum FloorpPanelRegistryNotification {
@@ -36,6 +37,15 @@ extension Notification.Name {
     /// registry without persisting window UI state globally. Preference-only
     /// Web panel changes are identified in `userInfo` so an active WebView is
     /// not detached and rebuilt while the user resizes its pinned drawer or
-    /// changes its zoom level.
+    /// changes its zoom level or requested content mode.
     static let FloorpPanelRegistryDidChange = Notification.Name("FloorpPanelRegistryDidChange")
+
+    /// Posted after the profile-wide Block Images preference changes.
+    ///
+    /// Normal browser tabs keep using their existing direct update path. Floorp
+    /// Web panels observe this dedicated notification so they can reinstall
+    /// content rules without broadening `contentBlockerTabSetupRequired`.
+    static let FloorpWebPanelImageBlockingPreferenceDidChange = Notification.Name(
+        "FloorpWebPanelImageBlockingPreferenceDidChange"
+    )
 }

@@ -17,17 +17,20 @@ struct FloorpWebPanelSessionConfiguration: Equatable {
     let homeURL: URL
     let iconName: String
     let zoomLevel: FloorpWebPanelZoomLevel
+    let contentMode: FloorpWebPanelContentMode
 
     init(
         panelTitle: String,
         homeURL: URL,
         iconName: String,
-        zoomLevel: FloorpWebPanelZoomLevel = .defaultLevel
+        zoomLevel: FloorpWebPanelZoomLevel = .defaultLevel,
+        contentMode: FloorpWebPanelContentMode = .mobile
     ) {
         self.panelTitle = panelTitle
         self.homeURL = homeURL
         self.iconName = iconName
         self.zoomLevel = zoomLevel
+        self.contentMode = contentMode
     }
 }
 
@@ -77,6 +80,7 @@ enum FloorpWebPanelRestorationPolicy {
 protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
     var state: FloorpWebPanelSessionState { get }
+    var isVisible: Bool { get }
     var contentView: UIView? { get }
     var findTarget: (any FloorpWebPanelFindTarget)? { get }
 
@@ -93,6 +97,9 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     func stopLoading()
     func openCurrentPageInMainBrowser()
     func setVisible(_ isVisible: Bool)
+    var isContentModeReloadPending: Bool { get }
+    @discardableResult
+    func applyPendingContentModeReload() -> Bool
     /// Returns a synchronous, safe URL candidate immediately before unload.
     /// Implementations backed by an asynchronous runtime should prefer its
     /// latest value over observer-derived state.
@@ -120,6 +127,9 @@ extension FloorpWebPanelSessionProtocol {
     func reload() {}
     func stopLoading() {}
     func openCurrentPageInMainBrowser() {}
+    var isContentModeReloadPending: Bool { false }
+    @discardableResult
+    func applyPendingContentModeReload() -> Bool { false }
     func restorationURLForUnload() -> URL? {
         FloorpWebPanelRestorationPolicy.safeWebURL(state.currentURL)
     }

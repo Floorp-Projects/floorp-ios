@@ -57,10 +57,16 @@ protocol FloorpWebPanelWebViewRuntime: AnyObject {
     var stateDidChange: (@MainActor () -> Void)? { get set }
 
     func setNavigationExecutor(_ executor: FloorpWebPanelNavigationExecutor?)
-    func load(_ request: URLRequest)
-    func goBack()
-    func goForward()
-    func reload()
+    @discardableResult
+    func load(_ request: URLRequest) -> FloorpWebPanelNavigationIdentity?
+    @discardableResult
+    func goBack() -> FloorpWebPanelNavigationIdentity?
+    @discardableResult
+    func goForward() -> FloorpWebPanelNavigationIdentity?
+    @discardableResult
+    func reload() -> FloorpWebPanelNavigationIdentity?
+    @discardableResult
+    func reloadFromOrigin() -> FloorpWebPanelNavigationIdentity?
     func stopLoading()
     func setPageZoom(_ pageZoom: CGFloat)
     func setMediaPlaybackSuppressed(
@@ -143,20 +149,34 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
         tabWebView?.uiDelegate = executor
     }
 
-    func load(_ request: URLRequest) {
-        tabWebView?.load(request)
+    @discardableResult
+    func load(_ request: URLRequest) -> FloorpWebPanelNavigationIdentity? {
+        guard let navigation = tabWebView?.load(request) else { return nil }
+        return FloorpWebPanelNavigationIdentity(navigation)
     }
 
-    func goBack() {
-        tabWebView?.goBack()
+    @discardableResult
+    func goBack() -> FloorpWebPanelNavigationIdentity? {
+        guard let navigation = tabWebView?.goBack() else { return nil }
+        return FloorpWebPanelNavigationIdentity(navigation)
     }
 
-    func goForward() {
-        tabWebView?.goForward()
+    @discardableResult
+    func goForward() -> FloorpWebPanelNavigationIdentity? {
+        guard let navigation = tabWebView?.goForward() else { return nil }
+        return FloorpWebPanelNavigationIdentity(navigation)
     }
 
-    func reload() {
-        tabWebView?.reload()
+    @discardableResult
+    func reload() -> FloorpWebPanelNavigationIdentity? {
+        guard let navigation = tabWebView?.reload() else { return nil }
+        return FloorpWebPanelNavigationIdentity(navigation)
+    }
+
+    @discardableResult
+    func reloadFromOrigin() -> FloorpWebPanelNavigationIdentity? {
+        guard let navigation = tabWebView?.reloadFromOrigin() else { return nil }
+        return FloorpWebPanelNavigationIdentity(navigation)
     }
 
     func stopLoading() {
@@ -397,21 +417,50 @@ private enum FloorpWebPanelMediaPlaybackError: Error {
 
 @MainActor
 final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
+    private struct ReloadReasons: OptionSet, Equatable {
+        let rawValue: Int
+
+        static let contentMode = ReloadReasons(rawValue: 1 << 0)
+        static let imageRules = ReloadReasons(rawValue: 1 << 1)
+        static let manual = ReloadReasons(rawValue: 1 << 2)
+    }
+
+    private enum ReloadState: Equatable {
+        case idle
+        case starting(ReloadReasons)
+        case navigating(FloorpWebPanelNavigationIdentity, ReloadReasons)
+    }
+
     let key: FloorpWebPanelSessionKey
     private(set) var state: FloorpWebPanelSessionState
     private var runtime: (any FloorpWebPanelWebViewRuntime)?
     private var blockerTab: FloorpWebPanelContentBlockerTab?
     private var contentRuleInstaller: (any FloorpWebPanelContentRuleInstalling)?
+    private var noImageModeScriptController:
+        (any FloorpWebPanelNoImageModeScriptControlling)?
+    private let imageContentBlockingEnabled: @MainActor () -> Bool
+    private let notificationCenter: NotificationCenter
+    private var imageBlockingPreferenceObserver: FloorpWebPanelNotificationObservation?
     private var navigationExecutor: FloorpWebPanelNavigationExecutor?
     private var privateBrowsingSessionLease: WKPrivateBrowsingSessionLease?
     private var webPanelFindTarget: (any FloorpWebPanelFindTarget)?
     private var observers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
     private var installationGeneration = UUID()
     private var areContentRulesReady = false
+    private var lastObservedImageContentBlockingEnabled: Bool
+    private var lastAppliedImageContentBlockingEnabled: Bool
+    private var isImageBlockingRefreshInFlight = false
+    private var hasStartedInitialLoad = false
+    private var imageBlockingRefreshGeneration = UUID()
     private var pendingInitialLoadURL: URL?
     private var pendingRestorationCandidateURL: URL?
+    private var loadedContentMode: FloorpWebPanelContentMode
+    private var hasIssuedNavigation = false
+    private var pendingReloadReasons = ReloadReasons()
+    private var reloadState = ReloadState.idle
+    private var reloadRetryRequiresExplicitTrigger = false
     private var isInvalidated = false
-    private var isVisible = true
+    private(set) var isVisible = true
     private var desiredMediaPlaybackSuppression = false
     private var appliedMediaPlaybackSuppression = false
     private var isMediaPlaybackTransitionInFlight = false
@@ -419,6 +468,18 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
     var contentView: UIView? {
         runtime?.contentView
+    }
+
+    var isContentModeReloadPending: Bool {
+        if pendingReloadReasons.contains(.contentMode) {
+            return true
+        }
+        switch reloadState {
+        case .idle:
+            return false
+        case .starting(let reasons), .navigating(_, let reasons):
+            return reasons.contains(.contentMode)
+        }
     }
 
     var findTarget: (any FloorpWebPanelFindTarget)? {
@@ -430,7 +491,12 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         configuration: FloorpWebPanelSessionConfiguration,
         runtime: any FloorpWebPanelWebViewRuntime,
         contentRuleInstallerFactory: any FloorpWebPanelContentRuleInstallerFactory,
+        noImageModeScriptControllerFactory:
+            any FloorpWebPanelNoImageModeScriptControllerFactory =
+                DefaultFloorpWebPanelNoImageModeScriptControllerFactory(),
         navigationExecutor: FloorpWebPanelNavigationExecutor,
+        imageContentBlockingEnabled: @escaping @MainActor () -> Bool,
+        notificationCenter: NotificationCenter = .default,
         restorationURL: URL? = nil,
         privateBrowsingSessionLease: WKPrivateBrowsingSessionLease? = nil
     ) {
@@ -438,12 +504,24 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         self.state = FloorpWebPanelSessionState(configuration: configuration)
         self.runtime = runtime
         self.navigationExecutor = navigationExecutor
+        self.imageContentBlockingEnabled = imageContentBlockingEnabled
+        self.notificationCenter = notificationCenter
+        let isImageContentBlockingEnabled = imageContentBlockingEnabled()
+        self.lastObservedImageContentBlockingEnabled = isImageContentBlockingEnabled
+        self.lastAppliedImageContentBlockingEnabled = isImageContentBlockingEnabled
         let safeRestorationURL = FloorpWebPanelRestorationPolicy.safeWebURL(restorationURL)
         self.pendingInitialLoadURL = safeRestorationURL ?? configuration.homeURL
         self.pendingRestorationCandidateURL = safeRestorationURL
+        self.loadedContentMode = configuration.contentMode
         self.privateBrowsingSessionLease = privateBrowsingSessionLease
 
         runtime.setNavigationExecutor(navigationExecutor)
+        navigationExecutor.contentModeDidCommit = { [weak self] navigationID, contentMode in
+            self?.contentModeDidCommit(contentMode, navigationID: navigationID)
+        }
+        navigationExecutor.contentModeNavigationDidFail = { [weak self] navigationID in
+            self?.contentModeNavigationDidFail(navigationID: navigationID)
+        }
         applyPageZoom(configuration.zoomLevel)
         runtime.stateDidChange = { [weak self] in
             self?.synchronizeState()
@@ -451,22 +529,47 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
         if let webView = runtime.webView {
             webPanelFindTarget = DefaultFloorpWebPanelFindTarget(webView: webView)
+            noImageModeScriptController = noImageModeScriptControllerFactory.makeController(
+                for: webView,
+                isEnabled: isImageContentBlockingEnabled
+            )
             let blockerTab = FloorpWebPanelContentBlockerTab(
                 isPrivate: key.isPrivate,
-                webView: webView
+                webView: webView,
+                imageContentBlockingEnabled: imageContentBlockingEnabled
             )
             self.blockerTab = blockerTab
             contentRuleInstaller = contentRuleInstallerFactory.makeInstaller(for: blockerTab)
         }
+        observeImageBlockingPreferenceChanges()
         installRulesBeforeInitialLoad()
     }
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration) {
         guard !isInvalidated else { return }
         let previousZoomLevel = state.configuration.zoomLevel
+        let previousContentMode = state.configuration.contentMode
         state.configuration = configuration
         if previousZoomLevel != configuration.zoomLevel {
             applyPageZoom(configuration.zoomLevel)
+        }
+        if previousContentMode != configuration.contentMode {
+            let shouldRetryAfterConfigurationChange = reloadRetryRequiresExplicitTrigger
+            reloadRetryRequiresExplicitTrigger = false
+            navigationExecutor?.updateContentMode(configuration.contentMode)
+            if hasIssuedNavigation || runtime?.currentURL != nil {
+                if loadedContentMode != configuration.contentMode {
+                    pendingReloadReasons.insert(.contentMode)
+                } else {
+                    pendingReloadReasons.remove(.contentMode)
+                }
+            } else {
+                loadedContentMode = configuration.contentMode
+                pendingReloadReasons.remove(.contentMode)
+            }
+            if shouldRetryAfterConfigurationChange {
+                startPendingReloadIfPossible(isExplicitRetry: true)
+            }
         }
         notifyObservers()
     }
@@ -489,7 +592,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     func loadHome() {
         guard !isInvalidated else { return }
         pendingRestorationCandidateURL = nil
-        guard areContentRulesReady else {
+        guard areContentRulesReady, hasStartedInitialLoad else {
             pendingInitialLoadURL = state.configuration.homeURL
             return
         }
@@ -498,21 +601,41 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
     func goBack() {
         guard !isInvalidated, state.canGoBack else { return }
-        runtime?.goBack()
+        performNavigation { runtime?.goBack() }
     }
 
     func goForward() {
         guard !isInvalidated, state.canGoForward else { return }
-        runtime?.goForward()
+        performNavigation { runtime?.goForward() }
     }
 
     func reload() {
         guard !isInvalidated else { return }
-        runtime?.reload()
+        switch reloadState {
+        case .idle:
+            pendingReloadReasons.insert(.manual)
+            startPendingReloadIfPossible(isExplicitRetry: true)
+        case .starting, .navigating:
+            // The in-flight reload already satisfies the user's request. In
+            // particular, do not supersede a navigation before didStart binds
+            // its content-mode identity.
+            break
+        }
     }
 
     func stopLoading() {
         guard !isInvalidated else { return }
+        switch reloadState {
+        case .idle:
+            break
+        case .starting(let reasons), .navigating(_, let reasons):
+            pendingReloadReasons.formUnion(reasons)
+            if loadedContentMode == state.configuration.contentMode {
+                pendingReloadReasons.remove(.contentMode)
+            }
+            reloadState = .idle
+            reloadRetryRequiresExplicitTrigger = true
+        }
         runtime?.stopLoading()
     }
 
@@ -528,6 +651,52 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
             webPanelFindTarget?.endFindSession()
         }
         updateMediaPlaybackSuppression()
+        if isVisible {
+            startPendingReloadIfPossible(isExplicitRetry: true)
+        }
+    }
+
+    @discardableResult
+    func applyPendingContentModeReload() -> Bool {
+        guard pendingReloadReasons.contains(.contentMode) else {
+            return false
+        }
+        return startPendingReloadIfPossible(isExplicitRetry: true)
+    }
+
+    @discardableResult
+    private func startPendingReloadIfPossible(
+        isExplicitRetry: Bool = false
+    ) -> Bool {
+        guard !isInvalidated,
+              isVisible,
+              !pendingReloadReasons.isEmpty,
+              reloadState == .idle,
+              isExplicitRetry || !reloadRetryRequiresExplicitTrigger,
+              let runtime,
+              runtime.currentURL != nil else {
+            return false
+        }
+        reloadRetryRequiresExplicitTrigger = false
+        let reasons = pendingReloadReasons
+        webPanelFindTarget?.endFindSession()
+        reloadState = .starting(reasons)
+        let navigationID = reasons.contains(.contentMode)
+            ? runtime.reloadFromOrigin()
+            : runtime.reload()
+        guard reloadState == .starting(reasons) else {
+            // A synchronous explicit navigation adopted these reasons while
+            // the reload API was returning its navigation identity.
+            return reloadState != .idle
+        }
+        guard let navigationID else {
+            reloadState = .idle
+            reloadRetryRequiresExplicitTrigger = true
+            return false
+        }
+        pendingReloadReasons.subtract(reasons)
+        reloadState = .navigating(navigationID, reasons)
+        return true
     }
 
     func restorationURLForUnload() -> URL? {
@@ -547,11 +716,20 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         guard !isInvalidated else { return }
         isInvalidated = true
         installationGeneration = UUID()
+        imageBlockingRefreshGeneration = UUID()
         mediaPlaybackTransitionGeneration = UUID()
         pendingInitialLoadURL = nil
         pendingRestorationCandidateURL = nil
+        pendingReloadReasons = []
+        reloadState = .idle
+        reloadRetryRequiresExplicitTrigger = false
         isMediaPlaybackTransitionInFlight = false
+        isImageBlockingRefreshInFlight = false
         observers.removeAll()
+        imageBlockingPreferenceObserver?.invalidate()
+        imageBlockingPreferenceObserver = nil
+        noImageModeScriptController?.invalidate()
+        noImageModeScriptController = nil
         contentRuleInstaller?.invalidate()
         contentRuleInstaller = nil
         blockerTab?.detach()
@@ -586,13 +764,115 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private func finishContentRuleInstallation() {
         guard !isInvalidated, !areContentRulesReady else { return }
         areContentRulesReady = true
+        guard lastObservedImageContentBlockingEnabled
+                == lastAppliedImageContentBlockingEnabled else {
+            startImageBlockingRefreshIfNeeded()
+            return
+        }
+        performPendingInitialLoad()
+    }
+
+    private func performPendingInitialLoad() {
+        guard !isInvalidated, !hasStartedInitialLoad else { return }
+        hasStartedInitialLoad = true
         guard let initialLoadURL = pendingInitialLoadURL else { return }
         pendingInitialLoadURL = nil
         performLoad(initialLoadURL)
     }
 
+    private func observeImageBlockingPreferenceChanges() {
+        let observer = notificationCenter.addObserver(
+            forName: .FloorpWebPanelImageBlockingPreferenceDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.imageBlockingPreferenceDidChange()
+            }
+        }
+        imageBlockingPreferenceObserver = FloorpWebPanelNotificationObservation(
+            observer: observer,
+            notificationCenter: notificationCenter
+        )
+    }
+
+    private func imageBlockingPreferenceDidChange() {
+        guard !isInvalidated else { return }
+        let isEnabled = imageContentBlockingEnabled()
+        guard isEnabled != lastObservedImageContentBlockingEnabled else { return }
+        lastObservedImageContentBlockingEnabled = isEnabled
+        reloadRetryRequiresExplicitTrigger = false
+        noImageModeScriptController?.setEnabled(isEnabled)
+        guard areContentRulesReady else { return }
+        startImageBlockingRefreshIfNeeded()
+    }
+
+    private func startImageBlockingRefreshIfNeeded() {
+        guard !isInvalidated,
+              areContentRulesReady,
+              !isImageBlockingRefreshInFlight,
+              lastObservedImageContentBlockingEnabled
+                != lastAppliedImageContentBlockingEnabled,
+              let contentRuleInstaller else {
+            return
+        }
+        let target = lastObservedImageContentBlockingEnabled
+        let generation = imageBlockingRefreshGeneration
+        isImageBlockingRefreshInFlight = true
+        contentRuleInstaller.refresh { [weak self] in
+            guard let self,
+                  !self.isInvalidated,
+                  self.imageBlockingRefreshGeneration == generation else {
+                return
+            }
+            self.isImageBlockingRefreshInFlight = false
+            self.lastAppliedImageContentBlockingEnabled = target
+            if self.lastObservedImageContentBlockingEnabled
+                != self.lastAppliedImageContentBlockingEnabled {
+                self.startImageBlockingRefreshIfNeeded()
+            } else if !self.hasStartedInitialLoad {
+                self.performPendingInitialLoad()
+            } else {
+                self.pendingReloadReasons.insert(.imageRules)
+                self.startPendingReloadIfPossible(isExplicitRetry: true)
+            }
+        }
+    }
+
     private func performLoad(_ url: URL) {
-        runtime?.load(URLRequest(url: url))
+        hasIssuedNavigation = true
+        performNavigation { runtime?.load(URLRequest(url: url)) }
+    }
+
+    private func performNavigation(
+        _ startNavigation: () -> FloorpWebPanelNavigationIdentity?
+    ) {
+        let previousReloadState = reloadState
+        var reasons = pendingReloadReasons
+        switch previousReloadState {
+        case .idle:
+            break
+        case .starting(let activeReasons), .navigating(_, let activeReasons):
+            reasons.formUnion(activeReasons)
+        }
+        guard !reasons.isEmpty else {
+            _ = startNavigation()
+            return
+        }
+        reloadRetryRequiresExplicitTrigger = false
+        if previousReloadState == .idle {
+            reloadState = .starting(reasons)
+        }
+        guard let navigationID = startNavigation() else {
+            if previousReloadState == .idle,
+               reloadState == .starting(reasons) {
+                reloadState = .idle
+            }
+            reloadRetryRequiresExplicitTrigger = true
+            return
+        }
+        pendingReloadReasons.subtract(reasons)
+        reloadState = .navigating(navigationID, reasons)
     }
 
     private func applyPageZoom(_ zoomLevel: FloorpWebPanelZoomLevel) {
@@ -644,6 +924,52 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         state.isLoading = runtime.isLoading
         state.estimatedProgress = min(max(runtime.estimatedProgress, 0), 1)
         notifyObservers()
+        startPendingReloadIfPossible()
+    }
+
+    private func contentModeDidCommit(
+        _ contentMode: FloorpWebPanelContentMode,
+        navigationID: FloorpWebPanelNavigationIdentity
+    ) {
+        guard !isInvalidated else { return }
+        switch reloadState {
+        case .idle:
+            break
+        case .starting:
+            return
+        case .navigating(let activeNavigationID, _):
+            guard activeNavigationID == navigationID else { return }
+            reloadState = .idle
+        }
+        hasIssuedNavigation = true
+        reloadRetryRequiresExplicitTrigger = false
+        loadedContentMode = contentMode
+        if contentMode != state.configuration.contentMode {
+            pendingReloadReasons.insert(.contentMode)
+        } else {
+            pendingReloadReasons.remove(.contentMode)
+        }
+        if isVisible, !pendingReloadReasons.isEmpty {
+            startPendingReloadIfPossible()
+        }
+    }
+
+    private func contentModeNavigationDidFail(
+        navigationID: FloorpWebPanelNavigationIdentity
+    ) {
+        guard !isInvalidated,
+              case .navigating(let activeNavigationID, let reasons) = reloadState,
+              activeNavigationID == navigationID else {
+            return
+        }
+        reloadState = .idle
+        pendingReloadReasons.formUnion(reasons)
+        reloadRetryRequiresExplicitTrigger = true
+        if loadedContentMode != state.configuration.contentMode {
+            pendingReloadReasons.insert(.contentMode)
+        } else {
+            pendingReloadReasons.remove(.contentMode)
+        }
     }
 
     private func notifyObservers() {
@@ -658,6 +984,10 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
     private let configurationProvider: any FloorpWebPanelWebViewConfigurationProviding
     private let runtimeFactory: any FloorpWebPanelWebViewRuntimeFactory
     private let contentRuleInstallerFactory: any FloorpWebPanelContentRuleInstallerFactory
+    private let noImageModeScriptControllerFactory:
+        any FloorpWebPanelNoImageModeScriptControllerFactory
+    private let imageContentBlockingEnabled: @MainActor () -> Bool
+    private let notificationCenter: NotificationCenter
     private let openInMainBrowser: FloorpWebPanelNavigationExecutor.OpenInMainBrowser
     private let privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator
 
@@ -666,6 +996,11 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
         configurationProvider: (any FloorpWebPanelWebViewConfigurationProviding)? = nil,
         runtimeFactory: any FloorpWebPanelWebViewRuntimeFactory = DefaultFloorpWebPanelWebViewRuntimeFactory(),
         contentRuleInstallerFactory: (any FloorpWebPanelContentRuleInstallerFactory)? = nil,
+        noImageModeScriptControllerFactory:
+            any FloorpWebPanelNoImageModeScriptControllerFactory =
+                DefaultFloorpWebPanelNoImageModeScriptControllerFactory(),
+        imageContentBlockingEnabled: (@MainActor () -> Bool)? = nil,
+        notificationCenter: NotificationCenter = .default,
         privateBrowsingSessionCoordinator: WKPrivateBrowsingSessionCoordinator = .shared,
         openInMainBrowser: @escaping FloorpWebPanelNavigationExecutor.OpenInMainBrowser
     ) {
@@ -678,6 +1013,10 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
         self.runtimeFactory = runtimeFactory
         self.contentRuleInstallerFactory = contentRuleInstallerFactory
             ?? DefaultFloorpWebPanelContentRuleInstallerFactory(prefs: profile.prefs)
+        self.noImageModeScriptControllerFactory = noImageModeScriptControllerFactory
+        self.imageContentBlockingEnabled = imageContentBlockingEnabled
+            ?? { [prefs = profile.prefs] in NoImageModeHelper.isActivated(prefs) }
+        self.notificationCenter = notificationCenter
         self.openInMainBrowser = openInMainBrowser
         self.privateBrowsingSessionCoordinator = privateBrowsingSessionCoordinator
     }
@@ -691,6 +1030,11 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
             ? privateBrowsingSessionCoordinator.acquireLease()
             : nil
         let webViewConfiguration = configurationProvider.configuration(isPrivate: key.isPrivate)
+        let webpagePreferences = webViewConfiguration.defaultWebpagePreferences
+            ?? WKWebpagePreferences()
+        webpagePreferences.preferredContentMode = configuration.contentMode
+            .webKitPreferredContentMode
+        webViewConfiguration.defaultWebpagePreferences = webpagePreferences
         let runtime = runtimeFactory.makeRuntime(
             configuration: webViewConfiguration,
             windowUUID: key.windowUUID,
@@ -701,11 +1045,15 @@ final class DefaultFloorpWebPanelSessionFactory: FloorpWebPanelSessionFactory {
             configuration: configuration,
             runtime: runtime,
             contentRuleInstallerFactory: contentRuleInstallerFactory,
+            noImageModeScriptControllerFactory: noImageModeScriptControllerFactory,
             navigationExecutor: FloorpWebPanelNavigationExecutor(
                 windowUUID: key.windowUUID,
                 isPrivate: key.isPrivate,
+                contentMode: configuration.contentMode,
                 openInMainBrowser: openInMainBrowser
             ),
+            imageContentBlockingEnabled: imageContentBlockingEnabled,
+            notificationCenter: notificationCenter,
             restorationURL: restorationURL,
             privateBrowsingSessionLease: privateBrowsingSessionLease
         )

@@ -548,7 +548,11 @@ final class FloorpPanelManager {
         for id: String,
         expectedRevision: FloorpWebPanelPreferencesRevision
     ) throws -> FloorpWebPanelPreferences {
-        try mutateWebPanelPreferences(id: id, expectedRevision: expectedRevision) { current in
+        try mutateWebPanelPreferences(
+            id: id,
+            expectedRevision: expectedRevision,
+            registryChange: .webPanelContentMode(panelID: id)
+        ) { current in
             FloorpWebPanelPreferences(
                 revision: current.revision,
                 contentWidth: current.contentWidth,

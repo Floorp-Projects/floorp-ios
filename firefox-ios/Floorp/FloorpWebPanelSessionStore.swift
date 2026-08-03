@@ -90,8 +90,19 @@ final class FloorpWebPanelSessionStore {
         session.setVisible(false)
         if autoUnload {
             removeSession(for: key, preservingRestoration: true)
+        } else {
+            trimRegularSessionsIfNeeded()
         }
         return true
+    }
+
+    @discardableResult
+    func evictInactiveSessionsForMemoryPressure() -> Set<FloorpWebPanelSessionKey> {
+        let keys = Set(entries.compactMap { key, entry in
+            entry.session.isVisible ? nil : key
+        })
+        keys.forEach { removeSession(for: $0, preservingRestoration: true) }
+        return keys
     }
 
     @discardableResult
@@ -155,7 +166,31 @@ final class FloorpWebPanelSessionStore {
                 panelTitle: entry.configuration.panelTitle,
                 homeURL: entry.configuration.homeURL,
                 iconName: entry.configuration.iconName,
-                zoomLevel: zoomLevel
+                zoomLevel: zoomLevel,
+                contentMode: entry.configuration.contentMode
+            )
+            entry.session.updateConfiguration(configuration)
+            entry.configuration = configuration
+            entries[key] = entry
+        }
+    }
+
+    /// Applies a preference-only content mode update to every cached privacy-mode
+    /// session for this panel without recreating or reattaching its WebView.
+    func updateContentMode(
+        _ contentMode: FloorpWebPanelContentMode,
+        for panelID: String
+    ) {
+        for key in Array(entries.keys) where key.panelID == panelID {
+            guard var entry = entries[key], entry.configuration.contentMode != contentMode else {
+                continue
+            }
+            let configuration = FloorpWebPanelSessionConfiguration(
+                panelTitle: entry.configuration.panelTitle,
+                homeURL: entry.configuration.homeURL,
+                iconName: entry.configuration.iconName,
+                zoomLevel: entry.configuration.zoomLevel,
+                contentMode: contentMode
             )
             entry.session.updateConfiguration(configuration)
             entry.configuration = configuration
@@ -208,7 +243,11 @@ final class FloorpWebPanelSessionStore {
 
     private func trimRegularSessionsIfNeeded() {
         while regularSessionLRU.count > regularSessionLimit {
-            let key = regularSessionLRU.removeFirst()
+            guard let key = regularSessionLRU.first(where: {
+                entries[$0]?.session.isVisible == false
+            }) else {
+                return
+            }
             removeSession(for: key, preservingRestoration: true)
         }
     }
@@ -249,7 +288,8 @@ final class FloorpWebPanelSessionStore {
             panelTitle: validated.title,
             homeURL: validated.url,
             iconName: validated.iconName,
-            zoomLevel: panel.effectiveWebPreferences?.zoomLevel ?? .defaultLevel
+            zoomLevel: panel.effectiveWebPreferences?.zoomLevel ?? .defaultLevel,
+            contentMode: panel.effectiveWebPreferences?.contentMode ?? .mobile
         )
     }
 
