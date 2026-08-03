@@ -17,6 +17,7 @@ class SceneDelegate: UIResponder,
     lazy var introScreenManager = IntroScreenManager(prefs: profile.prefs)
     var sessionManager: AppSessionProvider = AppContainer.shared.resolve()
     var downloadQueue: DownloadQueue = AppContainer.shared.resolve()
+    var windowManager: WindowManager = AppContainer.shared.resolve()
 
     var sceneCoordinator: SceneCoordinator?
     var routeBuilder = RouteBuilder()
@@ -77,7 +78,7 @@ class SceneDelegate: UIResponder,
         downloadQueue.cancelAll(for: sceneCoordinator.windowUUID)
 
         // Notify WindowManager that window is closing
-        (AppContainer.shared.resolve() as WindowManager).windowWillClose(uuid: sceneCoordinator.windowUUID)
+        windowManager.windowWillClose(uuid: sceneCoordinator.windowUUID)
         self.sceneCoordinator?.removeAllChildren()
         self.sceneCoordinator = nil
     }
@@ -176,7 +177,7 @@ class SceneDelegate: UIResponder,
         // If so, we want to be sure that we select the tab in the correct iPad window.
         if shouldRerouteIncomingURLToSpecificWindow(url),
            let tabUUID = URLScanner(url: url)?.value(query: "uuid"),
-           let targetWindow = (AppContainer.shared.resolve() as WindowManager).windowUUID(forTab: tabUUID),
+           let targetWindow = windowManager.windowUUID(forTab: tabUUID),
            targetWindow != sceneCoordinator?.windowUUID {
             DefaultApplicationHelper().open(url, inWindow: targetWindow)
         } else {
