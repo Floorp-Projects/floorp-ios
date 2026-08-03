@@ -556,7 +556,6 @@
         "MicrosurveyCoordinatorTests\/testMicrosurveyDelegate_showPrivacy_callsRouterDismiss_andCreatesNewTab()",
         "MicrosurveyCoordinatorTests\/testMicrosurveyDelegate_showPrivacyWithContentParams_callsRouterDismiss_andCreatesNewTab()",
         "NavigationBarStateTests\/test_didLoadToolbarsAction_returnsExpectedState()",
-        "NimbusOnboardingFeatureLayerTests\/testLayer_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
         "NimbusOnboardingKitFeatureLayerTests\/testGetOnboardingModel_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
         "NotificationSurfaceManagerTests\/testDidDismissNotification()",
         "NotificationSurfaceManagerTests\/testLegacyNotificationCategoryHandlesTapAndDismissResponses()",
