@@ -189,7 +189,14 @@ jobs:
             CODE_SIGN_IDENTITY= \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            | tee "$RUNNER_TEMP/test.log"
+            2>&1 | tee "$RUNNER_TEMP/test.log"
+
+          if grep -Fq \
+            "Fatal error: No definition registered for type:" \
+            "$RUNNER_TEMP/test.log"; then
+            echo "::error::Unit-test host resolved an AppContainer dependency after teardown"
+            exit 1
+          fi
 
       - name: Upload diagnostics
         if: failure()
