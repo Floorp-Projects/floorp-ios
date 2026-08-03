@@ -926,6 +926,7 @@ struct AddressBarState: StateType, Sendable, Equatable {
         case .version1, .none:
             actions.append(
                 contentsOf: [
+                    floorpDrawerAction(), // Floorp: keep the drawer reachable when the navigation toolbar is hidden
                     menuAction(iconName: menuIcon, showWarningBadge: showWarningBadge),
                     tabsAction(
                         iconName: iconName,
@@ -946,6 +947,7 @@ struct AddressBarState: StateType, Sendable, Equatable {
                         previousTabScreenshot: previousTabScreenshot,
                         nextTabScreenshot: nextTabScreenshot
                     ),
+                    floorpDrawerAction(), // Floorp: keep the drawer reachable when the navigation toolbar is hidden
                     menuAction(iconName: menuIcon, showWarningBadge: showWarningBadge)
                 ]
             )
@@ -1033,6 +1035,17 @@ struct AddressBarState: StateType, Sendable, Equatable {
             isEnabled: true,
             a11yLabel: .LegacyAppMenu.Toolbar.MenuButtonAccessibilityLabel,
             a11yId: AccessibilityIdentifiers.Toolbar.settingsMenuButton)
+    }
+
+    // Floorp: iPad and compact landscape layouts render browser actions in the address toolbar.
+    private static func floorpDrawerAction() -> ToolbarActionConfiguration {
+        return ToolbarActionConfiguration(
+            actionType: .floorpDrawer,
+            iconName: ImageIdentifiers.floorpDrawer,
+            isEnabled: true,
+            a11yLabel: "Floorp Drawer",
+            a11yId: "floorpDrawerToolbarButton"
+        )
     }
 
     private static func backAction(enabled: Bool) -> ToolbarActionConfiguration {

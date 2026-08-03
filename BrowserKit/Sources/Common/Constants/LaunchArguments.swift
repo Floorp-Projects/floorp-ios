@@ -28,6 +28,8 @@ public struct LaunchArguments {
     public static let DisableAnimations = "DISABLE_ANIMATIONS"
     public static let ResetMicrosurveyExpirationCount = "RESET_MICROSURVEY_EXPIRATION_COUNT"
     public static let SkipAppleIntelligence = "SKIP_APPLE_INTELLIGENCE"
+    public static let SearchBarTop = "FIREFOX_SEARCH_BAR_TOP"
+    public static let SearchBarBottom = "FIREFOX_SEARCH_BAR_BOTTOM"
 
     // After the colon, put the name of the file to load from test bundle
     public static let LoadDatabasePrefix = "FIREFOX_LOAD_DB_NAMED:"

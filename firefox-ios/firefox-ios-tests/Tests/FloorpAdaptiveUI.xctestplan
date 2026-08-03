@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "8D10A4A6-5310-4D3E-BAB6-16F0FB4F534A",
+      "name" : "Floorp Adaptive UI",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "language" : "en-US",
+    "region" : "US"
+  },
+  "testTargets" : [
+    {
+      "selectedTests" : [
+        "FloorpAdaptiveSidebarIPadUITests\/testPortraitOverlayMigratesToLandscapePinnedAndPreservesNotesState()",
+        "FloorpAdaptiveSidebarIPadUITests\/testRTLPinnedResizeKeepsBrowserChromeSeparate()",
+        "FloorpAdaptiveSidebarIPhoneUITests\/testOverlayStaysAboveBottomAddressBar()",
+        "FloorpAdaptiveSidebarIPhoneUITests\/testOverlayStaysAboveTopAddressBar()"
+      ],
+      "target" : {
+        "containerPath" : "container:Client.xcodeproj",
+        "identifier" : "3BFE4B061D342FB800DDF53F",
+        "name" : "XCUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

@@ -1,0 +1,169 @@
+name: Floorp adaptive sidebar UI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/adaptive-sidebar-ui.yml
+      - .xcode-version
+      - BrowserKit/Sources/Common/Constants/LaunchArguments.swift
+      - firefox-ios/Client/Application/AccessibilityIdentifiers.swift
+      - firefox-ios/Client/Application/UITestAppDelegate.swift
+      - firefox-ios/Floorp/**
+      - firefox-ios/Client/Frontend/Browser/BrowserViewController/**
+      - firefox-ios/Client/Frontend/Browser/Toolbars/**
+      - firefox-ios/Client.xcodeproj/project.pbxproj
+      - firefox-ios/Client.xcodeproj/xcshareddata/xcschemes/Fennec.xcscheme
+      - firefox-ios/firefox-ios-tests/Tests/FloorpAdaptiveUI.xctestplan
+      - firefox-ios/firefox-ios-tests/Tests/XCUITests/BaseTestCase.swift
+      - firefox-ios/firefox-ios-tests/Tests/XCUITests/FloorpAdaptiveSidebarUITests.swift
+      - firefox-ios/firefox-ios-tests/Tests/XCUITests/XCUIElementHelpers.swift
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: floorp-adaptive-sidebar-ui-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_PATH: firefox-ios/Client.xcodeproj
+  SCHEME: Fennec
+  CONFIGURATION: Fennec_Testing
+  SIMULATOR_OS: "26.2"
+
+jobs:
+  adaptive-sidebar-ui:
+    name: Adaptive sidebar UI (${{ matrix.simulator_name }})
+    runs-on: macos-26
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - simulator_name: iPhone 17
+            test_identifier: XCUITests/FloorpAdaptiveSidebarIPhoneUITests
+            artifact_suffix: iphone-17
+          - simulator_name: iPad (A16)
+            test_identifier: XCUITests/FloorpAdaptiveSidebarIPadUITests
+            artifact_suffix: ipad-a16
+    env:
+      SIMULATOR_NAME: ${{ matrix.simulator_name }}
+      ONLY_TESTING: ${{ matrix.test_identifier }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Select Xcode
+        run: |
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Prepare iOS Simulator
+        timeout-minutes: 10
+        run: |
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIMULATOR_OS//./-}"
+          simulator_id="$(
+            xcrun simctl list devices available --json \
+              | jq -er --arg runtime "$runtime" --arg name "$SIMULATOR_NAME" \
+                '.devices[$runtime] | map(select(.name == $name)) | first | .udid'
+          )"
+          simulator_arch="$(uname -m)"
+
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf 'DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+            "$simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
+          printf 'Using %s (%s, %s)\n' "$SIMULATOR_NAME" "$simulator_id" "$simulator_arch"
+
+      - name: Build adaptive sidebar UI tests
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -quiet \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "$DESTINATION" \
+            -testPlan FloorpAdaptiveUI \
+            -only-testing:"$ONLY_TESTING" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -parallel-testing-enabled NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/adaptive-ui-build.log"
+
+      - name: Run adaptive sidebar UI tests
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "$DESTINATION" \
+            -testPlan FloorpAdaptiveUI \
+            -only-testing:"$ONLY_TESTING" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 180 \
+            -maximum-test-execution-time-allowance 300 \
+            -retry-tests-on-failure \
+            -test-iterations 2 \
+            -test-repetition-relaunch-enabled YES \
+            -resultBundlePath "$RUNNER_TEMP/FloorpAdaptiveUI.xcresult" \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/adaptive-ui-test.log"
+
+      - name: Upload adaptive sidebar evidence and diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-adaptive-ui-${{ matrix.artifact_suffix }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/adaptive-ui-build.log
+            ${{ runner.temp }}/adaptive-ui-test.log
+            ${{ runner.temp }}/FloorpAdaptiveUI.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

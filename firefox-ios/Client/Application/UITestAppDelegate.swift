@@ -84,8 +84,16 @@ class UITestAppDelegate: AppDelegate {
             profile.prefs.setBool(true, forKey: PrefsKeys.KeyDidShowDefaultBrowserOnboarding)
         }
 
-        if launchArguments.contains(LaunchArguments.SkipTermsOfUse) {
-            profile.prefs.setBool(true, forKey: PrefsKeys.TermsOfUseAccepted)
+        if launchArguments.contains(LaunchArguments.SearchBarTop) {
+            profile.prefs.setString(
+                SearchBarPosition.top.rawValue,
+                forKey: PrefsKeys.FeatureFlags.SearchBarPosition
+            )
+        } else if launchArguments.contains(LaunchArguments.SearchBarBottom) {
+            profile.prefs.setString(
+                SearchBarPosition.bottom.rawValue,
+                forKey: PrefsKeys.FeatureFlags.SearchBarPosition
+            )
         }
 
         // Skip the intro when requested by for example tests or automation
@@ -246,7 +254,18 @@ class UITestAppDelegate: AppDelegate {
 
         Tab.ChangeUserAgent.clear()
 
-        return super.application(application, willFinishLaunchingWithOptions: launchOptions)
+        let didFinishLaunching = super.application(
+            application,
+            willFinishLaunchingWithOptions: launchOptions
+        )
+
+        // Floorp's pre-launch migration intentionally invalidates inherited
+        // Mozilla acceptance. Apply the UI-test override after that migration.
+        if ProcessInfo.processInfo.arguments.contains(LaunchArguments.SkipTermsOfUse) {
+            profile.prefs.setBool(true, forKey: PrefsKeys.TermsOfUseAccepted)
+        }
+
+        return didFinishLaunching
     }
 
     /// Use this to reset the application between tests.

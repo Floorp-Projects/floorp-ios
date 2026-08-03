@@ -2948,7 +2948,7 @@ final class FloorpOverlayDrawerViewController:
         if let presentationHost {
             switch presentationMode {
             case .overlay:
-                isAttachedToPresentationHost = presentingViewController === presentationHost
+                isAttachedToPresentationHost = presentingViewController != nil
             case .pinned:
                 isAttachedToPresentationHost = parent === presentationHost
                     && view.superview === presentationHost.view
@@ -3229,7 +3229,9 @@ final class FloorpOverlayDrawerViewController:
                 self.completePresentation(onPresented: onPresented)
             }
         }
-        return presentingViewController === parentVC
+        // UIKit may promote the effective presenter to an ancestor navigation
+        // controller. A non-nil presenter proves that this drawer was attached.
+        return presentingViewController != nil
     }
 
     private func embedPinned(
@@ -3464,7 +3466,7 @@ final class FloorpOverlayDrawerViewController:
             self.presentationMigrationRetainer = nil
             self.completePresentation(onPresented: nil)
         }
-        guard presentingViewController === presentationHost else {
+        guard presentingViewController != nil else {
             restorePinnedAfterFailedOverlayMigration(in: presentationHost)
             return
         }
