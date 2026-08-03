@@ -2482,6 +2482,8 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         )
         XCTAssertFalse(firstFindToolbar.isHidden)
         XCTAssertFalse(secondFindToolbar.isHidden)
+        XCTAssertTrue(firstState.attach(firstDrawer))
+        XCTAssertTrue(secondState.attach(secondDrawer))
         let action = try XCTUnwrap(
             firstDrawer.currentContentModeMenuElements(for: panel.id).first as? UIAction
         )
