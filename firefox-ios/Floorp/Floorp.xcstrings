@@ -13,6 +13,114 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーの幅を変更" } }
       }
     },
+    "Floorp.Drawer.Title.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Floorp" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Floorp" } }
+      }
+    },
+    "Floorp.Drawer.CloseAccessibility.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close drawer" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ドロワーを閉じる" } }
+      }
+    },
+    "Floorp.Drawer.BookmarksTab.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bookmarks" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ブックマーク" } }
+      }
+    },
+    "Floorp.Drawer.HistoryTab.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "History" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "履歴" } }
+      }
+    },
+    "Floorp.Drawer.DownloadsTab.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Downloads" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダウンロード" } }
+      }
+    },
+    "Floorp.Drawer.NoItemsFound.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No items found" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "項目が見つかりません" } }
+      }
+    },
+    "Floorp.Drawer.NoDownloads.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No downloads yet" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダウンロードはまだありません" } }
+      }
+    },
+    "Floorp.Drawer.RetryButton.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再試行" } }
+      }
+    },
+    "Floorp.Drawer.BookmarksLoadError.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to load bookmarks" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ブックマークを読み込めませんでした" } }
+      }
+    },
+    "Floorp.Drawer.HistoryLoadError.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to load history" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "履歴を読み込めませんでした" } }
+      }
+    },
+    "Floorp.Drawer.DownloadsLoadError.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to load downloads" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダウンロードを読み込めませんでした" } }
+      }
+    },
+    "Floorp.Drawer.SearchPlaceholder.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索…" } }
+      }
+    },
+    "Floorp.Drawer.SearchFieldAccessibility.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search items" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "項目を検索" } }
+      }
+    },
+    "Floorp.Drawer.ClearSearchAccessibility.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Clear search" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索をクリア" } }
+      }
+    },
+    "Floorp.Drawer.PanelSidebarAccessibility.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Panel sidebar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルサイドバー" } }
+      }
+    },
+    "Floorp.Drawer.OpenInNewTab.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open in New Tab" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいタブで開く" } }
+      }
+    },
+    "Floorp.Drawer.OpenInPrivateTab.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open in Private Tab" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいプライベートタブで開く" } }
+      }
+    },
+    "Floorp.Drawer.DeleteItem.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } }
+      }
+    },
     "Floorp.PanelRegistry.RegistryReadOnlyMessage.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "These panel settings were created by a newer Floorp version and were left unchanged." } },
@@ -581,6 +689,48 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Mobile site requested" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "モバイルサイトに切り替えました" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelPauseMedia.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pause Panel Media" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルのメディアを一時停止" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelMediaPausedAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web panel media paused" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルのメディアを一時停止しました" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelMediaPausedState.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Media paused" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メディア一時停止中" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelMediaPlaybackErrorMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The panel’s media playback state was not changed. Try again." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルのメディア再生状態は変更されませんでした。もう一度お試しください。" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelMediaPlaybackErrorTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t Change Panel Media Playback" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルのメディア再生を変更できませんでした" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelResumeMedia.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Resume Panel Media" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネルのメディアを再開" } }
+      }
+    },
+    "Floorp.Drawer.WebPanelMediaResumedAnnouncement.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web panel media resumed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルのメディアを再開しました" } }
       }
     },
     "Floorp.Drawer.WebPanelZoomAnnouncement.v1" : {

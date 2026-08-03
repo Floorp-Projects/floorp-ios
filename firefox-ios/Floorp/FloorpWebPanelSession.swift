@@ -42,6 +42,11 @@ struct FloorpWebPanelSessionState: Equatable {
     var canGoForward: Bool
     var isLoading: Bool
     var estimatedProgress: Double
+    var isUserMediaPaused: Bool
+    /// Session-local revision for the user-controlled media pause state.
+    /// Every optimistic change and rollback advances it so stale UI actions
+    /// cannot become valid again after an A-B-A state sequence.
+    var userMediaStateRevision: UInt64
 
     init(
         configuration: FloorpWebPanelSessionConfiguration,
@@ -50,7 +55,9 @@ struct FloorpWebPanelSessionState: Equatable {
         canGoBack: Bool = false,
         canGoForward: Bool = false,
         isLoading: Bool = false,
-        estimatedProgress: Double = 0
+        estimatedProgress: Double = 0,
+        isUserMediaPaused: Bool = false,
+        userMediaStateRevision: UInt64 = 0
     ) {
         self.configuration = configuration
         self.currentURL = currentURL
@@ -59,8 +66,12 @@ struct FloorpWebPanelSessionState: Equatable {
         self.canGoForward = canGoForward
         self.isLoading = isLoading
         self.estimatedProgress = estimatedProgress
+        self.isUserMediaPaused = isUserMediaPaused
+        self.userMediaStateRevision = userMediaStateRevision
     }
 }
+
+typealias FloorpWebPanelMediaPauseCompletion = @MainActor (Result<Void, Error>) -> Void
 
 enum FloorpWebPanelRestorationPolicy {
     static func safeWebURL(_ url: URL?) -> URL? {
@@ -79,6 +90,9 @@ enum FloorpWebPanelRestorationPolicy {
 @MainActor
 protocol FloorpWebPanelSessionProtocol: AnyObject {
     var key: FloorpWebPanelSessionKey { get }
+    /// Stable identity for the lifetime of this session. Unlike an object
+    /// address, this token cannot become valid again after deallocation.
+    var sessionIdentifier: UUID { get }
     var state: FloorpWebPanelSessionState { get }
     var isVisible: Bool { get }
     var contentView: UIView? { get }
@@ -100,6 +114,14 @@ protocol FloorpWebPanelSessionProtocol: AnyObject {
     var isContentModeReloadPending: Bool { get }
     @discardableResult
     func applyPendingContentModeReload() -> Bool
+    /// iOS intentionally exposes pause/resume instead of desktop-style audio
+    /// mute. Public WebKit API suspends all audio and video playback together;
+    /// this session-scoped state is therefore labeled as media playback pause.
+    @discardableResult
+    func setUserMediaPaused(
+        _ isUserMediaPaused: Bool,
+        completion: @escaping FloorpWebPanelMediaPauseCompletion
+    ) -> Bool
     /// Returns a synchronous, safe URL candidate immediately before unload.
     /// Implementations backed by an asynchronous runtime should prefer its
     /// latest value over observer-derived state.
@@ -130,6 +152,11 @@ extension FloorpWebPanelSessionProtocol {
     var isContentModeReloadPending: Bool { false }
     @discardableResult
     func applyPendingContentModeReload() -> Bool { false }
+    @discardableResult
+    func setUserMediaPaused(
+        _ isUserMediaPaused: Bool,
+        completion: @escaping FloorpWebPanelMediaPauseCompletion
+    ) -> Bool { false }
     func restorationURLForUnload() -> URL? {
         FloorpWebPanelRestorationPolicy.safeWebURL(state.currentURL)
     }
