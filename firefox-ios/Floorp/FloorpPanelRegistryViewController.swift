@@ -8,7 +8,23 @@ import Shared
 
 enum FloorpPanelRegistryItem: Hashable {
     case panel(String)
+    case autoUnload
     case restoreBuiltIns
+}
+
+@MainActor
+final class FloorpPanelRegistryAutoUnloadSwitch: UISwitch {
+    var expectedRevision: FloorpOverlayDrawerConfigRevision
+
+    init(config: FloorpOverlayDrawerConfig) {
+        expectedRevision = FloorpOverlayDrawerConfigRevision(config: config)
+        super.init(frame: .zero)
+        isOn = config.autoUnload
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 }
 
 struct FloorpPanelRegistryMove: Equatable {
@@ -139,10 +155,15 @@ final class FloorpPanelRegistryViewController: UIViewController,
                                                UICollectionViewDelegate {
     private enum Section: Int, CaseIterable {
         case panels
+        case settings
         case recovery
     }
 
     private typealias Item = FloorpPanelRegistryItem
+    typealias AutoUnloadMutation = @MainActor (
+        Bool,
+        FloorpOverlayDrawerConfigRevision
+    ) throws -> FloorpOverlayDrawerConfig
 
     private enum EditorRequest {
         case add(FloorpWebPanelDraft?)
@@ -163,6 +184,7 @@ final class FloorpPanelRegistryViewController: UIViewController,
     var onDone: (() -> Void)?
 
     private let panelManager: FloorpPanelManager
+    private let autoUnloadMutation: AutoUnloadMutation
     private var webPanelSuggestion: FloorpWebPanelDraft?
     private var pendingEditorRequest: EditorRequest?
     private var isViewVisible = false
@@ -201,9 +223,13 @@ final class FloorpPanelRegistryViewController: UIViewController,
         windowUUID: WindowUUID,
         webPanelSuggestion: FloorpWebPanelDraft? = nil,
         themeManager: ThemeManager = AppContainer.shared.resolve(),
-        notificationCenter: NotificationProtocol = NotificationCenter.default
+        notificationCenter: NotificationProtocol = NotificationCenter.default,
+        autoUnloadMutation: AutoUnloadMutation? = nil
     ) {
         self.panelManager = panelManager
+        self.autoUnloadMutation = autoUnloadMutation ?? { value, expectedRevision in
+            try panelManager.setAutoUnload(value, expectedRevision: expectedRevision)
+        }
         self.windowUUID = windowUUID
         self.webPanelSuggestion = webPanelSuggestion
         self.themeManager = themeManager
@@ -361,7 +387,7 @@ final class FloorpPanelRegistryViewController: UIViewController,
         }
     }
 
-    private func configure(cell: UICollectionViewListCell, for item: Item) {
+    func configure(cell: UICollectionViewListCell, for item: FloorpPanelRegistryItem) {
         let theme = themeManager.getCurrentTheme(for: windowUUID)
         var background = UIBackgroundConfiguration.listGroupedCell()
         background.backgroundColor = theme.colors.layer2
@@ -369,6 +395,8 @@ final class FloorpPanelRegistryViewController: UIViewController,
         cell.accessories = []
         cell.accessibilityCustomActions = nil
         cell.accessibilityValue = nil
+        cell.accessibilityElements = nil
+        cell.isAccessibilityElement = true
         cell.isUserInteractionEnabled = true
         cell.accessibilityTraits = []
 
@@ -376,6 +404,8 @@ final class FloorpPanelRegistryViewController: UIViewController,
         case .panel(let id):
             guard let panel = panelManager.panel(for: id) else { return }
             configurePanelCell(cell, panel: panel)
+        case .autoUnload:
+            configureAutoUnloadCell(cell)
         case .restoreBuiltIns:
             configureRestoreCell(cell)
         }
@@ -434,6 +464,43 @@ final class FloorpPanelRegistryViewController: UIViewController,
             cell.accessibilityTraits.insert(.button)
         }
         cell.accessibilityCustomActions = accessibilityActions(for: panel)
+    }
+
+    private func configureAutoUnloadCell(_ cell: UICollectionViewListCell) {
+        let theme = themeManager.getCurrentTheme(for: windowUUID)
+        let config = panelManager.config
+        var content = UIListContentConfiguration.subtitleCell()
+        content.text = FloorpStrings.PanelRegistry.autoUnload
+        content.secondaryText = FloorpStrings.PanelRegistry.autoUnloadDescription
+        content.textProperties.color = theme.colors.textPrimary
+        content.textProperties.font = .preferredFont(forTextStyle: .body)
+        content.secondaryTextProperties.color = theme.colors.textSecondary
+        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
+        content.secondaryTextProperties.numberOfLines = 0
+        cell.contentConfiguration = content
+
+        let toggle = FloorpPanelRegistryAutoUnloadSwitch(config: config)
+        toggle.onTintColor = theme.colors.actionPrimary
+        toggle.accessibilityIdentifier = "Floorp.PanelRegistry.autoUnload"
+        toggle.accessibilityLabel = FloorpStrings.PanelRegistry.autoUnload
+        toggle.accessibilityHint = FloorpStrings.PanelRegistry.autoUnloadDescription
+        toggle.isAccessibilityElement = true
+        toggle.addTarget(
+            self,
+            action: #selector(autoUnloadSwitchChanged(_:)),
+            for: .valueChanged
+        )
+        cell.accessories = [
+            .customView(configuration: .init(
+                customView: toggle,
+                placement: .trailing(displayed: .always)
+            )),
+        ]
+        cell.accessibilityIdentifier = "Floorp.PanelRegistry.autoUnloadRow"
+        cell.accessibilityLabel = nil
+        cell.accessibilityHint = nil
+        cell.isAccessibilityElement = false
+        cell.accessibilityElements = [toggle]
     }
 
     private func webPanelSubtitle(
@@ -504,9 +571,14 @@ final class FloorpPanelRegistryViewController: UIViewController,
         guard let section = Section(rawValue: sectionIndex) else { return }
         let theme = themeManager.getCurrentTheme(for: windowUUID)
         var content = UIListContentConfiguration.groupedHeader()
-        content.text = section == .panels
-            ? FloorpStrings.PanelRegistry.panelsSection
-            : FloorpStrings.PanelRegistry.recoverySection
+        switch section {
+        case .panels:
+            content.text = FloorpStrings.PanelRegistry.panelsSection
+        case .settings:
+            content.text = FloorpStrings.PanelRegistry.settingsSection
+        case .recovery:
+            content.text = FloorpStrings.PanelRegistry.recoverySection
+        }
         content.textProperties.color = theme.colors.textSecondary
         header.contentConfiguration = content
     }
@@ -516,6 +588,7 @@ final class FloorpPanelRegistryViewController: UIViewController,
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         snapshot.appendSections(Section.allCases)
         snapshot.appendItems(panelManager.panels.map { .panel($0.id) }, toSection: .panels)
+        snapshot.appendItems([.autoUnload], toSection: .settings)
         snapshot.appendItems([.restoreBuiltIns], toSection: .recovery)
 
         let currentItems = Set(dataSource.snapshot().itemIdentifiers)
@@ -542,6 +615,36 @@ final class FloorpPanelRegistryViewController: UIViewController,
         } else {
             navigationController?.dismiss(animated: true)
         }
+    }
+
+    @objc private func autoUnloadSwitchChanged(_ control: UISwitch) {
+        guard let control = control as? FloorpPanelRegistryAutoUnloadSwitch else { return }
+        let currentConfig = panelManager.config
+        guard control.isOn != currentConfig.autoUnload else {
+            update(control: control, with: currentConfig, animated: false)
+            return
+        }
+
+        do {
+            let updatedConfig = try autoUnloadMutation(
+                control.isOn,
+                control.expectedRevision
+            )
+            update(control: control, with: updatedConfig, animated: false)
+        } catch {
+            update(control: control, with: panelManager.config, animated: true)
+            applySnapshot(animatingDifferences: false)
+            presentOperationError(error)
+        }
+    }
+
+    private func update(
+        control: FloorpPanelRegistryAutoUnloadSwitch,
+        with config: FloorpOverlayDrawerConfig,
+        animated: Bool
+    ) {
+        control.expectedRevision = FloorpOverlayDrawerConfigRevision(config: config)
+        control.setOn(config.autoUnload, animated: animated)
     }
 
     override func setEditing(_ editing: Bool, animated: Bool) {
@@ -873,6 +976,8 @@ final class FloorpPanelRegistryViewController: UIViewController,
         switch item {
         case .panel(let id):
             return panelManager.panel(for: id)?.type == .web
+        case .autoUnload:
+            return false
         case .restoreBuiltIns:
             return missingBuiltInPanelCount > 0
         }
@@ -884,6 +989,8 @@ final class FloorpPanelRegistryViewController: UIViewController,
         switch item {
         case .panel(let id):
             presentEditor(for: id)
+        case .autoUnload:
+            break
         case .restoreBuiltIns:
             restoreBuiltInPanels()
         }

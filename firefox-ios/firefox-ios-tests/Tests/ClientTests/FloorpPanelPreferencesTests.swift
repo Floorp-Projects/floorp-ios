@@ -4,6 +4,7 @@
 
 import XCTest
 import Common
+import UIKit
 @testable import Client
 
 @MainActor
@@ -622,5 +623,336 @@ final class FloorpPanelPreferencesTests: XCTestCase {
     private func rawPanelObjects(in defaults: UserDefaults) throws -> [[String: Any]] {
         let data = try XCTUnwrap(defaults.data(forKey: panelsKey))
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+    }
+}
+
+@MainActor
+final class FloorpPanelRegistryAutoUnloadTests: XCTestCase {
+    func testSwitchReflectsInitialValueAndKeepsPanelSectionsStable() throws {
+        try assertInitialState(isOn: false)
+        try assertInitialState(isOn: true)
+    }
+
+    func testReusedSettingCellClearsItsCustomAccessibilityContainer() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let controller = fixture.makeController()
+        let host = host(controller)
+        defer { host.cleanup() }
+        let cell = UICollectionViewListCell()
+
+        controller.configure(cell: cell, for: .autoUnload)
+        XCTAssertFalse(cell.isAccessibilityElement)
+        XCTAssertEqual(cell.accessibilityElements?.count, 1)
+
+        let firstPanel = try XCTUnwrap(fixture.manager.panels.first)
+        controller.configure(cell: cell, for: .panel(firstPanel.id))
+
+        XCTAssertTrue(cell.isAccessibilityElement)
+        XCTAssertNil(cell.accessibilityElements)
+        XCTAssertEqual(
+            cell.accessibilityIdentifier,
+            "Floorp.PanelRegistry.panel.\(firstPanel.sortOrder)"
+        )
+    }
+
+    func testTogglePersistsThroughManagerCASBoundary() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        var mutationCount = 0
+        let controller = fixture.makeController { value, expectedRevision in
+            mutationCount += 1
+            XCTAssertEqual(expectedRevision.value, 0)
+            return try fixture.manager.setAutoUnload(
+                value,
+                expectedRevision: expectedRevision
+            )
+        }
+        let host = host(controller)
+        defer { host.cleanup() }
+        let control = try autoUnloadSwitch(in: controller)
+
+        control.setOn(true, animated: false)
+        control.sendActions(for: .valueChanged)
+
+        let didReloadWithoutReentry = await waitUntil {
+            guard let currentControl = self.findAutoUnloadSwitch(in: controller) else {
+                return false
+            }
+            return currentControl.isOn && currentControl.expectedRevision.value == 1
+        }
+        XCTAssertTrue(didReloadWithoutReentry)
+        XCTAssertEqual(mutationCount, 1)
+        XCTAssertTrue(control.isOn)
+        XCTAssertTrue(fixture.manager.config.autoUnload)
+        XCTAssertEqual(fixture.manager.config.revision, 1)
+        try autoUnloadSwitch(in: controller).sendActions(for: .valueChanged)
+        XCTAssertEqual(mutationCount, 1)
+        let restartedManager = FloorpPanelManager(defaults: fixture.defaults)
+        XCTAssertTrue(restartedManager.config.autoUnload)
+    }
+
+    func testCASConflictRollsBackToLatestManagerValueAndShowsError() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let controller = fixture.makeController()
+        let host = host(controller)
+        defer { host.cleanup() }
+        let staleControl = try autoUnloadSwitch(in: controller)
+        let currentConfig = fixture.manager.config
+        _ = try fixture.manager.updateConfig(
+            FloorpOverlayDrawerConfig(
+                isEnabled: false,
+                sidebarWidth: currentConfig.sidebarWidth,
+                autoUnload: false
+            ),
+            expectedRevision: FloorpOverlayDrawerConfigRevision(config: currentConfig)
+        )
+
+        staleControl.setOn(true, animated: false)
+        staleControl.sendActions(for: .valueChanged)
+
+        XCTAssertFalse(staleControl.isOn)
+        XCTAssertFalse(fixture.manager.config.autoUnload)
+        XCTAssertEqual(fixture.manager.config.revision, 1)
+        let alert = try XCTUnwrap(controller.presentedViewController as? UIAlertController)
+        XCTAssertEqual(alert.title, FloorpStrings.PanelRegistry.operationFailedTitle)
+        XCTAssertEqual(alert.message, FloorpStrings.PanelRegistry.operationFailedMessage)
+    }
+
+    func testStorageFailureRollsBackAndShowsExistingOperationError() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        var mutationCount = 0
+        let controller = fixture.makeController { _, _ in
+            mutationCount += 1
+            throw FloorpPanelError.storageError("Injected persistence failure")
+        }
+        let host = host(controller)
+        defer { host.cleanup() }
+        let control = try autoUnloadSwitch(in: controller)
+
+        control.setOn(true, animated: false)
+        control.sendActions(for: .valueChanged)
+
+        XCTAssertEqual(mutationCount, 1)
+        XCTAssertFalse(control.isOn)
+        XCTAssertFalse(fixture.manager.config.autoUnload)
+        XCTAssertEqual(fixture.manager.config.revision, 0)
+        let alert = try XCTUnwrap(controller.presentedViewController as? UIAlertController)
+        XCTAssertEqual(alert.title, FloorpStrings.PanelRegistry.operationFailedTitle)
+        XCTAssertEqual(alert.message, FloorpStrings.PanelRegistry.operationFailedMessage)
+    }
+
+    func testManagerNotificationUpdatesAnotherControllerWithoutMutating() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let firstController = fixture.makeController()
+        var secondMutationCount = 0
+        let secondController = fixture.makeController { value, expectedRevision in
+            secondMutationCount += 1
+            return try fixture.manager.setAutoUnload(
+                value,
+                expectedRevision: expectedRevision
+            )
+        }
+        let firstHost = host(firstController)
+        defer { firstHost.cleanup() }
+        let secondHost = host(secondController)
+        defer { secondHost.cleanup() }
+        let firstControl = try autoUnloadSwitch(in: firstController)
+        let initialSecondControl = try autoUnloadSwitch(in: secondController)
+        XCTAssertFalse(initialSecondControl.isOn)
+        XCTAssertEqual(initialSecondControl.expectedRevision.value, 0)
+
+        firstControl.setOn(true, animated: false)
+        firstControl.sendActions(for: .valueChanged)
+
+        let didUpdateSecondController = await waitUntil {
+            guard let currentControl = self.findAutoUnloadSwitch(in: secondController) else {
+                return false
+            }
+            return currentControl.isOn && currentControl.expectedRevision.value == 1
+        }
+        XCTAssertTrue(didUpdateSecondController)
+        let updatedSecondControl = try autoUnloadSwitch(in: secondController)
+        XCTAssertFalse(updatedSecondControl === initialSecondControl)
+        XCTAssertEqual(updatedSecondControl.expectedRevision.value, 1)
+        XCTAssertEqual(secondMutationCount, 0)
+        XCTAssertTrue(fixture.manager.config.autoUnload)
+    }
+
+    func testDuplicateValueChangedIsANoOp() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        var mutationCount = 0
+        let controller = fixture.makeController { value, expectedRevision in
+            mutationCount += 1
+            return try fixture.manager.setAutoUnload(
+                value,
+                expectedRevision: expectedRevision
+            )
+        }
+        let host = host(controller)
+        defer { host.cleanup() }
+        let control = try autoUnloadSwitch(in: controller)
+
+        control.sendActions(for: .valueChanged)
+        XCTAssertEqual(mutationCount, 0)
+        XCTAssertEqual(fixture.manager.config.revision, 0)
+
+        control.setOn(true, animated: false)
+        control.sendActions(for: .valueChanged)
+        control.sendActions(for: .valueChanged)
+
+        XCTAssertEqual(mutationCount, 1)
+        XCTAssertEqual(fixture.manager.config.revision, 1)
+        XCTAssertTrue(fixture.manager.config.autoUnload)
+    }
+
+    private func assertInitialState(isOn: Bool) throws {
+        let fixture = try makeFixture(initialAutoUnload: isOn)
+        defer { fixture.cleanup() }
+        let controller = fixture.makeController()
+        let host = host(controller)
+        defer { host.cleanup() }
+        let collectionView = try XCTUnwrap(
+            findView(identifier: "Floorp.PanelRegistry.collection", in: controller.view)
+                as? UICollectionView
+        )
+        let control = try autoUnloadSwitch(in: controller)
+        let settingsCell = try XCTUnwrap(
+            collectionView.cellForItem(at: IndexPath(item: 0, section: 1))
+        )
+
+        XCTAssertEqual(collectionView.numberOfSections, 3)
+        XCTAssertEqual(collectionView.numberOfItems(inSection: 0), fixture.manager.panels.count)
+        XCTAssertEqual(collectionView.numberOfItems(inSection: 1), 1)
+        XCTAssertEqual(collectionView.numberOfItems(inSection: 2), 1)
+        XCTAssertNotNil(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        XCTAssertEqual(control.isOn, isOn)
+        XCTAssertEqual(control.accessibilityIdentifier, "Floorp.PanelRegistry.autoUnload")
+        XCTAssertEqual(control.accessibilityLabel, FloorpStrings.PanelRegistry.autoUnload)
+        XCTAssertEqual(
+            control.accessibilityHint,
+            FloorpStrings.PanelRegistry.autoUnloadDescription
+        )
+        XCTAssertTrue(control.isAccessibilityElement)
+        XCTAssertFalse(settingsCell.isAccessibilityElement)
+        let accessibilityElements = try XCTUnwrap(settingsCell.accessibilityElements)
+        XCTAssertEqual(accessibilityElements.count, 1)
+        XCTAssertTrue((accessibilityElements[0] as AnyObject) === control)
+    }
+
+    private func makeFixture(
+        initialAutoUnload: Bool = false
+    ) throws -> FloorpPanelRegistryAutoUnloadFixture {
+        let suiteName = "FloorpPanelRegistryAutoUnloadTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let notificationCenter = NotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+        if initialAutoUnload {
+            _ = try manager.setAutoUnload(
+                true,
+                expectedRevision: FloorpOverlayDrawerConfigRevision(config: manager.config)
+            )
+        }
+        return FloorpPanelRegistryAutoUnloadFixture(
+            suiteName: suiteName,
+            defaults: defaults,
+            manager: manager,
+            notificationCenter: notificationCenter
+        )
+    }
+
+    private func host(
+        _ controller: FloorpPanelRegistryViewController
+    ) -> FloorpPanelRegistryAutoUnloadHost {
+        let navigationController = UINavigationController(rootViewController: controller)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = navigationController
+        window.makeKeyAndVisible()
+        navigationController.view.frame = window.bounds
+        navigationController.view.layoutIfNeeded()
+        controller.view.layoutIfNeeded()
+        return FloorpPanelRegistryAutoUnloadHost(window: window)
+    }
+
+    private func autoUnloadSwitch(
+        in controller: FloorpPanelRegistryViewController
+    ) throws -> FloorpPanelRegistryAutoUnloadSwitch {
+        try XCTUnwrap(findAutoUnloadSwitch(in: controller))
+    }
+
+    private func findAutoUnloadSwitch(
+        in controller: FloorpPanelRegistryViewController
+    ) -> FloorpPanelRegistryAutoUnloadSwitch? {
+        controller.view.layoutIfNeeded()
+        return findView(
+            identifier: "Floorp.PanelRegistry.autoUnload",
+            in: controller.view
+        ) as? FloorpPanelRegistryAutoUnloadSwitch
+    }
+
+    private func findView(identifier: String, in rootView: UIView) -> UIView? {
+        if rootView.accessibilityIdentifier == identifier {
+            return rootView
+        }
+        for subview in rootView.subviews {
+            if let match = findView(identifier: identifier, in: subview) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private func waitUntil(
+        _ predicate: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        for _ in 0..<100 {
+            if predicate() {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return false
+    }
+}
+
+@MainActor
+private struct FloorpPanelRegistryAutoUnloadFixture {
+    let suiteName: String
+    let defaults: UserDefaults
+    let manager: FloorpPanelManager
+    let notificationCenter: NotificationCenter
+
+    func makeController(
+        autoUnloadMutation: FloorpPanelRegistryViewController.AutoUnloadMutation? = nil
+    ) -> FloorpPanelRegistryViewController {
+        FloorpPanelRegistryViewController(
+            panelManager: manager,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            autoUnloadMutation: autoUnloadMutation
+        )
+    }
+
+    func cleanup() {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+}
+
+@MainActor
+private struct FloorpPanelRegistryAutoUnloadHost {
+    let window: UIWindow
+
+    func cleanup() {
+        window.rootViewController?.dismiss(animated: false)
+        window.isHidden = true
+        window.rootViewController = nil
     }
 }

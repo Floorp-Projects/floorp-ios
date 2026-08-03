@@ -49,10 +49,28 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "パネル" } }
       }
     },
+    "Floorp.PanelRegistry.SettingsSection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web Panel Settings" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web パネルの設定" } }
+      }
+    },
     "Floorp.PanelRegistry.RecoverySection.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Recovery" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "復元" } }
+      }
+    },
+    "Floorp.PanelRegistry.AutoUnload.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unload Closed Web Panels" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "閉じた Web パネルをアンロード" } }
+      }
+    },
+    "Floorp.PanelRegistry.AutoUnloadDescription.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Frees memory; the panel reloads the next time you open it." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモリを解放し、次に開いたときに Web パネルを再読み込みします。" } }
       }
     },
     "Floorp.PanelRegistry.AddWebPanel.v1" : {

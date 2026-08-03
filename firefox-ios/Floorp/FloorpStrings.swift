@@ -369,10 +369,25 @@ enum FloorpStrings {
             value: "Panels",
             comment: "Section heading for registered Floorp panels"
         )
+        static let settingsSection = string(
+            "Floorp.PanelRegistry.SettingsSection.v1",
+            value: "Web Panel Settings",
+            comment: "Section heading for global Web panel behavior settings"
+        )
         static let recoverySection = string(
             "Floorp.PanelRegistry.RecoverySection.v1",
             value: "Recovery",
             comment: "Section heading for panel recovery actions"
+        )
+        static let autoUnload = string(
+            "Floorp.PanelRegistry.AutoUnload.v1",
+            value: "Unload Closed Web Panels",
+            comment: "Switch that releases a Web panel session after it is closed"
+        )
+        static let autoUnloadDescription = string(
+            "Floorp.PanelRegistry.AutoUnloadDescription.v1",
+            value: "Frees memory; the panel reloads the next time you open it.",
+            comment: "Description of automatic Web panel unloading"
         )
         static let addWebPanel = string(
             "Floorp.PanelRegistry.AddWebPanel.v1",
