@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
+import Foundation
 import Storage
 import TestKit
 @testable import Client
@@ -18,6 +19,7 @@ final class DependencyHelperMock {
         injectedFeatureFlagProvider: FeatureFlagProviding? = nil,
         injectedUserFeaturePreferences: UserFeaturePreferring? = nil
     ) {
+        GlobalTabEventHandlers.resetForTests()
         AppContainer.shared.reset()
 
         let profile: Profile = injectedProfile ?? BrowserProfile(
@@ -36,12 +38,10 @@ final class DependencyHelperMock {
             wrappedManager: WindowManagerImplementation()
         )
 
-        var tabManager: TabManager!
-
         let appSessionProvider: AppSessionProvider = AppSessionManager()
         AppContainer.shared.register(service: appSessionProvider as AppSessionProvider)
 
-        tabManager = injectedTabManager ?? MockTabManager()
+        let tabManager: TabManager = injectedTabManager ?? MockTabManager()
         AppContainer.shared.register(service: MockThemeManager() as ThemeManager)
 
         let searchEnginesManager = SearchEnginesManager(
@@ -85,6 +85,17 @@ final class DependencyHelperMock {
     }
 
     func reset() {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                GlobalTabEventHandlers.resetForTests()
+            }
+        } else {
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    GlobalTabEventHandlers.resetForTests()
+                }
+            }
+        }
         AppContainer.shared.reset()
     }
 }

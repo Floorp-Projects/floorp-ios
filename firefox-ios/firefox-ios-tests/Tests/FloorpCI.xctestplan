@@ -131,6 +131,13 @@
     },
     {
       "selectedTests" : [
+        "AccountSyncHandlerTests\/testDebouncerCancelsPendingActionWhenReleased()",
+        "AccountSyncHandlerTests\/testDependencyResetReleasesGlobalHandlerBeforePendingSync()",
+        "AccountSyncHandlerTests\/testPendingSyncKeepsInjectedWindowManagerAfterContainerReset()",
+        "AccountSyncHandlerTests\/testTabDidGainFocus_doesntSyncWithoutAccount()",
+        "AccountSyncHandlerTests\/testTabDidGainFocus_multipleActions_executedAtMostOnce()",
+        "AccountSyncHandlerTests\/testTabDidGainFocus_multipleDebounce_withWithMultipleSyncs()",
+        "AccountSyncHandlerTests\/testTabDidGainFocus_syncWithAccount()",
         "AddressBarStateTests\/test_numberOfTabsChangedAction_withoutNavToolbar_returnsExpectedState()",
         "FloorpBrowserChromeLayoutTests\/testCustomGuidesReserveManagedBrowserChromeSurfacesInLTRAndRTL()",
         "FloorpBrowserChromeLayoutTests\/testDefaultGuidesPreserveOriginalFullWidthAndSafeAreaAnchors()",
