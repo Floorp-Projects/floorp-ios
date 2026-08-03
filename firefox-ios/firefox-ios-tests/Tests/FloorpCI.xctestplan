@@ -573,6 +573,7 @@
         "NotificationSurfaceManagerTests\/testNotificationCategoriesIncludeCurrentAndLegacyIdentifiers()",
         "NotificationSurfaceManagerTests\/testUnknownNotificationCategoryIsNotHandledAsNotificationSurface()",
         "RemoteTabsPanelTests\/testNoTabsEmptyStateUsesCrossClientSyncCopy()",
+        "SceneDelegateTests\/testInitializationAfterDependencyTeardownDoesNotResolveDependencies()",
         "SummarizerNimbusUtilsTests\/test_isAppAuthAttestEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
         "SummarizerNimbusUtilsTests\/test_isAppleSummarizerEnabled_whenHostedSummarizerDisallowedByAppPolicy()",
         "SummarizerNimbusUtilsTests\/test_isHostedSummarizerEnabled_whenDisallowedByAppPolicy()",
