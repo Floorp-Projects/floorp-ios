@@ -155,6 +155,52 @@ enum FloorpStrings {
             comment: "Action that explicitly unloads the selected custom web panel"
         )
 
+        static let webPanelZoomIn = NSLocalizedString(
+            "Floorp.Drawer.WebPanelZoomIn.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Zoom In",
+            comment: "Action that increases the selected custom web panel zoom"
+        )
+
+        static let webPanelZoomOut = NSLocalizedString(
+            "Floorp.Drawer.WebPanelZoomOut.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Zoom Out",
+            comment: "Action that decreases the selected custom web panel zoom"
+        )
+
+        static let webPanelZoomReset = NSLocalizedString(
+            "Floorp.Drawer.WebPanelZoomReset.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Reset Zoom",
+            comment: "Action that restores the selected custom web panel zoom to 100 percent"
+        )
+
+        static func webPanelZoomMenuTitle(percent: Int) -> String {
+            let format = NSLocalizedString(
+                "Floorp.Drawer.WebPanelZoomMenuTitle.v1",
+                tableName: "Floorp",
+                bundle: .main,
+                value: "Zoom · %d%%",
+                comment: "Web panel zoom submenu title showing the current percentage"
+            )
+            return String(format: format, locale: Locale.current, percent)
+        }
+
+        static func webPanelZoomAnnouncement(percent: Int) -> String {
+            let format = NSLocalizedString(
+                "Floorp.Drawer.WebPanelZoomAnnouncement.v1",
+                tableName: "Floorp",
+                bundle: .main,
+                value: "Zoom set to %d%%",
+                comment: "VoiceOver announcement after a Web panel zoom change"
+            )
+            return String(format: format, locale: Locale.current, percent)
+        }
+
         static let webPanelBack = NSLocalizedString(
             "Floorp.Drawer.WebPanelBack.v1",
             tableName: "Floorp",

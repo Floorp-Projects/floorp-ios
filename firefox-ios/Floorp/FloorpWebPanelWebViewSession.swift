@@ -53,6 +53,7 @@ protocol FloorpWebPanelWebViewRuntime: AnyObject {
     var canGoForward: Bool { get }
     var isLoading: Bool { get }
     var estimatedProgress: Double { get }
+    var pageZoom: CGFloat { get }
     var stateDidChange: (@MainActor () -> Void)? { get set }
 
     func setNavigationExecutor(_ executor: FloorpWebPanelNavigationExecutor?)
@@ -61,6 +62,7 @@ protocol FloorpWebPanelWebViewRuntime: AnyObject {
     func goForward()
     func reload()
     func stopLoading()
+    func setPageZoom(_ pageZoom: CGFloat)
     func setMediaPlaybackSuppressed(
         _ isSuppressed: Bool,
         completion: @escaping @MainActor (Result<Void, Error>) -> Void
@@ -110,6 +112,7 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
     var canGoForward: Bool { tabWebView?.canGoForward ?? false }
     var isLoading: Bool { tabWebView?.isLoading ?? false }
     var estimatedProgress: Double { tabWebView?.estimatedProgress ?? 0 }
+    var pageZoom: CGFloat { tabWebView?.pageZoom ?? 1 }
 
     init(
         configuration: WKWebViewConfiguration,
@@ -158,6 +161,11 @@ private final class DefaultFloorpWebPanelWebViewRuntime:
 
     func stopLoading() {
         tabWebView?.stopLoading()
+    }
+
+    func setPageZoom(_ pageZoom: CGFloat) {
+        guard let tabWebView, tabWebView.pageZoom != pageZoom else { return }
+        tabWebView.pageZoom = pageZoom
     }
 
     func setMediaPlaybackSuppressed(
@@ -436,6 +444,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         self.privateBrowsingSessionLease = privateBrowsingSessionLease
 
         runtime.setNavigationExecutor(navigationExecutor)
+        applyPageZoom(configuration.zoomLevel)
         runtime.stateDidChange = { [weak self] in
             self?.synchronizeState()
         }
@@ -454,7 +463,11 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
     func updateConfiguration(_ configuration: FloorpWebPanelSessionConfiguration) {
         guard !isInvalidated else { return }
+        let previousZoomLevel = state.configuration.zoomLevel
         state.configuration = configuration
+        if previousZoomLevel != configuration.zoomLevel {
+            applyPageZoom(configuration.zoomLevel)
+        }
         notifyObservers()
     }
 
@@ -580,6 +593,12 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
 
     private func performLoad(_ url: URL) {
         runtime?.load(URLRequest(url: url))
+    }
+
+    private func applyPageZoom(_ zoomLevel: FloorpWebPanelZoomLevel) {
+        let requestedPageZoom = CGFloat(zoomLevel.scale)
+        guard let runtime, runtime.pageZoom != requestedPageZoom else { return }
+        runtime.setPageZoom(requestedPageZoom)
     }
 
     private func updateMediaPlaybackSuppression() {

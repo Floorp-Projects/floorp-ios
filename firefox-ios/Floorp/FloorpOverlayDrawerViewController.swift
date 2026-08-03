@@ -216,6 +216,13 @@ final class FloorpPanelPresentationState: NSObject {
         webPanelSessionStore?.reconcile(with: panels)
     }
 
+    func updateWebPanelZoom(
+        _ zoomLevel: FloorpWebPanelZoomLevel,
+        for panelID: String
+    ) {
+        webPanelSessionStore?.updateZoomLevel(zoomLevel, for: panelID)
+    }
+
     private func closePrivateWebPanelSessionsIfNeeded(
         in tabManager: any TabManager,
         selectedTabIsPrivate: Bool?
@@ -236,8 +243,13 @@ final class FloorpPanelPresentationState: NSObject {
         )
     }
 
-    @objc private func panelRegistryDidChange() {
+    @objc private func panelRegistryDidChange(_ notification: Notification) {
         guard let panelManager else { return }
+        if case .webPanelZoom(let panelID) = notification.floorpPanelRegistryChange,
+           let zoomLevel = panelManager.panel(for: panelID)?.effectiveWebPreferences?.zoomLevel {
+            updateWebPanelZoom(zoomLevel, for: panelID)
+            return
+        }
         if activeDrawer == nil {
             invalidateWebPanelWidths()
         }
@@ -418,6 +430,18 @@ typealias FloorpNotesReorderWriter = @MainActor (
     _ expectedRevision: UInt64
 ) async throws -> Bool
 typealias FloorpNoteAccessibilityFocusPoster = @MainActor (_ argument: Any?) -> Void
+typealias FloorpWebPanelZoomMutation = @MainActor (
+    _ panelID: String,
+    _ change: FloorpWebPanelZoomChange,
+    _ expectedRevision: FloorpWebPanelPreferencesRevision
+) throws -> FloorpWebPanelPreferences
+
+struct FloorpWebPanelZoomActionContext: Equatable {
+    let key: FloorpWebPanelSessionKey
+    let sessionIdentifier: ObjectIdentifier
+    let expectedRevision: FloorpWebPanelPreferencesRevision
+    let zoomLevel: FloorpWebPanelZoomLevel
+}
 
 @MainActor
 final class FloorpOverlayDrawerViewController:
@@ -456,6 +480,7 @@ final class FloorpOverlayDrawerViewController:
     private let notesReorderWriter: FloorpNotesReorderWriter
     private let noteAccessibilityFocusPoster: FloorpNoteAccessibilityFocusPoster
     private let presentationModeProvider: FloorpPanelPresentationModeProvider
+    private let webPanelZoomMutation: FloorpWebPanelZoomMutation
 
     /// Callback when user taps a bookmark/history item.
     var onItemSelected: ((URL) -> Void)?
@@ -847,6 +872,7 @@ final class FloorpOverlayDrawerViewController:
          themeManager: ThemeManager = AppContainer.shared.resolve(),
          notificationCenter: NotificationProtocol = NotificationCenter.default,
          isPrivateProvider: @escaping @MainActor () -> Bool = { false },
+         webPanelZoomMutation: FloorpWebPanelZoomMutation? = nil,
          registryFallbackRetryDelayNanoseconds: UInt64 = 250_000_000,
          presentationModeProvider: @escaping FloorpPanelPresentationModeProvider = { width, sizeClass in
              FloorpPanelPresentationModeResolver.resolve(
@@ -872,6 +898,13 @@ final class FloorpOverlayDrawerViewController:
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
         self.isPrivateProvider = isPrivateProvider
+        self.webPanelZoomMutation = webPanelZoomMutation ?? { panelID, change, revision in
+            try panelManager.adjustWebPanelZoom(
+                for: panelID,
+                change: change,
+                expectedRevision: revision
+            )
+        }
         self.registryFallbackRetryDelayNanoseconds = registryFallbackRetryDelayNanoseconds
         self.presentationModeProvider = presentationModeProvider
         self.notesSnapshotLoader = notesSnapshotLoader ?? {
@@ -1551,6 +1584,9 @@ final class FloorpOverlayDrawerViewController:
             actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
                 completion(self?.currentUnloadMenuElements(for: panel.id) ?? [])
             })
+            actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.currentZoomMenuElements(for: panel.id) ?? [])
+            })
             actions.append(UIAction(
                 title: FloorpStrings.PanelRegistry.edit,
                 image: UIImage(systemName: "pencil"),
@@ -1593,6 +1629,40 @@ final class FloorpOverlayDrawerViewController:
         )]
     }
 
+    func currentZoomMenuElements(for panelID: String) -> [UIMenuElement] {
+        guard let context = currentWebPanelZoomActionContext(for: panelID) else { return [] }
+        let zoomLevel = context.zoomLevel
+        let decrease = UIAction(
+            title: FloorpStrings.Drawer.webPanelZoomOut,
+            image: UIImage(systemName: "minus.magnifyingglass"),
+            attributes: zoomLevel.applying(.decrease) == zoomLevel ? .disabled : [],
+            handler: { [weak self] _ in
+                _ = self?.performWebPanelZoomAction(.decrease, context: context)
+            }
+        )
+        let increase = UIAction(
+            title: FloorpStrings.Drawer.webPanelZoomIn,
+            image: UIImage(systemName: "plus.magnifyingglass"),
+            attributes: zoomLevel.applying(.increase) == zoomLevel ? .disabled : [],
+            handler: { [weak self] _ in
+                _ = self?.performWebPanelZoomAction(.increase, context: context)
+            }
+        )
+        let reset = UIAction(
+            title: FloorpStrings.Drawer.webPanelZoomReset,
+            image: UIImage(systemName: "arrow.counterclockwise"),
+            attributes: zoomLevel == .defaultLevel ? .disabled : [],
+            handler: { [weak self] _ in
+                _ = self?.performWebPanelZoomAction(.reset, context: context)
+            }
+        )
+        return [UIMenu(
+            title: FloorpStrings.Drawer.webPanelZoomMenuTitle(percent: zoomLevel.rawValue),
+            image: UIImage(systemName: "textformat.size"),
+            children: [increase, decrease, reset]
+        )]
+    }
+
     private func displayTitle(for panel: FloorpPanel) -> String {
         if panel.type == .web {
             return panel.safeDisplayTitle ?? FloorpStrings.PanelRegistry.needsAttention
@@ -1623,22 +1693,55 @@ final class FloorpOverlayDrawerViewController:
                 button.accessibilityTraits.remove(.selected)
             }
         }
-        updateSidebarUnloadAccessibilityActions()
+        updateSidebarWebPanelAccessibilityActions()
     }
 
-    private func updateSidebarUnloadAccessibilityActions() {
+    private func updateSidebarWebPanelAccessibilityActions() {
         for button in sidebarButtons {
             guard let panelID = button.accessibilityIdentifier,
-                  activeLoadedWebPanelKey(matching: panelID) != nil else {
+                  activeLoadedWebPanelKey(matching: panelID) != nil,
+                  let zoomContext = currentWebPanelZoomActionContext(for: panelID) else {
                 button.accessibilityCustomActions = nil
                 continue
             }
-            button.accessibilityCustomActions = [UIAccessibilityCustomAction(
+            var actions = [UIAccessibilityCustomAction(
                 name: FloorpStrings.Drawer.webPanelUnload,
                 actionHandler: { [weak self] _ in
                     self?.performUnloadWebPanelAction(panelID: panelID) == true
                 }
             )]
+            if zoomContext.zoomLevel.applying(.increase) != zoomContext.zoomLevel {
+                actions.append(makeWebPanelZoomAccessibilityAction(
+                    name: FloorpStrings.Drawer.webPanelZoomIn,
+                    change: .increase,
+                    context: zoomContext
+                ))
+            }
+            if zoomContext.zoomLevel.applying(.decrease) != zoomContext.zoomLevel {
+                actions.append(makeWebPanelZoomAccessibilityAction(
+                    name: FloorpStrings.Drawer.webPanelZoomOut,
+                    change: .decrease,
+                    context: zoomContext
+                ))
+            }
+            if zoomContext.zoomLevel != .defaultLevel {
+                actions.append(makeWebPanelZoomAccessibilityAction(
+                    name: FloorpStrings.Drawer.webPanelZoomReset,
+                    change: .reset,
+                    context: zoomContext
+                ))
+            }
+            button.accessibilityCustomActions = actions
+        }
+    }
+
+    private func makeWebPanelZoomAccessibilityAction(
+        name: String,
+        change: FloorpWebPanelZoomChange,
+        context: FloorpWebPanelZoomActionContext
+    ) -> UIAccessibilityCustomAction {
+        UIAccessibilityCustomAction(name: name) { [weak self] _ in
+            self?.performWebPanelZoomAction(change, context: context) == true
         }
     }
 
@@ -1781,6 +1884,11 @@ final class FloorpOverlayDrawerViewController:
 
     @objc private func panelRegistryDidChange(_ notification: Notification) {
         guard isViewLoaded else { return }
+        if case .webPanelZoom(let panelID) = notification.floorpPanelRegistryChange {
+            synchronizeWebPanelZoomFromManager(for: panelID)
+            updateSidebarWebPanelAccessibilityActions()
+            return
+        }
         presentationState.reconcileWebPanelRuntime(with: panelManager.panels)
         if case .webPanelContentWidth(let panelID) = notification.floorpPanelRegistryChange {
             presentationState.invalidateWebPanelWidths()
@@ -2019,7 +2127,7 @@ final class FloorpOverlayDrawerViewController:
             webPanelStateObserverID = session.addStateObserver { [weak self] state in
                 self?.renderWebPanelState(state, expectedKey: sessionKey)
             }
-            updateSidebarUnloadAccessibilityActions()
+            updateSidebarWebPanelAccessibilityActions()
         } catch {
             showWebPanelUnavailable()
         }
@@ -2061,7 +2169,7 @@ final class FloorpOverlayDrawerViewController:
         webPanelContainerView.isHidden = true
         webPanelContainerView.accessibilityValue = nil
         renderWebPanelToolbarState(nil)
-        updateSidebarUnloadAccessibilityActions()
+        updateSidebarWebPanelAccessibilityActions()
     }
 
     private func installWebPanelFindController(
@@ -2148,6 +2256,23 @@ final class FloorpOverlayDrawerViewController:
         return expectedKey
     }
 
+    func currentWebPanelZoomActionContext(
+        for panelID: String
+    ) -> FloorpWebPanelZoomActionContext? {
+        guard let key = activeLoadedWebPanelKey(matching: panelID),
+              let session = activeWebPanelSession,
+              let panel = panelManager.panel(for: panelID),
+              let preferences = panel.effectiveWebPreferences else {
+            return nil
+        }
+        return FloorpWebPanelZoomActionContext(
+            key: key,
+            sessionIdentifier: ObjectIdentifier(session),
+            expectedRevision: FloorpWebPanelPreferencesRevision(panel: panel),
+            zoomLevel: preferences.zoomLevel
+        )
+    }
+
     private func webPanelSessionKey(
         panelID: String,
         isPrivate: Bool
@@ -2167,6 +2292,54 @@ final class FloorpOverlayDrawerViewController:
             argument: FloorpStrings.Drawer.webPanelUnloaded
         )
         return true
+    }
+
+    @discardableResult
+    func performWebPanelZoomAction(
+        _ change: FloorpWebPanelZoomChange,
+        context: FloorpWebPanelZoomActionContext
+    ) -> Bool {
+        guard let activeKey = activeLoadedWebPanelKey(matching: context.key.panelID),
+              activeKey == context.key,
+              let activeWebPanelSession,
+              ObjectIdentifier(activeWebPanelSession) == context.sessionIdentifier,
+              activeWebPanelSession.state.configuration.zoomLevel.applying(change)
+                != activeWebPanelSession.state.configuration.zoomLevel else {
+            return false
+        }
+
+        do {
+            let preferences = try webPanelZoomMutation(
+                context.key.panelID,
+                change,
+                context.expectedRevision
+            )
+            presentationState.updateWebPanelZoom(
+                preferences.zoomLevel,
+                for: context.key.panelID
+            )
+            updateSidebarWebPanelAccessibilityActions()
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: FloorpStrings.Drawer.webPanelZoomAnnouncement(
+                    percent: preferences.zoomLevel.rawValue
+                )
+            )
+            return true
+        } catch {
+            synchronizeWebPanelZoomFromManager(for: context.key.panelID)
+            updateSidebarWebPanelAccessibilityActions()
+            DispatchQueue.main.async { [weak self] in
+                self?.presentPanelOperationError(error)
+            }
+            return false
+        }
+    }
+
+    private func synchronizeWebPanelZoomFromManager(for panelID: String) {
+        guard let zoomLevel = panelManager.panel(for: panelID)?
+            .effectiveWebPreferences?.zoomLevel else { return }
+        presentationState.updateWebPanelZoom(zoomLevel, for: panelID)
     }
 
     func rebindActiveContent(forSelectedTabIsPrivate isPrivate: Bool) {
