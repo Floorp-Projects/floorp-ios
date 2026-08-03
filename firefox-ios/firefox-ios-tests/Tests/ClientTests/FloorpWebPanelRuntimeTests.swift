@@ -46,6 +46,42 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         XCTAssertEqual(first.state.configuration.homeURL.absoluteString, "https://example.com/portal")
     }
 
+    func testZoomConfigurationUpdatesCachedPrivacySessionsAndSurvivesUnload() throws {
+        let factory = MockFloorpWebPanelSessionFactory()
+        let store = FloorpWebPanelSessionStore(windowUUID: UUID(), factory: factory)
+        var panel = makePanel(id: "zoomed")
+        panel.webPreferences = FloorpWebPanelPreferences(
+            zoomLevel: .oneHundredTwentyFivePercent
+        )
+        let regular = try mockSession(from: store.session(for: panel, isPrivate: false))
+        let privateSession = try mockSession(from: store.session(for: panel, isPrivate: true))
+
+        XCTAssertEqual(regular.state.configuration.zoomLevel, .oneHundredTwentyFivePercent)
+        XCTAssertEqual(privateSession.state.configuration.zoomLevel, .oneHundredTwentyFivePercent)
+
+        store.updateZoomLevel(.oneHundredFiftyPercent, for: panel.id)
+        store.updateZoomLevel(.oneHundredFiftyPercent, for: panel.id)
+
+        XCTAssertEqual(regular.state.configuration.zoomLevel, .oneHundredFiftyPercent)
+        XCTAssertEqual(privateSession.state.configuration.zoomLevel, .oneHundredFiftyPercent)
+        XCTAssertEqual(regular.configurationUpdateCount, 1)
+        XCTAssertEqual(privateSession.configurationUpdateCount, 1)
+        XCTAssertEqual(factory.makeCallCount, 2)
+
+        XCTAssertTrue(store.unloadSession(for: regular.key))
+        panel.webPreferences = FloorpWebPanelPreferences(
+            revision: 1,
+            zoomLevel: .oneHundredSeventyFivePercent
+        )
+        store.reconcile(with: [panel])
+        let replacement = try mockSession(from: store.session(for: panel, isPrivate: false))
+
+        XCTAssertFalse(replacement === regular)
+        XCTAssertTrue(try store.session(for: panel, isPrivate: true) === privateSession)
+        XCTAssertEqual(replacement.state.configuration.zoomLevel, .oneHundredSeventyFivePercent)
+        XCTAssertEqual(privateSession.state.configuration.zoomLevel, .oneHundredSeventyFivePercent)
+    }
+
     func testSessionKeysSeparateWindowsAndPrivacyModes() throws {
         let factory = MockFloorpWebPanelSessionFactory()
         let firstWindow = UUID()
@@ -158,8 +194,9 @@ final class FloorpWebPanelSessionStoreTests: XCTestCase {
         )
         let panel = makePanel(id: "portal")
         let regular = try mockSession(from: firstStore.session(for: panel, isPrivate: false))
-        let privateSession = try mockSession(
-            from: firstStore.session(for: panel, isPrivate: true)
+        let privateSession = try XCTUnwrap(
+            try firstStore.session(for: panel, isPrivate: true)
+                as? MockFloorpWebPanelSession
         )
         let regularURL = try XCTUnwrap(URL(string: "https://example.com/regular-current"))
         let privateURL = try XCTUnwrap(URL(string: "https://example.com/private-current"))
@@ -1710,6 +1747,438 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(fixture.factory.makeCallCount, 3)
     }
 
+    // swiftlint:disable:next function_body_length
+    func testZoomMenuFastPathPreservesFindAndUpdatesEveryWindowAndPrivacySession() throws {
+        let suiteName = "FloorpWebPanelZoomFastPathTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let notificationCenter = NotificationCenter()
+        let manager = FloorpPanelManager(
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+        let panel = try manager.addWebPanel(
+            draft: FloorpWebPanelDraft(title: "Zoom", urlText: "https://example.com/zoom")
+        )
+        let firstFactory = MockFloorpWebPanelSessionFactory()
+        let secondFactory = MockFloorpWebPanelSessionFactory()
+        let firstWindowUUID = WindowUUID()
+        let secondWindowUUID = WindowUUID()
+        let firstStore = FloorpWebPanelSessionStore(
+            windowUUID: firstWindowUUID,
+            factory: firstFactory
+        )
+        let secondStore = FloorpWebPanelSessionStore(
+            windowUUID: secondWindowUUID,
+            factory: secondFactory
+        )
+        let firstState = FloorpPanelPresentationState(
+            windowUUID: firstWindowUUID,
+            selectedPanelId: panel.id,
+            webPanelSessionStore: firstStore
+        )
+        let secondState = FloorpPanelPresentationState(
+            windowUUID: secondWindowUUID,
+            selectedPanelId: panel.id,
+            webPanelSessionStore: secondStore
+        )
+        defer {
+            firstState.invalidateWebPanelRuntime()
+            secondState.invalidateWebPanelRuntime()
+        }
+        let privateSession = try XCTUnwrap(
+            try firstStore.session(for: panel, isPrivate: true)
+                as? MockFloorpWebPanelSession
+        )
+        let firstDrawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: .shared,
+            presentationState: firstState,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            isPrivateProvider: { false }
+        )
+        let secondDrawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: .shared,
+            presentationState: secondState,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            isPrivateProvider: { false }
+        )
+        firstDrawer.loadViewIfNeeded()
+        secondDrawer.loadViewIfNeeded()
+        let firstSession = try XCTUnwrap(firstFactory.sessions.first(where: { !$0.key.isPrivate }))
+        let secondSession = try XCTUnwrap(secondFactory.sessions.first)
+        let firstContent = try XCTUnwrap(firstSession.contentView)
+        let secondContent = try XCTUnwrap(secondSession.contentView)
+        let firstSuperview = try XCTUnwrap(firstContent.superview)
+        let secondSuperview = try XCTUnwrap(secondContent.superview)
+        let firstURL = try XCTUnwrap(URL(string: "https://example.com/first-current"))
+        let secondURL = try XCTUnwrap(URL(string: "https://example.com/second-current"))
+        firstSession.recordRuntimeState(currentURL: firstURL, pageTitle: "First")
+        secondSession.recordRuntimeState(currentURL: secondURL, pageTitle: "Second")
+        let firstFindButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: firstDrawer.view) as? UIButton
+        )
+        let secondFindButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: secondDrawer.view) as? UIButton
+        )
+        firstFindButton.sendActions(for: .touchUpInside)
+        secondFindButton.sendActions(for: .touchUpInside)
+        let firstFindToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: firstDrawer.view)
+        )
+        let secondFindToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: secondDrawer.view)
+        )
+        let firstQuery = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: firstDrawer.view) as? UITextField
+        )
+        let secondQuery = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: secondDrawer.view) as? UITextField
+        )
+        firstQuery.text = "first needle"
+        secondQuery.text = "second needle"
+        firstQuery.sendActions(for: .editingChanged)
+        secondQuery.sendActions(for: .editingChanged)
+
+        let initialMenu = try zoomMenu(in: firstDrawer, panelID: panel.id)
+        XCTAssertEqual(
+            initialMenu.title,
+            FloorpStrings.Drawer.webPanelZoomMenuTitle(percent: 100)
+        )
+        XCTAssertTrue(
+            try zoomAction(FloorpStrings.Drawer.webPanelZoomReset, in: initialMenu)
+                .attributes.contains(.disabled)
+        )
+        invoke(try zoomAction(FloorpStrings.Drawer.webPanelZoomIn, in: initialMenu))
+
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).zoomLevel, .oneHundredTenPercent)
+        for session in [firstSession, privateSession, secondSession] {
+            XCTAssertEqual(session.state.configuration.zoomLevel, .oneHundredTenPercent)
+            XCTAssertEqual(session.invalidationCount, 0)
+        }
+        XCTAssertTrue(firstSession.contentView === firstContent)
+        XCTAssertTrue(secondSession.contentView === secondContent)
+        XCTAssertTrue(firstContent.superview === firstSuperview)
+        XCTAssertTrue(secondContent.superview === secondSuperview)
+        XCTAssertEqual(firstSession.state.currentURL, firstURL)
+        XCTAssertEqual(secondSession.state.currentURL, secondURL)
+        XCTAssertTrue(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: firstDrawer.view)
+                === firstFindToolbar
+        )
+        XCTAssertTrue(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: secondDrawer.view)
+                === secondFindToolbar
+        )
+        XCTAssertFalse(firstFindToolbar.isHidden)
+        XCTAssertFalse(secondFindToolbar.isHidden)
+        XCTAssertEqual(firstQuery.text, "first needle")
+        XCTAssertEqual(secondQuery.text, "second needle")
+        XCTAssertEqual(firstSession.findTargetMock.invalidationCount, 0)
+        XCTAssertEqual(secondSession.findTargetMock.invalidationCount, 0)
+        XCTAssertEqual(firstSession.findTargetMock.requests.map(\.query), ["first needle"])
+        XCTAssertEqual(secondSession.findTargetMock.requests.map(\.query), ["second needle"])
+
+        let firstButton = try XCTUnwrap(
+            findView(identifier: panel.id, in: firstDrawer.view) as? UIButton
+        )
+        XCTAssertEqual(
+            firstButton.accessibilityCustomActions?.map(\.name),
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelZoomIn,
+                FloorpStrings.Drawer.webPanelZoomOut,
+                FloorpStrings.Drawer.webPanelZoomReset,
+            ]
+        )
+        let resetAccessibilityAction = try XCTUnwrap(
+            firstButton.accessibilityCustomActions?.first(where: {
+                $0.name == FloorpStrings.Drawer.webPanelZoomReset
+            })
+        )
+        XCTAssertTrue(
+            resetAccessibilityAction.actionHandler?(resetAccessibilityAction) == true
+        )
+        XCTAssertEqual(try manager.webPanelPreferences(for: panel.id).zoomLevel, .defaultLevel)
+        XCTAssertEqual(
+            firstButton.accessibilityCustomActions?.map(\.name),
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelZoomIn,
+                FloorpStrings.Drawer.webPanelZoomOut,
+            ]
+        )
+    }
+
+    func testZoomMenuAndVoiceOverActionsRespectBoundsAndReset() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        while try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel != .fiftyPercent {
+            _ = try fixture.manager.adjustWebPanelZoom(
+                for: panel.id,
+                change: .decrease,
+                expectedRevision: try fixture.manager.webPanelPreferencesRevision(for: panel.id)
+            )
+        }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let button = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        let minimumMenu = try zoomMenu(in: drawer, panelID: panel.id)
+
+        XCTAssertTrue(
+            try zoomAction(FloorpStrings.Drawer.webPanelZoomOut, in: minimumMenu)
+                .attributes.contains(.disabled)
+        )
+        XCTAssertEqual(
+            button.accessibilityCustomActions?.map(\.name),
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelZoomIn,
+                FloorpStrings.Drawer.webPanelZoomReset,
+            ]
+        )
+
+        while try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel
+            != .threeHundredPercent {
+            let context = try XCTUnwrap(drawer.currentWebPanelZoomActionContext(for: panel.id))
+            XCTAssertTrue(drawer.performWebPanelZoomAction(.increase, context: context))
+        }
+        let maximumMenu = try zoomMenu(in: drawer, panelID: panel.id)
+        XCTAssertTrue(
+            try zoomAction(FloorpStrings.Drawer.webPanelZoomIn, in: maximumMenu)
+                .attributes.contains(.disabled)
+        )
+        XCTAssertEqual(
+            button.accessibilityCustomActions?.map(\.name),
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelZoomOut,
+                FloorpStrings.Drawer.webPanelZoomReset,
+            ]
+        )
+
+        invoke(try zoomAction(FloorpStrings.Drawer.webPanelZoomReset, in: maximumMenu))
+
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .defaultLevel)
+        XCTAssertEqual(
+            button.accessibilityCustomActions?.map(\.name),
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelZoomIn,
+                FloorpStrings.Drawer.webPanelZoomOut,
+            ]
+        )
+    }
+
+    func testStaleZoomMenuActionsCannotMutateReplacementOrOtherPrivacySession() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let privacyMode = FloorpMutableWebPanelPrivacyMode(false)
+        let drawer = fixture.makeDrawer(isPrivateProvider: { privacyMode.value })
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let staleOriginalAction = try zoomAction(
+            FloorpStrings.Drawer.webPanelZoomIn,
+            in: zoomMenu(in: drawer, panelID: panel.id)
+        )
+        let original = try XCTUnwrap(fixture.factory.sessions.last)
+
+        XCTAssertTrue(drawer.unloadWebPanelIfActive(panelID: panel.id))
+        let button = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        button.sendActions(for: .touchUpInside)
+        let replacement = try XCTUnwrap(fixture.factory.sessions.last)
+        XCTAssertFalse(replacement === original)
+
+        invoke(staleOriginalAction)
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .defaultLevel)
+        XCTAssertEqual(replacement.state.configuration.zoomLevel, .defaultLevel)
+
+        let staleRegularAction = try zoomAction(
+            FloorpStrings.Drawer.webPanelZoomIn,
+            in: zoomMenu(in: drawer, panelID: panel.id)
+        )
+        privacyMode.value = true
+        drawer.rebindActiveContent(forSelectedTabIsPrivate: true)
+        let privateSession = try XCTUnwrap(fixture.factory.sessions.last)
+        XCTAssertTrue(privateSession.key.isPrivate)
+
+        invoke(staleRegularAction)
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .defaultLevel)
+        XCTAssertEqual(privateSession.state.configuration.zoomLevel, .defaultLevel)
+        let privateMenu = try zoomMenu(in: drawer, panelID: panel.id)
+        invoke(try zoomAction(FloorpStrings.Drawer.webPanelZoomIn, in: privateMenu))
+
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .oneHundredTenPercent)
+        XCTAssertEqual(privateSession.state.configuration.zoomLevel, .oneHundredTenPercent)
+        XCTAssertEqual(replacement.state.configuration.zoomLevel, .oneHundredTenPercent)
+    }
+
+    func testStaleZoomRevisionSynchronizesLatestAndShowsOperationErrorInPlace() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = drawer
+        window.makeKeyAndVisible()
+        defer {
+            drawer.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let content = try XCTUnwrap(session.contentView)
+        let contentSuperview = try XCTUnwrap(content.superview)
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/cas-current"))
+        session.recordRuntimeState(currentURL: currentURL, pageTitle: "CAS")
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        findButton.sendActions(for: .touchUpInside)
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
+        let findQuery = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: drawer.view) as? UITextField
+        )
+        findQuery.text = "keep cas query"
+        findQuery.sendActions(for: .editingChanged)
+        let staleContext = try XCTUnwrap(drawer.currentWebPanelZoomActionContext(for: panel.id))
+        _ = try fixture.manager.adjustWebPanelZoom(
+            for: panel.id,
+            change: .increase,
+            expectedRevision: try fixture.manager.webPanelPreferencesRevision(for: panel.id)
+        )
+
+        XCTAssertFalse(drawer.performWebPanelZoomAction(.increase, context: staleContext))
+        let presentedError = await waitForPresentationState {
+            drawer.presentedViewController is UIAlertController
+        }
+
+        XCTAssertTrue(presentedError)
+        XCTAssertEqual(
+            (drawer.presentedViewController as? UIAlertController)?.title,
+            FloorpStrings.PanelRegistry.operationFailedTitle
+        )
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .oneHundredTenPercent)
+        XCTAssertEqual(session.state.configuration.zoomLevel, .oneHundredTenPercent)
+        XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertTrue(session.contentView === content)
+        XCTAssertTrue(content.superview === contentSuperview)
+        XCTAssertEqual(session.state.currentURL, currentURL)
+        XCTAssertTrue(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+                === findToolbar
+        )
+        XCTAssertFalse(findToolbar.isHidden)
+        XCTAssertEqual(findQuery.text, "keep cas query")
+        XCTAssertEqual(session.findTargetMock.invalidationCount, 0)
+        XCTAssertEqual(session.findTargetMock.requests.map(\.query), ["keep cas query"])
+    }
+
+    func testZoomStorageFailureRollsBackLatestAndPreservesFindRuntime() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        var mutationCallCount = 0
+        let drawer = fixture.makeDrawer(
+            isPrivateProvider: { false },
+            webPanelZoomMutation: { _, _, _ in
+                mutationCallCount += 1
+                throw FloorpPanelError.storageError("Injected zoom write failure")
+            }
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = drawer
+        window.makeKeyAndVisible()
+        defer {
+            drawer.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let content = try XCTUnwrap(session.contentView)
+        let contentSuperview = try XCTUnwrap(content.superview)
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/storage-current"))
+        session.recordRuntimeState(currentURL: currentURL, pageTitle: "Storage")
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        findButton.sendActions(for: .touchUpInside)
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
+        let findQuery = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: drawer.view) as? UITextField
+        )
+        findQuery.text = "keep storage query"
+        findQuery.sendActions(for: .editingChanged)
+        let context = try XCTUnwrap(drawer.currentWebPanelZoomActionContext(for: panel.id))
+
+        XCTAssertFalse(drawer.performWebPanelZoomAction(.increase, context: context))
+        let presentedError = await waitForPresentationState {
+            drawer.presentedViewController is UIAlertController
+        }
+
+        XCTAssertTrue(presentedError)
+        XCTAssertEqual(mutationCallCount, 1)
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .defaultLevel)
+        XCTAssertEqual(session.state.configuration.zoomLevel, .defaultLevel)
+        XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertTrue(session.contentView === content)
+        XCTAssertTrue(content.superview === contentSuperview)
+        XCTAssertEqual(session.state.currentURL, currentURL)
+        XCTAssertTrue(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+                === findToolbar
+        )
+        XCTAssertFalse(findToolbar.isHidden)
+        XCTAssertEqual(findQuery.text, "keep storage query")
+        XCTAssertEqual(session.findTargetMock.invalidationCount, 0)
+        XCTAssertEqual(session.findTargetMock.requests.map(\.query), ["keep storage query"])
+    }
+
+    func testPersistedZoomAppliesWhenAutoUnloadRecreatesSession() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.manager.setAutoUnload(
+            true,
+            expectedRevision: FloorpOverlayDrawerConfigRevision(config: fixture.manager.config)
+        )
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let context = try XCTUnwrap(drawer.currentWebPanelZoomActionContext(for: panel.id))
+        XCTAssertTrue(drawer.performWebPanelZoomAction(.increase, context: context))
+        let first = try XCTUnwrap(fixture.factory.sessions.last)
+        let builtIn = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type != .web }))
+        let builtInButton = try XCTUnwrap(
+            findView(identifier: builtIn.id, in: drawer.view) as? UIButton
+        )
+
+        builtInButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(first.invalidationCount, 1)
+        let webPanelButton = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        webPanelButton.sendActions(for: .touchUpInside)
+        let replacement = try XCTUnwrap(fixture.factory.sessions.last)
+
+        XCTAssertFalse(replacement === first)
+        XCTAssertEqual(replacement.state.configuration.zoomLevel, .oneHundredTenPercent)
+        XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .oneHundredTenPercent)
+    }
+
     func testActiveExplicitUnloadDetachesRuntimeUntilSelectedAgain() throws {
         let fixture = try makeDrawerFixture()
         defer { fixture.cleanup() }
@@ -1762,7 +2231,11 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertTrue(drawer.currentUnloadMenuElements(for: otherWebPanel.id).isEmpty)
         XCTAssertEqual(
             webPanelButton.accessibilityCustomActions?.map(\.name),
-            [FloorpStrings.Drawer.webPanelUnload]
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelZoomIn,
+                FloorpStrings.Drawer.webPanelZoomOut,
+            ]
         )
         XCTAssertNil(otherWebPanelButton.accessibilityCustomActions)
         XCTAssertFalse(drawer.unloadWebPanelIfActive(panelID: otherWebPanel.id))
@@ -1909,7 +2382,11 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertEqual(fixture.factory.sessions.last?.key, privateKey)
         XCTAssertEqual(
             webPanelButton.accessibilityCustomActions?.map(\.name),
-            [FloorpStrings.Drawer.webPanelUnload]
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelZoomIn,
+                FloorpStrings.Drawer.webPanelZoomOut,
+            ]
         )
     }
 
@@ -2199,6 +2676,23 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         XCTAssertNil(findLabel(text: FloorpStrings.Drawer.webPanelUnloaded, in: drawer.view))
         XCTAssertNotNil(findLabel(text: FloorpStrings.Drawer.webPanelUnavailable, in: drawer.view))
         XCTAssertNil(fixture.presentationState.webPanelSessionStore)
+    }
+
+    private func zoomMenu(
+        in drawer: FloorpOverlayDrawerViewController,
+        panelID: String
+    ) throws -> UIMenu {
+        try XCTUnwrap(drawer.currentZoomMenuElements(for: panelID).first as? UIMenu)
+    }
+
+    private func zoomAction(_ title: String, in menu: UIMenu) throws -> UIAction {
+        try XCTUnwrap(menu.children.first(where: { ($0 as? UIAction)?.title == title }) as? UIAction)
+    }
+
+    private func invoke(_ action: UIAction) {
+        let sender = UIButton(type: .system)
+        sender.addAction(action, for: .touchUpInside)
+        sender.sendActions(for: .touchUpInside)
     }
 
     private func makeDrawerFixture() throws -> FloorpWebPanelDrawerFixture {
@@ -2657,11 +3151,12 @@ private struct FloorpWebPanelDrawerFixture {
     let factory: MockFloorpWebPanelSessionFactory
 
     func makeDrawer(isPrivate: Bool) -> FloorpOverlayDrawerViewController {
-        makeDrawer(isPrivateProvider: { isPrivate })
+        makeDrawer(isPrivateProvider: { isPrivate }, webPanelZoomMutation: nil)
     }
 
     func makeDrawer(
-        isPrivateProvider: @escaping @MainActor () -> Bool
+        isPrivateProvider: @escaping @MainActor () -> Bool,
+        webPanelZoomMutation: FloorpWebPanelZoomMutation? = nil
     ) -> FloorpOverlayDrawerViewController {
         FloorpOverlayDrawerViewController(
             panelManager: manager,
@@ -2669,7 +3164,8 @@ private struct FloorpWebPanelDrawerFixture {
             presentationState: presentationState,
             themeManager: MockThemeManager(),
             notificationCenter: MockNotificationCenter(),
-            isPrivateProvider: isPrivateProvider
+            isPrivateProvider: isPrivateProvider,
+            webPanelZoomMutation: webPanelZoomMutation
         )
     }
 

@@ -47,6 +47,24 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         XCTAssertNil(runtime.contentView)
     }
 
+    func testDefaultRuntimeAppliesPageZoomThroughOwnedWebView() throws {
+        let profile = MockProfile()
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(injectedProfile: profile)
+        defer { dependencies.reset() }
+        let runtime = DefaultFloorpWebPanelWebViewRuntimeFactory().makeRuntime(
+            configuration: WKWebViewConfiguration(),
+            windowUUID: UUID(),
+            certStore: profile.certStore
+        )
+        let webView = try XCTUnwrap(runtime.webView)
+
+        runtime.setPageZoom(1.25)
+
+        XCTAssertEqual(runtime.pageZoom, 1.25)
+        XCTAssertEqual(webView.pageZoom, 1.25)
+    }
+
     @available(iOS 16.0, *)
     func testDefaultFindTargetEnablesAndDismissesNativeInteraction() {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
@@ -151,6 +169,33 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
             fixture.runtime.loadedRequests.map(\.url),
             [fixture.configuration.homeURL]
         )
+    }
+
+    func testZoomIsAppliedBeforeInitialNavigationAndUpdatesInPlaceOnlyWhenChanged() {
+        let fixture = makeFixture(zoomLevel: .oneHundredTwentyFivePercent)
+        let webView = fixture.runtime.retainedWebView
+        let currentURL = URL(string: "https://example.com/current")
+        fixture.runtime.currentURL = currentURL
+
+        XCTAssertEqual(fixture.runtime.pageZoom, 1.25)
+        XCTAssertEqual(fixture.runtime.pageZoomAssignments, [1.25])
+        XCTAssertTrue(fixture.runtime.loadedRequests.isEmpty)
+
+        fixture.installer.completeInstallation()
+        let updatedConfiguration = FloorpWebPanelSessionConfiguration(
+            panelTitle: fixture.configuration.panelTitle,
+            homeURL: fixture.configuration.homeURL,
+            iconName: fixture.configuration.iconName,
+            zoomLevel: .oneHundredFiftyPercent
+        )
+        fixture.session.updateConfiguration(updatedConfiguration)
+        fixture.session.updateConfiguration(updatedConfiguration)
+
+        XCTAssertTrue(fixture.runtime.retainedWebView === webView)
+        XCTAssertEqual(fixture.runtime.currentURL, currentURL)
+        XCTAssertEqual(fixture.runtime.loadedRequests.map(\.url), [fixture.configuration.homeURL])
+        XCTAssertEqual(fixture.runtime.pageZoom, 1.5)
+        XCTAssertEqual(fixture.runtime.pageZoomAssignments, [1.25, 1.5])
     }
 
     func testRestorationURLLoadsExactlyOnceAfterContentRulesAndRejectsUnsafeURL() throws {
@@ -538,6 +583,7 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
     private func makeFixture(
         windowUUID: WindowUUID = UUID(),
         isPrivate: Bool = false,
+        zoomLevel: FloorpWebPanelZoomLevel = .defaultLevel,
         restorationURL: URL? = nil,
         openInMainBrowser: @escaping FloorpWebPanelNavigationExecutor.OpenInMainBrowser = { _ in }
     ) -> Fixture {
@@ -547,7 +593,8 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         let configuration = FloorpWebPanelSessionConfiguration(
             panelTitle: "Panel",
             homeURL: URL(string: "https://example.com/home")!,
-            iconName: "globe"
+            iconName: "globe",
+            zoomLevel: zoomLevel
         )
         let session = FloorpWebPanelWebViewSession(
             key: FloorpWebPanelSessionKey(
@@ -820,6 +867,8 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
     var canGoForward = false
     var isLoading = false
     var estimatedProgress = 0.0
+    private(set) var pageZoom: CGFloat = 1
+    private(set) var pageZoomAssignments = [CGFloat]()
     private(set) var loadedRequests = [URLRequest]()
     private(set) var goBackCallCount = 0
     private(set) var goForwardCallCount = 0
@@ -860,6 +909,12 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
 
     func stopLoading() {
         stopLoadingCallCount += 1
+    }
+
+    func setPageZoom(_ pageZoom: CGFloat) {
+        guard self.pageZoom != pageZoom else { return }
+        self.pageZoom = pageZoom
+        pageZoomAssignments.append(pageZoom)
     }
 
     func setMediaPlaybackSuppressed(
