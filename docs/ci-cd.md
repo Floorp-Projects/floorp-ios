@@ -8,7 +8,7 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
 | Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow with trusted automation restoration, reviewed localization conflict resolution, and explicit CI dispatch |
-| Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (1)` signed, uploaded, and verified by the internal group |
+| Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (2)` signed, uploaded, and verified by the internal group |
 | Repeatable signed delivery | Xcode Cloud | Scaffold implemented; workflow not yet configured |
 | App Store release | App Store Connect | Manual approval initially |
 | Mozilla/Focus maintenance automation | Git history | Removed pending a Floorp-owned replacement |
@@ -17,7 +17,7 @@ GitHub Actions does not receive an Apple certificate or private key. The first b
 
 ### Validated Internal TestFlight baseline
 
-On August 1, 2026, Floorp `0.1.0 (1)` was signed by Team `DV2U35YBHT`, uploaded to App Store Connect app `6796708699`, processed successfully, assigned to the `Floorp Internal` group, and installed by an internal tester. App Store Connect read `ITSAppUsesNonExemptEncryption=false` as “Uses non-exempt encryption: No.”
+On August 1, 2026, Floorp `0.1.0 (2)` was signed by Team `DV2U35YBHT`, uploaded to App Store Connect app `6796708699`, processed successfully, assigned to the `Floorp Internal` group, and installed by an internal tester. App Store Connect read `ITSAppUsesNonExemptEncryption=false` as “Uses non-exempt encryption: No.”
 
 The upload reported a non-blocking missing dSYM warning for `Glean.framework`. Resolve that warning before relying on production crash symbolication.
 
@@ -35,7 +35,7 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 8. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
 9. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
 
-`FloorpCI.xctestplan` is an explicit baseline of 15 test targets: 14 currently reliable suites plus 16 selected Floorp Notes cases and five release-service-policy cases from `ClientTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
+`FloorpCI.xctestplan` has 16 target entries: 14 currently reliable broad suites plus explicit allowlists from `AccountTests` and `ClientTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
 SwiftPM checkouts and Derived Data use job-local directories. This avoids shared-cache corruption and keeps untrusted pull-request code out of persistent caches.
 
@@ -67,7 +67,7 @@ At the time this document was introduced, `main` was not protected. Repository s
 
 ## Release readiness
 
-Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented, but the external and product decisions below remain before TestFlight distribution.
+Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented; every release candidate still requires a signed archive and Organizer validation before TestFlight distribution.
 
 ### Release build configuration
 
@@ -101,21 +101,21 @@ Adding Push later requires restoring that target where needed, production entitl
 
 ### Managed browser entitlements
 
-The private `0.1.0 (2)` Internal TestFlight candidate intentionally omits `com.apple.developer.web-browser`. Apple has not approved that managed capability for the Floorp App ID, so this build will not appear as a default-browser choice. Apple's request form requires an App Store build or a public TestFlight link, so the request is intentionally deferred while distribution remains private. When Floorp adopts external testing or public distribution, first provide an assessment build without the entitlement; after Apple approves the request, enable the capability for `app.floorp.Floorp`, regenerate the distribution profile, re-add the entitlement, and verify it in the signed archive.
+The private Internal TestFlight line intentionally omits `com.apple.developer.web-browser`. Apple has not approved that managed capability for the Floorp App ID, so these builds will not appear as a default-browser choice. Apple's request form requires an App Store build or a public TestFlight link, so the request is intentionally deferred while distribution remains private. When Floorp adopts external testing or public distribution, first provide an assessment build without the entitlement; after Apple approves the request, enable the capability for `app.floorp.Floorp`, regenerate the distribution profile, re-add the entitlement, and verify it in the signed archive.
 
 The Floorp release entitlement omits `com.apple.developer.browser.app-installation`, which is for installing alternative-distribution apps from a website. Add it only if Floorp deliberately adopts that distribution path and Apple approves the request.
 
 ### Versioning
 
-The last validated Internal TestFlight baseline is `0.1.0 (1)`, and the checked-in post-rebrand release candidate is `0.1.0 (2)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
+The last validated Internal TestFlight baseline is `0.1.0 (2)`, and the checked-in Web panel sidebar candidate is `0.1.0 (3)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
 
 ### Floorp-owned services and App Store ID
 
-The initial Floorp service policy keeps FxA/Sync, Remote Settings/Nimbus, and the existing Mozilla content services enabled. It disables remote Push and Hosted Summarizer, including its App Attest authentication path. Apple Intelligence summarization remains independently available on supported devices and executes on-device. Both disabled services are protected by `FloorpRelease` Info.plist policy values in addition to their normal feature flags, so a remote Nimbus rollout cannot re-enable them.
+The initial Floorp service policy keeps FxA/Sync, Remote Settings/Nimbus, and the existing Mozilla content services enabled. It disables remote Push, Hosted Summarizer (including its App Attest authentication path), and Quick Answers. Apple Intelligence summarization remains independently available on supported devices and executes on-device. All three disabled services are protected by `FloorpRelease` Info.plist policy values in addition to their normal feature flags, so a remote Nimbus rollout cannot re-enable them.
 
 Continue reviewing Sentry and every retained endpoint before public distribution. Where ownership is unresolved, disable the feature rather than silently using an inherited production default. Xcode Cloud secret variables prevent values from appearing in logs, but any value embedded in the app bundle remains extractable and must not be a privileged server secret.
 
-Firefox's App Store ID has been removed. `FLOORP_APP_STORE_ID` is optional; while it is unset or invalid, Floorp hides the rating setting and does not open a review URL. Set it to Floorp's numeric Apple ID after the App Store Connect record exists.
+Firefox's App Store ID has been removed. `FLOORP_APP_STORE_ID` is optional; while it is unset or invalid, Floorp hides the rating setting and does not open a review URL. Set it to Floorp's numeric Apple ID only after the public App Store listing is live.
 
 ### Release branding
 
@@ -136,12 +136,12 @@ Complete the remaining unchecked steps before enabling repeatable Xcode Cloud di
 - [x] Register `group.app.floorp.Floorp.DV2U35YBHT` and assign it to every retained target that shares data.
 - [x] Omit Push/APNs and AutoFill Credential Provider from the initial Client-only release.
 - [ ] Confirm Multipath remains a product requirement; it is currently retained because networking code uses `.handover`.
-- [x] Disable Hosted Summarizer and its App Attest path; retain Apple on-device summarization.
+- [x] Disable Hosted Summarizer, its App Attest path, and Quick Answers; retain Apple on-device summarization.
 - [ ] Request the default-browser managed entitlement.
 - [x] Omit the browser app-installation entitlement from the initial release configuration.
 - [ ] Choose the Floorp marketing-version policy and initial version.
 - [x] Create the Floorp app record in App Store Connect (`6796708699`).
-- [ ] Set `FLOORP_APP_STORE_ID` after App Store Connect assigns Floorp's numeric Apple ID.
+- [ ] Set `FLOORP_APP_STORE_ID` after the public App Store listing is live.
 - [ ] Replace remaining inherited main-app branding; review extension branding before any extension is restored.
 - [x] Create the `Floorp Internal` TestFlight group and add the initial tester.
 - [ ] Assign an owner and safe client-side value for each external service setting used by the release configuration.

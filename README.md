@@ -1,6 +1,6 @@
 # Floorp for iOS
 
-[![Xcode](https://img.shields.io/badge/Xcode-26.5-blue?logo=Xcode&logoColor=white)]()
+[![Xcode](https://img.shields.io/badge/Xcode-26.3-blue?logo=Xcode&logoColor=white)]()
 [![Swift](https://img.shields.io/badge/Swift-6.2-red?logo=Swift&logoColor=white)]()
 [![iOS](https://img.shields.io/badge/iOS-15.0+-green?logo=apple&logoColor=white)]()
 
@@ -12,7 +12,7 @@ Floorp is a community-driven project that aims to provide a customizable and pri
 
 ### Prerequisites
 
-- **Xcode 26.5** (the canonical version is declared in `.xcode-version`)
+- **Xcode 26.3** (the canonical version is declared in `.xcode-version`)
 - **Node.js 24.18.1** (the canonical version is declared in `.nvmrc`)
 - **Swift Package Manager** (the pinned packages are resolved by Xcode)
 - **SwiftLint 0.62.2** for the pre-push check (`brew install swiftlint`)

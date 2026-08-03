@@ -1,9 +1,11 @@
 Floorp for iOS internal beta
 
-This is the post-rebrand 0.1.0 (2) checkpoint. Test both a clean install and an update from 0.1.0 (1). Confirm the Floorp name and icon on the Home Screen, in the app switcher, and throughout launch, onboarding, Home, Settings, About, and permission prompts. Open the Terms, Privacy, Support, and source/feedback links. Repeat the main paths in English and Japanese.
+This is the 0.1.0 (3) Web panel sidebar parity candidate. Test both a clean install and an update from 0.1.0 (2). Confirm the Floorp name and icon throughout launch and that the sidebar toolbar button has a visible, correctly aligned icon.
 
-Please focus on Floorp Notes: create, edit, delete, and search notes; restart the app and confirm notes persist; and check the readability of saved page text and links. Notes are currently stored on this device and are not included in Sync.
+On iPhone, open and close the overlay drawer with both top and bottom address-bar layouts; the browser address bar must never cover the drawer. On iPad, test the pinned sidebar in portrait, landscape, Split View, resized windows, and right-to-left layout. Open Notes, Bookmarks, History, and Downloads, including empty states and opening an item.
 
-Also smoke-test normal and private browsing, tabs, and settings. Do not use production account credentials until Floorp's account-service ownership is confirmed.
+For Web panels, add, edit, delete, and reorder panels. Test Back, Forward, Home, Reload/Stop, and Find; switch Mobile/Desktop content mode; toggle Block Images; change and reset zoom; Pause/Resume media; and use Unload followed by restore. Hide and reopen the drawer, leave panels hidden long enough for auto-unload, and confirm normal/private data stays isolated across two windows. Repeat key paths in English and Japanese with VoiceOver.
 
-Known limitations: Floorp cannot yet be selected as the default browser because its managed entitlement is not approved. Push and cloud-hosted page summarization are disabled, app extensions are not included in this build, and Rate Floorp is hidden until the App Store listing is configured. On supported devices, Apple Intelligence page summarization remains available on-device.
+Also smoke-test normal and private browsing, tabs, settings, and Floorp Notes persistence. Do not use production account credentials until Floorp's account-service ownership is confirmed.
+
+Known limitations: Floorp cannot yet be selected as the default browser because its managed entitlement is not approved. Push, cloud-hosted page summarization, Quick Answers, and app extensions are disabled. Rate Floorp is hidden until the public App Store listing is live. On supported devices, Apple Intelligence page summarization remains available on-device.

@@ -13,18 +13,20 @@ class SceneDelegate: UIResponder,
                      FeatureFlaggable {
     var window: UIWindow?
 
-    let profile: Profile = AppContainer.shared.resolve()
+    // UIKit can construct a scene while the unit-test host is shutting down, after its container is reset.
+    // Keep container-backed dependencies lazy so the unit-test lifecycle guards can return first.
+    lazy var profile: Profile = AppContainer.shared.resolve()
     lazy var introScreenManager = IntroScreenManager(prefs: profile.prefs)
-    var sessionManager: AppSessionProvider = AppContainer.shared.resolve()
-    var downloadQueue: DownloadQueue = AppContainer.shared.resolve()
-    var windowManager: WindowManager = AppContainer.shared.resolve()
+    lazy var sessionManager: AppSessionProvider = AppContainer.shared.resolve()
+    lazy var downloadQueue: DownloadQueue = AppContainer.shared.resolve()
+    lazy var windowManager: WindowManager = AppContainer.shared.resolve()
 
     var sceneCoordinator: SceneCoordinator?
     var routeBuilder = RouteBuilder()
-    var shareTelemetry: ShareTelemetry = AppContainer.shared.resolve()
+    lazy var shareTelemetry: ShareTelemetry = AppContainer.shared.resolve()
 
     private let logger: Logger = DefaultLogger.shared
-    private let tabErrorTelemetryHelper = TabErrorTelemetryHelper.shared
+    private lazy var tabErrorTelemetryHelper = TabErrorTelemetryHelper.shared
     private var isDeeplinkOptimizationRefactorEnabled: Bool {
         return featureFlagsProvider.isEnabled(.deeplinkOptimizationRefactor)
     }
