@@ -13,6 +13,7 @@ final class MockWindowManager: WindowManager {
     var closePrivateTabsMultiActionCalled = 0
     var overrideWindows = false
     var windowsWereAccessed = false
+    private(set) var allWindowTabManagersCallCount = 0
 
     init(
         wrappedManager: WindowManagerImplementation,
@@ -42,7 +43,8 @@ final class MockWindowManager: WindowManager {
     }
 
     func allWindowTabManagers() -> [TabManager] {
-        wrappedManager.allWindowTabManagers()
+        allWindowTabManagersCallCount += 1
+        return wrappedManager.allWindowTabManagers()
     }
 
     func allWindowUUIDs(includingReserved: Bool) -> [WindowUUID] {

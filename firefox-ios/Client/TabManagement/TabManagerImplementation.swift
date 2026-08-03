@@ -133,7 +133,7 @@ final class TabManagerImplementation: NSObject,
 
         synchronizePrivateBrowsingSessionOwnership()
 
-        GlobalTabEventHandlers.configure(with: profile)
+        GlobalTabEventHandlers.configure(with: profile, windowManager: windowManager)
 
         startObservingNotifications(
             withNotificationCenter: notificationCenter,
