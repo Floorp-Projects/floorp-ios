@@ -44,6 +44,7 @@ final class FloorpPanelPresentationState: NSObject {
     var libraryPanelHost: (any FloorpLibraryPanelHosting)?
     private var browserContentLayoutGuides: FloorpBrowserContentLayoutGuides?
     private var panelWidths = [String: CGFloat]()
+    private var explicitlyUnloadedWebPanelKeys = Set<FloorpWebPanelSessionKey>()
 
     var activeDrawer: FloorpOverlayDrawerViewController? {
         activePresentation as? FloorpOverlayDrawerViewController
@@ -75,6 +76,22 @@ final class FloorpPanelPresentationState: NSObject {
 
     func select(_ panel: FloorpPanel) {
         selectedPanelId = panel.id
+    }
+
+    @discardableResult
+    func markWebPanelExplicitlyUnloaded(_ key: FloorpWebPanelSessionKey) -> Bool {
+        guard key.windowUUID == windowUUID else { return false }
+        return explicitlyUnloadedWebPanelKeys.insert(key).inserted
+    }
+
+    func isWebPanelExplicitlyUnloaded(_ key: FloorpWebPanelSessionKey) -> Bool {
+        key.windowUUID == windowUUID && explicitlyUnloadedWebPanelKeys.contains(key)
+    }
+
+    @discardableResult
+    func clearWebPanelExplicitlyUnloaded(_ key: FloorpWebPanelSessionKey) -> Bool {
+        guard key.windowUUID == windowUUID else { return false }
+        return explicitlyUnloadedWebPanelKeys.remove(key) != nil
     }
 
     func attach(_ presentation: any FloorpPanelPrivacyModePresenting) -> Bool {
@@ -185,9 +202,18 @@ final class FloorpPanelPresentationState: NSObject {
         }
         observesPanelRegistry = false
         panelManager = nil
+        explicitlyUnloadedWebPanelKeys.removeAll()
         activeDrawer?.webPanelRuntimeWillInvalidate()
         webPanelSessionStore?.invalidateAll()
         webPanelSessionStore = nil
+    }
+
+    func reconcileWebPanelRuntime(with panels: [FloorpPanel]) {
+        let retainedPanelIDs = Set(panels.lazy.filter { $0.type == .web }.map(\.id))
+        explicitlyUnloadedWebPanelKeys = explicitlyUnloadedWebPanelKeys.filter {
+            retainedPanelIDs.contains($0.panelID)
+        }
+        webPanelSessionStore?.reconcile(with: panels)
     }
 
     private func closePrivateWebPanelSessionsIfNeeded(
@@ -197,10 +223,14 @@ final class FloorpPanelPresentationState: NSObject {
         guard observedTabManager === tabManager,
               tabManager.windowUUID == windowUUID,
               selectedTabIsPrivate != true,
-              tabManager.privateTabs.isEmpty,
-              webPanelSessionStore?.closePrivateSessions() == true else {
+              tabManager.privateTabs.isEmpty else {
             return
         }
+        let didCloseSessions = webPanelSessionStore?.closePrivateSessions() == true
+        let previousMarkerCount = explicitlyUnloadedWebPanelKeys.count
+        explicitlyUnloadedWebPanelKeys = explicitlyUnloadedWebPanelKeys.filter { !$0.isPrivate }
+        let didClearMarkers = explicitlyUnloadedWebPanelKeys.count != previousMarkerCount
+        guard didCloseSessions || didClearMarkers else { return }
         activePresentation?.privateWebPanelSessionsDidClose(
             selectedTabIsPrivate: selectedTabIsPrivate
         )
@@ -211,7 +241,7 @@ final class FloorpPanelPresentationState: NSObject {
         if activeDrawer == nil {
             invalidateWebPanelWidths()
         }
-        webPanelSessionStore?.reconcile(with: panelManager.panels)
+        reconcileWebPanelRuntime(with: panelManager.panels)
     }
 }
 
@@ -477,7 +507,6 @@ final class FloorpOverlayDrawerViewController:
     private var activeWebPanelSession: (any FloorpWebPanelSessionProtocol)?
     private var webPanelFindController: FloorpWebPanelFindController?
     private var webPanelStateObserverID: UUID?
-    private var explicitlyUnloadedWebPanelKey: FloorpWebPanelSessionKey?
     private var pendingRegistryFallbackIndex: Int?
     private var pendingRegistryFallbackRetryTask: Task<Void, Never>?
     private var pendingRegistryFallbackRetryID: UUID?
@@ -881,7 +910,7 @@ final class FloorpOverlayDrawerViewController:
         super.viewDidLoad()
         setupView()
         setupConstraints()
-        presentationState.webPanelSessionStore?.reconcile(with: panelManager.panels)
+        presentationState.reconcileWebPanelRuntime(with: panelManager.panels)
         buildSidebarButtons()
         if let selectedPanel = presentationState.selectedPanel(in: panelManager.panels) {
             selectPanel(selectedPanel.id)
@@ -1519,6 +1548,9 @@ final class FloorpOverlayDrawerViewController:
         }
         var actions = [UIMenuElement]()
         if panel.type == .web {
+            actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.currentUnloadMenuElements(for: panel.id) ?? [])
+            })
             actions.append(UIAction(
                 title: FloorpStrings.PanelRegistry.edit,
                 image: UIImage(systemName: "pencil"),
@@ -1548,6 +1580,17 @@ final class FloorpOverlayDrawerViewController:
             handler: { [weak self] _ in self?.requestPanelRemoval(id: panel.id) }
         ))
         return UIMenu(children: actions)
+    }
+
+    func currentUnloadMenuElements(for panelID: String) -> [UIMenuElement] {
+        guard activeLoadedWebPanelKey(matching: panelID) != nil else { return [] }
+        return [UIAction(
+            title: FloorpStrings.Drawer.webPanelUnload,
+            image: UIImage(systemName: "rectangle.portrait.and.arrow.right"),
+            handler: { [weak self] _ in
+                _ = self?.performUnloadWebPanelAction(panelID: panelID)
+            }
+        )]
     }
 
     private func displayTitle(for panel: FloorpPanel) -> String {
@@ -1580,14 +1623,33 @@ final class FloorpOverlayDrawerViewController:
                 button.accessibilityTraits.remove(.selected)
             }
         }
+        updateSidebarUnloadAccessibilityActions()
+    }
+
+    private func updateSidebarUnloadAccessibilityActions() {
+        for button in sidebarButtons {
+            guard let panelID = button.accessibilityIdentifier,
+                  activeLoadedWebPanelKey(matching: panelID) != nil else {
+                button.accessibilityCustomActions = nil
+                continue
+            }
+            button.accessibilityCustomActions = [UIAccessibilityCustomAction(
+                name: FloorpStrings.Drawer.webPanelUnload,
+                actionHandler: { [weak self] _ in
+                    self?.performUnloadWebPanelAction(panelID: panelID) == true
+                }
+            )]
+        }
     }
 
     @objc private func sidebarButtonTapped(_ sender: UIButton) {
         guard let panelId = sender.accessibilityIdentifier,
               let panel = panelManager.panel(for: panelId),
               canSelectPanel(panel) else { return }
-        if explicitlyUnloadedWebPanelKey?.panelID == panelId {
-            explicitlyUnloadedWebPanelKey = nil
+        if panel.type == .web {
+            presentationState.clearWebPanelExplicitlyUnloaded(
+                webPanelSessionKey(panelID: panelId, isPrivate: isPrivateProvider())
+            )
         }
         selectPanel(panelId)
         loadCurrentPanel()
@@ -1719,7 +1781,7 @@ final class FloorpOverlayDrawerViewController:
 
     @objc private func panelRegistryDidChange(_ notification: Notification) {
         guard isViewLoaded else { return }
-        presentationState.webPanelSessionStore?.reconcile(with: panelManager.panels)
+        presentationState.reconcileWebPanelRuntime(with: panelManager.panels)
         if case .webPanelContentWidth(let panelID) = notification.floorpPanelRegistryChange {
             presentationState.invalidateWebPanelWidths()
             if let changedPanel = panelManager.panel(for: panelID) {
@@ -1924,12 +1986,8 @@ final class FloorpOverlayDrawerViewController:
             return
         }
 
-        let requestedKey = FloorpWebPanelSessionKey(
-            windowUUID: windowUUID,
-            panelID: panel.id,
-            isPrivate: isPrivate
-        )
-        guard explicitlyUnloadedWebPanelKey != requestedKey else {
+        let requestedKey = webPanelSessionKey(panelID: panel.id, isPrivate: isPrivate)
+        guard !presentationState.isWebPanelExplicitlyUnloaded(requestedKey) else {
             showWebPanelUnloaded()
             return
         }
@@ -1961,6 +2019,7 @@ final class FloorpOverlayDrawerViewController:
             webPanelStateObserverID = session.addStateObserver { [weak self] state in
                 self?.renderWebPanelState(state, expectedKey: sessionKey)
             }
+            updateSidebarUnloadAccessibilityActions()
         } catch {
             showWebPanelUnavailable()
         }
@@ -2002,6 +2061,7 @@ final class FloorpOverlayDrawerViewController:
         webPanelContainerView.isHidden = true
         webPanelContainerView.accessibilityValue = nil
         renderWebPanelToolbarState(nil)
+        updateSidebarUnloadAccessibilityActions()
     }
 
     private func installWebPanelFindController(
@@ -2048,26 +2108,64 @@ final class FloorpOverlayDrawerViewController:
         webPanelFindController = nil
     }
 
-    /// Unloads the attached runtime without leaving stale observer, content,
-    /// or toolbar state behind. A future user-facing action can call this
-    /// boundary without reaching into the window-scoped session store.
+    /// Unloads only the selected, attached runtime matching `panelID` and the
+    /// window's current privacy mode. Menu and accessibility entry points both
+    /// use this boundary so a stale action cannot unload a different session.
     @discardableResult
-    func unloadActiveWebPanel() -> Bool {
-        guard currentPanelType == .web,
-              let session = activeWebPanelSession,
+    func unloadWebPanelIfActive(panelID: String) -> Bool {
+        guard let key = activeLoadedWebPanelKey(matching: panelID),
               let sessionStore = presentationState.webPanelSessionStore else {
             return false
         }
 
-        let key = session.key
         detachWebPanelContent(applyHiddenLifecycle: false)
         guard sessionStore.unloadSession(for: key) else {
             showWebPanelUnavailable()
             return false
         }
 
-        explicitlyUnloadedWebPanelKey = key
+        presentationState.markWebPanelExplicitlyUnloaded(key)
         showWebPanelUnloaded()
+        return true
+    }
+
+    private func activeLoadedWebPanelKey(matching panelID: String) -> FloorpWebPanelSessionKey? {
+        guard currentPanelType == .web,
+              presentationState.selectedPanelId == panelID,
+              panelManager.panel(for: panelID)?.type == .web,
+              let session = activeWebPanelSession,
+              let sessionStore = presentationState.webPanelSessionStore else {
+            return nil
+        }
+        let expectedKey = webPanelSessionKey(
+            panelID: panelID,
+            isPrivate: isPrivateProvider()
+        )
+        guard session.key == expectedKey,
+              sessionStore.cachedSessionKeys.contains(expectedKey) else {
+            return nil
+        }
+        return expectedKey
+    }
+
+    private func webPanelSessionKey(
+        panelID: String,
+        isPrivate: Bool
+    ) -> FloorpWebPanelSessionKey {
+        FloorpWebPanelSessionKey(
+            windowUUID: windowUUID,
+            panelID: panelID,
+            isPrivate: isPrivate
+        )
+    }
+
+    @discardableResult
+    private func performUnloadWebPanelAction(panelID: String) -> Bool {
+        guard unloadWebPanelIfActive(panelID: panelID) else { return false }
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: FloorpStrings.Drawer.webPanelUnloaded
+        )
         return true
     }
 
@@ -2080,8 +2178,10 @@ final class FloorpOverlayDrawerViewController:
             return
         }
         if activeWebPanelSession == nil,
-           explicitlyUnloadedWebPanelKey?.panelID == presentationState.selectedPanelId,
-           explicitlyUnloadedWebPanelKey?.isPrivate == isPrivate {
+           let selectedPanelID = presentationState.selectedPanelId,
+           presentationState.isWebPanelExplicitlyUnloaded(
+               webPanelSessionKey(panelID: selectedPanelID, isPrivate: isPrivate)
+           ) {
             return
         }
         loadCurrentPanel(webPanelPrivacyMode: isPrivate)
@@ -2099,8 +2199,9 @@ final class FloorpOverlayDrawerViewController:
     }
 
     fileprivate func webPanelRuntimeWillInvalidate() {
-        guard activeWebPanelSession != nil else { return }
-        detachWebPanelContent(applyHiddenLifecycle: false)
+        if activeWebPanelSession != nil {
+            detachWebPanelContent(applyHiddenLifecycle: false)
+        }
         if currentPanelType == .web {
             showWebPanelUnavailable()
         }
