@@ -1,131 +1,142 @@
-# Floorp Panel Sidebar parity matrix
+# Floorp Panel Sidebar parity and shipping contract
 
-This document is the completion contract for bringing the Floorp iOS panel
-sidebar to feature parity with Floorp desktop, while preserving native iOS
-behavior. It is a delivery checklist, not a claim that the current iOS
-implementation is complete.
+This document defines the Floorp iOS panel-sidebar feature contract. It keeps
+two questions separate:
 
-## Evidence baseline
+1. Is the behavior implemented and covered by deterministic source-level
+   tests?
+2. Was that behavior exercised on the exact commit and build that will ship?
+
+The first question is recorded here. The second is recorded in
+[the release acceptance checklist](floorp-panel-sidebar-acceptance.md). A green
+unit-test run is not runtime acceptance, and a manual smoke test on a different
+commit is not release evidence.
+
+## Reference and status language
 
 - Desktop reference: Floorp `main` at
   [`410c211c202012631159d1bce1f3ab208305d2b7`](https://github.com/Floorp-Projects/Floorp/commit/410c211c202012631159d1bce1f3ab208305d2b7).
-- iOS audit baseline: Floorp iOS `main` at
-  [`3155bfcd4df80ad4684ef150db718386fe6488d2`](https://github.com/Floorp-Projects/floorp-ios/commit/3155bfcd4df80ad4684ef150db718386fe6488d2).
-- Desktop parity means equivalent user-visible behavior and data semantics.
-  It does not mean copying Gecko/XUL implementation details or desktop pixel
-  dimensions.
+- The candidate source SHA, build number, CI runs, devices, OS versions, and
+  screenshots are intentionally not asserted here. They must be recorded in
+  the acceptance checklist after the release candidate is immutable.
+- Desktop parity means equivalent user-visible behavior and data ownership. It
+  does not mean copying Gecko/XUL internals or desktop pixel dimensions.
 
-Priority and status labels used below:
+### iOS media-playback divergence
 
-- **P0**: required before the sidebar can be considered dependable for daily
-  internal use.
-- **P1**: required for the declared desktop-parity milestone, after the P0
-  lifecycle and web-content foundation is stable.
-- **Platform exclusion**: intentionally outside iOS parity scope.
-- **Implemented**: a user-reachable path exists and has direct test evidence.
-- **Partial**: supporting code exists, but the end-to-end user contract or its
-  verification is incomplete.
-- **Missing**: no user-reachable implementation exists at the audit baseline.
+Floorp desktop can mute a Web panel's audio while playback continues. Public
+WebKit API on iOS instead provides `setAllMediaPlaybackSuspended`, which pauses
+and resumes all audio and video playback together. The iOS action is therefore
+intentionally exposed as **Pause Panel Media** / **Resume Panel Media**, not as
+Mute / Unmute. This pause state belongs only to the loaded panel session and is
+not a persisted desktop-compatible preference.
 
-## P0 completion matrix
+Status terms:
 
-| ID | Required behavior and desktop evidence | Current iOS evidence | Baseline status | Evidence required to mark complete |
+- **Implemented**: a user-reachable implementation and focused automated tests
+  are present in the integration line.
+- **Candidate — final CI pending**: implementation exists in the release
+  candidate work, but must not be described as shipped until its final CI and
+  runtime evidence are recorded.
+- **Architecture implemented — live evidence pending**: the production
+  boundary is present and unit-tested, but a real WebKit fixture is still
+  required to prove the end-to-end contract.
+- **Intentional iOS divergence**: an explicit platform/product boundary. It is
+  not a missing implementation for this milestone.
+
+## Functional implementation status
+
+### P0: dependable daily use
+
+| ID | Contract | Status | Source and deterministic evidence | Remaining release evidence |
 | --- | --- | --- | --- | --- |
-| P0-1 | Maintain one ordered, persistent panel registry with add, edit, delete, and reorder. Desktop persists decoded panel data in [`data/data.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/data/data.ts), adds panels through [`panel-sidebar-modal.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/panel-sidebar-modal.tsx), and reorders them by drag and drop in [`sidebar-panel-button.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/sidebar-panel-button.tsx). | The model already carries identity, type, title, URL, icon, and order in `firefox-ios/Floorp/FloorpPanel.swift:68-87`. `FloorpPanelManager` implements persistent add/remove/update/reorder in `firefox-ios/Floorp/FloorpPanelManager.swift:279-334`. There is no panel-management UI, and the sidebar buttons only select a panel (`FloorpOverlayDrawerViewController.swift:474-528`). | **Partial** | Unit tests must cover add/update/delete/reorder, duplicate and unknown IDs, restart persistence, schema migration, and preserving unknown future fields where applicable. A UI test must add a web panel, edit it, reorder it, relaunch, and delete it without touching built-ins unintentionally. |
-| P0-2 | Keep active-panel selection and loaded-panel state per browser window. Switching or hiding the sidebar must retain the loaded page until an explicit unload or memory policy says otherwise. Desktop models window state as `WindowPanelSidebarState` in [`utils/type.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/utils/type.ts), while browser nodes are retained and selected by [`panel-sidebar.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/panel-sidebar.tsx). | Notifications are routed by `windowUUID` (`firefox-ios/Floorp/BrowserViewController+Floorp.swift:47-52`), but `FloorpPanelManager.shared` holds one globally persisted `selectedPanelId` (`FloorpPanelManager.swift:209-231,349-360`). Closing drops the drawer controller (`BrowserViewController+Floorp.swift:56-69`), and every panel switch clears and reloads content (`FloorpOverlayDrawerViewController.swift:548-572`). | **Missing** | A two-window test must prove independent active panels, visibility, and loaded URLs. Hide/show and panel-switch tests must prove navigation and scroll state survive for each window lifetime. A newly created window must start from a safe default without inheriting normal or private state from another window; process restoration is only required if Floorp later adopts an explicit scene-restoration contract. |
-| P0-3 | A web panel header provides Back, Forward, Reload, Home, Open in Main, Close, and Find. Desktop commands are exposed by [`sidebar-header.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/sidebar-header.tsx), delegated through [`panel-navigator.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/panel-navigator.ts), and page find is owned by [`web-panel-find-controller.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/utils/web-panel-find-controller.ts). | The iOS header has title, Notes add, and close controls only (`FloorpOverlayDrawerViewController.swift:127-163,321-380`). Selecting `.web` displays an unavailable message (`FloorpOverlayDrawerViewController.swift:561-572`). | **Missing** | Controller tests must verify enablement and routing for every command. A web fixture UI test must navigate through at least three pages, exercise back/forward/reload/home, find next/previous, open the exact current URL in the main browser, and close without losing the panel session. VoiceOver labels and hardware-keyboard Find must be covered. |
-| P0-4 | Web panels use the normal Floorp profile's cookies/login session and content-blocking pipeline, while panel navigation never writes to the main browsing-history store. Desktop embeds a real browser with global history disabled in [`web-site-browser.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/browsers/web-site-browser.tsx) and [`website-panel-window-child.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/website-panel-window-child.ts). | No web-content view exists; `.web` is unavailable (`FloorpOverlayDrawerViewController.swift:570-571`). Existing bookmark/history selections instead load the URL into the main selected tab (`BrowserViewController+Floorp.swift:80-86`). | **Missing** | Integration tests must prove a login cookie set in a normal tab is visible in a normal web panel, the active content-blocking policy produces the same result in both surfaces, private and normal data stores remain isolated, and panel-only navigation leaves the profile's main history count and URLs unchanged. Security review must confirm normal URL validation, external-scheme handling, downloads, permissions, and authentication challenges. |
-| P0-5 | Use an adaptive presentation: an overlay drawer on compact iPhone layouts and an iPad pinned, resizable, split-view-ready sidebar where space permits. | Compact layouts retain the modal overlay, while sufficiently wide regular-width iPad layouts embed the same drawer controller as a pinned child. Browser content and chrome use injected full-width and safe-area-intersection guides, the pinned width is adjustable, and live presentation migration retains the active native or web content. `FloorpBrowserChromeLayoutTests`, `FloorpOverlayDrawerPresentationTests`, and `FloorpWebPanelDrawerRuntimeTests` cover resolver thresholds, LTR/RTL geometry, safe-area intersection, resize behavior, migration rollback, and web-session identity. | **Partial** | Add real-BrowserViewController UI evidence for iPad top-bar+pinned and iPhone top/bottom-bar+overlay configurations, plus portrait/landscape, Split View and Stage Manager live resizing, Dynamic Type, and VoiceOver. iPad bottom-bar coverage is not required because the product migrates that preference to its supported top-bar layout. The tests must also prove the address bar cannot overlap either presentation on-device and that repeated size-class changes preserve loaded content. |
-| P0-6 | Loaded web panels survive ordinary hide/show, but support explicit unload, optional automatic unload, memory-warning eviction, and deterministic restoration of the last committed URL/state. Desktop exposes `autoUnload` and explicit unload in [`panel-sidebar.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/panel-sidebar.tsx) and [`sidebar-contextMenu.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/sidebar-contextMenu.tsx). | `panelLoadTask` is cancelled on replacement/deinit (`FloorpOverlayDrawerViewController.swift:79-88,246-249,548-550`), but there is no loaded web panel, explicit/automatic unload policy, memory-warning handler, state snapshot, or restoration path. | **Missing** | Deterministic lifecycle tests must distinguish hide, explicit unload, automatic unload, memory warning, window close, and process restoration. Tests must verify that eligible panels release their web views, reload the last committed URL once, do not duplicate requests, and never restore private content into a normal window. A memory profile must demonstrate that evicted web views are actually released. |
-| P0-7 | Ship first-class Notes, Bookmarks, History, and Downloads panels. Desktop defines these built-ins in [`data/static-panels.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/data/static-panels.ts). | All four types and defaults exist (`firefox-ios/Floorp/FloorpPanel.swift:21-31,91-129`). The drawer loads each built-in (`FloorpOverlayDrawerViewController.swift:561-676`); Places/download access is in `FloorpPanelManager.swift:42-200`. Presentation regression tests exist at `firefox-ios/firefox-ios-tests/Tests/ClientTests/FloorpNotesTests.swift:1187-1341`. | **Implemented baseline; parity verification incomplete** | Add stable UI smoke paths for all four panels on iPhone and iPad, including empty/error states, opening items, destructive actions, relaunch, multiwindow routing, Dynamic Type, VoiceOver, and RTL. These tests must run in the release test plan; source presence alone is insufficient. |
+| P0-1 | Maintain one ordered, profile-persistent registry with add, edit, remove, restore, and reorder UI. | **Implemented** | [`FloorpPanelManager.swift`](../firefox-ios/Floorp/FloorpPanelManager.swift) owns validated CRUD, ordering, optimistic revisions, migration, and future-schema read-only behavior. [`FloorpPanelRegistryViewController.swift`](../firefox-ios/Floorp/FloorpPanelRegistryViewController.swift) exposes add/edit/reorder/remove/restore through touch, context menus, and accessibility actions. `FloorpPanelManagerRegistryTests`, `FloorpWebPanelValidatorTests`, and `FloorpPanelRegistryUIHelperTests` are in [`FloorpNotesTests.swift`](../firefox-ios/firefox-ios-tests/Tests/ClientTests/FloorpNotesTests.swift). | On the final build, add, edit, reorder, relaunch, remove, and restore a panel without damaging built-ins. |
+| P0-2 | Keep active selection, loaded Web views, and private/normal state scoped to one browser window. Ordinary hide/show and panel switches retain the session. | **Implemented** | [`BrowserViewController+Floorp.swift`](../firefox-ios/Floorp/BrowserViewController+Floorp.swift) associates a presentation state with each browser controller. [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift) owns window-local selection and attachment. [`FloorpWebPanelSessionStore.swift`](../firefox-ios/Floorp/FloorpWebPanelSessionStore.swift) keys sessions by window, panel, and privacy mode. Coverage includes `testSessionKeysSeparateWindowsAndPrivacyModes`, `testRegularAndPrivateSessionsSurviveDrawerHideAndRemainSeparated`, and `testWindowAssociationTeardownInvalidatesAndRemovesRuntimeState` in [`FloorpWebPanelRuntimeTests.swift`](../firefox-ios/firefox-ios-tests/Tests/ClientTests/FloorpWebPanelRuntimeTests.swift). | Exercise two windows and both privacy modes on the final build, including hide/show and panel switching without an unintended reload. |
+| P0-3 | Provide Back, Forward, Reload/Stop, Home, Open in Main, Close, and Find for a Web panel. | **Implemented** | The toolbar, command enablement, keyboard commands, and main-browser handoff are in [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift). Find uses [`FloorpWebPanelFindController.swift`](../firefox-ios/Floorp/FloorpWebPanelFindController.swift) and native `WKFindInteraction` where available. Coverage includes `testWebPanelToolbarTracksStateAndDispatchesCommands`, `testFindToolbarIsDiscoverableAndClearsWhenSwitchingPanels`, `testOpenInMainBrowserDismissesDrawerAndPreservesSessionForReopen`, and `FloorpWebPanelFindControllerTests`. | Run all commands against a multi-page local fixture; record Cmd-F, next/previous, Escape, and VoiceOver behavior. |
+| P0-4 | Use the normal/private Floorp WebKit profile boundary and content-blocking pipeline without writing panel navigation to the main browsing-history store. | **Architecture implemented — live evidence pending** | [`FloorpWebPanelWebViewSession.swift`](../firefox-ios/Floorp/FloorpWebPanelWebViewSession.swift) creates an isolated `TabWebView` with the shared normal configuration or a leased private session. It does not create a main-browser `Tab` or call the history manager. [`FloorpWebPanelContentRules.swift`](../firefox-ios/Floorp/FloorpWebPanelContentRules.swift) installs `FirefoxTabContentBlocker` rules before first load. Block Images reads and observes the live profile preference, applies the same document-start/all-frame CSS contract as a normal tab without replacing unrelated scripts, refreshes loaded regular/private sessions once, and re-reads the preference after unload. Coverage includes `testConfigurationUsesSharedDefaultAndPrivateDataStores`, `testInitialLoadWaitsForContentRules`, `testNoImageModeScriptMatchesNormalTabContractAndPreservesForeignScripts`, `testDefaultFactoryAdapterReadsLiveProfileImageBlockingPreference`, `testImageBlockingPreferenceChangeRefreshesRegularAndPrivatePanelsExactlyOnce`, and `testRecreatedSessionReadsLatestImageBlockingPreferenceAfterUnload` in [`FloorpWebPanelWebViewSessionTests.swift`](../firefox-ios/firefox-ios-tests/Tests/ClientTests/FloorpWebPanelWebViewSessionTests.swift). | A live local HTTPS fixture must prove shared normal cookies/login, private isolation, equivalent blocking and Block Images behavior, and no main-history additions. This row remains open until that artifact is recorded. |
+| P0-5 | Use an overlay on compact iPhone layouts and a pinned, resizable sidebar on sufficiently wide regular iPad layouts without address-bar overlap. | **Implemented** | [`FloorpAdaptivePanelPresentation.swift`](../firefox-ios/Floorp/FloorpAdaptivePanelPresentation.swift) resolves the presentation mode. The same drawer controller migrates between modes, preserving content identity. `FloorpBrowserChromeLayoutTests` and `FloorpOverlayDrawerPresentationTests` are in [`FloorpNotesTests.swift`](../firefox-ios/firefox-ios-tests/Tests/ClientTests/FloorpNotesTests.swift); `testAdaptivePresentationMigrationPreservesLoadedWebPanelSessionAndContent` is in [`FloorpWebPanelRuntimeTests.swift`](../firefox-ios/firefox-ios-tests/Tests/ClientTests/FloorpWebPanelRuntimeTests.swift). [`FloorpAdaptiveSidebarUITests.swift`](../firefox-ios/firefox-ios-tests/Tests/XCUITests/FloorpAdaptiveSidebarUITests.swift) covers iPhone top/bottom address bars, iPad orientation migration, resizing, and RTL. | Attach the final iPhone and iPad UI-test run URLs and their screenshots. Also record the supported Split View size used for acceptance. |
+| P0-6 | Retain normal sessions, support explicit unload and optional auto-unload, evict only inactive sessions under memory pressure, and restore only a safe last URL. | **Implemented** | Explicit-unload markers and UI live in [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift). Auto-unload configuration and persistence live in [`FloorpPanelManager.swift`](../firefox-ios/Floorp/FloorpPanelManager.swift). LRU, memory-pressure eviction, and privacy-scoped restoration snapshots live in [`FloorpWebPanelSessionStore.swift`](../firefox-ios/Floorp/FloorpWebPanelSessionStore.swift). Coverage includes `testActiveExplicitUnloadDetachesRuntimeUntilSelectedAgain`, `testAutoUnloadRestoresLastSafeURLAfterPanelSwitchAndDrawerHide`, `testMemoryPressureEvictsOnlyInactiveSessionsAndRestoresSafeLatestURLs`, `testRegularLRUAllowsVisibleOverflowUntilASessionIsHidden`, and `testMemoryWarningObservationIsIdempotentAndPreservesExplicitUnloadMarkers`. | Verify the visible panel is retained, inactive Web views are released, and explicit/auto/memory unload restores the expected URL once on the final build. |
+| P0-7 | Ship first-class Notes, Bookmarks, History, and Downloads panels. | **Implemented** | Defaults are in [`FloorpPanel.swift`](../firefox-ios/Floorp/FloorpPanel.swift). [`FloorpLibraryPanelHost.swift`](../firefox-ios/Floorp/FloorpLibraryPanelHost.swift) embeds the native Library stacks while [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift) hosts Notes. `FloorpLibraryPanelHostTests`, `FloorpNativeLibraryDrawerTests`, and the Notes suites cover state retention, window routing, edits, search, reorder, and failure paths. | Smoke all four panels on iPhone and iPad, including empty/error states and opening an item, on the final build. |
 
-## P1 completion matrix
+### P1: desktop-equivalent panel affordances
 
-| ID | Required behavior and desktop evidence | Current iOS evidence | Baseline status | Evidence required to mark complete |
+| ID | Contract | Status | Source and deterministic evidence | Remaining release evidence |
 | --- | --- | --- | --- | --- |
-| P1-1 | Display a stable built-in icon and a fetched favicon or user-selected icon for web panels. Desktop resolves favicons in [`favicon-getter.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/utils/favicon-getter.ts) and renders them in [`sidebar-panel-button.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/sidebar-panel-button.tsx). | Built-ins map to SF Symbols and unknown icon names fall back to `square.dashed` (`firefox-ios/Floorp/FloorpPanel.swift:36-58`; `FloorpOverlayDrawerViewController.swift:485-505`). There is no web favicon acquisition/cache or image-backed custom icon model. | **Partial** | Unit tests must cover priority, validation, cache invalidation, fallback, and corrupt/oversized images. A UI test must prove favicon updates do not reorder panels or cause layout jumps and remain legible in light/dark and selected states. |
-| P1-2 | Persist a per-panel content width and restore it when switching panels. Desktop stores `width` on each panel in [`utils/type.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/utils/type.ts) and applies/persists it in [`panel-sidebar.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/panel-sidebar.tsx). | Web-panel preferences persist a validated content width with revision-aware updates and restore it across drawer and process recreation. Pinned resize uses that value per web panel, preserves the wider preference while a narrow window temporarily clamps it, and invalidates stale per-window caches after registry changes. Built-in panels currently retain independent widths only for the browser-window lifetime. | **Partial** | Add relaunch persistence for built-in widths or explicitly document them as a platform-specific non-persistent preference. Add real iPad resize evidence across panel switches, relaunch, Split View/Stage Manager transitions, Dynamic Type, and VoiceOver adjustable actions. |
-| P1-3 | Persist per-web-panel zoom with increase, decrease, and reset. Desktop applies and saves zoom in [`web-panel-browser.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/utils/web-panel-browser.ts) and [`website-panel-window-parent.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/website-panel-window-parent.ts). | No zoom field or web view exists in the iOS Floorp panel model/controller. | **Missing** | Unit tests must cover bounded steps, reset, migration, and independent values. A rendered-page test must verify visual scale and persistence after unload/reload without changing the main tab's page zoom. |
-| P1-4 | Toggle Request Desktop Site / Request Mobile Site per web panel and reload using that choice. Desktop persists a `userAgent` flag and reloads the panel in [`panel-sidebar.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/panel-sidebar.tsx). | No per-panel content-mode field or action exists. | **Missing** | A local fixture must assert the effective user agent/content mode before and after toggling, across reload, panel switch, unload, and relaunch. The setting must remain panel-scoped and use the same compatibility policy as main browsing. |
-| P1-5 | Long-pressing a panel button exposes applicable actions without making pointer input mandatory. Desktop provides a panel context menu in [`sidebar-contextMenu.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/components/sidebar-contextMenu.tsx). | Sidebar buttons only install a tap target (`FloorpOverlayDrawerViewController.swift:485-505`). Row swipe deletion at `FloorpOverlayDrawerViewController.swift:1103-1145` is item deletion, not panel management. | **Missing** | Interaction tests must cover long press, iPad pointer/context menu, hardware keyboard where applicable, and equivalent VoiceOver custom actions. Availability must be type/state-aware, and destructive panel deletion must require confirmation. |
-| P1-6 | Find text inside the currently loaded web panel, including next, previous, close, and hardware-keyboard commands. Desktop owns this separately from list filtering in [`web-panel-find-controller.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/chrome/common/panel-sidebar/utils/web-panel-find-controller.ts). | The current search field filters native list items (`firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift:165-180,808-826`); it cannot search web-page content. | **Missing** | Web fixture tests must cover zero/one/multiple matches, next/previous wrap, dynamic-page changes, case behavior, keyboard avoidance, Cmd-F/Escape, VoiceOver announcements, and teardown on unload. List filtering must remain unchanged for built-ins. |
+| P1-1 | Show stable built-in icons and a stable user-selected icon for each Web panel. | **Implemented with an intentional iOS choice** | [`FloorpPanel.swift`](../firefox-ios/Floorp/FloorpPanel.swift) defines a curated, validated SF Symbols allow-list and safe fallback. [`FloorpPanelRegistryViewController.swift`](../firefox-ios/Floorp/FloorpPanelRegistryViewController.swift) exposes the localized icon picker. `testEnforcesTitleAndIconPolicy` and `testIconPickerUsesHumanReadableLocalizedNames` cover validation and UI mapping. iOS does not fetch favicons or contact a third-party favicon service. | Confirm every curated icon renders in light/dark mode and remains stable after relaunch. |
+| P1-2 | Retain a useful width for each panel. | **Implemented with an intentional persistence split** | `FloorpWebPanelPreferences.contentWidth` in [`FloorpPanel.swift`](../firefox-ios/Floorp/FloorpPanel.swift) persists each Web panel's validated width. Built-in panel widths remain independent only for the browser-window lifetime in `FloorpPanelPresentationState`. Coverage includes `testPreferencesRemainIndependentPerWebPanelAcrossRestart`, `testStoredWidthClampsToModelBoundsWhilePresentationOwnsAvailableWidthClamp`, `testPinnedWebPanelResizePersistsWithoutReplacingWideWindowPreference`, and `testClosedWindowStateReloadsWebPanelWidthAfterRegistryChange`. | Resize Web and built-in panels, switch between them, relaunch, and verify the documented persistence split. |
+| P1-3 | Persist per-Web-panel zoom with bounded increase, decrease, and reset actions. | **Implemented** | The model and persistence are in [`FloorpPanel.swift`](../firefox-ios/Floorp/FloorpPanel.swift) and [`FloorpPanelManager.swift`](../firefox-ios/Floorp/FloorpPanelManager.swift); the WebView applies `pageZoom` in [`FloorpWebPanelWebViewSession.swift`](../firefox-ios/Floorp/FloorpWebPanelWebViewSession.swift). Menu and VoiceOver actions are in [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift). Coverage includes `testZoomUsesBoundedNativeStepsAndResetWithoutNoOpNotification`, `testZoomIsAppliedBeforeInitialNavigationAndUpdatesInPlaceOnlyWhenChanged`, `testZoomMenuAndVoiceOverActionsRespectBoundsAndReset`, and `testPersistedZoomAppliesWhenAutoUnloadRecreatesSession`. | Verify visible scale and persistence after panel switch, unload, and relaunch without changing main-tab zoom. |
+| P1-4 | Persist Request Desktop Site / Request Mobile Site per Web panel and reload safely. | **Candidate — final CI pending** | [`FloorpWebPanelNavigationExecutor.swift`](../firefox-ios/Floorp/FloorpWebPanelNavigationExecutor.swift) applies `WKWebpagePreferences.preferredContentMode` and the app's domain-aware `UserAgent` only to allowed main-frame HTTP(S) navigation; exact `about:blank` participates in navigation lifecycle tracking without receiving HTTP content-mode overrides. [`FloorpWebPanelWebViewSession.swift`](../firefox-ios/Floorp/FloorpWebPanelWebViewSession.swift) uses one identity-bound arbiter for content-mode, Block Images, and manual reload reasons. It coalesces overlapping work, retires success/failure for the matching navigation (including `about:blank`), and retries a nil or failed reload only after an explicit trigger. The selected Mobile/Desktop mode persists per Web panel and propagates to loaded sessions in every window. Focused coverage includes `testMainFrameContentModeAppliesPreferredModeAndDomainUserAgent`, `testAboutBlankTracksLifecycleWithoutApplyingHTTPContentMode`, `testAboutBlankManualAndImageReloadsRetireUnifiedArbiter`, `testHiddenContentAndImageChangesCoalesceIntoOneOriginReload`, `testFailedContentReloadDoesNotRetryFromKVOUntilExplicitRequest`, and `testContentModeMenuUpdatesEveryWindowInPlaceAndClosesFindBeforeReload`. | Final CI must include all registered content-mode and reload-arbiter tests. A fixture must report the effective mode/UA before and after switching, hiding, unloading, and relaunching, and must exercise manual/content-mode/Block Images reloads on HTTP(S) and exact `about:blank`. |
+| P1-5 | Expose state-aware panel actions through touch context menus and an equivalent non-pointer accessibility route. | **Implemented** | Sidebar buttons receive state-aware `UIMenu` content in [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift), including edit, move, remove, unload, content mode, and zoom. The same active-session actions are exposed as VoiceOver custom actions. Registry rows also expose context menus and accessibility actions in [`FloorpPanelRegistryViewController.swift`](../firefox-ios/Floorp/FloorpPanelRegistryViewController.swift). | Exercise long press, iPad pointer, destructive confirmation, and VoiceOver actions on the final build. |
+| P1-6 | Find text in the loaded Web panel with next, previous, close, and hardware-keyboard commands. | **Implemented** | [`FloorpWebPanelFindController.swift`](../firefox-ios/Floorp/FloorpWebPanelFindController.swift) owns native/fallback find and request serialization. The drawer installs it only for the active Web session and removes it on switch/unload. `FloorpWebPanelFindControllerTests`, `testFindToolbarIsDiscoverableAndClearsWhenSwitchingPanels`, and default-runtime find tests cover the lifecycle. | Use a dynamic fixture with zero, one, and multiple matches; record wrap, keyboard avoidance, Cmd-F, Escape, and VoiceOver announcements. |
+| P1-7 | Pause/resume all media in the active Web panel without persisting that state or affecting a replacement/private session. | **Candidate — final CI pending; intentional iOS divergence** | The candidate adds session-local `isUserMediaPaused` state and reversible native `setAllMediaPlaybackSuspended` transitions in [`FloorpWebPanelWebViewSession.swift`](../firefox-ios/Floorp/FloorpWebPanelWebViewSession.swift). [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift) exposes Pause Panel Media / Resume Panel Media through deferred menus and VoiceOver actions bound to the exact session identity, privacy mode, state, and revision. Transitions coalesce safely, roll back on native failure, withstand reentrant or late completions, and cannot let hidden-session retries override the newest user intent. Coverage includes `testExplicitMediaPauseAndVisibilityShareOneReversibleSuppressionState`, `testDelayedMediaPauseChangesCoalesceToLatestIntent`, `testOldPauseAndHiddenRetryFailuresCannotRollbackNewestResumeIntent`, `testMediaPauseMenuAndVoiceOverTogglePreserveActiveRuntime`, and `testStaleMediaPauseActionsCannotAffectReplacementPrivacyOrNewerState`. The pause state resets when the loaded session unloads or is recreated. | Final CI must include every registered media-pause test. Verify with an audible/video local fixture that Pause stops all playback and Resume continues it; do not record this as audio-only mute parity. |
 
-## Floorp Notes parity matrix
+## Notes status within the sidebar
 
-Notes parity is part of the sidebar milestone, not a separate exception. The
-desktop reference UI and data behavior live under
-[`browser-features/pages-notes`](https://github.com/Floorp-Projects/Floorp/tree/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes).
+Notes is a first-class built-in panel. Its local editing contract is separate
+from the release-gated network transport.
 
-| ID | Required behavior and desktop evidence | Current iOS evidence | Baseline status | Evidence required to mark complete |
-| --- | --- | --- | --- | --- |
-| N-1 | Create, select, delete with confirmation, and search title plus full content. Desktop implements these flows in [`App.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/App.tsx), [`NoteList.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/components/notes/NoteList.tsx), and [`NoteSearch.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/components/notes/NoteSearch.tsx). | iOS exposes add/open/delete in `FloorpOverlayDrawerViewController.swift:667-703,829-910,1080-1082,1152-1179`. Search uses the full projected note content, not only the 160-character preview (`FloorpOverlayDrawerViewController.swift:686-700`; `FloorpPanel.swift:176-183`). Search normalization has unit coverage in `FloorpNotesTests.swift:1382-1398`. | **Implemented baseline; UI verification incomplete** | One UI test must create, select, edit, search beyond the preview, cancel/confirm deletion, relaunch, and verify persistence. Repeat the smoke path in English and Japanese and verify VoiceOver focus after creation/deletion. |
-| N-2 | Reorder notes, including a filtered subset, and persist the resulting complete order. Desktop drag reorder is implemented in [`NoteList.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/components/notes/NoteList.tsx) and merged into full order by [`App.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/App.tsx). | The store can reorder known IDs while preserving omitted notes (`firefox-ios/Floorp/FloorpNotes.swift:620-632`) and has unit coverage (`FloorpNotesTests.swift:469-493`). No reorder UI calls it. | **Partial** | UI and store tests must cover full and filtered reorder, duplicate/unknown IDs, cancellation, accessibility reorder actions, concurrent external changes, and restart persistence. |
-| N-3 | Autosave title/content changes and show idle, saving, saved, and error status without losing edits during overlapping writes or lifecycle changes. Desktop coordinates and flushes saves in [`App.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/App.tsx). | iOS debounces autosave, displays save state, saves on close/background, serializes first and overlapping saves, and offers conflict recovery (`firefox-ios/Floorp/FloorpNoteEditorViewController.swift:103-298,345-376,594-711,714-858`). Deterministic coordinator/store tests are in `FloorpNotesTests.swift:633-1166`. | **Implemented baseline; UI verification incomplete** | UI tests must visibly exercise saving/saved/error/retry, background/foreground, dismiss gestures, and two-window conflict recovery. The existing deterministic tests must stay in `FloorpCI`. |
-| N-4 | Edit desktop-compatible rich text: headings H1-H3, bold, italic, underline, strike-through, ordered/unordered lists, alignment, undo/redo, and images. Desktop extensions and image ingestion are in [`RichTextEditor.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/components/editor/RichTextEditor.tsx), commands are in [`Toolbar.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/components/editor/Toolbar.tsx), and image safety/resizing is in [`ResizableImage.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/components/editor/ResizableImage.tsx). | The iOS editor is a plain `UITextView` (`FloorpNoteEditorViewController.swift:403-417`). Rich TipTap/Lexical content is projected read-only or requires explicit lossy conversion (`FloorpNoteEditorViewController.swift:345-348,511-516,684-710`). Source preservation and projection exist, but rich editing does not. | **Missing** | Round-trip fixtures for every mark/node and mixed nested documents must compare semantic JSON and preserve unknown nodes byte-for-byte until an explicit supported edit. UI tests must cover toolbar state, selection, keyboard shortcuts, undo grouping, paste/drop/photo insertion, image compression/orientation/size limits, Dynamic Type, and VoiceOver. |
-| N-5 | Round-trip the desktop parallel-array payload through Firefox Sync and resolve concurrent changes with a deterministic three-way merge, including delete-vs-edit and conflict copies. Desktop payload and merge behavior are in [`dataManager.ts`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/lib/dataManager.ts), with pref-change coordination in [`App.tsx`](https://github.com/Floorp-Projects/Floorp/blob/410c211c202012631159d1bce1f3ab208305d2b7/browser-features/pages-notes/src/App.tsx). | `FloorpNotesDesktopPayload` decodes/normalizes the desktop parallel arrays (`firefox-ios/Floorp/FloorpNotes.swift:89-175`), and the store exports them (`FloorpNotes.swift:634-647`). The store explicitly remains local-only because the inherited iOS Sync manager exposes no compatible preferences engine (`FloorpNotes.swift:482-487`). There is no production transport, tombstone/base state, or three-way merge. | **Partial adapter; Sync missing** | Shared desktop/iOS fixtures must round-trip IDs, order, timestamps, rich content, unknown nodes, and legacy missing arrays. Pure merge tests must cover first sync, one-sided edits, concurrent edits, delete-vs-unchanged, delete-vs-edit, clock ties, duplicate IDs, reordered lists, retry/idempotence, and conflict-copy naming. End-to-end evidence must use a real supported Firefox Sync engine/record contract, pass two-device offline tests, and document privacy, retention, authentication, and rollout ownership before enabling production traffic. |
+| Area | Functional status | Evidence and boundary |
+| --- | --- | --- |
+| CRUD, search, reorder, and autosave | **Implemented** | [`FloorpNotes.swift`](../firefox-ios/Floorp/FloorpNotes.swift), [`FloorpOverlayDrawerViewController.swift`](../firefox-ios/Floorp/FloorpOverlayDrawerViewController.swift), and [`FloorpNoteEditorViewController.swift`](../firefox-ios/Floorp/FloorpNoteEditorViewController.swift). `FloorpNotesStoreTests`, `FloorpNotesInteractionControllerTests`, `FloorpNoteEditorInteractionTests`, and save-coordinator tests cover persistence, conflicts, filtered reorder, focus, and retry. |
+| Desktop-compatible rich editing | **Implemented** | [`FloorpRichTextDocument.swift`](../firefox-ios/Floorp/FloorpRichTextDocument.swift) and [`FloorpNoteEditorViewController.swift`](../firefox-ios/Floorp/FloorpNoteEditorViewController.swift) support H1-H3, bold, italic, underline, strike, lists, alignment, undo/redo, and bounded image import while preserving unsupported source safely. `FloorpRichTextWebEditorViewTests` and `FloorpRichTextDocumentTests` provide executable round-trip and safety coverage. |
+| Deterministic merge and transport boundary | **Implemented but network-disabled** | [`FloorpNotesSync.swift`](../firefox-ios/Floorp/FloorpNotesSync.swift) contains the Application Services adapter contract, deterministic merge/runner, and an explicit release gate. `FloorpNotesSyncTests` covers conflicts, retries, limits, cancellation, commit ordering, and the shared fixture. `FloorpNotesSyncReleaseGate.currentRuntimeEvidence` intentionally evaluates to false because the coordinated desktop contract and linked transport evidence are absent. No Notes network request is authorized by this milestone. |
 
-## Platform exclusions
+## Intentional iOS divergences and security boundary
 
-The following desktop behaviors do not block iOS parity. They must not be
-silently reintroduced as dependencies of an included item.
+These decisions are part of the shipping contract and must not be described as
+accidental omissions:
 
-| Excluded desktop behavior | iOS boundary |
-| --- | --- |
-| Gecko XUL/chrome/about-page internals | Implement with supported UIKit, WebKit, BrowserKit, and application services. Match behavior and data contracts, not privileged DOM structure. |
-| Browser Manager and Floorp OS panels | Do not ship these panels on iOS in this milestone. Their absence must not leave blank buttons or invalid persisted registry entries. |
-| Extension sidebars | iOS extensions do not receive a desktop-style arbitrary sidebar surface. Do not expose placeholder extension panels. |
-| Firefox containers / desktop `userContextId` | Web panels use the correct normal or private iOS profile store. Per-panel desktop container identities are outside scope. |
-| Free-floating mouse-positioned panel windows | Use the adaptive iPhone overlay and iPad pinned/resizable presentation. Do not reproduce desktop floating coordinates. |
-| Desktop fixed pixel dimensions | Use size classes, safe areas, Dynamic Type, Split View, and Stage Manager constraints. Desktop pixel values are reference proportions only. |
-| Add-ons, Passwords, and Settings as sidebar panels | Continue using their native iOS destinations. They are not panel-registry entries for this milestone. |
+- Web-panel navigation accepts HTTP, HTTPS, and exact `about:blank` only.
+  [`FloorpWebPanelNavigationPolicy.swift`](../firefox-ios/Floorp/FloorpWebPanelNavigationPolicy.swift)
+  cancels credential-bearing/invalid URLs and other schemes. A safe,
+  user-initiated new-window request is handed to the owning main browser and
+  privacy mode.
+- Downloads, file pickers, media-permission prompts, and HTTP authentication
+  are main-browser boundaries. The embedded panel does not promise those
+  privileged workflows; the user opens the page in the main browser to perform
+  them.
+- Normal Web panels use the normal profile WebKit store; private panels use the
+  private-session coordinator. Desktop containers and `userContextId` do not
+  exist on iOS, so per-panel container identities are excluded.
+- Registry data and Web preferences survive process restart. Active selection,
+  loaded Web views, restoration snapshots, explicit-unload markers,
+  media-pause state, and built-in widths are browser-window-lifetime state.
+  Process restoration
+  is excluded until Floorp adopts an explicit iOS scene-restoration contract.
+- Web-panel icons are user-selected curated SF Symbols. Automatic favicon
+  acquisition and third-party favicon services are excluded.
+- Web-panel width persists per Web panel. Built-in panel width lasts for the
+  current browser window only.
+- Notes remains local unless the explicit network release gate has exact
+  desktop, fixture, and linked Application Services evidence. The merge code
+  alone never enables network traffic.
+- Browser Manager, Floorp OS panels, extension sidebars, desktop containers,
+  free-floating panel windows, and desktop process-restoration semantics are
+  outside this iOS milestone.
+- Add-ons, Passwords, and Settings continue to use native iOS destinations
+  rather than becoming panel-registry entries.
 
-## Implementation order
+## Shipping rule
 
-Each step should be independently reviewable and leave the existing four
-built-ins usable. Later steps must not bypass earlier lifecycle boundaries.
+The functional matrix may be updated when code and focused tests land, but the
+sidebar may be declared release-accepted only when:
 
-1. **Freeze state ownership and schemas.** Separate the profile-scoped ordered
-   registry from window-scoped presentation/session state. Add versioned,
-   migration-tested models before adding web views.
-2. **Complete registry UX.** Add, validate, edit, reorder, and delete web panels;
-   make built-in deletion policy explicit; add restart and accessibility tests.
-3. **Introduce the web-panel runtime.** Build one injectable web-content session
-   abstraction using the normal/private Floorp profile pipeline, navigation
-   policy, content blocking, and history suppression. Prove the cookie,
-   isolation, and no-main-history invariants before exposing more controls.
-4. **Retain sessions per window.** Preserve active panel, committed URL,
-   navigation state, and view state across switch/hide operations; add two-window
-   and restoration tests.
-5. **Add the complete header and Find.** Wire Back, Forward, Reload, Home, Open
-   in Main, Close, Find next/previous, accessibility actions, and keyboard
-   commands to the retained session.
-6. **Make presentation adaptive.** Keep compact-width overlay behavior and add
-   the pinned/resizable iPad path. Verify live size-class transitions without
-   reloading content.
-7. **Add unload and memory recovery.** Implement explicit unload first, then
-   auto-unload and memory-warning eviction with testable restoration snapshots
-   and private-state boundaries.
-8. **Finish P1 web affordances.** Add favicon/custom icon handling, per-panel
-   width, zoom, desktop/mobile content mode, and long-press/pointer/VoiceOver
-   menus with migrations and focused tests.
-9. **Finish local Notes interaction parity.** Expose persistent accessible
-   reorder and close the N-1/N-3 UI-test gaps before changing the editor format.
-10. **Add rich Notes editing.** Adopt a versioned TipTap-compatible document
-    boundary, implement every N-4 command and image constraint, and prove
-    lossless desktop fixture round trips.
-11. **Add Notes Sync deliberately.** Land the pure three-way merge and fixtures,
-    then the supported Firefox Sync transport and rollout/privacy contract.
-    Keep Sync disabled until the end-to-end two-device evidence passes.
-12. **Run the completion gate and internal release.** Re-audit every non-excluded
-    matrix row against code, tests, and runtime evidence; run `FloorpCI`, iPhone
-    and iPad UI suites, multiwindow/private-data checks, memory profiling, and
-    accessibility/localization smoke tests. Only then upload the signed build to
-    Internal TestFlight and record its build number and verification result.
+1. every candidate row is present in the recorded candidate source SHA;
+2. required CI jobs succeed for that source SHA;
+3. the live P0-4 fixture contract passes;
+4. device, OS, accessibility, localization, and screenshot evidence is entered
+   in [the acceptance checklist](floorp-panel-sidebar-acceptance.md); and
+5. the recorded candidate source SHA is the source used for the evaluated
+   Internal TestFlight build.
 
-## Completion rule
+Any unfilled required field remains **pending**. Do not infer acceptance from a
+different branch, earlier TestFlight build, source inspection, or a similar CI
+workflow.
 
-The sidebar milestone is complete only when every P0, P1, and Notes row has the
-listed acceptance evidence, every platform exclusion remains intentional, and
-the resulting commit is the one shipped to Internal TestFlight. A green build,
-an API without reachable UI, or a narrow unit test does not by itself satisfy a
-row.
+An Internal TestFlight candidate may be uploaded before manual acceptance is
+complete, solely to collect the runtime evidence above. Uploading, processing,
+or installing that candidate does not change its acceptance status. While any
+required acceptance evidence is pending, its distribution status must remain
+**Internal evidence collection only**: assign it only to **Floorp Internal** and
+do not enable any external tester group, public link, Beta App Review, App Store
+submission, or public release.

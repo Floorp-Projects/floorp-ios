@@ -178,6 +178,66 @@ enum FloorpStrings {
             }
         }
 
+        static let webPanelPauseMedia = NSLocalizedString(
+            "Floorp.Drawer.WebPanelPauseMedia.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Pause Panel Media",
+            comment: "Action that pauses all media in the selected custom web panel"
+        )
+
+        static let webPanelResumeMedia = NSLocalizedString(
+            "Floorp.Drawer.WebPanelResumeMedia.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Resume Panel Media",
+            comment: "Action that resumes all media in the selected custom web panel"
+        )
+
+        static let webPanelMediaPausedState = NSLocalizedString(
+            "Floorp.Drawer.WebPanelMediaPausedState.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Media paused",
+            comment: "VoiceOver state for a custom web panel whose media is paused"
+        )
+
+        static let webPanelMediaPlaybackErrorTitle = NSLocalizedString(
+            "Floorp.Drawer.WebPanelMediaPlaybackErrorTitle.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Couldn’t Change Panel Media Playback",
+            comment: "Title shown when a Web panel media pause or resume request fails"
+        )
+
+        static let webPanelMediaPlaybackErrorMessage = NSLocalizedString(
+            "Floorp.Drawer.WebPanelMediaPlaybackErrorMessage.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "The panel’s media playback state was not changed. Try again.",
+            comment: "Message shown when a Web panel media pause or resume request fails"
+        )
+
+        private static let webPanelMediaPausedAnnouncement = NSLocalizedString(
+            "Floorp.Drawer.WebPanelMediaPausedAnnouncement.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Web panel media paused",
+            comment: "VoiceOver announcement after pausing all media in a Web panel"
+        )
+
+        private static let webPanelMediaResumedAnnouncement = NSLocalizedString(
+            "Floorp.Drawer.WebPanelMediaResumedAnnouncement.v1",
+            tableName: "Floorp",
+            bundle: .main,
+            value: "Web panel media resumed",
+            comment: "VoiceOver announcement after resuming all media in a Web panel"
+        )
+
+        static func webPanelMediaPauseAnnouncement(isPaused: Bool) -> String {
+            isPaused ? webPanelMediaPausedAnnouncement : webPanelMediaResumedAnnouncement
+        }
+
         static let webPanelZoomIn = NSLocalizedString(
             "Floorp.Drawer.WebPanelZoomIn.v1",
             tableName: "Floorp",

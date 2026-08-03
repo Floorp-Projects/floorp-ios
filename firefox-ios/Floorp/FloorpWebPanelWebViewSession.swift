@@ -287,6 +287,8 @@ final class FloorpWebPanelMediaPlaybackTransitioner {
 
     init(
         nativeSetter: @escaping NativeSetter = { webView, isSuppressed, callback in
+            // Public WebKit exposes all-media suspension, not audio-only mute.
+            // Keep UI and accessibility wording aligned with pause/resume.
             webView.setAllMediaPlaybackSuspended(isSuppressed) {
                 callback?.call()
             }
@@ -415,6 +417,23 @@ private enum FloorpWebPanelMediaPlaybackError: Error {
     case runtimeUnavailable
 }
 
+private struct FloorpWebPanelPendingMediaPauseChange {
+    let previousIsUserMediaPaused: Bool
+    let requestedIsUserMediaPaused: Bool
+    let requestedRevision: UInt64
+    var effectiveSuppressionTarget: Bool
+    let completion: FloorpWebPanelMediaPauseCompletion
+}
+
+private struct FloorpWebPanelMediaPlaybackSuppressionReasons: Equatable {
+    let isHidden: Bool
+    let isUserMediaPaused: Bool
+
+    var shouldSuppress: Bool {
+        isHidden || isUserMediaPaused
+    }
+}
+
 @MainActor
 final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private struct ReloadReasons: OptionSet, Equatable {
@@ -432,6 +451,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     }
 
     let key: FloorpWebPanelSessionKey
+    let sessionIdentifier = UUID()
     private(set) var state: FloorpWebPanelSessionState
     private var runtime: (any FloorpWebPanelWebViewRuntime)?
     private var blockerTab: FloorpWebPanelContentBlockerTab?
@@ -462,9 +482,23 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
     private var isInvalidated = false
     private(set) var isVisible = true
     private var desiredMediaPlaybackSuppression = false
+    private var desiredMediaPlaybackSuppressionReasons =
+        FloorpWebPanelMediaPlaybackSuppressionReasons(
+            isHidden: false,
+            isUserMediaPaused: false
+        )
     private var appliedMediaPlaybackSuppression = false
     private var isMediaPlaybackTransitionInFlight = false
+    private var failedMediaPlaybackSuppression: Bool?
     private var mediaPlaybackTransitionGeneration = UUID()
+    private var mediaPlaybackSuppressionReasonGeneration = UUID()
+    private var pendingMediaPauseChange: FloorpWebPanelPendingMediaPauseChange?
+    private var mediaPauseMutationDepth = 0
+    private var isDeliveringMediaPauseCompletions = false
+    private var mediaPauseCompletionDeliveries = [(
+        completion: FloorpWebPanelMediaPauseCompletion,
+        result: Result<Void, Error>
+    )]()
 
     var contentView: UIView? {
         runtime?.contentView
@@ -651,6 +685,7 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
             webPanelFindTarget?.endFindSession()
         }
         updateMediaPlaybackSuppression()
+        resolvePendingMediaPauseChangeIfSettled()
         if isVisible {
             startPendingReloadIfPossible(isExplicitRetry: true)
         }
@@ -699,6 +734,39 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         return true
     }
 
+    @discardableResult
+    func setUserMediaPaused(
+        _ isUserMediaPaused: Bool,
+        completion: @escaping FloorpWebPanelMediaPauseCompletion
+    ) -> Bool {
+        guard !isInvalidated, runtime != nil, state.isUserMediaPaused != isUserMediaPaused else {
+            return false
+        }
+        beginMediaPauseMutation()
+        defer { endMediaPauseMutation() }
+
+        let supersededChange = pendingMediaPauseChange
+        let previousIsUserMediaPaused = state.isUserMediaPaused
+        let requestedEffectiveSuppression = !isVisible || isUserMediaPaused
+        state.isUserMediaPaused = isUserMediaPaused
+        state.userMediaStateRevision += 1
+        let requestedRevision = state.userMediaStateRevision
+        pendingMediaPauseChange = FloorpWebPanelPendingMediaPauseChange(
+            previousIsUserMediaPaused: previousIsUserMediaPaused,
+            requestedIsUserMediaPaused: isUserMediaPaused,
+            requestedRevision: requestedRevision,
+            effectiveSuppressionTarget: requestedEffectiveSuppression,
+            completion: completion
+        )
+        if let supersededChange {
+            enqueueMediaPauseCompletion(supersededChange.completion, result: .success(()))
+        }
+        notifyObservers()
+        updateMediaPlaybackSuppression()
+        resolvePendingMediaPauseChangeIfSettled()
+        return true
+    }
+
     func restorationURLForUnload() -> URL? {
         guard !isInvalidated else { return nil }
         if let runtimeURL = runtime?.currentURL {
@@ -725,6 +793,9 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         reloadRetryRequiresExplicitTrigger = false
         isMediaPlaybackTransitionInFlight = false
         isImageBlockingRefreshInFlight = false
+        failedMediaPlaybackSuppression = nil
+        pendingMediaPauseChange = nil
+        mediaPauseCompletionDeliveries.removeAll()
         observers.removeAll()
         imageBlockingPreferenceObserver?.invalidate()
         imageBlockingPreferenceObserver = nil
@@ -881,33 +952,166 @@ final class FloorpWebPanelWebViewSession: FloorpWebPanelSessionProtocol {
         runtime.setPageZoom(requestedPageZoom)
     }
 
-    private func updateMediaPlaybackSuppression() {
-        let shouldSuppress = !isVisible
-        guard desiredMediaPlaybackSuppression != shouldSuppress else { return }
-        desiredMediaPlaybackSuppression = shouldSuppress
-        startMediaPlaybackTransitionIfNeeded()
+    private func updateMediaPlaybackSuppression(startTransition: Bool = true) {
+        let reasons = FloorpWebPanelMediaPlaybackSuppressionReasons(
+            isHidden: !isVisible,
+            isUserMediaPaused: state.isUserMediaPaused
+        )
+        guard desiredMediaPlaybackSuppressionReasons != reasons else { return }
+        desiredMediaPlaybackSuppressionReasons = reasons
+        mediaPlaybackSuppressionReasonGeneration = UUID()
+        desiredMediaPlaybackSuppression = reasons.shouldSuppress
+        if var pendingMediaPauseChange,
+           pendingMediaPauseChange.requestedIsUserMediaPaused == state.isUserMediaPaused {
+            pendingMediaPauseChange.effectiveSuppressionTarget = reasons.shouldSuppress
+            self.pendingMediaPauseChange = pendingMediaPauseChange
+        }
+        failedMediaPlaybackSuppression = nil
+        if startTransition {
+            startMediaPlaybackTransitionIfNeeded()
+        }
     }
 
     private func startMediaPlaybackTransitionIfNeeded() {
         guard !isInvalidated,
               !isMediaPlaybackTransitionInFlight,
               desiredMediaPlaybackSuppression != appliedMediaPlaybackSuppression,
+              failedMediaPlaybackSuppression != desiredMediaPlaybackSuppression,
               let runtime else {
             return
         }
 
         let target = desiredMediaPlaybackSuppression
         let generation = mediaPlaybackTransitionGeneration
-        isMediaPlaybackTransitionInFlight = true
-        runtime.setMediaPlaybackSuppressed(target) { [weak self] _ in
-            guard let self,
-                  !self.isInvalidated,
-                  self.mediaPlaybackTransitionGeneration == generation else {
-                return
+        let reasonGeneration = mediaPlaybackSuppressionReasonGeneration
+        let userOwnedRevision: UInt64? = pendingMediaPauseChange.flatMap { pendingChange in
+            guard pendingChange.requestedRevision == state.userMediaStateRevision,
+                  pendingChange.requestedIsUserMediaPaused == state.isUserMediaPaused,
+                  pendingChange.effectiveSuppressionTarget == target,
+                  pendingChange.requestedIsUserMediaPaused == target else {
+                return nil
             }
-            self.isMediaPlaybackTransitionInFlight = false
-            self.appliedMediaPlaybackSuppression = target
-            self.startMediaPlaybackTransitionIfNeeded()
+            return pendingChange.requestedRevision
+        }
+        isMediaPlaybackTransitionInFlight = true
+        runtime.setMediaPlaybackSuppressed(target) { [weak self] result in
+            self?.handleMediaPlaybackTransitionResult(
+                result,
+                target: target,
+                transitionGeneration: generation,
+                reasonGeneration: reasonGeneration,
+                userOwnedRevision: userOwnedRevision
+            )
+        }
+    }
+
+    private func handleMediaPlaybackTransitionResult(
+        _ result: Result<Void, Error>,
+        target: Bool,
+        transitionGeneration: UUID,
+        reasonGeneration: UUID,
+        userOwnedRevision: UInt64?
+    ) {
+        guard !isInvalidated,
+              mediaPlaybackTransitionGeneration == transitionGeneration else {
+            return
+        }
+        beginMediaPauseMutation()
+        defer { endMediaPauseMutation() }
+
+        isMediaPlaybackTransitionInFlight = false
+        var failedMediaPauseChange: FloorpWebPanelPendingMediaPauseChange?
+        switch result {
+        case .success:
+            appliedMediaPlaybackSuppression = target
+            failedMediaPlaybackSuppression = nil
+        case .failure:
+            failedMediaPlaybackSuppression = target
+            failedMediaPauseChange = rollBackFailedMediaPauseChange(
+                target: target,
+                transitionUserOwnedRevision: userOwnedRevision
+            )
+            if mediaPlaybackSuppressionReasonGeneration != reasonGeneration {
+                // The effective Bool can remain `true` while ownership moves
+                // between user media pause and hidden lifecycle. Retry once
+                // for the newer reason so hidden media remains suspended.
+                failedMediaPlaybackSuppression = nil
+            }
+        }
+        startMediaPlaybackTransitionIfNeeded()
+        resolvePendingMediaPauseChangeIfSettled()
+        if case .failure(let error) = result,
+           let failedMediaPauseChange {
+            enqueueMediaPauseCompletion(
+                failedMediaPauseChange.completion,
+                result: .failure(error)
+            )
+        }
+    }
+
+    private func rollBackFailedMediaPauseChange(
+        target: Bool,
+        transitionUserOwnedRevision: UInt64?
+    ) -> FloorpWebPanelPendingMediaPauseChange? {
+        guard let transitionUserOwnedRevision,
+              let pendingMediaPauseChange,
+              pendingMediaPauseChange.effectiveSuppressionTarget == target,
+              pendingMediaPauseChange.requestedRevision
+                == transitionUserOwnedRevision,
+              state.isUserMediaPaused == pendingMediaPauseChange.requestedIsUserMediaPaused,
+              state.userMediaStateRevision == pendingMediaPauseChange.requestedRevision else {
+            return nil
+        }
+        self.pendingMediaPauseChange = nil
+        state.isUserMediaPaused = pendingMediaPauseChange.previousIsUserMediaPaused
+        state.userMediaStateRevision += 1
+        notifyObservers()
+        updateMediaPlaybackSuppression(startTransition: false)
+        return pendingMediaPauseChange
+    }
+
+    private func resolvePendingMediaPauseChangeIfSettled() {
+        guard !isMediaPlaybackTransitionInFlight,
+              let pendingMediaPauseChange,
+              desiredMediaPlaybackSuppression
+                == pendingMediaPauseChange.effectiveSuppressionTarget,
+              appliedMediaPlaybackSuppression
+                == pendingMediaPauseChange.effectiveSuppressionTarget,
+              state.isUserMediaPaused == pendingMediaPauseChange.requestedIsUserMediaPaused,
+              state.userMediaStateRevision == pendingMediaPauseChange.requestedRevision else {
+            return
+        }
+        self.pendingMediaPauseChange = nil
+        enqueueMediaPauseCompletion(pendingMediaPauseChange.completion, result: .success(()))
+    }
+
+    private func beginMediaPauseMutation() {
+        mediaPauseMutationDepth += 1
+    }
+
+    private func endMediaPauseMutation() {
+        mediaPauseMutationDepth -= 1
+        drainMediaPauseCompletionsIfPossible()
+    }
+
+    private func enqueueMediaPauseCompletion(
+        _ completion: @escaping FloorpWebPanelMediaPauseCompletion,
+        result: Result<Void, Error>
+    ) {
+        mediaPauseCompletionDeliveries.append((completion, result))
+        drainMediaPauseCompletionsIfPossible()
+    }
+
+    private func drainMediaPauseCompletionsIfPossible() {
+        guard mediaPauseMutationDepth == 0,
+              !isDeliveringMediaPauseCompletions else {
+            return
+        }
+        isDeliveringMediaPauseCompletions = true
+        defer { isDeliveringMediaPauseCompletions = false }
+        while !mediaPauseCompletionDeliveries.isEmpty {
+            let delivery = mediaPauseCompletionDeliveries.removeFirst()
+            delivery.completion(delivery.result)
         }
     }
 

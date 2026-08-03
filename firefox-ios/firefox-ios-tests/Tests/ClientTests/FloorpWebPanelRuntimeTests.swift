@@ -2006,6 +2006,220 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
     }
 
     // swiftlint:disable:next function_body_length
+    func testMediaPauseMenuAndVoiceOverTogglePreserveActiveRuntime() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let content = try XCTUnwrap(session.contentView)
+        let contentSuperview = try XCTUnwrap(content.superview)
+        let currentURL = try XCTUnwrap(URL(string: "https://example.com/media-pause-current"))
+        session.recordRuntimeState(currentURL: currentURL, pageTitle: "Media Pause")
+        let findButton = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find", in: drawer.view) as? UIButton
+        )
+        findButton.sendActions(for: .touchUpInside)
+        let findToolbar = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Toolbar", in: drawer.view)
+        )
+        let findQuery = try XCTUnwrap(
+            findView(identifier: "Floorp.WebPanel.Find.Query", in: drawer.view) as? UITextField
+        )
+        findQuery.text = "keep media query"
+        findQuery.sendActions(for: .editingChanged)
+        let button = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        let pauseMediaAction = try XCTUnwrap(
+            drawer.currentMediaPauseMenuElements(for: panel.id).first as? UIAction
+        )
+
+        XCTAssertEqual(pauseMediaAction.title, FloorpStrings.Drawer.webPanelPauseMedia)
+        XCTAssertNotNil(pauseMediaAction.image)
+        XCTAssertNil(button.accessibilityValue)
+        invoke(pauseMediaAction)
+
+        XCTAssertTrue(session.state.isUserMediaPaused)
+        XCTAssertEqual(button.accessibilityValue, FloorpStrings.Drawer.webPanelMediaPausedState)
+        XCTAssertEqual(
+            button.accessibilityCustomActions?.map(\.name),
+            [
+                FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelResumeMedia,
+                String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
+                FloorpStrings.Drawer.webPanelZoomIn,
+                FloorpStrings.Drawer.webPanelZoomOut,
+            ]
+        )
+        let resumeMediaMenuAction = try XCTUnwrap(
+            drawer.currentMediaPauseMenuElements(for: panel.id).first as? UIAction
+        )
+        XCTAssertEqual(resumeMediaMenuAction.title, FloorpStrings.Drawer.webPanelResumeMedia)
+        let resumeMediaAccessibilityAction = try XCTUnwrap(
+            button.accessibilityCustomActions?.first(where: {
+                $0.name == FloorpStrings.Drawer.webPanelResumeMedia
+            })
+        )
+        XCTAssertTrue(
+            resumeMediaAccessibilityAction.actionHandler?(resumeMediaAccessibilityAction) == true
+        )
+
+        XCTAssertFalse(session.state.isUserMediaPaused)
+        XCTAssertNil(button.accessibilityValue)
+        XCTAssertTrue(session.contentView === content)
+        XCTAssertTrue(content.superview === contentSuperview)
+        XCTAssertEqual(session.state.currentURL, currentURL)
+        XCTAssertTrue(findToolbar.superview != nil)
+        XCTAssertFalse(findToolbar.isHidden)
+        XCTAssertEqual(findQuery.text, "keep media query")
+        XCTAssertEqual(session.findTargetMock.invalidationCount, 0)
+    }
+
+    func testStaleMediaPauseActionsCannotAffectReplacementPrivacyOrNewerState() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let privacyMode = FloorpMutableWebPanelPrivacyMode(false)
+        let drawer = fixture.makeDrawer(isPrivateProvider: { privacyMode.value })
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let original = try XCTUnwrap(fixture.factory.sessions.last)
+        let staleOriginalMediaAction = try XCTUnwrap(
+            drawer.currentMediaPauseMenuElements(for: panel.id).first as? UIAction
+        )
+
+        XCTAssertTrue(drawer.unloadWebPanelIfActive(panelID: panel.id))
+        let button = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        button.sendActions(for: .touchUpInside)
+        let replacement = try XCTUnwrap(fixture.factory.sessions.last)
+        invoke(staleOriginalMediaAction)
+
+        XCTAssertFalse(replacement === original)
+        XCTAssertFalse(replacement.state.isUserMediaPaused)
+
+        let staleRegularMediaAction = try XCTUnwrap(
+            drawer.currentMediaPauseMenuElements(for: panel.id).first as? UIAction
+        )
+        privacyMode.value = true
+        drawer.rebindActiveContent(forSelectedTabIsPrivate: true)
+        let privateSession = try XCTUnwrap(fixture.factory.sessions.last)
+        invoke(staleRegularMediaAction)
+
+        XCTAssertTrue(privateSession.key.isPrivate)
+        XCTAssertFalse(privateSession.state.isUserMediaPaused)
+        let privatePauseMediaAction = try XCTUnwrap(
+            drawer.currentMediaPauseMenuElements(for: panel.id).first as? UIAction
+        )
+        invoke(privatePauseMediaAction)
+        invoke(privatePauseMediaAction)
+
+        XCTAssertTrue(privateSession.state.isUserMediaPaused)
+        XCTAssertFalse(replacement.state.isUserMediaPaused)
+    }
+
+    func testStaleMediaPauseContextCannotTargetReplacementAfterOriginalDeallocation() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        var originalSession: MockFloorpWebPanelSession? = try XCTUnwrap(
+            fixture.factory.sessions.last
+        )
+        let staleContext = try XCTUnwrap(
+            drawer.currentWebPanelMediaPauseActionContext(for: panel.id)
+        )
+        let originalIdentifier = try XCTUnwrap(originalSession?.sessionIdentifier)
+        weak var releasedSession = originalSession
+
+        XCTAssertTrue(drawer.unloadWebPanelIfActive(panelID: panel.id))
+        fixture.factory.releaseSession(identifier: originalIdentifier)
+        originalSession = nil
+        XCTAssertNil(releasedSession)
+
+        let button = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        button.sendActions(for: .touchUpInside)
+        let replacement = try XCTUnwrap(fixture.factory.sessions.last)
+
+        XCTAssertEqual(replacement.key, staleContext.key)
+        XCTAssertNotEqual(replacement.sessionIdentifier, originalIdentifier)
+        XCTAssertFalse(replacement.state.isUserMediaPaused)
+        XCTAssertEqual(replacement.state.userMediaStateRevision, 0)
+        XCTAssertFalse(drawer.performWebPanelMediaPauseAction(context: staleContext))
+        XCTAssertFalse(replacement.state.isUserMediaPaused)
+        XCTAssertEqual(replacement.state.userMediaStateRevision, 0)
+    }
+
+    func testStaleMediaPauseActionRejectsABAReturnToOriginalState() throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let staleInitialContext = try XCTUnwrap(
+            drawer.currentWebPanelMediaPauseActionContext(for: panel.id)
+        )
+
+        XCTAssertEqual(staleInitialContext.expectedRevision, 0)
+        XCTAssertTrue(drawer.performWebPanelMediaPauseAction(context: staleInitialContext))
+        XCTAssertTrue(session.state.isUserMediaPaused)
+        XCTAssertEqual(session.state.userMediaStateRevision, 1)
+
+        let resumeContext = try XCTUnwrap(
+            drawer.currentWebPanelMediaPauseActionContext(for: panel.id)
+        )
+        XCTAssertTrue(drawer.performWebPanelMediaPauseAction(context: resumeContext))
+        XCTAssertFalse(session.state.isUserMediaPaused)
+        XCTAssertEqual(session.state.userMediaStateRevision, 2)
+
+        XCTAssertFalse(drawer.performWebPanelMediaPauseAction(context: staleInitialContext))
+        XCTAssertFalse(session.state.isUserMediaPaused)
+        XCTAssertEqual(session.state.userMediaStateRevision, 2)
+    }
+
+    func testMediaPauseFailureRollsBackVoiceOverStateAndShowsMediaPlaybackError() async throws {
+        let fixture = try makeDrawerFixture()
+        defer { fixture.cleanup() }
+        let drawer = fixture.makeDrawer(isPrivate: false)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = drawer
+        window.makeKeyAndVisible()
+        defer {
+            drawer.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        drawer.loadViewIfNeeded()
+        let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
+        let session = try XCTUnwrap(fixture.factory.sessions.first)
+        let button = try XCTUnwrap(
+            findView(identifier: panel.id, in: drawer.view) as? UIButton
+        )
+        session.mediaPauseError = FloorpPanelError.storageError("Injected media pause failure")
+        let context = try XCTUnwrap(drawer.currentWebPanelMediaPauseActionContext(for: panel.id))
+
+        XCTAssertTrue(drawer.performWebPanelMediaPauseAction(context: context))
+        let presentedError = await waitForPresentationState {
+            drawer.presentedViewController is UIAlertController
+        }
+
+        XCTAssertTrue(presentedError)
+        XCTAssertFalse(session.state.isUserMediaPaused)
+        XCTAssertEqual(session.state.userMediaStateRevision, 2)
+        XCTAssertFalse(drawer.performWebPanelMediaPauseAction(context: context))
+        XCTAssertNil(button.accessibilityValue)
+        let alert = try XCTUnwrap(drawer.presentedViewController as? UIAlertController)
+        XCTAssertEqual(alert.title, FloorpStrings.Drawer.webPanelMediaPlaybackErrorTitle)
+        XCTAssertEqual(alert.message, FloorpStrings.Drawer.webPanelMediaPlaybackErrorMessage)
+    }
+
+    // swiftlint:disable:next function_body_length
     func testZoomMenuFastPathPreservesFindAndUpdatesEveryWindowAndPrivacySession() throws {
         let suiteName = "FloorpWebPanelZoomFastPathTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -2147,6 +2361,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             firstButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
@@ -2166,6 +2381,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             firstButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
@@ -2308,9 +2524,10 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         )
         let firstActionNames = firstButton.accessibilityCustomActions?.map(\.name) ?? []
         XCTAssertEqual(
-            Array(firstActionNames.prefix(2)),
+            Array(firstActionNames.prefix(3)),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewMobileSiteTitleString,
             ]
         )
@@ -2482,6 +2699,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             button.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomReset,
@@ -2502,6 +2720,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             button.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomOut,
                 FloorpStrings.Drawer.webPanelZoomReset,
@@ -2515,6 +2734,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             button.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
@@ -2529,7 +2749,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         let drawer = fixture.makeDrawer(isPrivateProvider: { privacyMode.value })
         drawer.loadViewIfNeeded()
         let panel = try XCTUnwrap(fixture.manager.panels.first(where: { $0.type == .web }))
-        let staleOriginalAction = try zoomAction(
+        let staleOriginalMediaAction = try zoomAction(
             FloorpStrings.Drawer.webPanelZoomIn,
             in: zoomMenu(in: drawer, panelID: panel.id)
         )
@@ -2543,11 +2763,11 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         let replacement = try XCTUnwrap(fixture.factory.sessions.last)
         XCTAssertFalse(replacement === original)
 
-        invoke(staleOriginalAction)
+        invoke(staleOriginalMediaAction)
         XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .defaultLevel)
         XCTAssertEqual(replacement.state.configuration.zoomLevel, .defaultLevel)
 
-        let staleRegularAction = try zoomAction(
+        let staleRegularMediaAction = try zoomAction(
             FloorpStrings.Drawer.webPanelZoomIn,
             in: zoomMenu(in: drawer, panelID: panel.id)
         )
@@ -2556,7 +2776,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
         let privateSession = try XCTUnwrap(fixture.factory.sessions.last)
         XCTAssertTrue(privateSession.key.isPrivate)
 
-        invoke(staleRegularAction)
+        invoke(staleRegularMediaAction)
         XCTAssertEqual(try fixture.manager.webPanelPreferences(for: panel.id).zoomLevel, .defaultLevel)
         XCTAssertEqual(privateSession.state.configuration.zoomLevel, .defaultLevel)
         let privateMenu = try zoomMenu(in: drawer, panelID: panel.id)
@@ -2779,6 +2999,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             webPanelButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
@@ -2931,6 +3152,7 @@ final class FloorpWebPanelDrawerRuntimeTests: XCTestCase {
             webPanelButton.accessibilityCustomActions?.map(\.name),
             [
                 FloorpStrings.Drawer.webPanelUnload,
+                FloorpStrings.Drawer.webPanelPauseMedia,
                 String.LegacyAppMenu.AppMenuViewDesktopSiteTitleString,
                 FloorpStrings.Drawer.webPanelZoomIn,
                 FloorpStrings.Drawer.webPanelZoomOut,
@@ -3538,6 +3760,7 @@ private final class MockFloorpWebPanelFindTarget: FloorpWebPanelFindTarget {
 @MainActor
 private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     let key: FloorpWebPanelSessionKey
+    let sessionIdentifier = UUID()
     let restorationURL: URL?
     private(set) var state: FloorpWebPanelSessionState
     private(set) var configurationUpdateCount = 0
@@ -3551,6 +3774,7 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
     private(set) var stopLoadingCallCount = 0
     private(set) var openInMainBrowserCallCount = 0
     private(set) var visibilityChanges = [Bool]()
+    var mediaPauseError: Error?
     private let hostedContentView = UIView()
     private var stateObservers = [UUID: @MainActor (FloorpWebPanelSessionState) -> Void]()
     private(set) var isVisible = true
@@ -3665,6 +3889,27 @@ private final class MockFloorpWebPanelSession: FloorpWebPanelSessionProtocol {
         return true
     }
 
+    @discardableResult
+    func setUserMediaPaused(
+        _ isUserMediaPaused: Bool,
+        completion: @escaping FloorpWebPanelMediaPauseCompletion
+    ) -> Bool {
+        guard invalidationCount == 0, state.isUserMediaPaused != isUserMediaPaused else { return false }
+        let previousIsUserMediaPaused = state.isUserMediaPaused
+        state.isUserMediaPaused = isUserMediaPaused
+        state.userMediaStateRevision += 1
+        notifyStateObservers()
+        if let mediaPauseError {
+            state.isUserMediaPaused = previousIsUserMediaPaused
+            state.userMediaStateRevision += 1
+            notifyStateObservers()
+            completion(.failure(mediaPauseError))
+        } else {
+            completion(.success(()))
+        }
+        return true
+    }
+
     func restorationURLForUnload() -> URL? {
         if hasLatestRuntimeURL {
             return FloorpWebPanelRestorationPolicy.safeWebURL(latestRuntimeURL)
@@ -3771,6 +4016,10 @@ private final class MockFloorpWebPanelSessionFactory: FloorpWebPanelSessionFacto
     private(set) var makeCallCount = 0
     var errorToThrow: Error?
     var keyOverride: FloorpWebPanelSessionKey?
+
+    func releaseSession(identifier: UUID) {
+        sessions.removeAll { $0.sessionIdentifier == identifier }
+    }
 
     func makeSession(
         for key: FloorpWebPanelSessionKey,

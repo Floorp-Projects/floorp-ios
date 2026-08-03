@@ -490,16 +490,23 @@ typealias FloorpWebPanelContentModeMutation = @MainActor (
 
 struct FloorpWebPanelZoomActionContext: Equatable {
     let key: FloorpWebPanelSessionKey
-    let sessionIdentifier: ObjectIdentifier
+    let sessionIdentifier: UUID
     let expectedRevision: FloorpWebPanelPreferencesRevision
     let zoomLevel: FloorpWebPanelZoomLevel
 }
 
 struct FloorpWebPanelContentModeActionContext: Equatable {
     let key: FloorpWebPanelSessionKey
-    let sessionIdentifier: ObjectIdentifier
+    let sessionIdentifier: UUID
     let expectedRevision: FloorpWebPanelPreferencesRevision
     let contentMode: FloorpWebPanelContentMode
+}
+
+struct FloorpWebPanelMediaPauseActionContext: Equatable {
+    let key: FloorpWebPanelSessionKey
+    let sessionIdentifier: UUID
+    let expectedIsUserMediaPaused: Bool
+    let expectedRevision: UInt64
 }
 
 @MainActor
@@ -1654,6 +1661,9 @@ final class FloorpOverlayDrawerViewController:
                 completion(self?.currentUnloadMenuElements(for: panel.id) ?? [])
             })
             actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.currentMediaPauseMenuElements(for: panel.id) ?? [])
+            })
+            actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
                 completion(self?.currentContentModeMenuElements(for: panel.id) ?? [])
             })
             actions.append(UIDeferredMenuElement.uncached { [weak self] completion in
@@ -1754,6 +1764,20 @@ final class FloorpOverlayDrawerViewController:
         )]
     }
 
+    func currentMediaPauseMenuElements(for panelID: String) -> [UIMenuElement] {
+        guard let context = currentWebPanelMediaPauseActionContext(for: panelID) else { return [] }
+        let willPause = !context.expectedIsUserMediaPaused
+        return [UIAction(
+            title: willPause
+                ? FloorpStrings.Drawer.webPanelPauseMedia
+                : FloorpStrings.Drawer.webPanelResumeMedia,
+            image: UIImage(systemName: willPause ? "pause.circle" : "play.circle"),
+            handler: { [weak self] _ in
+                _ = self?.performWebPanelMediaPauseAction(context: context)
+            }
+        )]
+    }
+
     private func webPanelContentModeActionTitle(
         for contentMode: FloorpWebPanelContentMode
     ) -> String {
@@ -1797,8 +1821,24 @@ final class FloorpOverlayDrawerViewController:
 
     private func updateSidebarWebPanelAccessibilityActions() {
         for button in sidebarButtons {
-            guard let panelID = button.accessibilityIdentifier,
+            guard let panelID = button.accessibilityIdentifier else {
+                button.accessibilityCustomActions = nil
+                button.accessibilityValue = nil
+                continue
+            }
+            let panel = panelManager.panel(for: panelID)
+            let invalidWebPanelValue: String?
+            if let panel,
+               panel.type == .web,
+               (try? FloorpWebPanelValidator.validate(panel)) == nil {
+                invalidWebPanelValue = FloorpStrings.PanelRegistry.needsAttention
+            } else {
+                invalidWebPanelValue = nil
+            }
+            button.accessibilityValue = invalidWebPanelValue
+            guard
                   activeLoadedWebPanelKey(matching: panelID) != nil,
+                  let mediaPauseContext = currentWebPanelMediaPauseActionContext(for: panelID),
                   let zoomContext = currentWebPanelZoomActionContext(for: panelID),
                   let contentModeContext = currentWebPanelContentModeActionContext(
                     for: panelID
@@ -1806,12 +1846,23 @@ final class FloorpOverlayDrawerViewController:
                 button.accessibilityCustomActions = nil
                 continue
             }
+            button.accessibilityValue = mediaPauseContext.expectedIsUserMediaPaused
+                ? FloorpStrings.Drawer.webPanelMediaPausedState
+                : invalidWebPanelValue
             var actions = [UIAccessibilityCustomAction(
                 name: FloorpStrings.Drawer.webPanelUnload,
                 actionHandler: { [weak self] _ in
                     self?.performUnloadWebPanelAction(panelID: panelID) == true
                 }
             )]
+            actions.append(UIAccessibilityCustomAction(
+                name: mediaPauseContext.expectedIsUserMediaPaused
+                    ? FloorpStrings.Drawer.webPanelResumeMedia
+                    : FloorpStrings.Drawer.webPanelPauseMedia,
+                actionHandler: { [weak self] _ in
+                    self?.performWebPanelMediaPauseAction(context: mediaPauseContext) == true
+                }
+            ))
             let requestedMode: FloorpWebPanelContentMode = contentModeContext.contentMode == .mobile
                 ? .desktop
                 : .mobile
@@ -2265,6 +2316,7 @@ final class FloorpOverlayDrawerViewController:
             ? String(Int(state.estimatedProgress * 100)) + "%"
             : nil
         renderWebPanelToolbarState(state)
+        updateSidebarWebPanelAccessibilityActions()
     }
 
     private func detachWebPanelContent(applyHiddenLifecycle: Bool = true) {
@@ -2386,7 +2438,7 @@ final class FloorpOverlayDrawerViewController:
         }
         return FloorpWebPanelZoomActionContext(
             key: key,
-            sessionIdentifier: ObjectIdentifier(session),
+            sessionIdentifier: session.sessionIdentifier,
             expectedRevision: FloorpWebPanelPreferencesRevision(panel: panel),
             zoomLevel: preferences.zoomLevel
         )
@@ -2403,9 +2455,24 @@ final class FloorpOverlayDrawerViewController:
         }
         return FloorpWebPanelContentModeActionContext(
             key: key,
-            sessionIdentifier: ObjectIdentifier(session),
+            sessionIdentifier: session.sessionIdentifier,
             expectedRevision: FloorpWebPanelPreferencesRevision(panel: panel),
             contentMode: preferences.contentMode
+        )
+    }
+
+    func currentWebPanelMediaPauseActionContext(
+        for panelID: String
+    ) -> FloorpWebPanelMediaPauseActionContext? {
+        guard let key = activeLoadedWebPanelKey(matching: panelID),
+              let session = activeWebPanelSession else {
+            return nil
+        }
+        return FloorpWebPanelMediaPauseActionContext(
+            key: key,
+            sessionIdentifier: session.sessionIdentifier,
+            expectedIsUserMediaPaused: session.state.isUserMediaPaused,
+            expectedRevision: session.state.userMediaStateRevision
         )
     }
 
@@ -2431,6 +2498,113 @@ final class FloorpOverlayDrawerViewController:
     }
 
     @discardableResult
+    func performWebPanelMediaPauseAction(context: FloorpWebPanelMediaPauseActionContext) -> Bool {
+        guard let activeKey = activeLoadedWebPanelKey(matching: context.key.panelID),
+              activeKey == context.key,
+              let activeWebPanelSession,
+              activeWebPanelSession.sessionIdentifier == context.sessionIdentifier,
+              activeWebPanelSession.state.isUserMediaPaused
+                == context.expectedIsUserMediaPaused,
+              activeWebPanelSession.state.userMediaStateRevision
+                == context.expectedRevision else {
+            return false
+        }
+        let isUserMediaPaused = !context.expectedIsUserMediaPaused
+        let requestedRevision = context.expectedRevision + 1
+        let rollbackRevision = requestedRevision + 1
+        let accepted = activeWebPanelSession.setUserMediaPaused(isUserMediaPaused) { [weak self] result in
+            self?.handleWebPanelMediaPauseResult(
+                result,
+                context: context,
+                requestedIsPaused: isUserMediaPaused,
+                requestedRevision: requestedRevision,
+                rollbackRevision: rollbackRevision
+            )
+        }
+        guard accepted else { return false }
+        updateSidebarWebPanelAccessibilityActions()
+        return true
+    }
+
+    private func handleWebPanelMediaPauseResult(
+        _ result: Result<Void, Error>,
+        context: FloorpWebPanelMediaPauseActionContext,
+        requestedIsPaused: Bool,
+        requestedRevision: UInt64,
+        rollbackRevision: UInt64
+    ) {
+        guard let currentContext = currentWebPanelMediaPauseActionContext(
+                for: context.key.panelID
+              ),
+              currentContext.key == context.key,
+              currentContext.sessionIdentifier == context.sessionIdentifier else {
+            return
+        }
+        updateSidebarWebPanelAccessibilityActions()
+        switch result {
+        case .success:
+            guard currentContext.expectedIsUserMediaPaused == requestedIsPaused,
+                  currentContext.expectedRevision == requestedRevision else {
+                return
+            }
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: FloorpStrings.Drawer.webPanelMediaPauseAnnouncement(
+                    isPaused: requestedIsPaused
+                )
+            )
+        case .failure(let error):
+            guard currentContext.expectedIsUserMediaPaused
+                    == context.expectedIsUserMediaPaused,
+                  currentContext.expectedRevision == rollbackRevision else {
+                return
+            }
+            scheduleWebPanelMediaPlaybackError(
+                error,
+                context: context,
+                rollbackRevision: rollbackRevision
+            )
+        }
+    }
+
+    private func scheduleWebPanelMediaPlaybackError(
+        _ error: Error,
+        context: FloorpWebPanelMediaPauseActionContext,
+        rollbackRevision: UInt64
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  let latestContext = self.currentWebPanelMediaPauseActionContext(
+                    for: context.key.panelID
+                  ),
+                  latestContext.key == context.key,
+                  latestContext.sessionIdentifier == context.sessionIdentifier,
+                  latestContext.expectedIsUserMediaPaused
+                    == context.expectedIsUserMediaPaused,
+                  latestContext.expectedRevision == rollbackRevision else {
+                return
+            }
+            self.presentWebPanelMediaPlaybackError(error)
+        }
+    }
+
+    private func presentWebPanelMediaPlaybackError(_ error: Error) {
+        logger.log(
+            "Floorp: Web panel media playback operation failed: \(error.localizedDescription)",
+            level: .warning,
+            category: .setup
+        )
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: FloorpStrings.Drawer.webPanelMediaPlaybackErrorTitle,
+            message: FloorpStrings.Drawer.webPanelMediaPlaybackErrorMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: FloorpStrings.PanelRegistry.done, style: .default))
+        present(alert, animated: true)
+    }
+
+    @discardableResult
     func performWebPanelZoomAction(
         _ change: FloorpWebPanelZoomChange,
         context: FloorpWebPanelZoomActionContext
@@ -2438,7 +2612,7 @@ final class FloorpOverlayDrawerViewController:
         guard let activeKey = activeLoadedWebPanelKey(matching: context.key.panelID),
               activeKey == context.key,
               let activeWebPanelSession,
-              ObjectIdentifier(activeWebPanelSession) == context.sessionIdentifier,
+              activeWebPanelSession.sessionIdentifier == context.sessionIdentifier,
               activeWebPanelSession.state.configuration.zoomLevel.applying(change)
                 != activeWebPanelSession.state.configuration.zoomLevel else {
             return false
@@ -2481,7 +2655,7 @@ final class FloorpOverlayDrawerViewController:
               let activeKey = activeLoadedWebPanelKey(matching: context.key.panelID),
               activeKey == context.key,
               let activeWebPanelSession,
-              ObjectIdentifier(activeWebPanelSession) == context.sessionIdentifier,
+              activeWebPanelSession.sessionIdentifier == context.sessionIdentifier,
               activeWebPanelSession.state.configuration.contentMode == context.contentMode,
               let currentPanel = panelManager.panel(for: context.key.panelID),
               let currentPreferences = currentPanel.effectiveWebPreferences,

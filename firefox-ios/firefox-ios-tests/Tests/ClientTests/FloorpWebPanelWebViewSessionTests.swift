@@ -52,12 +52,15 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
         let profile = MockProfile()
         let dependencies = DependencyHelperMock()
         dependencies.bootstrapDependencies(injectedProfile: profile)
-        defer { dependencies.reset() }
         let runtime = DefaultFloorpWebPanelWebViewRuntimeFactory().makeRuntime(
             configuration: WKWebViewConfiguration(),
             windowUUID: UUID(),
             certStore: profile.certStore
         )
+        defer {
+            runtime.invalidate()
+            dependencies.reset()
+        }
         let webView = try XCTUnwrap(runtime.webView)
 
         runtime.setPageZoom(1.25)
@@ -833,6 +836,205 @@ final class FloorpWebPanelWebViewSessionTests: XCTestCase {
 
         XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false])
         XCTAssertEqual(fixture.runtime.invalidateCallCount, 0)
+    }
+
+    func testExplicitMediaPauseAndVisibilityShareOneReversibleSuppressionState() throws {
+        let fixture = makeFixture()
+        var observedMediaPauseStates = [Bool]()
+        _ = try XCTUnwrap(fixture.session.addStateObserver {
+            observedMediaPauseStates.append($0.isUserMediaPaused)
+        })
+        var completionCount = 0
+
+        XCTAssertTrue(fixture.session.setUserMediaPaused(true) { result in
+            if case .success = result { completionCount += 1 }
+        })
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+
+        fixture.session.setVisible(false)
+        fixture.session.setVisible(true)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+
+        fixture.session.setVisible(false)
+        XCTAssertTrue(fixture.session.setUserMediaPaused(false) { result in
+            if case .success = result { completionCount += 1 }
+        })
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+        fixture.session.setVisible(true)
+
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false])
+        XCTAssertEqual(observedMediaPauseStates, [false, true, false])
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 2)
+        XCTAssertEqual(completionCount, 2)
+        XCTAssertFalse(fixture.session.setUserMediaPaused(false) { _ in
+            XCTFail("An idempotent media pause request must not invoke its completion")
+        })
+    }
+
+    func testDelayedMediaPauseChangesCoalesceToLatestIntent() {
+        let fixture = makeFixture()
+        fixture.runtime.delaysMediaPlaybackCompletions = true
+        var completedIntents = [String]()
+
+        XCTAssertTrue(fixture.session.setUserMediaPaused(true) { result in
+            if case .success = result { completedIntents.append("pause") }
+        })
+        XCTAssertTrue(fixture.session.setUserMediaPaused(false) { result in
+            if case .success = result { completedIntents.append("resume") }
+        })
+
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+        XCTAssertEqual(completedIntents, ["pause"])
+        fixture.runtime.completePendingMediaPlaybackTransitions()
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, false])
+        XCTAssertEqual(completedIntents, ["pause"])
+        fixture.runtime.completePendingMediaPlaybackTransitions()
+
+        XCTAssertEqual(completedIntents, ["pause", "resume"])
+        XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+    }
+
+    func testSupersededCompletionReentrancyPreservesNewestMediaPauseIntent() {
+        let fixture = makeFixture()
+        fixture.runtime.delaysMediaPlaybackCompletions = true
+        var completedIntents = [String]()
+        var reentrantRequestAccepted = false
+
+        XCTAssertTrue(fixture.session.setUserMediaPaused(true) { result in
+            guard case .success = result else { return }
+            completedIntents.append("initial-pause")
+            XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+            XCTAssertEqual(fixture.session.state.userMediaStateRevision, 2)
+            reentrantRequestAccepted = fixture.session.setUserMediaPaused(true) { result in
+                if case .success = result { completedIntents.append("reentrant-pause") }
+            }
+        })
+        XCTAssertTrue(fixture.session.setUserMediaPaused(false) { result in
+            if case .success = result { completedIntents.append("superseded-resume") }
+        })
+
+        XCTAssertTrue(reentrantRequestAccepted)
+        XCTAssertTrue(fixture.session.state.isUserMediaPaused)
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 3)
+        XCTAssertEqual(completedIntents, ["initial-pause", "superseded-resume"])
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+
+        fixture.runtime.completePendingMediaPlaybackTransitions()
+
+        XCTAssertEqual(
+            completedIntents,
+            ["initial-pause", "superseded-resume", "reentrant-pause"]
+        )
+        XCTAssertTrue(fixture.session.state.isUserMediaPaused)
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 3)
+    }
+
+    func testFailedMediaPauseTransitionRollsBackStateNotifiesAndAllowsRetry() throws {
+        let fixture = makeFixture()
+        fixture.runtime.delaysMediaPlaybackCompletions = true
+        var observedMediaPauseStates = [Bool]()
+        var observedMediaStateRevisions = [UInt64]()
+        _ = try XCTUnwrap(fixture.session.addStateObserver {
+            observedMediaPauseStates.append($0.isUserMediaPaused)
+            observedMediaStateRevisions.append($0.userMediaStateRevision)
+        })
+        var receivedFailure = false
+
+        XCTAssertTrue(fixture.session.setUserMediaPaused(true) { result in
+            if case .failure = result { receivedFailure = true }
+        })
+        fixture.runtime.completePendingMediaPlaybackTransitions(
+            with: .failure(NSError(domain: "FloorpMediaPauseTests", code: 1))
+        )
+
+        XCTAssertTrue(receivedFailure)
+        XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+        XCTAssertEqual(observedMediaPauseStates, [false, true, false])
+        XCTAssertEqual(observedMediaStateRevisions, [0, 1, 2])
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 2)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+
+        XCTAssertTrue(fixture.session.setUserMediaPaused(true) { _ in })
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 3)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, true])
+        fixture.runtime.completePendingMediaPlaybackTransitions()
+        XCTAssertTrue(fixture.session.state.isUserMediaPaused)
+    }
+
+    func testFailedMediaPauseAfterHideRollsBackUserStateAndRetriesHiddenSuppression() {
+        let fixture = makeFixture()
+        fixture.runtime.delaysMediaPlaybackCompletions = true
+        var receivedFailure = false
+
+        XCTAssertTrue(fixture.session.setUserMediaPaused(true) { result in
+            if case .failure = result { receivedFailure = true }
+        })
+        fixture.session.setVisible(false)
+        fixture.runtime.completePendingMediaPlaybackTransitions(
+            with: .failure(NSError(domain: "FloorpMediaPauseTests", code: 2))
+        )
+
+        XCTAssertTrue(receivedFailure)
+        XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+        XCTAssertFalse(fixture.session.isVisible)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, true])
+
+        fixture.runtime.completePendingMediaPlaybackTransitions()
+        fixture.session.setVisible(true)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, true, false])
+    }
+
+    func testOldPauseAndHiddenRetryFailuresCannotRollbackNewestResumeIntent() {
+        let fixture = makeFixture()
+        fixture.runtime.delaysMediaPlaybackCompletions = true
+        var completedIntents = [String]()
+
+        XCTAssertTrue(fixture.session.setUserMediaPaused(true) { result in
+            switch result {
+            case .success: completedIntents.append("pause-success")
+            case .failure: completedIntents.append("pause-failure")
+            }
+        })
+        XCTAssertTrue(fixture.session.setUserMediaPaused(false) { result in
+            switch result {
+            case .success: completedIntents.append("resume-success")
+            case .failure: completedIntents.append("resume-failure")
+            }
+        })
+        fixture.session.setVisible(false)
+
+        XCTAssertEqual(completedIntents, ["pause-success"])
+        XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 2)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true])
+
+        fixture.runtime.completePendingMediaPlaybackTransitions(
+            with: .failure(NSError(domain: "FloorpMediaPauseTests", code: 3))
+        )
+
+        XCTAssertEqual(completedIntents, ["pause-success"])
+        XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 2)
+        XCTAssertFalse(fixture.session.isVisible)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, true])
+        XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 1)
+
+        fixture.runtime.completePendingMediaPlaybackTransitions(
+            with: .failure(NSError(domain: "FloorpMediaPauseTests", code: 4))
+        )
+
+        XCTAssertEqual(completedIntents, ["pause-success"])
+        XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 2)
+        XCTAssertFalse(fixture.session.isVisible)
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, true])
+        XCTAssertEqual(fixture.runtime.pendingMediaPlaybackCompletionCount, 0)
+
+        fixture.session.setVisible(true)
+        XCTAssertEqual(completedIntents, ["pause-success", "resume-success"])
+        XCTAssertEqual(fixture.runtime.mediaPlaybackSuppressionRequests, [true, true])
+        XCTAssertFalse(fixture.session.state.isUserMediaPaused)
+        XCTAssertEqual(fixture.session.state.userMediaStateRevision, 2)
     }
 
     func testDelayedMediaTransitionsCoalesceAndIgnoreCompletionAfterInvalidate() {
@@ -2076,10 +2278,12 @@ private final class MockFloorpWebPanelWebViewRuntime: FloorpWebPanelWebViewRunti
         completion(.success(()))
     }
 
-    func completePendingMediaPlaybackTransitions() {
+    func completePendingMediaPlaybackTransitions(
+        with result: Result<Void, Error> = .success(())
+    ) {
         let completions = pendingMediaPlaybackCompletions
         pendingMediaPlaybackCompletions.removeAll()
-        completions.forEach { $0(.success(())) }
+        completions.forEach { $0(result) }
     }
 
     func invalidate() {
