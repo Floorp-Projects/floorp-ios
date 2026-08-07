@@ -211,6 +211,40 @@ External TestFlight groups, Beta App Review submission, and App Store submission
 
 ## Official references
 
+### Release evidence, retention, and rollback
+
+One release/version authority: Xcode Cloud owns monotonic distribution build
+numbers; the marketing version remains reviewed in the repository
+(`FloorpRelease.xcconfig`). Manual and cloud numbering must never be mixed; a
+release candidate is identified only by the recorded source SHA-256, marketing
+version, and build number triple.
+
+`scripts/release/collect-floorp-release-evidence.sh` binds each candidate to
+its source SHA, archived marketing version/build, signing identity,
+entitlements, archive and IPA digests, and the dSYM UUID inventory.
+`scripts/release/validate-floorp-release-evidence.py` re-verifies the document
+against `scripts/release/floorp-release-evidence.schema.json` and rejects mixed
+build IDs, forbidden entitlements, missing dSYMs, and digest mismatches.
+
+`scripts/release/app-store-connect-api.py` is the only App Store Connect
+surface. Its read allowlist covers the required GETs and its write allowlist is
+exactly `POST /v1/ciBuildRuns`, `POST /v1/betaBuildLocalizations`,
+`PATCH /v1/betaBuildLocalizations/{id}`, `PATCH /v1/betaAppReviewDetails/{id}`,
+`POST /v1/betaAppReviewSubmissions`, and
+`POST /v1/betaGroups/{id}/relationships/builds`. Every other write route,
+including group creation, is denied before any request. Writes require the
+intended object ID, a prior-state SHA-256, and `--authorize-mutation`;
+`--dry-run` issues zero requests.
+
+Retention: release evidence documents, `.xcresult` bundles, archives, IPAs,
+and dSYM inventories are retained for at least 90 days; CI artifacts are
+retained 7 days by the workflow. Rollback: because each candidate is bound to
+its exact source SHA and App Store Connect build ID, a defective upload is
+removed through the allowlisted relationship and localization routes without
+re-uploading; the last-good archive and its evidence document remain the
+rollback target. IPAs are uploaded exclusively with `xcrun altool` during
+Todo 11 and never through the ASC REST client.
+
 - [GitHub Actions repository settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)
 - [Triggering a workflow with `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
 - [GitHub-hosted macOS runner images](https://github.com/actions/runner-images)

@@ -1,0 +1,11 @@
+{
+  "data": {
+    "type": "ciBuildRuns",
+    "attributes": {"clean": false},
+    "relationships": {
+      "workflow": {
+        "data": {"type": "ciWorkflows", "id": "REPLACE_WITH_WORKFLOW_ID"}
+      }
+    }
+  }
+}
