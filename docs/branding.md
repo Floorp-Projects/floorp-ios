@@ -186,6 +186,12 @@ release tests as one reviewed change.
 
 - Product artwork must contain the Floorp logo. Renaming an inherited Firefox
   asset or image set is not sufficient.
+- The Nova-design private-mode home header (`fxHomeHeaderLogoPrivate`) must
+  contain the official Floorp mark, identical bytes to the normal-mode header
+  mark pinned by `scripts/ci/check-floorp-branding.sh`. The upstream Firefox
+  "Private mode" artwork introduced by upstream sync is never an approved
+  substitute; `scripts/ci/test-rebrand-dry-run.sh` and the branding check must
+  keep rejecting it.
 - The classic app icon, Liquid Glass icon, launch screen, onboarding artwork,
   home header, main-app logo, and any enabled extension artwork must be
   inspected visually.

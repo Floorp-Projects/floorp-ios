@@ -901,6 +901,22 @@ require_hash \
     "firefox-ios/Client/Assets/Images.xcassets/fxHomeHeaderLogoText.imageset/floorp-wordmark.svg" \
     "$FLOORP_WORDMARK_HASH" \
     "Home header uses the desktop official Floorp wordmark"
+# The upstream sync introduces the Nova-design private home header, which must
+# never ship the upstream Firefox "Private mode" artwork. The private header
+# asset catalog is pinned to the same official Floorp mark as the normal-mode
+# header, and the catalog must not reference the upstream PDF again.
+require_hash \
+    "firefox-ios/Client/Assets/Images.xcassets/fxHomeHeaderLogoPrivate.imageset/floorp-logo.svg" \
+    "$FLOORP_LOGO_HASH" \
+    "Private-mode home header uses the desktop official Floorp mark"
+require_fixed \
+    "firefox-ios/Client/Assets/Images.xcassets/fxHomeHeaderLogoPrivate.imageset/Contents.json" \
+    "floorp-logo.svg" \
+    "Private header asset catalog references the approved Floorp artwork"
+forbid_fixed_in_files \
+    "fxHomeHeaderLogoPrivate.pdf" \
+    "Private header asset catalog never references the upstream Firefox artwork" \
+    "firefox-ios/Client/Assets/Images.xcassets/fxHomeHeaderLogoPrivate.imageset/Contents.json"
 
 require_hash \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore.png" \
