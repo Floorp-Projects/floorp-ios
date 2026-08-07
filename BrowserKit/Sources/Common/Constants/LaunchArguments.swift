@@ -17,6 +17,10 @@ public struct LaunchArguments {
     /// Clears the WKWebView website data store (cookies, local storage, cache) on launch. Web data
     /// lives in WKWebsiteDataStore, which ClearProfile does not touch.
     public static let ClearWebData = "FIREFOX_CLEAR_WEB_DATA"
+    /// Clears the Floorp Notes local archive (including recovery copies and
+    /// unsaved drafts) on launch. Notes live outside the browser profile, so
+    /// ClearProfile does not touch them; UI tests opt in explicitly.
+    public static let FloorpNotesClearArchive = "FLOORP_NOTES_CLEAR_ARCHIVE"
     public static let StageServer = "FIREFOX_USE_STAGE_SERVER"
     public static let FxAChinaServer = "FIREFOX_USE_FXA_CHINA_SERVER"
     public static let DeviceName = "DEVICE_NAME"

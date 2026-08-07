@@ -252,6 +252,21 @@ class UITestAppDelegate: AppDelegate {
             ) {}
         }
 
+        // Floorp Notes live outside the browser profile, so ClearProfile does
+        // not touch them. UI tests opt into a clean archive explicitly so the
+        // create/edit/search/delete/relaunch smoke is deterministic.
+        if ProcessInfo.processInfo.arguments.contains(LaunchArguments.FloorpNotesClearArchive) {
+            let notesDirectory = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first?
+                .appendingPathComponent("Floorp", isDirectory: true)
+                .appendingPathComponent("Notes", isDirectory: true)
+            if let notesDirectory {
+                try? FileManager.default.removeItem(at: notesDirectory)
+            }
+        }
+
         Tab.ChangeUserAgent.clear()
 
         let didFinishLaunching = super.application(

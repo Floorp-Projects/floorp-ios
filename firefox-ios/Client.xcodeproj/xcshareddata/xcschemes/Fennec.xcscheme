@@ -583,6 +583,9 @@
             reference = "container:firefox-ios-tests/Tests/FloorpBrandingUI.xctestplan">
          </TestPlanReference>
          <TestPlanReference
+            reference = "container:firefox-ios-tests/Tests/FloorpNotesUI.xctestplan">
+         </TestPlanReference>
+         <TestPlanReference
             reference = "container:firefox-ios-tests/Tests/FloorpCI.xctestplan">
          </TestPlanReference>
          <TestPlanReference
