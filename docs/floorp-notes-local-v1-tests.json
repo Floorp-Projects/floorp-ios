@@ -1,0 +1,217 @@
+{
+  "baseline_sha256": "64149d2417c089edf132e235f4ed2a86bea8824a74967f65a16ddde84d4e86ae",
+  "cases": [
+    {
+      "id": "21-1",
+      "issue": 21,
+      "scenario": "Autosave fires after the scheduled delay using the injected clock",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testAutosaveFiresAfterScheduledDelayWithInjectedSleep()"
+      ]
+    },
+    {
+      "id": "21-2",
+      "issue": 21,
+      "scenario": "Rescheduling an autosave cancels the prior pending fire",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testReschedulingAutosaveCancelsThePriorPendingFire()"
+      ]
+    },
+    {
+      "id": "21-3",
+      "issue": 21,
+      "scenario": "Cancelling a pending autosave prevents its fire",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testCancellingAutosavePreventsPendingFire()"
+      ]
+    },
+    {
+      "id": "21-4",
+      "issue": 21,
+      "scenario": "The autosave callback saves the dirty draft",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testAutosaveCallbackSavesTheDirtyDraft()"
+      ]
+    },
+    {
+      "id": "21-5",
+      "issue": 21,
+      "scenario": "An edit made during an in-flight save is persisted by a follow-up write",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testEditMadeDuringSaveIsPersistedInFollowUpWrite()"
+      ]
+    },
+    {
+      "id": "21-6",
+      "issue": 21,
+      "scenario": "Untouched new drafts persist only once and only after the first save",
+      "tests": [
+        "ClientTests/FloorpNoteEditorViewControllerTests/testExplicitSavePersistsUntouchedNewDraftOnlyOnce()",
+        "ClientTests/FloorpNotePersistenceSessionTests/testNewDraftDoesNotPersistBeforeFirstSave()",
+        "ClientTests/FloorpNotePersistenceSessionTests/testFailedFirstSaveCanRetryWithoutDuplicate()"
+      ]
+    },
+    {
+      "id": "22-1",
+      "issue": 22,
+      "scenario": "Edit conflicts surface as typed failures and reload replaces the dirty draft",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testConflictIsTypedAndReloadReplacesTheDirtyDraft()"
+      ]
+    },
+    {
+      "id": "22-2",
+      "issue": 22,
+      "scenario": "A deleted note can be recovered as a copy",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testDeletedNoteCanBeRecoveredAsCopy()"
+      ]
+    },
+    {
+      "id": "22-3",
+      "issue": 22,
+      "scenario": "Archive-limit save failures remain dirty and typed",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testArchiveLimitFailureRemainsDirtyAndTyped()"
+      ]
+    },
+    {
+      "id": "22-4",
+      "issue": 22,
+      "scenario": "An edit made during a pending reload is kept instead of being overwritten",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testEditDuringReloadIsKeptInsteadOfBeingOverwritten()"
+      ]
+    },
+    {
+      "id": "22-5",
+      "issue": 22,
+      "scenario": "Unsaved text is persisted to a recovery draft and cleared after a successful save",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testUnsavedChangePersistsRecoveryDraftAndSuccessfulSaveClearsIt()"
+      ]
+    },
+    {
+      "id": "22-6",
+      "issue": 22,
+      "scenario": "A failed save keeps the newest recoverable draft",
+      "tests": [
+        "ClientTests/FloorpNoteSaveCoordinatorTests/testFailedSaveKeepsNewestRecoverableDraft()"
+      ]
+    },
+    {
+      "id": "22-7",
+      "issue": 22,
+      "scenario": "Stale edits never overwrite a newer archive revision",
+      "tests": [
+        "ClientTests/FloorpNotesStoreTests/testStaleEditIsRejectedAndTimestampAdvancesWhenClockDoesNot()"
+      ]
+    },
+    {
+      "id": "22-8",
+      "issue": 22,
+      "scenario": "Injected write failures preserve the last-good archive with no partial file",
+      "tests": [
+        "ClientTests/FloorpNotesStoreTests/testInjectedWriteFailurePreservesLastGoodArchiveWithoutPartialFile()",
+        "ClientTests/FloorpNoteRecoveryDraftStoreTests/testInjectedWriteFailurePreservesNewestRecoverableDraftWithoutPartialFile()"
+      ]
+    },
+    {
+      "id": "22-9",
+      "issue": 22,
+      "scenario": "Closing after a failed save requires explicit resolution and retries deterministically",
+      "tests": [
+        "ClientTests/FloorpNoteEditorViewControllerTests/testCloseCommandFailureResumesWaiterAndRecoversOnlyAfterClosing()",
+        "ClientTests/FloorpNoteEditorInteractionTests/testStableIdentifiersAndExplicitRetryReflectSaveState()"
+      ]
+    },
+    {
+      "id": "23-1",
+      "issue": 23,
+      "scenario": "Export/import round-trips exact IDs, timestamps, plain text, and opaque rich bytes",
+      "tests": [
+        "ClientTests/FloorpNotesImportExportTests/testExportImportRoundTripPreservesIDsTimestampsAndOpaqueRichBytes()"
+      ]
+    },
+    {
+      "id": "23-2",
+      "issue": 23,
+      "scenario": "Malformed, inconsistent, or invalid-ID imports leave the archive and revision unchanged",
+      "tests": [
+        "ClientTests/FloorpNotesImportExportTests/testMalformedInconsistentOrInvalidIDImportLeavesArchiveUnchanged()"
+      ]
+    },
+    {
+      "id": "23-3",
+      "issue": 23,
+      "scenario": "Oversized, duplicate-ID, invalid-timestamp, and over-limit imports are rejected without mutation",
+      "tests": [
+        "ClientTests/FloorpNotesImportExportTests/testOversizedDuplicateTimestampAndLimitImportsAreRejected()"
+      ]
+    },
+    {
+      "id": "23-4",
+      "issue": 23,
+      "scenario": "Merge policy is deterministic: newer updatedAt wins, ties keep local, new IDs append",
+      "tests": [
+        "ClientTests/FloorpNotesImportExportTests/testMergePolicyNewerWinsTieKeepsLocalAndNewIDsAppend()"
+      ]
+    },
+    {
+      "id": "23-5",
+      "issue": 23,
+      "scenario": "Replace policy replaces all notes and advances the revision",
+      "tests": [
+        "ClientTests/FloorpNotesImportExportTests/testReplacePolicyReplacesAllNotesAndAdvancesRevision()"
+      ]
+    },
+    {
+      "id": "23-6",
+      "issue": 23,
+      "scenario": "An injected write failure during import restores the last-good archive byte-for-byte",
+      "tests": [
+        "ClientTests/FloorpNotesImportExportTests/testInjectedWriteFailureDuringImportRestoresLastGoodArchive()"
+      ]
+    },
+    {
+      "id": "23-7",
+      "issue": 23,
+      "scenario": "A preserved corruption backup is retrievable as untrusted data and never auto-imported",
+      "tests": [
+        "ClientTests/FloorpNotesImportExportTests/testCorruptionBackupIsRetrievableUntrustedAndNeverAutoImported()",
+        "ClientTests/FloorpNotesStoreTests/testCorruptArchiveIsPreservedAndRequiresExplicitReset()"
+      ]
+    },
+    {
+      "id": "24-1",
+      "issue": 24,
+      "scenario": "CRUD and concurrent updates persist across store instances",
+      "tests": [
+        "ClientTests/FloorpNotesStoreTests/testCRUDPersistsAcrossStoreInstancesIncludingEmptyArchive()",
+        "ClientTests/FloorpNotesStoreTests/testConcurrentUpdatesToDifferentNotesDoNotOverwriteEachOther()"
+      ]
+    },
+    {
+      "id": "24-2",
+      "issue": 24,
+      "scenario": "Reorder, replace-all, and desktop payload export cover the previously unused store operations",
+      "tests": [
+        "ClientTests/FloorpNotesStoreTests/testReorderReplaceAndDesktopExportCoverUnusedStoreOperations()",
+        "ClientTests/FloorpNotesReorderStoreTests/testStaleRevisionRejectsReorderWithoutOverwritingLatestArchive()"
+      ]
+    },
+    {
+      "id": "24-3",
+      "issue": 24,
+      "scenario": "Rich-source conversion preserves byte-exact source until an explicit plain-text save",
+      "tests": [
+        "ClientTests/FloorpNoteEditorViewControllerTests/testEditingAutomaticContentAsJSONPersistsExplicitPlainTextFormat()",
+        "ClientTests/FloorpNoteEditorViewControllerTests/testFirstRichSaveRebindsBridgeToPersistedIdentityWithoutRewritingSource()",
+        "ClientTests/FloorpRichTextDocumentTests/testDesktopNodeAndMarkFixtureRoundTripsSemantically()",
+        "ClientTests/FloorpNotesSyncMergeTests/testCanonicallyEquivalentRichSourcesRemainByteDistinctDuringMerge()"
+      ]
+    }
+  ],
+  "note": "Floorp Notes Local v1 acceptance traceability (#21-#24). Every deterministic test reference must be selected in FloorpCI.xctestplan; the bound baseline_sha256 must match scripts/ci/fixtures/floorpci-selected-tests.json.",
+  "schema_version": 1
+}
