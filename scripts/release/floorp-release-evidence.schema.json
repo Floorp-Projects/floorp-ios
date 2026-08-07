@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Floorp release candidate evidence",
+  "description": "Binds a release candidate to its exact source, version/build authority, signing identity, entitlements, archive, IPA digest, dSYM inventory, and App Store Connect identity. Produced by collect-floorp-release-evidence.sh and validated by validate-floorp-release-evidence.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_sha256",
+    "marketing_version",
+    "build_number",
+    "bundle_id",
+    "team_id",
+    "archive_path",
+    "ipa_path",
+    "ipa_sha256",
+    "signing_identity",
+    "entitlements",
+    "dsym_inventory",
+    "app_store_connect_build_id",
+    "ci_run_url",
+    "xcresult_path",
+    "export_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "marketing_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "build_number": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bundle_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "team_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "archive_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ipa_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ipa_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "signing_identity": {
+      "type": ["string", "null"]
+    },
+    "archive_info": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["marketing_version", "build_number", "bundle_id", "team_id"],
+      "properties": {
+        "marketing_version": {"type": "string", "minLength": 1},
+        "build_number": {"type": "string", "minLength": 1},
+        "bundle_id": {"type": "string", "minLength": 1},
+        "team_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "ipa_info": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["marketing_version", "build_number"],
+      "properties": {
+        "marketing_version": {"type": "string", "minLength": 1},
+        "build_number": {"type": "string", "minLength": 1}
+      }
+    },
+    "entitlements": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "boolean", "array", "number", "null"]
+      }
+    },
+    "dsym_inventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["uuid", "path"],
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "pattern": "^[0-9A-F]{32}$"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "app_store_connect_build_id": {
+      "type": ["string", "null"]
+    },
+    "ci_run_url": {
+      "type": ["string", "null"]
+    },
+    "xcresult_path": {
+      "type": ["string", "null"]
+    },
+    "export_status": {
+      "type": ["string", "null"]
+    }
+  }
+}
