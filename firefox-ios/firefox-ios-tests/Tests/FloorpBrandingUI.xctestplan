@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "9D1E5A0E-7B3C-4F5A-9E6B-1A2B3C4D5E6F",
+      "name" : "Floorp Branding UI",
+      "options" : {
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "language" : "en-US",
+    "region" : "US"
+  },
+  "testTargets" : [
+    {
+      "selectedTests" : [
+        "FloorpBrandingUITests/testLaunchHomeHeaderShowsFloorpBranding()",
+        "FloorpBrandingUITests/testPrivateHomeHeaderShowsFloorpBranding()",
+        "FloorpBrandingUITests/testSettingsAboutShowsFloorpIdentity()",
+        "FloorpBrandingUITests/testQuickActionsUseFloorpCopy()",
+        "FloorpBrandingOnboardingUITests/testOnboardingShowsFloorpLoader()"
+      ],
+      "target" : {
+        "containerPath" : "container:Client.xcodeproj",
+        "identifier" : "3BFE4B061D342FB800DDF53F",
+        "name" : "XCUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

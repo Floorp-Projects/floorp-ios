@@ -26,6 +26,7 @@
 /* Begin PBXBuildFile section */
 		F10A00212F50000100000001 /* FloorpAdaptiveSidebarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00202F50000100000001 /* FloorpAdaptiveSidebarUITests.swift */; };
 		F10A00222F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */; };
+		F10A00262F50000100000001 /* FloorpBrandingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00272F50000100000001 /* FloorpBrandingUITests.swift */; };
 		032CE5F62EBA0C04007CCC0D /* ToUExperiencePointsCalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032CE5F52EBA0C04007CCC0D /* ToUExperiencePointsCalculatorTests.swift */; };
 		033A5FCC2E5F001200A84E8A /* TermsOfUseTelemetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 033A5FCB2E5F001200A84E8A /* TermsOfUseTelemetryTests.swift */; };
 		033A62002E77FE9900A84E8A /* ResetTermsOfServiceAcceptancePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 033A61FF2E77FE9900A84E8A /* ResetTermsOfServiceAcceptancePage.swift */; };
@@ -2809,6 +2810,7 @@
 /* Begin PBXFileReference section */
 		F10A00202F50000100000001 /* FloorpAdaptiveSidebarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpAdaptiveSidebarUITests.swift; sourceTree = "<group>"; };
 		F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPrivateHeaderBrandingUITests.swift; sourceTree = "<group>"; };
+		F10A00272F50000100000001 /* FloorpBrandingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpBrandingUITests.swift; sourceTree = "<group>"; };
 		001348F79CA80B94DCD3E535 /* km */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = km; path = km.lproj/PrivateBrowsing.strings; sourceTree = "<group>"; };
 		00218A431FC749D7BC8EC05D /* homepageStoryCategoriesOn.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = homepageStoryCategoriesOn.json; sourceTree = "<group>"; };
 		003141C6B19507C79B6C399C /* ga */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ga; path = ga.lproj/Menu.strings; sourceTree = "<group>"; };
@@ -13554,6 +13556,7 @@
 				5FE7F1852E781EB300B0AFEC /* Selectors */,
 				F10A00202F50000100000001 /* FloorpAdaptiveSidebarUITests.swift */,
 				F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */,
+				F10A00272F50000100000001 /* FloorpBrandingUITests.swift */,
 				5FEB88322D6F5E4A00ECE6B1 /* A11yHomePageTests.swift */,
 				5F7C8A032D09A62A00C9F89D /* A11yOnboardingTests.swift */,
 				5FACA10F2D099DCD00B289BC /* A11ySearchTest.swift */,
@@ -19593,6 +19596,7 @@
 			files = (
 				F10A00212F50000100000001 /* FloorpAdaptiveSidebarUITests.swift in Sources */,
 				F10A00222F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift in Sources */,
+				F10A00262F50000100000001 /* FloorpBrandingUITests.swift in Sources */,
 				2CA16FDE1E5F089100332277 /* SearchTest.swift in Sources */,
 				8A9F0B5827C59E1800FE09AE /* ImageIdentifiers.swift in Sources */,
 				EDDC4F732F68697E00E0B8FA /* ModernKitOnboardingTests.swift in Sources */,
