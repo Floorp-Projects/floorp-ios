@@ -1,0 +1,14 @@
+{
+  "id": 99000002,
+  "name": "Protect Floorp iOS main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
+  "rules": [
+    {"type": "pull_request", "parameters": {"required_approving_review_count": 1, "required_review_thread_resolution": true, "dismiss_stale_reviews_on_push": true}},
+    {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "Validate workflows"}, {"context": "Build and unit test"}]}},
+    {"type": "deletion", "parameters": {}},
+    {"type": "non_fast_forward", "parameters": {}}
+  ],
+  "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}]
+}
