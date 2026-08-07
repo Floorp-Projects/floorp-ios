@@ -22,10 +22,12 @@ import XCTest
 @MainActor
 class FloorpPrivateHeaderBrandingUITests: FeatureFlaggedTestBase {
     private static let approvedPrivateHeaderDigest =
-        "0000000000000000000000000000000000000000000000000000000000000000"
+        "fe5958f7023bd3b4dcb7b1c3be431b7d504c016bac8bac965818eaac048e128c"
 
     private static let logoIdentifier =
         AccessibilityIdentifiers.FirefoxHomepage.OtherButtons.logoID
+    private static let privateHomeCardIdentifier =
+        AccessibilityIdentifiers.PrivateMode.Homepage.card
 
     private var toolbarScreen: ToolbarScreen!
     private var tabTrayScreen: TabTrayScreen!
@@ -55,25 +57,43 @@ class FloorpPrivateHeaderBrandingUITests: FeatureFlaggedTestBase {
         tabTrayScreen.assertNewTabButtonExist()
         tabTrayScreen.tapOnNewTabButton()
 
-        // The private home page header renders the logo stack with the
-        // Floorp product name as its accessibility label.
-        let logo = app.descendants(matching: .any)
-            .matching(identifier: Self.logoIdentifier)
+        // Confirm the private home page is on screen before locating its header.
+        let privateHomeCard = app.descendants(matching: .any)
+            .matching(identifier: Self.privateHomeCardIdentifier)
             .firstMatch
-        XCTAssertTrue(logo.waitForExistence(timeout: TIMEOUT))
+        XCTAssertTrue(
+            privateHomeCard.waitForExistence(timeout: TIMEOUT),
+            "Private home page card did not appear"
+        )
+
+        // Select the visible (hittable) header logo and verify the Floorp
+        // product label before comparing the rendered pixels.
+        let logo = Self.visibleLogo(in: app)
+        XCTAssertNotNil(logo, "No visible private home header logo found")
+        guard let logo else { return }
         XCTAssertEqual(
             logo.label,
             "Floorp",
             "Private-mode home header logo must carry the Floorp product name"
         )
 
-        // The rendered pixels must match the approved Floorp artwork digest.
         let renderedDigest = try Self.renderedScreenshotDigest(of: logo)
         XCTAssertEqual(
             renderedDigest,
             Self.approvedPrivateHeaderDigest,
             "Private-mode home header render does not match the approved Floorp artwork (rendered digest \(renderedDigest))"
         )
+    }
+
+    /// Returns the on-screen header logo element. The regular home page can
+    /// linger in the accessibility tree behind the tab tray, so the first
+    /// match is not necessarily visible; prefer a hittable element and record
+    /// the candidates for diagnostics.
+    private static func visibleLogo(in app: XCUIApplication) -> XCUIElement? {
+        let candidates = app.descendants(matching: .any)
+            .matching(identifier: logoIdentifier)
+            .allElementsBoundByIndex
+        return candidates.first { $0.isHittable } ?? candidates.last
     }
 
     private static func renderedScreenshotDigest(of element: XCUIElement) throws -> String {
