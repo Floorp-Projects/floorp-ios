@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "app": {
+    "bundle_id": "app.floorp.Floorp",
+    "apple_id": "9999999999",
+    "team_id": "DV2U35YBHT",
+    "primary_locales": ["en-US", "ja-JP"]
+  },
+  "privacy": {
+    "data_types": [
+      {"category": "Contact Info", "data_type": "Email Address", "collected": true, "linked_to_user_identity": true, "purpose": ["App Functionality"]}
+    ]
+  },
+  "export_compliance": {
+    "uses_encryption": true,
+    "exempt_from_export_compliance": true,
+    "itsapp_uses_non_exempt_encryption": false
+  }
+}

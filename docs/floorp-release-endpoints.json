@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "note": "Floorp release runtime endpoint matrix. Every endpoint reachable from a FloorpRelease build must be listed; the network capture harness and validate-floorp-privacy.py treat any traced host outside this matrix as an unowned-service failure. Disabled services remain disabled by build/runtime policy (docs/ci-cd.md) and must not appear in traces.",
+  "endpoints": [
+    {
+      "host": "accounts.firefox.com",
+      "purpose": "FxA web flow (sign-in/sign-up/email verification)",
+      "owner": "Mozilla (FxA) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "fxa"
+    },
+    {
+      "host": "oauth.accounts.firefox.com",
+      "purpose": "FxA OAuth token exchange",
+      "owner": "Mozilla (FxA) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "fxa"
+    },
+    {
+      "host": "profile.accounts.firefox.com",
+      "purpose": "FxA profile fetch",
+      "owner": "Mozilla (FxA) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "fxa"
+    },
+    {
+      "host": "api.accounts.firefox.com",
+      "purpose": "FxA API",
+      "owner": "Mozilla (FxA) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "fxa"
+    },
+    {
+      "host": "token.services.mozilla.com",
+      "purpose": "Sync token server",
+      "owner": "Mozilla (Sync) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "sync"
+    },
+    {
+      "host": "sync.services.mozilla.com",
+      "purpose": "Firefox Sync 1.5 storage",
+      "owner": "Mozilla (Sync) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "sync"
+    },
+    {
+      "host": "event-sync.services.mozilla.com",
+      "purpose": "Sync event ping",
+      "owner": "Mozilla (Sync) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "sync"
+    },
+    {
+      "host": "firefox.settings.services.mozilla.com",
+      "purpose": "Remote Settings / Nimbus experiment records",
+      "owner": "Mozilla (Remote Settings) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "remote-settings"
+    },
+    {
+      "host": "remote-settings.data.mozilla.com",
+      "purpose": "Remote Settings attachment downloads (tracking-protection lists)",
+      "owner": "Mozilla (Remote Settings) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "remote-settings"
+    },
+    {
+      "host": "static.accounts.firefox.com",
+      "purpose": "FxA static assets",
+      "owner": "Mozilla (FxA) - Floorp-authorized retained service",
+      "status": "enabled",
+      "service": "fxa"
+    },
+    {
+      "host": "merino.services.mozilla.com",
+      "purpose": "Merino search suggestions and homepage stories",
+      "owner": "Mozilla (Merino) - Floorp-authorized retained content service",
+      "status": "enabled",
+      "service": "merino"
+    },
+    {
+      "host": "prod.ohttp-gateway.prod.webservices.mozgcp.net",
+      "purpose": "Glean OHTTP relay configuration",
+      "owner": "unowned - Glean telemetry disabled by Floorp startup policy (FloorpFlags.isTelemetryDisabled)",
+      "status": "disabled",
+      "service": "telemetry"
+    },
+    {
+      "host": "mozilla-ohttp.fastly-edge.com",
+      "purpose": "Glean OHTTP relay upload",
+      "owner": "unowned - Glean telemetry disabled by Floorp startup policy",
+      "status": "disabled",
+      "service": "telemetry"
+    },
+    {
+      "host": "mlpa-prod-prod-mozilla.global.ssl.fastly.net",
+      "purpose": "Glean OHTTP relay production alias",
+      "owner": "unowned - Glean telemetry disabled by Floorp startup policy",
+      "status": "disabled",
+      "service": "telemetry"
+    },
+    {
+      "host": "mlpa-nonprod-dev-mozilla.global.ssl.fastly.net",
+      "purpose": "Glean OHTTP relay dev alias",
+      "owner": "unowned - Glean telemetry disabled by Floorp startup policy",
+      "status": "disabled",
+      "service": "telemetry"
+    },
+    {
+      "host": "mlpa-nonprod-stage-mozilla.global.ssl.fastly.net",
+      "purpose": "Glean OHTTP relay staging alias",
+      "owner": "unowned - Glean telemetry disabled by Floorp startup policy",
+      "status": "disabled",
+      "service": "telemetry"
+    },
+    {
+      "host": "ads.mozilla.org",
+      "purpose": "Mozilla Unified Ads / sponsored shortcuts",
+      "owner": "unowned - Unified Ads disabled by Floorp policy (FloorpFlags.isSponsoredShortcutsDisabled)",
+      "status": "disabled",
+      "service": "unified-ads"
+    },
+    {
+      "host": "ads.allizom.org",
+      "purpose": "Mozilla Unified Ads staging",
+      "owner": "unowned - Unified Ads disabled by Floorp policy",
+      "status": "disabled",
+      "service": "unified-ads"
+    },
+    {
+      "host": "relay.allizom.org",
+      "purpose": "Mozilla test relay",
+      "owner": "unowned - test-only host, not a Floorp runtime endpoint",
+      "status": "disabled",
+      "service": "test"
+    },
+    {
+      "host": "sentry.io",
+      "purpose": "Crash/error reporting",
+      "owner": "unowned - Sentry DSN is unset in FloorpRelease, SDK inert",
+      "status": "disabled",
+      "service": "sentry"
+    },
+    {
+      "host": "push.services.mozilla.com",
+      "purpose": "Autopush (Push notification delivery)",
+      "owner": "unowned - APNs/Push disabled by Floorp release policy",
+      "status": "disabled",
+      "service": "push"
+    },
+    {
+      "host": "updates.push.services.mozilla.com",
+      "purpose": "Autopush update channel",
+      "owner": "unowned - Push disabled by Floorp release policy",
+      "status": "disabled",
+      "service": "push"
+    },
+    {
+      "host": "ai-request-api.services.mozilla.com",
+      "purpose": "Hosted Summarizer backend",
+      "owner": "unowned - Hosted Summarizer disabled by Floorp release policy",
+      "status": "disabled",
+      "service": "hosted-summarizer"
+    },
+    {
+      "host": "0.add0n.com",
+      "purpose": "Quick Answers backend",
+      "owner": "unowned - Quick Answers disabled by Floorp release policy",
+      "status": "disabled",
+      "service": "quick-answers"
+    },
+    {
+      "host": "localhost",
+      "purpose": "local GCDWebServer (development only; excluded from release traces)",
+      "owner": "Floorp",
+      "status": "disabled",
+      "service": "local-dev"
+    }
+  ]
+}

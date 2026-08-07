@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "note": "App Store Connect metadata and App Privacy/export-compliance artifact for the Floorp release line. Internally consistent by construction; validate-floorp-privacy.py rejects drift (wrong app id, locales outside the acceptance set, contradictory privacy answers, or unset export fields).",
+  "app": {
+    "bundle_id": "app.floorp.Floorp",
+    "apple_id": "6796708699",
+    "team_id": "DV2U35YBHT",
+    "name": "Floorp",
+    "primary_locales": ["en-US", "ja-JP"],
+    "marketing_version_source": "firefox-ios/Client/Configuration/FloorpRelease.xcconfig (FLOORP_MARKETING_VERSION)",
+    "build_number_source": "Xcode Cloud monotonic distribution build numbers (single authority)",
+    "app_store_id": "unset until the public listing is live (FLOORP_APP_STORE_ID empty)"
+  },
+  "privacy": {
+    "privacy_policy_url": "https://floorp.app/privacy",
+    "data_types": [
+      {
+        "category": "Contact Info",
+        "data_type": "Email Address",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "purpose": ["App Functionality"],
+        "note": "FxA account email"
+      },
+      {
+        "category": "Identifiers",
+        "data_type": "User ID",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "purpose": ["App Functionality"],
+        "note": "FxA user id for Sync"
+      }
+    ],
+    "collected_data_notes": "Notes remain local-only in the iOS app; no note content is collected. Analytics/other third-party data collection categories intentionally omitted."
+  },
+  "export_compliance": {
+    "uses_encryption": true,
+    "exempt_from_export_compliance": true,
+    "exemption_notes": "Standard TLS plus FxA/Sync over TLS only; no custom non-exempt cryptography",
+    "itsapp_uses_non_exempt_encryption": false
+  },
+  "listing": {
+    "category": "Utilities",
+    "age_rating_notes": "Unrestricted web browsing; final age rating requires App Store review",
+    "description": "Floorp web browser",
+    "support_url": "https://floorp.app",
+    "marketing_url": "https://floorp.app"
+  }
+}

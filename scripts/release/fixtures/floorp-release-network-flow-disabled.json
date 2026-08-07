@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "flows": [
+    {"method": "POST", "scheme": "https", "host": "push.services.mozilla.com", "port": 443, "path": "/v1/push"}
+  ]
+}
