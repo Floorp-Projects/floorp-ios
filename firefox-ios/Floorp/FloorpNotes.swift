@@ -543,6 +543,101 @@ enum FloorpNoteContent {
     }
 }
 
+// MARK: - Import and export
+
+/// The deterministic conflict policy applied when importing a validated
+/// payload into the local archive.
+enum FloorpNotesImportPolicy: Sendable {
+    /// Replaces the entire local archive with the imported notes.
+    case replace
+
+    /// Merges by exact ID. When a local and an imported note share an ID, the
+    /// version with the newer `updatedAt` wins; ties keep the local version.
+    /// Imported IDs that do not exist locally are appended in payload order.
+    case merge
+}
+
+struct FloorpNotesImportResult: Equatable, Sendable {
+    let revision: UInt64
+    let importedCount: Int
+    /// Number of existing local notes whose value changed (merge policy).
+    let mergedCount: Int
+    /// Number of local notes replaced (replace policy).
+    let replacedCount: Int
+}
+
+/// Validates an import document before any store mutation. The only accepted
+/// format is the desktop payload produced by
+/// `FloorpNotesStore.desktopPayloadData()` (parallel `ids`/`titles`/
+/// `contents`/`createdAts`/`updatedAts` arrays). Validation is strict: invalid
+/// identifiers, byte-exact duplicates, inconsistent arrays, invalid
+/// timestamps, oversized input, and over-limit note counts all reject the
+/// document without touching the archive. Content bytes are never rewritten,
+/// so unknown rich-text source stays byte-for-byte preserved.
+enum FloorpNotesImportValidator {
+    static func validate(data: Data) throws -> [FloorpNote] {
+        guard data.count <= FloorpNotesStore.maximumArchiveBytes else {
+            throw FloorpNotesStoreError.archiveTooLarge(
+                actualBytes: data.count,
+                maximumBytes: FloorpNotesStore.maximumArchiveBytes
+            )
+        }
+
+        let payload: FloorpNotesDesktopPayload
+        do {
+            payload = try JSONDecoder().decode(FloorpNotesDesktopPayload.self, from: data)
+        } catch {
+            throw FloorpNotesStoreError.invalidImportPayload
+        }
+
+        guard let ids = payload.ids else {
+            throw FloorpNotesStoreError.invalidImportPayload
+        }
+        let count = ids.count
+        guard count == payload.titles.count, count == payload.contents.count else {
+            throw FloorpNotesStoreError.invalidImportPayload
+        }
+        if let createdAts = payload.createdAts, createdAts.count != count {
+            throw FloorpNotesStoreError.invalidImportPayload
+        }
+        if let updatedAts = payload.updatedAts, updatedAts.count != count {
+            throw FloorpNotesStoreError.invalidImportPayload
+        }
+        guard count <= FloorpNotesStore.maximumNoteCount else {
+            throw FloorpNotesStoreError.tooManyNotes(count)
+        }
+
+        var seenIDs = Set<FloorpNoteID>()
+        var notes = [FloorpNote]()
+        notes.reserveCapacity(count)
+        for index in ids.indices {
+            let id = FloorpNoteID(ids[index])
+            guard !id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw FloorpNotesStoreError.invalidNoteID
+            }
+            guard seenIDs.insert(id).inserted else {
+                throw FloorpNotesStoreError.duplicateNoteID(id)
+            }
+            let createdAt = payload.createdAts?[index] ?? 0
+            let updatedAt = payload.updatedAts?[index] ?? createdAt
+            guard createdAt > 0, updatedAt >= createdAt else {
+                throw FloorpNotesStoreError.invalidTimestamp(id)
+            }
+            notes.append(
+                FloorpNote(
+                    id: id,
+                    title: payload.titles[index],
+                    content: payload.contents[index],
+                    createdAt: createdAt,
+                    updatedAt: updatedAt,
+                    contentFormat: .automatic
+                )
+            )
+        }
+        return notes
+    }
+}
+
 // MARK: - Store
 
 enum FloorpNotesStoreError: Error, LocalizedError {
@@ -552,6 +647,8 @@ enum FloorpNotesStoreError: Error, LocalizedError {
     case writesBlockedByCorruption(recoveryURL: URL)
     case invalidNoteID
     case duplicateNoteID(FloorpNoteID)
+    case invalidTimestamp(FloorpNoteID)
+    case invalidImportPayload
     case noteNotFound(FloorpNoteID)
     case editConflict(FloorpNoteID)
     case reorderConflict(expectedRevision: UInt64, actualRevision: UInt64)
@@ -573,6 +670,10 @@ enum FloorpNotesStoreError: Error, LocalizedError {
             return "A note has an invalid identifier."
         case .duplicateNoteID:
             return "Two notes have the same identifier."
+        case .invalidTimestamp(let id):
+            return "A note has an invalid timestamp (\(id.rawValue))."
+        case .invalidImportPayload:
+            return "The imported JSON payload is not a valid Floorp Notes document."
         case .noteNotFound:
             return "The note no longer exists."
         case .editConflict:
@@ -850,6 +951,58 @@ actor FloorpNotesStore {
         return data
     }
 
+    /// Imports a validated JSON document produced by `desktopPayloadData()`.
+    ///
+    /// Validation happens entirely before mutation: malformed, oversized,
+    /// duplicate, or timestamp-invalid input leaves the archive and revision
+    /// unchanged. The subsequent commit is atomic, so an injected write,
+    /// rename, or commit failure leaves the last-good archive intact with no
+    /// partial or temporary file behind.
+    @discardableResult
+    func importNotes(
+        from data: Data,
+        policy: FloorpNotesImportPolicy = .replace
+    ) throws -> FloorpNotesImportResult {
+        let archive = try loadArchiveForWriting()
+        let imported = try FloorpNotesImportValidator.validate(data: data)
+        let local = archive.notes
+        let notes: [FloorpNote]
+        var mergedCount = 0
+        var replacedCount = 0
+        switch policy {
+        case .replace:
+            notes = imported
+            replacedCount = local.count
+        case .merge:
+            (notes, mergedCount) = Self.mergedImport(imported, into: local)
+        }
+        try commit(notes: notes, replacing: archive)
+        return FloorpNotesImportResult(
+            revision: archiveByAdvancingRevision(of: archive, notes: notes).revision,
+            importedCount: imported.count,
+            mergedCount: mergedCount,
+            replacedCount: replacedCount
+        )
+    }
+
+    /// Returns the URL of the preserved corruption backup, if the current
+    /// store instance has one. The backup is untrusted data and is never
+    /// auto-imported.
+    func preservedCorruptionBackupURL() -> URL? {
+        if case .preserved(let recoveryURL) = corruptionState {
+            return recoveryURL
+        }
+        return nil
+    }
+
+    /// Returns the preserved corruption backup as raw untrusted data, or nil
+    /// when no recovery copy is currently preserved. Callers must never treat
+    /// this data as trusted Notes content.
+    func preservedCorruptionBackupData() throws -> Data? {
+        guard let recoveryURL = preservedCorruptionBackupURL() else { return nil }
+        return try Data(contentsOf: recoveryURL)
+    }
+
     /// Allows the UI to recover only after an explicit destructive decision
     /// and only when a separate recovery copy was successfully created.
     func resetAfterCorruption() throws {
@@ -862,6 +1015,34 @@ actor FloorpNotesStore {
         cachedArchive = emptyArchive
         self.corruptionState = nil
         postChangeNotification(revision: emptyArchive.revision)
+    }
+
+    /// Deterministic merge: newer `updatedAt` wins for a shared ID, ties keep
+    /// the local version, and imported IDs missing locally are appended in
+    /// payload order.
+    private static func mergedImport(
+        _ imported: [FloorpNote],
+        into local: [FloorpNote]
+    ) -> (notes: [FloorpNote], mergedCount: Int) {
+        var byID = Dictionary(uniqueKeysWithValues: local.map { ($0.id, $0) })
+        var mergedCount = 0
+        for note in imported {
+            if let existing = byID[note.id] {
+                if note.updatedAt > existing.updatedAt {
+                    byID[note.id] = note
+                    mergedCount += 1
+                }
+            } else {
+                byID[note.id] = note
+            }
+        }
+        var notes = local.map { byID[$0.id] ?? $0 }
+        var seen = Set(local.map(\.id))
+        for note in imported where !seen.contains(note.id) {
+            notes.append(note)
+            seen.insert(note.id)
+        }
+        return (notes, mergedCount)
     }
 
     private func loadArchiveForWriting() throws -> Archive {
