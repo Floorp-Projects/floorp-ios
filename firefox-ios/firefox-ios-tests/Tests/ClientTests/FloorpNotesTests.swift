@@ -172,6 +172,48 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(persistedContent, "original")
     }
 
+    func testInjectedWriteFailurePreservesLastGoodArchiveWithoutPartialFile() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let seedStore = FloorpNotesStore(fileURL: location.archive)
+        let note = try await seedStore.createNote(title: "Safe", content: "original")
+
+        enum WriteFailure: Error { case injected }
+        let failingStore = FloorpNotesStore(
+            fileURL: location.archive,
+            writeData: { _, _ in throw WriteFailure.injected }
+        )
+        do {
+            _ = try await failingStore.updateNote(
+                id: note.id,
+                title: "Must not persist",
+                content: "replacement",
+                expectedUpdatedAt: note.updatedAt
+            )
+            XCTFail("Expected injected write failure")
+        } catch WriteFailure.injected {
+            // Expected.
+        }
+
+        // A fresh store/process instance must still read the last-good archive.
+        let restartedStore = FloorpNotesStore(fileURL: location.archive)
+        let persisted = try await restartedStore.loadNotes()
+        XCTAssertEqual(persisted, [note])
+        XCTAssertEqual(persisted.first?.content, "original")
+
+        // No partial or temporary files may linger next to the archive.
+        let files = try FileManager.default.contentsOfDirectory(
+            at: location.directory,
+            includingPropertiesForKeys: nil
+        )
+        let strayFiles = files.filter { $0.lastPathComponent != "notes.json" }
+        XCTAssertTrue(
+            strayFiles.isEmpty,
+            "Unexpected partial/temp files: \(strayFiles.map(\.lastPathComponent))"
+        )
+    }
+
     func testCorruptArchiveIsPreservedAndRequiresExplicitReset() async throws {
         let location = try makeTemporaryArchiveLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }
@@ -806,6 +848,104 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
 
     private enum CopyFailure: Error {
         case expected
+    }
+}
+
+final class FloorpNoteRecoveryDraftStoreTests: XCTestCase {
+    private func makeTemporaryDraftLocation() throws -> (
+        directory: URL,
+        draft: URL
+    ) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpNotesRecoveryTests-\(UUID().uuidString)", isDirectory: true)
+        return (directory, directory.appendingPathComponent("unsaved-draft.json"))
+    }
+
+    func testNewestDraftIsRecoverableAcrossStoreInstances() throws {
+        let location = try makeTemporaryDraftLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let draft = FloorpNoteRecoveryDraft(
+            id: FloorpNoteID("note"),
+            title: "Unsaved",
+            content: "Recover me",
+            contentFormat: .plainText,
+            updatedAt: 42
+        )
+        let firstStore = FloorpNoteRecoveryDraftStore(fileURL: location.draft)
+        try firstStore.saveDraft(draft)
+
+        // A fresh store/process instance must recover the newest draft.
+        let relaunchedStore = FloorpNoteRecoveryDraftStore(fileURL: location.draft)
+        XCTAssertEqual(try relaunchedStore.loadRecoverableDraft(), draft)
+    }
+
+    func testClearRemovesTheRecoverableDraft() throws {
+        let location = try makeTemporaryDraftLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNoteRecoveryDraftStore(fileURL: location.draft)
+        try store.saveDraft(
+            FloorpNoteRecoveryDraft(
+                id: FloorpNoteID("note"),
+                title: "Unsaved",
+                content: "Recover me",
+                contentFormat: .plainText,
+                updatedAt: 1
+            )
+        )
+        try store.clear()
+        XCTAssertNil(try store.loadRecoverableDraft())
+    }
+
+    func testInjectedWriteFailurePreservesNewestRecoverableDraftWithoutPartialFile() throws {
+        let location = try makeTemporaryDraftLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let previous = FloorpNoteRecoveryDraft(
+            id: FloorpNoteID("note"),
+            title: "Previous",
+            content: "Oldest recoverable",
+            contentFormat: .plainText,
+            updatedAt: 1
+        )
+        let firstStore = FloorpNoteRecoveryDraftStore(fileURL: location.draft)
+        try firstStore.saveDraft(previous)
+
+        enum WriteFailure: Error { case injected }
+        let failingStore = FloorpNoteRecoveryDraftStore(
+            fileURL: location.draft,
+            writeData: { _, _ in throw WriteFailure.injected }
+        )
+        do {
+            try failingStore.saveDraft(
+                FloorpNoteRecoveryDraft(
+                    id: FloorpNoteID("note"),
+                    title: "Must not win",
+                    content: "replacement",
+                    contentFormat: .plainText,
+                    updatedAt: 2
+                )
+            )
+            XCTFail("Expected injected write failure")
+        } catch WriteFailure.injected {
+            // Expected.
+        }
+
+        // The newest recoverable draft must remain the last-good one, and a
+        // fresh instance must still read it with no partial file lingering.
+        let relaunchedStore = FloorpNoteRecoveryDraftStore(fileURL: location.draft)
+        XCTAssertEqual(try relaunchedStore.loadRecoverableDraft(), previous)
+
+        let files = try FileManager.default.contentsOfDirectory(
+            at: location.directory,
+            includingPropertiesForKeys: nil
+        )
+        let strayFiles = files.filter { $0.lastPathComponent != "unsaved-draft.json" }
+        XCTAssertTrue(
+            strayFiles.isEmpty,
+            "Unexpected partial/temp files: \(strayFiles.map(\.lastPathComponent))"
+        )
     }
 }
 
@@ -4332,6 +4472,66 @@ final class FloorpNoteSaveCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(savedDrafts.last?.title, "Edited")
         XCTAssertFalse(coordinator.hasUnsavedChanges)
+    }
+
+    func testUnsavedChangePersistsRecoveryDraftAndSuccessfulSaveClearsIt() async throws {
+        let location = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpNotesCoordinatorRecovery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: location) }
+        let recoveryStore = FloorpNoteRecoveryDraftStore(fileURL: location)
+
+        let original = makeNote(id: "note", title: "Original", updatedAt: 1)
+        let persistence = MockFloorpNotePersistence()
+        let coordinator = FloorpNoteSaveCoordinator(
+            draft: original,
+            isPersisted: true,
+            persistence: persistence,
+            recoveryDraftStore: recoveryStore
+        )
+
+        XCTAssertNil(coordinator.loadRecoverableDraft())
+        coordinator.updateTitle("Edited")
+
+        // The newest unsaved draft is recoverable before any save.
+        let recoverable = try XCTUnwrap(coordinator.loadRecoverableDraft())
+        XCTAssertEqual(recoverable.title, "Edited")
+        XCTAssertEqual(recoverable.content, original.content)
+
+        // A successful save clears the recovery snapshot.
+        guard case .saved = await coordinator.saveLatest() else {
+            return XCTFail("Expected the save to succeed")
+        }
+        XCTAssertNil(coordinator.loadRecoverableDraft())
+    }
+
+    func testFailedSaveKeepsNewestRecoverableDraft() async {
+        let location = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpNotesCoordinatorRecovery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: location) }
+        let recoveryStore = FloorpNoteRecoveryDraftStore(fileURL: location)
+
+        let original = makeNote(id: "note", title: "Original", updatedAt: 1)
+        let persistence = MockFloorpNotePersistence()
+        persistence.saveHandler = { _ in
+            throw FloorpNotesStoreError.editConflict(original.id)
+        }
+        let coordinator = FloorpNoteSaveCoordinator(
+            draft: original,
+            isPersisted: true,
+            persistence: persistence,
+            recoveryDraftStore: recoveryStore
+        )
+        coordinator.updateContent("Unsaved body", contentFormat: .plainText)
+
+        guard case .failed(let failure) = await coordinator.saveLatest() else {
+            return XCTFail("Expected the save to fail")
+        }
+        XCTAssertEqual(failure.kind, .conflict)
+        XCTAssertTrue(coordinator.hasUnsavedChanges)
+
+        // The newest unsaved draft must survive the failed save for recovery.
+        let recoverable = try? XCTUnwrap(coordinator.loadRecoverableDraft())
+        XCTAssertEqual(recoverable?.content, "Unsaved body")
     }
 }
 

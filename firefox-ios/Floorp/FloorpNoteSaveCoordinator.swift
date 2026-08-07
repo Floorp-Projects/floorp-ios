@@ -31,6 +31,7 @@ final class FloorpNoteSaveCoordinator {
     }
 
     private let persistence: FloorpNotePersistence
+    private let recoveryDraftStore: FloorpNoteRecoveryDraftStore?
     private(set) var draft: FloorpNote
     private(set) var changeVersion = 0
     private(set) var savedVersion = 0
@@ -44,10 +45,16 @@ final class FloorpNoteSaveCoordinator {
     var hasUnsavedChanges: Bool { savedVersion != changeVersion }
     var hasUnsavedContentChanges: Bool { savedContentVersion != contentChangeVersion }
 
-    init(draft: FloorpNote, isPersisted: Bool, persistence: FloorpNotePersistence) {
+    init(
+        draft: FloorpNote,
+        isPersisted: Bool,
+        persistence: FloorpNotePersistence,
+        recoveryDraftStore: FloorpNoteRecoveryDraftStore? = nil
+    ) {
         self.draft = draft
         self.hasPersistedNote = isPersisted
         self.persistence = persistence
+        self.recoveryDraftStore = recoveryDraftStore
     }
 
     @discardableResult
@@ -167,6 +174,9 @@ final class FloorpNoteSaveCoordinator {
         } while hasUnsavedChanges
 
         finishSaving()
+        if lastSavedNote != nil {
+            clearRecoveryDraft()
+        }
         return lastSavedNote.map(SaveOutcome.saved) ?? .noChanges
     }
 
@@ -193,6 +203,7 @@ final class FloorpNoteSaveCoordinator {
         savedContentVersion = 0
         hasPersistedNote = true
         lastFailure = nil
+        clearRecoveryDraft()
         return note
     }
 
@@ -210,6 +221,7 @@ final class FloorpNoteSaveCoordinator {
             lastFailure = nil
             adoptPersistenceIdentity(from: persistedNote)
             finishSaving()
+            clearRecoveryDraft()
             if hasUnsavedChanges {
                 return await saveLatest()
             }
@@ -225,6 +237,37 @@ final class FloorpNoteSaveCoordinator {
     private func markChanged() {
         changeVersion += 1
         lastFailure = nil
+        persistRecoveryDraft()
+    }
+
+    /// Persists a recoverable snapshot of the current draft so unsaved text
+    /// survives a force termination or relaunch. Best-effort: a failed write
+    /// never blocks the edit itself.
+    func persistRecoveryDraft() {
+        guard let recoveryDraftStore else { return }
+        try? recoveryDraftStore.saveDraft(
+            FloorpNoteRecoveryDraft(
+                id: draft.id,
+                title: draft.title,
+                content: draft.content,
+                contentFormat: draft.contentFormat,
+                updatedAt: draft.updatedAt
+            )
+        )
+    }
+
+    /// Discards the persisted recovery snapshot after an explicit discard or a
+    /// successful save/reload, so a stale unsaved draft is never resurrected.
+    func clearRecoveryDraft() {
+        guard let recoveryDraftStore else { return }
+        try? recoveryDraftStore.clear()
+    }
+
+    /// Returns the last recoverable draft (from a prior force termination or
+    /// relaunch), if one exists.
+    func loadRecoverableDraft() -> FloorpNoteRecoveryDraft? {
+        guard let recoveryDraftStore else { return nil }
+        return try? recoveryDraftStore.loadRecoverableDraft()
     }
 
     private func adoptPersistenceIdentity(from persistedNote: FloorpNote) {
