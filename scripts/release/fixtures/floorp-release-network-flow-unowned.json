@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "flows": [
+    {"method": "GET", "scheme": "https", "host": "unknown-analytics.example.net", "port": 443, "path": "/collect"}
+  ]
+}
