@@ -8,7 +8,10 @@ import Common
 
 @MainActor
 final class SceneDelegateTests: XCTestCase, FeatureFlaggable {
+    // XCTest fixtures are initialized in setUp and released in tearDown.
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockSessionManager: MockAppSessionManager!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockGleanWrapper: MockGleanWrapper!
 
     override func setUp() async throws {
@@ -26,6 +29,11 @@ final class SceneDelegateTests: XCTestCase, FeatureFlaggable {
         DependencyHelperMock().reset()
         AppEventQueue.reset()
         try await super.tearDown()
+    }
+
+    func testInitializationAfterDependencyTeardownDoesNotResolveDependencies() {
+        DependencyHelperMock().reset()
+        _ = SceneDelegate()
     }
 
     // MARK: - handle(route:) - openedFromExternalSource

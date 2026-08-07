@@ -17,15 +17,24 @@ final class Debouncer {
     }
 
     func call(action: @escaping @MainActor () -> Void) {
-        task?.cancel()
+        cancel()
 
-        let nanos = UInt64(delay) * nanosecondsPerSecond
+        let nanos = UInt64(delay * Double(nanosecondsPerSecond))
 
         task = Task {
             try? await Task.sleep(nanoseconds: nanos)
             guard !Task.isCancelled else { return }
             action()
         }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+
+    deinit {
+        task?.cancel()
     }
 }
 
@@ -38,9 +47,7 @@ final class AccountSyncHandler: TabEventHandler, Notifiable, Sendable {
     private let profile: Profile
     private let logger: Logger
     private let queueDelay: Double
-    private var windowManager: WindowManager {
-        return AppContainer.shared.resolve()
-    }
+    private let windowManager: WindowManager
     let tabEventWindowResponseType: TabEventHandlerWindowResponseType =
         .allWindows
 
@@ -49,6 +56,7 @@ final class AccountSyncHandler: TabEventHandler, Notifiable, Sendable {
 
     init(
         with profile: Profile,
+        windowManager: WindowManager,
         debounceTime: Double = 5.0,
         queue: DispatchQueueInterface = DispatchQueue.global(),
         queueDelay: Double = 0.5,
@@ -56,6 +64,7 @@ final class AccountSyncHandler: TabEventHandler, Notifiable, Sendable {
         onSyncCompleted: (@Sendable () -> Void)? = nil
     ) {
         self.profile = profile
+        self.windowManager = windowManager
         self.debouncer = Debouncer(delay: debounceTime)
         self.logger = logger
         self.queueDelay = queueDelay
@@ -156,7 +165,7 @@ extension AccountSyncHandler {
     nonisolated func handleNotifications(_ notification: Notification) {
         switch notification.name {
         case .accountAuthenticated:
-            ensureMainThread { self.storeTabs() }
+            ensureMainThread { [weak self] in self?.storeTabs() }
         default:
             break
         }
