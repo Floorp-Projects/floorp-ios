@@ -645,6 +645,7 @@ actor FloorpNotesStore {
     private let now: @Sendable () -> Int64
     private let makeID: @Sendable () -> String
     private let copyItem: @Sendable (URL, URL) throws -> Void
+    private let writeData: @Sendable (Data, URL) throws -> Void
     private var cachedArchive: Archive?
     private var corruptionState: CorruptionState?
 
@@ -654,12 +655,19 @@ actor FloorpNotesStore {
         makeID: @escaping @Sendable () -> String = { UUID().uuidString },
         copyItem: @escaping @Sendable (URL, URL) throws -> Void = { source, destination in
             try FileManager.default.copyItem(at: source, to: destination)
+        },
+        writeData: @escaping @Sendable (Data, URL) throws -> Void = { data, url in
+            try data.write(
+                to: url,
+                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            )
         }
     ) {
         self.fileURL = fileURL
         self.now = now
         self.makeID = makeID
         self.copyItem = copyItem
+        self.writeData = writeData
     }
 
     func loadNotes() throws -> [FloorpNote] {
@@ -1003,10 +1011,7 @@ actor FloorpNotesStore {
             withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
         )
-        try data.write(
-            to: fileURL,
-            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
-        )
+        try writeData(data, fileURL)
     }
 
     private func encodedArchiveData(_ archive: Archive) throws -> Data {
@@ -1145,5 +1150,73 @@ actor FloorpNotesStore {
             .appendingPathComponent("Floorp", isDirectory: true)
             .appendingPathComponent("Notes", isDirectory: true)
             .appendingPathComponent("notes-v1.json", isDirectory: false)
+    }
+}
+
+// MARK: - Recoverable editor draft
+
+/// The recoverable snapshot of an in-progress Floorp note editor draft.
+/// Persisted to disk so unsaved text can survive a force termination or a
+/// relaunch (issue #22).
+struct FloorpNoteRecoveryDraft: Codable, Equatable, Sendable {
+    let id: FloorpNoteID
+    let title: String
+    let content: String
+    let contentFormat: FloorpNoteContentFormat
+    let updatedAt: Int64
+}
+
+/// Owns the on-disk recovery copy of an unsaved editor draft. Writes are
+/// atomic and injectable so a failed write never destroys the newest
+/// recoverable draft nor leaves a partial file behind.
+final class FloorpNoteRecoveryDraftStore {
+    static func defaultFileURL() -> URL {
+        let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        return applicationSupport
+            .appendingPathComponent("Floorp", isDirectory: true)
+            .appendingPathComponent("Notes", isDirectory: true)
+            .appendingPathComponent("unsaved-draft.json", isDirectory: false)
+    }
+
+    let fileURL: URL
+    private let writeData: (Data, URL) throws -> Void
+
+    init(
+        fileURL: URL = FloorpNoteRecoveryDraftStore.defaultFileURL(),
+        writeData: @escaping (Data, URL) throws -> Void = { data, url in
+            try data.write(to: url, options: [.atomic])
+        }
+    ) {
+        self.fileURL = fileURL
+        self.writeData = writeData
+    }
+
+    func saveDraft(_ draft: FloorpNoteRecoveryDraft) throws {
+        try ensureDirectory()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(draft)
+        try writeData(data, fileURL)
+    }
+
+    func clear() throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        try FileManager.default.removeItem(at: fileURL)
+    }
+
+    func loadRecoverableDraft() throws -> FloorpNoteRecoveryDraft? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        let data = try Data(contentsOf: fileURL)
+        return try JSONDecoder().decode(FloorpNoteRecoveryDraft.self, from: data)
+    }
+
+    private func ensureDirectory() throws {
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
     }
 }
