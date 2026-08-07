@@ -29,8 +29,8 @@ class FloorpPrivateHeaderBrandingUITests: FeatureFlaggedTestBase {
     private static let privateHomeCardIdentifier =
         AccessibilityIdentifiers.PrivateMode.Homepage.card
 
-    private var toolbarScreen: ToolbarScreen!
-    private var tabTrayScreen: TabTrayScreen!
+    private lazy var toolbarScreen = ToolbarScreen(app: app)
+    private lazy var tabTrayScreen = TabTrayScreen(app: app)
 
     override func setUpApp() {
         super.setUpApp()
@@ -38,12 +38,6 @@ class FloorpPrivateHeaderBrandingUITests: FeatureFlaggedTestBase {
             jsonFileName: "floorpNovaDesignEnabled",
             featureName: "nova-design-feature"
         )
-    }
-
-    override func setUp() async throws {
-        try await super.setUp()
-        toolbarScreen = ToolbarScreen(app: app)
-        tabTrayScreen = TabTrayScreen(app: app)
     }
 
     func testPrivateModeHomeHeaderRendersApprovedFloorpMark() throws {
