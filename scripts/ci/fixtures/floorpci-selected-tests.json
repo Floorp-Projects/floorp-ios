@@ -1,0 +1,2001 @@
+{
+  "schema_version": 1,
+  "selected_tests": [
+    {
+      "target": "AccountTests",
+      "test": "AutopushTests/testFloorpBundleIdentifierHasNoMozillaPushConfigurationLabel()"
+    },
+    {
+      "target": "AccountTests",
+      "test": "AutopushTests/testFloorpPushPolicyStopsInitializationBeforeBundleIdentifierMapping()"
+    },
+    {
+      "target": "AccountTests",
+      "test": "AutopushTests/testPushConfigurationLabelMapsSupportedApplicationBundleIdentifiers()"
+    },
+    {
+      "target": "AccountTests",
+      "test": "AutopushTests/testPushConfigurationLabelMapsSupportedExtensionBundleIdentifiers()"
+    },
+    {
+      "target": "AccountTests",
+      "test": "AutopushTests/testPushConfigurationLabelRejectsPublicURLSchemes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AccountSyncHandlerTests/testDebouncerCancelsPendingActionWhenReleased()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AccountSyncHandlerTests/testDependencyResetReleasesGlobalHandlerBeforePendingSync()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AccountSyncHandlerTests/testPendingSyncKeepsInjectedWindowManagerAfterContainerReset()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AccountSyncHandlerTests/testTabDidGainFocus_doesntSyncWithoutAccount()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AccountSyncHandlerTests/testTabDidGainFocus_multipleActions_executedAtMostOnce()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AccountSyncHandlerTests/testTabDidGainFocus_multipleDebounce_withWithMultipleSyncs()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AccountSyncHandlerTests/testTabDidGainFocus_syncWithAccount()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AddressBarStateTests/test_numberOfTabsChangedAction_withoutNavToolbar_returnsExpectedState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpBrowserChromeLayoutTests/testCustomGuidesReserveManagedBrowserChromeSurfacesInLTRAndRTL()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpBrowserChromeLayoutTests/testDefaultGuidesPreserveOriginalFullWidthAndSafeAreaAnchors()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testBookmarkEditModeBlocksExternalPanelSwitchingAndDismissal()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testExternalDoneRequestsDrawerDismissal()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testExternalSwitcherDoesNotInstallInternalSegmentControl()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testHistorySearchPreservesStateAcrossSwitchAndConsumesFirstDismissalRequest()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testLibraryActionsPreserveVisitTypeAndPrivateChoice()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testLibraryNotificationsOnlyUpdateTheirOwningWindow()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testPresentedViewControllerBlocksExternalPanelSwitchingAndDismissal()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testPushedBookmarkEditorBlocksExternalPanelSwitchingAndDismissal()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryPanelHostTests/testSelectPreservesEachNativePanelNavigationStack()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryRegressionTests/testDefaultLibraryPresentationRemainsModalWithInternalSwitcher()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryRegressionTests/testHistoryCoordinatorOnlyClearsItsOwningWindow()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryRegressionTests/testHistoryNotificationsOnlyAffectTheirOwningWindow()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpLibraryRegressionTests/testRecentlyClosedTabPreservesPrivateMode()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNativeLibraryDrawerTests/testBlockedHostPreventsLocalRegistryMutations()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNativeLibraryDrawerTests/testBlockedHostPreventsRailSelection()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNativeLibraryDrawerTests/testForeignRegistryRemovalDefersFallbackUntilBookmarkEditEnds()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNativeLibraryDrawerTests/testForeignRegistryRemovalRetriesFallbackAfterPresentedWorkflowEnds()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNativeLibraryDrawerTests/testNativePanelsReuseHostAndNotesDetachesIt()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorInteractionTests/testNewDraftFocusesAndSelectsTitleOnFirstAppearance()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorInteractionTests/testStableIdentifiersAndExplicitRetryReflectSaveState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testBridgeQueuesConcurrentRichUpdatesAndReflectsAccessibleState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testBridgeRecoveryInvalidatesAndReleasesReplacedRichEditor()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testCloseCancelsPendingPlainToRichConversionBeforeDismissal()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testCloseCommandFailureResumesWaiterAndRecoversOnlyAfterClosing()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testCloseInvalidatesAndReleasesRichEditorWithPendingJavaScript()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testCloseInvalidatesTerminatedActiveRecoveryBeforeRestarting()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testCloseProcessTerminationDoesNotRestartWebContentWhileClosing()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testCloseWaitsForSelectedImageInsteadOfSilentlyCancellingIt()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testControllerDeinitInvalidatesRichEditorWithPendingJavaScript()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testDelayedPlainToRichPreflightRebuildsFromTheNewestLockedBody()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testEditingAutomaticContentAsJSONPersistsExplicitPlainTextFormat()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testExplicitSaveDoesNotRewriteUntouchedExistingNote()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testExplicitSavePersistsUntouchedNewDraftOnlyOnce()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testFailedCopyPrefersAndRetainsRecoveryOverDivergentDirtyWebSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testFailedExplicitSaveOfUntouchedDraftCanRetry()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testFailedRichSaveAsCopyDoesNotAdvanceWebRevision()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testFirstRichSaveRebindsBridgeToPersistedIdentityWithoutRewritingSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testImmediateSaveFlushesUnsentWebEditorInput()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testImageImportAggregateRejectionDoesNotMutateDOMOrSession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testImageImportTimeoutKeepsEditorOpenWithExplicitFailure()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testInitialHTMLNavigationStallRetriesOnceThenShowsReadOnlyBody()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testInputImmediatelyFollowedByBoldItalicAndCloseKeepsLatestDOM()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testKnownLexicalTitleOnlyEditPreservesOriginalSourceUntilBodyChanges()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testLateRichLoadCreatesEditorAfterConversionAndCanSaveAndClose()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testLazyRichLoadBoundsTwoRecoveryNavigationFailuresWithoutLingeringWork()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testLexicalSaveAsCopyRebindsUsingExistingDocumentAndPreservesOpaqueSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testOverflowAndDeletedNoteRecoveryKeepsNewestEnvelopeForReeditAndCopy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testOversizedDesktopNoteIdentityShowsRichBodyReadOnlyInsteadOfBlank()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testPhotoEncoderDownsamplesOffMainActorAtOneToOneRendererScale()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testPhotoEncoderRejectsHugeDeclaredMetadataBeforeThumbnailDecode()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testPhotoEncoderRejectsOversizedFileBeforeImageDecoding()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testPlainNoteCanEnterRichEditorWithoutLosingItsText()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testRapidRichCommandsQuiesceBeforeImmediateCloseAndDoNotRunAfterFlush()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testRichEditorFactoryRunsOnlyForEditableRichNotes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testRichNoteExposesAccessibleDesktopFormattingControls()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testStalledRecoveryLoadFailsClosedWithoutPermanentlyBlockingClose()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testTerminatedPreflightCannotRecreateReleasedRichEditor()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testTitleOnlyProcessRecoveryPreservesLexicalAndTipTapSourceBytes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteEditorViewControllerTests/testUnknownLexicalContentRemainsReadOnlyAndSourceIsNotRewritten()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteIDTests/testCodableUsesSingleJSONStringAndPreservesRawValue()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteIDTests/testEqualityHashingAndOrderingUseExactUTF8Bytes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotePersistenceSessionTests/testConcurrentFirstSavesCreateOneNote()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotePersistenceSessionTests/testCreationCallbackReportsInitialCreateAndSaveAsCopyOnly()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotePersistenceSessionTests/testExistingNoteSessionPreservesConflictDetection()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotePersistenceSessionTests/testFailedFirstSaveCanRetryWithoutDuplicate()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotePersistenceSessionTests/testFirstSaveCreatesAndSubsequentSaveUpdatesSameNote()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotePersistenceSessionTests/testNewDraftDoesNotPersistBeforeFirstSave()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testArchiveLimitFailureRemainsDirtyAndTyped()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testConflictIsTypedAndReloadReplacesTheDirtyDraft()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testDeletedNoteCanBeRecoveredAsCopy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testEditDuringReloadIsKeptInsteadOfBeingOverwritten()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testEditMadeDuringSaveIsPersistedInFollowUpWrite()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testSaveDuringDelayedCopySerializesAndTargetsTheCopyIdentity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testCommitBlocksEveryDrawerDismissalUntilTheWriterFinishes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testExternalArchiveChangeCancelsStagedReorder()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testFailureAfterExternalDismissalIsShownByReplacementDrawer()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testForeignArchiveCreationDoesNotStealAccessibilityFocus()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testLatestGenerationWinsAndOlderRevisionIsRejected()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testOwningCreationClearsSearchAndFocusesOnlyTheSavedNote()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testSnapshotArrivingAfterReorderBeginsDiscardsStagedOrder()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testStagedReorderGatesInteractionsAndCancelDoesNotPersist()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesInteractionControllerTests/testStagedReorderDismissesWithoutPersistingItsOrder()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesListOrderTests/testFilteredMergePreservesHiddenPositions()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesListOrderTests/testMergeTreatsCanonicallyEquivalentIDsAsDistinct()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesListOrderTests/testMergeRejectsDuplicateMismatchedAndStaleIDsWithTypedErrors()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesReorderSessionTests/testMovesAreStagedWithoutChangingOriginalOrder()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesReorderStoreTests/testFilteredReorderPersistsAndNoOpDoesNotAdvanceRevision()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesReorderStoreTests/testStaleRevisionRejectsReorderWithoutOverwritingLatestArchive()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AppLaunchUtilTests/testFloorpDataCollectionPolicyPersistsAllDisabledPreferences()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AppLaunchUtilTests/testGivenFloorpSponsoredContentDisabled_WhenTosNotAccepted_ThenContextIdIsNotSet()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AppLaunchUtilTests/testGivenTelemetryDisabledAndTosDisabled_ThenContextIdIsNotSet()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AppLaunchUtilTests/testGivenTosDisabled_ThenContextIdIsSet()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "AppLaunchUtilTests/testPreLaunchMigrationMakesInheritedAcceptanceEligibleForFloorpTerms()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "ConversionEventTrackerTests/testRecord_floorpAttributionPolicyDisabled_doesNotEmitConversionValue()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FeatureFlagsProviderTests/testIsEnabled_quickAnswersDisallowedByAppPolicy_returnsFalseWithoutConsultingNimbus()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testCodecDistinguishesInvalidJSONNonTipTapAndVersionErrors()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testCodecRejectsExcessiveJSONStructure()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testCodecRejectsInputBeyondArchiveBoundary()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testCommandPlannerCoversDesktopToolbarCommands()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testCommandPlannerRejectsUnsupportedHeadingLevels()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testDesktopNodeAndMarkFixtureRoundTripsSemantically()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testEditorUpdateRejectsNewUnknownContent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testEncoderStopsWhenGeneratedOutputExceedsArchiveBoundary()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testEveryEditablePlainTextConversionCanBeEncoded()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImageCommandAcceptsSafeRasterData()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImageCommandEnforcesWidthMetadataAndPersistedSizeLimits()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImageCommandRejectsObjectURLsVectorsAndMismatchedData()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImageCommandRejectsProjectedDocumentAggregateLimit()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImagePolicyAccountsForAnimatedCanvasWithoutRewritingSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImagePolicyEnforcesDocumentAggregatePixelBudgetWithoutRewritingSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImagePolicyRejectsAnimatedFrameAndCumulativePixelBudgets()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImagePolicyRejectsDeclaredHugeRasterMetadataWithoutRewritingSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testImagePolicyRejectsZeroAndPerFramePixelBudgets()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testKnownLexicalFixtureMigratesWithDesktopMarksBlocksListsAndAlignment()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testLexicalMetadataRequiresSupportedVersionAndStrictTypes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testLexicalNonDefaultMetadataAndListSemanticsRemainReadOnly()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testLexicalOrderedListPreservesStartAndAcceptsOnlyDefaultMetadata()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testLexicalUnknownNodeOrFieldKeepsOriginalSourceReadOnly()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testOrderedListStartOutsideSigned32BitRemainsReadOnlyAndByteExact()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testPlainTextConversionPreservesLinesAndEscaping()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testPlainTextConversionUsesOneTokenizerForPlatformAndUnicodeNewlines()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testPlainTextPreflightRejectsNewlineNodeBombBeforeBuildingNodes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testPlainTextSingleLineHonorsExactEncodedArchiveBoundary()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testRichEditorStateCarriesAccessibleSelectionState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testUnknownDocumentRequiresExplicitConversionBeforeCommandsOrUpdates()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testUnknownNodesMarksAndFieldsRemainByteForByteUntouched()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testUnsafeOrNonCanonicalPersistedImageBlocksEditingWithoutRewritingSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testUpdateRejectsCanonicallyEquivalentButByteDistinctNoteIdentity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testUpdateRejectsWrongIdentityGenerationAndStaleRevisionBeforeDocumentDecode()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextDocumentTests/testVersionedEnvelopesCarryMandatoryIdentityAndRoundTrip()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testCollapsedCaretAtSecondParagraphStartSurvivesConsecutiveBoldItalic()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testCommandAppliesToLatestDOMWhenNativeRevisionLagsAndRejectsFutureRevision()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testCommandQueuedBeforeEditorLoadExecutesAfterReady()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testExclusiveMarkRemovalStillEmitsUpdateWhenRequestedMarkFails()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testImageInsertionTargetsCursorAndFailureLeavesExistingImagesUntouched()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testLocalizedAccessiblePageAcceptsOnlyItsOwnedNavigationAndMainFrameBridge()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testMarkedHardBreakAndWidthlessImageSurviveExecutableRoundTrip()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testOrderedListSigned32BitBoundariesSurviveExecutableRoundTrip()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testPasteAndDropStayPlainTextOnlyAndNeverCreateImages()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testStalledJavaScriptRequestsTimeOutAndReleaseTheirTokens()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testTogglingActiveHeadingReturnsItToParagraph()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testUnrelatedEditPreservesExactImageSourceAttribute()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpRichTextWebEditorViewTests/testWebContentProcessTerminationFailsPendingCommandImmediately()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testCRUDPersistsAcrossStoreInstancesIncludingEmptyArchive()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testBoundarySizedV1ArchiveMigratesWithoutFormatMetadataGrowth()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testBoundarySizedRichV1ArchiveFitsReservedV2MigrationHeadroom()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testCanonicallyEquivalentIDsPersistReorderUpdateAndDeleteIndependentlyAcrossRestarts()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testConcurrentUpdatesToDifferentNotesDoNotOverwriteEachOther()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testCorruptArchiveIsPreservedAndRequiresExplicitReset()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testCorruptArchiveStaysUntouchedWhenRecoveryCopyFails()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testDesktopLegacyPayloadNormalizesMissingMetadataAndDuplicateIDs()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testDesktopPayloadPreservesCanonicallyEquivalentIDsAndUsesByteExactEquality()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testIncompleteRichProjectionIsReadOnly()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testOversizedUpdateFailsWithoutReplacingLastGoodArchive()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testPlainJSONCreatedOnIOSRemainsEditableAfterRestart()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testRecoveryCopyMustMatchBeforeResetIsAllowed()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testReorderReplaceAndDesktopExportCoverUnusedStoreOperations()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testReplaceRejectsDuplicateIDsAndTooManyNotesWithoutWriting()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testLexicalProjectionPreservesLineAndBlockBoundaries()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testMaximumRichMetadataAndExponentNormalizationFitsV2Headroom()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testRichContentWithImageIsReadOnlyAndDoesNotExposeSource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testRichDocumentPreflightUsesWholeArchiveBudgetWithoutWriting()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testRichEditorProjectionPreservesMeaningfulWhitespace()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testStaleEditIsRejectedAndTimestampAdvancesWhenClockDoesNot()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testTipTapProjectionSupportsParagraphs()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testUnsupportedNewerSchemaIsLeftByteForByteUntouched()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testUnknownJSONRemainsVerbatimAndReadOnly()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testV1ArchiveMigratesToV2WithoutChangingSourceContent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testV1ArbitraryJSONMigratesAsEditablePlainText()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesApplicationServicesAdapterTests/testCurrentRuntimeEvidenceCannotEnableNetworkSync()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesApplicationServicesAdapterTests/testOuterJSONStringEscapingDefinesApplicationServicesBudget()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesApplicationServicesAdapterTests/testReleaseGateAcceptsOnlyExactDesktopOrCoordinatedMigrationContract()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesApplicationServicesAdapterTests/testTypedRemoteStateRejectsInconsistentRecordModification()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesApplicationServicesAdapterTests/testTypedRemoteStatesMapWithoutConflation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncCompatibilityFixtureTests/testSharedMergeFixturesMatchIOSAndKeepProductionDesktopGated()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testCancellationDuringFetchPreventsPrepareUploadAndCommit()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testCancellationDuringUploadPreventsCommit()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testCanonicalEquivalentNoteIDsRemainDistinctAcrossRemoteNormalizationAndMerge()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testCanonicallyEquivalentLocalRichEditStillRequiresUpload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testCanonicallyEquivalentRichSourcesRemainByteDistinctDuringMerge()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testConcurrentEditsKeepDeterministicWinnerAndConflictCopy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testConcurrentReorderPrefersLocalAndAppendsRemoteNew()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testConflictAtMaximumCountIsRejected()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testConflictCopyIDCollisionPreservesBothNotesWithDeterministicProbe()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testDeleteVersusEditKeepsTheEdit()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testDuplicateAndBlankIDsAreRejectedBySource()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testEncodedPayloadHonorsExactRecordBoundary()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testFinalCASFailureDoesNotRecordLocalCommit()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testFirstSyncPreservesLocalOrderAndAppendsRemoteNewNotes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testLegacyEmptyRemotePayloadCanExplicitlyDeleteEstablishedNotes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testMissingRemoteRecordRetainsLocalNotesAndInvalidatesOldBase()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testNoOpPlanDoesNotRequireCanonicalPayloadToFitUploadBudget()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testNoOpSyncDoesNotUploadButAdvancesBase()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testNestedConflictCollisionIsIndependentOfInputTraversalOrder()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testNestedConflictWinnerReusesCandidateNearLimit()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testOneSidedEditsAndDeletesMergeWithoutConflicts()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testOneSidedRemoteReorderWins()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerFillsShortContentAndTimestampArrays()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerNormalizesLegacyPayloadDeterministicallyAndRoundTripsArrays()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerPreservesExactWhitespaceInNonblankRemoteID()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerPreservesOpaqueLexicalAndTipTapSourcesByteForByte()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerRejectsAccountSchemaAndLimitErrors()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerRejectsInconsistentMissingRecordRepresentation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerRejectsMalformedExplicitRemoteIDs()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerRejectsMissingRemoteIDsAfterInitialSync()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerRejectsOversizedIncomingRecordBeforeMerge()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerRejectsUnknownRemoteFields()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPlannerUsesTitlesAsCanonicalCountAndIgnoresSurplusArrays()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testPresentAggregateWithoutNotesAppliesRemoteDeletionWithoutResettingBase()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testRetryAfterUploadedConflictAndFailedLocalCommitReusesCopyNearLimit()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testRetryDoesNotDuplicateConflictCopy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testRunnerCommitsNotesAndBaseOnlyAfterConfirmedUpload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testRunnerDoesNotAdvanceBaseWhenUploadFails()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testRunnerPreflightsLocalPersistenceBeforeUpload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testTimestampTieIsCommutative()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesSyncMergeTests/testWireInvisibleContentFormatDoesNotChangeConflictIdentity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testAdaptiveLayoutMetricsForCompactAndRegularWidths()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testAdaptivePresentationResolverRequiresWideRegularIPadGeometry()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testBrowserContentGuidesReserveThePhysicalSidebarEdge()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testBrowserSafeAreaGuideIntersectsReservedBrowserGeometry()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testDirectionalLayoutMetricsAndSidebarClamp()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testDrawerUsesModalOverlayOutsideBrowserSubviewZOrder()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testExternalDismissalFinishesOnceAndAllowsReplacementDrawer()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testOverlayRemainsDismissibleWhenUIKitPromotesPresenterToNavigationController()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testPresentationIsRejectedWhileParentAlreadyOwnsAModal()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testPinnedRTLReservesLeftEdgeAndKeepsResizeHandleInteractive()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testPinnedDrawerPresentsAndAcknowledgesPendingNotesOperationError()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testPinnedLibraryAppearanceLifecycleStaysBalancedAcrossMigrationAndClose()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testPinnedWebPanelResizePersistsWithoutReplacingWideWindowPreference()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testPinnedWidthClampsToBrowserGeometryAndUsesDirectionalResize()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testPresentationModeMigrationPreservesDrawerAndLoadedContentIdentity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testRegularRTLDrawerResizesWithoutLosingOutsideHitRegion()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testWideRegularPresentationPinsBesideBrowserChromeAndResetsLayoutOnClose()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpOverlayDrawerPresentationTests/testWindowScopedPresentationStatesRemainIndependentAndFallback()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testBuiltInPreferenceMutationIsRejectedWithoutRewriteOrNotification()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testContentModeAndGlobalAutoUnloadPersistAndSuppressNoOpNotifications()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testCorruptConfigBlocksMigrationAndAllTypedWrites()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testCorruptSchemaMarkersRemainReadOnlyAndPreserveThePersistentDomain()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testFuturePreferenceSchemaLeavesStoredRegistryByteForByteUntouched()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testGenericConfigMutationUsesLatestRevisionAndCanRetryAfterConflict()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testInvalidWidthClampsButUnknownTypedValuesRemainReadOnly()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testLegacyWebPanelMigratesSafeDefaultsAndPersistsAcrossRestart()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testMissingSchemaMarkerIsTheOnlyImplicitLegacyVersion()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testPreferencesRemainIndependentPerWebPanelAcrossRestart()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testStaleRegistryMutationsMergeLatestWebPanelPreferences()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testStoredWidthClampsToModelBoundsWhilePresentationOwnsAvailableWidthClamp()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testTwoManagerCASRejectsStalePanelAndConfigEditsWithoutOverwrite()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelPreferencesTests/testZoomUsesBoundedNativeStepsAndResetWithoutNoOpNotification()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testAddUpdateMoveAndPersistenceUseSafeValuesAndNotify()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testConcurrentWebPanelEditCannotOverwriteNewerValues()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testLoadDoesNotRewriteRegistryFromNewerSchema()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testLoadFallsBackToDefaultsWhenEveryPersistedPanelIsStructurallyInvalid()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testLoadKeepsDecodablePanelsWhenAnotherElementUsesFutureSchema()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testLoadSanitizesStructureButPreservesInvalidWebPanelsForRepair()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testPanelLimitRejectsAddWithoutMutationOrNotification()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testRemoveLastPanelFailsAndRestoreBuiltInsIsIdempotent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelManagerRegistryTests/testReservedUpdateAndInvalidMoveFailWithoutNotification()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelNotesMigrationTests/testLegacyPanelConfigurationReceivesNotesExactlyOnce()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelNotesMigrationTests/testNoteSearchUsesContentBeyondDisplayedPreview()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelNotesMigrationTests/testReorderPreservesPanelsMissingFromOlderOrderList()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelNotesMigrationTests/testSchemaOneMigrationPreservesUserDeletedNotes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryAutoUnloadTests/testCASConflictRollsBackToLatestManagerValueAndShowsError()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryAutoUnloadTests/testDuplicateValueChangedIsANoOp()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryAutoUnloadTests/testManagerNotificationUpdatesAnotherControllerWithoutMutating()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryAutoUnloadTests/testReusedSettingCellClearsItsCustomAccessibilityContainer()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryAutoUnloadTests/testStorageFailureRollsBackAndShowsExistingOperationError()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryAutoUnloadTests/testSwitchReflectsInitialValueAndKeepsPanelSectionsStable()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryAutoUnloadTests/testTogglePersistsThroughManagerCASBoundary()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryUIHelperTests/testPanelRegistryErrorMapperUsesLocalizedSpecificMessages()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryUIHelperTests/testIconPickerUsesHumanReadableLocalizedNames()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryUIHelperTests/testReorderMapsSingleDragToOneMove()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryUIHelperTests/testReorderRejectsNoOpAndMultipleMoves()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpPanelRegistryUIHelperTests/testWebPanelAddressSummaryDistinguishesHTTPSHTTPAndInvalidInput()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testActiveExplicitUnloadDetachesRuntimeUntilSelectedAgain()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testAdaptivePresentationMigrationPreservesLoadedWebPanelSessionAndContent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testAutoUnloadRestoresLastSafeURLAfterPanelSwitchAndDrawerHide()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testClosedWindowStateReloadsWebPanelWidthAfterRegistryChange()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testContentModeMenuUpdatesEveryWindowInPlaceAndClosesFindBeforeReload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testContentModeStorageFailureKeepsRuntimeAndShowsOperationError()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testExplicitUnloadSurvivesDrawerRecreationUntilExactPanelReselection()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testFailedPresentationDetachesWebPanelContentAndObserver()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testFindToolbarIsDiscoverableAndClearsWhenSwitchingPanels()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testGenericReconcileAppliesActiveContentModeWithoutReplacingSession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testLastPrivateTabCloseDismissesDrawerUntilSelectionLeavesPrivateMode()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testLastPrivateTabCloseRebindsVisibleWebPanelToRegularSession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testMediaPauseFailureRollsBackVoiceOverStateAndShowsMediaPlaybackError()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testMediaPauseMenuAndVoiceOverTogglePreserveActiveRuntime()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testOpenInMainBrowserDismissesDrawerAndPreservesSessionForReopen()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testPersistedZoomAppliesWhenAutoUnloadRecreatesSession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testPinnedWidthChangePreservesFindStateInEveryVisibleWindow()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testPrivacyModeRebindAutoUnloadKeepsRestorationModeScoped()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testRegularAndPrivateSessionsSurviveDrawerHideAndRemainSeparated()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testReselectionClearsOnlyExactPrivacyMarkerAndRestoresEachMode()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testRuntimeTeardownClearsMarkerOnlyDrawerStateAndShowsUnavailable()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testSelectedTabModeChangesRebindBothDirectionsWithoutReplacingDrawer()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testStaleContentModeActionCannotMutateReplacementSession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testStaleMediaPauseActionRejectsABAReturnToOriginalState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testStaleMediaPauseActionsCannotAffectReplacementPrivacyOrNewerState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testStaleMediaPauseContextCannotTargetReplacementAfterOriginalDeallocation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testStaleZoomMenuActionsCannotMutateReplacementOrOtherPrivacySession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testStaleZoomRevisionSynchronizesLatestAndShowsOperationErrorInPlace()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testWebPanelToolbarTracksStateAndDispatchesCommands()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testWindowAssociationTeardownInvalidatesAndRemovesRuntimeState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testWindowRuntimeTeardownPurgesEveryPrivacyModeAndDetachesContent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testZoomMenuAndVoiceOverActionsRespectBoundsAndReset()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testZoomMenuFastPathPreservesFindAndUpdatesEveryWindowAndPrivacySession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelDrawerRuntimeTests/testZoomStorageFailureRollsBackLatestAndPreservesFindRuntime()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelFindControllerTests/testFallbackFindSerializesRequestsAndKeepsOnlyLatestQuery()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelFindControllerTests/testFallbackReportsDocumentBoundariesAfterFindingAMatch()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelFindControllerTests/testInvalidationClearsMemoryAndIgnoresLateResults()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelFindControllerTests/testNativeInteractionOwnsPresentationAndKeyboardNavigation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelFindControllerTests/testTimeoutKeepsRequestSlotUntilLateCompletionAndStartsLatestQuery()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationPolicyTests/testAllowsOnlyExactAboutBlankInExistingFrames()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationPolicyTests/testAllowsSafeHTTPAndHTTPSInExistingFrames()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationPolicyTests/testRejectsDangerousSchemesForEveryTarget()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationPolicyTests/testRejectsMissingURLForEveryTarget()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationPolicyTests/testRejectsUnsafeHTTPURLsForEveryTarget()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationPolicyTests/testRoutesSafeNewWindowsToTheMainBrowser()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testAboutBlankTracksLifecycleWithoutApplyingHTTPContentMode()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testAllowsAndCancelsExistingFrameDecisions()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testContentModeCallbacksStayBoundToEachNavigationIdentity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testContentModeDoesNotMutateSubframeNewWindowOrCancelledNavigation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testInvalidatedExecutorRejectsEveryDecision()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testMainFrameContentModeAppliesPreferredModeAndDomainUserAgent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testOpenRequestPreservesOwningWindowAndSourcePrivacy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelNavigationExecutorTests/testUserInitiatedPopupsAreThrottled()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelMainBrowserRouterTests/testRejectsRequestOwnedByAnotherWindow()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelMainBrowserRouterTests/testRoutesPrivateRequestToPrivateNewTab()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelMainBrowserRouterTests/testRoutesRegularRequestToRegularNewTab()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testCanonicalEquivalentURLAndOrderingDoNotInvalidateSessions()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testClosingPrivateSessionsPurgesOnlyPrivateState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testContentModeUpdatesCachedPrivacySessionsAndSurvivesUnload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testExplicitUnloadMarkersAreExactAndRuntimeInvalidationClearsThem()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testExplicitUnloadMarkersPruneRemovedPanelsDuringRuntimeReconcile()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testFactoryFailureDoesNotConsumeRestorationSnapshot()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testFactoryFailuresAndInvalidPanelsAreNotCached()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testHideAndUnloadAPIsAreWindowScopedAndIdempotent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testInvalidateAllIsIdempotent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testLastPrivateTabCloseClearsPrivateMarkerWithoutCachedSession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testLookupInvalidatesURLChangesWithoutReconcile()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testMetadataChangesPreserveSessionAndRuntimeState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testMemoryPressureDoesNotDoubleUnloadAutoUnloadedSession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testMemoryPressureEvictionDoesNotMixWindowStores()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testMemoryPressureEvictsOnlyInactiveSessionsAndRestoresSafeLatestURLs()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testMemoryWarningObservationIsIdempotentAndPreservesExplicitUnloadMarkers()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testMismatchedFactoryKeyIsInvalidatedAndRejected()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testNonWebPanelsAreRejectedBeforeCallingFactory()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testPresentationStateIgnoresCallbacksFromPreviouslyObservedManager()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testPresentationStateKeepsPrivateSessionsWhileAnotherPrivateTabExists()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testPresentationStatePurgesPrivateSessionsWhenLastPrivateTabCloses()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testPresentationStateRegistersAndRemovesPrivateTabLifecycleObserver()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testPresentationStateRejectsForeignWindowLifecycleObserver()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testPrivateSessionsDoNotConsumeRegularLRUCapacity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testReconcileDiscardsSnapshotsForChangedAndRemovedPanels()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testReconcileInvalidatesURLChangesWithoutEagerRecreation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testReconcileRemovesMissingInvalidAndDuplicatePanels()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testRegularLRUAllowsVisibleOverflowUntilASessionIsHidden()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testRegularSessionsUseLeastRecentlyUsedEviction()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testSessionCreationIsLazyAndReusesTheSameIdentity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testSessionKeysSeparateWindowsAndPrivacyModes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testSessionStateUsesSafeDefaults()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testSelectedPrivateTabDefersPurgeWhenPrivateListIsTransientlyEmpty()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testSelectedTabPrivacyBoundaryIsManagerScopedAndPrecedesPrivatePurge()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testRestorationSnapshotsStayWindowAndPrivacyScopedAndPrivatePurgeClearsThem()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testUnloadUsesLatestSynchronousRestorationCandidateAndRejectsUnsafeURL()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testUnsafeURLsAndInvalidateAllCannotRestoreSnapshots()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelSessionStoreTests/testZoomConfigurationUpdatesCachedPrivacySessionsAndSurvivesUnload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testAboutBlankManualAndImageReloadsRetireUnifiedArbiter()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testBackAndForwardAdoptInFlightContentReloadBeforeNavigationBinding()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testCommandsRespectNavigationState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testConfigurationUsesSharedDefaultAndPrivateDataStores()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testContentBlockerAdapterDetachesFromWebView()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testContentModeChangedBeforeInitialLoadUsesLatestModeWithoutReload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testContentModeChangesDuringReloadCoalesceAndStateCallbacksDoNotDoubleReload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testContentModeReloadNilKeepsPendingAndRetriesWhenShown()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testContentModeUpdatePreservesRuntimeAndReloadsFromOriginExactlyOnce()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testDefaultFactoryAdapterReadsLiveProfileImageBlockingPreference()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testDefaultFindTargetEnablesAndDismissesNativeInteraction()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testDefaultFindTargetUsesWKFindForFallbackRequests()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testDefaultRuntimeAppliesPageZoomThroughOwnedWebView()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testDefaultRuntimeOwnsTabWebViewAndReleasesItOnInvalidate()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testDelayedMediaTransitionsCoalesceAndIgnoreCompletionAfterInvalidate()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testFailedBackStartKeepsInFlightReloadIdentityAndReasons()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testFailedContentModeNavigationKeepsPendingAndRetriesWhenShown()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testFailedContentReloadDoesNotRetryFromKVOUntilExplicitRequest()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testFailedManualReloadDoesNotRetryFromKVOUntilManualRequest()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testHiddenContentAndImageChangesCoalesceIntoOneOriginReload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testHiddenContentModeChangesCoalesceUntilVisible()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testImageBlockingChangeBeforeInitialRulesRefreshesBeforeFirstLoad()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testImageBlockingChangesDuringRefreshAreSerializedWithoutDroppingIntent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testImageBlockingObserverIgnoresNoOpAndStopsAfterInvalidate()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testImageBlockingPreferenceChangeRefreshesRegularAndPrivatePanelsExactlyOnce()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testImageRefreshWaitsForUnboundContentReloadThenReloadsExactlyOnce()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testDelayedMediaPauseChangesCoalesceToLatestIntent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testExplicitMediaPauseAndVisibilityShareOneReversibleSuppressionState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testFailedMediaPauseAfterHideRollsBackUserStateAndRetriesHiddenSuppression()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testFailedMediaPauseTransitionRollsBackStateNotifiesAndAllowsRetry()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testHiddenSessionContinuesPendingLoadAndRequestsMediaSuppression()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testOldPauseAndHiddenRetryFailuresCannotRollbackNewestResumeIntent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testInitialLoadWaitsForContentRules()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testInvalidateCancelsPendingLoadAndReleasesResources()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testInvalidateCleanupOrdersFinalSuppressionAfterDelayedResume()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testInvalidateReleasesWebViewWhenNativeMediaTransitionNeverCompletes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testInvalidateReleasesSessionAndRuntimeBeforeLateMediaCompletion()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testLoadHomeAdoptsInFlightContentReloadBeforeNavigationBinding()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testManualReloadDoesNotSupersedeContentReloadBeforeNavigationBinding()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testMetadataUpdatePreservesRuntimeAndNotifies()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testNilAndFailedImageReloadsRemainRetryableWithoutManualSupersession()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testNoImageModeScriptMatchesNormalTabContractAndPreservesForeignScripts()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testNoImageModeToggleBroadcastsWhenBoolSettingAlreadyPersistedValue()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testObserverCanRemoveItselfDuringNotification()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testOpenCurrentPageInMainBrowserAllowsOnlySafeCurrentURL()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testPrivateFactoryLeaseSurvivesUntilSessionInvalidationAndIgnoresLateCallbacks()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testRecreatedSessionReadsLatestImageBlockingPreferenceAfterUnload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testRestorationCandidatePrefersLatestRuntimeURLAndRejectsUnsafeLatestURL()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testRestorationURLLoadsExactlyOnceAfterContentRulesAndRejectsUnsafeURL()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testStateObserversReceiveInitialAndRuntimeStates()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testStopBeforeNavigationBindingRequeuesReasonsWithoutKVORetry()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testSupersededNavigationCallbacksDoNotReleaseInFlightContentModeReload()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testSupersededCompletionReentrancyPreservesNewestMediaPauseIntent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testUnloadCancelsPendingRuleCallbackIdempotently()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testVisibilityTransitionsRemainIdempotent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelWebViewSessionTests/testZoomIsAppliedBeforeInitialNavigationAndUpdatesInPlaceOnlyWhenChanged()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelValidatorTests/testAcceptsPortBoundariesIDNAndIPv6()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelValidatorTests/testCanonicalizesTitleAndHTTPURL()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelValidatorTests/testCompletesSchemeForHostAndProtocolRelativeURL()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelValidatorTests/testEnforcesLimitAfterAddingDefaultScheme()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelValidatorTests/testEnforcesTitleAndIconPolicy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelValidatorTests/testRejectsUnsupportedOrUnsafeURLs()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpWebPanelValidatorTests/testSafeDisplayTitleNeverReturnsUnboundedOrUnsafeLegacyContent()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "MicrosurveyCoordinatorTests/testMicrosurveyDelegate_showPrivacy_callsRouterDismiss_andCreatesNewTab()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "MicrosurveyCoordinatorTests/testMicrosurveyDelegate_showPrivacyWithContentParams_callsRouterDismiss_andCreatesNewTab()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "NavigationBarStateTests/test_didLoadToolbarsAction_returnsExpectedState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "NimbusOnboardingKitFeatureLayerTests/testGetOnboardingModel_notificationCardIsExcludedWhenRemotePushIsDisallowed()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "NotificationSurfaceManagerTests/testDidDismissNotification()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "NotificationSurfaceManagerTests/testLegacyNotificationCategoryHandlesTapAndDismissResponses()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "NotificationSurfaceManagerTests/testNotificationCategoriesIncludeCurrentAndLegacyIdentifiers()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "NotificationSurfaceManagerTests/testUnknownNotificationCategoryIsNotHandledAsNotificationSurface()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "RemoteTabsPanelTests/testNoTabsEmptyStateUsesCrossClientSyncCopy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "SceneDelegateTests/testInitializationAfterDependencyTeardownDoesNotResolveDependencies()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "SummarizerNimbusUtilsTests/test_isAppAuthAttestEnabled_whenHostedSummarizerDisallowedByAppPolicy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "SummarizerNimbusUtilsTests/test_isAppleSummarizerEnabled_whenHostedSummarizerDisallowedByAppPolicy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "SummarizerNimbusUtilsTests/test_isHostedSummarizerEnabled_whenDisallowedByAppPolicy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TabManagerPrivacyModeTests/testLastPrivateTabDoesNotResetStoreWhilePanelLeaseIsAlive()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TabManagerPrivacyModeTests/testMultipleWindowOwnersRotateOnlyAfterBothLoseTheirLastPrivateTab()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TabManagerPrivacyModeTests/testPrivateTabAndLaterPanelUseTheSameStore()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TabManagerPrivacyModeTests/testRestoredPrivateZombieTabsOwnTheSessionBeforeCreatingAWebView()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseCoordinatorTests/testShouldShowTermsOfUse_ReturnsFalse_WhenNimbusAndFloorpPolicyAreDisabled()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseCoordinatorTests/testShouldShowTermsOfUse_ReturnsTrue_WhenFloorpPolicyIsActiveAndNimbusIsDisabled()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseCoordinatorTests/testShouldShowTermsOfUse_ReturnsTrue_WhenInheritedTermsOfServiceWasAccepted()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseLinkTypeTests/testLinkType_ForURL_ReturnsCorrectType()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseLinkTypeTests/testURLs_UseSeparateFloorpDestinationsForHelpAndTermsInformation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseMigrationTests/testMigrationClearsInheritedMozillaAcceptanceAndPromptState()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseMigrationTests/testMigrationActivatesCurrentFloorpTermsPolicy()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseMigrationTests/testMigrationLeavesAcceptanceNilSoFloorpTermsAreEligibleForPresentation()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseMigrationTests/testMigrationOnFreshInstallLeavesFloorpPromptStateUnset()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseMigrationTests/testRepeatedMigrationPreservesFloorpAcceptance()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TermsOfUseMigrationTests/testRepeatedMigrationPreservesFloorpPromptStateBeforeAcceptance()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "TopSitesManagerTests/test_floorpSponsoredContentPolicyHidesPartnerAndSponsoredTiles()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "UnifiedAdsCallbackTelemetryTests/testFloorpSponsoredContentPolicy_blocksCallbacksAndGlean()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "UnifiedAdsProviderTests/testFetchTiles_whenFloorpDisablesSponsoredContent_doesNotRequestAds()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "UserActivityRouteTests/testCurrentAndLegacySiriActivitiesShareDuplicateSuppression()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "UserActivityRouteTests/testLegacySiriShortcutMatchesExistingShortcutLookup()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "UserActivityRouteTests/testLegacySiriShortcutUserActivity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "UserActivityRouteTests/testSiriShortcutUserActivity()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "UserFeaturePreferenceManagerTests/testSponsoredShortcuts_floorpPolicyOverridesPersistedOptIn()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "VersionSettingTests/testCopyAppVersion()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteRecoveryDraftStoreTests/testClearRemovesTheRecoverableDraft()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteRecoveryDraftStoreTests/testInjectedWriteFailurePreservesNewestRecoverableDraftWithoutPartialFile()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteRecoveryDraftStoreTests/testNewestDraftIsRecoverableAcrossStoreInstances()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testAutosaveCallbackSavesTheDirtyDraft()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testAutosaveFiresAfterScheduledDelayWithInjectedSleep()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testCancellingAutosavePreventsPendingFire()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testFailedSaveKeepsNewestRecoverableDraft()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testReschedulingAutosaveCancelsThePriorPendingFire()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNoteSaveCoordinatorTests/testUnsavedChangePersistsRecoveryDraftAndSuccessfulSaveClearsIt()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesImportExportTests/testCorruptionBackupIsRetrievableUntrustedAndNeverAutoImported()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesImportExportTests/testExportImportRoundTripPreservesIDsTimestampsAndOpaqueRichBytes()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesImportExportTests/testInjectedWriteFailureDuringImportRestoresLastGoodArchive()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesImportExportTests/testMalformedInconsistentOrInvalidIDImportLeavesArchiveUnchanged()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesImportExportTests/testMergePolicyNewerWinsTieKeepsLocalAndNewIDsAppend()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesImportExportTests/testOversizedDuplicateTimestampAndLimitImportsAreRejected()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesImportExportTests/testReplacePolicyReplacesAllNotesAndAdvancesRevision()"
+    },
+    {
+      "target": "ClientTests",
+      "test": "FloorpNotesStoreTests/testInjectedWriteFailurePreservesLastGoodArchiveWithoutPartialFile()"
+    }
+  ]
+}
