@@ -949,6 +949,384 @@ final class FloorpNoteRecoveryDraftStoreTests: XCTestCase {
     }
 }
 
+final class FloorpNotesImportExportTests: XCTestCase, @unchecked Sendable {
+    private func makeTemporaryArchiveLocation() throws -> (directory: URL, archive: URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpNotesImportTests-\(UUID().uuidString)", isDirectory: true)
+        return (directory, directory.appendingPathComponent("notes.json"))
+    }
+
+    private func payloadData(notes: [FloorpNote]) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(FloorpNotesDesktopPayload(notes: notes))
+    }
+
+    func testExportImportRoundTripPreservesIDsTimestampsAndOpaqueRichBytes() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        let richJSON = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Rich"}]}]}"#
+        let plain = makeFloorpTestNote(
+            id: "plain",
+            title: "Plain",
+            content: "Hello",
+            createdAt: 10,
+            updatedAt: 20,
+            contentFormat: .plainText
+        )
+        let rich = makeFloorpTestNote(
+            id: "rich",
+            title: "Rich",
+            content: richJSON,
+            createdAt: 30,
+            updatedAt: 40,
+            contentFormat: .automatic
+        )
+        try await store.replaceAllNotes(with: [plain, rich])
+
+        let exported = try await store.desktopPayloadData()
+        let restartedStore = FloorpNotesStore(fileURL: location.archive)
+        let result = try await restartedStore.importNotes(from: exported, policy: .replace)
+        let notes = try await restartedStore.loadNotes()
+
+        XCTAssertEqual(result.importedCount, 2)
+        XCTAssertEqual(result.replacedCount, 2)
+        XCTAssertEqual(result.mergedCount, 0)
+        XCTAssertEqual(notes.map(\.id), [plain.id, rich.id])
+        XCTAssertEqual(notes.map(\.title), ["Plain", "Rich"])
+        XCTAssertEqual(notes.map(\.content), ["Hello", richJSON])
+        XCTAssertEqual(notes.map(\.createdAt), [10, 30])
+        XCTAssertEqual(notes.map(\.updatedAt), [20, 40])
+    }
+
+    func testMalformedInconsistentOrInvalidIDImportLeavesArchiveUnchanged() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        let seed = makeFloorpTestNote(
+            id: "seed",
+            title: "Seed",
+            content: "keep",
+            createdAt: 1,
+            updatedAt: 2,
+            contentFormat: .plainText
+        )
+        try await store.replaceAllNotes(with: [seed])
+        let before = try await store.loadSnapshot()
+
+        let invalidJSON = Data("not json".utf8)
+        let inconsistentArrays = Data(#"{"ids":["a"],"titles":["T"],"contents":["C","extra"]}"#.utf8)
+        let missingIDs = Data(#"{"titles":["T"],"contents":["C"]}"#.utf8)
+        let emptyID = Data(#"{"ids":[""],"titles":["T"],"contents":["C"],"createdAts":[1],"updatedAts":[2]}"#.utf8)
+
+        do {
+            _ = try await store.importNotes(from: invalidJSON, policy: .replace)
+            XCTFail("Expected invalidImportPayload")
+        } catch FloorpNotesStoreError.invalidImportPayload {
+            // Expected.
+        }
+        do {
+            _ = try await store.importNotes(from: inconsistentArrays, policy: .replace)
+            XCTFail("Expected invalidImportPayload")
+        } catch FloorpNotesStoreError.invalidImportPayload {
+            // Expected.
+        }
+        do {
+            _ = try await store.importNotes(from: missingIDs, policy: .replace)
+            XCTFail("Expected invalidImportPayload")
+        } catch FloorpNotesStoreError.invalidImportPayload {
+            // Expected.
+        }
+        do {
+            _ = try await store.importNotes(from: emptyID, policy: .replace)
+            XCTFail("Expected invalidNoteID")
+        } catch FloorpNotesStoreError.invalidNoteID {
+            // Expected.
+        }
+
+        let after = try await store.loadSnapshot()
+        XCTAssertEqual(after, before, "rejected imports must leave archive and revision unchanged")
+    }
+
+    func testOversizedDuplicateTimestampAndLimitImportsAreRejected() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        let seed = makeFloorpTestNote(
+            id: "seed",
+            title: "Seed",
+            content: "keep",
+            createdAt: 1,
+            updatedAt: 2,
+            contentFormat: .plainText
+        )
+        try await store.replaceAllNotes(with: [seed])
+        let before = try await store.loadSnapshot()
+
+        let oversized = Data(#"{"ids":["a"],"titles":["T"],"contents":[""#.utf8)
+            + Data(String(repeating: "x", count: FloorpNotesStore.maximumArchiveBytes).utf8)
+            + Data(#""],"createdAts":[1],"updatedAts":[2]}"#.utf8)
+        do {
+            _ = try await store.importNotes(from: oversized, policy: .replace)
+            XCTFail("Expected archiveTooLarge")
+        } catch FloorpNotesStoreError.archiveTooLarge(_, _) {
+            // Expected.
+        }
+
+        let duplicate = Data(
+            #"{"ids":["a","a"],"titles":["T","U"],"contents":["C","D"],"createdAts":[1,1],"updatedAts":[2,2]}"#.utf8
+        )
+        do {
+            _ = try await store.importNotes(from: duplicate, policy: .replace)
+            XCTFail("Expected duplicateNoteID")
+        } catch FloorpNotesStoreError.duplicateNoteID(let id) {
+            XCTAssertEqual(id, FloorpNoteID("a"))
+        }
+
+        let zeroTimestamp = Data(
+            #"{"ids":["a"],"titles":["T"],"contents":["C"],"createdAts":[0],"updatedAts":[2]}"#.utf8
+        )
+        do {
+            _ = try await store.importNotes(from: zeroTimestamp, policy: .replace)
+            XCTFail("Expected invalidTimestamp")
+        } catch FloorpNotesStoreError.invalidTimestamp(let id) {
+            XCTAssertEqual(id, FloorpNoteID("a"))
+        }
+
+        let reversedTimestamp = Data(
+            #"{"ids":["a"],"titles":["T"],"contents":["C"],"createdAts":[5],"updatedAts":[2]}"#.utf8
+        )
+        do {
+            _ = try await store.importNotes(from: reversedTimestamp, policy: .replace)
+            XCTFail("Expected invalidTimestamp")
+        } catch FloorpNotesStoreError.invalidTimestamp {
+            // Expected.
+        }
+
+        let overLimit = (0..<(FloorpNotesStore.maximumNoteCount + 1)).map { index in
+            makeFloorpTestNote(
+                id: "note-\(index)",
+                title: "T",
+                content: "",
+                createdAt: 1,
+                updatedAt: 2,
+                contentFormat: .plainText
+            )
+        }
+        do {
+            _ = try await store.importNotes(from: try payloadData(notes: overLimit), policy: .replace)
+            XCTFail("Expected tooManyNotes")
+        } catch FloorpNotesStoreError.tooManyNotes(let count) {
+            XCTAssertEqual(count, FloorpNotesStore.maximumNoteCount + 1)
+        }
+
+        let after = try await store.loadSnapshot()
+        XCTAssertEqual(after, before, "rejected imports must leave archive and revision unchanged")
+    }
+
+    func testMergePolicyNewerWinsTieKeepsLocalAndNewIDsAppend() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        let localA = makeFloorpTestNote(
+            id: "a",
+            title: "A local",
+            content: "a1",
+            createdAt: 1,
+            updatedAt: 100,
+            contentFormat: .plainText
+        )
+        let localB = makeFloorpTestNote(
+            id: "b",
+            title: "B local",
+            content: "b1",
+            createdAt: 1,
+            updatedAt: 200,
+            contentFormat: .plainText
+        )
+        try await store.replaceAllNotes(with: [localA, localB])
+
+        let importedA = makeFloorpTestNote(
+            id: "a",
+            title: "A remote newer",
+            content: "a2",
+            createdAt: 1,
+            updatedAt: 150,
+            contentFormat: .plainText
+        )
+        let importedB = makeFloorpTestNote(
+            id: "b",
+            title: "B remote tie",
+            content: "b2",
+            createdAt: 1,
+            updatedAt: 200,
+            contentFormat: .plainText
+        )
+        let importedC = makeFloorpTestNote(
+            id: "c",
+            title: "C new",
+            content: "c1",
+            createdAt: 1,
+            updatedAt: 300,
+            contentFormat: .plainText
+        )
+        let data = try payloadData(notes: [importedA, importedB, importedC])
+
+        let result = try await store.importNotes(from: data, policy: .merge)
+        let notes = try await store.loadNotes()
+
+        XCTAssertEqual(result.importedCount, 3)
+        XCTAssertEqual(result.mergedCount, 1)
+        XCTAssertEqual(result.replacedCount, 0)
+        XCTAssertEqual(notes.map(\.id), [FloorpNoteID("a"), FloorpNoteID("b"), FloorpNoteID("c")])
+        XCTAssertEqual(notes[0].title, "A remote newer")
+        XCTAssertEqual(notes[1].title, "B local")
+        XCTAssertEqual(notes[2].title, "C new")
+    }
+
+    func testReplacePolicyReplacesAllNotesAndAdvancesRevision() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        let first = makeFloorpTestNote(
+            id: "first",
+            title: "First",
+            content: "old",
+            createdAt: 1,
+            updatedAt: 2,
+            contentFormat: .plainText
+        )
+        let second = makeFloorpTestNote(
+            id: "second",
+            title: "Second",
+            content: "old",
+            createdAt: 1,
+            updatedAt: 2,
+            contentFormat: .plainText
+        )
+        try await store.replaceAllNotes(with: [first, second])
+        let before = try await store.loadSnapshot()
+
+        let replacement = makeFloorpTestNote(
+            id: "replacement",
+            title: "Replacement",
+            content: "new",
+            createdAt: 3,
+            updatedAt: 4,
+            contentFormat: .plainText
+        )
+        let result = try await store.importNotes(
+            from: try payloadData(notes: [replacement]),
+            policy: .replace
+        )
+
+        XCTAssertEqual(result.replacedCount, 2)
+        XCTAssertEqual(result.mergedCount, 0)
+        XCTAssertEqual(result.revision, before.revision + 1)
+        let notes = try await store.loadNotes()
+        XCTAssertEqual(notes.map(\.id), [replacement.id])
+    }
+
+    func testInjectedWriteFailureDuringImportRestoresLastGoodArchive() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let seedStore = FloorpNotesStore(fileURL: location.archive)
+        let seed = makeFloorpTestNote(
+            id: "seed",
+            title: "Seed",
+            content: "original",
+            createdAt: 1,
+            updatedAt: 2,
+            contentFormat: .plainText
+        )
+        try await seedStore.replaceAllNotes(with: [seed])
+        let originalArchiveBytes = try Data(contentsOf: location.archive)
+
+        enum WriteFailure: Error { case injected }
+        let failingStore = FloorpNotesStore(
+            fileURL: location.archive,
+            writeData: { _, _ in throw WriteFailure.injected }
+        )
+        let incoming = makeFloorpTestNote(
+            id: "other",
+            title: "Other",
+            content: "x",
+            createdAt: 1,
+            updatedAt: 2,
+            contentFormat: .plainText
+        )
+        do {
+            _ = try await failingStore.importNotes(
+                from: try payloadData(notes: [incoming]),
+                policy: .replace
+            )
+            XCTFail("Expected injected write failure")
+        } catch WriteFailure.injected {
+            // Expected.
+        }
+
+        // A fresh store open restores the last-good archive byte-for-byte.
+        let restartedStore = FloorpNotesStore(fileURL: location.archive)
+        let restartedNotes = try await restartedStore.loadNotes()
+        XCTAssertEqual(restartedNotes, [seed])
+        XCTAssertEqual(try Data(contentsOf: location.archive), originalArchiveBytes)
+
+        // No partial or temporary files may linger.
+        let files = try FileManager.default.contentsOfDirectory(
+            at: location.directory,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertTrue(files.allSatisfy { $0.lastPathComponent == "notes.json" })
+    }
+
+    func testCorruptionBackupIsRetrievableUntrustedAndNeverAutoImported() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+        try FileManager.default.createDirectory(at: location.directory, withIntermediateDirectories: true)
+        let corruptBytes = Data("not-json".utf8)
+        try corruptBytes.write(to: location.archive)
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        do {
+            _ = try await store.loadNotes()
+            XCTFail("Expected corruptArchive")
+        } catch FloorpNotesStoreError.corruptArchive {
+            // Expected.
+        }
+
+        let backup = try await store.preservedCorruptionBackupData()
+        XCTAssertEqual(backup, corruptBytes)
+        let preservedURL = await store.preservedCorruptionBackupURL()
+        XCTAssertNotNil(preservedURL)
+
+        // The backup is never auto-imported: loading still fails.
+        do {
+            _ = try await store.loadNotes()
+            XCTFail("Expected corruptArchive")
+        } catch FloorpNotesStoreError.corruptArchive {
+            // Expected.
+        }
+
+        // Reset keeps the recovery copy byte-identical on disk.
+        try await store.resetAfterCorruption()
+        let clearedURL = await store.preservedCorruptionBackupURL()
+        XCTAssertNil(clearedURL)
+        let remaining = try FileManager.default.contentsOfDirectory(
+            at: location.directory,
+            includingPropertiesForKeys: nil
+        )
+        let backupURL = try XCTUnwrap(remaining.first { $0.lastPathComponent.contains(".corrupt-") })
+        XCTAssertEqual(try Data(contentsOf: backupURL), corruptBytes)
+    }
+}
+
 @MainActor
 final class FloorpNoteEditorViewControllerTests: XCTestCase {
     private let safePNGDataURL = "data:image/png;base64,"
