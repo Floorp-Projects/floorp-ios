@@ -146,273 +146,6 @@ final class FloorpNotePersistenceSession: FloorpNotePersistence {
     }
 }
 
-@MainActor
-final class FloorpNoteSaveCoordinator {
-    enum FailureKind: Equatable, Hashable {
-        case conflict
-        case noteDeleted
-        case archiveTooLarge
-        case damagedArchive
-        case newerSchema
-        case storage
-    }
-
-    struct Failure {
-        let kind: FailureKind
-        let underlyingError: Error
-    }
-
-    enum SaveOutcome {
-        case noChanges
-        case saved(FloorpNote)
-        case failed(Failure)
-    }
-
-    private let persistence: FloorpNotePersistence
-    private(set) var draft: FloorpNote
-    private(set) var changeVersion = 0
-    private(set) var savedVersion = 0
-    private(set) var contentChangeVersion = 0
-    private(set) var savedContentVersion = 0
-    private(set) var hasPersistedNote: Bool
-    private(set) var lastFailure: Failure?
-    private var isSaving = false
-    private var saveWaiters = [CheckedContinuation<Void, Never>]()
-
-    var hasUnsavedChanges: Bool { savedVersion != changeVersion }
-    var hasUnsavedContentChanges: Bool { savedContentVersion != contentChangeVersion }
-
-    init(draft: FloorpNote, isPersisted: Bool, persistence: FloorpNotePersistence) {
-        self.draft = draft
-        self.hasPersistedNote = isPersisted
-        self.persistence = persistence
-    }
-
-    @discardableResult
-    func updateTitle(_ title: String) -> Bool {
-        guard draft.title != title else { return false }
-        draft.title = title
-        markChanged()
-        return true
-    }
-
-    @discardableResult
-    func updateContent(
-        _ content: String,
-        contentFormat: FloorpNoteContentFormat? = nil
-    ) -> Bool {
-        let nextFormat = contentFormat ?? draft.contentFormat
-        guard draft.content != content || draft.contentFormat != nextFormat else { return false }
-        draft.content = content
-        draft.contentFormat = nextFormat
-        contentChangeVersion += 1
-        markChanged()
-        return true
-    }
-
-    func requestExplicitSave() {
-        if !hasPersistedNote && !hasUnsavedChanges {
-            markChanged()
-        }
-    }
-
-    func preflightContentUpdate(
-        _ content: String,
-        contentFormat: FloorpNoteContentFormat
-    ) async throws {
-        while true {
-            let candidateVersion = changeVersion
-            var candidate = draft
-            candidate.content = content
-            candidate.contentFormat = contentFormat
-            try await persistence.preflight(candidate)
-            guard changeVersion != candidateVersion else { return }
-        }
-    }
-
-    /// Replaces a plain-text body only if it is still the body that was
-    /// converted. Title edits can race the asynchronous preflight and are
-    /// retried, while a newer body makes the caller rebuild the rich document.
-    func preflightAndReplaceContent(
-        expectedContent: String,
-        expectedContentFormat: FloorpNoteContentFormat,
-        content: String,
-        contentFormat: FloorpNoteContentFormat
-    ) async throws -> Bool {
-        while true {
-            try Task.checkCancellation()
-            guard draft.content == expectedContent,
-                  draft.contentFormat == expectedContentFormat else {
-                return false
-            }
-            let candidateVersion = changeVersion
-            var candidate = draft
-            candidate.content = content
-            candidate.contentFormat = contentFormat
-            try await persistence.preflight(candidate)
-            try Task.checkCancellation()
-            guard draft.content == expectedContent,
-                  draft.contentFormat == expectedContentFormat else {
-                return false
-            }
-            guard changeVersion == candidateVersion else { continue }
-            _ = updateContent(content, contentFormat: contentFormat)
-            return true
-        }
-    }
-
-    func preflightCopyContent(
-        _ content: String,
-        contentFormat: FloorpNoteContentFormat
-    ) async throws {
-        var candidate = draft
-        candidate.content = content
-        candidate.contentFormat = contentFormat
-        try await persistence.preflightCopy(candidate)
-    }
-
-    func saveLatest() async -> SaveOutcome {
-        if isSaving {
-            await withCheckedContinuation { continuation in
-                saveWaiters.append(continuation)
-            }
-            if let lastFailure { return .failed(lastFailure) }
-            return hasUnsavedChanges ? await saveLatest() : .noChanges
-        }
-        guard hasUnsavedChanges else { return .noChanges }
-
-        isSaving = true
-        var lastSavedNote: FloorpNote?
-
-        repeat {
-            let versionToSave = changeVersion
-            let contentVersionToSave = contentChangeVersion
-            let noteToSave = draft
-            do {
-                let persistedNote = try await persistence.save(noteToSave)
-                savedVersion = versionToSave
-                savedContentVersion = contentVersionToSave
-                hasPersistedNote = true
-                lastFailure = nil
-                adoptPersistenceIdentity(from: persistedNote)
-                lastSavedNote = persistedNote
-            } catch {
-                let failure = Failure(kind: Self.failureKind(for: error), underlyingError: error)
-                lastFailure = failure
-                finishSaving()
-                return .failed(failure)
-            }
-        } while hasUnsavedChanges
-
-        finishSaving()
-        return lastSavedNote.map(SaveOutcome.saved) ?? .noChanges
-    }
-
-    func reload() async throws -> FloorpNote {
-        let requestedVersion = changeVersion
-        let requestedNoteID = draft.id
-        await waitUntilIdle()
-        isSaving = true
-        defer { finishSaving() }
-        guard changeVersion == requestedVersion, draft.id == requestedNoteID else {
-            throw FloorpNotesStoreError.editConflict(requestedNoteID)
-        }
-        guard let note = try await persistence.reload() else {
-            throw FloorpNotesStoreError.noteNotFound(draft.id)
-        }
-        guard changeVersion == requestedVersion, draft.id == requestedNoteID else {
-            throw FloorpNotesStoreError.editConflict(requestedNoteID)
-        }
-        persistence.acceptReloaded(note)
-        draft = note
-        changeVersion = 0
-        savedVersion = 0
-        contentChangeVersion = 0
-        savedContentVersion = 0
-        hasPersistedNote = true
-        lastFailure = nil
-        return note
-    }
-
-    func saveAsCopy() async -> SaveOutcome {
-        await waitUntilIdle()
-        isSaving = true
-        let versionToSave = changeVersion
-        let contentVersionToSave = contentChangeVersion
-        let noteToSave = draft
-        do {
-            let persistedNote = try await persistence.saveAsCopy(noteToSave)
-            savedVersion = versionToSave
-            savedContentVersion = contentVersionToSave
-            hasPersistedNote = true
-            lastFailure = nil
-            adoptPersistenceIdentity(from: persistedNote)
-            finishSaving()
-            if hasUnsavedChanges {
-                return await saveLatest()
-            }
-            return .saved(persistedNote)
-        } catch {
-            let failure = Failure(kind: Self.failureKind(for: error), underlyingError: error)
-            lastFailure = failure
-            finishSaving()
-            return .failed(failure)
-        }
-    }
-
-    private func markChanged() {
-        changeVersion += 1
-        lastFailure = nil
-    }
-
-    private func adoptPersistenceIdentity(from persistedNote: FloorpNote) {
-        draft = FloorpNote(
-            id: persistedNote.id,
-            title: draft.title,
-            content: draft.content,
-            createdAt: persistedNote.createdAt,
-            updatedAt: persistedNote.updatedAt,
-            contentFormat: draft.contentFormat
-        )
-    }
-
-    private func finishSaving() {
-        isSaving = false
-        let waiters = saveWaiters
-        saveWaiters.removeAll()
-        waiters.forEach { $0.resume() }
-    }
-
-    private func waitUntilIdle() async {
-        if isSaving {
-            await withCheckedContinuation { continuation in
-                saveWaiters.append(continuation)
-            }
-            await waitUntilIdle()
-        }
-    }
-
-    static func failureKind(for error: Error) -> FailureKind {
-        switch error {
-        case FloorpNotesStoreError.editConflict:
-            return .conflict
-        case FloorpNotesStoreError.noteNotFound:
-            return .noteDeleted
-        case FloorpNotesStoreError.archiveTooLarge, FloorpNotesStoreError.tooManyNotes:
-            return .archiveTooLarge
-        case FloorpNotesStoreError.corruptArchive,
-             FloorpNotesStoreError.corruptArchiveCouldNotBePreserved,
-             FloorpNotesStoreError.writesBlockedByCorruption:
-            return .damagedArchive
-        case FloorpNotesStoreError.unsupportedSchema:
-            return .newerSchema
-        default:
-            return .storage
-        }
-    }
-}
-
-@MainActor
 private final class FloorpNoteClosurePersistence: FloorpNotePersistence {
     private let onSave: @MainActor (FloorpNote) async throws -> FloorpNote
 
@@ -551,7 +284,6 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private var richRecoveryDraft: FloorpRichTextRecoveryDraft?
     private var richBridgeRecoverySession: FloorpRichTextEditorSessionCursor?
     private var richBridgeFailureVersion = 0
-    private var autosaveTask: Task<Void, Never>?
     private var savedStatusResetTask: Task<Void, Never>?
     private let backgroundSaveLease = FloorpBackgroundSaveLease()
     private let shouldFocusTitleOnFirstAppearance: Bool
@@ -870,6 +602,9 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
             persistence: persistence
         )
         super.init(nibName: nil, bundle: nil)
+        saveCoordinator.onAutosave = { [weak self] in
+            _ = await self?.saveLatestDraft()
+        }
     }
 
     convenience init(
@@ -965,7 +700,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     deinit {
-        autosaveTask?.cancel()
+        saveCoordinator.cancelAutosave()
         savedStatusResetTask?.cancel()
         richUpdateDrainTask?.cancel()
         richAuthoritativeFlushTask?.cancel()
@@ -1075,7 +810,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     @discardableResult
     func saveForExplicitRequest() async -> Bool {
         guard !isClosing, !isEditorSessionTerminated else { return false }
-        autosaveTask?.cancel()
+        saveCoordinator.cancelAutosave()
         saveCoordinator.requestExplicitSave()
         setInteractiveDismissalBlocked(saveCoordinator.hasUnsavedChanges)
         let outcome = await saveLatestDraft()
@@ -1097,7 +832,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
         guard !isClosing, !isEditorSessionTerminated else { return false }
         isClosing = true
         plainToRichConversionTask?.cancel()
-        autosaveTask?.cancel()
+        saveCoordinator.cancelAutosave()
         setReloadInteractionEnabled(false, updatesRichEditor: false)
         let outcome = await saveLatestDraft()
         if case .failed(let failure) = outcome {
@@ -1117,7 +852,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     @objc private func applicationWillResignActive() {
         guard saveCoordinator.hasUnsavedChanges || editorMode == .richText else { return }
-        autosaveTask?.cancel()
+        saveCoordinator.cancelAutosave()
         beginBackgroundSaveTask()
         Task { @MainActor [weak self] in
             _ = await self?.saveLatestDraft()
@@ -1132,16 +867,9 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func scheduleAutosave() {
-        autosaveTask?.cancel()
-        autosaveTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: UX.autosaveDelayNanoseconds)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            _ = await self?.saveLatestDraft()
-        }
+        saveCoordinator.scheduleAutosave(
+            delayNanoseconds: UX.autosaveDelayNanoseconds
+        )
     }
 
     @discardableResult
@@ -1556,7 +1284,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
 
     private func applyReloadedNote(_ note: FloorpNote) {
         guard !isEditorSessionTerminated, !isClosing else { return }
-        autosaveTask?.cancel()
+        saveCoordinator.cancelAutosave()
         contentAnalysis = FloorpNoteContent.analyze(
             note.content,
             contentFormat: note.contentFormat
@@ -1573,7 +1301,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     }
 
     private func dismissDiscardingChanges() {
-        autosaveTask?.cancel()
+        saveCoordinator.cancelAutosave()
         setInteractiveDismissalBlocked(false)
         terminateEditorSession()
         navigationController?.dismiss(animated: true)
@@ -1582,7 +1310,7 @@ final class FloorpNoteEditorViewController: UIViewController, Themeable {
     private func terminateEditorSession() {
         guard !isEditorSessionTerminated else { return }
         isEditorSessionTerminated = true
-        autosaveTask?.cancel()
+        saveCoordinator.cancelAutosave()
         plainToRichConversionTask?.cancel()
         richUpdateDrainTask?.cancel()
         richAuthoritativeFlushTask?.cancel()

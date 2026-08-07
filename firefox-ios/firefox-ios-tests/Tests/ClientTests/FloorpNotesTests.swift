@@ -4208,6 +4208,131 @@ final class FloorpNoteSaveCoordinatorTests: XCTestCase {
             contentFormat: .plainText
         )
     }
+
+    // MARK: - Deterministic autosave scheduling (issue #21)
+
+    /// Waits without fixed sub-second sleeps until `condition` becomes true.
+    private func waitUntil(_ condition: () -> Bool) async {
+        while !condition() {
+            await Task.yield()
+        }
+    }
+
+    func testAutosaveFiresAfterScheduledDelayWithInjectedSleep() async {
+        let original = makeNote(id: "note", title: "Original", updatedAt: 1)
+        let persistence = MockFloorpNotePersistence()
+        let coordinator = FloorpNoteSaveCoordinator(
+            draft: original,
+            isPersisted: true,
+            persistence: persistence
+        )
+        var fired = false
+        coordinator.onAutosave = { fired = true }
+
+        var sleepContinuation: CheckedContinuation<Void, Never>?
+        var recordedDelay: UInt64?
+        coordinator.scheduleAutosave(delayNanoseconds: 400_000_000) { delay in
+            recordedDelay = delay
+            await withCheckedContinuation { sleepContinuation = $0 }
+        }
+        await waitUntil { sleepContinuation != nil }
+        sleepContinuation?.resume()
+        await waitUntil { fired }
+
+        XCTAssertEqual(recordedDelay, 400_000_000)
+        XCTAssertTrue(fired)
+    }
+
+    func testReschedulingAutosaveCancelsThePriorPendingFire() async {
+        let original = makeNote(id: "note", title: "Original", updatedAt: 1)
+        let persistence = MockFloorpNotePersistence()
+        let coordinator = FloorpNoteSaveCoordinator(
+            draft: original,
+            isPersisted: true,
+            persistence: persistence
+        )
+        var fireCount = 0
+        coordinator.onAutosave = { fireCount += 1 }
+
+        var firstSleep: CheckedContinuation<Void, Never>?
+        var secondSleep: CheckedContinuation<Void, Never>?
+        coordinator.scheduleAutosave(delayNanoseconds: 1) { _ in
+            await withCheckedContinuation { firstSleep = $0 }
+        }
+        await waitUntil { firstSleep != nil }
+        coordinator.scheduleAutosave(delayNanoseconds: 2) { _ in
+            await withCheckedContinuation { secondSleep = $0 }
+        }
+        await waitUntil { secondSleep != nil }
+
+        // The first schedule was cancelled by the second; resuming its sleep
+        // must not fire the autosave callback.
+        firstSleep?.resume()
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(fireCount, 0)
+
+        secondSleep?.resume()
+        await waitUntil { fireCount == 1 }
+        XCTAssertEqual(fireCount, 1)
+    }
+
+    func testCancellingAutosavePreventsPendingFire() async {
+        let original = makeNote(id: "note", title: "Original", updatedAt: 1)
+        let persistence = MockFloorpNotePersistence()
+        let coordinator = FloorpNoteSaveCoordinator(
+            draft: original,
+            isPersisted: true,
+            persistence: persistence
+        )
+        var fired = false
+        coordinator.onAutosave = { fired = true }
+
+        var sleepContinuation: CheckedContinuation<Void, Never>?
+        coordinator.scheduleAutosave(delayNanoseconds: 1) { _ in
+            await withCheckedContinuation { sleepContinuation = $0 }
+        }
+        await waitUntil { sleepContinuation != nil }
+        coordinator.cancelAutosave()
+        sleepContinuation?.resume()
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertFalse(fired)
+    }
+
+    func testAutosaveCallbackSavesTheDirtyDraft() async {
+        let original = makeNote(id: "note", title: "Original", updatedAt: 1)
+        let persistence = MockFloorpNotePersistence()
+        var savedDrafts = [FloorpNote]()
+        persistence.saveHandler = { draft in
+            savedDrafts.append(draft)
+            var saved = draft
+            saved.updatedAt += 1
+            return saved
+        }
+        let coordinator = FloorpNoteSaveCoordinator(
+            draft: original,
+            isPersisted: true,
+            persistence: persistence
+        )
+        coordinator.onAutosave = {
+            _ = await coordinator.saveLatest()
+        }
+        coordinator.updateTitle("Edited")
+
+        var sleepContinuation: CheckedContinuation<Void, Never>?
+        coordinator.scheduleAutosave(delayNanoseconds: 1) { _ in
+            await withCheckedContinuation { sleepContinuation = $0 }
+        }
+        await waitUntil { sleepContinuation != nil }
+        sleepContinuation?.resume()
+        await waitUntil { !savedDrafts.isEmpty }
+
+        XCTAssertEqual(savedDrafts.last?.title, "Edited")
+        XCTAssertFalse(coordinator.hasUnsavedChanges)
+    }
 }
 
 @MainActor
