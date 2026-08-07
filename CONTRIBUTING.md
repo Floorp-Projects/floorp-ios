@@ -6,6 +6,12 @@ Note: If you are not choosing to work on one of our `contributor-friendly` issue
 
 Before getting started, please make sure your work aligns with how we collaborate in this repository.
 
+## Review and merge expectations
+
+- Pull requests to `main` require the `Validate workflows` and `Build and unit test` checks to pass against the exact reviewed head SHA; the head must not drift between review and merge.
+- The upstream-sync branch is disposable and receives no manual commits. Do not force-push `main`; force pushes and deletion are blocked by the branch ruleset.
+- External mutations (merges, branch/issue/PR writes, App Store Connect, Xcode Cloud) are executed from a read-only preflight with prior-state capture and post-state diff. Missing permissions or agreements stop with zero mutation and are reported as exact blockers with an owner and resume condition.
+
 ## Submitting an Issue
 
 If you find a bug or a documentation issue, please [open an issue](https://github.com/mozilla-mobile/firefox-ios/issues/new/choose) in the repository.
