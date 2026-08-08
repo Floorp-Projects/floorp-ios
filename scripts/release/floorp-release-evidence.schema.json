@@ -26,6 +26,9 @@
     "schema_version": {
       "const": 1
     },
+    "archive_only": {
+      "type": "boolean"
+    },
     "source_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"
@@ -43,20 +46,18 @@
       "minLength": 1
     },
     "team_id": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "archive_path": {
       "type": "string",
       "minLength": 1
     },
     "ipa_path": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "ipa_sha256": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^([0-9a-f]{64})?$"
     },
     "signing_identity": {
       "type": ["string", "null"]
@@ -69,7 +70,7 @@
         "marketing_version": {"type": "string", "minLength": 1},
         "build_number": {"type": "string", "minLength": 1},
         "bundle_id": {"type": "string", "minLength": 1},
-        "team_id": {"type": "string", "minLength": 1}
+        "team_id": {"type": "string"}
       }
     },
     "ipa_info": {

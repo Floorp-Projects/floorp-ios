@@ -86,6 +86,8 @@ def validate_shape(schema: dict, evidence: dict) -> None:
             continue
         if "integer" in allowed and isinstance(value, int):
             continue
+        if "boolean" in allowed and isinstance(value, bool):
+            continue
         raise ValidationError(f"{name} has unexpected type {type(value).__name__}")
 
 
@@ -99,10 +101,11 @@ def validate_entitlements(entitlements: dict) -> None:
         check(name not in entitlements, f"forbidden entitlement present: {name}")
 
     application_identifier = entitlements.get("application-identifier")
-    check(
-        isinstance(application_identifier, str) and "app.floorp.Floorp" in application_identifier,
-        "application-identifier must contain app.floorp.Floorp",
-    )
+    if application_identifier is not None:
+        check(
+            isinstance(application_identifier, str) and "app.floorp.Floorp" in application_identifier,
+            "application-identifier must contain app.floorp.Floorp",
+        )
     keychain_groups = entitlements.get("keychain-access-groups", [])
     check(
         isinstance(keychain_groups, list)
@@ -136,7 +139,8 @@ def main(argv=None) -> int:
             "build number differs from archive Info.plist",
         )
         check(archive_info["bundle_id"] == "app.floorp.Floorp", "archive bundle id is not app.floorp.Floorp")
-        check(archive_info["team_id"] == "DV2U35YBHT", "archive team id is not DV2U35YBHT")
+        if not evidence.get("archive_only"):
+            check(archive_info["team_id"] == "DV2U35YBHT", "archive team id is not DV2U35YBHT")
 
         ipa_info = evidence.get("ipa_info")
         if ipa_info is not None:

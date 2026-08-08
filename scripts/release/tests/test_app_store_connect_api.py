@@ -197,7 +197,7 @@ class ClientBehaviorTests(unittest.TestCase):
                     "type": "ciBuildRuns",
                     "attributes": {
                         "executionProgress": "COMPLETE",
-                        "completionStatus": "SUCCESS",
+                        "completionStatus": "SUCCEEDED",
                         "sourceCommit": {"commitSha": "a" * 40},
                     },
                 }
@@ -209,6 +209,36 @@ class ClientBehaviorTests(unittest.TestCase):
             self.assertEqual(calls, ["/v1/ciBuildRuns/run-1"])
             self.assertEqual(json.loads(out.read_text())["data"]["id"], "run-1")
 
+    def test_wait_ci_run_accepts_succeeded_completion_status(self):
+        # The API reports success as completionStatus "SUCCEEDED" (not
+        # "SUCCEEDED"); the waiter must treat it as terminal and successful.
+        def client(method, path, dry_run=False):
+            return {
+                "data": {
+                    "id": "run-1",
+                    "attributes": {
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCEEDED",
+                        "sourceCommit": {"commitSha": "a" * 40},
+                    },
+                }
+            }
+
+        original_sleep = asc.time.sleep
+        asc.time.sleep = lambda seconds: (_ for _ in ()).throw(
+            AssertionError("waiter polled again: SUCCEEDED was not treated as terminal")
+        )
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "run.json"
+                asc.wait_ci_run(client, "run-1", "a" * 40, out, dry_run=False)
+                self.assertEqual(
+                    json.loads(out.read_text())["data"]["attributes"]["completionStatus"],
+                    "SUCCEEDED",
+                )
+        finally:
+            asc.time.sleep = original_sleep
+
     def test_wait_ci_run_rejects_head_mismatch(self):
         def client(method, path, dry_run=False):
             return {
@@ -216,7 +246,7 @@ class ClientBehaviorTests(unittest.TestCase):
                     "id": "run-1",
                     "attributes": {
                         "executionProgress": "COMPLETE",
-                        "completionStatus": "SUCCESS",
+                        "completionStatus": "SUCCEEDED",
                         "sourceCommit": {"commitSha": "b" * 40},
                     },
                 }
