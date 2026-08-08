@@ -97,11 +97,15 @@ def der_to_raw_signature(der: bytes) -> bytes:
     if der[0] != 0x30:
         raise CredentialError("unexpected DER signature prefix")
     index = 2
-    if der[index] & 0x80:
-        index += der[index] & 0x7F
-    index += 1
+    # Skip the sequence length (long form supported for safety).
+    if der[1] & 0x80:
+        index = 2 + (der[1] & 0x7F)
 
     def read_integer(start):
+        # Each INTEGER is encoded as 0x02 <len> <value>.
+        if der[start] != 0x02:
+            raise CredentialError("unexpected DER integer tag")
+        start += 1
         length = der[start]
         start += 1
         if length & 0x80:
@@ -226,6 +230,24 @@ def wait_ci_run(client, run_id: str, expected_head: str, output: Path,
         time.sleep(30)
 
 
+def build_polling_client(issuer_id: str, key_id: str, private_key_path: Path,
+                         dry_run: bool):
+    """Returns an API client that mints a fresh JWT on every request.
+
+    wait-ci-run polls can run up to 180 minutes while JWTs expire after 20,
+    so the token must be refreshed per request rather than minted once.
+    """
+
+    def client(method: str, path: str, dry_run: bool = dry_run):
+        if dry_run:
+            jwt = ""
+        else:
+            jwt = make_jwt(issuer_id, key_id, private_key_path, int(time.time()))
+        return api_call(method, path, jwt, dry_run=dry_run)
+
+    return client
+
+
 def download_ci_artifact(client, run_id: str, relationship: str, output: Path,
                          sha256_output: Path, dry_run: bool) -> None:
     path = f"/v1/ciRuns/{run_id}/artifacts"
@@ -337,17 +359,15 @@ def main(argv=None) -> int:
                 })
             return 0
         if arguments.command == "wait-ci-run":
-            issuer, key_id, key_path = load_credentials(arguments)
-            jwt = make_jwt(issuer, key_id, key_path, int(time.time()))
-            wait_ci_run(
-                lambda method, path, dry_run=arguments.dry_run: api_call(
-                    method, path, jwt, dry_run=dry_run
-                ),
-                arguments.run_id,
-                arguments.expected_head,
-                arguments.output,
-                arguments.dry_run,
-            )
+            if arguments.dry_run:
+                client = build_polling_client("", "", Path("."), dry_run=True)
+            else:
+                issuer, key_id, key_path = load_credentials(arguments)
+                client = build_polling_client(
+                    issuer, key_id, key_path, dry_run=arguments.dry_run
+                )
+            wait_ci_run(client, arguments.run_id, arguments.expected_head,
+                        arguments.output, arguments.dry_run)
             return 0
         if arguments.command == "download-ci-artifact":
             issuer, key_id, key_path = load_credentials(arguments)

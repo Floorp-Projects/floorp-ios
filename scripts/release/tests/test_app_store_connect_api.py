@@ -171,12 +171,45 @@ class ClientBehaviorTests(unittest.TestCase):
 
 class CryptoTests(unittest.TestCase):
     def test_der_to_raw_signature_padding(self):
+        # Well-formed DER with 33-byte (leading-zero) r and s integers:
+        # SEQUENCE len 0x46, INTEGER 0x21 00<r32>, INTEGER 0x21 00<s32>.
+        # r32 = 01..20, s32 = 21..40 (hex), each prefixed with 0x00.
         der = bytes.fromhex(
-            "3045022100b8e5c5e4c5e7b5d5c5b5a5c5d5e5f505152535455565758595a5b5c5d5e5f"
-            "022100b8e5c5e4c5e7b5d5c5b5a5c5d5e5f505152535455565758595a5b5c5d5e5f60"
+            "3046"
+            "0221"
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+            "0221"
+            "002122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"
         )
         raw = asc.der_to_raw_signature(der)
         self.assertEqual(len(raw), 64)
+        self.assertEqual(
+            raw[:32].hex(),
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        )
+        self.assertEqual(
+            raw[32:].hex(),
+            "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+        )
+
+    def test_der_to_raw_signature_standard_double_int(self):
+        # Standard OpenSSL pkeyutl -sign output: 0x30 len 0x02 rlen r 0x02 slen s,
+        # where s carries a leading zero (33-byte integer). The second integer's
+        # tag byte must not be mistaken for its length.
+        der = bytes.fromhex(
+            "304502205c69b8d57282b6f9993835ea895ff1032f89d5b870ad2cfc64c9c274b378b129"
+            "022100f17cdc6470b4a99439c46d8eaa5ab95fef3d83ac69a2f168cb999c6badfc6c43"
+        )
+        raw = asc.der_to_raw_signature(der)
+        self.assertEqual(len(raw), 64)
+        self.assertEqual(
+            raw[:32].hex(),
+            "5c69b8d57282b6f9993835ea895ff1032f89d5b870ad2cfc64c9c274b378b129",
+        )
+        self.assertEqual(
+            raw[32:].hex(),
+            "f17cdc6470b4a99439c46d8eaa5ab95fef3d83ac69a2f168cb999c6badfc6c43",
+        )
 
     def test_make_jwt_requires_existing_key(self):
         with self.assertRaises(asc.CredentialError):
@@ -195,6 +228,62 @@ class CryptoTests(unittest.TestCase):
             key.write_bytes(result.stdout)
             token = asc.make_jwt("issuer-1", "key-1", key, 1_700_000_000)
             self.assertEqual(len(token.split(".")), 3)
+
+    def test_polling_client_mints_fresh_jwt_per_request(self):
+        # Regression: a wait-ci-run poll can run up to 180 minutes, far beyond
+        # the 20-minute JWT lifetime; every request must carry a freshly
+        # minted token instead of one minted before the poll loop.
+        minted = []
+        recorded = []
+        original_make_jwt = asc.make_jwt
+        original_api_call = asc.api_call
+
+        def fake_make_jwt(issuer_id, key_id, private_key_path, now):
+            minted.append(now)
+            return "jwt-%d" % len(minted)
+
+        def fake_api_call(method, path, jwt, body=None, dry_run=False):
+            recorded.append((method, path, jwt, dry_run))
+            return {"ok": True}
+
+        asc.make_jwt = fake_make_jwt
+        asc.api_call = fake_api_call
+        try:
+            client = asc.build_polling_client(
+                "issuer-1", "key-1", Path("/unused.p8"), dry_run=False
+            )
+            client("GET", "/v1/ciRuns/123", dry_run=False)
+            client("GET", "/v1/ciRuns/123", dry_run=False)
+            self.assertEqual(len(recorded), 2)
+            self.assertEqual([entry[2] for entry in recorded], ["jwt-1", "jwt-2"])
+        finally:
+            asc.make_jwt = original_make_jwt
+            asc.api_call = original_api_call
+
+    def test_polling_client_dry_run_mints_nothing(self):
+        minted = []
+        recorded = []
+        original_make_jwt = asc.make_jwt
+        original_api_call = asc.api_call
+
+        def fake_make_jwt(issuer_id, key_id, private_key_path, now):
+            minted.append(now)
+            return "jwt-%d" % len(minted)
+
+        def fake_api_call(method, path, jwt, body=None, dry_run=False):
+            recorded.append((method, path, jwt, dry_run))
+            return {"ok": True}
+
+        asc.make_jwt = fake_make_jwt
+        asc.api_call = fake_api_call
+        try:
+            client = asc.build_polling_client("", "", Path("."), dry_run=True)
+            client("GET", "/v1/ciRuns/123", dry_run=True)
+            self.assertEqual(minted, [])
+            self.assertEqual(recorded, [("GET", "/v1/ciRuns/123", "", True)])
+        finally:
+            asc.make_jwt = original_make_jwt
+            asc.api_call = original_api_call
 
 
 if __name__ == "__main__":
