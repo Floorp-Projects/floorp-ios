@@ -4,6 +4,11 @@
 
 set -euo pipefail
 
+# Xcode Cloud has no interactive "Trust & Enable" prompt for Swift macro
+# packages; skip macro fingerprint validation so packages such as
+# ModifiedCopyMacro can be used without a one-time local approval.
+defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+
 readonly REPOSITORY_PATH="${CI_PRIMARY_REPOSITORY_PATH:?CI_PRIMARY_REPOSITORY_PATH is required}"
 readonly NODE_VERSION="$(<"${REPOSITORY_PATH}/.nvmrc")"
 

@@ -49,11 +49,12 @@ READ_ROUTES = [
     r"^/v1/builds/[^/]+$",
     r"^/v1/ciProducts$",
     r"^/v1/ciProducts/[^/]+/workflows$",
+    r"^/v1/ciProducts/[^/]+/buildRuns$",
     r"^/v1/ciWorkflows/[^/]+$",
-    r"^/v1/ciBuildRuns$",
-    r"^/v1/ciRuns$",
-    r"^/v1/ciRuns/[^/]+$",
-    r"^/v1/ciRuns/[^/]+/artifacts$",
+    r"^/v1/ciBuildRuns/[^/]+$",
+    r"^/v1/ciBuildRuns/[^/]+/actions$",
+    r"^/v1/ciBuildActions/[^/]+$",
+    r"^/v1/ciBuildActions/[^/]+/artifacts$",
     r"^/v1/betaGroups$",
     r"^/v1/betaGroups/[^/]+/builds$",
     r"^/v1/betaBuildLocalizations$",
@@ -208,7 +209,7 @@ def write_output(path: Path, value) -> None:
 
 def wait_ci_run(client, run_id: str, expected_head: str, output: Path,
                 dry_run: bool) -> None:
-    path = f"/v1/ciRuns/{run_id}"
+    path = f"/v1/ciBuildRuns/{run_id}"
     deadline = time.time() + 180 * 60
     while True:
         response = client("GET", path, dry_run=dry_run)
@@ -216,11 +217,14 @@ def wait_ci_run(client, run_id: str, expected_head: str, output: Path,
             write_output(output, {"dry_run": True, "run_id": run_id})
             return
         attributes = response.get("data", {}).get("attributes", {})
-        status = attributes.get("status")
-        if status in ("SUCCESS", "FAILED", "CANCELED"):
-            if expected_head and attributes.get("sourceCommit") != expected_head:
+        progress = attributes.get("executionProgress")
+        status = attributes.get("completionStatus")
+        if progress == "COMPLETE" and status in ("SUCCESS", "FAILED", "CANCELED"):
+            source_commit = attributes.get("sourceCommit") or {}
+            commit_sha = source_commit.get("commitSha") if isinstance(source_commit, dict) else None
+            if expected_head and commit_sha != expected_head:
                 raise AllowlistError(
-                    f"CI run head {attributes.get('sourceCommit')} != expected {expected_head}"
+                    f"CI run head {commit_sha} != expected {expected_head}"
                 )
             write_output(output, response)
             if status != "SUCCESS":
@@ -251,19 +255,27 @@ def build_polling_client(issuer_id: str, key_id: str, private_key_path: Path,
 
 def download_ci_artifact(client, run_id: str, relationship: str, output: Path,
                          sha256_output: Path, dry_run: bool) -> None:
-    path = f"/v1/ciRuns/{run_id}/artifacts"
-    response = client("GET", path, dry_run=dry_run)
+    actions_response = client("GET", f"/v1/ciBuildRuns/{run_id}/actions", dry_run=dry_run)
     if dry_run:
         write_output(sha256_output, {"dry_run": True})
         return
+    actions = actions_response.get("data", [])
+    if not actions:
+        raise AllowlistError(f"no ciBuildActions on run {run_id}")
+    action_id = actions[0].get("id")
+    response = client("GET", f"/v1/ciBuildActions/{action_id}/artifacts", dry_run=dry_run)
     artifacts = response.get("data", [])
+    wanted = relationship.rstrip("s").lower()
     match = next(
         (item for item in artifacts
-         if item.get("attributes", {}).get("relationship") == relationship),
+         if (item.get("attributes", {}).get("fileType") or "").lower().rstrip("s") == wanted),
         None,
     )
     if match is None:
-        raise AllowlistError(f"no artifact with relationship {relationship} on run {run_id}")
+        raise AllowlistError(
+            f"no artifact with fileType {relationship} on run {run_id} "
+            f"(found {[a.get('attributes', {}).get('fileType') for a in artifacts]})"
+        )
     download_url = match.get("attributes", {}).get("downloadUrl")
     if not download_url:
         raise AllowlistError("artifact has no downloadUrl")
