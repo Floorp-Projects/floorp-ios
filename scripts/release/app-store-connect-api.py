@@ -219,7 +219,7 @@ def wait_ci_run(client, run_id: str, expected_head: str, output: Path,
         attributes = response.get("data", {}).get("attributes", {})
         progress = attributes.get("executionProgress")
         status = attributes.get("completionStatus")
-        if progress == "COMPLETE" and status in ("SUCCESS", "FAILED", "CANCELED"):
+        if progress == "COMPLETE" and status in ("SUCCEEDED", "FAILED", "CANCELED"):
             source_commit = attributes.get("sourceCommit") or {}
             commit_sha = source_commit.get("commitSha") if isinstance(source_commit, dict) else None
             if expected_head and commit_sha != expected_head:
@@ -227,7 +227,7 @@ def wait_ci_run(client, run_id: str, expected_head: str, output: Path,
                     f"CI run head {commit_sha} != expected {expected_head}"
                 )
             write_output(output, response)
-            if status != "SUCCESS":
+            if status != "SUCCEEDED":
                 raise AllowlistError(f"CI run finished with status {status}")
             return
         if time.time() > deadline:

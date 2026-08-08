@@ -1,6 +1,7 @@
 """Unit tests for scripts/release/validate-floorp-release-evidence.py."""
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +34,27 @@ class FloorpReleaseEvidenceValidatorTests(unittest.TestCase):
 
     def test_valid_evidence_passes(self):
         self.assertEqual(self.run_validator(FIXTURES / "floorp-release-evidence-valid.json"), 0)
+
+    def test_archive_only_cloud_evidence_passes(self):
+        # A non-distributing Xcode Cloud archive is intentionally unsigned:
+        # team_id/signing_identity are empty and the team is proven by the
+        # app-group entitlement (group.app.floorp.Floorp.DV2U35YBHT).
+        self.assertEqual(
+            self.run_validator(FIXTURES / "floorp-release-evidence-cloud-archive.json"),
+            0,
+        )
+
+    def test_non_archive_evidence_still_requires_team(self):
+        # Without archive_only, an empty team_id must keep failing.
+        evidence = json.loads(
+            (FIXTURES / "floorp-release-evidence-valid.json").read_text()
+        )
+        evidence["team_id"] = ""
+        evidence["archive_info"]["team_id"] = ""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ev.json"
+            path.write_text(json.dumps(evidence))
+            self.assertEqual(self.run_validator(path), 1)
 
     def test_wrong_source_sha_fails(self):
         self.assertEqual(self.run_validator(FIXTURES / "floorp-release-evidence-wrong-sha.json"), 1)

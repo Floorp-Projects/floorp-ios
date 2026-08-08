@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "source_sha256": "af20a1926e553efceaf861ff730a500a3d0ede7d",
+  "marketing_version": "0.1.0",
+  "build_number": "3",
+  "bundle_id": "app.floorp.Floorp",
+  "team_id": "",
+  "archive_path": "/tmp/Cloud.xcarchive",
+  "ipa_path": "",
+  "ipa_sha256": "",
+  "signing_identity": null,
+  "archive_info": {
+    "marketing_version": "0.1.0",
+    "build_number": "3",
+    "bundle_id": "app.floorp.Floorp",
+    "team_id": ""
+  },
+  "entitlements": {
+    "com.apple.developer.networking.multipath": true,
+    "com.apple.security.application-groups": [
+      "group.app.floorp.Floorp.DV2U35YBHT"
+    ],
+    "keychain-access-groups": [
+      "DV2U35YBHT.app.floorp.Floorp"
+    ]
+  },
+  "dsym_inventory": [
+    {
+      "uuid": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "path": "/tmp/Client.app.dSYM"
+    },
+    {
+      "uuid": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "path": "/tmp/App.framework.dSYM"
+    }
+  ],
+  "app_store_connect_build_id": null,
+  "ci_run_url": null,
+  "xcresult_path": null,
+  "export_status": null,
+  "archive_only": true
+}

@@ -133,7 +133,7 @@ print(json.dumps({
 }))
 ")"
 
-python3 - "$OUTPUT" "$SOURCE_SHA" "$MARKETING_VERSION" "$BUILD_NUMBER" "$BUNDLE_ID" "$TEAM_ID" "$ARCHIVE" "$IPA" "$IPA_SHA256" "$SIGNING_IDENTITY" "$ENTITLEMENTS_JSON" "$DSYM_ENTRIES" "$ASC_BUILD_ID" "$CI_RUN_URL" "$XCRESULT_PATH" "$EXPORT_STATUS" "$ARCHIVE_INFO" "$IPA_INFO" <<'PYEOF'
+python3 - "$OUTPUT" "$SOURCE_SHA" "$MARKETING_VERSION" "$BUILD_NUMBER" "$BUNDLE_ID" "$TEAM_ID" "$ARCHIVE" "$IPA" "$IPA_SHA256" "$SIGNING_IDENTITY" "$ENTITLEMENTS_JSON" "$DSYM_ENTRIES" "$ASC_BUILD_ID" "$CI_RUN_URL" "$XCRESULT_PATH" "$EXPORT_STATUS" "$ARCHIVE_ONLY" "$ARCHIVE_INFO" "$IPA_INFO" <<'PYEOF'
 import json
 import sys
 
@@ -141,11 +141,12 @@ import sys
     output, source_sha, marketing_version, build_number, bundle_id, team_id,
     archive, ipa, ipa_sha256, signing_identity, entitlements_json,
     dsym_entries, asc_build_id, ci_run_url, xcresult_path, export_status,
-    archive_info, ipa_info,
+    archive_only, archive_info, ipa_info,
 ) = sys.argv[1:]
 
 evidence = {
     "schema_version": 1,
+    "archive_only": archive_only == "1",
     "source_sha256": source_sha,
     "marketing_version": marketing_version,
     "build_number": build_number,
