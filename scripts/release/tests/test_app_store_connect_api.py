@@ -1,6 +1,7 @@
 """Unit tests for scripts/release/app-store-connect-api.py."""
 
 import importlib.util
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -24,12 +25,14 @@ class AllowlistTests(unittest.TestCase):
         for path in [
             "/v1/ciProducts",
             "/v1/ciProducts/37C53C81-4C23-4E04-ADBB-1F238907A310/workflows",
+            "/v1/ciProducts/37C53C81-4C23-4E04-ADBB-1F238907A310/buildRuns",
             "/v1/ciWorkflows/D00DF3AC-15CD-430A-9FCB-39F876242926",
-            "/v1/ciBuildRuns",
+            "/v1/ciBuildRuns/bfd267d8-696a-4394-94db-570f0aa9b376",
+            "/v1/ciBuildRuns/bfd267d8-696a-4394-94db-570f0aa9b376/actions",
+            "/v1/ciBuildActions/4294e7e3-8adf-47fe-8f7c-02456baba2bb",
+            "/v1/ciBuildActions/4294e7e3-8adf-47fe-8f7c-02456baba2bb/artifacts",
             "/v1/builds",
             "/v1/betaGroups",
-            "/v1/ciRuns/123",
-            "/v1/ciRuns/123/artifacts",
             "/v1/betaAppReviewDetails",
             "/v1/betaAppReviewSubmissions",
             "/v1/betaBuildLocalizations",
@@ -59,6 +62,9 @@ class AllowlistTests(unittest.TestCase):
             ("POST", "/v1/betaAppReviewDetails"),
             ("GET", "/v1/secrets"),
             ("GET", "/v1/ciWorkflows"),
+            ("GET", "/v1/ciRuns/123"),
+            ("GET", "/v1/ciRuns/123/artifacts"),
+            ("GET", "/v1/ciBuildRuns"),
         ]
         for method, path in denied:
             self.assertFalse(asc.route_allowed(method, path), f"{method} {path}")
@@ -176,6 +182,114 @@ class ClientBehaviorTests(unittest.TestCase):
             # Credentials are absent, so the JWT step must fail AFTER the
             # allowlist checks pass (exit 1, no network request).
             self.assertEqual(code, 1)
+
+    def test_wait_ci_run_polls_ci_build_run_completion(self):
+        # App Store Connect exposes runs as ciBuildRuns: terminal state is
+        # executionProgress COMPLETE + completionStatus SUCCESS, and the head
+        # lives in sourceCommit.commitSha.
+        calls = []
+
+        def client(method, path, dry_run=False):
+            calls.append(path)
+            return {
+                "data": {
+                    "id": "run-1",
+                    "type": "ciBuildRuns",
+                    "attributes": {
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCESS",
+                        "sourceCommit": {"commitSha": "a" * 40},
+                    },
+                }
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "run.json"
+            asc.wait_ci_run(client, "run-1", "a" * 40, out, dry_run=False)
+            self.assertEqual(calls, ["/v1/ciBuildRuns/run-1"])
+            self.assertEqual(json.loads(out.read_text())["data"]["id"], "run-1")
+
+    def test_wait_ci_run_rejects_head_mismatch(self):
+        def client(method, path, dry_run=False):
+            return {
+                "data": {
+                    "id": "run-1",
+                    "attributes": {
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCESS",
+                        "sourceCommit": {"commitSha": "b" * 40},
+                    },
+                }
+            }
+
+        with self.assertRaises(asc.AllowlistError):
+            asc.wait_ci_run(client, "run-1", "a" * 40, Path("/tmp/x.json"), dry_run=False)
+
+    def test_wait_ci_run_raises_on_failed_completion(self):
+        def client(method, path, dry_run=False):
+            return {
+                "data": {
+                    "id": "run-1",
+                    "attributes": {
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "FAILED",
+                        "sourceCommit": {"commitSha": "a" * 40},
+                    },
+                }
+            }
+
+        with self.assertRaises(asc.AllowlistError):
+            asc.wait_ci_run(client, "run-1", "a" * 40, Path("/tmp/x.json"), dry_run=False)
+
+    def test_download_ci_artifact_resolves_actions_then_artifacts(self):
+        # Artifacts hang off ciBuildActions: list actions, then the action's
+        # artifacts, and pick the one whose fileType matches the relationship.
+        responses = {
+            "/v1/ciBuildRuns/run-1/actions": {
+                "data": [{"id": "action-1", "type": "ciBuildActions"}]
+            },
+            "/v1/ciBuildActions/action-1/artifacts": {
+                "data": [
+                    {"id": "a1", "attributes": {"fileType": "LOG_BUNDLE", "downloadUrl": "https://x/log"}},
+                    {"id": "a2", "attributes": {"fileType": "ARCHIVE", "downloadUrl": "https://x/archive"}},
+                ]
+            },
+        }
+        calls = []
+
+        def client(method, path, dry_run=False):
+            calls.append(path)
+            return responses[path]
+
+        original_urlopen = asc.urllib.request.urlopen
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b"archive-bytes"
+
+        asc.urllib.request.urlopen = lambda request, timeout=300: FakeResponse()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "a.zip"
+                sha = Path(tmp) / "a.zip.sha256"
+                asc.download_ci_artifact(client, "run-1", "archives", out, sha, dry_run=False)
+                self.assertEqual(out.read_bytes(), b"archive-bytes")
+                self.assertEqual(
+                    sha.read_text().strip(),
+                    hashlib.sha256(b"archive-bytes").hexdigest(),
+                )
+                self.assertEqual(calls, [
+                    "/v1/ciBuildRuns/run-1/actions",
+                    "/v1/ciBuildActions/action-1/artifacts",
+                ])
+        finally:
+            asc.urllib.request.urlopen = original_urlopen
 
 
 class CryptoTests(unittest.TestCase):
