@@ -123,6 +123,18 @@ print(json.dumps({
     rm -rf "$(dirname "$(dirname "$IPA_APP")")"
 fi
 
+if [[ -z "$TEAM_ID" && "$ARCHIVE_ONLY" -eq 0 && -n "$IPA" ]]; then
+    # Xcode Cloud archive-only runs produce unsigned archives (no team in the
+    # Info.plist); the exported IPA carries the signing team.
+    IPA_APP_TEAM="$(mktemp -d)/Payload/Client.app"
+    mkdir -p "$(dirname "$IPA_APP_TEAM")"
+    unzip -q -o "$IPA" 'Payload/Client.app/*' -d "$(dirname "$(dirname "$IPA_APP_TEAM")")" 2>/dev/null || true
+    if [[ -d "$IPA_APP_TEAM" ]]; then
+        TEAM_ID="$(codesign -dv "$IPA_APP_TEAM" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1)"
+    fi
+    rm -rf "$(dirname "$(dirname "$IPA_APP_TEAM")")"
+fi
+
 ARCHIVE_INFO="$(python3 -c "
 import json, sys
 print(json.dumps({
