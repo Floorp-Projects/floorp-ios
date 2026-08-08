@@ -23,7 +23,8 @@ class AllowlistTests(unittest.TestCase):
     def test_read_allowlist_accepts_required_gets(self):
         for path in [
             "/v1/ciProducts",
-            "/v1/ciWorkflows?filter[ciProduct]=abc",
+            "/v1/ciProducts/37C53C81-4C23-4E04-ADBB-1F238907A310/workflows",
+            "/v1/ciWorkflows/D00DF3AC-15CD-430A-9FCB-39F876242926",
             "/v1/ciBuildRuns",
             "/v1/builds",
             "/v1/betaGroups",
@@ -57,10 +58,18 @@ class AllowlistTests(unittest.TestCase):
             ("PATCH", "/v1/builds/123"),
             ("POST", "/v1/betaAppReviewDetails"),
             ("GET", "/v1/secrets"),
-            ("GET", "/v1/ciWorkflows/123"),
+            ("GET", "/v1/ciWorkflows"),
         ]
         for method, path in denied:
             self.assertFalse(asc.route_allowed(method, path), f"{method} {path}")
+
+    def test_ci_workflows_collection_is_not_a_listing_route(self):
+        # App Store Connect does not implement GET /v1/ciWorkflows as a
+        # collection listing (it returns 403); workflows are listed through
+        # GET /v1/ciProducts/{id}/workflows instead. The client must not
+        # advertise the bare collection as an allowed read.
+        self.assertFalse(asc.route_allowed("GET", "/v1/ciWorkflows"))
+        self.assertFalse(asc.route_allowed("GET", "/v1/ciWorkflows?filter[ciProduct]=abc"))
 
 
 class ClientBehaviorTests(unittest.TestCase):
