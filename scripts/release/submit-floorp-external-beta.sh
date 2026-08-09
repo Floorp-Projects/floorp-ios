@@ -72,9 +72,9 @@ asc_get() {
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-asc_get "/v1/betaAppReviewDetails" "$TMP_DIR/review-details-before.json"
-asc_get "/v1/betaAppReviewSubmissions" "$TMP_DIR/submissions-before.json"
-asc_get "/v1/betaBuildLocalizations" "$TMP_DIR/localizations-before.json"
+asc_get "/v1/betaAppReviewDetails?filter[app]=$APP_ID" "$TMP_DIR/review-details-before.json"
+asc_get "/v1/betaAppReviewSubmissions?filter[build]=$BUILD_ID" "$TMP_DIR/submissions-before.json"
+asc_get "/v1/betaBuildLocalizations?filter[build]=$BUILD_ID" "$TMP_DIR/localizations-before.json"
 asc_get "/v1/betaGroups/$GROUP_ID/builds" "$TMP_DIR/group-builds-before.json"
 asc_get "/v1/builds/$BUILD_ID" "$TMP_DIR/build-before.json"
 
@@ -122,8 +122,18 @@ JA_TEXT="$(cat "${WHAT_TO_TEST_JA:-firefox-ios/TestFlight/WhatToTest.ja-JP.txt}"
 LOCALIZATIONS_BEFORE_SHA="$(sha256_of "$TMP_DIR/localizations-before.json")"
 
 # 1. Localization (create or patch the en-US/ja-JP beta build localizations).
+asc_beta_locale() {
+    # betaBuildLocalizations uses the ASC beta locale set ("ja", not "ja-JP").
+    case "$1" in
+        ja-JP|ja) echo "ja" ;;
+        *) echo "$1" ;;
+    esac
+}
+
 upsert_localization() {
-    local locale="$1" text="$2"
+    local source_locale="$1" text="$2"
+    local locale
+    locale="$(asc_beta_locale "$source_locale")"
     local existing_id
     existing_id="$(python3 -c "
 import json
@@ -188,34 +198,62 @@ python3 "$CLIENT" patch "/v1/betaAppReviewDetails/$REVIEW_DETAILS_ID" \
     --output "$TMP_DIR/review-details-patched.json"
 
 # 3. Beta App Review submission for the exact build.
-python3 - "$BUILD_ID" > "$TMP_DIR/submission-body.json" <<'PYEOF'
+EXISTING_SUBMISSION_ID="$(python3 -c "
+import json
+data = json.load(open('$TMP_DIR/submissions-before.json'))
+rows = data.get('data', [])
+print(rows[0]['id'] if rows else '')
+")"
+if [[ -n "$EXISTING_SUBMISSION_ID" ]]; then
+    # Idempotency: the build already has a Beta App Review submission.
+    python3 - "$EXISTING_SUBMISSION_ID" "$BUILD_ID" > "$TMP_DIR/submission-created.json" <<'PYEOF'
+import json, sys
+print(json.dumps({"idempotent": True, "submission_id": sys.argv[1], "build_id": sys.argv[2]}))
+PYEOF
+else
+    python3 - "$BUILD_ID" > "$TMP_DIR/submission-body.json" <<'PYEOF'
 import json, sys
 print(json.dumps({"data": {"type": "betaAppReviewSubmissions", "relationships": {
     "build": {"data": {"type": "builds", "id": sys.argv[1]}}}}}))
 PYEOF
-python3 "$CLIENT" post /v1/betaAppReviewSubmissions \
-    --body "$TMP_DIR/submission-body.json" \
-    --intended-id "$BUILD_ID" \
-    --prior-state-sha256 "$(sha256_of "$TMP_DIR/submissions-before.json")" \
-    $AUTHORIZE $DRY_RUN \
-    --output "$TMP_DIR/submission-created.json"
+    python3 "$CLIENT" post /v1/betaAppReviewSubmissions \
+        --body "$TMP_DIR/submission-body.json" \
+        --intended-id "$BUILD_ID" \
+        --prior-state-sha256 "$(sha256_of "$TMP_DIR/submissions-before.json")" \
+        $AUTHORIZE $DRY_RUN \
+        --output "$TMP_DIR/submission-created.json"
+fi
 
 # 4. Assign the build to the external group (idempotent relationship).
-python3 - "$BUILD_ID" > "$TMP_DIR/group-body.json" <<'PYEOF'
+GROUP_HAS_BUILD="$(python3 -c "
+import json
+data = json.load(open('$TMP_DIR/group-builds-before.json'))
+rows = [r for r in data.get('data', []) if r.get('id') == '$BUILD_ID']
+print('yes' if rows else 'no')
+")"
+if [[ "$GROUP_HAS_BUILD" == "yes" ]]; then
+    # Idempotency: the build is already assigned to the external group.
+    python3 - "$BUILD_ID" "$GROUP_ID" > "$TMP_DIR/group-assigned.json" <<'PYEOF'
+import json, sys
+print(json.dumps({"idempotent": True, "build_id": sys.argv[1], "group_id": sys.argv[2]}))
+PYEOF
+else
+    python3 - "$BUILD_ID" > "$TMP_DIR/group-body.json" <<'PYEOF'
 import json, sys
 print(json.dumps({"data": [{"type": "builds", "id": sys.argv[1]}]}))
 PYEOF
-python3 "$CLIENT" post "/v1/betaGroups/$GROUP_ID/relationships/builds" \
-    --body "$TMP_DIR/group-body.json" \
-    --intended-id "$BUILD_ID" \
-    --prior-state-sha256 "$(sha256_of "$TMP_DIR/group-builds-before.json")" \
-    $AUTHORIZE $DRY_RUN \
-    --output "$TMP_DIR/group-assigned.json"
+    python3 "$CLIENT" post "/v1/betaGroups/$GROUP_ID/relationships/builds" \
+        --body "$TMP_DIR/group-body.json" \
+        --intended-id "$BUILD_ID" \
+        --prior-state-sha256 "$(sha256_of "$TMP_DIR/group-builds-before.json")" \
+        $AUTHORIZE $DRY_RUN \
+        --output "$TMP_DIR/group-assigned.json"
+fi
 
 # 5. After-state capture and diff.
-asc_get "/v1/betaAppReviewDetails" "$TMP_DIR/review-details-after.json"
-asc_get "/v1/betaAppReviewSubmissions" "$TMP_DIR/submissions-after.json"
-asc_get "/v1/betaBuildLocalizations" "$TMP_DIR/localizations-after.json"
+asc_get "/v1/betaAppReviewDetails?filter[app]=$APP_ID" "$TMP_DIR/review-details-after.json"
+asc_get "/v1/betaAppReviewSubmissions?filter[build]=$BUILD_ID" "$TMP_DIR/submissions-after.json"
+asc_get "/v1/betaBuildLocalizations?filter[build]=$BUILD_ID" "$TMP_DIR/localizations-after.json"
 asc_get "/v1/betaGroups/$GROUP_ID/builds" "$TMP_DIR/group-builds-after.json"
 asc_get "/v1/builds/$BUILD_ID" "$TMP_DIR/build-after.json"
 
@@ -236,10 +274,21 @@ SUBMISSION_ID="$(python3 -c "
 import json
 try:
     data = json.load(open('$TMP_DIR/submission-created.json'))
-    print(data.get('data', {}).get('id', ''))
+    if 'data' in data:
+        print(data.get('data', {}).get('id', ''))
+    else:
+        print(data.get('submission_id', ''))
 except Exception:
     print('')
 ")"
+if [[ -z "$SUBMISSION_ID" ]]; then
+    SUBMISSION_ID="$(python3 -c "
+import json
+data = json.load(open('$TMP_DIR/submissions-before.json'))
+rows = data.get('data', [])
+print(rows[0]['id'] if rows else '')
+")"
+fi
 
 python3 - "$OUTPUT" "$APP_ID" "$BUILD_ID" "$GROUP_ID" "$SUBMISSION_ID" \
     "$BEFORE" "$AFTER" <<'PYEOF'

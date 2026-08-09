@@ -156,7 +156,10 @@ def make_jwt(issuer_id: str, key_id: str, private_key_path: Path, now: int) -> s
 def _http_request(method: str, url: str, headers: dict, body: bytes) -> dict:
     request = urllib.request.Request(url, method=method, headers=headers, data=body or None)
     with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read())
+        raw = response.read()
+        if not raw:
+            return {}
+        return json.loads(raw)
 
 
 def api_call(method: str, path: str, jwt: str, body: Optional[bytes] = None,

@@ -33,14 +33,14 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             path = sys.argv[2]
             if command == "get":
                 canned = {
-                    "/v1/betaAppReviewDetails": {"data": [{"id": "rev-1", "type": "betaAppReviewDetails"}]},
-                    "/v1/betaAppReviewSubmissions": {"data": []},
-                    "/v1/betaBuildLocalizations": {"data": []},
+                    "/v1/betaAppReviewDetails?filter[app]=6796708699": {"data": [{"id": "rev-1", "type": "betaAppReviewDetails"}]},
+                    "/v1/betaAppReviewSubmissions?filter[build]=bld-1": {"data": []},
+                    "/v1/betaBuildLocalizations?filter[build]=bld-1": {"data": []},
                     "/v1/betaGroups/grp-1/builds": {"data": []},
                     "/v1/builds/bld-1": {"data": {"id": "bld-1", "type": "builds"}},
                 }
                 output = sys.argv[sys.argv.index("--output") + 1]
-                json.dump(canned.get(path, {"data": []}), open(output, "w"))
+                json.dump(canned.get(path, canned.get(path.split("?", 1)[0], {"data": []})), open(output, "w"))
             else:
                 if "--authorize-mutation" not in sys.argv:
                     sys.stderr.write("write routes require --authorize-mutation\\n")
