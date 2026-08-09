@@ -72,9 +72,9 @@ asc_get() {
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-asc_get "/v1/betaAppReviewDetails" "$TMP_DIR/review-details-before.json"
-asc_get "/v1/betaAppReviewSubmissions" "$TMP_DIR/submissions-before.json"
-asc_get "/v1/betaBuildLocalizations" "$TMP_DIR/localizations-before.json"
+asc_get "/v1/betaAppReviewDetails?filter[app]=$APP_ID" "$TMP_DIR/review-details-before.json"
+asc_get "/v1/betaAppReviewSubmissions?filter[build]=$BUILD_ID" "$TMP_DIR/submissions-before.json"
+asc_get "/v1/betaBuildLocalizations?filter[build]=$BUILD_ID" "$TMP_DIR/localizations-before.json"
 asc_get "/v1/betaGroups/$GROUP_ID/builds" "$TMP_DIR/group-builds-before.json"
 asc_get "/v1/builds/$BUILD_ID" "$TMP_DIR/build-before.json"
 
@@ -213,9 +213,9 @@ python3 "$CLIENT" post "/v1/betaGroups/$GROUP_ID/relationships/builds" \
     --output "$TMP_DIR/group-assigned.json"
 
 # 5. After-state capture and diff.
-asc_get "/v1/betaAppReviewDetails" "$TMP_DIR/review-details-after.json"
-asc_get "/v1/betaAppReviewSubmissions" "$TMP_DIR/submissions-after.json"
-asc_get "/v1/betaBuildLocalizations" "$TMP_DIR/localizations-after.json"
+asc_get "/v1/betaAppReviewDetails?filter[app]=$APP_ID" "$TMP_DIR/review-details-after.json"
+asc_get "/v1/betaAppReviewSubmissions?filter[build]=$BUILD_ID" "$TMP_DIR/submissions-after.json"
+asc_get "/v1/betaBuildLocalizations?filter[build]=$BUILD_ID" "$TMP_DIR/localizations-after.json"
 asc_get "/v1/betaGroups/$GROUP_ID/builds" "$TMP_DIR/group-builds-after.json"
 asc_get "/v1/builds/$BUILD_ID" "$TMP_DIR/build-after.json"
 
