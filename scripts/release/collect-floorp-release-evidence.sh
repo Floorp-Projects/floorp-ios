@@ -131,6 +131,9 @@ if [[ -z "$TEAM_ID" && "$ARCHIVE_ONLY" -eq 0 && -n "$IPA" ]]; then
     unzip -q -o "$IPA" 'Payload/Client.app/*' -d "$(dirname "$(dirname "$IPA_APP_TEAM")")" 2>/dev/null || true
     if [[ -d "$IPA_APP_TEAM" ]]; then
         TEAM_ID="$(codesign -dv "$IPA_APP_TEAM" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1)"
+        if [[ -z "$SIGNING_IDENTITY" ]]; then
+            SIGNING_IDENTITY="$(codesign -dvv "$IPA_APP_TEAM" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+        fi
     fi
     rm -rf "$(dirname "$(dirname "$IPA_APP_TEAM")")"
 fi
