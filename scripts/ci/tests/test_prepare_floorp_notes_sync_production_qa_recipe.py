@@ -111,6 +111,12 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
             "docs/floorp-notes-sync-g4-attestation.json",
             PREPARER.canonical_bytes({"schema_version": 1, "task_id": 18}),
         )
+        executable = self.write_repo_file(
+            self.ios,
+            "scripts/fixture-executable.sh",
+            b"#!/bin/sh\nexit 0\n",
+        )
+        executable.chmod(0o755)
         self.git(self.ios, "add", ".")
         self.git(self.ios, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "merged")
         merged = self.git(self.ios, "rev-parse", "HEAD")
@@ -542,10 +548,12 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
 
     def test_rejects_dirty_wrong_head_and_attached_worktree(self):
         (self.ios / "untracked.txt").write_text("dirty", encoding="utf-8")
+        (self.ios / ".git/info/exclude").write_text("untracked.txt\n", encoding="utf-8")
         result, _, stderr = self.invoke()
         self.assertEqual(result, 1)
         self.assertIn("dirty", stderr)
         (self.ios / "untracked.txt").unlink()
+        (self.ios / ".git/info/exclude").write_text("", encoding="utf-8")
 
         result, _, stderr = self.invoke(merged_oid=self.base_oid)
         self.assertEqual(result, 1)
@@ -575,6 +583,28 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
                 self.git(self.ios, "update-index", disable, "base.txt")
                 self.git(self.ios, "checkout", "--", "base.txt")
 
+    def test_rejects_staged_content_and_owner_execute_mode_drift(self):
+        target = self.ios / "base.txt"
+        target.write_text("staged content\n", encoding="utf-8")
+        self.git(self.ios, "add", "base.txt")
+        with self.assertRaisesRegex(PREPARER.PreparationError, "dirty staged"):
+            PREPARER.validate_merged_worktree(
+                self.ios,
+                self.merged_oid,
+                self.contract,
+            )
+        self.git(self.ios, "reset", "-q", "HEAD", "--", "base.txt")
+        self.git(self.ios, "checkout", "--", "base.txt")
+
+        executable = self.ios / "scripts/fixture-executable.sh"
+        executable.chmod(0o655)
+        with self.assertRaisesRegex(PREPARER.PreparationError, "executable"):
+            PREPARER.validate_merged_worktree(
+                self.ios,
+                self.merged_oid,
+                self.contract,
+            )
+
     def test_repository_fsmonitor_config_cannot_execute_helper(self):
         marker = self.directory / "fsmonitor-executed"
         self.git(
@@ -585,6 +615,43 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
         )
         PREPARER.validate_merged_worktree(self.ios, self.merged_oid, self.contract)
         self.assertFalse(marker.exists(), "repository core.fsmonitor helper executed")
+
+    def test_rejects_tracked_changes_without_running_repository_clean_filter(self):
+        marker = self.directory / "clean-filter-executed"
+        filter_script = self.directory / "clean-filter.sh"
+        filter_script.write_text(
+            f"#!/bin/sh\n/usr/bin/touch {marker}\n/bin/cat\n",
+            encoding="utf-8",
+        )
+        filter_script.chmod(0o700)
+        target = self.ios / "base.txt"
+        attributes = self.ios / ".git/info/attributes"
+        attributes.write_text("base.txt filter=audit\n", encoding="utf-8")
+        self.git(self.ios, "config", "filter.audit.clean", str(filter_script))
+        self.git(self.ios, "config", "filter.audit.required", "true")
+        self.git(self.ios, "config", "core.trustctime", "false")
+        self.git(self.ios, "config", "core.checkStat", "minimal")
+
+        for restore_cached_mtime in (False, True):
+            with self.subTest(restore_cached_mtime=restore_cached_mtime):
+                target.write_bytes(b"base\n")
+                self.git(self.ios, "status", "--porcelain=v1")
+                marker.unlink(missing_ok=True)
+                cached = target.stat()
+                target.write_bytes(b"evil\n")
+                if restore_cached_mtime:
+                    os.utime(
+                        target,
+                        ns=(cached.st_atime_ns, cached.st_mtime_ns),
+                    )
+
+                with self.assertRaisesRegex(PREPARER.PreparationError, "dirty"):
+                    PREPARER.validate_merged_worktree(
+                        self.ios,
+                        self.merged_oid,
+                        self.contract,
+                    )
+                self.assertFalse(marker.exists(), "repository clean filter executed")
 
     def test_every_git_invocation_uses_offline_hardened_configuration(self):
         real_run = subprocess.run

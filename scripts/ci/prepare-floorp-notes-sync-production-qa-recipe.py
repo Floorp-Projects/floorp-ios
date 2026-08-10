@@ -764,6 +764,12 @@ def git_command(
         "-c",
         f"core.worktree={worktree}",
         "-c",
+        "core.trustctime=true",
+        "-c",
+        "core.checkStat=default",
+        "-c",
+        "core.fileMode=true",
+        "-c",
         "maintenance.auto=false",
         "-c",
         "gc.auto=0",
@@ -826,6 +832,173 @@ def validate_git_worktree(path: Path, label: str) -> None:
     require(git_text(path, ("rev-parse", "--is-inside-work-tree"), label) == "true", f"{label}: not a Git worktree")
 
 
+def tracked_path_parts(raw_path: bytes, label: str) -> tuple[bytes, ...]:
+    require(bool(raw_path), f"{label}: tracked path is empty")
+    require(not raw_path.startswith(b"/"), f"{label}: tracked path is absolute")
+    parts = tuple(raw_path.split(b"/"))
+    require(
+        all(part not in (b"", b".", b"..", b".git") for part in parts),
+        f"{label}: tracked path contains a forbidden component",
+    )
+    return parts
+
+
+def open_tracked_parent(root_descriptor: int, parts: tuple[bytes, ...], label: str) -> int:
+    descriptor = os.dup(root_descriptor)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        for component in parts[:-1]:
+            try:
+                child = os.open(component, flags, dir_fd=descriptor)
+            except OSError as error:
+                raise PreparationError(
+                    f"{label}: tracked parent is missing, unsafe, or not a directory ({error})"
+                ) from error
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def hash_tracked_regular(
+    parent_descriptor: int,
+    basename: bytes,
+    expected_executable: bool,
+    label: str,
+) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(basename, flags, dir_fd=parent_descriptor)
+    except OSError as error:
+        raise PreparationError(f"{label}: tracked file cannot be opened safely ({error})") from error
+    try:
+        before = os.fstat(descriptor)
+        require(stat.S_ISREG(before.st_mode), f"{label}: tracked file is not regular")
+        require(
+            bool(before.st_mode & stat.S_IXUSR) == expected_executable,
+            f"{label}: tracked executable mode differs from the index",
+        )
+        digest = hashlib.sha1(f"blob {before.st_size}\0".encode("ascii"))
+        size = 0
+        while chunk := os.read(descriptor, READ_CHUNK_BYTES):
+            digest.update(chunk)
+            size += len(chunk)
+        after = os.fstat(descriptor)
+        require(stable_snapshot(before) == stable_snapshot(after), f"{label}: tracked file changed while read")
+        require(size == before.st_size, f"{label}: tracked file size changed while read")
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def hash_tracked_symlink(parent_descriptor: int, basename: bytes, label: str) -> str:
+    try:
+        before = os.stat(basename, dir_fd=parent_descriptor, follow_symlinks=False)
+        require(stat.S_ISLNK(before.st_mode), f"{label}: tracked symlink type differs from the index")
+        target = os.readlink(basename, dir_fd=parent_descriptor)
+        after = os.stat(basename, dir_fd=parent_descriptor, follow_symlinks=False)
+    except OSError as error:
+        raise PreparationError(f"{label}: tracked symlink cannot be read safely ({error})") from error
+    require(stable_snapshot(before) == stable_snapshot(after), f"{label}: tracked symlink changed while read")
+    raw_target = target if isinstance(target, bytes) else os.fsencode(target)
+    return git_blob_sha(raw_target)
+
+
+def validate_tracked_worktree_content(path: Path, commit_oid: str) -> None:
+    label = "merged iOS worktree"
+    entries = git_command(
+        path,
+        ("ls-files", "--stage", "-z"),
+        f"{label} tracked index",
+    ).stdout.split(b"\0")
+    index_records: dict[bytes, tuple[bytes, bytes]] = {}
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            metadata, raw_path = entry.split(b"\t", 1)
+            mode, expected_oid, stage = metadata.split(b" ")
+            expected_text = expected_oid.decode("ascii")
+        except (UnicodeError, ValueError) as error:
+            raise PreparationError(f"{label}: malformed tracked index entry") from error
+        require(stage == b"0", f"{label}: unmerged tracked index entry is forbidden")
+        require(raw_path not in index_records, f"{label}: duplicate tracked index path")
+        require(SHA1_PATTERN.fullmatch(expected_text) is not None, f"{label}: malformed blob OID")
+        index_records[raw_path] = (mode, expected_oid)
+
+    head_entries = git_command(
+        path,
+        ("ls-tree", "-r", "--full-tree", "-z", commit_oid),
+        f"{label} detached HEAD tree",
+    ).stdout.split(b"\0")
+    head_records: dict[bytes, tuple[bytes, bytes]] = {}
+    for entry in head_entries:
+        if not entry:
+            continue
+        try:
+            metadata, raw_path = entry.split(b"\t", 1)
+            mode, object_type, object_oid = metadata.split(b" ")
+            object_text = object_oid.decode("ascii")
+        except (UnicodeError, ValueError) as error:
+            raise PreparationError(f"{label}: malformed detached HEAD tree entry") from error
+        require(raw_path not in head_records, f"{label}: duplicate detached HEAD tree path")
+        require(SHA1_PATTERN.fullmatch(object_text) is not None, f"{label}: malformed HEAD object OID")
+        expected_type = b"commit" if mode == b"160000" else b"blob"
+        require(object_type == expected_type, f"{label}: malformed HEAD object type")
+        head_records[raw_path] = (mode, object_oid)
+    require(
+        index_records == head_records,
+        f"{label}: dirty staged index differs from detached HEAD",
+    )
+
+    root_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        root_descriptor = os.open(path, root_flags)
+    except OSError as error:
+        raise PreparationError(f"{label}: cannot open worktree safely ({error})") from error
+    try:
+        for raw_path, (mode, expected_oid) in index_records.items():
+            require(mode in (b"100644", b"100755", b"120000"), f"{label}: unsupported tracked mode")
+            parts = tracked_path_parts(raw_path, label)
+            display_path = os.fsdecode(raw_path)
+            entry_label = f"{label}: dirty tracked path {display_path!r}"
+            parent_descriptor = open_tracked_parent(root_descriptor, parts, entry_label)
+            try:
+                if mode == b"120000":
+                    actual_oid = hash_tracked_symlink(parent_descriptor, parts[-1], entry_label)
+                else:
+                    actual_oid = hash_tracked_regular(
+                        parent_descriptor,
+                        parts[-1],
+                        mode == b"100755",
+                        entry_label,
+                    )
+            finally:
+                os.close(parent_descriptor)
+            require(actual_oid == expected_oid.decode("ascii"), f"{entry_label}: content differs from the index")
+    finally:
+        os.close(root_descriptor)
+
+    untracked = git_command(
+        path,
+        ("ls-files", "--others", "-z"),
+        f"{label} untracked files",
+    ).stdout
+    require(untracked == b"", f"{label}: dirty untracked paths are forbidden")
+
+
 def validate_merged_worktree(
     path: Path,
     merged_oid: str,
@@ -859,12 +1032,7 @@ def validate_merged_worktree(
                     "merged iOS worktree: assume-unchanged/skip-worktree index flags are forbidden"
                 )
             raise PreparationError("merged iOS worktree: assume-unchanged index flags are forbidden")
-    status = git_command(
-        path,
-        ("status", "--porcelain=v1", "--untracked-files=all"),
-        "merged iOS worktree",
-    ).stdout
-    require(status == b"", "merged iOS worktree: worktree is dirty")
+    validate_tracked_worktree_content(path, merged_oid)
     parents = git_text(path, ("show", "-s", "--format=%P", merged_oid), "merged iOS worktree").split()
     require(parents == [contract.base_oid], "merged iOS worktree: squash commit parent does not equal guarded base")
     merged_tree = git_text(path, ("rev-parse", f"{merged_oid}^{{tree}}"), "merged iOS worktree")
