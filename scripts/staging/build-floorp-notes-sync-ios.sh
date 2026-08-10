@@ -134,6 +134,7 @@ ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd -P)"
 VALIDATOR_SOURCE="$ROOT/scripts/ci/validate-floorp-notes-sync-release.py"
 VALIDATOR="$VALIDATOR_SOURCE"
 VALIDATOR_FIXTURE_SOURCE="$ROOT/sync-fixtures/floorp-notes/floorp-notes-merge-v1.json"
+VALIDATOR_BUILD_CONFIGURATION_SOURCE="$ROOT/firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
 SCHEMA="${SCHEMA:-$ROOT/docs/floorp-notes-sync-release-evidence.schema.json}"
 ENDPOINT_MATRIX="${ENDPOINT_MATRIX:-$ROOT/docs/floorp-release-endpoints.json}"
 PIN="$ROOT/MozillaRustComponents/FloorpApplicationServicesPin.json"
@@ -222,7 +223,8 @@ for path in "$ENDPOINT_MATRIX" "$PIN" "$GENERATED_BINDING" "$ENTITLEMENTS_SOURCE
     [[ -e "$path" ]] || fail "required build-contract input is missing: $path"
 done
 if [[ "$MODE" != "release-disabled" ]]; then
-    for path in "$VALIDATOR_SOURCE" "$VALIDATOR_FIXTURE_SOURCE" "$SCHEMA"; do
+    for path in "$VALIDATOR_SOURCE" "$VALIDATOR_FIXTURE_SOURCE" \
+        "$VALIDATOR_BUILD_CONFIGURATION_SOURCE" "$SCHEMA"; do
         [[ -e "$path" ]] || fail "required build-contract input is missing: $path"
     done
 fi
@@ -309,6 +311,7 @@ SCHEMA_SNAPSHOT=""
 VALIDATOR_SNAPSHOT=""
 VALIDATOR_FIXTURE_SNAPSHOT=""
 VALIDATOR_ENDPOINT_SNAPSHOT=""
+VALIDATOR_BUILD_CONFIGURATION_SNAPSHOT=""
 SNAPSHOT_RECORD=""
 SNAPSHOT_RECORD_SHA256=""
 LOCAL_SNAPSHOT_RECORD=""
@@ -470,6 +473,7 @@ DEFAULT_ENDPOINT_MATRIX="$ROOT/docs/floorp-release-endpoints.json"
     || ENDPOINT_MATRIX="$SOURCE_SNAPSHOT/docs/floorp-release-endpoints.json"
 VALIDATOR_SOURCE="$SOURCE_SNAPSHOT/scripts/ci/validate-floorp-notes-sync-release.py"
 VALIDATOR_FIXTURE_SOURCE="$SOURCE_SNAPSHOT/sync-fixtures/floorp-notes/floorp-notes-merge-v1.json"
+VALIDATOR_BUILD_CONFIGURATION_SOURCE="$SOURCE_SNAPSHOT/firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
 CLOCK_CLIENT="$SOURCE_SNAPSHOT/scripts/ci/create-floorp-validation-clock.sh"
 PIN="$SOURCE_SNAPSHOT/MozillaRustComponents/FloorpApplicationServicesPin.json"
 GENERATED_BINDING="$SOURCE_SNAPSHOT/MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/floorp_prefs_sync.swift"
@@ -480,7 +484,8 @@ for path in "$ENDPOINT_MATRIX" "$PIN" "$GENERATED_BINDING" "$ENTITLEMENTS_SOURCE
     [[ -e "$path" ]] || fail "exact-commit build input is missing: $path"
 done
 if [[ "$MODE" != "release-disabled" ]]; then
-    for path in "$VALIDATOR_SOURCE" "$VALIDATOR_FIXTURE_SOURCE" "$SCHEMA" "$CLOCK_CLIENT"; do
+    for path in "$VALIDATOR_SOURCE" "$VALIDATOR_FIXTURE_SOURCE" \
+        "$VALIDATOR_BUILD_CONFIGURATION_SOURCE" "$SCHEMA" "$CLOCK_CLIENT"; do
         [[ -e "$path" ]] || fail "exact-commit release input is missing: $path"
     done
 fi
@@ -1077,6 +1082,7 @@ if [[ "$MODE" != "release-disabled" ]]; then
     VALIDATOR_SNAPSHOT="$VALIDATOR_REPOSITORY/scripts/ci/validate-floorp-notes-sync-release.py"
     VALIDATOR_FIXTURE_SNAPSHOT="$VALIDATOR_REPOSITORY/sync-fixtures/floorp-notes/floorp-notes-merge-v1.json"
     VALIDATOR_ENDPOINT_SNAPSHOT="$VALIDATOR_REPOSITORY/docs/floorp-release-endpoints.json"
+    VALIDATOR_BUILD_CONFIGURATION_SNAPSHOT="$VALIDATOR_REPOSITORY/firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
     SNAPSHOT_RECORD="$CONTRACT_DIR/input-snapshots.json"
     SNAPSHOT_RECORD_SHA256="$("$PYTHON_BIN" - "$CONTRACT_DIR" "$SNAPSHOT_RECORD" \
         evidence "$EVIDENCE" "$EVIDENCE_SNAPSHOT" \
@@ -1084,6 +1090,8 @@ if [[ "$MODE" != "release-disabled" ]]; then
         schema "$SCHEMA" "$SCHEMA_SNAPSHOT" \
         validator "$VALIDATOR_SOURCE" "$VALIDATOR_SNAPSHOT" \
         merge_fixture "$VALIDATOR_FIXTURE_SOURCE" "$VALIDATOR_FIXTURE_SNAPSHOT" \
+        floorp_release_configuration "$VALIDATOR_BUILD_CONFIGURATION_SOURCE" \
+            "$VALIDATOR_BUILD_CONFIGURATION_SNAPSHOT" \
         endpoint_policy "$ENDPOINT_MATRIX" "$VALIDATOR_ENDPOINT_SNAPSHOT" <<'PY'
 import hashlib
 import json
@@ -1205,6 +1213,7 @@ except json.JSONDecodeError as error:
 if set(records) != {
     "endpoint_policy",
     "evidence",
+    "floorp_release_configuration",
     "merge_fixture",
     "schema",
     "validation_clock",
@@ -1771,6 +1780,7 @@ if [[ "$MODE" != "release-disabled" ]]; then
     FINAL_VALIDATOR="$PUBLICATION_VALIDATOR_REPOSITORY/scripts/ci/validate-floorp-notes-sync-release.py"
     FINAL_VALIDATOR_FIXTURE="$PUBLICATION_VALIDATOR_REPOSITORY/sync-fixtures/floorp-notes/floorp-notes-merge-v1.json"
     FINAL_VALIDATOR_ENDPOINT="$PUBLICATION_VALIDATOR_REPOSITORY/docs/floorp-release-endpoints.json"
+    FINAL_VALIDATOR_BUILD_CONFIGURATION="$PUBLICATION_VALIDATOR_REPOSITORY/firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
     FINAL_SNAPSHOT_RECORD="$PUBLICATION_DIR/input-snapshots.json"
     FINAL_SNAPSHOT_RECORD_SHA256="$("$PYTHON_BIN" - "$PUBLICATION_DIR" \
         "$FINAL_SNAPSHOT_RECORD" \
@@ -1779,6 +1789,8 @@ if [[ "$MODE" != "release-disabled" ]]; then
         schema "$SCHEMA_SNAPSHOT" "$FINAL_SCHEMA" \
         validator "$VALIDATOR_SNAPSHOT" "$FINAL_VALIDATOR" \
         merge_fixture "$VALIDATOR_FIXTURE_SNAPSHOT" "$FINAL_VALIDATOR_FIXTURE" \
+        floorp_release_configuration "$VALIDATOR_BUILD_CONFIGURATION_SNAPSHOT" \
+            "$FINAL_VALIDATOR_BUILD_CONFIGURATION" \
         endpoint_policy "$VALIDATOR_ENDPOINT_SNAPSHOT" "$FINAL_VALIDATOR_ENDPOINT" <<'PY'
 import hashlib
 import json

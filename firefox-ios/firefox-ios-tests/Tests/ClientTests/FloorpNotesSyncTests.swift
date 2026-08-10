@@ -2174,6 +2174,44 @@ private final class TestFloorpPrefsSyncStoreFactory: @unchecked Sendable {
 }
 
 final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
+    func testG4AttestationBindsTask18Evidence() throws {
+        var repositoryRoot = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            repositoryRoot.deleteLastPathComponent()
+        }
+        let attestationURL = repositoryRoot
+            .appendingPathComponent("docs/floorp-notes-sync-g4-attestation.json")
+        let attestation = try Data(contentsOf: attestationURL)
+        let expected: [String: Any] = [
+            "desktop": [
+                "merged_sha": "fc244eed70248796fa92ff5821c6046ecd576e7e",
+                "run_head_sha": "17b47fcb837272040a6231963b5221aaec80fa42",
+                "run_id": 31_338_438_952,
+                "workflow_path": ".github/workflows/colocated_runner_test.yml",
+            ],
+            "floorpci_test": (
+                "ClientTests/FloorpNotesSyncEngineSelectionTests/"
+                    + "testG4AttestationBindsTask18Evidence()"
+            ),
+            "runtime": [
+                "merged_sha": "3bf9399564e59be32f92dcc1b044094881b4fb6a",
+                "run_head_sha": "515da7cf9c7fc258eacd56902448eb10989d17b0",
+                "run_id": 31_330_766_054,
+                "tree_sha": "533f9fdca9bdccb7f3d2a13842be7e2375160ae5",
+                "workflow_path": ".github/workflows/wrapper-mac-build.yml",
+            ],
+            "schema_version": 1,
+            "summaries": [
+                "execution_verdict_sha256": "0d1606797281d525924f0ff85b15b9697b6bb11de91196704a6d334591baf689",
+                "task_manifest_sha256": "d55a01faf3755658cca48750e40370aac72e83b87eb9a8fec9ce5f6bb5f77e84",
+                "tps_sha256": "f173c9c7113539c3e46eb7b4cb6a8359c7ffbfc749ff0a64325b524ffa551424",
+                "xpcshell_sha256": "70d3fcf4d6116bb37330a3c5c13b4da819716378d39e54f9bb1cd2702351860b",
+            ],
+            "task_id": 18,
+        ]
+        XCTAssertEqual(attestation, try canonicalEvidenceData(expected))
+    }
+
     func testStatusCenterPostsUIRefreshOnMainThread() {
         let notificationCenter = NotificationCenter()
         let statusCenter = FloorpNotesSyncStatusCenter(
@@ -2575,6 +2613,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
         try mutateFirstReleaseSource(in: &missingRoot) { source in
             source.removeValue(forKey: "release_immutable")
             source.removeValue(forKey: "release_prerelease")
+            source.removeValue(forKey: "release_published_at")
         }
         let missingEvidence = try canonicalEvidenceData(missingRoot)
         XCTAssertFalse(
@@ -2585,7 +2624,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
             )
         )
 
-        for field in ["release_immutable", "release_prerelease"] {
+        for field in ["release_immutable", "release_prerelease", "release_published_at"] {
             var falseRoot = fixtureRoot
             try mutateFirstReleaseSource(in: &falseRoot) { source in
                 source[field] = false
@@ -2599,6 +2638,22 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
                 )
             )
         }
+
+        var malformedTimestampRoot = fixtureRoot
+        try mutateFirstReleaseSource(in: &malformedTimestampRoot) { source in
+            source["release_published_at"] = "not-a-timestamp"
+        }
+        let malformedTimestampEvidence = try canonicalEvidenceData(malformedTimestampRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(
+                    evidence: malformedTimestampEvidence,
+                    root: malformedTimestampRoot
+                ),
+                evidenceData: malformedTimestampEvidence,
+                now: trustedNow
+            )
+        )
     }
 
     func testCompiledEvidenceRejectsUnverifiedEmbeddedG6() throws {
@@ -2748,6 +2803,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
         let servicesRepository = try XCTUnwrap(services["repository"] as? String)
         let servicesSHA = try XCTUnwrap(services["source_sha"] as? String)
         let servicesTag = try XCTUnwrap(services["release_tag"] as? String)
+        let syntheticG3Sources = g3Sources(repository: iosRepository, headSHA: iosSHA)
         let sourceSets: [String: [[String: Any]]] = [
             "g1": g1Sources(
                 iosRepository: iosRepository,
@@ -2760,12 +2816,16 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
                 sourceSHA: servicesSHA,
                 tag: servicesTag
             ),
-            "g3": g3Sources(repository: iosRepository, headSHA: iosSHA),
+            "g3": syntheticG3Sources,
             "g4": g4Sources(
+                iosRepository: iosRepository,
+                iosSHA: iosSHA,
                 desktopRepository: desktopRepository,
                 desktopSHA: desktopSHA,
                 runtimeRepository: runtimeRepository,
-                runtimeSHA: runtimeSHA
+                runtimeSHA: runtimeSHA,
+                attestationRun: syntheticG3Sources[1],
+                attestationXCResult: syntheticG3Sources[2]
             ),
             "g5": g5Sources(repository: iosRepository, headSHA: iosSHA),
         ]
@@ -2869,13 +2929,22 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
     }
 
     private func g4Sources(
+        iosRepository: String,
+        iosSHA: String,
         desktopRepository: String,
         desktopSHA: String,
         runtimeRepository: String,
-        runtimeSHA: String
+        runtimeSHA: String,
+        attestationRun: [String: Any],
+        attestationXCResult: [String: Any]
     ) -> [[String: Any]] {
-        [
+        var reboundRun = attestationRun
+        reboundRun["role"] = "g4-attestation-ci-run"
+        var reboundXCResult = attestationXCResult
+        reboundXCResult["role"] = "g4-attestation-xcresult"
+        return [
             localSource("task-manifest", policy: "metadata-json"),
+            localSource("task18-execution-verdict", policy: "metadata-json"),
             actionsRunSource(
                 "desktop-ci-run",
                 repository: desktopRepository,
@@ -2888,6 +2957,15 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
                 headSHA: runtimeSHA,
                 runID: 5
             ),
+            repositorySource(
+                "g4-attestation-source",
+                repository: iosRepository,
+                commit: iosSHA,
+                path: "docs/floorp-notes-sync-g4-attestation.json",
+                policy: "metadata-json"
+            ),
+            reboundRun,
+            reboundXCResult,
             localSource("xpcshell-run", policy: "metadata-json"),
             localSource("tps-run", policy: "metadata-json"),
         ]
@@ -2982,6 +3060,8 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
             "run_id": runID,
             "artifact_id": artifactID,
             "artifact_name": "floorp-notes-sync-xcresult",
+            "artifact_created_at": "2026-08-09T23:31:00Z",
+            "artifact_expires_at": "2026-08-16T23:31:00Z",
             "head_sha": headSHA,
             "sha256": sha256(Data("artifact:\(role)".utf8)),
         ]
@@ -3003,6 +3083,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
             "release_tag": tag,
             "release_immutable": true,
             "release_prerelease": true,
+            "release_published_at": "2026-08-08T05:41:30Z",
             "asset_id": assetID,
             "asset_name": "\(role).artifact",
             "source_sha": sourceSHA,

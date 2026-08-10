@@ -187,6 +187,8 @@
         "run_id",
         "artifact_id",
         "artifact_name",
+        "artifact_created_at",
+        "artifact_expires_at",
         "head_sha",
         "sha256"
       ],
@@ -198,6 +200,8 @@
         "run_id": {"$ref": "#/$defs/positiveSafeInteger"},
         "artifact_id": {"$ref": "#/$defs/positiveSafeInteger"},
         "artifact_name": {"type": "string", "minLength": 1, "maxLength": 255},
+        "artifact_created_at": {"$ref": "#/$defs/timestamp"},
+        "artifact_expires_at": {"$ref": "#/$defs/timestamp"},
         "head_sha": {"$ref": "#/$defs/sha1"},
         "sha256": {"$ref": "#/$defs/sha256"}
       }
@@ -214,6 +218,7 @@
         "release_tag",
         "release_immutable",
         "release_prerelease",
+        "release_published_at",
         "asset_id",
         "asset_name",
         "source_sha",
@@ -228,6 +233,7 @@
         "release_tag": {"type": "string", "minLength": 1, "maxLength": 255},
         "release_immutable": {"const": true},
         "release_prerelease": {"const": true},
+        "release_published_at": {"$ref": "#/$defs/timestamp"},
         "asset_id": {"$ref": "#/$defs/positiveSafeInteger"},
         "asset_name": {"type": "string", "minLength": 1, "maxLength": 255},
         "source_sha": {"$ref": "#/$defs/sha1"},

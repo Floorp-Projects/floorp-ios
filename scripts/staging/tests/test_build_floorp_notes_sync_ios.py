@@ -219,6 +219,11 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         docs.mkdir()
         shutil.copy2(REPOSITORY / "docs/floorp-release-endpoints.json", docs)
         (docs / "floorp-notes-sync-release-evidence.schema.json").write_text("{}\n")
+        release_configuration = self.repository / (
+            "firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
+        )
+        release_configuration.parent.mkdir(parents=True)
+        release_configuration.write_text("FLOORP_BUILD_NUMBER = 4\n")
         merge_fixture = self.repository / (
             "sync-fixtures/floorp-notes/floorp-notes-merge-v1.json"
         )
@@ -727,6 +732,22 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 (output / "contract-inputs/publication-inputs").resolve()
             )
         )
+
+    def test_enabled_build_snapshots_floorp_release_build_number_authority(self):
+        result, _, _, _, output = self.run_script("production-qa")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = b"FLOORP_BUILD_NUMBER = 4\n"
+        for root in (
+            output / "contract-inputs/validator-repository",
+            output / "contract-inputs/publication-inputs/validator-repository",
+        ):
+            self.assertEqual(
+                (
+                    root
+                    / "firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
+                ).read_bytes(),
+                expected,
+            )
 
     def test_post_build_clock_uses_only_the_public_cli(self):
         result, _, _, _, _ = self.run_script("production-qa")

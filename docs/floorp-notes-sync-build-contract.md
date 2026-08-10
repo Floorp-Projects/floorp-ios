@@ -109,6 +109,22 @@ a non-empty string array. The bound G3 CI run must be a `push` run whose
 stand in for merged-main integration evidence.
 G4 uses the decimal successful Desktop GitHub Actions run ID as its build
 number, binding the Desktop build identity to the retrievable CI run source.
+The iOS build number must equal the single `FLOORP_BUILD_NUMBER` declared by
+the reviewed `FloorpRelease.xcconfig`; production validation has no CLI
+override for that authority.
+G2 issuance is bound to the immutable release's live GitHub `published_at`.
+G3 and G5 bind issuance and lifetime to the selected XCResult artifact's live
+`created_at` and `expires_at`, so rerunning a workflow cannot refresh an older
+artifact. G4 retrieves the canonical merged-source
+`floorp-notes-sync-g4-attestation.json`; that record binds the exact Todo 18
+manifest, execution-validator `APPROVE` verdict, and xpcshell/TPS summary
+digests to Desktop and Runtime identities.
+An explicitly selected FloorpCI test verifies the attestation, and G4 reuses
+the exact G3 main-push run and XCResult as its external notarization. The
+validator parses that XCResult with `xcresulttool` and requires the exact test
+node to have only `Passed` results; raw test-name bytes are insufficient. G4
+issuance uses immutable run `created_at` values and
+expires no later than the earliest source or notarization-artifact deadline.
 The post-build clock dispatch passes the canonical workflow file name
 `floorp-notes-sync-validation-clock.yml` to the public clock client.
 

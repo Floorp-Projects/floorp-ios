@@ -643,6 +643,7 @@
         "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRejectsSchemaInvalidUnexpectedRootField()",
         "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRejectsUnverifiedEmbeddedG6()",
         "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRequiresEveryBuildAndResourceBinding()",
+        "FloorpNotesSyncEngineSelectionTests/testG4AttestationBindsTask18Evidence()",
         "FloorpNotesSyncEngineSelectionTests/testFloorpPrefsIsAddedOnlyWhenAllRuntimePoliciesAllowIt()",
         "FloorpNotesSyncEngineSelectionTests/testFloorpPrefsSelectionIsExplicitAndNeverToggleDriven()",
         "FloorpNotesSyncEngineSelectionTests/testProductionEndpointAuthorityRejectsEveryOverride()",

@@ -26,12 +26,13 @@ from urllib.parse import quote
 EXPECTED_REPOSITORY = "Floorp-Projects/floorp-ios"
 EXPECTED_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-validation-clock.yml"
 EXPECTED_SCHEMA_ID = "https://floorp.app/schemas/floorp-notes-sync-release-evidence-v1.json"
-EXPECTED_SCHEMA_SHA256 = "57da6b70fb1ea16dc2908e2e9fcf4abbcfd8326948e408bd85ff1f4826583f8a"
+EXPECTED_SCHEMA_SHA256 = "c6db94655222233ab4c0c220ddd491166c8ea4bdeb48effc23d468df2f8326d6"
 PRODUCTION_GH_BIN = Path("/opt/homebrew/bin/gh")
 PRODUCTION_GH_SHA256 = "6a2ab5fa89553eac1f0df50a26a5eaeea9a665d8971f5a51b32487b72c708f5c"
 PRODUCTION_GH_SIZE = 38_983_666
 TRUSTED_GH_DIRECTORIES: list[tempfile.TemporaryDirectory[str]] = []
 PRODUCTION_SSH_KEYGEN = Path("/usr/bin/ssh-keygen")
+PRODUCTION_XCRUN = Path("/usr/bin/xcrun")
 TRUSTED_GITHUB_HOST = "github.com"
 TODO16_REPOSITORY = "Floorp-Projects/Floorp"
 TODO16_MERGED_SHA = "18841c0c43d0eda428e1c88170769c1539543848"
@@ -137,8 +138,12 @@ GATE_SOURCE_ROLES = {
     "g3": ("integration-receipt", "ci-run", "xcresult"),
     "g4": (
         "task-manifest",
+        "task18-execution-verdict",
         "desktop-ci-run",
         "runtime-ci-run",
+        "g4-attestation-source",
+        "g4-attestation-ci-run",
+        "g4-attestation-xcresult",
         "xpcshell-run",
         "tps-run",
     ),
@@ -164,6 +169,15 @@ EXPECTED_ENDPOINT_POLICY_SHA256 = "af96437acde3d05eb8f18dc9cc81450aa9d61703579c0
 EXPECTED_RECORD_ID = "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0"
 EXPECTED_NOTES_PREF = "floorp.browser.note.memos"
 EXPECTED_CONTROL_PREF = "services.sync.prefs.sync.floorp.browser.note.memos"
+G4_ATTESTATION_PATH = "docs/floorp-notes-sync-g4-attestation.json"
+G4_ATTESTATION_TEST = (
+    "ClientTests/FloorpNotesSyncEngineSelectionTests/"
+    "testG4AttestationBindsTask18Evidence()"
+)
+G4_ATTESTATION_XCRESULT_TEST = (
+    "FloorpNotesSyncEngineSelectionTests/"
+    "testG4AttestationBindsTask18Evidence()"
+)
 EXPECTED_FXA_HOSTS = (
     "accounts.firefox.com",
     "api.accounts.firefox.com",
@@ -645,6 +659,7 @@ def gh_api_download_digest(
     environment: Mapping[str, str],
     *,
     require_xcresult: bool = False,
+    required_xcresult_test: str | None = None,
 ) -> str:
     with tempfile.TemporaryFile() as output:
         try:
@@ -671,7 +686,11 @@ def gh_api_download_digest(
         check(result.returncode == 0, f"trusted GitHub API {label} download failed")
         if require_xcresult:
             output.seek(0)
-            validate_xcresult_archive(output, label)
+            validate_xcresult_archive(
+                output,
+                label,
+                required_test=required_xcresult_test,
+            )
         output.seek(0)
         hasher = hashlib.sha256()
         while chunk := output.read(1024 * 1024):
@@ -679,7 +698,13 @@ def gh_api_download_digest(
         return hasher.hexdigest()
 
 
-def validate_xcresult_archive(archive: Any, label: str) -> None:
+def validate_xcresult_archive(
+    archive: Any,
+    label: str,
+    *,
+    required_test: str | None = None,
+    test_results: Mapping[str, str | list[str]] | None = None,
+) -> None:
     try:
         with zipfile.ZipFile(archive) as bundle:
             entries = bundle.infolist()
@@ -745,6 +770,93 @@ def validate_xcresult_archive(archive: Any, label: str) -> None:
     root = next(iter(roots))
     check(f"{root}/Info.plist" in paths, f"{label}: xcresult ZIP is missing Info.plist")
     check(any(path.startswith(f"{root}/Data/") for path in paths), f"{label}: xcresult ZIP is missing Data")
+    if required_test is not None:
+        if test_results is None:
+            test_results = xcresult_test_results(archive, root, label)
+        observed = test_results.get(required_test)
+        matching = [observed] if isinstance(observed, str) else observed
+        check(
+            isinstance(matching, list)
+            and bool(matching)
+            and all(result == "Passed" for result in matching),
+            f"{label}: required XCTest did not have Passed result nodes",
+        )
+
+
+def xcresult_test_results(
+    archive: Any,
+    root: str,
+    label: str,
+) -> dict[str, list[str]]:
+    try:
+        archive.seek(0)
+    except (AttributeError, OSError) as error:
+        raise ValidationError(f"{label}: xcresult ZIP cannot be rewound") from error
+    with tempfile.TemporaryDirectory(prefix="floorp-xcresult-") as temporary:
+        extraction_root = Path(temporary)
+        try:
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(extraction_root)
+        except (OSError, RuntimeError, EOFError, zipfile.BadZipFile, zipfile.LargeZipFile) as error:
+            raise ValidationError(f"{label}: xcresult ZIP extraction failed") from error
+        result_path = extraction_root / root
+        check(result_path.is_dir(), f"{label}: extracted xcresult root is missing")
+        environment = {
+            name: os.environ[name]
+            for name in ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
+            if os.environ.get(name)
+        }
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        try:
+            completed = subprocess.run(
+                [
+                    str(PRODUCTION_XCRUN),
+                    "xcresulttool",
+                    "get",
+                    "test-results",
+                    "tests",
+                    "--path",
+                    str(result_path),
+                    "--format",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=120,
+                env=environment,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValidationError(f"{label}: xcresulttool execution failed") from error
+        check(completed.returncode == 0, f"{label}: xcresulttool rejected the result bundle")
+        try:
+            payload = json.loads(completed.stdout, object_pairs_hook=unique_object)
+        except (json.JSONDecodeError, MalformedError) as error:
+            raise ValidationError(f"{label}: xcresulttool returned malformed JSON") from error
+
+    check(isinstance(payload, dict), f"{label}: xcresulttool root is malformed")
+    roots = payload.get("testNodes")
+    check(isinstance(roots, list), f"{label}: xcresulttool testNodes are missing")
+    results: dict[str, list[str]] = {}
+    pending = [(node, 1) for node in roots]
+    visited = 0
+    while pending:
+        node, depth = pending.pop()
+        visited += 1
+        check(visited <= MAX_XCRESULT_ENTRIES, f"{label}: xcresult test-node count exceeds limit")
+        check(depth <= MAX_XCRESULT_DEPTH, f"{label}: xcresult test-node depth exceeds limit")
+        check(isinstance(node, dict), f"{label}: xcresult test node is malformed")
+        children = node.get("children", [])
+        check(isinstance(children, list), f"{label}: xcresult test-node children are malformed")
+        pending.extend((child, depth + 1) for child in children)
+        if node.get("nodeType") != "Test Case":
+            continue
+        identifier = node.get("nodeIdentifier")
+        result = node.get("result")
+        check(isinstance(identifier, str) and bool(identifier), f"{label}: XCTest identifier is malformed")
+        check(isinstance(result, str) and bool(result), f"{label}: XCTest result is malformed")
+        results.setdefault(identifier, []).append(result)
+    return results
 
 
 def live_repository_name(run: dict[str, Any]) -> str:
@@ -927,7 +1039,11 @@ def validate_mode_gate_semantics(evidence: dict[str, Any], require_g6: bool) -> 
         check(gate.get("status") == "passed", f"{name}: required gate status is not passed")
 
 
-def validate_release_contract(evidence: dict[str, Any], trusted_now: datetime) -> None:
+def validate_release_contract(
+    evidence: dict[str, Any],
+    trusted_now: datetime,
+    expected_ios_build_number: str,
+) -> None:
     inputs = evidence["release_inputs"]
     contract = inputs["contract"]
     environment = inputs["environment"]
@@ -941,6 +1057,10 @@ def validate_release_contract(evidence: dict[str, Any], trusted_now: datetime) -
     check(tuple(environment["fxa_hosts"]) == EXPECTED_FXA_HOSTS, "release inputs: wrong FxA host policy")
     check(tuple(environment["sync_hosts"]) == EXPECTED_SYNC_HOSTS, "release inputs: wrong Sync host policy")
     check(environment["wire_protocol"] == "sync15", "release inputs: wrong Sync wire protocol")
+    check(
+        inputs["ios"]["build_number"] == expected_ios_build_number,
+        "release inputs: iOS FloorpRelease build number does not match the reviewed source",
+    )
 
     mode = evidence["build_contract_mode"]
     gates = evidence["gates"]
@@ -1019,6 +1139,23 @@ def validate_bound_source_files(fixture_path: Path, endpoint_policy_path: Path) 
     )
     endpoint_policy = load_json(endpoint_policy_path, require_canonical=False, label="endpoint policy")
     check(isinstance(endpoint_policy, dict), "endpoint policy: root must be an object")
+
+
+def load_floorp_release_build_number(configuration_path: Path) -> str:
+    try:
+        metadata = configuration_path.lstat()
+        check(not stat.S_ISLNK(metadata.st_mode), "FloorpRelease configuration must not be a symlink")
+        check(stat.S_ISREG(metadata.st_mode), "FloorpRelease configuration is not a regular file")
+        text = configuration_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValidationError("FloorpRelease configuration is unavailable") from error
+    matches = re.findall(
+        r"^FLOORP_BUILD_NUMBER[ \t]*=[ \t]*([1-9][0-9]*)[ \t]*$",
+        text,
+        flags=re.MULTILINE,
+    )
+    check(len(matches) == 1, "FloorpRelease build number source is not exact")
+    return matches[0]
 
 
 def git_blob_sha(raw: bytes) -> str:
@@ -1509,6 +1646,10 @@ def verify_github_release_asset(
         release.get("immutable") is expected_immutable,
         f"{label}: release immutable state mismatch",
     )
+    check(
+        release.get("published_at") == source.get("release_published_at"),
+        f"{label}: release published time mismatch",
+    )
     assets = release.get("assets")
     check(isinstance(assets, list), f"{label}: release assets are malformed")
     matching = [asset for asset in assets if isinstance(asset, dict) and asset.get("id") == source["asset_id"]]
@@ -1574,6 +1715,14 @@ def verify_github_actions_artifact(
     check(artifact.get("id") == source["artifact_id"], f"{label}: artifact ID mismatch")
     check(artifact.get("name") == source["artifact_name"], f"{label}: artifact name mismatch")
     check(artifact.get("expired") is False, f"{label}: artifact is expired")
+    check(
+        artifact.get("created_at") == source.get("artifact_created_at"),
+        f"{label}: artifact created time mismatch",
+    )
+    check(
+        artifact.get("expires_at") == source.get("artifact_expires_at"),
+        f"{label}: artifact expiration time mismatch",
+    )
     workflow_run = artifact.get("workflow_run")
     check(
         isinstance(workflow_run, dict) and workflow_run.get("id") == source["run_id"],
@@ -1585,6 +1734,11 @@ def verify_github_actions_artifact(
         label,
         gh_environment,
         require_xcresult=True,
+        required_xcresult_test=(
+            G4_ATTESTATION_XCRESULT_TEST
+            if source.get("role") == "g4-attestation-xcresult"
+            else None
+        ),
     )
 
 
@@ -1594,6 +1748,7 @@ def verify_artifact_source(
     gh_bin: Path,
     gh_environment: Mapping[str, str],
     test_remote_artifacts: Mapping[str, bytes] | None,
+    test_xcresult_results: Mapping[str, str | list[str]] | None,
     label: str,
 ) -> Any | None:
     kind = source["kind"]
@@ -1609,7 +1764,17 @@ def verify_artifact_source(
         check(key in test_remote_artifacts, f"{label}: test remote artifact is unavailable")
         raw = test_remote_artifacts[key]
         if kind == "github-actions-artifact":
-            validate_xcresult_archive(io.BytesIO(raw), label)
+            required_test = (
+                G4_ATTESTATION_XCRESULT_TEST
+                if source.get("role") == "g4-attestation-xcresult"
+                else None
+            )
+            validate_xcresult_archive(
+                io.BytesIO(raw),
+                label,
+                required_test=required_test,
+                test_results=test_xcresult_results if required_test is not None else None,
+            )
         actual_digest = hashlib.sha256(raw).hexdigest()
     elif kind == "github-repository-file":
         raw = fetch_github_repository_file(source, gh_bin, gh_environment, label)
@@ -1626,7 +1791,11 @@ def verify_artifact_source(
     check(actual_digest == source["sha256"], f"{label}: artifact bytes do not match SHA-256")
     if raw is None:
         return None
-    payload = validate_content_policy(raw, source["content_policy"], label)
+    if source.get("role") == "g4-attestation-source":
+        payload = parse_json_bytes(raw, require_canonical=True, label=label)
+        validate_metadata_value(payload, label, network_only=False)
+    else:
+        payload = validate_content_policy(raw, source["content_policy"], label)
     if kind == "github-actions-run":
         check(isinstance(payload, dict), f"{label}: run metadata is not an object")
         check(payload.get("id") == source["run_id"], f"{label}: run ID mismatch")
@@ -1964,6 +2133,75 @@ def validate_gate_source_semantics(
             ),
             f"{label}: Runtime CI run is not bound to the reviewed head",
         )
+        attestation_source = require_source(
+            sources,
+            "g4-attestation-source",
+            ("github-repository-file",),
+            "metadata-json",
+            label,
+        )
+        check(
+            (
+                attestation_source["repository"],
+                attestation_source["commit_sha"],
+                attestation_source["path"],
+            )
+            == (
+                inputs["ios"]["repository"],
+                inputs["ios"]["source_sha"],
+                G4_ATTESTATION_PATH,
+            ),
+            f"{label}: G4 attestation source is not bound to the merged iOS candidate",
+        )
+        attestation_run = require_source(
+            sources,
+            "g4-attestation-ci-run",
+            ("github-actions-run",),
+            "metadata-json",
+            label,
+        )
+        attestation_run_payload = payloads["g4-attestation-ci-run"]
+        check(isinstance(attestation_run_payload, dict), f"{label}: G4 attestation run is malformed")
+        check(
+            (attestation_run_payload.get("event"), attestation_run_payload.get("head_branch"))
+            == ("push", "main"),
+            f"{label}: G4 attestation run is not a main push",
+        )
+        check(
+            (
+                attestation_run["repository"],
+                attestation_run["head_sha"],
+                attestation_run["workflow_path"],
+            )
+            == (
+                inputs["ios"]["repository"],
+                inputs["ios"]["source_sha"],
+                ".github/workflows/ci.yml",
+            ),
+            f"{label}: G4 attestation run is not bound to the merged iOS candidate",
+        )
+        attestation_xcresult = require_source(
+            sources,
+            "g4-attestation-xcresult",
+            ("github-actions-artifact",),
+            "test-result-bundle",
+            label,
+        )
+        check(
+            (
+                attestation_xcresult["repository"],
+                attestation_xcresult["head_sha"],
+                attestation_xcresult["run_id"],
+                attestation_xcresult["artifact_name"],
+            )
+            == (
+                inputs["ios"]["repository"],
+                inputs["ios"]["source_sha"],
+                attestation_run["run_id"],
+                "floorp-notes-sync-xcresult",
+            ),
+            f"{label}: G4 attestation xcresult is not bound to the attestation run",
+        )
         xpcshell = require_source(sources, "xpcshell-run", ("local-file",), "metadata-json", label)
         tps = require_source(sources, "tps-run", ("local-file",), "metadata-json", label)
         check(xpcshell["sha256"] == gate["xpcshell_run_sha256"], f"{label}: xpcshell digest mismatch")
@@ -1973,6 +2211,58 @@ def validate_gate_source_semantics(
             payloads["tps-run"],
             f"{label}: TPS",
             require_payload_redaction=True,
+        )
+        expected_attestation = {
+            "desktop": {
+                "merged_sha": inputs["desktop"]["source_sha"],
+                "run_head_sha": desktop_run["head_sha"],
+                "run_id": desktop_run["run_id"],
+                "workflow_path": desktop_run["workflow_path"],
+            },
+            "floorpci_test": G4_ATTESTATION_TEST,
+            "runtime": {
+                "merged_sha": inputs["runtime"]["source_sha"],
+                "run_head_sha": runtime_run["head_sha"],
+                "run_id": runtime_run["run_id"],
+                "tree_sha": inputs["runtime"]["tree_sha"],
+                "workflow_path": runtime_run["workflow_path"],
+            },
+            "schema_version": 1,
+            "summaries": {
+                "execution_verdict_sha256": sources["task18-execution-verdict"]["sha256"],
+                "task_manifest_sha256": sources["task-manifest"]["sha256"],
+                "tps_sha256": tps["sha256"],
+                "xpcshell_sha256": xpcshell["sha256"],
+            },
+            "task_id": 18,
+        }
+        check(
+            payloads["g4-attestation-source"] == expected_attestation,
+            f"{label}: G4 external attestation does not bind the exact producer records",
+        )
+        execution_verdict = require_source(
+            sources,
+            "task18-execution-verdict",
+            ("local-file",),
+            "metadata-json",
+            label,
+        )
+        check(
+            execution_verdict["sha256"]
+            == expected_attestation["summaries"]["execution_verdict_sha256"],
+            f"{label}: Task 18 execution verdict digest is not attested",
+        )
+        check(
+            payloads["task18-execution-verdict"]
+            == {
+                "errors": [],
+                "tasks": [
+                    {"completion_claim_count": 1, "id": 16, "state": "completed"},
+                    {"completion_claim_count": 1, "id": 18, "state": "completed"},
+                ],
+                "verdict": "APPROVE",
+            },
+            f"{label}: Task 18 execution-validator verdict is not the exact APPROVE record",
         )
     elif gate_name == "g5":
         ci_run = require_source(sources, "ci-run", ("github-actions-run",), "metadata-json", label)
@@ -2025,12 +2315,87 @@ def validate_gate_source_semantics(
         )
 
 
+def validate_artifact_bound_gate_time(
+    gate_name: str,
+    gate: dict[str, Any],
+    sources: dict[str, dict[str, Any]],
+    payloads: dict[str, Any | None],
+    trusted_now: datetime,
+) -> None:
+    max_age_days: int
+    raw_anchors: list[Any]
+    if gate_name == "g2":
+        max_age_days = 30
+        raw_anchors = [
+            sources[role].get("release_published_at")
+            for role in ASSET_ROLE_TO_INPUT
+        ]
+        check(len(set(raw_anchors)) == 1, "G2: release artifact times are mixed")
+    elif gate_name in ("g3", "g5"):
+        max_age_days = 7
+        xcresult = sources["xcresult"]
+        raw_anchors = [xcresult.get("artifact_created_at")]
+    elif gate_name == "g4":
+        max_age_days = 30
+        desktop_run = payloads.get("desktop-ci-run")
+        runtime_run = payloads.get("runtime-ci-run")
+        attestation_run = payloads.get("g4-attestation-ci-run")
+        check(isinstance(desktop_run, dict), "G4: Desktop CI artifact time is unavailable")
+        check(isinstance(runtime_run, dict), "G4: Runtime CI artifact time is unavailable")
+        check(isinstance(attestation_run, dict), "G4: attestation CI artifact time is unavailable")
+        raw_anchors = [
+            desktop_run.get("created_at"),
+            runtime_run.get("created_at"),
+            attestation_run.get("created_at"),
+        ]
+    else:
+        return
+
+    anchors = [
+        parse_timestamp(raw, f"{gate_name.upper()} artifact time")
+        for raw in raw_anchors
+    ]
+    issued_at = parse_timestamp(gate["issued_at"], f"{gate_name.upper()}.issued_at")
+    check(
+        issued_at == max(anchors),
+        f"{gate_name.upper()}: issued_at does not match the XCResult artifact time"
+        if gate_name in ("g3", "g5")
+        else f"{gate_name.upper()}: issued_at does not match the artifact time",
+    )
+    expires_at = parse_timestamp(gate["expires_at"], f"{gate_name.upper()}.expires_at")
+    artifact_deadline = min(anchor + timedelta(days=max_age_days) for anchor in anchors)
+    if gate_name in ("g3", "g5"):
+        xcresult_deadline = parse_timestamp(
+            sources["xcresult"].get("artifact_expires_at"),
+            f"{gate_name.upper()} XCResult artifact time",
+        )
+        artifact_deadline = min(artifact_deadline, xcresult_deadline)
+    elif gate_name == "g4":
+        attestation_deadline = parse_timestamp(
+            sources["g4-attestation-xcresult"].get("artifact_expires_at"),
+            "G4 attestation XCResult artifact time",
+        )
+        artifact_deadline = min(artifact_deadline, attestation_deadline)
+    check(
+        expires_at <= artifact_deadline,
+        f"{gate_name.upper()}: expiration exceeds the XCResult artifact time lifetime"
+        if gate_name in ("g3", "g4", "g5")
+        else f"{gate_name.upper()}: expiration exceeds the artifact time lifetime",
+    )
+    check(
+        trusted_now <= artifact_deadline,
+        f"{gate_name.upper()}: artifact time exceeds maximum age",
+    )
+
+
 def validate_gate_artifacts(
     evidence: dict[str, Any],
     evidence_directory: Path,
     gh_bin: Path,
     gh_environment: Mapping[str, str],
     test_remote_artifacts: Mapping[str, bytes] | None,
+    test_xcresult_results: Mapping[str, str | list[str]] | None,
+    trusted_now: datetime,
 ) -> None:
     inputs = evidence["release_inputs"]
     for gate_name in G1_G5_NAMES:
@@ -2058,6 +2423,7 @@ def validate_gate_artifacts(
                 gh_bin,
                 gh_environment,
                 test_remote_artifacts,
+                test_xcresult_results,
                 f"{gate_name} {source['role']}",
             )
         if gate_name == "g3":
@@ -2065,6 +2431,27 @@ def validate_gate_artifacts(
         else:
             manifest = validate_task_manifest(gate_name, payloads["task-manifest"], inputs)
         validate_gate_source_semantics(gate_name, gate, sources, manifest, inputs, payloads)
+        validate_artifact_bound_gate_time(gate_name, gate, sources, payloads, trusted_now)
+
+    if "g3" in evidence["gates"] and "g4" in evidence["gates"]:
+        g3_sources = {
+            source["role"]: source
+            for source in evidence["gates"]["g3"]["artifact"]["sources"]
+        }
+        g4_sources = {
+            source["role"]: source
+            for source in evidence["gates"]["g4"]["artifact"]["sources"]
+        }
+        for g3_role, g4_role in (
+            ("ci-run", "g4-attestation-ci-run"),
+            ("xcresult", "g4-attestation-xcresult"),
+        ):
+            g3_source = {key: value for key, value in g3_sources[g3_role].items() if key != "role"}
+            g4_source = {key: value for key, value in g4_sources[g4_role].items() if key != "role"}
+            check(
+                g4_source == g3_source,
+                f"G4 external attestation does not reuse the exact G3 {g3_role}",
+            )
 
 
 def validate_gate_time(name: str, gate: dict[str, Any], trusted_now: datetime, max_age_days: int | None) -> None:
@@ -2359,8 +2746,10 @@ def main(
     test_gh_bin: Path | None = None,
     test_gh_environment: Mapping[str, str] | None = None,
     test_remote_artifacts: Mapping[str, bytes] | None = None,
+    test_xcresult_results: Mapping[str, str | list[str]] | None = None,
     test_g6_trust_bundle: Mapping[str, bytes] | None = None,
     test_ssh_keygen: Path | None = None,
+    test_expected_ios_build_number: str | None = None,
 ) -> int:
     repository_root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -2384,6 +2773,13 @@ def main(
     try:
         schema = load_pinned_schema(repository_root, arguments.schema)
         validate_bound_source_files(arguments.fixture, arguments.endpoint_policy)
+        expected_ios_build_number = test_expected_ios_build_number or load_floorp_release_build_number(
+            repository_root / "firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
+        )
+        check(
+            re.fullmatch(r"[1-9][0-9]*", expected_ios_build_number) is not None,
+            "FloorpRelease build number authority is malformed",
+        )
         evidence = load_json(arguments.evidence, require_canonical=True, label="evidence")
         clock = load_json(
             arguments.validation_clock_manifest,
@@ -2404,13 +2800,15 @@ def main(
             gh_bin,
             gh_environment,
         )
-        validate_release_contract(evidence, trusted_now)
+        validate_release_contract(evidence, trusted_now, expected_ios_build_number)
         validate_gate_artifacts(
             evidence,
             arguments.evidence.resolve(strict=True).parent,
             gh_bin,
             gh_environment,
             test_remote_artifacts,
+            test_xcresult_results,
+            trusted_now,
         )
         mode = evidence["build_contract_mode"]
         has_g6 = "g6" in evidence["gates"]

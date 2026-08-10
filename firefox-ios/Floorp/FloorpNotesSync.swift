@@ -1136,8 +1136,12 @@ enum FloorpNotesSyncReleaseGate {
             ],
             "g4": [
                 "task-manifest": localMetadata,
+                "task18-execution-verdict": localMetadata,
                 "desktop-ci-run": actionsRun,
                 "runtime-ci-run": actionsRun,
+                "g4-attestation-source": repositoryMetadata,
+                "g4-attestation-ci-run": actionsRun,
+                "g4-attestation-xcresult": actionsResult,
                 "xpcshell-run": localMetadata,
                 "tps-run": localMetadata,
             ],
@@ -1212,13 +1216,16 @@ enum FloorpNotesSyncReleaseGate {
                 source,
                 [
                     "kind", "role", "content_policy", "repository", "run_id",
-                    "artifact_id", "artifact_name", "head_sha", "sha256",
+                    "artifact_id", "artifact_name", "artifact_created_at",
+                    "artifact_expires_at", "head_sha", "sha256",
                 ]
             )
                 && isGitHubRepository(source["repository"])
                 && isPositiveSafeInteger(source["run_id"])
                 && isPositiveSafeInteger(source["artifact_id"])
                 && isNonempty(source["artifact_name"] as? String)
+                && timestamp(source["artifact_created_at"]) != nil
+                && timestamp(source["artifact_expires_at"]) != nil
                 && isSHA1(source["head_sha"])
         case "github-release-asset":
             return hasExactKeys(
@@ -1226,6 +1233,7 @@ enum FloorpNotesSyncReleaseGate {
                 [
                     "kind", "role", "content_policy", "repository", "release_id",
                     "release_tag", "release_immutable", "release_prerelease",
+                    "release_published_at",
                     "asset_id", "asset_name", "source_sha", "sha256",
                 ]
             )
@@ -1234,6 +1242,7 @@ enum FloorpNotesSyncReleaseGate {
                 && isNonempty(source["release_tag"] as? String)
                 && source["release_immutable"] as? Bool == true
                 && source["release_prerelease"] as? Bool == true
+                && timestamp(source["release_published_at"]) != nil
                 && isPositiveSafeInteger(source["asset_id"])
                 && isNonempty(source["asset_name"] as? String)
                 && isSHA1(source["source_sha"])

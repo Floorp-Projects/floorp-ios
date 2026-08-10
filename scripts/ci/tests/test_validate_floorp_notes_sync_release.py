@@ -247,6 +247,8 @@ def actions_artifact_source(
     return {
         "artifact_id": artifact_id,
         "artifact_name": artifact_name,
+        "artifact_created_at": "2026-08-09T23:31:00Z",
+        "artifact_expires_at": "2026-08-16T23:31:00Z",
         "content_policy": "test-result-bundle",
         "head_sha": head_sha,
         "kind": "github-actions-artifact",
@@ -273,6 +275,7 @@ def release_asset_source(
         "release_id": 367118816,
         "release_immutable": True,
         "release_prerelease": True,
+        "release_published_at": "2026-08-08T05:41:30Z",
         "release_tag": services["release_tag"],
         "repository": services["repository"],
         "role": role,
@@ -337,7 +340,20 @@ TEST_SOURCE_BYTES = {
     "release-manifest": b'{"schema_version":1,"test":"release-manifest"}\n',
     "sha256sums": b"test SHA256SUMS metadata\n",
     "swift-components": b"test swift-components archive",
-    "xcresult": synthetic_xcresult_zip(),
+    "xcresult": synthetic_xcresult_zip(
+        b"ClientTests/FloorpNotesSyncEngineSelectionTests/"
+        b"testG4AttestationBindsTask18Evidence()"
+    ),
+    "task18-execution-verdict": canonical_bytes(
+        {
+            "errors": [],
+            "tasks": [
+                {"completion_claim_count": 1, "id": 16, "state": "completed"},
+                {"completion_claim_count": 1, "id": 18, "state": "completed"},
+            ],
+            "verdict": "APPROVE",
+        }
+    ),
     "xpcshell-run": canonical_bytes({"failed": 0, "passed": 109, "secrets_retained": False}),
     "tps-run": canonical_bytes(
         {"failed": 0, "passed": 1, "payload_retained": False, "secrets_retained": False}
@@ -499,6 +515,40 @@ def integration_receipt_bytes(inputs: dict[str, object]) -> bytes:
     )
 
 
+def g4_attestation_bytes(inputs: dict[str, object]) -> bytes:
+    return canonical_bytes(
+        {
+            "desktop": {
+                "merged_sha": inputs["desktop"]["source_sha"],
+                "run_head_sha": "17b47fcb837272040a6231963b5221aaec80fa42",
+                "run_id": 31338438952,
+                "workflow_path": ".github/workflows/colocated_runner_test.yml",
+            },
+            "floorpci_test": (
+                "ClientTests/FloorpNotesSyncEngineSelectionTests/"
+                "testG4AttestationBindsTask18Evidence()"
+            ),
+            "runtime": {
+                "merged_sha": inputs["runtime"]["source_sha"],
+                "run_head_sha": "515da7cf9c7fc258eacd56902448eb10989d17b0",
+                "run_id": 31330766054,
+                "tree_sha": inputs["runtime"]["tree_sha"],
+                "workflow_path": ".github/workflows/wrapper-mac-build.yml",
+            },
+            "schema_version": 1,
+            "summaries": {
+                "execution_verdict_sha256": hashlib.sha256(
+                    TEST_SOURCE_BYTES["task18-execution-verdict"]
+                ).hexdigest(),
+                "task_manifest_sha256": hashlib.sha256(task_manifest_bytes(18, inputs)).hexdigest(),
+                "tps_sha256": hashlib.sha256(TEST_SOURCE_BYTES["tps-run"]).hexdigest(),
+                "xpcshell_sha256": hashlib.sha256(TEST_SOURCE_BYTES["xpcshell-run"]).hexdigest(),
+            },
+            "task_id": 18,
+        }
+    )
+
+
 def make_gate_sources(inputs: dict[str, object]) -> dict[str, list[dict[str, object]]]:
     fixture_raw = (ROOT / "sync-fixtures/floorp-notes/floorp-notes-merge-v1.json").read_bytes()
     manifests = {task: task_manifest_bytes(task, inputs) for task in (16, 17, 18, 20)}
@@ -585,6 +635,12 @@ def make_gate_sources(inputs: dict[str, object]) -> dict[str, list[dict[str, obj
     ]
     g4 = [
         local_source("task-manifest", "artifacts/task-18-manifest.json", "metadata-json", manifests[18]),
+        local_source(
+            "task18-execution-verdict",
+            "artifacts/task-18-execution-verdict.json",
+            "metadata-json",
+            TEST_SOURCE_BYTES["task18-execution-verdict"],
+        ),
         actions_run_source(
             "desktop-ci-run",
             inputs["desktop"]["repository"],
@@ -598,6 +654,32 @@ def make_gate_sources(inputs: dict[str, object]) -> dict[str, list[dict[str, obj
             31330766054,
             ".github/workflows/wrapper-mac-build.yml",
             "515da7cf9c7fc258eacd56902448eb10989d17b0",
+        ),
+        repository_source(
+            "g4-attestation-source",
+            inputs["ios"]["repository"],
+            inputs["ios"]["source_sha"],
+            "docs/floorp-notes-sync-g4-attestation.json",
+            "metadata-json",
+            g4_attestation_bytes(inputs),
+        ),
+        actions_run_source(
+            "g4-attestation-ci-run",
+            inputs["ios"]["repository"],
+            400000003,
+            ".github/workflows/ci.yml",
+            inputs["ios"]["source_sha"],
+            event="push",
+            head_branch="main",
+        ),
+        actions_artifact_source(
+            "g4-attestation-xcresult",
+            inputs["ios"]["repository"],
+            400000003,
+            500000003,
+            "floorp-notes-sync-xcresult",
+            inputs["ios"]["source_sha"],
+            TEST_SOURCE_BYTES["xcresult"],
         ),
         local_source(
             "xpcshell-run",
@@ -668,24 +750,24 @@ def make_evidence(*, mode: str = RELEASE_ENABLED_MODE) -> dict[str, object]:
         "g2": {
             "application_services": copy.deepcopy(inputs["application_services"]),
             "artifact": artifact_bundle(sources["g2"]),
-            "expires_at": "2026-08-31T00:00:00Z",
+            "expires_at": "2026-09-07T05:41:30Z",
             "fake_server_run_sha256": hashlib.sha256(TEST_SOURCE_BYTES["fake-server-run"]).hexdigest(),
-            "issued_at": "2026-08-01T00:00:00Z",
+            "issued_at": "2026-08-08T05:41:30Z",
             "status": "passed",
         },
         "g3": {
             "artifact": artifact_bundle(sources["g3"]),
             "candidate": copy.deepcopy(inputs["ios"]),
-            "expires_at": "2026-08-16T00:00:00Z",
-            "issued_at": "2026-08-09T00:00:00Z",
+            "expires_at": "2026-08-16T23:31:00Z",
+            "issued_at": "2026-08-09T23:31:00Z",
             "status": "passed",
             "xcresult_sha256": hashlib.sha256(TEST_SOURCE_BYTES["xcresult"]).hexdigest(),
         },
         "g4": {
             "artifact": artifact_bundle(sources["g4"]),
             "desktop": copy.deepcopy(inputs["desktop"]),
-            "expires_at": "2026-08-31T00:00:00Z",
-            "issued_at": "2026-08-01T00:00:00Z",
+            "expires_at": "2026-08-16T23:31:00Z",
+            "issued_at": "2026-08-09T23:00:00Z",
             "runtime": copy.deepcopy(inputs["runtime"]),
             "status": "passed",
             "tps_run_sha256": hashlib.sha256(TEST_SOURCE_BYTES["tps-run"]).hexdigest(),
@@ -702,9 +784,9 @@ def make_evidence(*, mode: str = RELEASE_ENABLED_MODE) -> dict[str, object]:
             },
             "artifact": artifact_bundle(sources["g5"]),
             "desktop": copy.deepcopy(inputs["desktop"]),
-            "expires_at": "2026-08-16T00:00:00Z",
+            "expires_at": "2026-08-16T23:31:00Z",
             "ios": copy.deepcopy(inputs["ios"]),
-            "issued_at": "2026-08-09T00:00:00Z",
+            "issued_at": "2026-08-09T23:31:00Z",
             "proxy_trace_sha256": hashlib.sha256(TEST_SOURCE_BYTES["proxy-trace"]).hexdigest(),
             "runtime": copy.deepcopy(inputs["runtime"]),
             "status": "passed",
@@ -778,6 +860,8 @@ def test_materials(evidence: dict[str, object]) -> tuple[dict[str, bytes], dict[
                 raw = task_manifest_bytes(task_for_gate[gate_name], evidence["release_inputs"])
             elif role == "merge-fixture":
                 raw = (ROOT / "sync-fixtures/floorp-notes/floorp-notes-merge-v1.json").read_bytes()
+            elif role == "g4-attestation-source":
+                raw = g4_attestation_bytes(evidence["release_inputs"])
             elif kind == "github-actions-run":
                 raw = canonical_bytes(
                     actions_run_payload(
@@ -785,10 +869,17 @@ def test_materials(evidence: dict[str, object]) -> tuple[dict[str, bytes], dict[
                         source["run_id"],
                         source["workflow_path"],
                         source["head_sha"],
-                        event="push" if gate_name == "g3" else "workflow_dispatch",
+                        event=(
+                            "push"
+                            if role in ("ci-run", "g4-attestation-ci-run")
+                            and gate_name in ("g3", "g4")
+                            else "workflow_dispatch"
+                        ),
                         head_branch="main",
                     )
                 )
+            elif kind == "github-actions-artifact":
+                raw = TEST_SOURCE_BYTES["xcresult"]
             else:
                 raw = TEST_SOURCE_BYTES[role]
             if kind == "local-file":
@@ -903,6 +994,8 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         *,
         prerelease: bool,
         immutable: bool,
+        expected_published_at: str = "2026-08-08T05:41:30Z",
+        published_at: str = "2026-08-08T05:41:30Z",
     ) -> str:
         raw = TEST_SOURCE_BYTES["mozilla-xcframework"]
         source = release_asset_source(
@@ -914,6 +1007,7 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         )
         source["release_prerelease"] = True
         source["release_immutable"] = True
+        source["release_published_at"] = expected_published_at
         release = {
             "assets": [
                 {
@@ -925,6 +1019,7 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
             "id": source["release_id"],
             "immutable": immutable,
             "prerelease": prerelease,
+            "published_at": published_at,
             "tag_name": source["release_tag"],
         }
         with (
@@ -1009,8 +1104,15 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
                     test_gh_bin=self.mock_gh,
                     test_gh_environment={"MOCK_GH_SCENARIO": gh_scenario},
                     test_remote_artifacts=remote_artifacts,
+                    test_xcresult_results={
+                        (
+                            "FloorpNotesSyncEngineSelectionTests/"
+                            "testG4AttestationBindsTask18Evidence()"
+                        ): "Passed"
+                    },
                     test_g6_trust_bundle=g6_trust_bundle,
                     test_ssh_keygen=SSH_KEYGEN if g6_trust_bundle is not None else None,
+                    test_expected_ios_build_number=release_inputs()["ios"]["build_number"],
                 )
             return subprocess.CompletedProcess(
                 command,
@@ -1142,6 +1244,32 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("Desktop build number", result.stderr)
 
+    def test_ios_build_number_is_bound_to_reviewed_floorp_release_config(self):
+        evidence = make_production_qa_evidence()
+        evidence["release_inputs"]["ios"]["build_number"] = "999"
+        evidence["gates"]["g3"]["candidate"] = copy.deepcopy(
+            evidence["release_inputs"]["ios"]
+        )
+        rehash(evidence)
+        result = self.run_validator(evidence)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("FloorpRelease build number", result.stderr)
+
+    def test_floorp_release_build_number_authority_is_exact(self):
+        configuration = ROOT / "firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
+        self.assertEqual(
+            VALIDATOR_MODULE.load_floorp_release_build_number(configuration),
+            "4",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            ambiguous = Path(temporary) / "FloorpRelease.xcconfig"
+            ambiguous.write_text(
+                "FLOORP_BUILD_NUMBER = 4\nFLOORP_BUILD_NUMBER = 5\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "not exact"):
+                VALIDATOR_MODULE.load_floorp_release_build_number(ambiguous)
+
     def test_pinned_prerelease_immutable_release_asset_is_accepted(self):
         expected = hashlib.sha256(TEST_SOURCE_BYTES["mozilla-xcframework"]).hexdigest()
         self.assertEqual(
@@ -1156,6 +1284,212 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
     def test_mutable_release_cannot_replace_pinned_immutable_release(self):
         with self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "immutable"):
             self.verify_test_release_asset(prerelease=True, immutable=False)
+
+    def test_release_asset_publication_time_must_match_live_release(self):
+        with self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "published"):
+            self.verify_test_release_asset(
+                prerelease=True,
+                immutable=True,
+                expected_published_at="2026-08-10T00:00:00Z",
+                published_at="2026-08-08T05:41:30Z",
+            )
+
+    def test_xcresult_artifact_time_must_match_live_artifact(self):
+        inputs = release_inputs()
+        raw = TEST_SOURCE_BYTES["xcresult"]
+        source = actions_artifact_source(
+            "xcresult",
+            inputs["ios"]["repository"],
+            400000003,
+            500000003,
+            "floorp-notes-sync-xcresult",
+            inputs["ios"]["source_sha"],
+            raw,
+        )
+        run = actions_run_payload(
+            source["repository"],
+            source["run_id"],
+            ".github/workflows/ci.yml",
+            source["head_sha"],
+            event="push",
+            head_branch="main",
+        )
+        run["path"] = f".github/workflows/ci.yml@{source['head_sha']}"
+        run["repository"] = {"full_name": source["repository"]}
+        artifact = {
+            "created_at": "2026-08-09T23:32:00Z",
+            "expired": False,
+            "expires_at": source["artifact_expires_at"],
+            "id": source["artifact_id"],
+            "name": source["artifact_name"],
+            "workflow_run": {"id": source["run_id"]},
+        }
+        with (
+            mock.patch.object(VALIDATOR_MODULE, "gh_api_json", side_effect=[run, artifact]),
+            mock.patch.object(
+                VALIDATOR_MODULE,
+                "gh_api_download_digest",
+                return_value=source["sha256"],
+            ),
+            self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "created time"),
+        ):
+            VALIDATOR_MODULE.verify_github_actions_artifact(
+                source,
+                Path("/usr/bin/false"),
+                {},
+                "g3 xcresult",
+            )
+
+    def test_g4_attestation_xcresult_requires_selected_test_marker(self):
+        required_test = (
+            "FloorpNotesSyncEngineSelectionTests/"
+            "testG4AttestationBindsTask18Evidence()"
+        )
+        with self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "Passed"):
+            VALIDATOR_MODULE.validate_xcresult_archive(
+                io.BytesIO(synthetic_xcresult_zip(b"different test")),
+                "g4 attestation xcresult",
+                required_test=required_test,
+                test_results={},
+            )
+
+    def test_g4_attestation_marker_without_passed_result_node_is_rejected(self):
+        required_test = (
+            "FloorpNotesSyncEngineSelectionTests/"
+            "testG4AttestationBindsTask18Evidence()"
+        )
+        with self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "Passed"):
+            VALIDATOR_MODULE.validate_xcresult_archive(
+                io.BytesIO(synthetic_xcresult_zip(required_test.encode("utf-8"))),
+                "g4 attestation xcresult",
+                required_test=required_test,
+                test_results={required_test: "Failed"},
+            )
+
+    def test_xcresulttool_semantics_extract_exact_passed_test_node(self):
+        required_test = (
+            "FloorpNotesSyncEngineSelectionTests/"
+            "testG4AttestationBindsTask18Evidence()"
+        )
+        payload = {
+            "testNodes": [
+                {
+                    "children": [
+                        {
+                            "name": "testG4AttestationBindsTask18Evidence()",
+                            "nodeIdentifier": required_test,
+                            "nodeType": "Test Case",
+                            "result": "Passed",
+                        }
+                    ],
+                    "name": "FloorpCI",
+                    "nodeType": "Test Plan",
+                    "result": "Passed",
+                }
+            ]
+        }
+        completed = subprocess.CompletedProcess(
+            ["xcrun", "xcresulttool"],
+            0,
+            json.dumps(payload),
+            "",
+        )
+        archive = io.BytesIO(synthetic_xcresult_zip(b"no raw marker required"))
+        with mock.patch.object(VALIDATOR_MODULE.subprocess, "run", return_value=completed):
+            results = VALIDATOR_MODULE.xcresult_test_results(
+                archive,
+                "FloorpNotesSync.xcresult",
+                "g4 attestation xcresult",
+            )
+        self.assertEqual(results, {required_test: ["Passed"]})
+
+    def test_gate_timestamps_cannot_refresh_older_ci_runs(self):
+        for gate_name, days in (("g3", 7), ("g4", 30), ("g5", 7)):
+            with self.subTest(gate=gate_name):
+                evidence = make_evidence()
+                evidence["gates"][gate_name]["issued_at"] = "2026-08-10T00:01:00Z"
+                evidence["gates"][gate_name]["expires_at"] = (
+                    "2026-08-17T00:01:00Z" if days == 7 else "2026-09-09T00:01:00Z"
+                )
+                rehash(evidence)
+                result = self.run_validator(evidence)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("artifact time", result.stderr)
+
+    def test_g3_rerun_timestamp_cannot_refresh_older_xcresult(self):
+        evidence = make_production_qa_evidence()
+        gate = evidence["gates"]["g3"]
+        run_source = gate["artifact"]["sources"][1]
+        payload = actions_run_payload(
+            run_source["repository"],
+            run_source["run_id"],
+            run_source["workflow_path"],
+            run_source["head_sha"],
+            event="push",
+            head_branch="main",
+        )
+        payload["updated_at"] = "2026-08-10T00:01:00Z"
+        raw = canonical_bytes(payload)
+        run_source["sha256"] = hashlib.sha256(raw).hexdigest()
+        gate["issued_at"] = "2026-08-10T00:01:00Z"
+        gate["expires_at"] = "2026-08-17T00:01:00Z"
+        gate["artifact"]["sha256"] = digest({"sources": gate["artifact"]["sources"]})
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            remote_artifact_overrides={source_identity_key(run_source): raw},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("XCResult artifact time", result.stderr)
+
+    def test_g2_gate_timestamp_cannot_refresh_older_release(self):
+        evidence = make_production_qa_evidence()
+        evidence["gates"]["g2"]["issued_at"] = "2026-08-10T00:01:00Z"
+        evidence["gates"]["g2"]["expires_at"] = "2026-09-09T00:01:00Z"
+        rehash(evidence)
+        result = self.run_validator(evidence)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("artifact time", result.stderr)
+
+    def test_g4_local_summary_requires_external_attestation(self):
+        evidence = make_production_qa_evidence()
+        gate = evidence["gates"]["g4"]
+        source = next(
+            item
+            for item in gate["artifact"]["sources"]
+            if item["role"] == "xpcshell-run"
+        )
+        raw = canonical_bytes(
+            {
+                "failed": 0,
+                "passed": 999,
+                "secrets_retained": False,
+                "source_log_sha256": "e" * 64,
+            }
+        )
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        gate["xpcshell_run_sha256"] = source["sha256"]
+        gate["artifact"]["sha256"] = digest({"sources": gate["artifact"]["sources"]})
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("attestation", result.stderr)
+
+    def test_g4_requires_task18_execution_validator_approval(self):
+        evidence = make_production_qa_evidence()
+        gate = evidence["gates"]["g4"]
+        gate["artifact"]["sources"] = [
+            source
+            for source in gate["artifact"]["sources"]
+            if source["role"] != "task18-execution-verdict"
+        ]
+        gate["artifact"]["sha256"] = digest({"sources": gate["artifact"]["sources"]})
+        rehash(evidence)
+        result = self.run_validator(evidence)
+        self.assertEqual(result.returncode, 1, result.stderr)
 
     def test_legacy_repository_fixture_without_retrievable_artifacts_fails_closed(self):
         result = self.run_validator(
