@@ -28,13 +28,15 @@ not exist. The command creates it from the CLI OIDs and reviewed command list,
 verifies its recipe-declared digest, and publishes it with the evidence. The
 output and receipt are no-clobber files.
 
-G4 has the exact ordered roles ``task-manifest``, ``desktop-ci-run``,
-``runtime-ci-run``, ``g4-attestation-source``, ``g4-attestation-ci-run``,
+G4 has the exact ordered roles ``task-manifest``,
+``task18-execution-verdict``, ``desktop-ci-run``, ``runtime-ci-run``,
+``g4-attestation-source``, ``g4-attestation-ci-run``,
 ``g4-attestation-xcresult``, ``xpcshell-run``, and ``tps-run``. Its canonical
-attestation source binds the Task 18 and summary digests plus the exact
-Desktop/Runtime producer identities. The attestation run and XCResult
-descriptors must be exact G3 descriptors with only their roles changed, and
-the XCResult must contain the selected FloorpCI attestation test identifier.
+attestation source binds the Task 18 manifest, execution verdict, summary
+digests, and exact Desktop/Runtime producer identities. The attestation run
+and XCResult descriptors must be exact G3 descriptors with only their roles
+changed. The XCResult is parsed by xcresulttool and must have one or more
+Passed nodes for the selected FloorpCI attestation test identifier.
 
 Example::
 
@@ -78,9 +80,9 @@ G4_ATTESTATION_TEST = (
     "ClientTests/FloorpNotesSyncEngineSelectionTests/"
     "testG4AttestationBindsTask18Evidence()"
 )
-G4_ATTESTATION_XCRESULT_MARKER = (
-    b"FloorpNotesSyncEngineSelectionTests/"
-    b"testG4AttestationBindsTask18Evidence()"
+G4_ATTESTATION_XCRESULT_TEST = (
+    "FloorpNotesSyncEngineSelectionTests/"
+    "testG4AttestationBindsTask18Evidence()"
 )
 GATE_SOURCE_ROLES = {
     "g1": (
@@ -102,6 +104,7 @@ GATE_SOURCE_ROLES = {
     "g3": ("integration-receipt", "ci-run", "xcresult"),
     "g4": (
         "task-manifest",
+        "task18-execution-verdict",
         "desktop-ci-run",
         "runtime-ci-run",
         "g4-attestation-source",
@@ -249,17 +252,18 @@ def read_material(
                 raw.extend(chunk)
         actual_digest = sha256.hexdigest()
         if descriptor.get("kind") == "github-actions-artifact":
+            required_test = (
+                VALIDATOR.G4_ATTESTATION_XCRESULT_TEST
+                if descriptor.get("role") == "g4-attestation-xcresult"
+                else None
+            )
             os.lseek(descriptor_fd, 0, os.SEEK_SET)
             with os.fdopen(os.dup(descriptor_fd), "rb") as archive:
                 validator_call(
                     VALIDATOR.validate_xcresult_archive,
                     archive,
                     label,
-                    required_marker=(
-                        G4_ATTESTATION_XCRESULT_MARKER
-                        if descriptor.get("role") == "g4-attestation-xcresult"
-                        else None
-                    ),
+                    required_test=required_test,
                 )
         after = os.fstat(descriptor_fd)
         require(stable_identity(before) == stable_identity(after), f"{label}: source changed while read")
@@ -350,8 +354,8 @@ def validate_recipe_root(recipe: dict[str, Any], merged_oid: str) -> None:
     require(
         getattr(VALIDATOR, "G4_ATTESTATION_PATH", None) == G4_ATTESTATION_PATH
         and getattr(VALIDATOR, "G4_ATTESTATION_TEST", None) == G4_ATTESTATION_TEST
-        and getattr(VALIDATOR, "G4_ATTESTATION_XCRESULT_MARKER", None)
-        == G4_ATTESTATION_XCRESULT_MARKER,
+        and getattr(VALIDATOR, "G4_ATTESTATION_XCRESULT_TEST", None)
+        == G4_ATTESTATION_XCRESULT_TEST,
         "recipe: repository validator G4 attestation contract drifted",
     )
     schema_version = recipe.get("schema_version")

@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from scripts.ci.tests import test_validate_floorp_notes_sync_release as fixtures
 
@@ -25,12 +26,13 @@ G4_ATTESTATION_TEST = (
     "ClientTests/FloorpNotesSyncEngineSelectionTests/"
     "testG4AttestationBindsTask18Evidence()"
 )
-G4_ATTESTATION_XCRESULT_MARKER = (
-    b"FloorpNotesSyncEngineSelectionTests/"
-    b"testG4AttestationBindsTask18Evidence()"
+G4_ATTESTATION_XCRESULT_TEST = (
+    "FloorpNotesSyncEngineSelectionTests/"
+    "testG4AttestationBindsTask18Evidence()"
 )
 G4_SOURCE_ROLES = (
     "task-manifest",
+    "task18-execution-verdict",
     "desktop-ci-run",
     "runtime-ci-run",
     "g4-attestation-source",
@@ -62,12 +64,14 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
         self.evidence_fixture = fixtures.make_production_qa_evidence()
         self.evidence_fixture["release_inputs"]["ios"]["build_number"] = "4"
         local_materials, remote_materials = fixtures.test_materials(self.evidence_fixture)
-        if tuple(
-            source["role"]
-            for source in self.evidence_fixture["gates"]["g4"]["artifact"]["sources"]
-        ) != G4_SOURCE_ROLES:
-            self.add_g4_attestation_sources(remote_materials)
-        self.bind_xcresult_to_attestation_test(remote_materials)
+        self.assertEqual(
+            tuple(
+                source["role"]
+                for source in self.evidence_fixture["gates"]["g4"]["artifact"]["sources"]
+            ),
+            G4_SOURCE_ROLES,
+        )
+        self.xcresult_results = {G4_ATTESTATION_XCRESULT_TEST: ["Passed", "Passed"]}
         attestation_source = next(
             source
             for source in self.evidence_fixture["gates"]["g4"]["artifact"]["sources"]
@@ -115,82 +119,6 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
                 )
             self.recipe["gates"][gate_name] = gate_recipe
 
-    def add_g4_attestation_sources(self, remote_materials: dict[str, bytes]) -> None:
-        inputs = self.evidence_fixture["release_inputs"]
-        g3_sources = self.evidence_fixture["gates"]["g3"]["artifact"]["sources"]
-        g4_gate = self.evidence_fixture["gates"]["g4"]
-        g4_sources = g4_gate["artifact"]["sources"]
-        task_manifest, desktop_run, runtime_run, xpcshell, tps = g4_sources
-        attestation = {
-            "desktop": {
-                "merged_sha": inputs["desktop"]["source_sha"],
-                "run_head_sha": desktop_run["head_sha"],
-                "run_id": desktop_run["run_id"],
-                "workflow_path": desktop_run["workflow_path"],
-            },
-            "floorpci_test": G4_ATTESTATION_TEST,
-            "runtime": {
-                "merged_sha": inputs["runtime"]["source_sha"],
-                "run_head_sha": runtime_run["head_sha"],
-                "run_id": runtime_run["run_id"],
-                "tree_sha": inputs["runtime"]["tree_sha"],
-                "workflow_path": runtime_run["workflow_path"],
-            },
-            "schema_version": 1,
-            "summaries": {
-                "task_manifest_sha256": task_manifest["sha256"],
-                "tps_sha256": tps["sha256"],
-                "xpcshell_sha256": xpcshell["sha256"],
-            },
-            "task_id": 18,
-        }
-        attestation_raw = fixtures.canonical_bytes(attestation)
-        attestation_source = fixtures.repository_source(
-            "g4-attestation-source",
-            inputs["ios"]["repository"],
-            inputs["ios"]["source_sha"],
-            G4_ATTESTATION_PATH,
-            "metadata-json",
-            attestation_raw,
-        )
-        attestation_ci = copy.deepcopy(g3_sources[1])
-        attestation_ci["role"] = "g4-attestation-ci-run"
-        attestation_xcresult = copy.deepcopy(g3_sources[2])
-        attestation_xcresult["role"] = "g4-attestation-xcresult"
-        g4_gate["artifact"]["sources"] = [
-            task_manifest,
-            desktop_run,
-            runtime_run,
-            attestation_source,
-            attestation_ci,
-            attestation_xcresult,
-            xpcshell,
-            tps,
-        ]
-        g4_gate["issued_at"] = "2026-08-09T23:00:00Z"
-        g4_gate["expires_at"] = "2026-08-16T23:31:00Z"
-        remote_materials[fixtures.source_identity_key(attestation_source)] = attestation_raw
-        remote_materials[fixtures.source_identity_key(attestation_ci)] = remote_materials[
-            fixtures.source_identity_key(g3_sources[1])
-        ]
-        remote_materials[fixtures.source_identity_key(attestation_xcresult)] = remote_materials[
-            fixtures.source_identity_key(g3_sources[2])
-        ]
-
-    def bind_xcresult_to_attestation_test(self, remote_materials: dict[str, bytes]) -> None:
-        marker_archive = fixtures.synthetic_xcresult_zip(G4_ATTESTATION_XCRESULT_MARKER)
-        for gate_name, role in (
-            ("g3", "xcresult"),
-            ("g4", "g4-attestation-xcresult"),
-        ):
-            source = next(
-                item
-                for item in self.evidence_fixture["gates"][gate_name]["artifact"]["sources"]
-                if item["role"] == role
-            )
-            source["sha256"] = hashlib.sha256(marker_archive).hexdigest()
-            remote_materials[fixtures.source_identity_key(source)] = marker_archive
-
     def tearDown(self) -> None:
         self.temporary_owner.cleanup()
 
@@ -237,12 +165,23 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
         base_oid: str = BASE_OID,
         reviewed_head_oid: str = REVIEWED_HEAD_OID,
         merged_oid: str | None = None,
+        test_xcresult_results: dict[str, str | list[str]] | None = None,
     ) -> tuple[int, str, str]:
         if merged_oid is None:
             merged_oid = self.recipe["release_inputs"]["ios"]["source_sha"]
+        if test_xcresult_results is None:
+            test_xcresult_results = self.xcresult_results
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        with (
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+            mock.patch.object(
+                ASSEMBLER.VALIDATOR,
+                "xcresult_test_results",
+                return_value=test_xcresult_results,
+            ),
+        ):
             return_code = ASSEMBLER.main(
                 [
                     "--recipe",
@@ -294,6 +233,7 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
                 test_gh_bin=mock_gh,
                 test_gh_environment={"MOCK_GH_SCENARIO": "success"},
                 test_remote_artifacts=self.remote_materials,
+                test_xcresult_results=self.xcresult_results,
             )
         self.assertEqual(return_code, 0, stderr.getvalue())
         self.assertIn("APPROVE", stdout.getvalue())
@@ -353,6 +293,24 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
         g3_sources = evidence["gates"]["g3"]["artifact"]["sources"]
         g4_sources = evidence["gates"]["g4"]["artifact"]["sources"]
         self.assertEqual(tuple(source["role"] for source in g4_sources), G4_SOURCE_ROLES)
+        verdict_source = next(
+            source for source in g4_sources if source["role"] == "task18-execution-verdict"
+        )
+        self.assertEqual(
+            self.g4_attestation["summaries"]["execution_verdict_sha256"],
+            verdict_source["sha256"],
+        )
+        self.assertEqual(
+            json.loads((self.directory / verdict_source["path"]).read_bytes()),
+            {
+                "errors": [],
+                "tasks": [
+                    {"completion_claim_count": 1, "id": 16, "state": "completed"},
+                    {"completion_claim_count": 1, "id": 18, "state": "completed"},
+                ],
+                "verdict": "APPROVE",
+            },
+        )
         g3_ci = next(source for source in g3_sources if source["role"] == "ci-run")
         g3_xcresult = next(source for source in g3_sources if source["role"] == "xcresult")
         g4_ci = next(
@@ -374,13 +332,13 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
     def test_rejects_malformed_or_unbound_g4_external_attestation(self):
         summary_mismatch = copy.deepcopy(self.recipe)
         payload = copy.deepcopy(self.g4_attestation)
-        payload["summaries"]["xpcshell_sha256"] = "0" * 64
+        payload["summaries"]["execution_verdict_sha256"] = "0" * 64
         self.replace_captured_bytes(
             summary_mismatch,
             "g4",
             "g4-attestation-source",
             fixtures.canonical_bytes(payload),
-            "g4-attestation-summary-mismatch.json",
+            "g4-attestation-verdict-digest-mismatch.json",
         )
         self.assert_recipe_rejected(summary_mismatch, contains="attestation")
 
@@ -400,6 +358,34 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
             "path"
         ] = "docs/not-the-g4-attestation.json"
         self.assert_recipe_rejected(wrong_source, contains="attestation source")
+
+    def test_rejects_nonapprove_task18_execution_verdict_even_when_rehashed_and_attested(self):
+        recipe = copy.deepcopy(self.recipe)
+        verdict_entry = self.source_entry(recipe, "g4", "task18-execution-verdict")
+        verdict = {
+            "errors": ["task 18 failed"],
+            "tasks": [
+                {"completion_claim_count": 1, "id": 16, "state": "completed"},
+                {"completion_claim_count": 0, "id": 18, "state": "failed"},
+            ],
+            "verdict": "REJECT",
+        }
+        verdict_raw = fixtures.canonical_bytes(verdict)
+        verdict_entry["descriptor"]["sha256"] = hashlib.sha256(verdict_raw).hexdigest()
+        self.write_material(verdict_entry["bytes_path"], verdict_raw)
+
+        attestation = copy.deepcopy(self.g4_attestation)
+        attestation["summaries"]["execution_verdict_sha256"] = verdict_entry["descriptor"][
+            "sha256"
+        ]
+        self.replace_captured_bytes(
+            recipe,
+            "g4",
+            "g4-attestation-source",
+            fixtures.canonical_bytes(attestation),
+            "g4-attestation-rehashed-reject.json",
+        )
+        self.assert_recipe_rejected(recipe, contains="exact APPROVE")
 
     def test_rejects_g4_attestation_descriptors_not_identical_to_g3(self):
         run_mismatch = copy.deepcopy(self.recipe)
@@ -425,23 +411,21 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
         ]["artifact_id"] += 1
         self.assert_recipe_rejected(xcresult_mismatch, contains="role-only")
 
-    def test_rejects_g4_attestation_xcresult_without_selected_floorpci_test(self):
-        recipe = copy.deepcopy(self.recipe)
-        unbound_archive = fixtures.synthetic_xcresult_zip(b"different selected test")
-        shared_path = "captures/g4-attestation-unbound-xcresult.bin"
-        for gate_name, role in (
-            ("g3", "xcresult"),
-            ("g4", "g4-attestation-xcresult"),
-        ):
-            entry = self.replace_captured_bytes(
-                recipe,
-                gate_name,
-                role,
-                unbound_archive,
-                "g4-attestation-unbound-xcresult.bin",
-            )
-            entry["bytes_path"] = shared_path
-        self.assert_recipe_rejected(recipe, contains="required test marker")
+    def test_rejects_failed_or_missing_semantic_g4_attestation_xcresult(self):
+        self.write_recipe()
+        cases = {
+            "failed": {G4_ATTESTATION_XCRESULT_TEST: ["Failed"]},
+            "mixed": {G4_ATTESTATION_XCRESULT_TEST: ["Passed", "Failed"]},
+            "missing": {},
+        }
+        for name, results in cases.items():
+            with self.subTest(name=name):
+                return_code, _, stderr = self.run_assembler(
+                    test_xcresult_results=results
+                )
+                self.assertNotEqual(return_code, 0)
+                self.assertIn("Passed result nodes", stderr)
+                self.assertFalse(self.output.exists())
 
     def test_rejects_noncanonical_recipe_and_non_production_mode(self):
         self.write_recipe(canonical=False)
@@ -466,6 +450,13 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
             if entry["descriptor"]["role"] != "g4-attestation-source"
         ]
         cases.append(("missing-attestation", missing_attestation))
+        missing_verdict = copy.deepcopy(self.recipe)
+        missing_verdict["gates"]["g4"]["sources"] = [
+            entry
+            for entry in missing_verdict["gates"]["g4"]["sources"]
+            if entry["descriptor"]["role"] != "task18-execution-verdict"
+        ]
+        cases.append(("missing-verdict", missing_verdict))
         reordered = copy.deepcopy(self.recipe)
         reordered["gates"]["g2"]["sources"][0:2] = reversed(
             reordered["gates"]["g2"]["sources"][0:2]
@@ -476,6 +467,11 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
             reordered_attestation["gates"]["g4"]["sources"][3:5]
         )
         cases.append(("reordered-attestation", reordered_attestation))
+        reordered_verdict = copy.deepcopy(self.recipe)
+        reordered_verdict["gates"]["g4"]["sources"][0:2] = reversed(
+            reordered_verdict["gates"]["g4"]["sources"][0:2]
+        )
+        cases.append(("reordered-verdict", reordered_verdict))
         extra = copy.deepcopy(self.recipe)
         extra_entry = copy.deepcopy(extra["gates"]["g1"]["sources"][-1])
         extra_entry["descriptor"]["role"] = "unexpected-source"
@@ -658,6 +654,9 @@ class FloorpNotesSyncProductionQaEvidenceAssemblerTests(unittest.TestCase):
         self.assertNotIn("scripts.ci.tests", source)
         self.assertNotIn("floorp-notes-sync-g1-g4-production-qa-valid.json", source)
         self.assertNotIn("TEST_SOURCE_BYTES", source)
+        self.assertNotIn("test_xcresult_results", source)
+        self.assertNotIn("required_marker", source)
+        self.assertNotIn("G4_ATTESTATION_XCRESULT_MARKER", source)
 
 
 if __name__ == "__main__":
