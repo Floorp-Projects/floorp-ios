@@ -26,7 +26,7 @@ from urllib.parse import quote
 EXPECTED_REPOSITORY = "Floorp-Projects/floorp-ios"
 EXPECTED_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-validation-clock.yml"
 EXPECTED_SCHEMA_ID = "https://floorp.app/schemas/floorp-notes-sync-release-evidence-v1.json"
-EXPECTED_SCHEMA_SHA256 = "1ed700057908ad12ca0a1190da479030b5b40d2a6a5451477273d53e070ddcce"
+EXPECTED_SCHEMA_SHA256 = "57da6b70fb1ea16dc2908e2e9fcf4abbcfd8326948e408bd85ff1f4826583f8a"
 PRODUCTION_GH_BIN = Path("/opt/homebrew/bin/gh")
 PRODUCTION_GH_SHA256 = "6a2ab5fa89553eac1f0df50a26a5eaeea9a665d8971f5a51b32487b72c708f5c"
 PRODUCTION_GH_SIZE = 38_983_666
@@ -134,7 +134,7 @@ GATE_SOURCE_ROLES = {
         "sha256sums",
         "swift-components",
     ),
-    "g3": ("task-manifest", "ci-run", "xcresult"),
+    "g3": ("integration-receipt", "ci-run", "xcresult"),
     "g4": (
         "task-manifest",
         "desktop-ci-run",
@@ -150,7 +150,7 @@ GATE_SOURCE_ROLES = {
         "proxy-trace",
     ),
 }
-TASK_BY_GATE = {"g1": 16, "g2": 17, "g3": 19, "g4": 18, "g5": 20}
+TASK_BY_GATE = {"g1": 16, "g2": 17, "g4": 18, "g5": 20}
 ASSET_ROLE_TO_INPUT = {
     "focus-xcframework": ("FocusRustComponents.xcframework.zip", "focus_xcframework_sha256"),
     "mozilla-xcframework": ("MozillaRustComponents.xcframework.zip", "mozilla_xcframework_sha256"),
@@ -1415,6 +1415,7 @@ def normalized_artifact_run(run: dict[str, Any]) -> dict[str, Any]:
         "conclusion": run.get("conclusion"),
         "created_at": run.get("created_at"),
         "event": run.get("event"),
+        "head_branch": run.get("head_branch"),
         "head_sha": run.get("head_sha"),
         "id": run.get("id"),
         "repository": live_repository_name(run),
@@ -1645,6 +1646,36 @@ def manifest_repository(manifest: dict[str, Any], name: str, label: str) -> dict
     return matches[0]
 
 
+def validate_terminal_commands(
+    record: dict[str, Any],
+    label: str,
+    *,
+    require_identity: bool = False,
+) -> None:
+    commands = record.get("commands")
+    check(isinstance(commands, list) and bool(commands), f"{label}: commands must be non-empty")
+    for index, command in enumerate(commands):
+        check(isinstance(command, dict), f"{label}: command {index} is malformed")
+        if require_identity:
+            argv = command.get("argv")
+            check(
+                isinstance(argv, list)
+                and bool(argv)
+                and all(isinstance(argument, str) and bool(argument) for argument in argv),
+                f"{label}: command {index} argv is malformed",
+            )
+            check(
+                set(command) == {"argv", "exit_code", "terminal"},
+                f"{label}: command {index} fields are not exact",
+            )
+        exit_code = command.get("exit_code")
+        check(
+            isinstance(exit_code, int) and not isinstance(exit_code, bool) and exit_code == 0,
+            f"{label}: command {index} did not pass",
+        )
+        check(command.get("terminal") is True, f"{label}: command {index} is nonterminal")
+
+
 def validate_task_manifest(
     gate_name: str,
     manifest: Any,
@@ -1654,12 +1685,7 @@ def validate_task_manifest(
     check(isinstance(manifest, dict), f"{label}: root must be an object")
     check(manifest.get("task_id") == TASK_BY_GATE[gate_name], f"{label}: wrong task ID")
     check(manifest.get("state") == "completed", f"{label}: task is not completed")
-    commands = manifest.get("commands")
-    check(isinstance(commands, list) and bool(commands), f"{label}: commands must be non-empty")
-    for index, command in enumerate(commands):
-        check(isinstance(command, dict), f"{label}: command {index} is malformed")
-        check(command.get("exit_code") == 0, f"{label}: command {index} did not pass")
-        check(command.get("terminal") is True, f"{label}: command {index} is nonterminal")
+    validate_terminal_commands(manifest, label)
     if gate_name == "g1":
         floorp = manifest_repository(manifest, "Floorp", label)
         check(floorp.get("merged_oid") == TODO16_MERGED_SHA, f"{label}: Todo 16 merged provenance mismatch")
@@ -1668,12 +1694,6 @@ def validate_task_manifest(
         check(
             services.get("merged_oid") == inputs["application_services"]["source_sha"],
             f"{label}: Application Services provenance mismatch",
-        )
-    elif gate_name == "g3":
-        ios = manifest_repository(manifest, "floorp-ios", label)
-        check(
-            inputs["ios"]["source_sha"] in (ios.get("head_oid"), ios.get("merged_oid")),
-            f"{label}: iOS provenance mismatch",
         )
     elif gate_name == "g4":
         desktop = manifest_repository(manifest, "Floorp", label)
@@ -1687,6 +1707,45 @@ def validate_task_manifest(
             f"{label}: iOS provenance mismatch",
         )
     return manifest
+
+
+def validate_integration_receipt(
+    receipt: Any,
+    inputs: dict[str, Any],
+) -> dict[str, Any]:
+    label = "G3 integration receipt"
+    check(isinstance(receipt, dict), f"{label}: root must be an object")
+    check(
+        set(receipt) == {"commands", "repositories", "schema_version", "state", "task_id"},
+        f"{label}: root fields are not exact",
+    )
+    schema_version = receipt.get("schema_version")
+    check(
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version == 1,
+        f"{label}: schema version mismatch",
+    )
+    check(receipt.get("task_id") == 19, f"{label}: wrong task ID")
+    check(receipt.get("state") == "integration_complete", f"{label}: state is not integration_complete")
+    validate_terminal_commands(receipt, label, require_identity=True)
+    repositories = receipt.get("repositories")
+    check(isinstance(repositories, list) and len(repositories) == 1, f"{label}: repository set is not exact")
+    ios = manifest_repository(receipt, "floorp-ios", label)
+    check(
+        set(ios) == {"base_oid", "head_oid", "merged_oid", "name"},
+        f"{label}: repository fields are not exact",
+    )
+    for field in ("base_oid", "head_oid", "merged_oid"):
+        check(
+            isinstance(ios.get(field), str) and re.fullmatch(r"[0-9a-f]{40}", ios[field]) is not None,
+            f"{label}: {field} is not a Git SHA",
+        )
+    check(
+        ios["merged_oid"] == inputs["ios"]["source_sha"],
+        f"{label}: merged iOS provenance mismatch",
+    )
+    return receipt
 
 
 def require_source(
@@ -1726,7 +1785,19 @@ def validate_gate_source_semantics(
     payloads: dict[str, Any | None],
 ) -> None:
     label = f"{gate_name} retrievable artifact provenance"
-    require_source(sources, "task-manifest", ("local-file",), "metadata-json", label)
+    provenance_role = "integration-receipt" if gate_name == "g3" else "task-manifest"
+    provenance_source = require_source(
+        sources,
+        provenance_role,
+        ("local-file",),
+        "metadata-json",
+        label,
+    )
+    if gate_name == "g3":
+        check(
+            provenance_source["path"] == "artifacts/task-19-integration-receipt.json",
+            f"{label}: integration receipt path is not canonical",
+        )
     if gate_name == "g1":
         todo16 = require_source(sources, "todo16-contract", ("github-repository-file",), "metadata-json", label)
         check(
@@ -1828,6 +1899,12 @@ def validate_gate_source_semantics(
             )
     elif gate_name == "g3":
         ci_run = require_source(sources, "ci-run", ("github-actions-run",), "metadata-json", label)
+        ci_run_payload = payloads["ci-run"]
+        check(isinstance(ci_run_payload, dict), f"{label}: iOS CI run metadata is malformed")
+        check(
+            (ci_run_payload.get("event"), ci_run_payload.get("head_branch")) == ("push", "main"),
+            f"{label}: iOS CI run is not a main push",
+        )
         check(
             (ci_run["repository"], ci_run["head_sha"], ci_run["workflow_path"])
             == (inputs["ios"]["repository"], inputs["ios"]["source_sha"], ".github/workflows/ci.yml"),
@@ -1863,6 +1940,12 @@ def validate_gate_source_semantics(
         runtime_manifest = manifest_repository(manifest, "Floorp-Runtime", label)
         desktop_run = require_source(sources, "desktop-ci-run", ("github-actions-run",), "metadata-json", label)
         runtime_run = require_source(sources, "runtime-ci-run", ("github-actions-run",), "metadata-json", label)
+        desktop_run_payload = payloads["desktop-ci-run"]
+        check(isinstance(desktop_run_payload, dict), f"{label}: Desktop CI run metadata is malformed")
+        check(
+            inputs["desktop"]["build_number"] == str(desktop_run_payload.get("id")),
+            f"{label}: Desktop build number is not bound to the CI run ID",
+        )
         check(
             (desktop_run["repository"], desktop_run["head_sha"], desktop_run["workflow_path"])
             == (
@@ -1977,7 +2060,10 @@ def validate_gate_artifacts(
                 test_remote_artifacts,
                 f"{gate_name} {source['role']}",
             )
-        manifest = validate_task_manifest(gate_name, payloads["task-manifest"], inputs)
+        if gate_name == "g3":
+            manifest = validate_integration_receipt(payloads["integration-receipt"], inputs)
+        else:
+            manifest = validate_task_manifest(gate_name, payloads["task-manifest"], inputs)
         validate_gate_source_semantics(gate_name, gate, sources, manifest, inputs, payloads)
 
 

@@ -2449,6 +2449,40 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
             )
         )
 
+        var terminalManifestRoot = root
+        var terminalManifestGates = try XCTUnwrap(
+            terminalManifestRoot["gates"] as? [String: Any]
+        )
+        var terminalManifestG3 = try XCTUnwrap(
+            terminalManifestGates["g3"] as? [String: Any]
+        )
+        var terminalManifestArtifact = try XCTUnwrap(
+            terminalManifestG3["artifact"] as? [String: Any]
+        )
+        var terminalManifestSources = try XCTUnwrap(
+            terminalManifestArtifact["sources"] as? [[String: Any]]
+        )
+        terminalManifestSources[0]["role"] = "task-manifest"
+        terminalManifestArtifact["sources"] = terminalManifestSources
+        terminalManifestArtifact["sha256"] = sha256(
+            try canonicalEvidenceData(["sources": terminalManifestSources])
+        )
+        terminalManifestG3["artifact"] = terminalManifestArtifact
+        terminalManifestGates["g3"] = terminalManifestG3
+        terminalManifestRoot["gates"] = terminalManifestGates
+        try rebindEvidenceDigests(&terminalManifestRoot)
+        let terminalManifestEvidence = try canonicalEvidenceData(terminalManifestRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(
+                    evidence: terminalManifestEvidence,
+                    root: terminalManifestRoot
+                ),
+                evidenceData: terminalManifestEvidence,
+                now: trustedNow
+            )
+        )
+
         let (_, releaseRoot) = try compiledEvidenceFixture(named: "floorp-notes-sync-g1-g5-valid")
         var mixedRoot = root
         var mixedGates = try XCTUnwrap(mixedRoot["gates"] as? [String: Any])
@@ -2817,7 +2851,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
         headSHA: String
     ) -> [[String: Any]] {
         [
-            localSource("task-manifest", policy: "metadata-json"),
+            localSource("integration-receipt", policy: "metadata-json"),
             actionsRunSource(
                 "ci-run",
                 repository: repository,

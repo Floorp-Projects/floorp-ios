@@ -1130,7 +1130,7 @@ enum FloorpNotesSyncReleaseGate {
                 "swift-components": releaseBinary,
             ],
             "g3": [
-                "task-manifest": localMetadata,
+                "integration-receipt": localMetadata,
                 "ci-run": actionsRun,
                 "xcresult": actionsResult,
             ],

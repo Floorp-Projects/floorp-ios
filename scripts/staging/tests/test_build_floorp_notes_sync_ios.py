@@ -734,6 +734,11 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         arguments = json.loads(self.last_clock_record.read_text())
         self.assertNotIn("--gh-bin", arguments)
         self.assertEqual(arguments.count("--output"), 1)
+        workflow_index = arguments.index("--workflow")
+        self.assertEqual(
+            arguments[workflow_index + 1],
+            "floorp-notes-sync-validation-clock.yml",
+        )
 
     def test_local_sources_are_snapshotted_for_build_and_publication(self):
         evidence, metadata, result_bundle = self.prepare_local_source_evidence()

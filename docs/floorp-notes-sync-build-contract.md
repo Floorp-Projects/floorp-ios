@@ -98,6 +98,20 @@ markers, including markers spanning read-chunk boundaries. Declared and
 observed cumulative uncompressed sizes are bounded before the artifact can
 satisfy a gate.
 
+G3 uses `artifacts/task-19-integration-receipt.json`, not the terminal Todo 19
+manifest. The receipt state is exactly `integration_complete`; it binds the
+successful terminal commands and squash-merged iOS commit while recording the
+reviewed head,
+without claiming Todo 19 completion before the production-QA build exists.
+Each receipt command has exactly `argv`, `exit_code`, and `terminal`; `argv` is
+a non-empty string array. The bound G3 CI run must be a `push` run whose
+`head_branch` is `main`, so feature-branch and manually dispatched runs cannot
+stand in for merged-main integration evidence.
+G4 uses the decimal successful Desktop GitHub Actions run ID as its build
+number, binding the Desktop build identity to the retrievable CI run source.
+The post-build clock dispatch passes the canonical workflow file name
+`floorp-notes-sync-validation-clock.yml` to the public clock client.
+
 ## App integration interface
 
 The generated xcconfig provides these build settings:

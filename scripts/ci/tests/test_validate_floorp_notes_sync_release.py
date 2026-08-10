@@ -184,11 +184,15 @@ def actions_run_payload(
     run_id: int,
     workflow_path: str,
     head_sha: str,
+    *,
+    event: str = "workflow_dispatch",
+    head_branch: str = "main",
 ) -> dict[str, object]:
     return {
         "conclusion": "success",
         "created_at": "2026-08-09T23:00:00Z",
-        "event": "workflow_dispatch",
+        "event": event,
+        "head_branch": head_branch,
         "head_sha": head_sha,
         "id": run_id,
         "repository": repository,
@@ -205,8 +209,20 @@ def actions_run_source(
     run_id: int,
     workflow_path: str,
     head_sha: str,
+    *,
+    event: str = "workflow_dispatch",
+    head_branch: str = "main",
 ) -> dict[str, object]:
-    raw = canonical_bytes(actions_run_payload(repository, run_id, workflow_path, head_sha))
+    raw = canonical_bytes(
+        actions_run_payload(
+            repository,
+            run_id,
+            workflow_path,
+            head_sha,
+            event=event,
+            head_branch=head_branch,
+        )
+    )
     return {
         "content_policy": "metadata-json",
         "head_sha": head_sha,
@@ -358,7 +374,7 @@ def release_inputs() -> dict[str, object]:
             "fixture_sha256": "2597e5311c7c4ea4bb9d6a806ffa183aae3b3bd7380893b664b02ac829d665fd",
         },
         "desktop": {
-            "build_number": "2026081001",
+            "build_number": "31338438952",
             "repository": "Floorp-Projects/Floorp",
             "source_sha": "fc244eed70248796fa92ff5821c6046ecd576e7e",
         },
@@ -458,9 +474,34 @@ def task_manifest_bytes(task_id: int, inputs: dict[str, object]) -> bytes:
     )
 
 
+def integration_receipt_bytes(inputs: dict[str, object]) -> bytes:
+    return canonical_bytes(
+        {
+            "commands": [
+                {
+                    "argv": ["verify", "task-19-integration"],
+                    "exit_code": 0,
+                    "terminal": True,
+                }
+            ],
+            "repositories": [
+                {
+                    "base_oid": "330870f9d6db91433afe1024ac8200f81d260a42",
+                    "head_oid": "af21d1a4f95eda87dabfaf3a0dfa0fbb89b7ccfb",
+                    "merged_oid": inputs["ios"]["source_sha"],
+                    "name": "floorp-ios",
+                }
+            ],
+            "schema_version": 1,
+            "state": "integration_complete",
+            "task_id": 19,
+        }
+    )
+
+
 def make_gate_sources(inputs: dict[str, object]) -> dict[str, list[dict[str, object]]]:
     fixture_raw = (ROOT / "sync-fixtures/floorp-notes/floorp-notes-merge-v1.json").read_bytes()
-    manifests = {task: task_manifest_bytes(task, inputs) for task in (16, 17, 18, 19, 20)}
+    manifests = {task: task_manifest_bytes(task, inputs) for task in (16, 17, 18, 20)}
     g1 = [
         local_source("task-manifest", "artifacts/task-16-manifest.json", "metadata-json", manifests[16]),
         repository_source(
@@ -517,13 +558,20 @@ def make_gate_sources(inputs: dict[str, object]) -> dict[str, list[dict[str, obj
         for role, name, asset_id in release_assets
     )
     g3 = [
-        local_source("task-manifest", "artifacts/task-19-manifest.json", "metadata-json", manifests[19]),
+        local_source(
+            "integration-receipt",
+            "artifacts/task-19-integration-receipt.json",
+            "metadata-json",
+            integration_receipt_bytes(inputs),
+        ),
         actions_run_source(
             "ci-run",
             inputs["ios"]["repository"],
             400000003,
             ".github/workflows/ci.yml",
             inputs["ios"]["source_sha"],
+            event="push",
+            head_branch="main",
         ),
         actions_artifact_source(
             "xcresult",
@@ -724,7 +772,9 @@ def test_materials(evidence: dict[str, object]) -> tuple[dict[str, bytes], dict[
         for source in gate["artifact"]["sources"]:
             role = source["role"]
             kind = source["kind"]
-            if role == "task-manifest":
+            if role == "integration-receipt":
+                raw = integration_receipt_bytes(evidence["release_inputs"])
+            elif role == "task-manifest":
                 raw = task_manifest_bytes(task_for_gate[gate_name], evidence["release_inputs"])
             elif role == "merge-fixture":
                 raw = (ROOT / "sync-fixtures/floorp-notes/floorp-notes-merge-v1.json").read_bytes()
@@ -735,6 +785,8 @@ def test_materials(evidence: dict[str, object]) -> tuple[dict[str, bytes], dict[
                         source["run_id"],
                         source["workflow_path"],
                         source["head_sha"],
+                        event="push" if gate_name == "g3" else "workflow_dispatch",
+                        head_branch="main",
                     )
                 )
             else:
@@ -907,6 +959,7 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         extra: list[str] | None = None,
         g6_trust_bundle: dict[str, bytes] | None = None,
         local_artifact_overrides: dict[str, bytes] | None = None,
+        remote_artifact_overrides: dict[str, bytes] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -924,6 +977,8 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
             local_artifacts, remote_artifacts = test_materials(canonical_test_evidence)
             if local_artifact_overrides:
                 local_artifacts.update(local_artifact_overrides)
+            if remote_artifact_overrides:
+                remote_artifacts.update(remote_artifact_overrides)
             for relative, raw in local_artifacts.items():
                 path = directory / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -980,6 +1035,112 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
     def test_valid_production_qa_g1_g4_evidence_passes(self):
         result = self.run_validator(make_production_qa_evidence())
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_g3_rejects_completed_terminal_manifest_as_integration_receipt(self):
+        evidence = make_production_qa_evidence()
+        completed_manifest = task_manifest_bytes(19, evidence["release_inputs"])
+        source = evidence["gates"]["g3"]["artifact"]["sources"][0]
+        source["sha256"] = hashlib.sha256(completed_manifest).hexdigest()
+        evidence["gates"]["g3"]["artifact"]["sha256"] = digest(
+            {"sources": evidence["gates"]["g3"]["artifact"]["sources"]}
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: completed_manifest},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("integration receipt", result.stderr)
+
+    def test_g3_rejects_non_main_non_push_ci_run(self):
+        evidence = make_production_qa_evidence()
+        source = evidence["gates"]["g3"]["artifact"]["sources"][1]
+        raw = canonical_bytes(
+            actions_run_payload(
+                source["repository"],
+                source["run_id"],
+                source["workflow_path"],
+                source["head_sha"],
+                event="workflow_dispatch",
+                head_branch="agent/floorp-plan-t19-production-notes-sync",
+            )
+        )
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g3"]["artifact"]["sha256"] = digest(
+            {"sources": evidence["gates"]["g3"]["artifact"]["sources"]}
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            remote_artifact_overrides={source_identity_key(source): raw},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("main push", result.stderr)
+
+    def test_g3_rejects_integration_receipt_command_without_argv(self):
+        evidence = make_production_qa_evidence()
+        receipt = json.loads(integration_receipt_bytes(evidence["release_inputs"]))
+        receipt["commands"][0].pop("argv")
+        raw = canonical_bytes(receipt)
+        source = evidence["gates"]["g3"]["artifact"]["sources"][0]
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g3"]["artifact"]["sha256"] = digest(
+            {"sources": evidence["gates"]["g3"]["artifact"]["sources"]}
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("argv", result.stderr)
+
+    def test_g3_rejects_boolean_integration_receipt_exit_code(self):
+        evidence = make_production_qa_evidence()
+        receipt = json.loads(integration_receipt_bytes(evidence["release_inputs"]))
+        receipt["commands"][0]["exit_code"] = False
+        raw = canonical_bytes(receipt)
+        source = evidence["gates"]["g3"]["artifact"]["sources"][0]
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g3"]["artifact"]["sha256"] = digest(
+            {"sources": evidence["gates"]["g3"]["artifact"]["sources"]}
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("did not pass", result.stderr)
+
+    def test_g3_rejects_boolean_integration_receipt_schema_version(self):
+        evidence = make_production_qa_evidence()
+        receipt = json.loads(integration_receipt_bytes(evidence["release_inputs"]))
+        receipt["schema_version"] = True
+        raw = canonical_bytes(receipt)
+        source = evidence["gates"]["g3"]["artifact"]["sources"][0]
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g3"]["artifact"]["sha256"] = digest(
+            {"sources": evidence["gates"]["g3"]["artifact"]["sources"]}
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("schema version", result.stderr)
+
+    def test_g4_desktop_build_number_is_bound_to_ci_run(self):
+        evidence = make_production_qa_evidence()
+        evidence["release_inputs"]["desktop"]["build_number"] = "999"
+        evidence["gates"]["g4"]["desktop"] = copy.deepcopy(
+            evidence["release_inputs"]["desktop"]
+        )
+        rehash(evidence)
+        result = self.run_validator(evidence)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Desktop build number", result.stderr)
 
     def test_pinned_prerelease_immutable_release_asset_is_accepted(self):
         expected = hashlib.sha256(TEST_SOURCE_BYTES["mozilla-xcframework"]).hexdigest()

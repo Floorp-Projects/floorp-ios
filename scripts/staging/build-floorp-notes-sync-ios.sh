@@ -1756,7 +1756,7 @@ if [[ "$MODE" != "release-disabled" ]]; then
     FRESH_CLOCK_CAPTURE="$CONTRACT_DIR/post-build-validation-clock-capture.json"
     "$CLOCK_CLIENT" \
         --repository Floorp-Projects/floorp-ios \
-        --workflow .github/workflows/floorp-notes-sync-validation-clock.yml \
+        --workflow floorp-notes-sync-validation-clock.yml \
         --expected-head "$SOURCE_SHA" \
         --max-age-seconds 300 \
         --output "$FRESH_CLOCK_CAPTURE"
