@@ -23,6 +23,11 @@ NODE_VERSION = "24.18.1"
 NODE_ARCHIVE_NAME = f"node-v{NODE_VERSION}-darwin-arm64.tar.gz"
 NODE_ARCHIVE_URL = f"https://nodejs.org/download/release/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}"
 NODE_ARCHIVE_SHA256 = "eb02f7fab96d3d67de40c5ec8566096fcb4c2026728787683ae5a97eb612b941"
+NIMBUS_FML_LOCK_RELATIVE = "scripts/staging/nimbus-fml-binary.lock.json"
+NIMBUS_FML_ARCHES = {
+    "arm64": "aarch64-apple-darwin",
+    "x86_64": "x86_64-apple-darwin",
+}
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 READ_SIZE = 1024 * 1024
 MAX_MANIFEST_SIZE = 16 * 1024 * 1024
@@ -55,10 +60,65 @@ MANIFEST_KEYS = {
     "source_sha",
     "tools",
 }
+TOOLS_KEYS = {
+    "glean_parser_requirement",
+    "glean_parser_version",
+    "glean_python",
+    "installed_packages",
+    "nimbus_binary",
+    "nimbus_script_sha256",
+    "node_archive",
+    "node",
+    "npm",
+}
+NIMBUS_MANIFEST_KEYS = {
+    "archive_sha256",
+    "executable_arch",
+    "executable_sha256",
+    "url",
+    "version",
+}
+TOOL_RECORD_KEYS = {
+    "path",
+    "resolved_path",
+    "sha256",
+    "size",
+    "version",
+}
+NODE_ARCHIVE_KEYS = {
+    "name",
+    "sha256",
+    "url",
+}
+NIMBUS_BINARY_KEYS = {
+    "archive_sha256",
+    "checksum_url",
+    "executables",
+    "schema_version",
+    "url",
+    "version",
+}
 
 
 class PreparationError(Exception):
     pass
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def reject_float(value):
+    raise ValueError(f"JSON number is not an integer: {value!r}")
+
+
+def reject_constant(value):
+    raise ValueError(f"JSON constant is forbidden: {value!r}")
 
 
 def require(condition: bool, message: str) -> None:
@@ -286,6 +346,141 @@ def tool_record(path: Path, version: str) -> dict[str, object]:
     }
 
 
+def install_pinned_nimbus(
+    tool: Path,
+    environment: dict[str, str],
+    firefox_root: Path,
+) -> dict[str, object]:
+    lock_source = firefox_root.parent / NIMBUS_FML_LOCK_RELATIVE
+    metadata = regular_file(lock_source, "Nimbus FML binary lock")
+    require(metadata.st_size <= MAX_MANIFEST_SIZE, "Nimbus FML binary lock is too large")
+    lock_bytes = lock_source.read_bytes()
+    try:
+        parsed = json.loads(
+            lock_bytes.decode("utf-8"),
+            object_pairs_hook=unique_object,
+            parse_float=reject_float,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise PreparationError("Nimbus FML binary lock is malformed") from error
+    except ValueError as error:
+        raise PreparationError(f"Nimbus FML binary lock is malformed ({error})") from error
+    require(
+        lock_bytes == canonical_bytes(parsed),
+        "Nimbus FML binary lock is not canonical",
+    )
+    require(
+        isinstance(parsed, dict) and set(parsed) == NIMBUS_BINARY_KEYS,
+        "Nimbus FML binary lock fields are not exact",
+    )
+    require(
+        parsed.get("schema_version") == 1
+        and not isinstance(parsed.get("schema_version"), bool),
+        "Nimbus FML binary lock schema is unsupported",
+    )
+    version = parsed.get("version")
+    url = parsed.get("url")
+    checksum_url = parsed.get("checksum_url")
+    archive_sha256 = parsed.get("archive_sha256")
+    require(
+        isinstance(version, str) and bool(version) and "/" not in version,
+        "Nimbus FML binary lock version is malformed",
+    )
+    require(
+        isinstance(url, str)
+        and (url.startswith("https://") or url.startswith("file://")),
+        "Nimbus FML binary lock URL is not HTTPS",
+    )
+    require(
+        isinstance(checksum_url, str)
+        and (checksum_url.startswith("https://") or checksum_url.startswith("file://")),
+        "Nimbus FML binary lock checksum URL is not HTTPS",
+    )
+    require(
+        isinstance(archive_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", archive_sha256) is not None,
+        "Nimbus FML binary lock archive digest is malformed",
+    )
+    executables = parsed.get("executables")
+    require(
+        isinstance(executables, dict) and set(executables) == set(NIMBUS_FML_ARCHES.values()),
+        "Nimbus FML binary lock executable set is not exact",
+    )
+    for arch, digest in executables.items():
+        require(
+            isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
+            f"Nimbus FML binary lock executable digest is malformed: {arch}",
+        )
+    machine = os.uname().machine
+    require(machine in NIMBUS_FML_ARCHES, f"unsupported architecture: {machine}")
+    executable_arch = NIMBUS_FML_ARCHES[machine]
+    executable_sha256 = executables[executable_arch]
+
+    zip_path = tool / "nimbus-fml.zip"
+    run(
+        [
+            "/usr/bin/curl",
+            "--proto",
+            "=https,file",
+            "--proto-redir",
+            "=https,file",
+            "--tlsv1.2",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            url,
+            "--output",
+            str(zip_path),
+        ],
+        cwd=tool,
+        environment=environment,
+        label="pinned Nimbus FML download",
+    )
+    require(
+        sha256_file(zip_path) == archive_sha256,
+        "pinned Nimbus FML archive SHA-256 mismatch",
+    )
+    fml_dir = firefox_root / "build/nimbus" / version / "bin"
+    fml_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    private_directory(fml_dir, "Nimbus FML cache", create=True)
+    (fml_dir / "nimbus-fml.sha256").write_text(
+        f"{archive_sha256}  nimbus-fml.zip\n",
+        encoding="utf-8",
+    )
+    (fml_dir / "nimbus-fml.zip").write_bytes(zip_path.read_bytes())
+    run(
+        [
+            "/usr/bin/unzip",
+            "-o",
+            "-j",
+            str(fml_dir / "nimbus-fml.zip"),
+            f"{executable_arch}/release/nimbus-fml",
+            "-d",
+            str(fml_dir),
+        ],
+        cwd=fml_dir,
+        environment=environment,
+        label="pinned Nimbus FML extraction",
+    )
+    binary = fml_dir / "nimbus-fml"
+    metadata = regular_file(binary, "pinned Nimbus FML executable")
+    require(
+        sha256_file(binary) == executable_sha256,
+        "pinned Nimbus FML executable SHA-256 mismatch",
+    )
+    if not bool(metadata.st_mode & stat.S_IXUSR):
+        binary.chmod(metadata.st_mode | stat.S_IXUSR)
+    return {
+        "archive_sha256": archive_sha256,
+        "executable_arch": executable_arch,
+        "executable_sha256": executable_sha256,
+        "url": url,
+        "version": version,
+    }
+
+
 def publish(path: Path, payload: bytes) -> None:
     try:
         descriptor = os.open(
@@ -318,10 +513,126 @@ def load_manifest(path: Path) -> tuple[dict[str, object], bytes]:
     return payload, raw
 
 
-def verify(source_root: Path, manifest_path: Path) -> dict[str, object]:
+def validate_tools(payload: dict[str, object], source: Path) -> None:
+    tools = payload.get("tools")
+    require(isinstance(tools, dict), "generated-source manifest tools schema is malformed")
+    require(set(tools) == TOOLS_KEYS, "generated-source manifest tools fields are not exact")
+    requirement = tools.get("glean_parser_requirement")
+    require(
+        requirement == "20.0",
+        "generated-source manifest Glean parser requirement is not exactly 20.0",
+    )
+    version = tools.get("glean_parser_version")
+    require(
+        version == "20.0.0",
+        "generated-source manifest Glean parser version is not exactly 20.0.0",
+    )
+    nimbus_script = tools.get("nimbus_script_sha256")
+    require(
+        isinstance(nimbus_script, str)
+        and re.fullmatch(r"[0-9a-f]{64}", nimbus_script) is not None,
+        "generated-source manifest Nimbus script digest is malformed",
+    )
+    nimbus_path = source / "firefox-ios/bin/nimbus-fml.sh"
+    require(
+        sha256_file(nimbus_path) == nimbus_script,
+        "generated-source manifest Nimbus script digest mismatch",
+    )
+    nimbus_binary = tools.get("nimbus_binary")
+    require(
+        isinstance(nimbus_binary, dict)
+        and set(nimbus_binary) == NIMBUS_MANIFEST_KEYS,
+        "generated-source manifest Nimbus binary fields are not exact",
+    )
+    require(
+        isinstance(nimbus_binary.get("version"), str)
+        and bool(nimbus_binary["version"])
+        and "/" not in nimbus_binary["version"],
+        "generated-source manifest Nimbus binary version is malformed",
+    )
+    require(
+        isinstance(nimbus_binary.get("url"), str)
+        and (
+            nimbus_binary["url"].startswith("https://")
+            or nimbus_binary["url"].startswith("file://")
+        ),
+        "generated-source manifest Nimbus binary URL is not HTTPS",
+    )
+    for key in ("archive_sha256", "executable_sha256"):
+        digest = nimbus_binary.get(key)
+        require(
+            isinstance(digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
+            f"generated-source manifest Nimbus binary {key} is malformed",
+        )
+    require(
+        nimbus_binary.get("executable_arch") in NIMBUS_FML_ARCHES.values(),
+        "generated-source manifest Nimbus binary architecture is malformed",
+    )
+    installed = tools.get("installed_packages")
+    require(
+        isinstance(installed, list)
+        and bool(installed)
+        and all(isinstance(item, str) and bool(item) for item in installed),
+        "generated-source manifest package inventory is malformed",
+    )
+    node_archive = tools.get("node_archive")
+    require(
+        isinstance(node_archive, dict) and set(node_archive) == NODE_ARCHIVE_KEYS,
+        "generated-source manifest Node archive fields are not exact",
+    )
+    for key, pattern in (
+        ("name", r".+"),
+        ("url", r".+"),
+        ("sha256", r"[0-9a-f]{64}"),
+    ):
+        value = node_archive.get(key)
+        require(
+            isinstance(value, str) and re.fullmatch(pattern, value) is not None,
+            f"generated-source manifest Node archive {key} is malformed",
+        )
+    for key in ("glean_python", "node", "npm"):
+        record = tools.get(key)
+        require(
+            isinstance(record, dict) and set(record) == TOOL_RECORD_KEYS,
+            f"generated-source manifest tool record {key} fields are not exact",
+        )
+        require(
+            isinstance(record.get("version"), str) and bool(record["version"]),
+            f"generated-source manifest tool record {key} version is malformed",
+        )
+        require(
+            isinstance(record.get("path"), str) and bool(record["path"]),
+            f"generated-source manifest tool record {key} path is malformed",
+        )
+        require(
+            isinstance(record.get("resolved_path"), str) and bool(record["resolved_path"]),
+            f"generated-source manifest tool record {key} resolved path is malformed",
+        )
+        require(
+            isinstance(record.get("size"), int)
+            and not isinstance(record.get("size"), bool)
+            and record["size"] > 0,
+            f"generated-source manifest tool record {key} size is malformed",
+        )
+        digest = record.get("sha256")
+        require(
+            isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
+            f"generated-source manifest tool record {key} digest is malformed",
+        )
+
+
+def verify(
+    source_root: Path,
+    manifest_path: Path,
+    *,
+    source_sha: str,
+    source_archive: Path,
+) -> dict[str, object]:
     require(source_root.is_absolute(), "generated-source root must be absolute")
     require(not source_root.is_symlink(), "generated-source root symlink is forbidden")
     require(manifest_path.is_absolute(), "generated-source manifest path must be absolute")
+    require(SHA1.fullmatch(source_sha) is not None, "expected source SHA is malformed")
     source = source_root.resolve(strict=True)
     payload, _ = load_manifest(manifest_path)
     require(payload.get("schema_version") == 1, "generated-source manifest schema is unsupported")
@@ -330,6 +641,22 @@ def verify(source_root: Path, manifest_path: Path) -> dict[str, object]:
         and SHA1.fullmatch(payload["source_sha"]) is not None,
         "generated-source manifest source SHA is malformed",
     )
+    require(
+        payload.get("source_sha") == source_sha,
+        "generated-source manifest source SHA does not match the requested commit",
+    )
+    archive_sha256 = payload.get("source_archive_sha256")
+    require(
+        isinstance(archive_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", archive_sha256) is not None,
+        "generated-source manifest archive digest is malformed",
+    )
+    archive = source_archive.resolve(strict=True)
+    require(
+        sha256_file(archive) == archive_sha256,
+        "generated-source manifest archive digest mismatch",
+    )
+    validate_tools(payload, source)
     files = payload.get("generated_files")
     require(isinstance(files, list) and bool(files), "generated-source file list is empty")
     observed: list[str] = []
@@ -452,6 +779,8 @@ def prepare(
             "Glean",
             "-o",
             str(storage_output),
+            "-b",
+            "0",
             str(storage_metrics),
         ],
         cwd=firefox_root,
@@ -461,13 +790,35 @@ def prepare(
 
     nimbus = firefox_root / "bin/nimbus-fml.sh"
     regular_file(nimbus, "pinned Nimbus generator")
+    nimbus_binary = install_pinned_nimbus(tool, environment, firefox_root)
     nimbus_environment = {
         **environment,
         "CONFIGURATION": "FloorpRelease",
         "PROJECT": "Client",
         "SOURCE_ROOT": str(firefox_root),
     }
-    run(["/bin/bash", str(nimbus), "--verbose"], cwd=firefox_root, environment=nimbus_environment, label="Nimbus generation")
+    run(
+        [
+            "/bin/bash",
+            str(nimbus),
+            "--verbose",
+            "-a",
+            nimbus_binary["version"],
+        ],
+        cwd=firefox_root,
+        environment=nimbus_environment,
+        label="Nimbus generation",
+    )
+    binary_path = (
+        firefox_root
+        / "build/nimbus"
+        / nimbus_binary["version"]
+        / "bin/nimbus-fml"
+    )
+    require(
+        sha256_file(binary_path) == nimbus_binary["executable_sha256"],
+        "Nimbus FML executable changed during generation",
+    )
 
     safe_remove_tree(root / "node_modules", root, "node_modules cleanup")
     safe_remove_tree(firefox_root / "build/nimbus", root, "Nimbus cache cleanup")
@@ -531,6 +882,7 @@ def prepare(
             "glean_parser_version": glean_version,
             "glean_python": tool_record(venv_python, run([str(venv_python), "--version"], cwd=root, environment=environment, label="Glean Python version", capture=True)),
             "installed_packages": inventory,
+            "nimbus_binary": nimbus_binary,
             "nimbus_script_sha256": sha256_file(nimbus),
             "node_archive": {
                 "name": NODE_ARCHIVE_NAME,
@@ -543,7 +895,7 @@ def prepare(
     }
     raw = canonical_bytes(payload)
     publish(destination, raw)
-    verify(root, destination)
+    verify(root, destination, source_sha=source_sha, source_archive=archive)
     return payload
 
 
@@ -560,6 +912,8 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--source-root", required=True, type=Path)
     verify_parser.add_argument("--manifest", required=True, type=Path)
+    verify_parser.add_argument("--source-sha", required=True)
+    verify_parser.add_argument("--source-archive", required=True, type=Path)
     arguments = parser.parse_args(argv)
     previous_umask = os.umask(0o077)
     try:
@@ -574,7 +928,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"APPROVE: prepared generated source inputs at {arguments.output.resolve(strict=True)}")
         else:
-            verify(arguments.source_root, arguments.manifest)
+            verify(
+                arguments.source_root,
+                arguments.manifest,
+                source_sha=arguments.source_sha,
+                source_archive=arguments.source_archive,
+            )
             print("APPROVE: generated source inputs match their canonical manifest")
         return 0
     except PreparationError as error:

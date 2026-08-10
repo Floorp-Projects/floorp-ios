@@ -42,7 +42,7 @@ cleanup() {
 trap cleanup EXIT
 
 ACTION=build FLOORP_GLEAN_VERIFY_ONLY=NO SOURCE_ROOT="${FIREFOX_ROOT}" PROJECT=Client \
-    bash "${GENERATOR}" -g Glean -o "${temporary_dir}" "${definitions[@]}"
+    bash "${GENERATOR}" -g Glean -o "${temporary_dir}" -b 0 "${definitions[@]}"
 
 generated_file="${temporary_dir}/Metrics.swift"
 if [[ ! -s "${generated_file}" ]]; then

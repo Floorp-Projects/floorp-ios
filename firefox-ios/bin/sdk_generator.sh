@@ -227,10 +227,72 @@ else
     VENVDIR="${SOURCE_ROOT}/.venv"
 fi
 
-[ -x "${VENVDIR}/bin/python" ] || python3 -m venv "${VENVDIR}"
-if ! "${VENVDIR}"/bin/python -I -c \
-    "import importlib.metadata; raise SystemExit(importlib.metadata.version('glean_parser') != '${GLEAN_PARSER_DISTRIBUTION_VERSION}')"; then
-    "${VENVDIR}"/bin/pip install --disable-pip-version-check "glean_parser==$GLEAN_PARSER_VERSION"
+if [ -n "${FLOORP_GLEAN_VENV:-}" ]; then
+    GLEAN_LOCK=""
+    for candidate in \
+        "${FLOORP_GLEAN_TOOL_ROOT}/glean-requirements.lock" \
+        "${SOURCE_ROOT}/../scripts/staging/glean-requirements.lock"; do
+        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+            GLEAN_LOCK="$candidate"
+            break
+        fi
+    done
+    if [ -z "$GLEAN_LOCK" ]; then
+        echo "error: Glean requirements lock is missing" >&2
+        exit 2
+    fi
+    if [ ! -x "${VENVDIR}/bin/python" ]; then
+        python3 -m venv "${VENVDIR}"
+    fi
+    if ! "${VENVDIR}"/bin/python -I -c \
+        "import importlib.metadata; raise SystemExit(importlib.metadata.version('glean_parser') != '${GLEAN_PARSER_DISTRIBUTION_VERSION}')"; then
+        "${VENVDIR}"/bin/pip install --disable-pip-version-check --require-hashes -r "$GLEAN_LOCK"
+    fi
+    if [ "${FLOORP_GLEAN_VERIFY_ONLY:-NO}" = "YES" ]; then
+        if [ -z "${FLOORP_GENERATED_SOURCE_MANIFEST:-}" ]; then
+            echo "error: verify-only Glean generation requires the generated-source manifest" >&2
+            exit 2
+        fi
+        GLEAN_FREEZE="$("${VENVDIR}"/bin/python -I -m pip freeze --all 2>/dev/null || true)"
+        "${VENVDIR}"/bin/python -I - "$FLOORP_GENERATED_SOURCE_MANIFEST" "$GLEAN_FREEZE" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+
+def reject(message):
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+manifest_path = pathlib.Path(sys.argv[1])
+freeze = sorted(line for line in sys.argv[2].splitlines() if line)
+try:
+    payload = json.loads(manifest_path.read_text())
+except (OSError, ValueError) as error:
+    reject(f"generated-source manifest is unreadable ({error})")
+try:
+    tools = payload["tools"]
+    record = tools["glean_python"]
+    installed = tools["installed_packages"]
+except (KeyError, TypeError):
+    reject("generated-source manifest Glean schema is missing")
+resolved = pathlib.Path(record.get("resolved_path", "")).resolve(strict=False)
+if not resolved.is_file() or resolved.is_symlink():
+    reject("Glean venv Python is missing or unsafe")
+if hashlib.sha256(resolved.read_bytes()).hexdigest() != record.get("sha256"):
+    reject("Glean venv Python does not match the canonical manifest")
+if freeze != sorted(installed):
+    reject("Glean installed packages do not match the canonical manifest")
+PY
+    fi
+else
+    [ -x "${VENVDIR}/bin/python" ] || python3 -m venv "${VENVDIR}"
+    if ! "${VENVDIR}"/bin/python -I -c \
+        "import importlib.metadata; raise SystemExit(importlib.metadata.version('glean_parser') != '${GLEAN_PARSER_DISTRIBUTION_VERSION}')"; then
+        "${VENVDIR}"/bin/pip install --disable-pip-version-check "glean_parser==$GLEAN_PARSER_VERSION"
+    fi
 fi
 
 VERIFY_ONLY="${FLOORP_GLEAN_VERIFY_ONLY:-NO}"

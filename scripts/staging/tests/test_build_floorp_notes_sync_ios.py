@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import textwrap
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -154,6 +155,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         test_environment = (
             '    DEVELOPER_DIR="$SELECTED_DEVELOPER" \\\n'
             '    FAKE_XCODE_RECORD="${FAKE_XCODE_RECORD:-}" \\\n'
+            '    FAKE_XCODE_ENV_RECORD="${FAKE_XCODE_ENV_RECORD:-}" \\\n'
             '    FAKE_XCODE_EXIT="${FAKE_XCODE_EXIT:-0}" \\\n'
             '    FAKE_GATE_MISMATCH="${FAKE_GATE_MISMATCH:-0}" \\\n'
             '    FAKE_BUILD_NUMBER="${FAKE_BUILD_NUMBER:-}" \\\n'
@@ -270,6 +272,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 set -euo pipefail
                 GLEAN_PARSER_VERSION=20.0
                 GLEAN_PARSER_DISTRIBUTION_VERSION=20.0.0
+                printf '%s\\n' "$*" >> "${TMPDIR}/floorp-sdk-record.txt"
                 output=""
                 while [[ $# -gt 0 ]]; do
                     case "$1" in
@@ -297,6 +300,45 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             )
         )
         sdk_generator.chmod(0o755)
+
+        fake_nimbus_binary = self.root / "fake-nimbus-fml"
+        fake_nimbus_binary.write_text("#!/bin/sh\nexit 0\n")
+        fake_nimbus_binary.chmod(0o755)
+        fake_nimbus_zip = self.root / "fake-nimbus-fml.zip"
+        with zipfile.ZipFile(fake_nimbus_zip, "w") as archive:
+            archive.write(
+                fake_nimbus_binary,
+                arcname="aarch64-apple-darwin/release/nimbus-fml",
+            )
+            archive.write(
+                fake_nimbus_binary,
+                arcname="x86_64-apple-darwin/release/nimbus-fml",
+            )
+        nimbus_lock = (
+            self.repository / "scripts/staging/nimbus-fml-binary.lock.json"
+        )
+        nimbus_lock.parent.mkdir(parents=True, exist_ok=True)
+        nimbus_zip_digest = hashlib.sha256(
+            fake_nimbus_zip.read_bytes()
+        ).hexdigest()
+        nimbus_binary_digest = hashlib.sha256(
+            fake_nimbus_binary.read_bytes()
+        ).hexdigest()
+        nimbus_lock.write_bytes(
+            self._canonical(
+                {
+                    "archive_sha256": nimbus_zip_digest,
+                    "checksum_url": fake_nimbus_zip.as_uri(),
+                    "executables": {
+                        "aarch64-apple-darwin": nimbus_binary_digest,
+                        "x86_64-apple-darwin": nimbus_binary_digest,
+                    },
+                    "schema_version": 1,
+                    "url": fake_nimbus_zip.as_uri(),
+                    "version": "155.20260731050244",
+                }
+            )
+        )
 
         validator = self.repository / "scripts/ci/validate-floorp-notes-sync-release.py"
         validator.parent.mkdir(parents=True)
@@ -408,7 +450,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         git = self.bin / "git"
         git.write_text(textwrap.dedent("""\
             #!/usr/bin/python3
-            import os, pathlib, sys, tarfile
+            import io, os, pathlib, sys, tarfile
             args = sys.argv[1:]
             if "rev-parse" in args:
                 value = args[args.index("rev-parse") + 1]
@@ -430,6 +472,36 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 with tarfile.open(output, "w", format=tarfile.PAX_FORMAT) as archive:
                     for path in sorted(source.rglob("*")):
                         archive.add(path, arcname=path.relative_to(source), recursive=False)
+                    poison = os.environ.get("FAKE_GIT_POISON")
+                    if poison == "symlink":
+                        member = tarfile.TarInfo("firefox-ios/evil-link")
+                        member.type = tarfile.SYMTYPE
+                        member.linkname = "/etc/passwd"
+                        archive.addfile(member)
+                    elif poison == "hardlink":
+                        member = tarfile.TarInfo("firefox-ios/evil-hardlink")
+                        member.type = tarfile.LNKTYPE
+                        member.linkname = "firefox-ios/Client/Assets/MainFrameAtDocumentEnd.js"
+                        archive.addfile(member)
+                    elif poison == "traversal":
+                        member = tarfile.TarInfo("../escape.txt")
+                        member.size = len(b"escape\\n")
+                        archive.addfile(member, io.BytesIO(b"escape\\n"))
+                    elif poison == "absolute":
+                        member = tarfile.TarInfo("/absolute/escape.txt")
+                        member.size = len(b"escape\\n")
+                        archive.addfile(member, io.BytesIO(b"escape\\n"))
+                    elif poison == "fifo":
+                        member = tarfile.TarInfo("firefox-ios/evil-fifo")
+                        member.type = tarfile.FIFOTYPE
+                        archive.addfile(member)
+                    elif poison == "duplicate":
+                        member = tarfile.TarInfo("firefox-ios/Client/Assets/MainFrameAtDocumentEnd.js")
+                        member.size = 0
+                        archive.addfile(member)
+                        archive.addfile(member)
+                    elif poison:
+                        raise SystemExit("unsupported FAKE_GIT_POISON: " + poison)
                 raise SystemExit(0)
             if args == ["get-tar-commit-id"]:
                 print(os.environ["FAKE_GIT_HEAD"])
@@ -458,6 +530,22 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 print("Xcode 26.0")
                 print("Build version 17A100")
                 raise SystemExit(0)
+            if os.environ.get("FAKE_XCODE_ENV_RECORD"):
+                with open(os.environ["FAKE_XCODE_ENV_RECORD"], "a") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                key: os.environ.get(key, "")
+                                for key in (
+                                    "HOME",
+                                    "TMPDIR",
+                                    "GIT_CONFIG_NOSYSTEM",
+                                    "GIT_CONFIG_GLOBAL",
+                                )
+                            }
+                        )
+                        + "\\n"
+                    )
             with open(os.environ["FAKE_XCODE_RECORD"], "a") as handle:
                 handle.write(json.dumps(args) + "\\n")
             if int(os.environ.get("FAKE_XCODE_EXIT", "0")):
@@ -1897,6 +1985,231 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         self.assertIn("worktree", result.stderr.lower())
 
 
+    def test_storage_glean_phase_pins_build_date_zero(self):
+        pbxproj = (
+            REPOSITORY / "firefox-ios/Client.xcodeproj/project.pbxproj"
+        ).read_text(encoding="utf-8")
+        marker = "45CC573928AD89CB006D55AA /* Glean SDK Generator Script */ = {"
+        phase = pbxproj.split(marker, 1)[1].split("};", 1)[0]
+        self.assertIn("-b 0", phase)
+
+    def test_preparer_pins_glean_build_date_zero(self):
+        preparer = (
+            REPOSITORY / "scripts/staging/prepare-floorp-ios-source-snapshot.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"-b",\n            "0",', preparer)
+
+    def test_sdk_generator_receives_pinned_build_date_zero(self):
+        result, _, _, _, output = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = output / "tool-state/tmp/floorp-sdk-record.txt"
+        self.assertTrue(record.exists(), "sdk_generator was never invoked")
+        calls = record.read_text().splitlines()
+        self.assertTrue(any("-b 0" in call for call in calls), calls)
+
+    @staticmethod
+    def _canonical(payload):
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+
+    def _run_verify(self, manifest, snapshot, archive, *extra):
+        return subprocess.run(
+            [
+                "/usr/bin/python3",
+                "-I",
+                "-S",
+                str(
+                    self.repository
+                    / "scripts/staging/prepare-floorp-ios-source-snapshot.py"
+                ),
+                "verify",
+                "--source-root",
+                str(snapshot),
+                "--manifest",
+                str(manifest),
+                "--source-sha",
+                SOURCE_SHA,
+                "--source-archive",
+                str(archive),
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_verify_binds_source_sha_archive_and_tools_schema(self):
+        result, _, _, _, output = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = output / "contract-inputs/generated-source-inputs.json"
+        snapshot = output / f"source-{SOURCE_SHA}"
+        archive = output / f"source-{SOURCE_SHA}.tar"
+        good = self._run_verify(manifest, snapshot, archive)
+        self.assertEqual(good.returncode, 0, good.stderr)
+        self.assertIn("APPROVE", good.stdout)
+
+        payload = json.loads(manifest.read_text())
+        cases = []
+        null_tools = json.loads(json.dumps(payload))
+        null_tools["tools"] = None
+        cases.append(("tools schema", null_tools, "tools"))
+        unknown_tool = json.loads(json.dumps(payload))
+        unknown_tool["tools"]["untrusted"] = True
+        cases.append(("tools schema", unknown_tool, "tools"))
+        wrong_sha = json.loads(json.dumps(payload))
+        wrong_sha["source_sha"] = "f" * 40
+        cases.append(("source SHA", wrong_sha, "source"))
+        wrong_archive = json.loads(json.dumps(payload))
+        wrong_archive["source_archive_sha256"] = "e" * 64
+        cases.append(("archive digest", wrong_archive, "archive"))
+        for name, mutated, expected in cases:
+            with self.subTest(name=name):
+                manifest.write_bytes(self._canonical(mutated))
+                checked = self._run_verify(manifest, snapshot, archive)
+                self.assertEqual(checked.returncode, 1, checked.stderr)
+                self.assertIn(expected, checked.stderr.lower())
+
+        manifest.write_bytes(self._canonical(payload))
+        missing = subprocess.run(
+            [
+                "/usr/bin/python3",
+                "-I",
+                "-S",
+                str(
+                    self.repository
+                    / "scripts/staging/prepare-floorp-ios-source-snapshot.py"
+                ),
+                "verify",
+                "--source-root",
+                str(snapshot),
+                "--manifest",
+                str(manifest),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(missing.returncode, 2)
+
+    def test_xcodebuild_isolates_home_tmp_and_pins_package_resolution(self):
+        env_record = self.root / "xcode-env.jsonl"
+        result, manifest_path, _, xcode_record, output = self.run_script(
+            env={"FAKE_XCODE_ENV_RECORD": str(env_record)}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        xcode_args = json.loads(xcode_record.read_text().splitlines()[0])
+        self.assertIn("-disableAutomaticPackageResolution", xcode_args)
+        self.assertIn("-onlyUsePackageVersionsFromResolvedFile", xcode_args)
+        index = xcode_args.index("-clonedSourcePackagesDirPath")
+        clones = Path(xcode_args[index + 1]).resolve()
+        self.assertFalse(clones.is_relative_to(Path.home()))
+        self.assertTrue(clones.is_relative_to(output.resolve()))
+        manifest = json.loads(manifest_path.read_text())
+        xcode_manifest_args = manifest["build"]["xcodebuild_arguments"]
+        self.assertIn("-disableAutomaticPackageResolution", xcode_manifest_args)
+        self.assertIn(
+            "-clonedSourcePackagesDirPath",
+            xcode_manifest_args,
+        )
+        self.assertIn(
+            str(clones),
+            xcode_manifest_args,
+        )
+        env_lines = [
+            json.loads(line) for line in env_record.read_text().splitlines()
+        ]
+        self.assertTrue(env_lines)
+        latest = env_lines[-1]
+        self.assertNotEqual(latest["HOME"], str(Path.home()))
+        self.assertIn("output", latest["HOME"])
+        self.assertIn("output", latest["TMPDIR"])
+        self.assertEqual(latest["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(latest["GIT_CONFIG_GLOBAL"], "/dev/null")
+
+    def test_poisoned_source_archive_members_fail_before_preparer(self):
+        for poison, expected in (
+            ("symlink", "symlink member"),
+            ("hardlink", "hardlink member"),
+            ("traversal", "escapes"),
+            ("absolute", "absolute path"),
+            ("fifo", "special-file member"),
+            ("duplicate", "duplicate member"),
+        ):
+            with self.subTest(poison=poison):
+                sdk_record = self.root / f"sdk-{poison}.txt"
+                result, manifest, _, _, output = self.run_script(
+                    env={
+                        "FAKE_GIT_POISON": poison,
+                        "FAKE_SDK_RECORD": str(sdk_record),
+                    }
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+                self.assertFalse(manifest.exists())
+                self.assertFalse((output / "tool-state").exists())
+                self.assertFalse(sdk_record.exists())
+
+    def test_glean_requirements_lock_is_hash_pinned(self):
+        lock = (REPOSITORY / "scripts/staging/glean-requirements.lock").read_text()
+        lines = [line for line in lock.splitlines() if line]
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertRegex(
+                line,
+                r"^[A-Za-z0-9._-]+==[0-9][A-Za-z0-9.+_-]* "
+                r"--hash=sha256:[0-9a-f]{64}$",
+                line,
+            )
+        self.assertTrue(any(line.startswith("glean-parser==20.0.0 ") for line in lines))
+        generator = (
+            REPOSITORY / "firefox-ios/bin/sdk_generator.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--require-hashes", generator)
+        self.assertIn("glean-requirements.lock", generator)
+        self.assertIn("generated-source manifest", generator)
+
+    def test_nimbus_binary_is_locked_and_attested(self):
+        lock_path = (
+            REPOSITORY / "scripts/staging/nimbus-fml-binary.lock.json"
+        )
+        raw = lock_path.read_bytes()
+        payload = json.loads(raw)
+        self.assertEqual(raw, self._canonical(payload))
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["version"], "155.20260731050244")
+        self.assertRegex(payload["archive_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            set(payload["executables"]),
+            {"aarch64-apple-darwin", "x86_64-apple-darwin"},
+        )
+        for digest in payload["executables"].values():
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        preparer = (
+            REPOSITORY / "scripts/staging/prepare-floorp-ios-source-snapshot.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("install_pinned_nimbus", preparer)
+        self.assertIn("pinned Nimbus FML executable SHA-256 mismatch", preparer)
+        self.assertIn('"-a",', preparer)
+
+        result, _, _, _, output = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(
+            (
+                output / "contract-inputs/generated-source-inputs.json"
+            ).read_text()
+        )
+        nimbus_binary = manifest["tools"]["nimbus_binary"]
+        self.assertEqual(nimbus_binary["version"], "155.20260731050244")
+        self.assertRegex(nimbus_binary["archive_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(nimbus_binary["executable_sha256"], r"^[0-9a-f]{64}$")
+        self.assertIn(
+            nimbus_binary["executable_arch"],
+            ("aarch64-apple-darwin", "x86_64-apple-darwin"),
+        )
+
+
 class GleanSDKGeneratorContractTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -1943,6 +2256,10 @@ class GleanSDKGeneratorContractTests(unittest.TestCase):
     def test_explicit_writable_venv_supports_read_only_source(self):
         tool_root = self.root / "writable-tooling"
         tool_root.mkdir(mode=0o700)
+        shutil.copy2(
+            REPOSITORY / "scripts/staging/glean-requirements.lock",
+            tool_root / "glean-requirements.lock",
+        )
         verify_root = tool_root / "verify"
         verify_root.mkdir(mode=0o700)
         venv = tool_root / "glean-venv"
@@ -2021,14 +2338,21 @@ class GleanSDKGeneratorContractTests(unittest.TestCase):
 
         tool_root = self.root / "private-tooling"
         tool_root.mkdir(mode=0o700)
+        shutil.copy2(
+            REPOSITORY / "scripts/staging/glean-requirements.lock",
+            tool_root / "glean-requirements.lock",
+        )
         verify_root = tool_root / "verify"
         verify_root.mkdir(mode=0o700)
         venv = tool_root / "glean-venv"
+        manifest = self.root / "generated-source-manifest.json"
+        manifest.write_text('{"tools":{"glean_python":{},"installed_packages":[]}}\n')
         environment = os.environ.copy()
         environment.update(
             {
                 "ACTION": "build",
                 "FAKE_PYTHON_RECORD": str(self.python_record),
+                "FLOORP_GENERATED_SOURCE_MANIFEST": str(manifest),
                 "FLOORP_GLEAN_TOOL_ROOT": str(tool_root),
                 "FLOORP_GLEAN_VENV": str(venv),
                 "FLOORP_GLEAN_VERIFY_ONLY": "YES",

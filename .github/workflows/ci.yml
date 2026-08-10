@@ -222,3 +222,40 @@ jobs:
             ${{ runner.temp }}/FloorpCI.xcresult
           if-no-files-found: ignore
           retention-days: 7
+
+  release-disabled-wrapper:
+    name: Release-disabled wrapper build
+    runs-on: macos-26
+    timeout-minutes: 90
+    needs: workflow-lint
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Run release-disabled wrapper
+        run: |
+          ./scripts/staging/build-floorp-notes-sync-ios.sh \
+            --mode release-disabled \
+            --source-sha "$GITHUB_SHA" \
+            --output-dir "$RUNNER_TEMP/floorp-notes-sync-release-disabled" \
+            --manifest "$RUNNER_TEMP/floorp-notes-sync-release-disabled-manifest.json"
+
+      - name: Upload release-disabled diagnostics
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-ios-release-disabled-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-release-disabled
+            ${{ runner.temp }}/floorp-notes-sync-release-disabled-manifest.json
+          if-no-files-found: ignore
+          retention-days: 7

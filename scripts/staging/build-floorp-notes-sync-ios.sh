@@ -327,6 +327,45 @@ mkdir -p "$SOURCE_SNAPSHOT"
 ARCHIVED_COMMIT="$("$GIT_BIN" get-tar-commit-id < "$SOURCE_ARCHIVE")"
 [[ "$ARCHIVED_COMMIT" == "$SOURCE_SHA" ]] \
     || fail "source archive is not bound to the requested commit"
+"$PYTHON_BIN" - "$SOURCE_ARCHIVE" <<'PY'
+import os
+import sys
+import tarfile
+
+
+def reject(message):
+    print(f"build-floorp-notes-sync-ios: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+archive_path = sys.argv[1]
+try:
+    opened = tarfile.open(archive_path, mode="r:")
+except (OSError, tarfile.TarError) as error:
+    reject(f"source archive cannot be audited ({error})")
+observed: set[str] = set()
+with opened:
+    for member in opened:
+        name = member.name
+        if member.isdir() and name.endswith("/"):
+            name = name[:-1]
+        if not name or name == "." or name.endswith("/."):
+            reject(f"source archive member has an unsafe name: {name!r}")
+        if name.startswith("/") or name.startswith("\\") or "\\" in name:
+            reject(f"source archive member has an absolute path: {name}")
+        parts = name.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            reject(f"source archive member escapes the snapshot: {name}")
+        if member.issym():
+            reject(f"source archive contains a symlink member: {name}")
+        if member.islnk():
+            reject(f"source archive contains a hardlink member: {name}")
+        if not (member.isreg() or member.isdir()):
+            reject(f"source archive contains a special-file member: {name}")
+        if name in observed:
+            reject(f"source archive contains a duplicate member: {name}")
+        observed.add(name)
+PY
 "$TAR_BIN" -xf "$SOURCE_ARCHIVE" -C "$SOURCE_SNAPSHOT"
 GENERATED_SOURCE_PREPARER="$SOURCE_SNAPSHOT/scripts/staging/prepare-floorp-ios-source-snapshot.py"
 [[ -f "$GENERATED_SOURCE_PREPARER" ]] \
@@ -495,7 +534,9 @@ if file_count != record.get("file_count"):
 PY
     "$PYTHON_BIN" "$GENERATED_SOURCE_PREPARER" verify \
         --source-root "$SOURCE_SNAPSHOT" \
-        --manifest "$GENERATED_SOURCE_RECORD"
+        --manifest "$GENERATED_SOURCE_RECORD" \
+        --source-sha "$SOURCE_SHA" \
+        --source-archive "$SOURCE_ARCHIVE"
 }
 
 DEFAULT_SCHEMA="$ROOT/docs/floorp-notes-sync-release-evidence.schema.json"
@@ -1722,6 +1763,27 @@ DEVELOPER_DIR="$SELECTED_DEVELOPER" "$XCODEBUILD_BIN" -version > "$XCODE_VERSION
 verify_contract_snapshots
 verify_source_snapshot
 
+XCODE_PRIVATE_HOME="$OUTPUT_DIR/xcode-home"
+XCODE_PRIVATE_TMP="$OUTPUT_DIR/xcode-tmp"
+XCODE_PACKAGE_CLONES="$OUTPUT_DIR/swiftpm-packages"
+"$PYTHON_BIN" - "$XCODE_PRIVATE_HOME" "$XCODE_PRIVATE_TMP" "$XCODE_PACKAGE_CLONES" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+for raw in sys.argv[1:]:
+    path = Path(raw)
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    if metadata is not None:
+        print(f"build-floorp-notes-sync-ios: private Xcode path already exists: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    os.mkdir(path, 0o700)
+PY
+
 XCODE_ARGS=(
     "$ACTION"
     -project "$PROJECT"
@@ -1729,9 +1791,14 @@ XCODE_ARGS=(
     -configuration FloorpRelease
     -destination "$DESTINATION"
     -derivedDataPath "$DERIVED_DATA"
+    -disableAutomaticPackageResolution
+    -onlyUsePackageVersionsFromResolvedFile
+    -clonedSourcePackagesDirPath "$XCODE_PACKAGE_CLONES"
     -xcconfig "$XC_CONFIG"
     COMPILER_INDEX_STORE_ENABLE=NO
     "FLOORP_GENERATED_SOURCE_MANIFEST=$GENERATED_SOURCE_RECORD"
+    "FLOORP_GENERATED_SOURCE_SHA=$SOURCE_SHA"
+    "FLOORP_SOURCE_ARCHIVE=$SOURCE_ARCHIVE"
     FLOORP_GENERATED_SOURCES_PREPARED=YES
     "FLOORP_GLEAN_TOOL_ROOT=$TOOL_STATE"
     "FLOORP_GLEAN_VENV=$GLEAN_VENV"
@@ -1752,17 +1819,22 @@ Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:], indent=2) + "\n")
 PY
 
 set -o pipefail
-XCODE_HOME="${HOME:?HOME is required for Xcode and signing}"
 XCODE_USER="${USER:-$(/usr/bin/id -un)}"
-XCODE_TMPDIR="${TMPDIR:-/tmp}"
 XCODE_LANG="${LANG:-en_US.UTF-8}"
 if ! /usr/bin/env -i \
     PATH="$SYSTEM_PATH" \
-    HOME="$XCODE_HOME" \
+    HOME="$XCODE_PRIVATE_HOME" \
     USER="$XCODE_USER" \
     LOGNAME="$XCODE_USER" \
-    TMPDIR="$XCODE_TMPDIR" \
+    TMPDIR="$XCODE_PRIVATE_TMP" \
     LANG="$XCODE_LANG" \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_COUNT=2 \
+    GIT_CONFIG_KEY_0=core.fsmonitor \
+    GIT_CONFIG_VALUE_0=false \
+    GIT_CONFIG_KEY_1=core.hooksPath \
+    GIT_CONFIG_VALUE_1=/dev/null \
     DEVELOPER_DIR="$SELECTED_DEVELOPER" \
     "$XCODEBUILD_BIN" "${XCODE_ARGS[@]}" 2>&1 | "$TEE_BIN" "$BUILD_LOG"; then
     echo "build-floorp-notes-sync-ios: xcodebuild failed" >&2
