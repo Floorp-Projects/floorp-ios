@@ -95,6 +95,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Run Floorp release contract tests
+        run: |
+          python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
+          python3 -m unittest discover -s scripts/staging/tests -p 'test_*.py'
+
       - name: Select Xcode
         run: |
           xcode_version="$(<.xcode-version)"

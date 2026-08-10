@@ -295,10 +295,14 @@ if action == "archive" and archive is not None:
 PY
 CONTRACT_DIR="$OUTPUT_DIR/contract-inputs"
 DERIVED_DATA="$OUTPUT_DIR/DerivedData"
+TOOL_STATE="$OUTPUT_DIR/tool-state"
+GLEAN_VENV="$TOOL_STATE/glean-venv"
+GLEAN_VERIFY_ROOT="$TOOL_STATE/verify"
 BUILD_LOG="$OUTPUT_DIR/xcodebuild.log"
 SOURCE_ARCHIVE="$OUTPUT_DIR/source-$SOURCE_SHA.tar"
 SOURCE_SNAPSHOT="$OUTPUT_DIR/source-$SOURCE_SHA"
 SOURCE_SNAPSHOT_RECORD="$CONTRACT_DIR/source-snapshot.json"
+GENERATED_SOURCE_RECORD="$CONTRACT_DIR/generated-source-inputs.json"
 PREFLIGHT="$CONTRACT_DIR/preflight.json"
 XC_CONFIG="$CONTRACT_DIR/FloorpNotesSyncBuild.xcconfig"
 COMMAND_JSON="$CONTRACT_DIR/xcodebuild-command.json"
@@ -324,10 +328,22 @@ ARCHIVED_COMMIT="$("$GIT_BIN" get-tar-commit-id < "$SOURCE_ARCHIVE")"
 [[ "$ARCHIVED_COMMIT" == "$SOURCE_SHA" ]] \
     || fail "source archive is not bound to the requested commit"
 "$TAR_BIN" -xf "$SOURCE_ARCHIVE" -C "$SOURCE_SNAPSHOT"
+GENERATED_SOURCE_PREPARER="$SOURCE_SNAPSHOT/scripts/staging/prepare-floorp-ios-source-snapshot.py"
+[[ -f "$GENERATED_SOURCE_PREPARER" ]] \
+    || fail "exact-commit generated-source preparer is missing"
+"$PYTHON_BIN" "$GENERATED_SOURCE_PREPARER" prepare \
+    --source-root "$SOURCE_SNAPSHOT" \
+    --source-archive "$SOURCE_ARCHIVE" \
+    --source-sha "$SOURCE_SHA" \
+    --output-root "$OUTPUT_DIR" \
+    --tool-state "$TOOL_STATE" \
+    --output "$GENERATED_SOURCE_RECORD"
+GENERATED_SOURCE_DIGEST="$("$SHASUM_BIN" -a 256 "$GENERATED_SOURCE_RECORD" | "$AWK_BIN" '{print $1}')"
 "$CHMOD_BIN" -R a-w "$SOURCE_SNAPSHOT"
 
 SOURCE_SNAPSHOT_DIGEST="$("$PYTHON_BIN" - "$SOURCE_SNAPSHOT" "$SOURCE_ARCHIVE" \
-    "$SOURCE_SNAPSHOT_RECORD" "$SOURCE_SHA" "$ACTUAL_TREE" <<'PY'
+    "$SOURCE_SNAPSHOT_RECORD" "$SOURCE_SHA" "$ACTUAL_TREE" \
+    "$GENERATED_SOURCE_RECORD" "$GENERATED_SOURCE_DIGEST" <<'PY'
 import hashlib
 import json
 import os
@@ -338,7 +354,7 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve(strict=True)
 archive = Path(sys.argv[2]).resolve(strict=True)
 record_path = Path(sys.argv[3]).resolve(strict=False)
-source_sha, source_tree = sys.argv[4:]
+source_sha, source_tree, generated_record, generated_digest = sys.argv[4:]
 
 
 def reject(message):
@@ -382,6 +398,10 @@ record = {
     "archive_sha256": archive_digest,
     "commit": source_sha,
     "file_count": file_count,
+    "generated_source_inputs": {
+        "path": str(Path(generated_record).resolve(strict=True)),
+        "sha256": generated_digest,
+    },
     "read_only": True,
     "snapshot_path": str(root),
     "snapshot_tree_sha256": tree_digest.hexdigest(),
@@ -407,7 +427,8 @@ PY
 
 verify_source_snapshot() {
     "$PYTHON_BIN" - "$SOURCE_SNAPSHOT" "$SOURCE_ARCHIVE" "$SOURCE_SNAPSHOT_RECORD" \
-        "$SOURCE_SNAPSHOT_DIGEST" <<'PY'
+        "$SOURCE_SNAPSHOT_DIGEST" "$GENERATED_SOURCE_RECORD" \
+        "$GENERATED_SOURCE_DIGEST" <<'PY'
 import hashlib
 import json
 import os
@@ -419,6 +440,8 @@ root = Path(sys.argv[1]).resolve(strict=True)
 archive = Path(sys.argv[2]).resolve(strict=True)
 record_path = Path(sys.argv[3]).resolve(strict=True)
 expected_tree_digest = sys.argv[4]
+generated_record_path = Path(sys.argv[5]).resolve(strict=True)
+expected_generated_digest = sys.argv[6]
 record = json.loads(record_path.read_text())
 
 
@@ -437,6 +460,13 @@ def file_digest(path):
 
 if file_digest(archive) != record.get("archive_sha256"):
     reject("source archive changed after exact-commit extraction")
+if file_digest(generated_record_path) != expected_generated_digest:
+    reject("generated-source manifest changed after preparation")
+if record.get("generated_source_inputs") != {
+    "path": str(generated_record_path),
+    "sha256": expected_generated_digest,
+}:
+    reject("source snapshot record does not bind generated-source inputs")
 tree_digest = hashlib.sha256()
 file_count = 0
 for directory, names, files in os.walk(root, topdown=True, followlinks=False):
@@ -463,6 +493,9 @@ if tree_digest.hexdigest() != expected_tree_digest:
 if file_count != record.get("file_count"):
     reject("source snapshot file count changed during the build")
 PY
+    "$PYTHON_BIN" "$GENERATED_SOURCE_PREPARER" verify \
+        --source-root "$SOURCE_SNAPSHOT" \
+        --manifest "$GENERATED_SOURCE_RECORD"
 }
 
 DEFAULT_SCHEMA="$ROOT/docs/floorp-notes-sync-release-evidence.schema.json"
@@ -1698,6 +1731,12 @@ XCODE_ARGS=(
     -derivedDataPath "$DERIVED_DATA"
     -xcconfig "$XC_CONFIG"
     COMPILER_INDEX_STORE_ENABLE=NO
+    "FLOORP_GENERATED_SOURCE_MANIFEST=$GENERATED_SOURCE_RECORD"
+    FLOORP_GENERATED_SOURCES_PREPARED=YES
+    "FLOORP_GLEAN_TOOL_ROOT=$TOOL_STATE"
+    "FLOORP_GLEAN_VENV=$GLEAN_VENV"
+    "FLOORP_GLEAN_VERIFY_ROOT=$GLEAN_VERIFY_ROOT"
+    FLOORP_GLEAN_VERIFY_ONLY=YES
 )
 if [[ "$ACTION" == "archive" ]]; then
     XCODE_ARGS+=( -archivePath "$ARCHIVE_PATH" )
