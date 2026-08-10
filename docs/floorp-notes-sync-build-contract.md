@@ -66,8 +66,8 @@ Evidence identifies its `build_contract_mode`. The validator is authoritative
 for schema conformance, RFC 8785 canonicalization, expiry/future checks, mixed
 release inputs, endpoint bindings, and clock freshness. The wrapper adds
 fail-closed checks for required passed gates, exact production authority, the
-immutable Todo 17 Application Services revision `.4`, and the successful
-repository/workflow/head clock identity. The iOS release input must contain
+immutable prerelease Todo 17 Application Services revision `.4`, and the
+successful repository/workflow/head clock identity. The iOS release input must contain
 exactly repository `Floorp-Projects/floorp-ios`, the requested source SHA,
 configuration `FloorpRelease`, and a nonempty build number. Post-build
 inspection then requires that build number to equal the built

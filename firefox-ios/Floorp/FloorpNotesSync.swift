@@ -1225,12 +1225,15 @@ enum FloorpNotesSyncReleaseGate {
                 source,
                 [
                     "kind", "role", "content_policy", "repository", "release_id",
-                    "release_tag", "asset_id", "asset_name", "source_sha", "sha256",
+                    "release_tag", "release_immutable", "release_prerelease",
+                    "asset_id", "asset_name", "source_sha", "sha256",
                 ]
             )
                 && isGitHubRepository(source["repository"])
                 && isPositiveSafeInteger(source["release_id"])
                 && isNonempty(source["release_tag"] as? String)
+                && source["release_immutable"] as? Bool == true
+                && source["release_prerelease"] as? Bool == true
                 && isPositiveSafeInteger(source["asset_id"])
                 && isNonempty(source["asset_name"] as? String)
                 && isSHA1(source["source_sha"])

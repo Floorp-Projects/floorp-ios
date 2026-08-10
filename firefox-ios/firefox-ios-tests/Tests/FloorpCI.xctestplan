@@ -638,6 +638,7 @@
         "FloorpNotesPrefsSyncDelegateTests/testRegistrationClaimsOwnerBeforeFirstCommitAndRejectsAnotherAccount()",
         "FloorpNotesPrefsSyncDelegateTests/testWriteFailureAndCancellationLeaveOwnerAndBaseUnchanged()",
         "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRejectsLegacyAndReboundMalformedArtifactProvenance()",
+        "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRejectsMissingOrFalsePinnedReleaseMetadata()",
         "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRejectsReboundWrongPinAndExpiredGate()",
         "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRejectsSchemaInvalidUnexpectedRootField()",
         "FloorpNotesSyncEngineSelectionTests/testCompiledEvidenceRejectsUnverifiedEmbeddedG6()",

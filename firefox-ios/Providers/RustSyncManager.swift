@@ -101,7 +101,7 @@ enum FloorpNotesSyncRetryPolicy {
             return nil
         }
         if let nextSyncAllowedAt, nextSyncAllowedAt > now {
-            return min(nextSyncAllowedAt.timeIntervalSince(now), maximumDelay)
+            return nextSyncAllowedAt.timeIntervalSince(now)
         }
         guard [.backedOff, .networkError, .serviceError, .otherError].contains(status) else {
             return nil

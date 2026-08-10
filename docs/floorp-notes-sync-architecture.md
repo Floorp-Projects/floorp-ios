@@ -192,6 +192,9 @@ request sequence in addition to its lifecycle generation. Result handling
 updates the retry slot only when both the generation is current and the result
 is newer than every result already handled for that generation. This prevents
 an older failure completion from reinstating a retry after a newer success.
+An Application Services `nextSyncAllowedAt` value is the authoritative earliest
+retry deadline and is never shortened by the local one-hour exponential-delay
+cap; that cap applies only when the server supplies no future deadline.
 Provider replacement is serialized by the same component lock. Checked
 disconnect records the exact provider it prepared, rejects replacement and
 duplicate removal starts while the operation is active, and resolves only that

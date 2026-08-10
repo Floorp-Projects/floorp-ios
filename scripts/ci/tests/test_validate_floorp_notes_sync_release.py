@@ -255,6 +255,8 @@ def release_asset_source(
         "content_policy": "release-binary",
         "kind": "github-release-asset",
         "release_id": 367118816,
+        "release_immutable": True,
+        "release_prerelease": True,
         "release_tag": services["release_tag"],
         "repository": services["repository"],
         "role": role,
@@ -844,6 +846,55 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         (data / "test-summary").write_bytes(b"synthetic-only test metadata")
         return result
 
+    def verify_test_release_asset(
+        self,
+        *,
+        prerelease: bool,
+        immutable: bool,
+    ) -> str:
+        raw = TEST_SOURCE_BYTES["mozilla-xcframework"]
+        source = release_asset_source(
+            "application-services-mozilla-xcframework",
+            "MozillaRustComponents.xcframework.zip",
+            501,
+            raw,
+            release_inputs(),
+        )
+        source["release_prerelease"] = True
+        source["release_immutable"] = True
+        release = {
+            "assets": [
+                {
+                    "id": source["asset_id"],
+                    "name": source["asset_name"],
+                }
+            ],
+            "draft": False,
+            "id": source["release_id"],
+            "immutable": immutable,
+            "prerelease": prerelease,
+            "tag_name": source["release_tag"],
+        }
+        with (
+            mock.patch.object(VALIDATOR_MODULE, "gh_api_json", return_value=release),
+            mock.patch.object(
+                VALIDATOR_MODULE,
+                "resolve_release_tag",
+                return_value=source["source_sha"],
+            ),
+            mock.patch.object(
+                VALIDATOR_MODULE,
+                "gh_api_download_digest",
+                return_value=source["sha256"],
+            ),
+        ):
+            return VALIDATOR_MODULE.verify_github_release_asset(
+                source,
+                Path("/usr/bin/false"),
+                {},
+                "g2 application-services asset",
+            )
+
     def run_validator(
         self,
         evidence: object | None = None,
@@ -929,6 +980,21 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
     def test_valid_production_qa_g1_g4_evidence_passes(self):
         result = self.run_validator(make_production_qa_evidence())
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_pinned_prerelease_immutable_release_asset_is_accepted(self):
+        expected = hashlib.sha256(TEST_SOURCE_BYTES["mozilla-xcframework"]).hexdigest()
+        self.assertEqual(
+            self.verify_test_release_asset(prerelease=True, immutable=True),
+            expected,
+        )
+
+    def test_final_release_cannot_replace_pinned_prerelease(self):
+        with self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "prerelease"):
+            self.verify_test_release_asset(prerelease=False, immutable=True)
+
+    def test_mutable_release_cannot_replace_pinned_immutable_release(self):
+        with self.assertRaisesRegex(VALIDATOR_MODULE.ValidationError, "immutable"):
+            self.verify_test_release_asset(prerelease=True, immutable=False)
 
     def test_legacy_repository_fixture_without_retrievable_artifacts_fails_closed(self):
         result = self.run_validator(

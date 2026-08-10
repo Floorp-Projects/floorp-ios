@@ -2333,6 +2333,15 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
         )
         XCTAssertEqual(
             FloorpNotesSyncRetryPolicy.delay(
+                status: .backedOff,
+                nextSyncAllowedAt: now.addingTimeInterval(86_400),
+                now: now,
+                attempt: 99
+            ),
+            86_400
+        )
+        XCTAssertEqual(
+            FloorpNotesSyncRetryPolicy.delay(
                 status: .networkError,
                 nextSyncAllowedAt: nil,
                 now: now,
@@ -2520,6 +2529,42 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
                 now: trustedNow
             )
         )
+    }
+
+    func testCompiledEvidenceRejectsMissingOrFalsePinnedReleaseMetadata() throws {
+        let (_, fixtureRoot) = try compiledEvidenceFixture(
+            named: "floorp-notes-sync-g1-g5-valid"
+        )
+        let trustedNow = try releaseEvidenceTrustedNow()
+
+        var missingRoot = fixtureRoot
+        try mutateFirstReleaseSource(in: &missingRoot) { source in
+            source.removeValue(forKey: "release_immutable")
+            source.removeValue(forKey: "release_prerelease")
+        }
+        let missingEvidence = try canonicalEvidenceData(missingRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: missingEvidence, root: missingRoot),
+                evidenceData: missingEvidence,
+                now: trustedNow
+            )
+        )
+
+        for field in ["release_immutable", "release_prerelease"] {
+            var falseRoot = fixtureRoot
+            try mutateFirstReleaseSource(in: &falseRoot) { source in
+                source[field] = false
+            }
+            let falseEvidence = try canonicalEvidenceData(falseRoot)
+            XCTAssertFalse(
+                FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                    try compiledConfiguration(evidence: falseEvidence, root: falseRoot),
+                    evidenceData: falseEvidence,
+                    now: trustedNow
+                )
+            )
+        }
     }
 
     func testCompiledEvidenceRejectsUnverifiedEmbeddedG6() throws {
@@ -2922,11 +2967,35 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
             "repository": repository,
             "release_id": 1,
             "release_tag": tag,
+            "release_immutable": true,
+            "release_prerelease": true,
             "asset_id": assetID,
             "asset_name": "\(role).artifact",
             "source_sha": sourceSHA,
             "sha256": sha256(Data("release:\(role)".utf8)),
         ]
+    }
+
+    private func mutateFirstReleaseSource(
+        in root: inout [String: Any],
+        mutation: (inout [String: Any]) -> Void
+    ) throws {
+        var gates = try XCTUnwrap(root["gates"] as? [String: Any])
+        var g2 = try XCTUnwrap(gates["g2"] as? [String: Any])
+        var artifact = try XCTUnwrap(g2["artifact"] as? [String: Any])
+        var sources = try XCTUnwrap(artifact["sources"] as? [[String: Any]])
+        let index = try XCTUnwrap(
+            sources.firstIndex { $0["kind"] as? String == "github-release-asset" }
+        )
+        mutation(&sources[index])
+        artifact["sources"] = sources
+        artifact["sha256"] = sha256(
+            try canonicalEvidenceData(["sources": sources])
+        )
+        g2["artifact"] = artifact
+        gates["g2"] = g2
+        root["gates"] = gates
+        try rebindEvidenceDigests(&root)
     }
 
     private func canonicalEvidenceData(_ value: Any) throws -> Data {

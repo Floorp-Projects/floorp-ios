@@ -26,7 +26,7 @@ from urllib.parse import quote
 EXPECTED_REPOSITORY = "Floorp-Projects/floorp-ios"
 EXPECTED_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-validation-clock.yml"
 EXPECTED_SCHEMA_ID = "https://floorp.app/schemas/floorp-notes-sync-release-evidence-v1.json"
-EXPECTED_SCHEMA_SHA256 = "a51fe4b64a68d9bb6ca4c8899e62ddc33d71f86b405d5cf0f8f53e1e2f6f58e2"
+EXPECTED_SCHEMA_SHA256 = "1ed700057908ad12ca0a1190da479030b5b40d2a6a5451477273d53e070ddcce"
 PRODUCTION_GH_BIN = Path("/opt/homebrew/bin/gh")
 PRODUCTION_GH_SHA256 = "6a2ab5fa89553eac1f0df50a26a5eaeea9a665d8971f5a51b32487b72c708f5c"
 PRODUCTION_GH_SIZE = 38_983_666
@@ -1495,7 +1495,19 @@ def verify_github_release_asset(
     check(isinstance(release, dict), f"{label}: release response is not an object")
     check(release.get("id") == source["release_id"], f"{label}: release ID mismatch")
     check(release.get("tag_name") == source["release_tag"], f"{label}: release tag mismatch")
-    check(not release.get("draft") and not release.get("prerelease"), f"{label}: release is not final")
+    check(release.get("draft") is False, f"{label}: release draft state mismatch")
+    expected_prerelease = source.get("release_prerelease")
+    expected_immutable = source.get("release_immutable")
+    check(expected_prerelease is True, f"{label}: pinned release must be prerelease")
+    check(expected_immutable is True, f"{label}: pinned release must be immutable")
+    check(
+        release.get("prerelease") is expected_prerelease,
+        f"{label}: release prerelease state mismatch",
+    )
+    check(
+        release.get("immutable") is expected_immutable,
+        f"{label}: release immutable state mismatch",
+    )
     assets = release.get("assets")
     check(isinstance(assets, list), f"{label}: release assets are malformed")
     matching = [asset for asset in assets if isinstance(asset, dict) and asset.get("id") == source["asset_id"]]
