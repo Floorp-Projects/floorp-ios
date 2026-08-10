@@ -12,21 +12,27 @@ import enum MozillaAppServices.SyncReason
 
 @MainActor
 class SyncContentSettingsViewControllerTests: XCTestCase {
-    var profile: MockProfile!
+    private var profileStorage: MockProfile?
+    private var profile: MockProfile {
+        guard let profileStorage else {
+            preconditionFailure("profile accessed outside the test lifecycle")
+        }
+        return profileStorage
+    }
     var syncContentSettingsVC: SyncContentSettingsViewController?
     let windowUUID: WindowUUID = .XCTestDefaultUUID
 
     override func setUp() async throws {
         try await super.setUp()
         DependencyHelperMock().bootstrapDependencies()
-        profile = MockProfile()
+        profileStorage = MockProfile()
         syncContentSettingsVC = SyncContentSettingsViewController(windowUUID: windowUUID)
         syncContentSettingsVC?.profile = profile
     }
 
     override func tearDown() async throws {
         DependencyHelperMock().reset()
-        profile = nil
+        profileStorage = nil
         syncContentSettingsVC = nil
         try await super.tearDown()
     }

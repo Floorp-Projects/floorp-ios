@@ -33,39 +33,63 @@ class RustSyncManagerTests: XCTestCase {
         static let tabsEnabledPrefKey = "sync.engine.tabs.enabled"
     }
 
-    private var rustSyncManager: RustSyncManager!
-    private var profile: MockBrowserProfile!
+    private final class Fixture {
+        let profile: MockBrowserProfile
+        let logins: MockLoginProvider
+        let autofill: MockAutofill
+        let places: MockPlaces
+        let tabs: MockRemoteTabs
+        var rustSyncManager: RustSyncManager
 
-    private var logins: MockLoginProvider!
-    private var autofill: MockAutofill!
-    private var places: MockPlaces!
-    private var tabs: MockRemoteTabs!
+        init() {
+            profile = MockBrowserProfile(localName: "RustSyncManagerTests")
+            logins = MockLoginProvider()
+            autofill = MockAutofill()
+            places = MockPlaces()
+            tabs = MockRemoteTabs()
+            rustSyncManager = RustSyncManager(
+                profile: profile,
+                creditCardAutofillEnabled: true,
+                logger: MockLogger(),
+                logins: logins,
+                autofill: autofill,
+                places: places,
+                tabs: tabs,
+                notificationCenter: MockNotificationCenter()
+            )
+            rustSyncManager.syncManagerAPI = RustSyncManagerAPI(
+                dispatchQueue: MockDispatchQueue()
+            )
+            profile.syncManager = rustSyncManager
+        }
+    }
+
+    private var fixture: Fixture?
+    private var requiredFixture: Fixture {
+        guard let fixture else {
+            preconditionFailure("fixture accessed outside the test lifecycle")
+        }
+        return fixture
+    }
+    private var rustSyncManager: RustSyncManager {
+        get { requiredFixture.rustSyncManager }
+        set { requiredFixture.rustSyncManager = newValue }
+    }
+    private var profile: MockBrowserProfile { requiredFixture.profile }
+    private var logins: MockLoginProvider { requiredFixture.logins }
+    private var autofill: MockAutofill { requiredFixture.autofill }
+    private var places: MockPlaces { requiredFixture.places }
+    private var tabs: MockRemoteTabs { requiredFixture.tabs }
 
     override func setUp() {
         super.setUp()
-        logins = MockLoginProvider()
-        autofill = MockAutofill()
-        places = MockPlaces()
-        tabs = MockRemoteTabs()
-
-        profile = MockBrowserProfile(localName: "RustSyncManagerTests")
-        rustSyncManager = RustSyncManager(profile: profile,
-                                          creditCardAutofillEnabled: true,
-                                          logger: MockLogger(),
-                                          logins: logins,
-                                          autofill: autofill,
-                                          places: places,
-                                          tabs: tabs,
-                                          notificationCenter: MockNotificationCenter())
-        rustSyncManager.syncManagerAPI = RustSyncManagerAPI(dispatchQueue: MockDispatchQueue())
-        profile.syncManager = rustSyncManager
+        fixture = Fixture()
     }
 
     override func tearDown() {
-        rustSyncManager = nil
         UserDefaults.standard.removeObject(forKey: "fxa.cwts.declinedSyncEngines")
         profile.prefs.clearAll()
-        profile = nil
+        fixture = nil
         super.tearDown()
     }
 
@@ -93,10 +117,10 @@ class RustSyncManagerTests: XCTestCase {
 
             XCTAssertNotNil(keys["creditcards"])
 
-            XCTAssertEqual(tabs?.registerWithSyncManagerCalled, 1)
-            XCTAssertEqual(logins?.registerWithSyncManagerCalled, 1)
-            XCTAssertEqual(autofill?.registerWithSyncManagerCalled, 1)
-            XCTAssertEqual(places?.registerWithSyncManagerCalled, 1)
+            XCTAssertEqual(tabs.registerWithSyncManagerCalled, 1)
+            XCTAssertEqual(logins.registerWithSyncManagerCalled, 1)
+            XCTAssertEqual(autofill.registerWithSyncManagerCalled, 1)
+            XCTAssertEqual(places.registerWithSyncManagerCalled, 1)
         }
     }
 
@@ -155,10 +179,10 @@ class RustSyncManagerTests: XCTestCase {
 
             XCTAssertNotNil(keys["creditcards"])
 
-            XCTAssertEqual(tabs?.registerWithSyncManagerCalled, 1)
-            XCTAssertEqual(logins?.registerWithSyncManagerCalled, 0)
-            XCTAssertEqual(autofill?.registerWithSyncManagerCalled, 1)
-            XCTAssertEqual(places?.registerWithSyncManagerCalled, 1)
+            XCTAssertEqual(tabs.registerWithSyncManagerCalled, 1)
+            XCTAssertEqual(logins.registerWithSyncManagerCalled, 0)
+            XCTAssertEqual(autofill.registerWithSyncManagerCalled, 1)
+            XCTAssertEqual(places.registerWithSyncManagerCalled, 1)
         }
     }
 
@@ -1000,7 +1024,7 @@ class RustSyncManagerTests: XCTestCase {
         let invalidationCountBeforeDisable = provider.invalidateCallCount
 
         DispatchQueue.global(qos: .userInitiated).async { [rustSyncManager] in
-            rustSyncManager?.applyFloorpNotesRuntimePolicy(enabled: false) {
+            rustSyncManager.applyFloorpNotesRuntimePolicy(enabled: false) {
                 policyApplied.signal()
             }
             disableReturned.signal()
@@ -1252,13 +1276,13 @@ class RustSyncManagerTests: XCTestCase {
         _ = rustSyncManager.onRemovedAccount()
 
         DispatchQueue.global(qos: .userInitiated).async { [rustSyncManager] in
-            _ = rustSyncManager?.finalizeAccountRemoval()
+            _ = rustSyncManager.finalizeAccountRemoval()
             finalizeFinished.signal()
         }
         XCTAssertEqual(finalizeStarted.wait(timeout: .now() + 1), .success)
 
         DispatchQueue.global(qos: .userInitiated).async { [rustSyncManager] in
-            rustSyncManager?.cancelAccountRemoval()
+            rustSyncManager.cancelAccountRemoval()
             cancelFinished.signal()
         }
         XCTAssertEqual(
