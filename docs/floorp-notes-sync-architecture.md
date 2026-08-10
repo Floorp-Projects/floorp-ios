@@ -128,8 +128,21 @@ external await and before commit.
 A nil remote revision is the typed missing/reset-record signal. It invalidates
 the old merge base and starts a first-sync merge, retaining local Notes rather
 than interpreting the missing record as a bulk remote deletion. Disconnect
-clears the account association and base. Local Notes are retained by default
-unless the user explicitly chooses to delete them.
+clears the active Sync association: the merge base and Application Services
+global/collection IDs are reset. The prior Firefox Account UID remains only as
+an account-isolation tombstone, not as an active association. This prevents a
+different account from inheriting or uploading the retained local Notes; that
+account sees local-only state. Local Notes are retained by default unless the
+user explicitly chooses to delete them.
+
+Checked disconnect writes the account UID and Application Services reset state
+to a small, protected, atomically replaced sidecar before FxA logout is
+allowed. Finalization resets the Notes archive and then removes that sidecar.
+If the archive write or sidecar removal fails after the irreversible logout,
+ordinary Sync/profile/keychain cleanup still completes and account removal is
+reported as successful; the next provider installation replays only the
+idempotent Notes association reset. It never repeats FxA logout and therefore
+cannot sign out a newly selected account.
 
 ## Privacy and retention
 
@@ -138,11 +151,63 @@ unless the user explicitly chooses to delete them.
   telemetry.
 - Local merge/base storage uses the same protected transactional component as
   Notes and is keyed by account UID.
-- A future engine reset removes server-derived state and account association.
-  Local Notes are retained by default unless the user explicitly chooses to
-  delete them.
+- An engine reset removes server-derived state and the active association but
+  retains the prior UID as an isolation tombstone. Local Notes are retained by
+  default unless the user explicitly chooses to delete them.
 - Normal application data protection, backup, and device-removal behavior must
   be documented in the release privacy review.
+
+## Runtime rollback ownership
+
+An exact, valid embedded G1-G5 record seeds the device-local Notes Sync policy
+only when that policy has never been set. A signed-in device user or internal
+QA operator can then turn **Sync Notes** off in account Sync settings. Turning
+it off persists across restarts, invalidates the registered Notes engine,
+cancels retries and stale lifecycle generations, and leaves local Notes and the
+last synchronized base untouched. Turning it back on can never override a
+false compiled release gate and requests only the Notes engine.
+
+This is the pre-public iOS rollback owner and control surface. It is not a
+central fleet-wide kill switch. A future public rollout that requires Floorp
+operations to disable every installed build needs a separately authorized,
+signed and expiring policy from a Floorp-owned HTTPS endpoint; no such endpoint
+or host is invented by this milestone.
+
+The final request gate and the Application Services call share one component
+lock. Runtime OFF is queued on that lock instead of blocking the settings UI;
+the Notes preference is published as false only after an already admitted FFI
+call completes. The Notes settings row does not write that preference itself.
+A monotonic policy-mutation sequence makes rapid OFF/ON changes latest-wins,
+so a delayed OFF operation cannot overwrite a newer ON decision.
+
+The same final gate validates the concrete `SyncParams.authInfo.tokenserverUrl`
+that the FFI call will consume. Notes is admitted only for HTTPS
+`token.services.mozilla.com` on the release Sync 1.5 path, without credentials,
+query, fragment, or a nonstandard port. Current preference flags remain an
+additional requirement, so an asynchronously stale custom FxA manager cannot
+be admitted merely because the preferences have already returned to release.
+
+Each Notes request admitted under the component lock receives a monotonic
+request sequence in addition to its lifecycle generation. Result handling
+updates the retry slot only when both the generation is current and the result
+is newer than every result already handled for that generation. This prevents
+an older failure completion from reinstating a retry after a newer success.
+Provider replacement is serialized by the same component lock. Checked
+disconnect records the exact provider it prepared, rejects replacement and
+duplicate removal starts while the operation is active, and resolves only that
+provider during finalize or cancel. Every successful provider installation,
+including an in-place installation of the same object, advances a separate
+install lease; a queued invalidation must match both that lease and the Notes
+lifecycle generation before it can invalidate the current provider.
+
+Preparation and completion are separate disconnect states. The provider may
+stage its durable reset while the component lock is held, but account-removal
+finalization is not admitted until `disconnectChecked()` itself reports
+success. A component failure cancels that exact staged provider once and keeps
+the FxA account and ordinary Sync state intact. Foreground activation cannot
+restart the standard Sync timer while removal is active; a failed/cancelled
+removal restores it only when the profile is still foregrounded and syncable,
+while successful finalization guarantees that it remains stopped.
 
 ## Release gates
 

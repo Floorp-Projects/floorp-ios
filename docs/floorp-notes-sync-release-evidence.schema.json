@@ -1,0 +1,705 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://floorp.app/schemas/floorp-notes-sync-release-evidence-v1.json",
+  "title": "Floorp Notes Sync mode-aware G1-G6 release evidence",
+  "description": "Fail-closed production-QA or release-enabled evidence binding exact iOS, Desktop, Runtime, Application Services, contract, endpoint, gate artifact, and optional G6 approval inputs. JSON instances must be RFC 8785 JCS canonical UTF-8.",
+  "oneOf": [
+    {"$ref": "#/$defs/productionQaEvidence"},
+    {"$ref": "#/$defs/releaseEnabledEvidence"}
+  ],
+  "$defs": {
+    "productionQaEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "build_contract_mode",
+        "release_inputs",
+        "gates",
+        "g1_g4_digest_sha256",
+        "same_release_key_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "build_contract_mode": {"const": "production-qa"},
+        "release_inputs": {"$ref": "#/$defs/releaseInputs"},
+        "gates": {"$ref": "#/$defs/productionQaGates"},
+        "g1_g4_digest_sha256": {
+          "description": "SHA-256 of RFC 8785 JCS for {release_inputs,gates:{g1,g2,g3,g4}}.",
+          "$ref": "#/$defs/sha256"
+        },
+        "same_release_key_sha256": {
+          "description": "SHA-256 of RFC 8785 JCS for release_inputs plus each G1-G4 gate artifact digest.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "releaseEnabledEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "build_contract_mode",
+        "release_inputs",
+        "gates",
+        "g1_g5_digest_sha256",
+        "same_release_key_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "build_contract_mode": {"const": "release-enabled"},
+        "release_inputs": {"$ref": "#/$defs/releaseInputs"},
+        "gates": {"$ref": "#/$defs/releaseEnabledGates"},
+        "g1_g5_digest_sha256": {
+          "description": "SHA-256 of RFC 8785 JCS for {release_inputs,gates:{g1,g2,g3,g4,g5}}.",
+          "$ref": "#/$defs/sha256"
+        },
+        "same_release_key_sha256": {
+          "description": "SHA-256 of RFC 8785 JCS for release_inputs plus each present G1-G6 gate artifact digest.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "artifactContentPolicy": {
+      "enum": [
+        "metadata-json",
+        "network-metadata-json",
+        "source-code",
+        "test-result-bundle",
+        "release-binary"
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._/-]+$"
+    },
+    "githubRepository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "artifactRole": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "localFileSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "role", "content_policy", "path", "sha256"],
+      "properties": {
+        "kind": {"const": "local-file"},
+        "role": {"$ref": "#/$defs/artifactRole"},
+        "content_policy": {"$ref": "#/$defs/artifactContentPolicy"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "localDirectorySource": {
+      "description": "A single .xcresult tree hashed through fd-relative O_NOFOLLOW traversal with stable entry identities, at most 200000 entries, and at most 16 GiB of regular-file content.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "role", "content_policy", "path", "sha256"],
+      "properties": {
+        "kind": {"const": "local-directory"},
+        "role": {"$ref": "#/$defs/artifactRole"},
+        "content_policy": {"const": "test-result-bundle"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "githubRepositoryFileSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "role",
+        "content_policy",
+        "repository",
+        "commit_sha",
+        "path",
+        "blob_sha",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {"const": "github-repository-file"},
+        "role": {"$ref": "#/$defs/artifactRole"},
+        "content_policy": {"$ref": "#/$defs/artifactContentPolicy"},
+        "repository": {"$ref": "#/$defs/githubRepository"},
+        "commit_sha": {"$ref": "#/$defs/sha1"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "blob_sha": {"$ref": "#/$defs/sha1"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "githubActionsRunSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "role",
+        "content_policy",
+        "repository",
+        "run_id",
+        "workflow_path",
+        "head_sha",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {"const": "github-actions-run"},
+        "role": {"$ref": "#/$defs/artifactRole"},
+        "content_policy": {"const": "metadata-json"},
+        "repository": {"$ref": "#/$defs/githubRepository"},
+        "run_id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "workflow_path": {
+          "type": "string",
+          "pattern": "^\\.github/workflows/[A-Za-z0-9._/-]+\\.ya?ml$"
+        },
+        "head_sha": {"$ref": "#/$defs/sha1"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "githubActionsArtifactSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "role",
+        "content_policy",
+        "repository",
+        "run_id",
+        "artifact_id",
+        "artifact_name",
+        "head_sha",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {"const": "github-actions-artifact"},
+        "role": {"$ref": "#/$defs/artifactRole"},
+        "content_policy": {"const": "test-result-bundle"},
+        "repository": {"$ref": "#/$defs/githubRepository"},
+        "run_id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "artifact_id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "artifact_name": {"type": "string", "minLength": 1, "maxLength": 255},
+        "head_sha": {"$ref": "#/$defs/sha1"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "githubReleaseAssetSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "role",
+        "content_policy",
+        "repository",
+        "release_id",
+        "release_tag",
+        "asset_id",
+        "asset_name",
+        "source_sha",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {"const": "github-release-asset"},
+        "role": {"$ref": "#/$defs/artifactRole"},
+        "content_policy": {"const": "release-binary"},
+        "repository": {"$ref": "#/$defs/githubRepository"},
+        "release_id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "release_tag": {"type": "string", "minLength": 1, "maxLength": 255},
+        "asset_id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "asset_name": {"type": "string", "minLength": 1, "maxLength": 255},
+        "source_sha": {"$ref": "#/$defs/sha1"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "artifactSource": {
+      "oneOf": [
+        {"$ref": "#/$defs/localFileSource"},
+        {"$ref": "#/$defs/localDirectorySource"},
+        {"$ref": "#/$defs/githubRepositoryFileSource"},
+        {"$ref": "#/$defs/githubActionsRunSource"},
+        {"$ref": "#/$defs/githubActionsArtifactSource"},
+        {"$ref": "#/$defs/githubReleaseAssetSource"}
+      ]
+    },
+    "artifact": {
+      "description": "SHA-256 of RFC 8785 JCS for the ordered, independently retrieved source descriptors. Every source digest is recomputed from local bytes or a pinned GitHub object; URI-only claims are forbidden.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "sha256"],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/artifactSource"}
+        },
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "iosInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "source_sha", "build_number", "configuration"],
+      "properties": {
+        "repository": {"const": "Floorp-Projects/floorp-ios"},
+        "source_sha": {"$ref": "#/$defs/sha1"},
+        "build_number": {"type": "string", "minLength": 1},
+        "configuration": {"type": "string", "minLength": 1}
+      }
+    },
+    "desktopInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "source_sha", "build_number"],
+      "properties": {
+        "repository": {"const": "Floorp-Projects/Floorp"},
+        "source_sha": {"$ref": "#/$defs/sha1"},
+        "build_number": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtimeInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "source_sha", "tree_sha"],
+      "properties": {
+        "repository": {"const": "Floorp-Projects/Floorp-Runtime"},
+        "source_sha": {"$ref": "#/$defs/sha1"},
+        "tree_sha": {"$ref": "#/$defs/sha1"}
+      }
+    },
+    "applicationServicesInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "source_sha", "tree_sha", "release_tag", "artifacts"],
+      "properties": {
+        "repository": {"const": "Floorp-Projects/application-services"},
+        "source_sha": {"$ref": "#/$defs/sha1"},
+        "tree_sha": {"$ref": "#/$defs/sha1"},
+        "release_tag": {
+          "type": "string",
+          "pattern": "^floorp-ios-[0-9]+\\.[0-9]{14}\\.[1-9][0-9]*$"
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "focus_xcframework_sha256",
+            "mozilla_xcframework_sha256",
+            "release_manifest_sha256",
+            "sha256sums_sha256",
+            "swift_components_sha256"
+          ],
+          "properties": {
+            "focus_xcframework_sha256": {"$ref": "#/$defs/sha256"},
+            "mozilla_xcframework_sha256": {"$ref": "#/$defs/sha256"},
+            "release_manifest_sha256": {"$ref": "#/$defs/sha256"},
+            "sha256sums_sha256": {"$ref": "#/$defs/sha256"},
+            "swift_components_sha256": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      }
+    },
+    "contractInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture_sha256", "case_set_sha256", "endpoint_policy_sha256"],
+      "properties": {
+        "fixture_sha256": {"$ref": "#/$defs/sha256"},
+        "case_set_sha256": {
+          "description": "SHA-256 of RFC 8785 JCS for the fixture requiredCaseNames array.",
+          "$ref": "#/$defs/sha256"
+        },
+        "endpoint_policy_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "environmentInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fxa_configuration", "fxa_hosts", "sync_hosts", "wire_protocol"],
+      "properties": {
+        "fxa_configuration": {"const": "FxAConfig.Server.release"},
+        "fxa_hosts": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "sync_hosts": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "wire_protocol": {"const": "sync15"}
+      }
+    },
+    "releaseInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ios",
+        "desktop",
+        "runtime",
+        "application_services",
+        "contract",
+        "environment"
+      ],
+      "properties": {
+        "ios": {"$ref": "#/$defs/iosInput"},
+        "desktop": {"$ref": "#/$defs/desktopInput"},
+        "runtime": {"$ref": "#/$defs/runtimeInput"},
+        "application_services": {"$ref": "#/$defs/applicationServicesInput"},
+        "contract": {"$ref": "#/$defs/contractInput"},
+        "environment": {"$ref": "#/$defs/environmentInput"}
+      }
+    },
+    "g1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "issued_at", "artifact", "contract"],
+      "properties": {
+        "status": {"const": "passed"},
+        "issued_at": {"$ref": "#/$defs/timestamp"},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ios_contract_sha",
+            "desktop_contract_sha",
+            "fixture_sha256",
+            "case_set_sha256",
+            "record_id",
+            "notes_pref_name",
+            "control_pref_name",
+            "control_pref_value"
+          ],
+          "properties": {
+            "ios_contract_sha": {"$ref": "#/$defs/sha1"},
+            "desktop_contract_sha": {"$ref": "#/$defs/sha1"},
+            "fixture_sha256": {"$ref": "#/$defs/sha256"},
+            "case_set_sha256": {"$ref": "#/$defs/sha256"},
+            "record_id": {"type": "string", "minLength": 1},
+            "notes_pref_name": {"type": "string", "minLength": 1},
+            "control_pref_name": {"type": "string", "minLength": 1},
+            "control_pref_value": {"const": true}
+          }
+        }
+      }
+    },
+    "g2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "issued_at",
+        "expires_at",
+        "artifact",
+        "application_services",
+        "fake_server_run_sha256"
+      ],
+      "properties": {
+        "status": {"const": "passed"},
+        "issued_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "application_services": {"$ref": "#/$defs/applicationServicesInput"},
+        "fake_server_run_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "g3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "issued_at", "expires_at", "artifact", "candidate", "xcresult_sha256"],
+      "properties": {
+        "status": {"const": "passed"},
+        "issued_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "candidate": {"$ref": "#/$defs/iosInput"},
+        "xcresult_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "g4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "issued_at",
+        "expires_at",
+        "artifact",
+        "desktop",
+        "runtime",
+        "xpcshell_run_sha256",
+        "tps_run_sha256"
+      ],
+      "properties": {
+        "status": {"const": "passed"},
+        "issued_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "desktop": {"$ref": "#/$defs/desktopInput"},
+        "runtime": {"$ref": "#/$defs/runtimeInput"},
+        "xpcshell_run_sha256": {"$ref": "#/$defs/sha256"},
+        "tps_run_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "g5ApplicationServices": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_sha", "release_tag", "mozilla_xcframework_sha256"],
+      "properties": {
+        "source_sha": {"$ref": "#/$defs/sha1"},
+        "release_tag": {
+          "type": "string",
+          "pattern": "^floorp-ios-[0-9]+\\.[0-9]{14}\\.[1-9][0-9]*$"
+        },
+        "mozilla_xcframework_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "g5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "issued_at",
+        "expires_at",
+        "artifact",
+        "ios",
+        "desktop",
+        "runtime",
+        "application_services",
+        "account_isolation_run_sha256",
+        "proxy_trace_sha256"
+      ],
+      "properties": {
+        "status": {"const": "passed"},
+        "issued_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "ios": {"$ref": "#/$defs/iosInput"},
+        "desktop": {"$ref": "#/$defs/desktopInput"},
+        "runtime": {"$ref": "#/$defs/runtimeInput"},
+        "application_services": {"$ref": "#/$defs/g5ApplicationServices"},
+        "account_isolation_run_sha256": {"$ref": "#/$defs/sha256"},
+        "proxy_trace_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "approvalPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "github_login",
+        "key_fingerprint",
+        "issued_at",
+        "expires_at",
+        "g1_g5_digest_sha256",
+        "release_inputs"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "architecture-owner",
+            "security-reviewer",
+            "privacy-reviewer",
+            "retention-reviewer",
+            "rollout-approver"
+          ]
+        },
+        "github_login": {"type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"},
+        "key_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"},
+        "issued_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"},
+        "g1_g5_digest_sha256": {"$ref": "#/$defs/sha256"},
+        "release_inputs": {"$ref": "#/$defs/releaseInputs"}
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "signature"],
+      "properties": {
+        "payload": {"$ref": "#/$defs/approvalPayload"},
+        "signature": {
+          "type": "string",
+          "pattern": "^-----BEGIN SSH SIGNATURE-----\\n[A-Za-z0-9+/=\\n]+-----END SSH SIGNATURE-----\\n$"
+        }
+      }
+    },
+    "g6Artifact": {
+      "description": "SHA-256 of RFC 8785 JCS for the five embedded detached approvals. G6 trust anchors are independently pinned to Todo 16 merged GitHub objects by the validator.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "g6": {
+      "description": "Optional during Todo 19 capability validation; release enablement requires five detached role approvals.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "issued_at", "expires_at", "artifact", "approvals"],
+      "properties": {
+        "status": {"const": "passed"},
+        "issued_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"},
+        "artifact": {"$ref": "#/$defs/g6Artifact"},
+        "approvals": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {"$ref": "#/$defs/approval"}
+        }
+      }
+    },
+    "productionQaGates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["g1", "g2", "g3", "g4"],
+      "properties": {
+        "g1": {"$ref": "#/$defs/g1"},
+        "g2": {"$ref": "#/$defs/g2"},
+        "g3": {"$ref": "#/$defs/g3"},
+        "g4": {"$ref": "#/$defs/g4"}
+      }
+    },
+    "releaseEnabledGates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["g1", "g2", "g3", "g4", "g5"],
+      "properties": {
+        "g1": {"$ref": "#/$defs/g1"},
+        "g2": {"$ref": "#/$defs/g2"},
+        "g3": {"$ref": "#/$defs/g3"},
+        "g4": {"$ref": "#/$defs/g4"},
+        "g5": {"$ref": "#/$defs/g5"},
+        "g6": {"$ref": "#/$defs/g6"}
+      }
+    },
+    "clockWorkflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path"],
+      "properties": {
+        "id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "path": {"const": ".github/workflows/floorp-notes-sync-validation-clock.yml"}
+      }
+    },
+    "clockRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "attempt",
+        "api_url",
+        "html_url",
+        "repository",
+        "workflow_id",
+        "workflow_path",
+        "event",
+        "head_sha",
+        "status",
+        "conclusion",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "attempt": {"$ref": "#/$defs/positiveSafeInteger"},
+        "api_url": {"type": "string", "minLength": 1},
+        "html_url": {"type": "string", "minLength": 1},
+        "repository": {"const": "Floorp-Projects/floorp-ios"},
+        "workflow_id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "workflow_path": {"const": ".github/workflows/floorp-notes-sync-validation-clock.yml"},
+        "event": {"const": "workflow_dispatch"},
+        "head_sha": {"$ref": "#/$defs/sha1"},
+        "status": {"const": "completed"},
+        "conclusion": {"const": "success"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "updated_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "clockJob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "run_id",
+        "run_attempt",
+        "name",
+        "status",
+        "conclusion",
+        "started_at",
+        "completed_at"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "run_id": {"$ref": "#/$defs/positiveSafeInteger"},
+        "run_attempt": {"$ref": "#/$defs/positiveSafeInteger"},
+        "name": {"const": "validation-clock"},
+        "status": {"const": "completed"},
+        "conclusion": {"const": "success"},
+        "started_at": {"$ref": "#/$defs/timestamp"},
+        "completed_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "validationClockManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "provider",
+        "repository",
+        "workflow",
+        "expected_head_sha",
+        "max_age_seconds",
+        "github_http_date",
+        "run",
+        "jobs"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "provider": {"const": "github-actions"},
+        "repository": {"const": "Floorp-Projects/floorp-ios"},
+        "workflow": {"$ref": "#/$defs/clockWorkflow"},
+        "expected_head_sha": {"$ref": "#/$defs/sha1"},
+        "max_age_seconds": {"const": 300},
+        "github_http_date": {
+          "type": "string",
+          "pattern": "^[A-Z][a-z]{2}, [0-9]{2} [A-Z][a-z]{2} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+        },
+        "run": {"$ref": "#/$defs/clockRun"},
+        "jobs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {"$ref": "#/$defs/clockJob"}
+        }
+      }
+    }
+  }
+}

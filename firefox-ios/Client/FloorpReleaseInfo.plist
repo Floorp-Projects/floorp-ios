@@ -99,6 +99,32 @@
 	<string>$(MOZ_ALLOW_QUICK_ANSWERS)</string>
 	<key>MozAllowRemotePushNotifications</key>
 	<string>$(MOZ_ALLOW_REMOTE_PUSH_NOTIFICATIONS)</string>
+	<key>MozFloorpNotesSyncBuildMode</key>
+	<string>$(FLOORP_NOTES_SYNC_BUILD_MODE)</string>
+	<key>MozFloorpNotesSyncSourceSHA</key>
+	<string>$(FLOORP_NOTES_SYNC_SOURCE_SHA)</string>
+	<key>MozFloorpNotesSyncBuildNumber</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>MozFloorpNotesSyncRequested</key>
+	<string>$(FLOORP_NOTES_SYNC_REQUESTED)</string>
+	<key>MozAllowFloorpNotesSync</key>
+	<string>$(FLOORP_NOTES_SYNC_EFFECTIVE)</string>
+	<key>MozFloorpNotesSyncRegistrationAllowed</key>
+	<string>$(FLOORP_NOTES_SYNC_EFFECTIVE)</string>
+	<key>MozFloorpNotesSyncEngineRequestsAllowed</key>
+	<string>$(FLOORP_NOTES_SYNC_EFFECTIVE)</string>
+	<key>MozFloorpNotesSyncUIExposureAllowed</key>
+	<string>$(FLOORP_NOTES_SYNC_EFFECTIVE)</string>
+	<key>MozFloorpNotesSyncEndpointAuthority</key>
+	<string>$(FLOORP_NOTES_SYNC_ENDPOINT_AUTHORITY)</string>
+	<key>MozFloorpNotesSyncProtocol</key>
+	<string>$(FLOORP_NOTES_SYNC_PROTOCOL)</string>
+	<key>MozFloorpNotesSyncEndpointMatrixSHA256</key>
+	<string>$(FLOORP_NOTES_SYNC_ENDPOINT_MATRIX_SHA256)</string>
+	<key>MozFloorpNotesSyncEvidenceDigest</key>
+	<string>$(FLOORP_NOTES_SYNC_EVIDENCE_DIGEST)</string>
+	<key>MozFloorpNotesSyncEvidenceResourceSHA256</key>
+	<string>$(FLOORP_NOTES_SYNC_EVIDENCE_RESOURCE_SHA256)</string>
 	<key>MozPublicURLScheme</key>
 	<string>$(MOZ_PUBLIC_URL_SCHEME)</string>
 	<key>MozWallpaperURLScheme</key>

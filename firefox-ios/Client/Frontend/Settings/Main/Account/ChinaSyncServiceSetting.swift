@@ -60,9 +60,29 @@ class ChinaSyncServiceSetting: Setting {
         let msg = "更改此设置后，再次登录您的帐户" // "Sign-in again to your account after changing this setting"
         let alert = AlertController(title: "", message: msg, preferredStyle: .alert)
         let okString = UIAlertAction(title: .OKString, style: .default) { _ in
-            self.prefs.setObject(toggle.isOn, forKey: self.prefKey)
-            self.profile.removeAccount()
-            RustFirefoxAccounts.reconfig(prefs: self.profile.prefs) { _ in }
+            let requestedValue = toggle.isOn
+            let completion: @MainActor @Sendable (Bool) -> Void = { [weak self, weak toggle] didRemove in
+                guard let self, let toggle else { return }
+                guard didRemove else {
+                    toggle.setOn(!requestedValue, animated: true)
+                    let failure = AlertController(
+                        title: FloorpStrings.Notes.syncDisconnectFailedTitle,
+                        message: FloorpStrings.Notes.syncDisconnectFailedMessage,
+                        preferredStyle: .alert
+                    )
+                    failure.addAction(UIAlertAction(title: .OKString, style: .default))
+                    self.settingsDelegate?.askedToShow(alert: failure)
+                    return
+                }
+                self.prefs.setObject(requestedValue, forKey: self.prefKey)
+                RustFirefoxAccounts.reconfig(prefs: self.profile.prefs) { _ in }
+            }
+            self.profile.removeAccount().upon { result in
+                let didRemove = result.isSuccess
+                Task { @MainActor in
+                    completion(didRemove)
+                }
+            }
         }
         let cancel = UIAlertAction(title: .CancelString, style: .default) { _ in
             toggle.setOn(!toggle.isOn, animated: true)

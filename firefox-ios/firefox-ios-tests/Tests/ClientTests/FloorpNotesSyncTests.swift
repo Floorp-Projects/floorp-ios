@@ -4,6 +4,8 @@
 
 import CryptoKit
 import Foundation
+import MozillaAppServices
+import Sync
 import XCTest
 @testable import Client
 
@@ -1412,6 +1414,1564 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
                 )
             )
         )
+    }
+}
+
+final class FloorpNotesPrefsSyncDelegateTests: XCTestCase, @unchecked Sendable {
+    func testEngineProviderRegistersExactlyOnceAndRetainsGeneratedStore() throws {
+        let archiveURL = try makeArchiveURL()
+        let statusCenter = FloorpNotesSyncStatusCenter()
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            networkSyncEnabled: { true },
+            statusCenter: statusCenter
+        )
+
+        XCTAssertEqual(statusCenter.status, .localOnly)
+        XCTAssertTrue(provider.allowsSync(accountID: "account-a"))
+        try provider.register(accountID: "account-a")
+        try provider.register(accountID: "account-a")
+
+        XCTAssertEqual(provider.registrationCount, 1)
+        XCTAssertTrue(provider.retainsRegisteredStore)
+        XCTAssertEqual(statusCenter.status, .syncEnabled)
+        provider.invalidate()
+        XCTAssertFalse(provider.retainsRegisteredStore)
+        XCTAssertEqual(statusCenter.status, .localOnly)
+    }
+
+    func testPendingDisconnectResumeWithoutMarkerRetainsRegisteredStore() throws {
+        let archiveURL = try makeArchiveURL()
+        let statusCenter = FloorpNotesSyncStatusCenter()
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            networkSyncEnabled: { true },
+            statusCenter: statusCenter
+        )
+        try provider.register(accountID: "account-a")
+        XCTAssertEqual(statusCenter.status, .syncEnabled)
+
+        try provider.resumePendingDisconnectCleanup()
+
+        XCTAssertTrue(provider.retainsRegisteredStore)
+        XCTAssertEqual(provider.registrationCount, 1)
+        XCTAssertEqual(statusCenter.status, .syncEnabled)
+    }
+
+    func testEngineProviderInvalidationLeavesNotesAndBaseByteIdentical() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await store.replaceAllNotes(with: [local])
+        let delegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: store
+        )
+        let token = try uploadToken(from: delegate.prepare(input: missingRecordInput()))
+        try delegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try delegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: store,
+            networkSyncEnabled: { true }
+        )
+        try provider.register(accountID: "account-a")
+        let before = try Data(contentsOf: archiveURL)
+
+        provider.invalidate()
+
+        XCTAssertEqual(try Data(contentsOf: archiveURL), before)
+        let restarted = FloorpNotesStore(fileURL: archiveURL)
+        let notes = try await restarted.loadNotes()
+        XCTAssertEqual(notes, [local])
+        let context = try await restarted.loadSyncContext()
+        XCTAssertNotNil(context.baseState)
+    }
+
+    func testInvalidationCannotReturnBeforeAtomicStateCommitFinishes() async throws {
+        let archiveURL = try makeArchiveURL()
+        let seed = FloorpNotesStore(fileURL: archiveURL)
+        try await seed.replaceAllNotes(
+            with: [makeNote(id: "local", title: "Local")]
+        )
+        try assertInvalidationWaitsForCommit(archiveURL: archiveURL)
+    }
+
+    private func assertInvalidationWaitsForCommit(archiveURL: URL) throws {
+        let writeStarted = DispatchSemaphore(value: 0)
+        let allowWrite = DispatchSemaphore(value: 0)
+        let commitFinished = DispatchSemaphore(value: 0)
+        let invalidationFinished = DispatchSemaphore(value: 0)
+        let errorBox = TestThreadSafeErrorBox()
+        let blockingStore = FloorpNotesStore(
+            fileURL: archiveURL,
+            writeData: { data, url in
+                writeStarted.signal()
+                guard allowWrite.wait(timeout: .now() + 5) == .success else {
+                    throw TestPersistenceFailure.write
+                }
+                try data.write(to: url, options: .atomic)
+            }
+        )
+        let delegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: blockingStore
+        )
+        let token = try uploadToken(from: delegate.prepare(input: missingRecordInput()))
+        try delegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try delegate.syncStateChanged(
+                    state: FloorpPrefsSyncState(
+                        globalSyncId: "global-a",
+                        collectionSyncId: "collection-a",
+                        lastModifiedMillis: 12
+                    )
+                )
+            } catch {
+                errorBox.store(error)
+            }
+            commitFinished.signal()
+        }
+        XCTAssertEqual(writeStarted.wait(timeout: .now() + 5), .success)
+
+        DispatchQueue.global(qos: .utility).async {
+            delegate.invalidate()
+            invalidationFinished.signal()
+        }
+        let invalidationBeforeCommit = invalidationFinished.wait(
+            timeout: .now() + 0.2
+        )
+        allowWrite.signal()
+
+        XCTAssertEqual(invalidationBeforeCommit, .timedOut)
+        XCTAssertEqual(commitFinished.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(invalidationFinished.wait(timeout: .now() + 5), .success)
+        XCTAssertNil(errorBox.error)
+    }
+
+    func testRegistrationClaimsOwnerBeforeFirstCommitAndRejectsAnotherAccount() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        try await store.replaceAllNotes(with: [makeNote(id: "local", title: "Local")])
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: store,
+            networkSyncEnabled: { true }
+        )
+
+        try provider.register(accountID: "account-a")
+
+        let restarted = FloorpNotesStore(fileURL: archiveURL)
+        let context = try await restarted.loadSyncContext()
+        XCTAssertEqual(context.ownerAccountID, "account-a")
+        XCTAssertNil(context.baseState)
+        XCTAssertEqual(
+            try restarted.syncAccountAvailability(accountID: "account-b"),
+            .accountMismatch
+        )
+    }
+
+    func testCheckedDisconnectRegistersWithNetworkGateOffAndRetainsLocalOwner() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await store.replaceAllNotes(with: [local])
+        let initialDelegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: store
+        )
+        let token = try uploadToken(from: initialDelegate.prepare(input: missingRecordInput()))
+        try initialDelegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try initialDelegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+
+        let statusCenter = FloorpNotesSyncStatusCenter()
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: store,
+            networkSyncEnabled: { false },
+            statusCenter: statusCenter
+        )
+        XCTAssertFalse(provider.allowsSync(accountID: "account-a"))
+        XCTAssertEqual(
+            try provider.prepareForDisconnect(accountID: "account-a"),
+            .available
+        )
+        XCTAssertTrue(provider.retainsRegisteredStore)
+        XCTAssertEqual(statusCenter.status, .localOnly)
+
+        try SyncManagerComponent().disconnectChecked()
+
+        let stagedContext = try await store.loadSyncContext()
+        XCTAssertNotNil(stagedContext.baseState)
+        XCTAssertEqual(stagedContext.applicationServicesState?.globalSyncID, "global-a")
+
+        try provider.finalizeDisconnect()
+        let context = try await store.loadSyncContext()
+        let notes = try await store.loadNotes()
+        XCTAssertEqual(context.ownerAccountID, "account-a")
+        XCTAssertNil(context.baseState)
+        XCTAssertNil(context.applicationServicesState?.globalSyncID)
+        XCTAssertNil(context.applicationServicesState?.collectionSyncID)
+        XCTAssertEqual(context.applicationServicesState?.lastModifiedMillis, 0)
+        XCTAssertEqual(notes, [local])
+        provider.invalidate()
+    }
+
+    func testFinalizeFailureResumesPendingAssociationCleanupAfterRestart() async throws {
+        let archiveURL = try makeArchiveURL()
+        let seedStore = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await seedStore.replaceAllNotes(with: [local])
+        let seedDelegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: seedStore
+        )
+        let token = try uploadToken(
+            from: seedDelegate.prepare(input: missingRecordInput())
+        )
+        try seedDelegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try seedDelegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+
+        let failingStore = FloorpNotesStore(
+            fileURL: archiveURL,
+            writeData: { data, url in
+                if url == archiveURL {
+                    throw TestPersistenceFailure.write
+                }
+                try data.write(to: url, options: .atomic)
+            }
+        )
+        let failingProvider = FloorpNotesSyncEngineProvider(
+            notesStore: failingStore,
+            networkSyncEnabled: { false }
+        )
+        XCTAssertEqual(
+            try failingProvider.prepareForDisconnect(accountID: "account-a"),
+            .available
+        )
+        try SyncManagerComponent().disconnectChecked()
+
+        XCTAssertThrowsError(try failingProvider.finalizeDisconnect())
+        failingProvider.invalidate()
+
+        let recoveringStore = FloorpNotesStore(fileURL: archiveURL)
+        let recoveringProvider = FloorpNotesSyncEngineProvider(
+            notesStore: recoveringStore,
+            networkSyncEnabled: { false }
+        )
+        try recoveringProvider.resumePendingDisconnectCleanup()
+
+        let context = try await recoveringStore.loadSyncContext()
+        XCTAssertEqual(context.ownerAccountID, "account-a")
+        XCTAssertNil(context.baseState)
+        XCTAssertNil(context.applicationServicesState?.globalSyncID)
+        XCTAssertNil(context.applicationServicesState?.collectionSyncID)
+        XCTAssertEqual(context.applicationServicesState?.lastModifiedMillis, 0)
+        let recoveredNotes = try await recoveringStore.loadNotes()
+        XCTAssertEqual(recoveredNotes, [local])
+    }
+
+    func testPendingCleanupRecoveryIsIdempotentAfterArchiveCommit() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await store.replaceAllNotes(with: [local])
+        let seedDelegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: store
+        )
+        let token = try uploadToken(
+            from: seedDelegate.prepare(input: missingRecordInput())
+        )
+        try seedDelegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try seedDelegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: store,
+            networkSyncEnabled: { false }
+        )
+        XCTAssertEqual(
+            try provider.prepareForDisconnect(accountID: "account-a"),
+            .available
+        )
+        try SyncManagerComponent().disconnectChecked()
+        let resetState = FloorpNotesApplicationServicesState(
+            globalSyncID: nil,
+            collectionSyncID: nil,
+            lastModifiedMillis: 0
+        )
+
+        try store.syncPersistenceCore.resetSyncAssociation(
+            accountID: "account-a",
+            state: resetState
+        )
+        provider.invalidate()
+
+        let recoveringStore = FloorpNotesStore(fileURL: archiveURL)
+        let recoveringProvider = FloorpNotesSyncEngineProvider(
+            notesStore: recoveringStore,
+            networkSyncEnabled: { false }
+        )
+        try recoveringProvider.resumePendingDisconnectCleanup()
+        try recoveringProvider.resumePendingDisconnectCleanup()
+
+        let context = try await recoveringStore.loadSyncContext()
+        XCTAssertEqual(context.ownerAccountID, "account-a")
+        XCTAssertNil(context.baseState)
+        XCTAssertEqual(context.applicationServicesState, resetState)
+        let recoveredNotes = try await recoveringStore.loadNotes()
+        XCTAssertEqual(recoveredNotes, [local])
+    }
+
+    func testCorruptPendingCleanupMarkerFailsClosedWithoutChangingArchive() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        try await store.replaceAllNotes(
+            with: [makeNote(id: "local", title: "Local")]
+        )
+        let delegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: store
+        )
+        let token = try uploadToken(from: delegate.prepare(input: missingRecordInput()))
+        try delegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try delegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: store,
+            networkSyncEnabled: { false }
+        )
+        _ = try provider.prepareForDisconnect(accountID: "account-a")
+        try SyncManagerComponent().disconnectChecked()
+        provider.invalidate()
+        let markerURL = archiveURL.appendingPathExtension(
+            "pending-sync-association-reset"
+        )
+        try Data("{".utf8).write(to: markerURL, options: .atomic)
+        let before = try Data(contentsOf: archiveURL)
+
+        let recoveringProvider = FloorpNotesSyncEngineProvider(
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            networkSyncEnabled: { false }
+        )
+        XCTAssertThrowsError(
+            try recoveringProvider.resumePendingDisconnectCleanup()
+        )
+
+        XCTAssertEqual(try Data(contentsOf: archiveURL), before)
+        let context = try await store.loadSyncContext()
+        XCTAssertNotNil(context.baseState)
+        XCTAssertEqual(context.applicationServicesState?.globalSyncID, "global-a")
+    }
+
+    func testCancelledCheckedDisconnectRetainsBaseAndOwner() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await store.replaceAllNotes(with: [local])
+        let delegate = FloorpNotesPrefsSyncDelegate(accountID: "account-a", notesStore: store)
+        let token = try uploadToken(from: delegate.prepare(input: missingRecordInput()))
+        try delegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try delegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: store,
+            networkSyncEnabled: { false }
+        )
+        XCTAssertEqual(
+            try provider.prepareForDisconnect(accountID: "account-a"),
+            .available
+        )
+        XCTAssertEqual(provider.registeredSyncState?.globalSyncId, "global-a")
+
+        try SyncManagerComponent().disconnectChecked()
+        XCTAssertNil(provider.registeredSyncState?.globalSyncId)
+        provider.cancelDisconnect()
+        XCTAssertEqual(provider.registeredSyncState?.globalSyncId, "global-a")
+
+        let context = try await FloorpNotesStore(fileURL: archiveURL).loadSyncContext()
+        XCTAssertEqual(context.ownerAccountID, "account-a")
+        XCTAssertNotNil(context.baseState)
+        XCTAssertEqual(context.applicationServicesState?.globalSyncID, "global-a")
+        XCTAssertEqual(
+            try store.syncAccountAvailability(accountID: "account-b"),
+            .accountMismatch
+        )
+    }
+
+    func testCancelledDisconnectRebuildFailureReturnsFalseAndFailsClosed() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        try await store.replaceAllNotes(
+            with: [makeNote(id: "local", title: "Local")]
+        )
+        let delegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: store
+        )
+        let token = try uploadToken(from: delegate.prepare(input: missingRecordInput()))
+        try delegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try delegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+        let factory = TestFloorpPrefsSyncStoreFactory(failingCall: 2)
+        let provider = FloorpNotesSyncEngineProvider(
+            notesStore: store,
+            networkSyncEnabled: { false },
+            makeApplicationServicesStore: factory.make
+        )
+        XCTAssertEqual(
+            try provider.prepareForDisconnect(accountID: "account-a"),
+            .available
+        )
+        try SyncManagerComponent().disconnectChecked()
+
+        XCTAssertFalse(provider.cancelDisconnect())
+        XCTAssertFalse(provider.retainsRegisteredStore)
+        let context = try await store.loadSyncContext()
+        XCTAssertEqual(context.applicationServicesState?.globalSyncID, "global-a")
+        XCTAssertNotNil(context.baseState)
+    }
+
+    func testConfirmedUploadAtomicallyAssignsOwnerAndAdvancesBase() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await store.replaceAllNotes(with: [local])
+        let delegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: store
+        )
+
+        let plan = try delegate.prepare(
+            input: FloorpPrefsSyncPrepareInput(
+                remoteNotes: .recordMissing,
+                remoteRecordModifiedMillis: nil,
+                collectionModifiedMillis: 0,
+                maximumNotesValueBytes: 164 * 1_024
+            )
+        )
+        let token: Data
+        switch plan {
+        case .upload(let transactionToken, let notesValue):
+            token = transactionToken
+            XCTAssertFalse(notesValue.isEmpty)
+        case .noUpload:
+            return XCTFail("A first sync with local Notes must prepare an upload")
+        }
+
+        let before = try await store.loadSyncContext()
+        XCTAssertNil(before.ownerAccountID)
+        XCTAssertNil(before.baseState)
+
+        try delegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 42
+            )
+        )
+        let stagedOnly = try await FloorpNotesStore(fileURL: archiveURL).loadSyncContext()
+        XCTAssertNil(stagedOnly.ownerAccountID)
+        XCTAssertNil(stagedOnly.baseState)
+        try delegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 42
+            )
+        )
+
+        let restarted = FloorpNotesStore(fileURL: archiveURL)
+        let context = try await restarted.loadSyncContext()
+        XCTAssertEqual(context.ownerAccountID, "account-a")
+        XCTAssertEqual(context.baseState, FloorpNotesSyncBaseState(accountID: "account-a", notes: [local]))
+        XCTAssertEqual(context.applicationServicesState?.lastModifiedMillis, 42)
+        let restartedNotes = try await restarted.loadNotes()
+        XCTAssertEqual(restartedNotes, [local])
+    }
+
+    func testWriteFailureAndCancellationLeaveOwnerAndBaseUnchanged() async throws {
+        let archiveURL = try makeArchiveURL()
+        let seed = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await seed.replaceAllNotes(with: [local])
+
+        let failing = FloorpNotesStore(
+            fileURL: archiveURL,
+            writeData: { _, _ in throw TestPersistenceFailure.write }
+        )
+        let failingDelegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: failing
+        )
+        let failedToken = try uploadToken(
+            from: failingDelegate.prepare(input: missingRecordInput())
+        )
+        try failingDelegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: failedToken,
+                didUpload: true,
+                serverModifiedMillis: 10
+            )
+        )
+        XCTAssertThrowsError(
+            try failingDelegate.syncStateChanged(
+                state: FloorpPrefsSyncState(
+                    globalSyncId: "global-a",
+                    collectionSyncId: "collection-a",
+                    lastModifiedMillis: 10
+                )
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpPrefsSyncError, .DelegateRejected)
+        }
+
+        let cancelledDelegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: FloorpNotesStore(fileURL: archiveURL)
+        )
+        let cancelledToken = try uploadToken(
+            from: cancelledDelegate.prepare(input: missingRecordInput())
+        )
+        cancelledDelegate.invalidate()
+        XCTAssertThrowsError(
+            try cancelledDelegate.syncFinished(
+                finish: FloorpPrefsSyncFinish(
+                    transactionToken: cancelledToken,
+                    didUpload: true,
+                    serverModifiedMillis: 11
+                )
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpPrefsSyncError, .UnexpectedSyncState)
+        }
+
+        let restarted = FloorpNotesStore(fileURL: archiveURL)
+        let context = try await restarted.loadSyncContext()
+        XCTAssertNil(context.ownerAccountID)
+        XCTAssertNil(context.baseState)
+        let restartedNotes = try await restarted.loadNotes()
+        XCTAssertEqual(restartedNotes, [local])
+    }
+
+    func testAssociationResetKeepsOwnerAndLocalNotesButRejectsAnotherAccount() async throws {
+        let archiveURL = try makeArchiveURL()
+        let store = FloorpNotesStore(fileURL: archiveURL)
+        let local = makeNote(id: "local", title: "Local")
+        try await store.replaceAllNotes(with: [local])
+        let ownerDelegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-a",
+            notesStore: store
+        )
+        let token = try uploadToken(from: ownerDelegate.prepare(input: missingRecordInput()))
+        try ownerDelegate.syncFinished(
+            finish: FloorpPrefsSyncFinish(
+                transactionToken: token,
+                didUpload: true,
+                serverModifiedMillis: 12
+            )
+        )
+        try ownerDelegate.syncStateChanged(
+            state: FloorpPrefsSyncState(
+                globalSyncId: "global-a",
+                collectionSyncId: "collection-a",
+                lastModifiedMillis: 12
+            )
+        )
+
+        try ownerDelegate.associationReset(
+            state: FloorpPrefsSyncState(
+                globalSyncId: nil,
+                collectionSyncId: nil,
+                lastModifiedMillis: 0
+            )
+        )
+
+        let context = try await store.loadSyncContext()
+        XCTAssertEqual(context.ownerAccountID, "account-a")
+        XCTAssertNil(context.baseState)
+        let storedNotes = try await store.loadNotes()
+        XCTAssertEqual(storedNotes, [local])
+
+        let otherDelegate = FloorpNotesPrefsSyncDelegate(
+            accountID: "account-b",
+            notesStore: store
+        )
+        XCTAssertThrowsError(try otherDelegate.prepare(input: missingRecordInput())) { error in
+            XCTAssertEqual(error as? FloorpPrefsSyncError, .DelegateRejected)
+        }
+    }
+
+    private func makeArchiveURL() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpNotesPrefsSync-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        return directory.appendingPathComponent("notes.json")
+    }
+
+    private func makeNote(id: String, title: String) -> FloorpNote {
+        FloorpNote(
+            id: FloorpNoteID(id),
+            title: title,
+            content: "content",
+            createdAt: 1,
+            updatedAt: 1,
+            contentFormat: .plainText
+        )
+    }
+
+    private func missingRecordInput() -> FloorpPrefsSyncPrepareInput {
+        FloorpPrefsSyncPrepareInput(
+            remoteNotes: .recordMissing,
+            remoteRecordModifiedMillis: nil,
+            collectionModifiedMillis: 0,
+            maximumNotesValueBytes: 164 * 1_024
+        )
+    }
+
+    private func uploadToken(from plan: FloorpPrefsSyncPlan) throws -> Data {
+        guard case .upload(let token, _) = plan else {
+            throw TestPersistenceFailure.expectedUpload
+        }
+        return token
+    }
+}
+
+private enum TestPersistenceFailure: Error {
+    case write
+    case expectedUpload
+}
+
+private final class TestThreadSafeErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedError: Error?
+
+    var error: Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedError
+    }
+
+    func store(_ error: Error) {
+        lock.lock()
+        storedError = error
+        lock.unlock()
+    }
+}
+
+private final class TestFloorpPrefsSyncStoreFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private let failingCall: Int
+    private var callCount = 0
+
+    init(failingCall: Int) {
+        self.failingCall = failingCall
+    }
+
+    func make(
+        delegate: FloorpPrefsSyncDelegate,
+        initialState: FloorpPrefsSyncState?
+    ) throws -> FloorpPrefsSyncStore {
+        lock.lock()
+        callCount += 1
+        let shouldFail = callCount == failingCall
+        lock.unlock()
+        if shouldFail { throw TestPersistenceFailure.write }
+        return try FloorpPrefsSyncStore(
+            delegate: delegate,
+            initialState: initialState
+        )
+    }
+}
+
+final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
+    func testStatusCenterPostsUIRefreshOnMainThread() {
+        let notificationCenter = NotificationCenter()
+        let statusCenter = FloorpNotesSyncStatusCenter(
+            notificationCenter: notificationCenter
+        )
+        let posted = expectation(description: "Notes Sync status posted on main thread")
+        let observer = notificationCenter.addObserver(
+            forName: .FloorpNotesSyncStatusDidChange,
+            object: statusCenter,
+            queue: nil
+        ) { _ in
+            XCTAssertTrue(Thread.isMainThread)
+            posted.fulfill()
+        }
+        defer { notificationCenter.removeObserver(observer) }
+
+        DispatchQueue.global(qos: .utility).async {
+            statusCenter.setStatus(.syncEnabled)
+        }
+
+        wait(for: [posted], timeout: 1)
+        XCTAssertEqual(statusCenter.status, .syncEnabled)
+    }
+
+    func testFloorpPrefsSelectionIsExplicitAndNeverToggleDriven() {
+        let selection = FloorpNotesSyncEngineSelection.partition(
+            requested: ["tabs", "prefs", "history", "prefs"]
+        )
+
+        XCTAssertEqual(selection.togglable, [.tabs, .history])
+        XCTAssertTrue(selection.requestsFloorpPrefs)
+        XCTAssertFalse(
+            RustSyncManagerAPI.TogglableEngine.allCases.contains { $0.rawValue == "prefs" }
+        )
+    }
+
+    func testFloorpPrefsIsAddedOnlyWhenAllRuntimePoliciesAllowIt() {
+        let allowed = FloorpNotesSyncRequestPolicy(
+            compiledEvidenceAllows: true,
+            runtimeKillSwitchAllows: true,
+            productionEndpointAllows: true,
+            accountAvailability: .available
+        )
+        XCTAssertEqual(
+            FloorpNotesSyncEngineSelection.syncEverythingEngines(policy: allowed).last,
+            "prefs"
+        )
+
+        let deniedPolicies: [FloorpNotesSyncRequestPolicy] = [
+            FloorpNotesSyncRequestPolicy(
+                compiledEvidenceAllows: false,
+                runtimeKillSwitchAllows: true,
+                productionEndpointAllows: true,
+                accountAvailability: .available
+            ),
+            FloorpNotesSyncRequestPolicy(
+                compiledEvidenceAllows: true,
+                runtimeKillSwitchAllows: false,
+                productionEndpointAllows: true,
+                accountAvailability: .available
+            ),
+            FloorpNotesSyncRequestPolicy(
+                compiledEvidenceAllows: true,
+                runtimeKillSwitchAllows: true,
+                productionEndpointAllows: false,
+                accountAvailability: .available
+            ),
+            FloorpNotesSyncRequestPolicy(
+                compiledEvidenceAllows: true,
+                runtimeKillSwitchAllows: true,
+                productionEndpointAllows: true,
+                accountAvailability: .accountMismatch
+            ),
+        ]
+        for policy in deniedPolicies {
+            XCTAssertFalse(
+                FloorpNotesSyncEngineSelection.syncEverythingEngines(policy: policy)
+                    .contains("prefs")
+            )
+        }
+    }
+
+    func testProductionEndpointAuthorityRejectsEveryOverride() {
+        XCTAssertTrue(
+            FloorpNotesSyncEndpointAuthority.allowsProduction(
+                FloorpNotesSyncEndpointSettings(
+                    usesStage: false,
+                    usesChina: false,
+                    usesCustomFxAContent: false,
+                    usesCustomTokenServer: false
+                )
+            )
+        )
+        let denied: [FloorpNotesSyncEndpointSettings] = [
+            FloorpNotesSyncEndpointSettings(
+                usesStage: true,
+                usesChina: false,
+                usesCustomFxAContent: false,
+                usesCustomTokenServer: false
+            ),
+            FloorpNotesSyncEndpointSettings(
+                usesStage: false,
+                usesChina: true,
+                usesCustomFxAContent: false,
+                usesCustomTokenServer: false
+            ),
+            FloorpNotesSyncEndpointSettings(
+                usesStage: false,
+                usesChina: false,
+                usesCustomFxAContent: true,
+                usesCustomTokenServer: false
+            ),
+            FloorpNotesSyncEndpointSettings(
+                usesStage: false,
+                usesChina: false,
+                usesCustomFxAContent: false,
+                usesCustomTokenServer: true
+            ),
+        ]
+        XCTAssertTrue(denied.allSatisfy { !FloorpNotesSyncEndpointAuthority.allowsProduction($0) })
+    }
+
+    func testProductionEndpointAuthorityRequiresConcreteReleaseTokenServer() throws {
+        XCTAssertTrue(
+            FloorpNotesSyncEndpointAuthority.allowsProductionTokenServer(
+                try XCTUnwrap(
+                    URL(string: "https://token.services.mozilla.com/1.0/sync/1.5")
+                )
+            )
+        )
+        let denied = [
+            "https://stage-token.services.mozilla.com/1.0/sync/1.5",
+            "https://token.services.mozilla.com:444/1.0/sync/1.5",
+            "http://token.services.mozilla.com/1.0/sync/1.5",
+            "https://token.services.mozilla.com/other",
+            "https://token.services.mozilla.com/1.0/sync/1.5?override=true",
+        ]
+        for rawURL in denied {
+            XCTAssertFalse(
+                FloorpNotesSyncEndpointAuthority.allowsProductionTokenServer(
+                    try XCTUnwrap(URL(string: rawURL))
+                )
+            )
+        }
+    }
+
+    func testRetryUsesServerDeadlineThenBoundedExponentialDelay() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        XCTAssertEqual(
+            FloorpNotesSyncRetryPolicy.delay(
+                status: .backedOff,
+                nextSyncAllowedAt: now.addingTimeInterval(600),
+                now: now,
+                attempt: 0
+            ),
+            600
+        )
+        XCTAssertEqual(
+            FloorpNotesSyncRetryPolicy.delay(
+                status: .networkError,
+                nextSyncAllowedAt: nil,
+                now: now,
+                attempt: 2
+            ),
+            720
+        )
+        XCTAssertEqual(
+            FloorpNotesSyncRetryPolicy.delay(
+                status: .serviceError,
+                nextSyncAllowedAt: nil,
+                now: now,
+                attempt: 99
+            ),
+            3_600
+        )
+        XCTAssertNil(
+            FloorpNotesSyncRetryPolicy.delay(
+                status: .ok,
+                nextSyncAllowedAt: nil,
+                now: now,
+                attempt: 0
+            )
+        )
+        XCTAssertNil(
+            FloorpNotesSyncRetryPolicy.delay(
+                status: .authError,
+                nextSyncAllowedAt: nil,
+                now: now,
+                attempt: 0
+            )
+        )
+    }
+
+    func testCompiledEvidenceRequiresEveryBuildAndResourceBinding() throws {
+        let (evidence, root) = try compiledEvidenceFixture(
+            named: "floorp-notes-sync-g1-g5-valid"
+        )
+        let configuration = try compiledConfiguration(evidence: evidence, root: root)
+        let trustedNow = try releaseEvidenceTrustedNow()
+
+        XCTAssertTrue(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                configuration,
+                evidenceData: evidence,
+                now: trustedNow
+            )
+        )
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(
+                    evidence: evidence,
+                    root: root,
+                    evidenceDigest: String(repeating: "a", count: 64),
+                ),
+                evidenceData: evidence,
+                now: trustedNow
+            )
+        )
+        var tampered = evidence
+        tampered.append(0x20)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                configuration,
+                evidenceData: tampered,
+                now: trustedNow
+            )
+        )
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(
+                    evidence: evidence,
+                    root: root,
+                    sourceSHA: String(repeating: "4", count: 40)
+                ),
+                evidenceData: evidence,
+                now: trustedNow
+            )
+        )
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(
+                    evidence: evidence,
+                    root: root,
+                    buildNumber: "different-build",
+                    requested: "NO"
+                ),
+                evidenceData: evidence,
+                now: trustedNow
+            )
+        )
+    }
+
+    func testProductionQAEvidenceRequiresExactlyG1ThroughG4() throws {
+        let (g1G4, root) = try compiledEvidenceFixture(
+            named: "floorp-notes-sync-g1-g4-production-qa-valid"
+        )
+        let trustedNow = try releaseEvidenceTrustedNow()
+
+        XCTAssertTrue(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: g1G4, root: root),
+                evidenceData: g1G4,
+                now: trustedNow
+            )
+        )
+
+        let (_, releaseRoot) = try compiledEvidenceFixture(named: "floorp-notes-sync-g1-g5-valid")
+        var mixedRoot = root
+        var mixedGates = try XCTUnwrap(mixedRoot["gates"] as? [String: Any])
+        let releaseGates = try XCTUnwrap(releaseRoot["gates"] as? [String: Any])
+        mixedGates["g5"] = releaseGates["g5"]
+        mixedRoot["gates"] = mixedGates
+        let mixed = try canonicalEvidenceData(mixedRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: mixed, root: mixedRoot),
+                evidenceData: mixed,
+                now: trustedNow
+            )
+        )
+    }
+
+    func testCompiledEvidenceRejectsSchemaInvalidUnexpectedRootField() throws {
+        let (_, root) = try compiledEvidenceFixture(
+            named: "floorp-notes-sync-g1-g5-valid"
+        )
+        var schemaInvalidRoot = root
+        schemaInvalidRoot["unexpected_runtime_bypass"] = true
+        let schemaInvalidEvidence = try canonicalEvidenceData(schemaInvalidRoot)
+
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: schemaInvalidEvidence, root: schemaInvalidRoot),
+                evidenceData: schemaInvalidEvidence,
+                now: try releaseEvidenceTrustedNow()
+            )
+        )
+    }
+
+    func testCompiledEvidenceRejectsLegacyAndReboundMalformedArtifactProvenance() throws {
+        let (_, fixtureRoot) = try compiledEvidenceFixture(
+            named: "floorp-notes-sync-g1-g5-valid"
+        )
+        let trustedNow = try releaseEvidenceTrustedNow()
+
+        var legacyRoot = fixtureRoot
+        var legacyGates = try XCTUnwrap(legacyRoot["gates"] as? [String: Any])
+        var legacyG1 = try XCTUnwrap(legacyGates["g1"] as? [String: Any])
+        legacyG1["artifact"] = [
+            "uri": "evidence://legacy-self-claim",
+            "sha256": String(repeating: "1", count: 64),
+        ]
+        legacyGates["g1"] = legacyG1
+        legacyRoot["gates"] = legacyGates
+        try rebindEvidenceDigests(&legacyRoot)
+        let legacyEvidence = try canonicalEvidenceData(legacyRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: legacyEvidence, root: legacyRoot),
+                evidenceData: legacyEvidence,
+                now: trustedNow
+            )
+        )
+
+        var malformedRoot = fixtureRoot
+        var malformedGates = try XCTUnwrap(malformedRoot["gates"] as? [String: Any])
+        var malformedG1 = try XCTUnwrap(malformedGates["g1"] as? [String: Any])
+        var artifact = try XCTUnwrap(malformedG1["artifact"] as? [String: Any])
+        var sources = try XCTUnwrap(artifact["sources"] as? [[String: Any]])
+        sources[0]["role"] = "attacker-manifest"
+        artifact["sources"] = sources
+        artifact["sha256"] = sha256(
+            try canonicalEvidenceData(["sources": sources])
+        )
+        malformedG1["artifact"] = artifact
+        malformedGates["g1"] = malformedG1
+        malformedRoot["gates"] = malformedGates
+        try rebindEvidenceDigests(&malformedRoot)
+        let malformedEvidence = try canonicalEvidenceData(malformedRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: malformedEvidence, root: malformedRoot),
+                evidenceData: malformedEvidence,
+                now: trustedNow
+            )
+        )
+    }
+
+    func testCompiledEvidenceRejectsUnverifiedEmbeddedG6() throws {
+        let (_, fixtureRoot) = try compiledEvidenceFixture(
+            named: "floorp-notes-sync-g1-g5-valid"
+        )
+        var root = fixtureRoot
+        var gates = try XCTUnwrap(root["gates"] as? [String: Any])
+        gates["g6"] = [
+            "status": "passed",
+            "issued_at": "2026-08-10T00:00:00Z",
+            "artifact": [
+                "uri": "evidence://unverified-g6",
+                "sha256": String(repeating: "6", count: 64),
+            ],
+        ]
+        root["gates"] = gates
+        let evidence = try canonicalEvidenceData(root)
+
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: evidence, root: root),
+                evidenceData: evidence,
+                now: try releaseEvidenceTrustedNow()
+            )
+        )
+    }
+
+    func testCompiledEvidenceRejectsReboundWrongPinAndExpiredGate() throws {
+        let (_, fixtureRoot) = try compiledEvidenceFixture(
+            named: "floorp-notes-sync-g1-g5-valid"
+        )
+        let trustedNow = try releaseEvidenceTrustedNow()
+
+        var wrongPinRoot = fixtureRoot
+        var wrongPinInputs = try XCTUnwrap(wrongPinRoot["release_inputs"] as? [String: Any])
+        var wrongPinAS = try XCTUnwrap(wrongPinInputs["application_services"] as? [String: Any])
+        wrongPinAS["source_sha"] = String(repeating: "9", count: 40)
+        wrongPinInputs["application_services"] = wrongPinAS
+        wrongPinRoot["release_inputs"] = wrongPinInputs
+        var wrongPinGates = try XCTUnwrap(wrongPinRoot["gates"] as? [String: Any])
+        var g2 = try XCTUnwrap(wrongPinGates["g2"] as? [String: Any])
+        g2["application_services"] = wrongPinAS
+        wrongPinGates["g2"] = g2
+        var g5 = try XCTUnwrap(wrongPinGates["g5"] as? [String: Any])
+        var g5AS = try XCTUnwrap(g5["application_services"] as? [String: Any])
+        g5AS["source_sha"] = String(repeating: "9", count: 40)
+        g5["application_services"] = g5AS
+        wrongPinGates["g5"] = g5
+        wrongPinRoot["gates"] = wrongPinGates
+        try rebindEvidenceDigests(&wrongPinRoot)
+        let wrongPinEvidence = try canonicalEvidenceData(wrongPinRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: wrongPinEvidence, root: wrongPinRoot),
+                evidenceData: wrongPinEvidence,
+                now: trustedNow
+            )
+        )
+
+        var expiredRoot = fixtureRoot
+        var expiredGates = try XCTUnwrap(expiredRoot["gates"] as? [String: Any])
+        var expiredG5 = try XCTUnwrap(expiredGates["g5"] as? [String: Any])
+        expiredG5["expires_at"] = "2026-08-09T23:59:59Z"
+        expiredGates["g5"] = expiredG5
+        expiredRoot["gates"] = expiredGates
+        try rebindEvidenceDigests(&expiredRoot)
+        let expiredEvidence = try canonicalEvidenceData(expiredRoot)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: expiredEvidence, root: expiredRoot),
+                evidenceData: expiredEvidence,
+                now: trustedNow
+            )
+        )
+    }
+
+    private func compiledConfiguration(
+        evidence: Data,
+        root: [String: Any],
+        sourceSHA: String? = nil,
+        buildNumber: String? = nil,
+        evidenceDigest: String? = nil,
+        requested: Any = "YES"
+    ) throws -> FloorpNotesSyncCompiledConfiguration {
+        let mode = try XCTUnwrap(root["build_contract_mode"] as? String)
+        let inputs = try XCTUnwrap(root["release_inputs"] as? [String: Any])
+        let ios = try XCTUnwrap(inputs["ios"] as? [String: Any])
+        let contract = try XCTUnwrap(inputs["contract"] as? [String: Any])
+        let digestKey = mode == "production-qa"
+            ? "g1_g4_digest_sha256"
+            : "g1_g5_digest_sha256"
+        return FloorpNotesSyncCompiledConfiguration(
+            buildMode: mode,
+            sourceSHA: sourceSHA ?? (ios["source_sha"] as? String),
+            buildNumber: buildNumber ?? (ios["build_number"] as? String),
+            requested: requested,
+            effective: "YES",
+            registrationAllowed: "YES",
+            engineRequestsAllowed: "YES",
+            uiExposureAllowed: "YES",
+            endpointAuthority: "production",
+            wireProtocol: "sync15",
+            endpointMatrixSHA256: contract["endpoint_policy_sha256"] as? String,
+            evidenceDigest: evidenceDigest ?? (root[digestKey] as? String),
+            evidenceResourceSHA256: SHA256.hash(data: evidence)
+                .map { String(format: "%02x", $0) }
+                .joined()
+        )
+    }
+
+    private func compiledEvidenceFixture(
+        named name: String
+    ) throws -> (Data, [String: Any]) {
+        var repositoryRoot = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            repositoryRoot.deleteLastPathComponent()
+        }
+        let url = repositoryRoot
+            .appendingPathComponent("scripts/ci/fixtures", isDirectory: true)
+            .appendingPathComponent(name)
+            .appendingPathExtension("json")
+        let fixtureData = try Data(contentsOf: url)
+        var root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: fixtureData) as? [String: Any]
+        )
+        XCTAssertEqual(fixtureData, try canonicalEvidenceData(root))
+        try bindSyntheticArtifactProvenance(&root)
+        let evidence = try canonicalEvidenceData(root)
+        return (evidence, root)
+    }
+
+    private func bindSyntheticArtifactProvenance(
+        _ root: inout [String: Any]
+    ) throws {
+        let inputs = try XCTUnwrap(root["release_inputs"] as? [String: Any])
+        let ios = try XCTUnwrap(inputs["ios"] as? [String: Any])
+        let desktop = try XCTUnwrap(inputs["desktop"] as? [String: Any])
+        let runtime = try XCTUnwrap(inputs["runtime"] as? [String: Any])
+        let services = try XCTUnwrap(inputs["application_services"] as? [String: Any])
+        let iosRepository = try XCTUnwrap(ios["repository"] as? String)
+        let iosSHA = try XCTUnwrap(ios["source_sha"] as? String)
+        let desktopRepository = try XCTUnwrap(desktop["repository"] as? String)
+        let desktopSHA = try XCTUnwrap(desktop["source_sha"] as? String)
+        let runtimeRepository = try XCTUnwrap(runtime["repository"] as? String)
+        let runtimeSHA = try XCTUnwrap(runtime["source_sha"] as? String)
+        let servicesRepository = try XCTUnwrap(services["repository"] as? String)
+        let servicesSHA = try XCTUnwrap(services["source_sha"] as? String)
+        let servicesTag = try XCTUnwrap(services["release_tag"] as? String)
+        let sourceSets: [String: [[String: Any]]] = [
+            "g1": g1Sources(
+                iosRepository: iosRepository,
+                iosSHA: iosSHA,
+                desktopRepository: desktopRepository,
+                desktopSHA: desktopSHA
+            ),
+            "g2": g2Sources(
+                repository: servicesRepository,
+                sourceSHA: servicesSHA,
+                tag: servicesTag
+            ),
+            "g3": g3Sources(repository: iosRepository, headSHA: iosSHA),
+            "g4": g4Sources(
+                desktopRepository: desktopRepository,
+                desktopSHA: desktopSHA,
+                runtimeRepository: runtimeRepository,
+                runtimeSHA: runtimeSHA
+            ),
+            "g5": g5Sources(repository: iosRepository, headSHA: iosSHA),
+        ]
+        var gates = try XCTUnwrap(root["gates"] as? [String: Any])
+        for (name, sources) in sourceSets where gates[name] != nil {
+            var gate = try XCTUnwrap(gates[name] as? [String: Any])
+            gate["artifact"] = [
+                "sources": sources,
+                "sha256": sha256(
+                    try canonicalEvidenceData(["sources": sources])
+                ),
+            ]
+            gates[name] = gate
+        }
+        root["gates"] = gates
+        try rebindEvidenceDigests(&root)
+    }
+
+    private func g1Sources(
+        iosRepository: String,
+        iosSHA: String,
+        desktopRepository: String,
+        desktopSHA: String
+    ) -> [[String: Any]] {
+        [
+            localSource("task-manifest", policy: "metadata-json"),
+            repositorySource(
+                "todo16-contract",
+                repository: desktopRepository,
+                commit: desktopSHA,
+                path: "docs/development/floorp-notes-sync/prerequisites.json",
+                policy: "metadata-json"
+            ),
+            repositorySource(
+                "ios-contract-source",
+                repository: iosRepository,
+                commit: iosSHA,
+                path: "docs/floorp-notes-sync-architecture.md",
+                policy: "source-code"
+            ),
+            repositorySource(
+                "desktop-contract-source",
+                repository: desktopRepository,
+                commit: desktopSHA,
+                path: "docs/development/floorp-notes-sync/ADR-001-floorp-notes-sync-contract.md",
+                policy: "source-code"
+            ),
+            repositorySource(
+                "merge-fixture",
+                repository: iosRepository,
+                commit: iosSHA,
+                path: "sync-fixtures/floorp-notes/floorp-notes-merge-v1.json",
+                policy: "metadata-json"
+            ),
+        ]
+    }
+
+    private func g2Sources(
+        repository: String,
+        sourceSHA: String,
+        tag: String
+    ) -> [[String: Any]] {
+        let roles = [
+            "focus-xcframework", "mozilla-xcframework", "release-manifest",
+            "sha256sums", "swift-components",
+        ]
+        return [
+            localSource("task-manifest", policy: "metadata-json"),
+            localSource("fake-server-run", policy: "metadata-json"),
+        ] + roles.enumerated().map { index, role in
+            releaseAssetSource(
+                role,
+                repository: repository,
+                sourceSHA: sourceSHA,
+                tag: tag,
+                assetID: index + 1
+            )
+        }
+    }
+
+    private func g3Sources(
+        repository: String,
+        headSHA: String
+    ) -> [[String: Any]] {
+        [
+            localSource("task-manifest", policy: "metadata-json"),
+            actionsRunSource(
+                "ci-run",
+                repository: repository,
+                headSHA: headSHA,
+                runID: 3
+            ),
+            actionsArtifactSource(
+                "xcresult",
+                repository: repository,
+                headSHA: headSHA,
+                runID: 3,
+                artifactID: 3
+            ),
+        ]
+    }
+
+    private func g4Sources(
+        desktopRepository: String,
+        desktopSHA: String,
+        runtimeRepository: String,
+        runtimeSHA: String
+    ) -> [[String: Any]] {
+        [
+            localSource("task-manifest", policy: "metadata-json"),
+            actionsRunSource(
+                "desktop-ci-run",
+                repository: desktopRepository,
+                headSHA: desktopSHA,
+                runID: 4
+            ),
+            actionsRunSource(
+                "runtime-ci-run",
+                repository: runtimeRepository,
+                headSHA: runtimeSHA,
+                runID: 5
+            ),
+            localSource("xpcshell-run", policy: "metadata-json"),
+            localSource("tps-run", policy: "metadata-json"),
+        ]
+    }
+
+    private func g5Sources(
+        repository: String,
+        headSHA: String
+    ) -> [[String: Any]] {
+        [
+            localSource("task-manifest", policy: "metadata-json"),
+            actionsRunSource(
+                "ci-run",
+                repository: repository,
+                headSHA: headSHA,
+                runID: 6
+            ),
+            actionsArtifactSource(
+                "xcresult",
+                repository: repository,
+                headSHA: headSHA,
+                runID: 6,
+                artifactID: 6
+            ),
+            localSource("account-isolation-run", policy: "metadata-json"),
+            localSource("proxy-trace", policy: "network-metadata-json"),
+        ]
+    }
+
+    private func localSource(
+        _ role: String,
+        policy: String
+    ) -> [String: Any] {
+        [
+            "kind": "local-file",
+            "role": role,
+            "content_policy": policy,
+            "path": "artifacts/\(role).json",
+            "sha256": sha256(Data("local:\(role)".utf8)),
+        ]
+    }
+
+    private func repositorySource(
+        _ role: String,
+        repository: String,
+        commit: String,
+        path: String,
+        policy: String
+    ) -> [String: Any] {
+        [
+            "kind": "github-repository-file",
+            "role": role,
+            "content_policy": policy,
+            "repository": repository,
+            "commit_sha": commit,
+            "path": path,
+            "blob_sha": String(repeating: "a", count: 40),
+            "sha256": sha256(Data("repository:\(role)".utf8)),
+        ]
+    }
+
+    private func actionsRunSource(
+        _ role: String,
+        repository: String,
+        headSHA: String,
+        runID: Int
+    ) -> [String: Any] {
+        [
+            "kind": "github-actions-run",
+            "role": role,
+            "content_policy": "metadata-json",
+            "repository": repository,
+            "run_id": runID,
+            "workflow_path": ".github/workflows/ci.yml",
+            "head_sha": headSHA,
+            "sha256": sha256(Data("run:\(role)".utf8)),
+        ]
+    }
+
+    private func actionsArtifactSource(
+        _ role: String,
+        repository: String,
+        headSHA: String,
+        runID: Int,
+        artifactID: Int
+    ) -> [String: Any] {
+        [
+            "kind": "github-actions-artifact",
+            "role": role,
+            "content_policy": "test-result-bundle",
+            "repository": repository,
+            "run_id": runID,
+            "artifact_id": artifactID,
+            "artifact_name": "floorp-notes-sync-xcresult",
+            "head_sha": headSHA,
+            "sha256": sha256(Data("artifact:\(role)".utf8)),
+        ]
+    }
+
+    private func releaseAssetSource(
+        _ role: String,
+        repository: String,
+        sourceSHA: String,
+        tag: String,
+        assetID: Int
+    ) -> [String: Any] {
+        [
+            "kind": "github-release-asset",
+            "role": role,
+            "content_policy": "release-binary",
+            "repository": repository,
+            "release_id": 1,
+            "release_tag": tag,
+            "asset_id": assetID,
+            "asset_name": "\(role).artifact",
+            "source_sha": sourceSHA,
+            "sha256": sha256(Data("release:\(role)".utf8)),
+        ]
+    }
+
+    private func canonicalEvidenceData(_ value: Any) throws -> Data {
+        try JSONSerialization.data(
+            withJSONObject: value,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private func rebindEvidenceDigests(_ root: inout [String: Any]) throws {
+        let mode = try XCTUnwrap(root["build_contract_mode"] as? String)
+        let inputs = try XCTUnwrap(root["release_inputs"] as? [String: Any])
+        let gates = try XCTUnwrap(root["gates"] as? [String: Any])
+        let names = mode == "production-qa"
+            ? ["g1", "g2", "g3", "g4"]
+            : ["g1", "g2", "g3", "g4", "g5"]
+        let boundGates = Dictionary(uniqueKeysWithValues: try names.map { name in
+            (name, try XCTUnwrap(gates[name]))
+        })
+        let digestKey = mode == "production-qa"
+            ? "g1_g4_digest_sha256"
+            : "g1_g5_digest_sha256"
+        root[digestKey] = sha256(
+            try canonicalEvidenceData(
+                ["gates": boundGates, "release_inputs": inputs]
+            )
+        )
+        let gateDigests = Dictionary(uniqueKeysWithValues: try gates.map { name, value in
+            let gate = try XCTUnwrap(value as? [String: Any])
+            let artifact = try XCTUnwrap(gate["artifact"] as? [String: Any])
+            return (name, try XCTUnwrap(artifact["sha256"] as? String))
+        })
+        root["same_release_key_sha256"] = sha256(
+            try canonicalEvidenceData(
+                ["gate_artifact_digests": gateDigests, "release_inputs": inputs]
+            )
+        )
+    }
+
+    private func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func releaseEvidenceTrustedNow() throws -> Date {
+        try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-10T00:00:00Z"))
     }
 }
 

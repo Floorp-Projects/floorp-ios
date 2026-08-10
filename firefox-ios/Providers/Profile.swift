@@ -52,7 +52,14 @@ public protocol SyncManager: Sendable {
     @discardableResult
     func onRemovedAccount() -> Success
     @discardableResult
+    func finalizeAccountRemoval() -> Success
+    func cancelAccountRemoval()
+    @discardableResult
     func onAddedAccount() -> Success
+}
+
+private struct ProfileAccountRemovalError: MaybeErrorType {
+    let description = "Account removal did not complete."
 }
 
 /// This exists to pass in external context: e.g., the UIApplication can
@@ -127,7 +134,8 @@ protocol Profile: AnyObject, Sendable {
 
     var rustFxA: RustFirefoxAccounts { get }
 
-    func removeAccount()
+    @discardableResult
+    func removeAccount() -> Success
 
     func getClientsAndTabs() -> Deferred<Maybe<[ClientAndTabs]>>
     func getCachedClientsAndTabs() -> Deferred<Maybe<[ClientAndTabs]>>
@@ -219,7 +227,13 @@ extension Profile {
 // TODO: Removed unchecked flag with FXIOS-12610
 open class BrowserProfile: Profile,
                            @unchecked Sendable {
+    typealias AccountDisconnect = @Sendable (
+        @escaping @Sendable (Bool) -> Void
+    ) -> Void
+
     private let logger: Logger
+    private let accountRemovalLock = NSLock()
+    private var accountRemovalInFlight: Success?
     private lazy var directory: String = {
         do {
             return try self.files.getAndEnsureDirectory()
@@ -257,11 +271,15 @@ open class BrowserProfile: Profile,
      */
     typealias RemoteSettingsServiceFactory = (String, RemoteSettingsConfig) -> RemoteSettingsService
     private let remoteSettingsServiceFactory: RemoteSettingsServiceFactory
+    private let accountDisconnect: AccountDisconnect
 
     init(localName: String,
          fxaCommandsDelegate: FxACommandsDelegate? = nil,
          clear: Bool = false,
          logger: Logger = DefaultLogger.shared,
+         accountDisconnect: @escaping AccountDisconnect = { completion in
+            RustFirefoxAccounts.shared.disconnect(completion: completion)
+         },
          remoteSettingsServiceFactory: @escaping RemoteSettingsServiceFactory = { storageDir, config in
             RemoteSettingsService(storageDir: storageDir, config: config)
          }) {
@@ -272,6 +290,7 @@ open class BrowserProfile: Profile,
         self.files = ProfileFileAccessor(localName: localName)
         self.keychain = KeychainManager.shared
         self.logger = logger
+        self.accountDisconnect = accountDisconnect
         self.fxaCommandsDelegate = fxaCommandsDelegate
         self.remoteSettingsServiceFactory = remoteSettingsServiceFactory
 
@@ -748,11 +767,92 @@ open class BrowserProfile: Profile,
         return RustFirefoxAccounts.shared
     }
 
-    func removeAccount() {
+    @discardableResult
+    func removeAccount() -> Success {
+        let (removal, shouldStart) = accountRemovalLock.withLock {
+            if let inFlight = accountRemovalInFlight {
+                return (inFlight, false)
+            }
+            let removal = Success()
+            accountRemovalInFlight = removal
+            return (removal, true)
+        }
+        guard shouldStart else { return removal }
         logger.log("Removing sync account", level: .debug, category: .sync)
 
-        RustFirefoxAccounts.shared.disconnect()
+        guard let syncManager else {
+            finishAccountRemoval(
+                removal,
+                result: Maybe(failure: ProfileAccountRemovalError())
+            )
+            return removal
+        }
+        syncManager.onRemovedAccount().uponQueue(.main) { [self] resetResult in
+            continueAccountRemoval(
+                removal,
+                syncManager: syncManager,
+                resetResult: resetResult
+            )
+        }
+        return removal
+    }
 
+    private func continueAccountRemoval(
+        _ removal: Success,
+        syncManager: any SyncManager,
+        resetResult: Maybe<Void>
+    ) {
+        guard resetResult.isSuccess else {
+            logger.log(
+                "Checked Sync disconnect failed; account was retained.",
+                level: .warning,
+                category: .sync
+            )
+            finishAccountRemoval(removal, result: resetResult)
+            return
+        }
+        accountDisconnect { [self] didDisconnect in
+            continueAccountRemoval(
+                removal,
+                syncManager: syncManager,
+                didDisconnect: didDisconnect
+            )
+        }
+    }
+
+    private func continueAccountRemoval(
+        _ removal: Success,
+        syncManager: any SyncManager,
+        didDisconnect: Bool
+    ) {
+        guard didDisconnect else {
+            syncManager.cancelAccountRemoval()
+            logger.log(
+                "Firefox Account logout failed after checked Sync disconnect.",
+                level: .warning,
+                category: .sync
+            )
+            finishAccountRemoval(
+                removal,
+                result: Maybe(failure: ProfileAccountRemovalError())
+            )
+            return
+        }
+        syncManager.finalizeAccountRemoval().uponQueue(.main) { [self] finalizeResult in
+            if finalizeResult.isFailure {
+                logger.log(
+                    "Account logout succeeded, but local Notes association cleanup "
+                        + "is pending and will resume on the next launch.",
+                    level: .warning,
+                    category: .sync
+                )
+            }
+            completeAccountRemovalCleanup()
+            finishAccountRemoval(removal, result: Maybe(success: ()))
+        }
+    }
+
+    private func completeAccountRemovalCleanup() {
         // Not available in extensions
         #if !MOZ_TARGET_NOTIFICATIONSERVICE && !MOZ_TARGET_SHARETO && !MOZ_TARGET_CREDENTIAL_PROVIDER
         unregisterRemoteNotifications()
@@ -779,10 +879,18 @@ open class BrowserProfile: Profile,
 
         // Tell any observers that our account has changed.
         NotificationCenter.default.post(name: .FirefoxAccountChanged, object: nil)
+    }
 
-        // Trigger cleanup. Pass in the account in case we want to try to remove
-        // client-specific data from the server.
-        self.syncManager?.onRemovedAccount()
+    private func finishAccountRemoval(
+        _ removal: Success,
+        result: Maybe<Void>
+    ) {
+        accountRemovalLock.withLock {
+            if accountRemovalInFlight === removal {
+                accountRemovalInFlight = nil
+            }
+        }
+        removal.fillIfUnfilled(result)
     }
 
     public func hasSyncedLogins() -> Deferred<Maybe<Bool>> {

@@ -198,6 +198,14 @@ jobs:
             exit 1
           fi
 
+      - name: Upload Notes Sync G3 result
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-xcresult
+          path: ${{ runner.temp }}/FloorpCI.xcresult
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

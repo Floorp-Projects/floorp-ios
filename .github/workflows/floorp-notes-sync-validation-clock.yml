@@ -1,0 +1,24 @@
+name: Floorp Notes Sync validation clock
+run-name: Floorp Notes Sync validation clock ${{ inputs.clock_nonce }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      clock_nonce:
+        description: Correlates one dispatch with its terminal run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validation-clock:
+    name: validation-clock
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate dispatch nonce
+        env:
+          CLOCK_NONCE: ${{ inputs.clock_nonce }}
+        run: test -n "$CLOCK_NONCE"

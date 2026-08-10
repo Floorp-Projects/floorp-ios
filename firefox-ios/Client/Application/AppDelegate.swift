@@ -91,6 +91,15 @@ class AppDelegate: UIResponder,
         // Then setup dependency container as it's needed for everything else
         DependencyHelper().bootstrapDependencies()
 
+        if let syncManager = profile.syncManager as? RustSyncManager {
+            syncManager.installFloorpNotesSyncEngineProvider(
+                FloorpNotesSyncEngineProvider()
+            )
+            syncManager.bootstrapFloorpNotesRuntimePolicy(
+                compiledEvidenceAllows: FloorpNotesSyncReleaseGate.isNetworkSyncEnabled
+            )
+        }
+
         appLaunchUtil = AppLaunchUtil(profile: profile)
         appLaunchUtil?.setUpPreLaunchDependencies()
 

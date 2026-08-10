@@ -523,17 +523,24 @@ fileprivate struct FfiConverterTimestamp: FfiConverterRustBuffer {
 
 
 public protocol SyncManagerProtocol: AnyObject, Sendable {
-    
+
     /**
      * Disconnect engines from sync, deleting/resetting the sync-related data
      */
     func disconnect() 
     
     /**
-     * Get a list of engine names available for syncing
+     * Disconnect every engine and surface a reset/persistence failure to the
+     * caller. Prefer this when sign-out must durably clear Sync association.
+     */
+    func disconnectChecked() throws
+
+    /**
+     * Get ordinary engine names available for toggle-driven syncing. Special
+     * shared transports such as Floorp prefs are intentionally omitted.
      */
     func getAvailableEngines()  -> [String]
-    
+
     /**
      * Perform a sync.  See [SyncParams] and [SyncResult] for details on how this works
      */
@@ -611,7 +618,19 @@ open func disconnect()  {try! rustCall() {
 }
     
     /**
-     * Get a list of engine names available for syncing
+     * Disconnect every engine and surface a reset/persistence failure to the
+     * caller. Prefer this when sign-out must durably clear Sync association.
+     */
+open func disconnectChecked()throws   {try rustCallWithError(FfiConverterTypeSyncManagerError_lift) {
+    uniffi_sync_manager_fn_method_syncmanager_disconnect_checked(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+    /**
+     * Get ordinary engine names available for toggle-driven syncing. Special
+     * shared transports such as Floorp prefs are intentionally omitted.
      */
 open func getAvailableEngines() -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
@@ -1623,6 +1642,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_sync_manager_checksum_method_syncmanager_disconnect() != 33773) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_sync_manager_checksum_method_syncmanager_disconnect_checked() != 32447) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_sync_manager_checksum_method_syncmanager_get_available_engines() != 56943) {

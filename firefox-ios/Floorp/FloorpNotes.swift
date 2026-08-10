@@ -695,32 +695,84 @@ struct FloorpNotesSnapshot: Equatable, Sendable {
     let notes: [FloorpNote]
 }
 
-/// Serial, crash-safe persistence for local Floorp Notes.
-///
-/// This is deliberately local-only. Firefox iOS currently has no preferences
-/// sync engine compatible with desktop's `services.sync.prefs` record. A
-/// future sync layer should use the desktop adapter above and the archive
-/// revision for conflict detection rather than bypassing this actor.
-actor FloorpNotesStore {
-    static let shared = FloorpNotesStore(fileURL: defaultArchiveURL())
+struct FloorpNotesApplicationServicesState: Codable, Equatable, Sendable {
+    let globalSyncID: String?
+    let collectionSyncID: String?
+    let lastModifiedMillis: Int64
+}
 
-    static let currentSchemaVersion = 2
+struct FloorpNotesSyncContext: Equatable, Sendable {
+    let ownerAccountID: String?
+    let baseState: FloorpNotesSyncBaseState?
+    let applicationServicesState: FloorpNotesApplicationServicesState?
+}
+
+enum FloorpNotesPersistenceAccountAvailability: Equatable, Sendable {
+    case available
+    case accountMismatch
+}
+
+struct FloorpNotesPreparedPersistence: Sendable {
+    let plan: FloorpNotesSyncPlan
+    fileprivate let accountID: String
+    fileprivate let expectedRevision: UInt64
+    fileprivate let nextArchive: FloorpNotesPersistenceCore.Archive
+}
+
+enum FloorpNotesPersistenceError: Error, Equatable, Sendable {
+    case emptyAccountID
+    case accountMismatch
+    case staleRevision
+    case invalidApplicationServicesState
+}
+
+/// Thread-safe, crash-safe persistence shared by the async Notes facade and
+/// the synchronous Application Services delegate callbacks.
+final class FloorpNotesPersistenceCore: @unchecked Sendable {
+    static let currentSchemaVersion = 3
     static let maximumNoteCount = 1_000
     static let legacyMaximumArchiveBytes = 1_000_000
     // v2 explicitly marks rich/desktop notes as `automatic`. It also writes
     // decoded timestamps in canonical decimal form. Reserve both worst-case
     // per-note expansions plus the archive-level revision so a boundary-sized
     // v1 archive can migrate atomically without becoming unreadable.
-    static let maximumArchiveBytes = legacyMaximumArchiveBytes + (maximumNoteCount * 60) + 64
+    static let maximumArchiveBytes = legacyMaximumArchiveBytes + (maximumNoteCount * 60) + 65_600
+    private static let pendingAssociationResetSchemaVersion = 1
+    private static let maximumPendingAssociationResetBytes = 16 * 1_024
 
-    private struct Archive: Codable, Equatable, Sendable {
+    fileprivate struct Archive: Codable, Equatable, Sendable {
         let schemaVersion: Int
         let revision: UInt64
         let notes: [FloorpNote]
+        let syncOwnerAccountID: String?
+        let syncBaseState: FloorpNotesSyncBaseState?
+        let applicationServicesState: FloorpNotesApplicationServicesState?
+
+        init(
+            schemaVersion: Int,
+            revision: UInt64,
+            notes: [FloorpNote],
+            syncOwnerAccountID: String? = nil,
+            syncBaseState: FloorpNotesSyncBaseState? = nil,
+            applicationServicesState: FloorpNotesApplicationServicesState? = nil
+        ) {
+            self.schemaVersion = schemaVersion
+            self.revision = revision
+            self.notes = notes
+            self.syncOwnerAccountID = syncOwnerAccountID
+            self.syncBaseState = syncBaseState
+            self.applicationServicesState = applicationServicesState
+        }
     }
 
     private struct ArchiveHeader: Decodable {
         let schemaVersion: Int
+    }
+
+    private struct PendingAssociationReset: Codable, Equatable, Sendable {
+        let schemaVersion: Int
+        let accountID: String
+        let state: FloorpNotesApplicationServicesState
     }
 
     private struct LegacyArchiveV1: Decodable {
@@ -737,6 +789,12 @@ actor FloorpNotesStore {
         let notes: [Note]
     }
 
+    private struct LegacyArchiveV2: Decodable {
+        let schemaVersion: Int
+        let revision: UInt64
+        let notes: [FloorpNote]
+    }
+
     private enum CorruptionState: Sendable {
         case preserved(recoveryURL: URL)
         case couldNotPreserve
@@ -747,8 +805,13 @@ actor FloorpNotesStore {
     private let makeID: @Sendable () -> String
     private let copyItem: @Sendable (URL, URL) throws -> Void
     private let writeData: @Sendable (Data, URL) throws -> Void
+    private let lock = NSRecursiveLock()
     private var cachedArchive: Archive?
     private var corruptionState: CorruptionState?
+
+    private var pendingAssociationResetURL: URL {
+        fileURL.appendingPathExtension("pending-sync-association-reset")
+    }
 
     init(
         fileURL: URL,
@@ -1017,6 +1080,288 @@ actor FloorpNotesStore {
         postChangeNotification(revision: emptyArchive.revision)
     }
 
+    func loadSyncContext() throws -> FloorpNotesSyncContext {
+        let archive = try loadArchive()
+        return FloorpNotesSyncContext(
+            ownerAccountID: archive.syncOwnerAccountID,
+            baseState: archive.syncBaseState,
+            applicationServicesState: archive.applicationServicesState
+        )
+    }
+
+    func syncAvailability(accountID: String) throws -> FloorpNotesPersistenceAccountAvailability {
+        try withLock {
+            let accountID = try normalizedAccountID(accountID)
+            let owner = try loadArchive().syncOwnerAccountID
+            return owner == nil || owner == accountID ? .available : .accountMismatch
+        }
+    }
+
+    func claimSyncOwnership(accountID: String) throws {
+        try withLock {
+            let accountID = try normalizedAccountID(accountID)
+            let archive = try loadArchiveForWriting()
+            if let owner = archive.syncOwnerAccountID {
+                guard owner == accountID else {
+                    throw FloorpNotesPersistenceError.accountMismatch
+                }
+                return
+            }
+            let claimed = Archive(
+                schemaVersion: Self.currentSchemaVersion,
+                revision: archive.revision,
+                notes: archive.notes,
+                syncOwnerAccountID: accountID,
+                syncBaseState: nil,
+                applicationServicesState: archive.applicationServicesState
+            )
+            try persist(claimed)
+            cachedArchive = claimed
+        }
+    }
+
+    func syncContext(accountID: String) throws -> FloorpNotesSyncContext {
+        try withLock {
+            let accountID = try normalizedAccountID(accountID)
+            let context = try loadSyncContext()
+            if let owner = context.ownerAccountID, owner != accountID {
+                throw FloorpNotesPersistenceError.accountMismatch
+            }
+            return context
+        }
+    }
+
+    func prepareSyncPersistence(
+        accountID: String,
+        remoteRecord: FloorpNotesSyncRemoteRecord,
+        now: Int64
+    ) throws -> FloorpNotesPreparedPersistence {
+        try withLock {
+            let accountID = try normalizedAccountID(accountID)
+            let archive = try loadArchiveForWriting()
+            if let owner = archive.syncOwnerAccountID, owner != accountID {
+                throw FloorpNotesPersistenceError.accountMismatch
+            }
+            let baseState = archive.syncOwnerAccountID == accountID
+                ? archive.syncBaseState
+                : nil
+            let plan = try FloorpNotesSyncPlanner.makePlan(
+                accountID: accountID,
+                baseState: baseState,
+                localNotes: archive.notes,
+                remoteRecord: remoteRecord,
+                now: now
+            )
+            try validate(plan.mergedNotes)
+            let nextRevision = archive.revision == UInt64.max
+                ? archive.revision
+                : archive.revision + 1
+            let nextArchive = Archive(
+                schemaVersion: Self.currentSchemaVersion,
+                revision: nextRevision,
+                notes: plan.mergedNotes,
+                syncOwnerAccountID: archive.syncOwnerAccountID ?? accountID,
+                syncBaseState: plan.nextBaseState,
+                applicationServicesState: archive.applicationServicesState
+            )
+            _ = try encodedArchiveData(nextArchive)
+            return FloorpNotesPreparedPersistence(
+                plan: plan,
+                accountID: accountID,
+                expectedRevision: archive.revision,
+                nextArchive: nextArchive
+            )
+        }
+    }
+
+    func commitSyncPersistence(
+        _ prepared: FloorpNotesPreparedPersistence,
+        applicationServicesState: FloorpNotesApplicationServicesState
+    ) throws {
+        try withLock {
+            try validateApplicationServicesState(applicationServicesState)
+            let archive = try loadArchiveForWriting()
+            guard archive.revision == prepared.expectedRevision else {
+                throw FloorpNotesPersistenceError.staleRevision
+            }
+            guard archive.syncOwnerAccountID == nil
+                    || archive.syncOwnerAccountID == prepared.accountID else {
+                throw FloorpNotesPersistenceError.accountMismatch
+            }
+            let committedArchive = Archive(
+                schemaVersion: prepared.nextArchive.schemaVersion,
+                revision: prepared.nextArchive.revision,
+                notes: prepared.nextArchive.notes,
+                syncOwnerAccountID: prepared.nextArchive.syncOwnerAccountID,
+                syncBaseState: prepared.nextArchive.syncBaseState,
+                applicationServicesState: applicationServicesState
+            )
+            try persist(try encodedArchiveData(committedArchive))
+            cachedArchive = committedArchive
+            postChangeNotification(revision: committedArchive.revision)
+        }
+    }
+
+    func resetSyncAssociation(
+        accountID: String,
+        state: FloorpNotesApplicationServicesState
+    ) throws {
+        try withLock {
+            let accountID = try normalizedAccountID(accountID)
+            try validateApplicationServicesState(state)
+            let archive = try loadArchiveForWriting()
+            guard archive.syncOwnerAccountID == nil
+                    || archive.syncOwnerAccountID == accountID else {
+                throw FloorpNotesPersistenceError.accountMismatch
+            }
+            guard archive.syncOwnerAccountID != nil else { return }
+            let nextArchive = Archive(
+                schemaVersion: Self.currentSchemaVersion,
+                revision: archive.revision,
+                notes: archive.notes,
+                syncOwnerAccountID: archive.syncOwnerAccountID,
+                syncBaseState: nil,
+                applicationServicesState: state
+            )
+            guard nextArchive != archive else { return }
+            try persist(nextArchive)
+            cachedArchive = nextArchive
+        }
+    }
+
+    func stagePendingSyncAssociationReset(
+        accountID: String,
+        state: FloorpNotesApplicationServicesState
+    ) throws {
+        try withLock {
+            let marker = PendingAssociationReset(
+                schemaVersion: Self.pendingAssociationResetSchemaVersion,
+                accountID: try normalizedAccountID(accountID),
+                state: state
+            )
+            try validateApplicationServicesState(state)
+            if let existing = try loadPendingSyncAssociationReset(),
+               existing != marker {
+                throw FloorpNotesPersistenceError.accountMismatch
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let data = try encoder.encode(marker)
+            guard data.count <= Self.maximumPendingAssociationResetBytes else {
+                throw FloorpNotesPersistenceError.invalidApplicationServicesState
+            }
+            try writeData(data, pendingAssociationResetURL)
+        }
+    }
+
+    func finalizePendingSyncAssociationReset(
+        accountID: String,
+        state: FloorpNotesApplicationServicesState
+    ) throws {
+        try withLock {
+            let normalizedAccountID = try normalizedAccountID(accountID)
+            guard let marker = try loadPendingSyncAssociationReset(),
+                  marker.accountID == normalizedAccountID,
+                  marker.state == state else {
+                throw FloorpNotesPersistenceError.invalidApplicationServicesState
+            }
+            try resetSyncAssociation(accountID: normalizedAccountID, state: state)
+            try removePendingSyncAssociationReset()
+        }
+    }
+
+    func cancelPendingSyncAssociationReset(accountID: String) throws {
+        try withLock {
+            guard let marker = try loadPendingSyncAssociationReset() else { return }
+            guard marker.accountID == (try normalizedAccountID(accountID)) else {
+                throw FloorpNotesPersistenceError.accountMismatch
+            }
+            try removePendingSyncAssociationReset()
+        }
+    }
+
+    @discardableResult
+    func resumePendingSyncAssociationReset() throws -> Bool {
+        try withLock {
+            guard let marker = try loadPendingSyncAssociationReset() else {
+                return false
+            }
+            try resetSyncAssociation(
+                accountID: marker.accountID,
+                state: marker.state
+            )
+            try removePendingSyncAssociationReset()
+            return true
+        }
+    }
+
+    func hasPendingSyncAssociationReset() throws -> Bool {
+        try withLock { try loadPendingSyncAssociationReset() != nil }
+    }
+
+    private func loadPendingSyncAssociationReset() throws -> PendingAssociationReset? {
+        guard FileManager.default.fileExists(
+            atPath: pendingAssociationResetURL.path
+        ) else {
+            return nil
+        }
+        let values = try pendingAssociationResetURL.resourceValues(
+            forKeys: [.fileSizeKey]
+        )
+        guard let fileSize = values.fileSize,
+              fileSize > 0,
+              fileSize <= Self.maximumPendingAssociationResetBytes else {
+            throw FloorpNotesPersistenceError.invalidApplicationServicesState
+        }
+        let data = try Data(contentsOf: pendingAssociationResetURL)
+        guard data.count == fileSize,
+              let marker = try? JSONDecoder().decode(
+                PendingAssociationReset.self,
+                from: data
+              ),
+              marker.schemaVersion == Self.pendingAssociationResetSchemaVersion else {
+            throw FloorpNotesPersistenceError.invalidApplicationServicesState
+        }
+        guard marker.accountID == (try normalizedAccountID(marker.accountID)) else {
+            throw FloorpNotesPersistenceError.invalidApplicationServicesState
+        }
+        try validateApplicationServicesState(marker.state)
+        return marker
+    }
+
+    private func removePendingSyncAssociationReset() throws {
+        guard FileManager.default.fileExists(
+            atPath: pendingAssociationResetURL.path
+        ) else {
+            return
+        }
+        try FileManager.default.removeItem(at: pendingAssociationResetURL)
+    }
+
+    fileprivate func withLock<T>(_ operation: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try operation()
+    }
+
+    private func normalizedAccountID(_ accountID: String) throws -> String {
+        let normalized = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            throw FloorpNotesPersistenceError.emptyAccountID
+        }
+        return normalized
+    }
+
+    private func validateApplicationServicesState(
+        _ state: FloorpNotesApplicationServicesState
+    ) throws {
+        let hasGlobal = state.globalSyncID != nil
+        let hasCollection = state.collectionSyncID != nil
+        guard hasGlobal == hasCollection, state.lastModifiedMillis >= 0 else {
+            throw FloorpNotesPersistenceError.invalidApplicationServicesState
+        }
+    }
+
     /// Deterministic merge: newer `updatedAt` wins for a shared ID, ties keep
     /// the local version, and imported IDs missing locally are appended in
     /// payload order.
@@ -1094,6 +1439,13 @@ actor FloorpNotesStore {
             switch header.schemaVersion {
             case Self.currentSchemaVersion:
                 archive = try JSONDecoder().decode(Archive.self, from: data)
+            case 2:
+                let legacy = try JSONDecoder().decode(LegacyArchiveV2.self, from: data)
+                archive = Archive(
+                    schemaVersion: Self.currentSchemaVersion,
+                    revision: legacy.revision,
+                    notes: legacy.notes
+                )
             case 1:
                 let legacy = try JSONDecoder().decode(LegacyArchiveV1.self, from: data)
                 archive = Archive(
@@ -1179,13 +1531,18 @@ actor FloorpNotesStore {
         return Archive(
             schemaVersion: Self.currentSchemaVersion,
             revision: nextRevision,
-            notes: notes
+            notes: notes,
+            syncOwnerAccountID: archive.syncOwnerAccountID,
+            syncBaseState: archive.syncBaseState,
+            applicationServicesState: archive.applicationServicesState
         )
     }
 
     private func persist(_ archive: Archive) throws {
-        let data = try encodedArchiveData(archive)
+        try persist(encodedArchiveData(archive))
+    }
 
+    private func persist(_ data: Data) throws {
         let directoryURL = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: directoryURL,
@@ -1318,8 +1675,207 @@ actor FloorpNotesStore {
         }
     }
 
-    nonisolated static func currentTimeInMilliseconds() -> Int64 {
+    static func currentTimeInMilliseconds() -> Int64 {
         Int64((Date().timeIntervalSince1970 * 1_000).rounded())
+    }
+
+    private static func defaultArchiveURL() -> URL {
+        let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        return applicationSupport
+            .appendingPathComponent("Floorp", isDirectory: true)
+            .appendingPathComponent("Notes", isDirectory: true)
+            .appendingPathComponent("notes-v1.json", isDirectory: false)
+    }
+}
+
+/// Async facade for UI/editor callers. Application Services uses the same
+/// persistence core directly because its delegate callbacks are synchronous.
+actor FloorpNotesStore {
+    static let shared = FloorpNotesStore(fileURL: defaultArchiveURL())
+
+    nonisolated static let currentSchemaVersion = FloorpNotesPersistenceCore.currentSchemaVersion
+    nonisolated static let maximumNoteCount = FloorpNotesPersistenceCore.maximumNoteCount
+    nonisolated static let legacyMaximumArchiveBytes =
+        FloorpNotesPersistenceCore.legacyMaximumArchiveBytes
+    nonisolated static let maximumArchiveBytes = FloorpNotesPersistenceCore.maximumArchiveBytes
+
+    nonisolated let syncPersistenceCore: FloorpNotesPersistenceCore
+
+    init(
+        fileURL: URL,
+        now: @escaping @Sendable () -> Int64 = FloorpNotesStore.currentTimeInMilliseconds,
+        makeID: @escaping @Sendable () -> String = { UUID().uuidString },
+        copyItem: @escaping @Sendable (URL, URL) throws -> Void = { source, destination in
+            try FileManager.default.copyItem(at: source, to: destination)
+        },
+        writeData: @escaping @Sendable (Data, URL) throws -> Void = { data, url in
+            try data.write(
+                to: url,
+                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            )
+        }
+    ) {
+        syncPersistenceCore = FloorpNotesPersistenceCore(
+            fileURL: fileURL,
+            now: now,
+            makeID: makeID,
+            copyItem: copyItem,
+            writeData: writeData
+        )
+    }
+
+    func loadNotes() throws -> [FloorpNote] {
+        try syncPersistenceCore.withLock { try syncPersistenceCore.loadNotes() }
+    }
+
+    func loadSnapshot() throws -> FloorpNotesSnapshot {
+        try syncPersistenceCore.withLock { try syncPersistenceCore.loadSnapshot() }
+    }
+
+    func preflightCreateNote(
+        title: String,
+        content: String,
+        contentFormat: FloorpNoteContentFormat,
+        candidateID: FloorpNoteID = FloorpNoteID(UUID().uuidString)
+    ) throws {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.preflightCreateNote(
+                title: title,
+                content: content,
+                contentFormat: contentFormat,
+                candidateID: candidateID
+            )
+        }
+    }
+
+    func preflightUpdateNote(
+        id: FloorpNoteID,
+        title: String,
+        content: String,
+        contentFormat: FloorpNoteContentFormat
+    ) throws {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.preflightUpdateNote(
+                id: id,
+                title: title,
+                content: content,
+                contentFormat: contentFormat
+            )
+        }
+    }
+
+    @discardableResult
+    func createNote(
+        title: String,
+        content: String = "",
+        contentFormat: FloorpNoteContentFormat = .plainText
+    ) throws -> FloorpNote {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.createNote(
+                title: title,
+                content: content,
+                contentFormat: contentFormat
+            )
+        }
+    }
+
+    @discardableResult
+    func updateNote(
+        id: FloorpNoteID,
+        title: String,
+        content: String,
+        contentFormat: FloorpNoteContentFormat? = nil,
+        expectedUpdatedAt: Int64? = nil
+    ) throws -> FloorpNote {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.updateNote(
+                id: id,
+                title: title,
+                content: content,
+                contentFormat: contentFormat,
+                expectedUpdatedAt: expectedUpdatedAt
+            )
+        }
+    }
+
+    func deleteNote(id: FloorpNoteID) throws {
+        try syncPersistenceCore.withLock { try syncPersistenceCore.deleteNote(id: id) }
+    }
+
+    func reorderNotes(orderedIDs: [FloorpNoteID]) throws {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.reorderNotes(orderedIDs: orderedIDs)
+        }
+    }
+
+    @discardableResult
+    func reorderVisibleNotes(
+        originalVisibleIDs: [FloorpNoteID],
+        orderedVisibleIDs: [FloorpNoteID],
+        expectedRevision: UInt64
+    ) throws -> Bool {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.reorderVisibleNotes(
+                originalVisibleIDs: originalVisibleIDs,
+                orderedVisibleIDs: orderedVisibleIDs,
+                expectedRevision: expectedRevision
+            )
+        }
+    }
+
+    func replaceAllNotes(with notes: [FloorpNote]) throws {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.replaceAllNotes(with: notes)
+        }
+    }
+
+    func desktopPayloadData() throws -> Data {
+        try syncPersistenceCore.withLock { try syncPersistenceCore.desktopPayloadData() }
+    }
+
+    @discardableResult
+    func importNotes(
+        from data: Data,
+        policy: FloorpNotesImportPolicy = .replace
+    ) throws -> FloorpNotesImportResult {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.importNotes(from: data, policy: policy)
+        }
+    }
+
+    func preservedCorruptionBackupURL() -> URL? {
+        syncPersistenceCore.withLock { syncPersistenceCore.preservedCorruptionBackupURL() }
+    }
+
+    func preservedCorruptionBackupData() throws -> Data? {
+        try syncPersistenceCore.withLock {
+            try syncPersistenceCore.preservedCorruptionBackupData()
+        }
+    }
+
+    func resetAfterCorruption() throws {
+        try syncPersistenceCore.withLock { try syncPersistenceCore.resetAfterCorruption() }
+    }
+
+    func loadSyncContext() throws -> FloorpNotesSyncContext {
+        try syncPersistenceCore.withLock { try syncPersistenceCore.loadSyncContext() }
+    }
+
+    nonisolated func syncAccountAvailability(
+        accountID: String
+    ) throws -> FloorpNotesPersistenceAccountAvailability {
+        try syncPersistenceCore.syncAvailability(accountID: accountID)
+    }
+
+    nonisolated func claimSyncOwnership(accountID: String) throws {
+        try syncPersistenceCore.claimSyncOwnership(accountID: accountID)
+    }
+
+    nonisolated static func currentTimeInMilliseconds() -> Int64 {
+        FloorpNotesPersistenceCore.currentTimeInMilliseconds()
     }
 
     nonisolated private static func defaultArchiveURL() -> URL {

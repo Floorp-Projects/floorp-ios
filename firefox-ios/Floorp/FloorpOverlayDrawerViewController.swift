@@ -540,6 +540,7 @@ final class FloorpOverlayDrawerViewController:
     private let notesStore: FloorpNotesStore
     private let logger: Logger
     private let isPrivateProvider: @MainActor () -> Bool
+    private let notesSyncStatusProvider: @MainActor () -> FloorpNotesSyncUIStatus
     private let libraryPanelHost: (any FloorpLibraryPanelHosting)?
     private let registryFallbackRetryDelayNanoseconds: UInt64
     private let notesSnapshotLoader: FloorpNotesSnapshotLoader
@@ -939,6 +940,9 @@ final class FloorpOverlayDrawerViewController:
          themeManager: ThemeManager = AppContainer.shared.resolve(),
          notificationCenter: NotificationProtocol = NotificationCenter.default,
          isPrivateProvider: @escaping @MainActor () -> Bool = { false },
+         notesSyncStatusProvider: @escaping @MainActor () -> FloorpNotesSyncUIStatus = {
+             FloorpNotesSyncStatusCenter.shared.status
+         },
          webPanelZoomMutation: FloorpWebPanelZoomMutation? = nil,
          webPanelContentModeMutation: FloorpWebPanelContentModeMutation? = nil,
          registryFallbackRetryDelayNanoseconds: UInt64 = 250_000_000,
@@ -966,6 +970,7 @@ final class FloorpOverlayDrawerViewController:
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
         self.isPrivateProvider = isPrivateProvider
+        self.notesSyncStatusProvider = notesSyncStatusProvider
         self.webPanelZoomMutation = webPanelZoomMutation ?? { panelID, change, revision in
             try panelManager.adjustWebPanelZoom(
                 for: panelID,
@@ -1029,6 +1034,12 @@ final class FloorpOverlayDrawerViewController:
             self,
             selector: #selector(notesDidChange(_:)),
             name: .FloorpNotesDidChange,
+            object: nil
+        )
+        notificationCenter.addObserver(
+            self,
+            selector: #selector(notesSyncStatusDidChange(_:)),
+            name: .FloorpNotesSyncStatusDidChange,
             object: nil
         )
         notificationCenter.addObserver(
@@ -2140,10 +2151,11 @@ final class FloorpOverlayDrawerViewController:
         currentPanelType = panel.type
         presentationState.select(panel)
         let panelTitle = displayTitle(for: panel)
+        let notesStatus = notesSyncStatusText
         titleLabel.text = panel.type == .notes
-            ? "\(panelTitle) · \(FloorpStrings.Notes.localOnly)"
+            ? "\(panelTitle) · \(notesStatus)"
             : panelTitle
-        titleLabel.accessibilityValue = panel.type == .notes ? FloorpStrings.Notes.localOnly : nil
+        titleLabel.accessibilityValue = panel.type == .notes ? notesStatus : nil
         addNoteButton.isHidden = panel.type != .notes
         notesReorderButton.isHidden = panel.type != .notes
         cancelNotesReorderButton.isHidden = true
@@ -3501,6 +3513,39 @@ final class FloorpOverlayDrawerViewController:
         loadNotes()
     }
 
+    @objc private func notesSyncStatusDidChange(_: Notification) {
+        updateNotesSyncStatusPresentation()
+    }
+
+    private var notesSyncStatusText: String {
+        switch notesSyncStatusProvider() {
+        case .localOnly:
+            return FloorpStrings.Notes.localOnly
+        case .syncEnabled:
+            return FloorpStrings.Notes.syncEnabled
+        }
+    }
+
+    private func updateNotesSyncStatusPresentation() {
+        guard currentPanelType == .notes,
+              let selectedPanelID = presentationState.selectedPanelId,
+              let panel = panelManager.panel(for: selectedPanelID) else {
+            return
+        }
+        let status = notesSyncStatusText
+        titleLabel.text = "\(displayTitle(for: panel)) · \(status)"
+        titleLabel.accessibilityValue = status
+        if let navigationController = presentedViewController as? UINavigationController,
+           let editor = navigationController.viewControllers.first
+            as? FloorpNoteEditorViewController {
+            editor.navigationItem.prompt = status
+        }
+    }
+
+    var notesSyncStatusTextForTesting: String? {
+        titleLabel.accessibilityValue
+    }
+
     private func openNote(id: FloorpNoteID) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -3539,7 +3584,7 @@ final class FloorpOverlayDrawerViewController:
             isPersisted: isPersisted,
             persistence: persistenceSession
         )
-        editor.navigationItem.prompt = FloorpStrings.Notes.localOnly
+        editor.navigationItem.prompt = notesSyncStatusText
         let navigationController = UINavigationController(rootViewController: editor)
         navigationController.modalPresentationStyle = .pageSheet
         present(navigationController, animated: true)

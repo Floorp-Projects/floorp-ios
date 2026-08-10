@@ -30,6 +30,11 @@ extension Notification.Name {
     /// Posted after a local Floorp Notes transaction has been committed.
     static let FloorpNotesDidChange = Notification.Name("FloorpNotesDidChange")
 
+    /// Posted when Notes switches between local-only and account Sync UI state.
+    static let FloorpNotesSyncStatusDidChange = Notification.Name(
+        "FloorpNotesSyncStatusDidChange"
+    )
+
     /// Posted after the profile-wide Floorp panel registry has changed.
     ///
     /// Presentation state remains window-scoped; each visible drawer uses this
