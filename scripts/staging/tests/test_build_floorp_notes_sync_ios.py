@@ -200,8 +200,10 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             'NODE_ARCHIVE_SHA256 = '
             '"eb02f7fab96d3d67de40c5ec8566096fcb4c2026728787683ae5a97eb612b941"'
         )
+        production_node_protocol = '"--proto",\n            "=https",'
         self.assertEqual(preparer_text.count(production_node_url), 1)
         self.assertEqual(preparer_text.count(production_node_sha256), 1)
+        self.assertEqual(preparer_text.count(production_node_protocol), 1)
         preparer.write_text(
             preparer_text
             .replace(
@@ -211,6 +213,10 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             .replace(
                 production_node_sha256,
                 f"NODE_ARCHIVE_SHA256 = {fake_node_sha256!r}",
+            )
+            .replace(
+                production_node_protocol,
+                '"--proto",\n            "=https,file",',
             )
         )
 
@@ -238,6 +244,8 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                     translations-engine.worker.js; do
                     printf 'generated %s\\n' "$name" > "$assets/$name"
                 done
+                printf 'generated license sidecar\\n' > \
+                    "$assets/MainFrameAtDocumentStart.js.LICENSE.txt"
                 printf 'client glean metrics\\n' > \
                     "$root/firefox-ios/Client/Generated/Metrics/Metrics.swift"
                 cat > "$root/firefox-ios/bin/nimbus-fml.sh" <<'NIMBUS'

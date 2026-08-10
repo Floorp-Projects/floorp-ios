@@ -38,8 +38,9 @@ WEBPACK_OUTPUTS = (
     "WebcompatAllFramesAtDocumentStart.js",
     "translations-engine.worker.js",
 )
+WEBPACK_SIDECARS = ("MainFrameAtDocumentStart.js.LICENSE.txt",)
 GENERATED_PATHS = tuple(
-    f"firefox-ios/Client/Assets/{name}" for name in WEBPACK_OUTPUTS
+    f"firefox-ios/Client/Assets/{name}" for name in (*WEBPACK_OUTPUTS, *WEBPACK_SIDECARS)
 ) + (
     "firefox-ios/Client/Generated/FxNimbus.swift",
     "firefox-ios/Client/Generated/FxNimbusMessaging.swift",
@@ -177,7 +178,7 @@ def install_pinned_node(tool: Path, environment: dict[str, str]) -> tuple[Path, 
         [
             "/usr/bin/curl",
             "--proto",
-            "=https,file",
+            "=https",
             "--proto-redir",
             "=https",
             "--tlsv1.2",
