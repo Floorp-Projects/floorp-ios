@@ -26,7 +26,17 @@ content-addressed, offline inputs; this command never fetches the network.
 The G3 integration-receipt entry is special: its canonical ``bytes_path`` must
 not exist. The command creates it from the CLI OIDs and reviewed command list,
 verifies its recipe-declared digest, and publishes it with the evidence. The
-output and receipt are no-clobber files. Example::
+output and receipt are no-clobber files.
+
+G4 has the exact ordered roles ``task-manifest``, ``desktop-ci-run``,
+``runtime-ci-run``, ``g4-attestation-source``, ``g4-attestation-ci-run``,
+``g4-attestation-xcresult``, ``xpcshell-run``, and ``tps-run``. Its canonical
+attestation source binds the Task 18 and summary digests plus the exact
+Desktop/Runtime producer identities. The attestation run and XCResult
+descriptors must be exact G3 descriptors with only their roles changed, and
+the XCResult must contain the selected FloorpCI attestation test identifier.
+
+Example::
 
     python3 -I scripts/ci/assemble-floorp-notes-sync-production-qa-evidence.py \
       --recipe /secure/run/production-qa-recipe.json \
@@ -63,6 +73,44 @@ RECIPE_ROOT_KEYS = {
     "schema_version",
 }
 GATE_NAMES = ("g1", "g2", "g3", "g4")
+G4_ATTESTATION_PATH = "docs/floorp-notes-sync-g4-attestation.json"
+G4_ATTESTATION_TEST = (
+    "ClientTests/FloorpNotesSyncEngineSelectionTests/"
+    "testG4AttestationBindsTask18Evidence()"
+)
+G4_ATTESTATION_XCRESULT_MARKER = (
+    b"FloorpNotesSyncEngineSelectionTests/"
+    b"testG4AttestationBindsTask18Evidence()"
+)
+GATE_SOURCE_ROLES = {
+    "g1": (
+        "task-manifest",
+        "todo16-contract",
+        "ios-contract-source",
+        "desktop-contract-source",
+        "merge-fixture",
+    ),
+    "g2": (
+        "task-manifest",
+        "fake-server-run",
+        "focus-xcframework",
+        "mozilla-xcframework",
+        "release-manifest",
+        "sha256sums",
+        "swift-components",
+    ),
+    "g3": ("integration-receipt", "ci-run", "xcresult"),
+    "g4": (
+        "task-manifest",
+        "desktop-ci-run",
+        "runtime-ci-run",
+        "g4-attestation-source",
+        "g4-attestation-ci-run",
+        "g4-attestation-xcresult",
+        "xpcshell-run",
+        "tps-run",
+    ),
+}
 SHA1_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 RELATIVE_PATH_PATTERN = re.compile(r"[A-Za-z0-9._/-]{1,1024}\Z")
@@ -203,7 +251,16 @@ def read_material(
         if descriptor.get("kind") == "github-actions-artifact":
             os.lseek(descriptor_fd, 0, os.SEEK_SET)
             with os.fdopen(os.dup(descriptor_fd), "rb") as archive:
-                validator_call(VALIDATOR.validate_xcresult_archive, archive, label)
+                validator_call(
+                    VALIDATOR.validate_xcresult_archive,
+                    archive,
+                    label,
+                    required_marker=(
+                        G4_ATTESTATION_XCRESULT_MARKER
+                        if descriptor.get("role") == "g4-attestation-xcresult"
+                        else None
+                    ),
+                )
         after = os.fstat(descriptor_fd)
         require(stable_identity(before) == stable_identity(after), f"{label}: source changed while read")
         expected_digest = descriptor.get("sha256")
@@ -219,7 +276,9 @@ def read_material(
             )
         payload: Any | None = None
         if raw is not None:
-            require_canonical = descriptor.get("kind") == "github-actions-run"
+            require_canonical = descriptor.get("kind") == "github-actions-run" or descriptor.get(
+                "role"
+            ) == "g4-attestation-source"
             payload = validator_call(
                 VALIDATOR.parse_json_bytes,
                 bytes(raw),
@@ -283,6 +342,18 @@ def floorp_release_build_number() -> str:
 
 
 def validate_recipe_root(recipe: dict[str, Any], merged_oid: str) -> None:
+    for gate_name, roles in GATE_SOURCE_ROLES.items():
+        require(
+            tuple(VALIDATOR.GATE_SOURCE_ROLES.get(gate_name, ())) == roles,
+            f"recipe: repository validator {gate_name} source-role contract drifted",
+        )
+    require(
+        getattr(VALIDATOR, "G4_ATTESTATION_PATH", None) == G4_ATTESTATION_PATH
+        and getattr(VALIDATOR, "G4_ATTESTATION_TEST", None) == G4_ATTESTATION_TEST
+        and getattr(VALIDATOR, "G4_ATTESTATION_XCRESULT_MARKER", None)
+        == G4_ATTESTATION_XCRESULT_MARKER,
+        "recipe: repository validator G4 attestation contract drifted",
+    )
     schema_version = recipe.get("schema_version")
     require(
         isinstance(schema_version, int) and not isinstance(schema_version, bool) and schema_version == 1,
@@ -388,7 +459,7 @@ def collect_gate(
         descriptors.append(copy.deepcopy(descriptor))
     roles = tuple(descriptor.get("role") for descriptor in descriptors)
     require(
-        roles == VALIDATOR.GATE_SOURCE_ROLES[gate_name],
+        roles == GATE_SOURCE_ROLES[gate_name],
         f"recipe {gate_name}: source roles or order are not exact",
     )
 
@@ -468,11 +539,44 @@ def make_gate(
     return gate
 
 
+def with_role(source: dict[str, Any], role: str) -> dict[str, Any]:
+    rebound = copy.deepcopy(source)
+    rebound["role"] = role
+    return rebound
+
+
+def validate_g4_cross_gate_identity(
+    gate: dict[str, Any],
+    payloads: dict[str, Any | None],
+    g3_gate: dict[str, Any],
+    g3_payloads: dict[str, Any | None],
+) -> None:
+    label = "G4 external attestation"
+    sources = {source["role"]: source for source in gate["artifact"]["sources"]}
+    g3_sources = {source["role"]: source for source in g3_gate["artifact"]["sources"]}
+    require(
+        sources["g4-attestation-ci-run"]
+        == with_role(g3_sources["ci-run"], "g4-attestation-ci-run"),
+        f"{label}: CI run descriptor is not a role-only copy of G3",
+    )
+    require(
+        sources["g4-attestation-xcresult"]
+        == with_role(g3_sources["xcresult"], "g4-attestation-xcresult"),
+        f"{label}: XCResult descriptor is not a role-only copy of G3",
+    )
+    require(
+        payloads["g4-attestation-ci-run"] == g3_payloads["ci-run"],
+        f"{label}: captured CI run differs from G3",
+    )
+
+
 def validate_gate_semantics(
     gate_name: str,
     gate: dict[str, Any],
     payloads: dict[str, Any | None],
     inputs: dict[str, Any],
+    g3_gate: dict[str, Any] | None,
+    g3_payloads: dict[str, Any | None] | None,
 ) -> None:
     sources = {source["role"]: source for source in gate["artifact"]["sources"]}
     if gate_name == "g3":
@@ -495,6 +599,9 @@ def validate_gate_semantics(
     )
     issued_at = validator_call(VALIDATOR.parse_timestamp, gate["issued_at"], f"{gate_name}.issued_at")
     max_age = {"g1": None, "g2": 30, "g3": 7, "g4": 30}[gate_name]
+    if gate_name == "g4":
+        require(g3_gate is not None and g3_payloads is not None, "G4 external attestation: G3 is unavailable")
+        validate_g4_cross_gate_identity(gate, payloads, g3_gate, g3_payloads)
     validator_call(
         VALIDATOR.validate_artifact_bound_gate_time,
         gate_name,
@@ -540,6 +647,7 @@ def assemble(
 
     receipt, receipt_bytes = build_receipt(recipe, base_oid, reviewed_head_oid, merged_oid)
     gates: dict[str, Any] = {}
+    gate_payloads: dict[str, dict[str, Any | None]] = {}
     receipt_output: Path | None = None
     issued_times: list[datetime] = []
     for gate_name in GATE_NAMES:
@@ -556,8 +664,16 @@ def assemble(
             require(receipt_output is None, "recipe: multiple integration receipt outputs are forbidden")
             receipt_output = candidate_receipt_path
         gate = make_gate(gate_name, gate_recipe, sources, recipe["release_inputs"])
-        validate_gate_semantics(gate_name, gate, payloads, recipe["release_inputs"])
+        validate_gate_semantics(
+            gate_name,
+            gate,
+            payloads,
+            recipe["release_inputs"],
+            gates.get("g3"),
+            gate_payloads.get("g3"),
+        )
         gates[gate_name] = gate
+        gate_payloads[gate_name] = payloads
         issued_times.append(
             validator_call(VALIDATOR.parse_timestamp, gate["issued_at"], f"{gate_name}.issued_at")
         )
