@@ -7,6 +7,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import textwrap
 import unittest
@@ -174,13 +175,42 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             self.repository / "scripts/staging/prepare-floorp-ios-source-snapshot.py"
         )
         shutil.copy2(preparer_source, preparer)
+        (self.repository / ".nvmrc").write_text("24.18.1\n")
+
+        fake_node_root = self.root / "node-v24.18.1-darwin-arm64"
+        fake_node_bin = fake_node_root / "bin"
+        fake_node_bin.mkdir(parents=True)
+        fake_node = fake_node_bin / "node"
+        fake_node.write_text("#!/bin/sh\nprintf 'v24.18.1\\n'\n")
+        fake_node.chmod(0o755)
+        fake_npm = fake_node_bin / "npm"
+        fake_npm.write_text("#!/bin/sh\nprintf '11.16.0\\n'\n")
+        fake_npm.chmod(0o755)
+        fake_node_archive = self.root / "node-v24.18.1-darwin-arm64.tar.gz"
+        with tarfile.open(fake_node_archive, "w:gz") as archive:
+            archive.add(fake_node_root, arcname=fake_node_root.name)
+        fake_node_sha256 = hashlib.sha256(fake_node_archive.read_bytes()).hexdigest()
+
         preparer_text = preparer.read_text()
-        production_node_directory = 'NODE_BIN_DIR = Path("/opt/homebrew/bin")'
-        self.assertEqual(preparer_text.count(production_node_directory), 1)
+        production_node_url = (
+            'NODE_ARCHIVE_URL = f"https://nodejs.org/download/release/'
+            'v{NODE_VERSION}/{NODE_ARCHIVE_NAME}"'
+        )
+        production_node_sha256 = (
+            'NODE_ARCHIVE_SHA256 = '
+            '"eb02f7fab96d3d67de40c5ec8566096fcb4c2026728787683ae5a97eb612b941"'
+        )
+        self.assertEqual(preparer_text.count(production_node_url), 1)
+        self.assertEqual(preparer_text.count(production_node_sha256), 1)
         preparer.write_text(
-            preparer_text.replace(
-                production_node_directory,
-                f"NODE_BIN_DIR = Path({str(self.bin)!r})",
+            preparer_text
+            .replace(
+                production_node_url,
+                f"NODE_ARCHIVE_URL = {fake_node_archive.as_uri()!r}",
+            )
+            .replace(
+                production_node_sha256,
+                f"NODE_ARCHIVE_SHA256 = {fake_node_sha256!r}",
             )
         )
 
@@ -1096,6 +1126,18 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         generated_manifest = json.loads(Path(generated["path"]).read_text())
         self.assertEqual(generated_manifest["schema_version"], 1)
         self.assertEqual(generated_manifest["source_sha"], SOURCE_SHA)
+        self.assertEqual(
+            generated_manifest["tools"]["node"]["version"],
+            "v24.18.1",
+        )
+        self.assertEqual(
+            generated_manifest["tools"]["glean_parser_version"],
+            "20.0",
+        )
+        self.assertRegex(
+            generated_manifest["tools"]["node_archive"]["sha256"],
+            r"^[0-9a-f]{64}$",
+        )
         generated_paths = {
             entry["path"] for entry in generated_manifest["generated_files"]
         }

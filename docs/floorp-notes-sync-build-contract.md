@@ -234,6 +234,9 @@ file and executable bit is unchanged, permits only the exact reviewed
 generated JS/Swift path set, removes package and generator caches, and emits a
 canonical manifest containing every generated-file digest plus Node, npm,
 Nimbus, Python, Glean-version, and installed-package identities. The wrapper
+downloads the exact `.nvmrc` Node release from the versioned Node.js archive,
+requires its reviewed SHA-256 before private extraction, and never uses a
+mutable Homebrew Node installation. The wrapper
 then removes every source-snapshot write bit, rejects symlinks or special
 files, and records a content Merkle digest that binds the generated-source
 manifest. Xcode receives only this read-only snapshot; the live worktree is

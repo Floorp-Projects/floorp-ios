@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -18,7 +19,10 @@ from typing import BinaryIO
 
 
 SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
-NODE_BIN_DIR = Path("/opt/homebrew/bin")
+NODE_VERSION = "24.18.1"
+NODE_ARCHIVE_NAME = f"node-v{NODE_VERSION}-darwin-arm64.tar.gz"
+NODE_ARCHIVE_URL = f"https://nodejs.org/download/release/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}"
+NODE_ARCHIVE_SHA256 = "eb02f7fab96d3d67de40c5ec8566096fcb4c2026728787683ae5a97eb612b941"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 READ_SIZE = 1024 * 1024
 MAX_MANIFEST_SIZE = 16 * 1024 * 1024
@@ -164,6 +168,63 @@ def safe_remove_tree(path: Path, root: Path, label: str) -> None:
     require(not stat.S_ISLNK(metadata.st_mode), f"{label}: symlink is forbidden")
     require(stat.S_ISDIR(metadata.st_mode), f"{label}: cleanup target is not a directory")
     shutil.rmtree(path)
+
+
+def install_pinned_node(tool: Path, environment: dict[str, str]) -> tuple[Path, Path, Path]:
+    require(os.uname().sysname == "Darwin" and os.uname().machine == "arm64", "pinned Node archive requires macOS arm64")
+    archive = tool / NODE_ARCHIVE_NAME
+    run(
+        [
+            "/usr/bin/curl",
+            "--proto",
+            "=https,file",
+            "--proto-redir",
+            "=https",
+            "--tlsv1.2",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            NODE_ARCHIVE_URL,
+            "--output",
+            str(archive),
+        ],
+        cwd=tool,
+        environment=environment,
+        label="pinned Node.js download",
+    )
+    require(sha256_file(archive) == NODE_ARCHIVE_SHA256, "pinned Node.js archive SHA-256 mismatch")
+    destination = tool / "node"
+    private_directory(destination, "pinned Node.js extraction", create=True)
+    try:
+        opened = tarfile.open(archive, mode="r:gz")
+    except (OSError, tarfile.TarError) as error:
+        raise PreparationError(f"pinned Node.js archive cannot be opened ({error})") from error
+    with opened:
+        for member in opened.getmembers():
+            safe_relative(member.name, "pinned Node.js archive member")
+            require(
+                member.isdir() or member.isfile() or member.issym() or member.islnk(),
+                f"pinned Node.js archive contains a special member: {member.name}",
+            )
+            if member.issym() or member.islnk():
+                link_parent = PurePosixPath(member.name).parent
+                link_target = PurePosixPath(member.linkname)
+                combined = link_target if link_target.is_absolute() else link_parent / link_target
+                normalized = posixpath.normpath(combined.as_posix())
+                require(
+                    not combined.is_absolute()
+                    and normalized not in ("", ".", "..")
+                    and not normalized.startswith("../"),
+                    f"pinned Node.js archive link escapes extraction: {member.name}",
+                )
+        opened.extractall(destination)
+    root = destination / f"node-v{NODE_VERSION}-darwin-arm64"
+    node = root / "bin/node"
+    npm = root / "bin/npm"
+    regular_file(node.resolve(strict=True), "pinned Node.js binary")
+    regular_file(npm.resolve(strict=True), "pinned npm client")
+    return node, npm, archive
 
 
 def compare_archive(source_root: Path, archive: Path) -> set[str]:
@@ -331,21 +392,27 @@ def prepare(
     for name in ("home", "tmp", "verify"):
         private_directory(tool / name, f"tool state {name}", create=True)
 
-    node = NODE_BIN_DIR / "node"
-    npm = NODE_BIN_DIR / "npm"
-    require(node.exists() and npm.exists(), f"Node.js tools are missing from {NODE_BIN_DIR}")
+    nvmrc = root / ".nvmrc"
+    regular_file(nvmrc, "Node.js version authority")
+    require(nvmrc.read_text(encoding="utf-8").strip() == NODE_VERSION, "pinned Node.js version differs from .nvmrc")
+
     user = run(["/usr/bin/id", "-un"], cwd=root, environment={"PATH": SYSTEM_PATH}, label="user identity", capture=True)
+    base_environment = {
+        "HOME": str(tool / "home"),
+        "LANG": "en_US.UTF-8",
+        "LOGNAME": user,
+        "PATH": SYSTEM_PATH,
+        "TMPDIR": str(tool / "tmp"),
+        "USER": user,
+    }
+    node, npm, node_archive = install_pinned_node(tool, base_environment)
     environment = {
+        **base_environment,
         "CI": "true",
         "FLOORP_GLEAN_TOOL_ROOT": str(tool),
         "FLOORP_GLEAN_VENV": str(tool / "glean-venv"),
         "FLOORP_GLEAN_VERIFY_ROOT": str(tool / "verify"),
-        "HOME": str(tool / "home"),
-        "LANG": "en_US.UTF-8",
-        "LOGNAME": user,
-        "PATH": f"{NODE_BIN_DIR}:{SYSTEM_PATH}",
-        "TMPDIR": str(tool / "tmp"),
-        "USER": user,
+        "PATH": f"{node.parent}:{SYSTEM_PATH}",
     }
     bootstrap = root / "bootstrap.sh"
     regular_file(bootstrap, "bootstrap script")
@@ -434,6 +501,7 @@ def prepare(
     inventory = sorted(line for line in inventory_text.splitlines() if line)
     require(bool(inventory), "Glean package inventory is empty")
     node_version = run([str(node), "--version"], cwd=root, environment=environment, label="Node.js version", capture=True)
+    require(node_version == f"v{NODE_VERSION}", "Node.js version does not match .nvmrc authority")
     npm_version = run([str(npm), "--version"], cwd=root, environment=environment, label="npm version", capture=True)
     payload: dict[str, object] = {
         "generated_files": generated_files,
@@ -445,6 +513,11 @@ def prepare(
             "glean_python": tool_record(venv_python, run([str(venv_python), "--version"], cwd=root, environment=environment, label="Glean Python version", capture=True)),
             "installed_packages": inventory,
             "nimbus_script_sha256": sha256_file(nimbus),
+            "node_archive": {
+                "name": NODE_ARCHIVE_NAME,
+                "sha256": sha256_file(node_archive),
+                "url": NODE_ARCHIVE_URL,
+            },
             "node": tool_record(node, node_version),
             "npm": tool_record(npm, npm_version),
         },
