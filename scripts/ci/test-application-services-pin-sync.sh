@@ -4,6 +4,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly CHECK_SCRIPT="${SCRIPT_DIR}/check-application-services-pin.sh"
+readonly SOURCE_CONFIGURATION_FILTER="${SCRIPT_DIR}/application-services-source-configuration.jq"
 readonly PACKAGE_FILE="${PROJECT_ROOT}/MozillaRustComponents/Package.swift"
 readonly PIN_FILE="${PROJECT_ROOT}/MozillaRustComponents/FloorpApplicationServicesPin.json"
 readonly FIXTURE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/floorp-as-sync.XXXXXX")"
@@ -13,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for command_name in awk cmp cp find git grep mkdir mktemp mv; do
+for command_name in awk cmp cp find git grep jq mkdir mktemp mv; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "[FAIL] ${command_name} is required for the Application Services sync test." >&2
         exit 2
@@ -138,6 +139,44 @@ run_pin_check "${clean_fixture}/Package.swift"
 assert_unmanaged_content_preserved \
     "${clean_fixture}/Package.upstream.swift" \
     "${clean_fixture}/Package.swift"
+
+source_configuration_fixture="${FIXTURE_ROOT}/source-configuration.json"
+jq -n --slurpfile pin "${PIN_FILE}" '
+    $pin[0] as $pin
+    | {
+        schema_version: 1,
+        distribution_repository: $pin.repository,
+        release_tag_pattern: "^floorp-ios-[0-9]+\\.[0-9]{14}\\.[1-9][0-9]*$",
+        release_tag_example: "floorp-ios-155.20260731050244.1",
+        upstream: {
+            repository: $pin.upstream.repository,
+            commit: $pin.upstream.commit,
+            source_version: $pin.upstream.sourceVersion,
+            artifact_version: $pin.artifactVersion
+        },
+        immutable_releases_required: true,
+        artifacts: [
+            "FocusRustComponents.xcframework.zip",
+            "MozillaRustComponents.xcframework.zip",
+            "swift-components.tar.xz"
+        ]
+    }
+' > "${source_configuration_fixture}"
+jq -e \
+    --slurpfile pin "${PIN_FILE}" \
+    -f "${SOURCE_CONFIGURATION_FILTER}" \
+    "${source_configuration_fixture}" >/dev/null
+
+invalid_source_configuration="${FIXTURE_ROOT}/source-configuration-invalid.json"
+jq '.release_tag_example = "mutable-tag"' \
+    "${source_configuration_fixture}" > "${invalid_source_configuration}"
+if jq -e \
+    --slurpfile pin "${PIN_FILE}" \
+    -f "${SOURCE_CONFIGURATION_FILTER}" \
+    "${invalid_source_configuration}" >/dev/null; then
+    echo "[FAIL] Source configuration accepted an example outside its release pattern." >&2
+    exit 1
+fi
 
 shape_fixture="${FIXTURE_ROOT}/shape-drift"
 mkdir -p "${shape_fixture}"

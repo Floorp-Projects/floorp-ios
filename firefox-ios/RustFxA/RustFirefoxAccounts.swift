@@ -241,9 +241,23 @@ public final class RustFirefoxAccounts: @unchecked Sendable {
         return cachedUserProfile
     }
 
-    public func disconnect() {
-        guard let accountManager = accountManager else { return }
-        accountManager.logout { _ in }
+    public func disconnect(completion: @escaping @Sendable (Bool) -> Void) {
+        guard let accountManager else {
+            clearDisconnectedAccountCache()
+            completion(true)
+            return
+        }
+        accountManager.logout { [weak self] result in
+            guard case .success = result else {
+                completion(false)
+                return
+            }
+            self?.clearDisconnectedAccountCache()
+            completion(true)
+        }
+    }
+
+    private func clearDisconnectedAccountCache() {
         let prefs = RustFirefoxAccounts.prefs
         prefs?.removeObjectForKey(prefKeyCachedUserProfile)
         prefs?.removeObjectForKey(PendingAccountDisconnectedKey)

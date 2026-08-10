@@ -9,6 +9,8 @@ import Common
 
 // TODO: FXIOS-14113 - BackgroundSyncUtility @unchecked Sendable
 final class BackgroundSyncUtility: BackgroundUtilityProtocol, @unchecked Sendable {
+    static let part2Collections = ["tabs", "logins", "clients", "prefs"]
+
     let profile: Profile
     let application: UIApplication
     let logger: Logger
@@ -82,11 +84,22 @@ final class BackgroundSyncUtility: BackgroundUtilityProtocol, @unchecked Sendabl
         // This task runs after the bookmarks+history sync.
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "app.floorp.sync.part2",
                                         using: DispatchQueue.global()) { task in
-            let collection = ["tabs", "logins", "clients"]
-            self.profile.syncManager?.syncNamedCollections(why: .backgrounded, names: collection).uponQueue(.main) { _ in
+            Self.performPart2Sync(profile: self.profile) {
                 self.shutdownProfileWhenNotActive()
                 task.setTaskCompleted(success: true)
             }
+        }
+    }
+
+    static func performPart2Sync(
+        profile: Profile,
+        completion: @escaping @Sendable () -> Void
+    ) {
+        profile.syncManager?.syncNamedCollections(
+            why: .backgrounded,
+            names: part2Collections
+        ).uponQueue(.main) { _ in
+            completion()
         }
     }
 

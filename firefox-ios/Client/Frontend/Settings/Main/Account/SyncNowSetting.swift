@@ -10,6 +10,7 @@ class SyncNowSetting: WithAccountSetting,
                       Notifiable {
     private weak var settingsDelegate: AccountSettingsDelegate?
     private var notificationCenter: NotificationProtocol
+    private let hasConnectivity: @Sendable () -> Bool
 
     private let imageView = UIImageView(frame: CGRect(width: 30, height: 30))
     private let syncIconWrapper = UIImage.createWithColor(
@@ -23,9 +24,13 @@ class SyncNowSetting: WithAccountSetting,
 
     init(settings: SettingsTableViewController,
          settingsDelegate: AccountSettingsDelegate?,
-         notificationCenter: NotificationProtocol = NotificationCenter.default) {
+         notificationCenter: NotificationProtocol = NotificationCenter.default,
+         hasConnectivity: @escaping @Sendable () -> Bool = {
+            DeviceInfo.hasConnectivity()
+         }) {
         self.settingsDelegate = settingsDelegate
         self.notificationCenter = notificationCenter
+        self.hasConnectivity = hasConnectivity
         super.init(settings: settings)
 
         startObservingNotifications(
@@ -46,7 +51,7 @@ class SyncNowSetting: WithAccountSetting,
     private var syncNowTitle: NSAttributedString? {
         guard let theme else { return nil }
 
-        if !DeviceInfo.hasConnectivity() {
+        if !hasConnectivity() {
             return NSAttributedString(
                 string: .FxANoInternetConnection,
                 attributes: [
@@ -150,7 +155,7 @@ class SyncNowSetting: WithAccountSetting,
 
     override var enabled: Bool {
         get {
-            if !DeviceInfo.hasConnectivity() {
+            if !hasConnectivity() {
                 return false
             }
 
@@ -228,7 +233,8 @@ class SyncNowSetting: WithAccountSetting,
             cell.accessoryView = nil
         }
         cell.accessoryType = accessoryType
-        cell.isUserInteractionEnabled = !(profile?.syncManager?.isSyncing ?? false) && DeviceInfo.hasConnectivity()
+        cell.isUserInteractionEnabled = !(profile?.syncManager?.isSyncing ?? false)
+            && hasConnectivity()
 
         configureImageCell(for: cell)
     }
@@ -274,7 +280,7 @@ class SyncNowSetting: WithAccountSetting,
     }
 
     override func onClick(_ navigationController: UINavigationController?) {
-        if !DeviceInfo.hasConnectivity() {
+        if !hasConnectivity() {
             return
         }
 

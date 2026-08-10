@@ -23,6 +23,163 @@ import struct MozillaAppServices.AccessTokenInfo
 import class MozillaAppServices.FxAccountManager
 import struct MozillaAppServices.DeviceConfig
 
+public enum FloorpNotesSyncAccountAvailability: Equatable, Sendable {
+    case available
+    case accountMismatch
+}
+
+public protocol FloorpNotesSyncEngineProviding: AnyObject, Sendable {
+    func resumePendingDisconnectCleanup() throws
+    func allowsSync(accountID: String) -> Bool
+    func register(accountID: String) throws
+    func prepareForDisconnect(
+        accountID: String?
+    ) throws -> FloorpNotesSyncAccountAvailability
+    func finalizeDisconnect() throws
+    @discardableResult func cancelDisconnect() -> Bool
+    func invalidate()
+}
+
+struct FloorpNotesSyncRequestPolicy: Equatable, Sendable {
+    let compiledEvidenceAllows: Bool
+    let runtimeKillSwitchAllows: Bool
+    let productionEndpointAllows: Bool
+    let accountAvailability: FloorpNotesSyncAccountAvailability
+
+    var allowsRequest: Bool {
+        compiledEvidenceAllows
+            && runtimeKillSwitchAllows
+            && productionEndpointAllows
+            && accountAvailability == .available
+    }
+}
+
+struct FloorpNotesSyncEndpointSettings: Equatable, Sendable {
+    let usesStage: Bool
+    let usesChina: Bool
+    let usesCustomFxAContent: Bool
+    let usesCustomTokenServer: Bool
+}
+
+enum FloorpNotesSyncEndpointAuthority {
+    static func allowsProduction(_ settings: FloorpNotesSyncEndpointSettings) -> Bool {
+        !settings.usesStage
+            && !settings.usesChina
+            && !settings.usesCustomFxAContent
+            && !settings.usesCustomTokenServer
+    }
+
+    static func allowsProductionTokenServer(_ url: URL) -> Bool {
+        guard let components = URLComponents(
+            url: url,
+            resolvingAgainstBaseURL: false
+        ) else {
+            return false
+        }
+        return components.scheme?.lowercased() == "https"
+            && components.host?.lowercased() == "token.services.mozilla.com"
+            && (components.port == nil || components.port == 443)
+            && components.user == nil
+            && components.password == nil
+            && components.percentEncodedPath == "/1.0/sync/1.5"
+            && components.percentEncodedQuery == nil
+            && components.fragment == nil
+    }
+}
+
+enum FloorpNotesSyncRetryPolicy {
+    static let baseDelay: TimeInterval = 180
+    static let maximumDelay: TimeInterval = 3_600
+
+    static func delay(
+        status: ServiceStatus,
+        nextSyncAllowedAt: Date?,
+        now: Date,
+        attempt: Int
+    ) -> TimeInterval? {
+        if status == .ok || status == .authError {
+            return nil
+        }
+        if let nextSyncAllowedAt, nextSyncAllowedAt > now {
+            return nextSyncAllowedAt.timeIntervalSince(now)
+        }
+        guard [.backedOff, .networkError, .serviceError, .otherError].contains(status) else {
+            return nil
+        }
+        let exponent = min(max(attempt, 0), 5)
+        return min(baseDelay * pow(2, Double(exponent)), maximumDelay)
+    }
+}
+
+enum FloorpNotesSyncEngineSelection {
+    static let engineName = "prefs"
+
+    struct Partition: Equatable, Sendable {
+        let togglable: [RustSyncManagerAPI.TogglableEngine]
+        let requestsFloorpPrefs: Bool
+    }
+
+    static func partition(requested: [String]) -> Partition {
+        var seen = Set<String>()
+        var togglable = [RustSyncManagerAPI.TogglableEngine]()
+        var requestsFloorpPrefs = false
+        for name in requested where seen.insert(name).inserted {
+            if name == engineName {
+                requestsFloorpPrefs = true
+            } else if let engine = RustSyncManagerAPI.TogglableEngine(rawValue: name) {
+                togglable.append(engine)
+            }
+        }
+        return Partition(
+            togglable: togglable,
+            requestsFloorpPrefs: requestsFloorpPrefs
+        )
+    }
+
+    static func syncEverythingEngines(policy: FloorpNotesSyncRequestPolicy) -> [String] {
+        var engines = RustSyncManagerAPI.TogglableEngine.allCases.map(\.rawValue)
+        if policy.allowsRequest {
+            engines.append(engineName)
+        }
+        return engines
+    }
+}
+
+final class FloorpNotesSyncExecutionContext: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedGeneration: UInt64?
+    private var storedRequestSequence: UInt64?
+
+    var generation: UInt64? {
+        lock.withLock { storedGeneration }
+    }
+
+    var requestSequence: UInt64? {
+        lock.withLock { storedRequestSequence }
+    }
+
+    func record(generation: UInt64, requestSequence: UInt64) {
+        lock.withLock {
+            storedGeneration = generation
+            storedRequestSequence = requestSequence
+        }
+    }
+}
+
+private enum FloorpNotesDisconnectPhase {
+    case idle
+    case preparing(provider: (any FloorpNotesSyncEngineProviding)?)
+    case preparedAwaitingDisconnect(
+        provider: (any FloorpNotesSyncEngineProviding)?,
+        finalizeNotes: Bool
+    )
+    case prepared(
+        provider: (any FloorpNotesSyncEngineProviding)?,
+        finalizeNotes: Bool
+    )
+    case resolving
+}
+
 // Extends NSObject so we can use timers.
 // TODO: FXIOS-14225 - RustSyncManager shouldn't be @unchecked Sendable
 public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
@@ -44,6 +201,38 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     private var notificationCenter: NotificationProtocol
     private var syncBackOffTimer: Timer?
     private let syncBackOffDelay = 180.0 // 3 Minutes
+    private var floorpNotesEngineProvider: (any FloorpNotesSyncEngineProviding)?
+    private var floorpNotesAccountID: String?
+    private let floorpNotesStateLock = NSRecursiveLock()
+    private let floorpNotesRetryLock = NSLock()
+    private let floorpNotesRetryScheduler: @Sendable (
+        TimeInterval,
+        DispatchWorkItem
+    ) -> Void
+    private let syncableAccountOverride: (@Sendable () -> Bool)?
+    private let delayedSyncScheduler: (@Sendable (
+        Int64,
+        @escaping @Sendable () -> Void
+    ) -> Void)?
+    private let syncRequestObserver: @Sendable (SyncReason, [String]) -> Void
+    private let timedSyncResumeScheduler: @Sendable (
+        @escaping @Sendable () -> Void
+    ) -> Void
+    private var floorpNotesRetryWorkItem: DispatchWorkItem?
+    private var floorpNotesRetryAttempt = 0
+    private var floorpNotesRetryGeneration: UInt64 = 0
+    private var floorpNotesLatestResultSequence: UInt64 = 0
+    private let syncLifecycleLock = NSLock()
+    private var syncLifecycleGeneration: UInt64 = 0
+    private var floorpNotesLifecycleGeneration: UInt64 = 0
+    private var floorpNotesRequestSequence: UInt64 = 0
+    private var floorpNotesPolicyMutationSequence: UInt64 = 0
+    private var floorpNotesProviderInstallLease: UInt64 = 0
+    private var accountRemovalInProgress = false
+    private var floorpNotesDisconnectPhase = FloorpNotesDisconnectPhase.idle
+    private var floorpNotesCompiledEvidenceAllows = false
+
+    static let floorpNotesRuntimeEnabledPref = "floorp.notes.sync.runtime-enabled"
 
     let fifteenMinutesInterval = TimeInterval(60 * 15)
 
@@ -68,6 +257,8 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         return syncDisplayState != nil && syncDisplayState! == .inProgress
     }
 
+    var hasActiveSyncTimer: Bool { syncTimer != nil }
+
     public var syncDisplayState: SyncDisplayState?
 
     var prefsForSync: Prefs {
@@ -81,7 +272,27 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
          autofill: SyncAutofillProvider? = nil,
          places: SyncPlacesProvider? = nil,
          tabs: SyncTabsProvider? = nil,
-         notificationCenter: NotificationProtocol = NotificationCenter.default) {
+         notificationCenter: NotificationProtocol = NotificationCenter.default,
+         floorpNotesRetryScheduler: @escaping @Sendable (
+            TimeInterval,
+            DispatchWorkItem
+         ) -> Void = { delay, workItem in
+             DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + delay,
+                execute: workItem
+             )
+         },
+         syncableAccountOverride: (@Sendable () -> Bool)? = nil,
+         delayedSyncScheduler: (@Sendable (
+            Int64,
+            @escaping @Sendable () -> Void
+         ) -> Void)? = nil,
+         syncRequestObserver: @escaping @Sendable (SyncReason, [String]) -> Void = { _, _ in },
+         timedSyncResumeScheduler: @escaping @Sendable (
+            @escaping @Sendable () -> Void
+         ) -> Void = { work in
+            DispatchQueue.main.async(execute: work)
+         }) {
         self.profile = profile
         self.prefs = profile.prefs
         self.logger = logger
@@ -90,12 +301,18 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         self.autofill = autofill ?? profile.autofill
         self.places = places ?? profile.places
         self.tabs = tabs ?? profile.tabs
+        self.floorpNotesRetryScheduler = floorpNotesRetryScheduler
+        self.syncableAccountOverride = syncableAccountOverride
+        self.delayedSyncScheduler = delayedSyncScheduler
+        self.syncRequestObserver = syncRequestObserver
+        self.timedSyncResumeScheduler = timedSyncResumeScheduler
 
         super.init()
     }
 
     @objc
     func syncOnTimer() {
+        guard activeSyncLifecycleGeneration() != nil else { return }
         syncEverything(why: .scheduled)
         profile?.pollCommands()
     }
@@ -112,7 +329,9 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     }
 
     func syncEverythingSoon() {
+        guard let generation = activeSyncLifecycleGeneration() else { return }
         doInBackgroundAfter(SyncConstants.SyncOnForegroundAfterMillis) {
+            guard self.isCurrentSyncLifecycleGeneration(generation) else { return }
             self.logger.log("Running delayed startup sync.",
                             level: .debug,
                             category: .sync)
@@ -153,7 +372,8 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     public func applicationDidBecomeActive() {
         backgrounded = false
         setPreferenceForSignIn()
-        guard let profile = profile, profile.hasSyncableAccount() else { return }
+        guard activeSyncLifecycleGeneration() != nil else { return }
+        guard profileHasSyncableAccount() else { return }
         beginTimedSyncs()
 
         // Sync now if it's been more than our threshold.
@@ -185,13 +405,331 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         // There is a case where a user has a syncable account, but returns
         // false so we check if nil here.
         guard signedInFxaAccountValue == nil else { return }
-        let userHasSyncableAccount = profile?.hasSyncableAccount() ?? false
+        let userHasSyncableAccount = profileHasSyncableAccount()
         profile?.prefs.setBool(userHasSyncableAccount, forKey: PrefsKeys.Sync.signedInFxaAccount)
+    }
+
+    private func profileHasSyncableAccount() -> Bool {
+        syncableAccountOverride?() ?? profile?.hasSyncableAccount() ?? false
     }
 
     private func resetUserSyncPreferences() {
         profile?.prefs.setBool(false, forKey: PrefsKeys.Sync.signedInFxaAccount)
         profile?.prefs.setInt(0, forKey: PrefsKeys.Sync.numberOfSyncedDevices)
+    }
+
+    private func floorpNotesPolicy(accountID: String) -> FloorpNotesSyncRequestPolicy {
+        floorpNotesStateLock.withLock {
+            let providerAllows = floorpNotesEngineProvider?.allowsSync(accountID: accountID) ?? false
+            let compiledEvidenceAllows = syncLifecycleLock.withLock {
+                floorpNotesCompiledEvidenceAllows
+            }
+            let runtimeAllows = prefs.boolForKey(Self.floorpNotesRuntimeEnabledPref) ?? false
+            let productionEndpointAllows = FloorpNotesSyncEndpointAuthority.allowsProduction(
+                FloorpNotesSyncEndpointSettings(
+                    usesStage: prefs.intForKey(PrefsKeys.UseStageServer) == 1,
+                    usesChina: prefs.boolForKey(PrefsKeys.KeyEnableChinaSyncService)
+                        ?? AppInfo.isChinaEdition,
+                    usesCustomFxAContent: prefs.boolForKey(
+                        PrefsKeys.KeyUseCustomFxAContentServer
+                    ) ?? false,
+                    usesCustomTokenServer: prefs.boolForKey(
+                        PrefsKeys.KeyUseCustomSyncTokenServerOverride
+                    ) ?? false
+                )
+            )
+            return FloorpNotesSyncRequestPolicy(
+                compiledEvidenceAllows: compiledEvidenceAllows && providerAllows,
+                runtimeKillSwitchAllows: runtimeAllows,
+                productionEndpointAllows: productionEndpointAllows,
+                accountAvailability: providerAllows ? .available : .accountMismatch
+            )
+        }
+    }
+
+    func disableFloorpNotesEngine() {
+        floorpNotesStateLock.withLock {
+            disableFloorpNotesEngineLocked()
+        }
+    }
+
+    private func disableFloorpNotesEngineLocked() {
+        let provider = floorpNotesEngineProvider
+        let providerInstallLease = floorpNotesProviderInstallLease
+        let generation = advanceFloorpNotesLifecycleLocked()
+        floorpNotesAccountID = nil
+        let shouldDeferInvalidation = syncLifecycleLock.withLock {
+            accountRemovalInProgress
+        }
+        guard !shouldDeferInvalidation, let provider else { return }
+        scheduleFloorpNotesProviderInvalidation(
+            provider: provider,
+            generation: generation,
+            providerInstallLease: providerInstallLease
+        )
+    }
+
+    @discardableResult
+    private func advanceFloorpNotesLifecycleLocked() -> UInt64 {
+        syncLifecycleLock.lock()
+        floorpNotesRetryLock.lock()
+        defer {
+            floorpNotesRetryLock.unlock()
+            syncLifecycleLock.unlock()
+        }
+        floorpNotesLifecycleGeneration &+= 1
+        floorpNotesRetryWorkItem?.cancel()
+        floorpNotesRetryWorkItem = nil
+        floorpNotesRetryAttempt = 0
+        floorpNotesRetryGeneration = floorpNotesLifecycleGeneration
+        floorpNotesLatestResultSequence = 0
+        return floorpNotesLifecycleGeneration
+    }
+
+    private func disableFloorpNotesEngineAssumingComponentLockLocked() {
+        _ = advanceFloorpNotesLifecycleLocked()
+        floorpNotesEngineProvider?.invalidate()
+        floorpNotesAccountID = nil
+    }
+
+    private func scheduleFloorpNotesProviderInvalidation(
+        provider: any FloorpNotesSyncEngineProviding,
+        generation: UInt64,
+        providerInstallLease: UInt64
+    ) {
+        syncManagerAPI.synchronizeComponentState { [weak self] in
+            guard let self else { return }
+            self.floorpNotesStateLock.withLock {
+                let isCurrentProvider = self.floorpNotesEngineProvider === provider
+                if isCurrentProvider {
+                    let mayInvalidate = self.syncLifecycleLock.withLock {
+                        !self.accountRemovalInProgress
+                            && self.floorpNotesLifecycleGeneration == generation
+                            && self.floorpNotesProviderInstallLease
+                                == providerInstallLease
+                    }
+                    guard mayInvalidate else { return }
+                }
+                provider.invalidate()
+            }
+        }
+    }
+
+    @discardableResult
+    public func installFloorpNotesSyncEngineProvider(
+        _ provider: any FloorpNotesSyncEngineProviding
+    ) -> Bool {
+        syncManagerAPI.synchronizeComponentStateAndWait { [self] in
+            floorpNotesStateLock.withLock {
+                guard case .idle = floorpNotesDisconnectPhase else {
+                    if floorpNotesEngineProvider !== provider {
+                        provider.invalidate()
+                    }
+                    return false
+                }
+                do {
+                    try provider.resumePendingDisconnectCleanup()
+                } catch {
+                    if floorpNotesEngineProvider === provider {
+                        floorpNotesEngineProvider = nil
+                        floorpNotesAccountID = nil
+                        _ = advanceFloorpNotesLifecycleLocked()
+                    }
+                    provider.invalidate()
+                    return false
+                }
+                if floorpNotesEngineProvider === provider {
+                    floorpNotesProviderInstallLease &+= 1
+                    return true
+                }
+                floorpNotesEngineProvider?.invalidate()
+                _ = advanceFloorpNotesLifecycleLocked()
+                floorpNotesAccountID = nil
+                floorpNotesEngineProvider = provider
+                floorpNotesProviderInstallLease &+= 1
+                return true
+            }
+        }
+    }
+
+    func bootstrapFloorpNotesRuntimePolicy(compiledEvidenceAllows: Bool) {
+        syncLifecycleLock.withLock {
+            floorpNotesCompiledEvidenceAllows = compiledEvidenceAllows
+        }
+        if prefs.boolForKey(Self.floorpNotesRuntimeEnabledPref) == nil {
+            prefs.setBool(
+                compiledEvidenceAllows,
+                forKey: Self.floorpNotesRuntimeEnabledPref
+            )
+        }
+        if !compiledEvidenceAllows
+            || prefs.boolForKey(Self.floorpNotesRuntimeEnabledPref) != true {
+            applyFloorpNotesRuntimePolicy(enabled: false)
+        }
+    }
+
+    func applyFloorpNotesRuntimePolicy(
+        enabled: Bool,
+        completion: @escaping @Sendable () -> Void = {}
+    ) {
+        let policyMutation = syncLifecycleLock.withLock { () -> (Bool, UInt64) in
+            floorpNotesPolicyMutationSequence &+= 1
+            return (
+                floorpNotesCompiledEvidenceAllows && enabled,
+                floorpNotesPolicyMutationSequence
+            )
+        }
+        if policyMutation.0 {
+            floorpNotesStateLock.withLock {
+                guard syncLifecycleLock.withLock({
+                    floorpNotesPolicyMutationSequence == policyMutation.1
+                }) else {
+                    return
+                }
+                let wasEnabled = prefs.boolForKey(
+                    Self.floorpNotesRuntimeEnabledPref
+                ) == true
+                prefs.setBool(true, forKey: Self.floorpNotesRuntimeEnabledPref)
+                if !wasEnabled {
+                    _ = advanceFloorpNotesLifecycleLocked()
+                    floorpNotesAccountID = nil
+                }
+            }
+            completion()
+            return
+        }
+
+        syncManagerAPI.synchronizeComponentState({ [self] in
+            floorpNotesStateLock.withLock {
+                let isLatestMutation = syncLifecycleLock.withLock {
+                    floorpNotesPolicyMutationSequence == policyMutation.1
+                }
+                if isLatestMutation {
+                    prefs.setBool(
+                        false,
+                        forKey: Self.floorpNotesRuntimeEnabledPref
+                    )
+                    let removalIsActive = syncLifecycleLock.withLock {
+                        accountRemovalInProgress
+                    }
+                    if removalIsActive {
+                        _ = advanceFloorpNotesLifecycleLocked()
+                        floorpNotesAccountID = nil
+                    } else {
+                        disableFloorpNotesEngineAssumingComponentLockLocked()
+                    }
+                }
+            }
+        }, completion: completion)
+    }
+
+    func handleFloorpNotesSyncResult(
+        _ result: SyncResult,
+        why: SyncReason,
+        floorpNotesGeneration: UInt64,
+        requestSequence: UInt64
+    ) {
+        let lifecycleGeneration = activeSyncLifecycleGeneration()
+        let didSucceed = result.successful.contains(FloorpNotesSyncEngineSelection.engineName)
+        let status = result.status == .ok ? ServiceStatus.otherError : result.status
+        let workItem = lifecycleGeneration.map {
+            makeFloorpNotesRetryWorkItem(
+                why: why,
+                lifecycleGeneration: $0,
+                floorpNotesGeneration: floorpNotesGeneration
+            )
+        }
+        let scheduledRetry = floorpNotesRetryLock.withLock {
+            () -> (TimeInterval, DispatchWorkItem)? in
+            guard floorpNotesRetryGeneration == floorpNotesGeneration,
+                  requestSequence > floorpNotesLatestResultSequence else {
+                return nil
+            }
+            floorpNotesLatestResultSequence = requestSequence
+            guard !didSucceed,
+                  let workItem,
+                  let delay = FloorpNotesSyncRetryPolicy.delay(
+                    status: status,
+                    nextSyncAllowedAt: result.nextSyncAllowedAt,
+                    now: Date(),
+                    attempt: floorpNotesRetryAttempt
+                  ) else {
+                clearFloorpNotesRetryLocked()
+                return nil
+            }
+            floorpNotesRetryWorkItem?.cancel()
+            floorpNotesRetryWorkItem = workItem
+            floorpNotesRetryAttempt += 1
+            return (delay, workItem)
+        }
+        guard let scheduledRetry else { return }
+        floorpNotesRetryScheduler(scheduledRetry.0, scheduledRetry.1)
+    }
+
+    private func makeFloorpNotesRetryWorkItem(
+        why: SyncReason,
+        lifecycleGeneration: UInt64,
+        floorpNotesGeneration: UInt64
+    ) -> DispatchWorkItem {
+        DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.isCurrentSyncLifecycleGeneration(lifecycleGeneration),
+                  self.isCurrentFloorpNotesLifecycleGeneration(
+                    floorpNotesGeneration
+                  ) else {
+                return
+            }
+            guard let accountID = self.floorpNotesStateLock.withLock({
+                self.floorpNotesAccountID
+            }), self.floorpNotesPolicy(accountID: accountID).allowsRequest else {
+                self.disableFloorpNotesEngine()
+                return
+            }
+            _ = self.syncNamedCollections(
+                why: why,
+                names: [FloorpNotesSyncEngineSelection.engineName],
+                expectedFloorpNotesGeneration: floorpNotesGeneration
+            )
+        }
+    }
+
+    private func clearFloorpNotesRetryLocked() {
+        floorpNotesRetryWorkItem?.cancel()
+        floorpNotesRetryWorkItem = nil
+        floorpNotesRetryAttempt = 0
+    }
+
+    func activeSyncLifecycleGeneration() -> UInt64? {
+        syncLifecycleLock.withLock {
+            accountRemovalInProgress ? nil : syncLifecycleGeneration
+        }
+    }
+
+    private func isCurrentSyncLifecycleGeneration(_ generation: UInt64) -> Bool {
+        syncLifecycleLock.withLock {
+            !accountRemovalInProgress && syncLifecycleGeneration == generation
+        }
+    }
+
+    func currentFloorpNotesLifecycleGeneration() -> UInt64 {
+        syncLifecycleLock.withLock { floorpNotesLifecycleGeneration }
+    }
+
+    private func isCurrentFloorpNotesLifecycleGeneration(
+        _ generation: UInt64
+    ) -> Bool {
+        syncLifecycleLock.withLock {
+            floorpNotesLifecycleGeneration == generation
+        }
+    }
+
+    @discardableResult
+    private func beginAccountRemoval() -> UInt64 {
+        syncLifecycleLock.withLock {
+            accountRemovalInProgress = true
+            syncLifecycleGeneration &+= 1
+            return syncLifecycleGeneration
+        }
     }
 
     private func beginSyncing() {
@@ -254,6 +792,10 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     }
 
     func doInBackgroundAfter(_ millis: Int64, _ block: @Sendable @escaping () -> Void) {
+        if let delayedSyncScheduler {
+            delayedSyncScheduler(millis, block)
+            return
+        }
         let queue = DispatchQueue.global(qos: DispatchQoS.background.qosClass)
         queue.asyncAfter(
             deadline: DispatchTime.now() + DispatchTimeInterval.milliseconds(Int(millis)),
@@ -263,37 +805,211 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     public func onAddedAccount() -> Success {
         // Only sync if we're green lit. This makes sure that we don't sync unverified
         // accounts.
-        guard let profile = profile, profile.hasSyncableAccount() else { return succeed() }
+        guard profileHasSyncableAccount() else { return succeed() }
         setPreferenceForSignIn()
         beginTimedSyncs()
         return syncEverything(why: .enabledChange)
     }
 
     public func onRemovedAccount() -> Success {
-        resetUserSyncPreferences()
-        let clearPrefs: () -> Success = {
-            withExtendedLifetime(self) {
-                // Clear prefs after we're done clearing everything else -- just in case
-                // one of them needs the prefs and we race. Clear regardless of success
-                // or failure.
-
-                // This will remove keys from the Keychain if they exist, as well
-                // as wiping the Sync prefs.
-
-                if let keyLabel = self
-                    .prefsForSync
-                    .branch("scratchpad")
-                    .stringForKey("keyLabel") {
-                        RustKeychain
-                            .sharedClientAppContainerKeychain
-                            .removeObject(key: keyLabel)
-                }
-                self.prefsForSync.clearAll()
-            }
-            return succeed()
+        let removal = Success()
+        let didBeginRemoval = floorpNotesStateLock.withLock { () -> Bool in
+            guard case .idle = floorpNotesDisconnectPhase else { return false }
+            beginAccountRemoval()
+            floorpNotesDisconnectPhase = .preparing(
+                provider: floorpNotesEngineProvider
+            )
+            _ = advanceFloorpNotesLifecycleLocked()
+            floorpNotesAccountID = nil
+            return true
         }
-        self.syncManagerAPI.disconnect()
-        return clearPrefs()
+        guard didBeginRemoval else {
+            removal.fill(Maybe(failure: AccountRemovalError()))
+            return removal
+        }
+        endTimedSyncs()
+        syncBackOffTimer?.invalidate()
+        syncBackOffTimer = nil
+
+        let accountID = RustFirefoxAccounts.shared.accountManager?.accountProfile()?.uid
+            ?? RustFirefoxAccounts.shared.userProfile?.uid
+        syncManagerAPI.disconnectChecked(prepare: { [self] in
+            do {
+                try floorpNotesStateLock.withLock {
+                    guard case .preparing(let provider) =
+                            floorpNotesDisconnectPhase else {
+                        throw AccountRemovalError()
+                    }
+                    let availability = try provider?
+                        .prepareForDisconnect(accountID: accountID)
+                    floorpNotesDisconnectPhase = .preparedAwaitingDisconnect(
+                        provider: provider,
+                        finalizeNotes: availability == .available
+                    )
+                }
+            } catch {
+                logger.log(
+                    "Floorp Notes Sync could not prepare for checked disconnect.",
+                    level: .warning,
+                    category: .sync
+                )
+                throw error
+            }
+        }) { [self] result in
+            guard result == .success else {
+                cancelAccountRemovalAfterCheckedDisconnectFailure()
+                removal.fillIfUnfilled(Maybe(failure: AccountRemovalError()))
+                return
+            }
+            let didCompleteDisconnect = floorpNotesStateLock.withLock {
+                guard case .preparedAwaitingDisconnect(
+                    let provider,
+                    let shouldFinalizeNotes
+                ) = floorpNotesDisconnectPhase else {
+                    return false
+                }
+                floorpNotesDisconnectPhase = .prepared(
+                    provider: provider,
+                    finalizeNotes: shouldFinalizeNotes
+                )
+                return true
+            }
+            guard didCompleteDisconnect else {
+                removal.fillIfUnfilled(Maybe(failure: AccountRemovalError()))
+                return
+            }
+            removal.fillIfUnfilled(Maybe(success: ()))
+        }
+        return removal
+    }
+
+    @discardableResult
+    public func finalizeAccountRemoval() -> Success {
+        let removal = Success()
+        floorpNotesStateLock.lock()
+        defer { floorpNotesStateLock.unlock() }
+        guard case .prepared(let provider, let shouldFinalizeNotes) =
+                floorpNotesDisconnectPhase else {
+            removal.fill(Maybe(failure: AccountRemovalError()))
+            return removal
+        }
+        floorpNotesDisconnectPhase = .resolving
+        var notesFinalizationFailed = false
+        do {
+            if shouldFinalizeNotes {
+                try provider?.finalizeDisconnect()
+            }
+        } catch {
+            logger.log(
+                "Floorp Notes Sync could not finalize checked disconnect.",
+                level: .warning,
+                category: .sync
+            )
+            notesFinalizationFailed = true
+        }
+
+        endTimedSyncs()
+        resetUserSyncPreferences()
+        if let keyLabel = prefsForSync
+            .branch("scratchpad")
+            .stringForKey("keyLabel") {
+            RustKeychain.sharedClientAppContainerKeychain.removeObject(key: keyLabel)
+        }
+        prefsForSync.clearAll()
+        prefs.removeObjectForKey(PrefsKeys.RustSyncManagerPersistedState)
+        completeAccountRemovalLifecycle()
+        floorpNotesDisconnectPhase = .idle
+        disableFloorpNotesEngineLocked()
+        if notesFinalizationFailed {
+            removal.fill(Maybe(failure: AccountRemovalError()))
+        } else {
+            removal.fill(Maybe(success: ()))
+        }
+        return removal
+    }
+
+    public func cancelAccountRemoval() {
+        let didCancel = floorpNotesStateLock.withLock {
+            cancelAccountRemovalLocked()
+        }
+        if didCancel {
+            scheduleTimedSyncResumeAfterAccountRemovalCancellation()
+        }
+    }
+
+    private func cancelAccountRemovalAfterCheckedDisconnectFailure() {
+        let didCancel = floorpNotesStateLock.withLock {
+            cancelAccountRemovalLocked(allowAwaitingDisconnect: true)
+        }
+        if didCancel {
+            scheduleTimedSyncResumeAfterAccountRemovalCancellation()
+        }
+    }
+
+    @discardableResult
+    private func cancelAccountRemovalLocked(
+        allowAwaitingDisconnect: Bool = false
+    ) -> Bool {
+        let provider: (any FloorpNotesSyncEngineProviding)?
+        let shouldRestoreNotes: Bool
+        switch floorpNotesDisconnectPhase {
+        case .preparing(let preparedProvider):
+            provider = preparedProvider
+            shouldRestoreNotes = false
+        case .preparedAwaitingDisconnect(
+            let preparedProvider,
+            let finalizeNotes
+        ) where allowAwaitingDisconnect:
+            provider = preparedProvider
+            shouldRestoreNotes = finalizeNotes
+        case .preparedAwaitingDisconnect:
+            return false
+        case .prepared(let preparedProvider, let finalizeNotes):
+            provider = preparedProvider
+            shouldRestoreNotes = finalizeNotes
+        case .idle, .resolving:
+            return false
+        }
+        floorpNotesDisconnectPhase = .resolving
+        var mustDisableNotes = false
+        if shouldRestoreNotes {
+            let didRestore = provider?.cancelDisconnect() == true
+            if !didRestore {
+                mustDisableNotes = true
+            }
+        }
+        completeAccountRemovalLifecycle()
+        floorpNotesDisconnectPhase = .idle
+        let runtimeAllows = prefs.boolForKey(
+            Self.floorpNotesRuntimeEnabledPref
+        ) == true
+        let compiledEvidenceAllows = syncLifecycleLock.withLock {
+            floorpNotesCompiledEvidenceAllows
+        }
+        if mustDisableNotes || !runtimeAllows || !compiledEvidenceAllows {
+            disableFloorpNotesEngineLocked()
+        }
+        return true
+    }
+
+    private func scheduleTimedSyncResumeAfterAccountRemovalCancellation() {
+        guard !backgrounded else { return }
+        timedSyncResumeScheduler { [weak self] in
+            guard let self,
+                  !self.backgrounded,
+                  self.activeSyncLifecycleGeneration() != nil,
+                  self.profileHasSyncableAccount() else {
+                return
+            }
+            self.beginTimedSyncs()
+        }
+    }
+
+    private func completeAccountRemovalLifecycle() {
+        syncLifecycleLock.withLock {
+            accountRemovalInProgress = false
+            syncLifecycleGeneration &+= 1
+        }
     }
 
     public func checkCreditCardEngineEnablement() -> Bool {
@@ -357,6 +1073,10 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
 
     public struct NoTokenServerURLError: MaybeErrorType {
         public let description = "Failed to get token server endpoint url."
+    }
+
+    public struct AccountRemovalError: MaybeErrorType {
+        public let description = "Checked Sync disconnect did not complete."
     }
 
     func shouldSyncLogins(_ passwordEngineIncluded: Bool, completion: @escaping @Sendable (Bool) -> Void) {
@@ -528,9 +1248,112 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
        return enginesToSync
     }
 
-    private func doSync(params: SyncParams, completion: @escaping @Sendable (SyncResult) -> Void) {
+    func prepareSyncParamsForExecution(
+        _ params: SyncParams,
+        lifecycleGeneration: UInt64,
+        accountID: String?,
+        expectedFloorpNotesGeneration: UInt64?,
+        executionContext: FloorpNotesSyncExecutionContext
+    ) -> SyncParams? {
+        guard isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
+            return nil
+        }
+        guard case .some(let engines) = params.engines,
+              engines.contains(FloorpNotesSyncEngineSelection.engineName) else {
+            return params
+        }
+
+        return floorpNotesStateLock.withLock {
+            guard isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
+                return nil
+            }
+            let currentGeneration = currentFloorpNotesLifecycleGeneration()
+            if let expectedFloorpNotesGeneration,
+               expectedFloorpNotesGeneration != currentGeneration {
+                return Self.removingFloorpNotes(from: params)
+            }
+            guard let accountID,
+                  let provider = floorpNotesEngineProvider,
+                  let tokenServerURL = URL(
+                    string: params.authInfo.tokenserverUrl
+                  ),
+                  FloorpNotesSyncEndpointAuthority
+                    .allowsProductionTokenServer(tokenServerURL),
+                  floorpNotesPolicy(accountID: accountID).allowsRequest else {
+                disableFloorpNotesEngineAssumingComponentLockLocked()
+                return Self.removingFloorpNotes(from: params)
+            }
+
+            guard registerFloorpNotesProviderIfNeeded(
+                provider,
+                accountID: accountID
+            ) else {
+                return Self.removingFloorpNotes(from: params)
+            }
+
+            floorpNotesRequestSequence &+= 1
+            executionContext.record(
+                generation: currentFloorpNotesLifecycleGeneration(),
+                requestSequence: floorpNotesRequestSequence
+            )
+            return params
+        }
+    }
+
+    private func registerFloorpNotesProviderIfNeeded(
+        _ provider: any FloorpNotesSyncEngineProviding,
+        accountID: String
+    ) -> Bool {
+        guard floorpNotesAccountID != accountID else { return true }
+        disableFloorpNotesEngineAssumingComponentLockLocked()
+        do {
+            try provider.register(accountID: accountID)
+            floorpNotesAccountID = accountID
+            return true
+        } catch {
+            logger.log(
+                "Floorp Notes Sync engine registration failed closed.",
+                level: .warning,
+                category: .sync
+            )
+            disableFloorpNotesEngineAssumingComponentLockLocked()
+            return false
+        }
+    }
+
+    func doSync(
+        params: SyncParams,
+        lifecycleGeneration: UInt64,
+        floorpNotesAccountID: String?,
+        expectedFloorpNotesGeneration: UInt64?,
+        floorpNotesExecutionContext: FloorpNotesSyncExecutionContext,
+        completion: @escaping @Sendable (SyncResult) -> Void
+    ) {
         beginSyncing()
-        syncManagerAPI.sync(params: params) { syncResult in
+        syncManagerAPI.sync(
+            params: params,
+            shouldStart: { [weak self] in
+                self?.isCurrentSyncLifecycleGeneration(lifecycleGeneration) == true
+            },
+            prepareParams: { [weak self] params in
+                self?.prepareSyncParamsForExecution(
+                    params,
+                    lifecycleGeneration: lifecycleGeneration,
+                    accountID: floorpNotesAccountID,
+                    expectedFloorpNotesGeneration: expectedFloorpNotesGeneration,
+                    executionContext: floorpNotesExecutionContext
+                )
+            }
+        ) { syncResult in
+            guard self.isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
+                self.syncDisplayState = nil
+                if !self.backgrounded {
+                    self.notifySyncing(notification: .ProfileDidFinishSyncing)
+                    AppEventQueue.completed(.profileSyncing)
+                }
+                completion(syncResult)
+                return
+            }
             // Save the persisted state
             if !syncResult.persistedState.isEmpty {
                 self.prefs
@@ -585,12 +1408,22 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         })
     }
 
-    private func syncRustEngines(why: SyncReason,
-                                 engines: [String]) -> Deferred<Maybe<SyncResult>> {
+    private func syncRustEngines(
+        why: SyncReason,
+        engines: [String],
+        expectedFloorpNotesGeneration: UInt64? = nil
+    ) -> Deferred<Maybe<SyncResult>> {
         let deferred = Deferred<Maybe<SyncResult>>()
+        let engineSelection = FloorpNotesSyncEngineSelection.partition(requested: engines)
+        syncRequestObserver(why, engines)
+        guard let lifecycleGeneration = activeSyncLifecycleGeneration() else {
+            deferred.fill(Maybe(failure: AccountRemovalError()))
+            return deferred
+        }
 
         logger.log("Syncing \(engines)", level: .info, category: .sync)
         guard let accountManager = RustFirefoxAccounts.shared.accountManager else {
+            deferred.fill(Maybe(failure: AccountRemovalError()))
             return deferred
         }
 
@@ -599,6 +1432,10 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         // main thread so the blocking FFI call can't hang the UI.
         // swiftlint:disable closure_body_length
         accountManager.getCurrentDeviceId { deviceIDResult in
+            guard self.isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
+                deferred.fillIfUnfilled(Maybe(failure: AccountRemovalError()))
+                return
+            }
             guard case .success(let deviceId) = deviceIDResult else {
                 self.logger.log("Device Id could not be retrieved",
                                 level: .warning,
@@ -608,6 +1445,10 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
             }
 
             accountManager.getAccessToken(scope: OAuthScope.oldSync) { result in
+                guard self.isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
+                    deferred.fillIfUnfilled(Maybe(failure: AccountRemovalError()))
+                    return
+                }
                 guard let accessTokenInfo = try? result.get(),
                       let key = accessTokenInfo.key else {
                     deferred.fill(Maybe(failure: ScopedKeyError()))
@@ -615,14 +1456,27 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                 }
 
                 accountManager.getTokenServerEndpointURL { result in
+                    guard self.isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
+                        deferred.fillIfUnfilled(Maybe(failure: AccountRemovalError()))
+                        return
+                    }
                     guard case .success(let tokenServerEndpointURL) = result else {
                         deferred.fill(Maybe(failure: NoTokenServerURLError()))
                         return
                     }
 
-                    self.getEnginesAndKeys(engines: engines.compactMap {
-                        RustSyncManagerAPI.TogglableEngine(rawValue: $0)
-                    }) { (rustEngines, localEncryptionKeys) in
+                    self.getEnginesAndKeys(
+                        engines: engineSelection.togglable
+                    ) { standardEngines, localEncryptionKeys in
+                        guard self.isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
+                            deferred.fillIfUnfilled(Maybe(failure: AccountRemovalError()))
+                            return
+                        }
+                        var rustEngines = standardEngines
+                        if engineSelection.requestsFloorpPrefs {
+                            rustEngines.append(FloorpNotesSyncEngineSelection.engineName)
+                        }
+                        let floorpNotesAccountID = accountManager.accountProfile()?.uid
                         let params = SyncParams(
                             reason: why,
                             engines: SyncEngineSelection.some(engines: rustEngines),
@@ -638,7 +1492,36 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                                 deviceId: deviceId,
                                 accountManager: accountManager))
 
-                        self.doSync(params: params) { syncResult in
+                        let floorpNotesExecutionContext = FloorpNotesSyncExecutionContext()
+                        self.doSync(
+                            params: params,
+                            lifecycleGeneration: lifecycleGeneration,
+                            floorpNotesAccountID: floorpNotesAccountID,
+                            expectedFloorpNotesGeneration: expectedFloorpNotesGeneration,
+                            floorpNotesExecutionContext: floorpNotesExecutionContext
+                        ) { syncResult in
+                            guard self.isCurrentSyncLifecycleGeneration(
+                                lifecycleGeneration
+                            ) else {
+                                deferred.fillIfUnfilled(
+                                    Maybe(failure: AccountRemovalError())
+                                )
+                                return
+                            }
+                            if let registeredFloorpNotesGeneration =
+                                floorpNotesExecutionContext.generation,
+                               let registeredRequestSequence =
+                                floorpNotesExecutionContext.requestSequence,
+                               self.isCurrentFloorpNotesLifecycleGeneration(
+                                registeredFloorpNotesGeneration
+                               ) {
+                                self.handleFloorpNotesSyncResult(
+                                    syncResult,
+                                    why: why,
+                                    floorpNotesGeneration: registeredFloorpNotesGeneration,
+                                    requestSequence: registeredRequestSequence
+                                )
+                            }
                             deferred.fill(Maybe(success: syncResult))
                         }
                     }
@@ -647,6 +1530,19 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         }
         // swiftlint:enable closure_body_length
         return deferred
+    }
+
+    private static func removingFloorpNotes(
+        from params: SyncParams
+    ) -> SyncParams? {
+        guard case .some(let engines) = params.engines else { return nil }
+        let standardEngines = engines.filter {
+            $0 != FloorpNotesSyncEngineSelection.engineName
+        }
+        guard !standardEngines.isEmpty else { return nil }
+        var standardOnly = params
+        standardOnly.engines = .some(engines: standardEngines)
+        return standardOnly
     }
 
     private func createSyncAuthInfo(key: ScopedKey,
@@ -673,7 +1569,8 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         // - If sync fails, propagate the same failure.
         return syncRustEngines(
             why: why,
-            engines: syncManagerAPI.rustTogglableEngines.compactMap { $0.rawValue }
+            engines: syncManagerAPI.rustTogglableEngines.map(\.rawValue)
+                + [FloorpNotesSyncEngineSelection.engineName]
         ).map { $0.map { _ in () } }
     }
 
@@ -683,6 +1580,18 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
      * and to preserve some ordering rules.
      */
     public func syncNamedCollections(why: SyncReason, names: [String]) -> Deferred<Maybe<SyncResult>> {
+        syncNamedCollections(
+            why: why,
+            names: names,
+            expectedFloorpNotesGeneration: nil
+        )
+    }
+
+    private func syncNamedCollections(
+        why: SyncReason,
+        names: [String],
+        expectedFloorpNotesGeneration: UInt64?
+    ) -> Deferred<Maybe<SyncResult>> {
         // Massage the list of names into engine identifiers.var engines = [String]()
         var engines = [String]()
 
@@ -691,7 +1600,11 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
             engines.append(name)
         }
 
-        return syncRustEngines(why: why, engines: engines)
+        return syncRustEngines(
+            why: why,
+            engines: engines,
+            expectedFloorpNotesGeneration: expectedFloorpNotesGeneration
+        )
     }
 
     /**
@@ -725,9 +1638,11 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
 
     private func retrySyncAfterDelay(why: SyncReason, names: [String]) {
         self.syncBackOffTimer?.invalidate()
+        guard let generation = activeSyncLifecycleGeneration() else { return }
 
         self.syncBackOffTimer = Timer.scheduledTimer(withTimeInterval: self.syncBackOffDelay,
                                                      repeats: false) { _ in
+            guard self.isCurrentSyncLifecycleGeneration(generation) else { return }
             _ = self.syncNamedCollections(why: why, names: names)
         }
     }

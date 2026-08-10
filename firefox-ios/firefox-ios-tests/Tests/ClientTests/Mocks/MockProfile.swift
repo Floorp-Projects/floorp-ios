@@ -34,11 +34,21 @@ open class ClientSyncManagerSpy: ClientSyncManager, @unchecked Sendable {
 
     open func syncTabs() -> Deferred<Maybe<SyncResult>> { return emptySyncResult }
     open func syncHistory() -> Deferred<Maybe<SyncResult>> { return emptySyncResult }
-    open func syncEverything(why: SyncReason) -> Success { return succeed() }
+    private(set) var syncEverythingCalled = 0
+    private(set) var lastSyncEverythingReason: SyncReason?
+    open func syncEverything(why: SyncReason) -> Success {
+        syncEverythingCalled += 1
+        lastSyncEverythingReason = why
+        return succeed()
+    }
 
     var syncNamedCollectionsCalled = 0
+    private(set) var lastSyncNamedCollectionsReason: SyncReason?
+    private(set) var lastSyncNamedCollectionsNames = [String]()
     open func syncNamedCollections(why: SyncReason, names: [String]) -> Deferred<Maybe<SyncResult>> {
         syncNamedCollectionsCalled += 1
+        lastSyncNamedCollectionsReason = why
+        lastSyncNamedCollectionsNames = names
         return emptySyncResult
     }
     var syncPostSyncSettingsChangeCalled = 0
@@ -61,6 +71,10 @@ open class ClientSyncManagerSpy: ClientSyncManager, @unchecked Sendable {
     open func onRemovedAccount() -> Success {
         return succeed()
     }
+    open func finalizeAccountRemoval() -> Success {
+        return succeed()
+    }
+    open func cancelAccountRemoval() {}
     open func checkCreditCardEngineEnablement() -> Bool {
         guard let mockDeclinedEngines = mockDeclinedEngines,
               !mockDeclinedEngines.isEmpty,
@@ -285,8 +299,9 @@ final class MockProfile: Client.Profile, @unchecked Sendable {
 
     public func flushAccount() {}
 
-    public func removeAccount() {
-        self.syncManager?.onRemovedAccount()
+    @discardableResult
+    public func removeAccount() -> Success {
+        self.syncManager?.onRemovedAccount() ?? succeed()
     }
 
     public func getCachedClientsAndTabs() -> Deferred<Maybe<[ClientAndTabs]>> {

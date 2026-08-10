@@ -5,6 +5,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly PACKAGE_FILE="${FLOORP_APPLICATION_SERVICES_PACKAGE_FILE:-${PROJECT_ROOT}/MozillaRustComponents/Package.swift}"
 readonly PIN_FILE="${FLOORP_APPLICATION_SERVICES_PIN_FILE:-${PROJECT_ROOT}/MozillaRustComponents/FloorpApplicationServicesPin.json}"
+readonly SOURCE_CONFIGURATION_FILTER="${SCRIPT_DIR}/application-services-source-configuration.jq"
 readonly EXPECTED_REPOSITORY="Floorp-Projects/application-services"
 
 apply_pin=false
@@ -26,7 +27,7 @@ for command_name in jq sed grep; do
     fi
 done
 
-if [[ ! -f "${PACKAGE_FILE}" || ! -f "${PIN_FILE}" ]]; then
+if [[ ! -f "${PACKAGE_FILE}" || ! -f "${PIN_FILE}" || ! -f "${SOURCE_CONFIGURATION_FILTER}" ]]; then
     echo "[FAIL] Application Services package or pin metadata is missing." >&2
     exit 1
 fi
@@ -288,24 +289,10 @@ if ! jq -e --slurpfile pin "${PIN_FILE}" '
     exit 1
 fi
 
-if ! jq -e --slurpfile pin "${PIN_FILE}" '
-    . as $configuration
-    | $pin[0] as $pin
-    | .schema_version == 1
-    and .distribution_repository == $pin.repository
-    and ($pin.release.tag | test($configuration.release_tag_pattern))
-    and .release_tag_example == $pin.release.tag
-    and .upstream.repository == $pin.upstream.repository
-    and .upstream.commit == $pin.upstream.commit
-    and .upstream.source_version == $pin.upstream.sourceVersion
-    and .upstream.artifact_version == $pin.artifactVersion
-    and .immutable_releases_required == true
-    and ((.artifacts | sort) == [
-        "FocusRustComponents.xcframework.zip",
-        "MozillaRustComponents.xcframework.zip",
-        "swift-components.tar.xz"
-    ])
-' "${remote_temp}/source-configuration.json" >/dev/null; then
+if ! jq -e \
+    --slurpfile pin "${PIN_FILE}" \
+    -f "${SOURCE_CONFIGURATION_FILTER}" \
+    "${remote_temp}/source-configuration.json" >/dev/null; then
     echo "[FAIL] Tagged source release configuration does not match the trusted pin." >&2
     exit 1
 fi

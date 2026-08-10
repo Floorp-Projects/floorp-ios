@@ -8,6 +8,12 @@ import Shared
 import Sync
 import Account
 
+/// The sync manager owns persistence for this kill switch so it can publish
+/// OFF only after the in-flight component barrier has completed.
+final class FloorpNotesRuntimeSetting: BoolSetting {
+    override func writeBool(_ control: UISwitch) {}
+}
+
 final class ManageFxAccountSetting: Setting {
     private var notification: NSObjectProtocol?
 
@@ -86,22 +92,46 @@ class DisconnectSetting: Setting {
             preferredStyle: UIAlertController.Style.alert)
 
         alertController.addAction(
-            UIAlertAction(title: .SettingsDisconnectCancelAction, style: .default) { (action) in
+            UIAlertAction(title: .SettingsDisconnectCancelAction, style: .default) { _ in
                 // Do nothing.
             }
         )
 
         alertController.addAction(
-            UIAlertAction(title: .SettingsDisconnectDestructiveAction, style: .destructive) { (action) in
-                self.profile?.removeAccount()
-                TelemetryWrapper.recordEvent(category: .firefoxAccount, method: .tap, object: .syncUserLoggedOut)
+            UIAlertAction(title: .SettingsDisconnectDestructiveAction, style: .destructive) { _ in
+                guard let profile = self.profile else { return }
+                let completion: @MainActor @Sendable (Bool) -> Void = { [weak self, weak navigationController] didRemove in
+                    guard let self else { return }
+                    guard didRemove else {
+                        let error = UIAlertController(
+                            title: FloorpStrings.Notes.syncDisconnectFailedTitle,
+                            message: FloorpStrings.Notes.syncDisconnectFailedMessage,
+                            preferredStyle: .alert
+                        )
+                        error.addAction(UIAlertAction(title: .OKString, style: .default))
+                        navigationController?.present(error, animated: true)
+                        return
+                    }
+                    TelemetryWrapper.recordEvent(
+                        category: .firefoxAccount,
+                        method: .tap,
+                        object: .syncUserLoggedOut
+                    )
 
-                // If there is more than one view controller in the navigation controller, we can pop.
-                // Otherwise, assume that we got here directly from the App Menu and dismiss the VC.
-                if let navigationController = navigationController, navigationController.viewControllers.count > 1 {
-                    _ = navigationController.popViewController(animated: true)
-                } else {
-                    self.settingsVC.dismiss(animated: true, completion: nil)
+                    // If there is more than one view controller in the navigation controller, we can pop.
+                    // Otherwise, assume that we got here directly from the App Menu and dismiss the VC.
+                    if let navigationController,
+                       navigationController.viewControllers.count > 1 {
+                        _ = navigationController.popViewController(animated: true)
+                    } else {
+                        self.settingsVC.dismiss(animated: true, completion: nil)
+                    }
+                }
+                profile.removeAccount().upon { result in
+                    let didRemove = result.isSuccess
+                    Task { @MainActor in
+                        completion(didRemove)
+                    }
                 }
             }
         )
@@ -186,8 +216,15 @@ class DeviceNameSetting: StringSetting {
 
 class SyncContentSettingsViewController: SettingsTableViewController {
     fileprivate var enginesToSyncOnExit: Set<String> = Set()
+    private let notesSyncAvailable: () -> Bool
 
-    init(windowUUID: WindowUUID) {
+    init(
+        windowUUID: WindowUUID,
+        notesSyncAvailable: @escaping () -> Bool = {
+            FloorpNotesSyncReleaseGate.isNetworkSyncEnabled
+        }
+    ) {
+        self.notesSyncAvailable = notesSyncAvailable
         super.init(style: .grouped, windowUUID: windowUUID)
 
         self.title = .FxASettingsTitle
@@ -306,7 +343,26 @@ class SyncContentSettingsViewController: SettingsTableViewController {
             attributedStatusText: nil,
             settingDidChange: engineSettingChanged(.addresses))
 
+        let notes = FloorpNotesRuntimeSetting(
+            prefs: profile.prefs,
+            prefKey: RustSyncManager.floorpNotesRuntimeEnabledPref,
+            defaultValue: false,
+            attributedTitleText: NSAttributedString(
+                string: FloorpStrings.Notes.syncSettingTitle
+            ),
+            attributedStatusText: NSAttributedString(
+                string: FloorpStrings.Notes.syncSettingDescription
+            ),
+            settingDidChange: { [weak self] enabled in
+                self?.applyNotesSyncRuntimePolicy(enabled: enabled)
+            }
+        )
+
         var engineSectionChildren: [Setting] = [bookmarks, history, tabs, passwords, creditCards]
+
+        if notesSyncAvailable() {
+            engineSectionChildren.append(notes)
+        }
 
         if AddressLocaleFeatureValidator.isValidRegion(for: SystemLocaleProvider().regionCode()) {
             engineSectionChildren.append(addresses)
@@ -327,5 +383,40 @@ class SyncContentSettingsViewController: SettingsTableViewController {
         let disconnectSection = SettingSection(title: nil, footerTitle: nil, children: [disconnect])
 
         return [manageSection, enginesSection, deviceNameSection, disconnectSection]
+    }
+
+    func applyNotesSyncRuntimePolicy(
+        enabled: Bool,
+        completion: (@MainActor @Sendable () -> Void)? = nil
+    ) {
+        guard let profile,
+              let syncManager = profile.syncManager as? RustSyncManager else {
+            profile?.prefs.setBool(
+                false,
+                forKey: RustSyncManager.floorpNotesRuntimeEnabledPref
+            )
+            tableView.reloadData()
+            completion?()
+            return
+        }
+        let updateUI: @MainActor @Sendable () -> Void = { [weak self, weak syncManager] in
+            defer { completion?() }
+            guard let self, let syncManager else { return }
+            let isEffectivelyEnabled = self.profile?.prefs.boolForKey(
+                RustSyncManager.floorpNotesRuntimeEnabledPref
+            ) == true
+            if enabled && isEffectivelyEnabled {
+                _ = syncManager.syncNamedCollections(
+                    why: .enabledChange,
+                    names: [FloorpNotesSyncEngineSelection.engineName]
+                )
+            }
+            self.tableView.reloadData()
+        }
+        syncManager.applyFloorpNotesRuntimePolicy(enabled: enabled) {
+            Task { @MainActor in
+                updateUI()
+            }
+        }
     }
 }

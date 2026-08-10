@@ -6,14 +6,22 @@ import Foundation
 import Glean
 
 public final class SyncManagerComponent: Sendable {
-    private let api: SyncManager
+    private let api: any SyncManagerProtocol
 
-    public init() {
-        api = SyncManager()
+    public convenience init() {
+        self.init(api: SyncManager())
+    }
+
+    init(api: any SyncManagerProtocol) {
+        self.api = api
     }
 
     public func disconnect() {
         api.disconnect()
+    }
+
+    public func disconnectChecked() throws {
+        try api.disconnectChecked()
     }
 
     public func sync(params: SyncParams) throws -> SyncResult {

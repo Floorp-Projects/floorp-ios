@@ -5037,6 +5037,50 @@ final class FloorpBrowserChromeLayoutTests: XCTestCase {
 
 @MainActor
 final class FloorpOverlayDrawerPresentationTests: XCTestCase {
+    func testNotesSyncStatusRefreshesVisibleDrawerTitle() throws {
+        let suiteName = "FloorpNotesSyncStatusUITests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FloorpNotesSyncStatusUITests-\(UUID().uuidString).json")
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+        let manager = FloorpPanelManager(defaults: defaults)
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(manager.panel(for: "floorp//notes")))
+        let notificationCenter = NotificationCenter()
+        let status = FloorpNotesSyncStatusTestBox(.localOnly)
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: manager,
+            notesStore: FloorpNotesStore(fileURL: archiveURL),
+            presentationState: state,
+            themeManager: MockThemeManager(),
+            notificationCenter: notificationCenter,
+            notesSyncStatusProvider: { status.value }
+        )
+
+        drawer.loadViewIfNeeded()
+        XCTAssertEqual(
+            drawer.notesSyncStatusTextForTesting,
+            FloorpStrings.Notes.localOnly
+        )
+
+        status.value = .syncEnabled
+        notificationCenter.post(name: .FloorpNotesSyncStatusDidChange, object: nil)
+        XCTAssertEqual(
+            drawer.notesSyncStatusTextForTesting,
+            FloorpStrings.Notes.syncEnabled
+        )
+
+        status.value = .localOnly
+        notificationCenter.post(name: .FloorpNotesSyncStatusDidChange, object: nil)
+        XCTAssertEqual(
+            drawer.notesSyncStatusTextForTesting,
+            FloorpStrings.Notes.localOnly
+        )
+    }
+
     func testWindowScopedPresentationStatesRemainIndependentAndFallback() throws {
         let panels = FloorpPanel.defaultPanels()
         let notes = try XCTUnwrap(panels.first(where: { $0.id == "floorp//notes" }))
@@ -6178,6 +6222,14 @@ private final class FloorpMutablePanelPresentationMode {
 }
 
 @MainActor
+private final class FloorpNotesSyncStatusTestBox: @unchecked Sendable {
+    var value: FloorpNotesSyncUIStatus
+
+    init(_ value: FloorpNotesSyncUIStatus) {
+        self.value = value
+    }
+}
+
 private final class FloorpAppearanceRecordingViewController: UIViewController {
     enum Event: Equatable {
         case willAppear

@@ -76,6 +76,80 @@ def run_checker(tmpdir, plan, baseline, traceability):
 
 
 class FloorpCISelectionValidatorTests(unittest.TestCase):
+    def test_repository_plan_selects_todo19_runtime_and_trigger_regressions(self):
+        root = Path(__file__).resolve().parents[3]
+        plan = json.loads(
+            (root / "firefox-ios/firefox-ios-tests/Tests/FloorpCI.xctestplan").read_text()
+        )
+        selections = {
+            (target["target"]["name"], test)
+            for target in plan["testTargets"]
+            for test in target.get("selectedTests", [])
+        }
+        required = {
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testExecutionPreparationRechecksCurrentNotesPolicy()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testPriorNotesGenerationCannotReenterAfterDisableReenable()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testRuntimeDisableDoesNotInvalidatePreparedCheckedDisconnect()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testRuntimeDisableReturnsBeforeSyncAndPublishesAfterBarrier()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testOlderSameGenerationResultCannotReinstateRetry()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testPreparedRemovalRejectsReplacementAndFinalizesPreparedProvider()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testQueuedProviderInvalidationCannotInvalidateReinstalledProvider()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testRapidOffOnKeepsLatestPolicyWhenQueuedOffRuns()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerTests/testForegroundAndScheduledTriggersUseCommonSyncPath()",
+            ),
+            (
+                "ClientTests",
+                "RustSyncManagerAPITests/testSynchronizedOperationWaitsForInFlightComponentSync()",
+            ),
+            (
+                "ClientTests",
+                "SyncContentSettingsViewControllerTests/testSyncNowTriggersUserSyncExactlyOnce()",
+            ),
+            (
+                "ClientTests",
+                "SyncContentSettingsViewControllerTests/testBackgroundPart2RequestsNotesThroughNamedSyncPath()",
+            ),
+            (
+                "ClientTests",
+                "SyncContentSettingsViewControllerTests/testNotesToggleRequestsOnlyAnEffectiveEnable()",
+            ),
+            (
+                "MozillaRustComponentsTests",
+                "SyncManagerComponentTests/testDisconnectCheckedForwardsToGeneratedAPI()",
+            ),
+            (
+                "MozillaRustComponentsTests",
+                "SyncManagerComponentTests/testDisconnectCheckedPropagatesGeneratedError()",
+            ),
+        }
+        self.assertTrue(required <= selections)
+
     def test_valid_selection_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)

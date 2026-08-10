@@ -1313,7 +1313,32 @@ enum FloorpStrings {
         static let localOnly = string(
             "Floorp.Notes.LocalOnly.v1",
             value: "Stored on this device",
-            comment: "Accessibility and UI notice that iOS Notes are not synced yet"
+            comment: "Accessibility and UI notice that Notes are currently local-only"
+        )
+        static let syncEnabled = string(
+            "Floorp.Notes.SyncEnabled.v1",
+            value: "Sync enabled",
+            comment: "Accessibility and UI notice that Notes Sync is enabled for the signed-in account"
+        )
+        static let syncSettingTitle = string(
+            "Floorp.Notes.SyncSettingTitle.v1",
+            value: "Sync Notes",
+            comment: "Title of the account setting that enables Notes Sync"
+        )
+        static let syncSettingDescription = string(
+            "Floorp.Notes.SyncSettingDescription.v1",
+            value: "Turn off to keep Notes on this device without deleting them.",
+            comment: "Description of the device-local Notes Sync rollback setting"
+        )
+        static let syncDisconnectFailedTitle = string(
+            "Floorp.Notes.SyncDisconnectFailedTitle.v1",
+            value: "Couldn’t Sign Out",
+            comment: "Title shown when checked Sync disconnect prevents account sign-out"
+        )
+        static let syncDisconnectFailedMessage = string(
+            "Floorp.Notes.SyncDisconnectFailedMessage.v1",
+            value: "Your account and local notes were left unchanged. Please try again.",
+            comment: "Message shown when account sign-out fails closed to protect local Notes"
         )
 
         static func moveAnnouncement(title: String, position: Int, total: Int) -> String {
