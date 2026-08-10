@@ -268,6 +268,8 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 """\
                 #!/bin/bash
                 set -euo pipefail
+                GLEAN_PARSER_VERSION=20.0
+                GLEAN_PARSER_DISTRIBUTION_VERSION=20.0.0
                 output=""
                 while [[ $# -gt 0 ]]; do
                     case "$1" in
@@ -285,10 +287,10 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 if sys.argv[1:] == ["--version"]:
                     print("Python 3.12.0")
                 elif "pip" in sys.argv[1:] and "freeze" in sys.argv[1:]:
-                    print("glean-parser==20.0")
+                    print("glean-parser==20.0.0")
                     print("pip==24.0")
                 elif "importlib.metadata" in " ".join(sys.argv[1:]):
-                    print("20.0")
+                    print("20.0.0")
                 PYTHON
                 chmod 0755 "$FLOORP_GLEAN_VENV/bin/python"
                 """
@@ -1140,6 +1142,10 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         )
         self.assertEqual(
             generated_manifest["tools"]["glean_parser_version"],
+            "20.0.0",
+        )
+        self.assertEqual(
+            generated_manifest["tools"]["glean_parser_requirement"],
             "20.0",
         )
         self.assertRegex(

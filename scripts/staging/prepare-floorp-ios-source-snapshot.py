@@ -421,6 +421,20 @@ def prepare(
 
     firefox_root = root / "firefox-ios"
     sdk_generator = firefox_root / "bin/sdk_generator.sh"
+    sdk_generator_text = sdk_generator.read_text(encoding="utf-8")
+    require(
+        re.findall(r"(?m)^GLEAN_PARSER_VERSION=([^\s]+)$", sdk_generator_text)
+        == ["20.0"],
+        "Glean parser requirement is not exactly 20.0",
+    )
+    require(
+        re.findall(
+            r"(?m)^GLEAN_PARSER_DISTRIBUTION_VERSION=([^\s]+)$",
+            sdk_generator_text,
+        )
+        == ["20.0.0"],
+        "Glean parser distribution version is not exactly 20.0.0",
+    )
     storage_output = firefox_root / "Storage/Generated"
     storage_metrics = firefox_root / "Storage/metrics.yaml"
     storage_environment = {
@@ -491,7 +505,10 @@ def prepare(
         label="Glean parser version",
         capture=True,
     )
-    require(glean_version == "20.0", "Glean parser version is not exactly 20.0")
+    require(
+        glean_version == "20.0.0",
+        "Glean parser distribution version is not exactly 20.0.0",
+    )
     inventory_text = run(
         [str(venv_python), "-I", "-m", "pip", "freeze", "--all"],
         cwd=root,
@@ -510,6 +527,7 @@ def prepare(
         "source_archive_sha256": sha256_file(archive),
         "source_sha": source_sha,
         "tools": {
+            "glean_parser_requirement": "20.0",
             "glean_parser_version": glean_version,
             "glean_python": tool_record(venv_python, run([str(venv_python), "--version"], cwd=root, environment=environment, label="Glean Python version", capture=True)),
             "installed_packages": inventory,

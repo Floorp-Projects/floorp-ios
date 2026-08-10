@@ -26,6 +26,7 @@
 set -e
 
 GLEAN_PARSER_VERSION=20.0
+GLEAN_PARSER_DISTRIBUTION_VERSION=20.0.0
 
 # CMDNAME is used in the usage text below.
 # shellcheck disable=SC2034
@@ -228,7 +229,7 @@ fi
 
 [ -x "${VENVDIR}/bin/python" ] || python3 -m venv "${VENVDIR}"
 if ! "${VENVDIR}"/bin/python -I -c \
-    "import importlib.metadata; raise SystemExit(importlib.metadata.version('glean_parser') != '${GLEAN_PARSER_VERSION}')"; then
+    "import importlib.metadata; raise SystemExit(importlib.metadata.version('glean_parser') != '${GLEAN_PARSER_DISTRIBUTION_VERSION}')"; then
     "${VENVDIR}"/bin/pip install --disable-pip-version-check "glean_parser==$GLEAN_PARSER_VERSION"
 fi
 
