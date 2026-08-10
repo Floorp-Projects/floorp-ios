@@ -55,6 +55,7 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
         self.xcresult_path = self.inputs / "g3-xcresult.zip"
         self.desktop_run_path = self.inputs / "desktop-run.json"
         self.runtime_run_path = self.inputs / "runtime-run.json"
+        self.integration_capture_path = self.inputs / "integration-execution.json"
         self.write_captures()
 
     def tearDown(self) -> None:
@@ -394,6 +395,37 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
         self.write_json(self.artifact_metadata_path, self.artifact_metadata)
         self.xcresult_path.write_bytes(b"synthetic-xcresult-zip")
         self.xcresult_path.chmod(0o600)
+        self.integration_capture = {
+            "commands": [
+                {"argv": list(argv), "exit_code": 0, "terminal": True}
+                for argv in PREPARER.integration_command_argv(self.contract)
+            ],
+            "main_ref": {
+                "ref": "refs/heads/main",
+                "sha": self.merged_oid,
+            },
+            "merge_response": {
+                "merged": True,
+                "sha": self.merged_oid,
+            },
+            "pull_request": {
+                "base_oid": self.base_oid,
+                "head_oid": self.merged_oid,
+                "number": 83,
+            },
+            "pr_checks": [
+                {"conclusion": "success", "name": "Adaptive sidebar UI (iPad (A16))"},
+                {"conclusion": "success", "name": "Adaptive sidebar UI (iPhone 17)"},
+                {"conclusion": "success", "name": "Build and unit test"},
+                {"conclusion": "success", "name": "Notes UI (iPad (A16), en-US)"},
+                {"conclusion": "success", "name": "Notes UI (iPad (A16), ja-JP)"},
+                {"conclusion": "success", "name": "Notes UI (iPhone 17, en-US)"},
+                {"conclusion": "success", "name": "Notes UI (iPhone 17, ja-JP)"},
+                {"conclusion": "success", "name": "Validate workflows"},
+            ],
+            "schema_version": 1,
+        }
+        self.write_json(self.integration_capture_path, self.integration_capture)
 
     def arguments(self, *, merged_oid: str | None = None, output: Path | None = None) -> list[str]:
         return [
@@ -415,6 +447,8 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
             str(self.desktop_run_path),
             "--runtime-run-json",
             str(self.runtime_run_path),
+            "--integration-execution-capture",
+            str(self.integration_capture_path),
             "--output-recipe",
             str(self.output if output is None else output),
             "--evidence-root",
@@ -522,6 +556,62 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("detached", stderr)
 
+    def test_rejects_assume_unchanged_and_skip_worktree_hidden_modifications(self):
+        target = self.ios / "base.txt"
+        cases = (
+            ("--assume-unchanged", "--no-assume-unchanged", "assume-unchanged"),
+            ("--skip-worktree", "--no-skip-worktree", "skip-worktree"),
+        )
+        for enable, disable, expected in cases:
+            with self.subTest(flag=expected):
+                self.git(self.ios, "update-index", enable, "base.txt")
+                target.write_text(f"hidden by {expected}\n", encoding="utf-8")
+                with self.assertRaisesRegex(PREPARER.PreparationError, expected):
+                    PREPARER.validate_merged_worktree(
+                        self.ios,
+                        self.merged_oid,
+                        self.contract,
+                    )
+                self.git(self.ios, "update-index", disable, "base.txt")
+                self.git(self.ios, "checkout", "--", "base.txt")
+
+    def test_repository_fsmonitor_config_cannot_execute_helper(self):
+        marker = self.directory / "fsmonitor-executed"
+        self.git(
+            self.ios,
+            "config",
+            "core.fsmonitor",
+            f"/usr/bin/touch {marker}",
+        )
+        PREPARER.validate_merged_worktree(self.ios, self.merged_oid, self.contract)
+        self.assertFalse(marker.exists(), "repository core.fsmonitor helper executed")
+
+    def test_every_git_invocation_uses_offline_hardened_configuration(self):
+        real_run = subprocess.run
+        observed: list[tuple[list[str], dict[str, str]]] = []
+
+        def recording_run(command, **kwargs):
+            observed.append((command, kwargs["env"]))
+            return real_run(command, **kwargs)
+
+        with mock.patch.object(PREPARER.subprocess, "run", side_effect=recording_run):
+            PREPARER.validate_merged_worktree(self.ios, self.merged_oid, self.contract)
+
+        self.assertTrue(observed)
+        for command, environment in observed:
+            self.assertEqual(command[0], "/usr/bin/git")
+            self.assertIn("core.fsmonitor=false", command)
+            self.assertIn("core.hooksPath=/dev/null", command)
+            self.assertIn("core.bare=false", command)
+            self.assertIn(f"core.worktree={self.ios}", command)
+            self.assertEqual(environment["GIT_CONFIG_NOSYSTEM"], "1")
+            self.assertEqual(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
+            self.assertEqual(environment["GIT_NO_LAZY_FETCH"], "1")
+            self.assertEqual(environment["GIT_NO_REPLACE_OBJECTS"], "1")
+            self.assertEqual(environment["GIT_ALLOW_PROTOCOL"], "")
+            self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+            self.assertEqual(environment["GIT_ASKPASS"], "/usr/bin/false")
+
     def test_rejects_noncanonical_run_and_run_identity_mismatch(self):
         self.write_json(self.g3_run_path, self.g3_run, canonical=False)
         result, _, stderr = self.invoke()
@@ -566,6 +656,123 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
         result, _, stderr = self.invoke()
         self.assertEqual(result, 1)
         self.assertIn("G4 evidence lifetime", stderr)
+
+    def test_integration_capture_is_materialized_and_drives_recipe_commands(self):
+        result, _, stderr = self.invoke()
+        self.assertEqual(result, 0, stderr)
+        capture_target = self.run_dir / "captures/integration-execution-capture.json"
+        self.assertEqual(capture_target.read_bytes(), self.integration_capture_path.read_bytes())
+        self.assertEqual(stat.S_IMODE(capture_target.stat().st_mode), 0o600)
+        recipe = json.loads(self.output.read_bytes())
+        self.assertEqual(recipe["g3_integration_commands"], self.integration_capture["commands"])
+        for command in recipe["g3_integration_commands"]:
+            self.assertEqual(set(command), {"argv", "exit_code", "terminal"})
+
+    def test_rejects_missing_mismatched_and_nonterminal_integration_capture(self):
+        original = self.arguments()
+        option = original.index("--integration-execution-capture")
+        without_capture = original[:option] + original[option + 2 :]
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            PREPARER.main(without_capture)
+        self.assertEqual(raised.exception.code, 2)
+
+        cases: list[tuple[str, dict[str, object], str]] = []
+        missing = dict(self.integration_capture)
+        missing.pop("pr_checks")
+        cases.append(("missing", missing, "fields"))
+
+        extra = dict(self.integration_capture)
+        extra["untrusted"] = True
+        cases.append(("extra", extra, "fields"))
+
+        wrong_pr = json.loads(json.dumps(self.integration_capture))
+        wrong_pr["pull_request"]["head_oid"] = "f" * 40
+        cases.append(("wrong-pr", wrong_pr, "head"))
+
+        missing_check = json.loads(json.dumps(self.integration_capture))
+        missing_check["pr_checks"].pop()
+        cases.append(("missing-check", missing_check, "pr checks"))
+
+        extra_check = json.loads(json.dumps(self.integration_capture))
+        extra_check["pr_checks"].append(
+            {"conclusion": "success", "name": "Unexpected check"}
+        )
+        cases.append(("extra-check", extra_check, "pr checks"))
+
+        duplicate_check = json.loads(json.dumps(self.integration_capture))
+        duplicate_check["pr_checks"][-1] = dict(duplicate_check["pr_checks"][0])
+        cases.append(("duplicate-check", duplicate_check, "duplicate"))
+
+        failed_check = json.loads(json.dumps(self.integration_capture))
+        failed_check["pr_checks"][0]["conclusion"] = "failure"
+        cases.append(("failed-check", failed_check, "pr checks"))
+
+        reordered_checks = json.loads(json.dumps(self.integration_capture))
+        reordered_checks["pr_checks"][0:2] = reversed(reordered_checks["pr_checks"][0:2])
+        cases.append(("reordered-checks", reordered_checks, "sorted"))
+
+        wrong_argv = json.loads(json.dumps(self.integration_capture))
+        wrong_argv["commands"][0]["argv"].append("--watch")
+        cases.append(("wrong-argv", wrong_argv, "argv"))
+
+        failed_command = json.loads(json.dumps(self.integration_capture))
+        failed_command["commands"][0]["exit_code"] = 1
+        cases.append(("failed-command", failed_command, "exit_code"))
+
+        boolean_exit = json.loads(json.dumps(self.integration_capture))
+        boolean_exit["commands"][0]["exit_code"] = False
+        cases.append(("boolean-exit", boolean_exit, "exit_code"))
+
+        nonterminal = json.loads(json.dumps(self.integration_capture))
+        nonterminal["commands"][0]["terminal"] = False
+        cases.append(("nonterminal", nonterminal, "terminal"))
+
+        command_extra = json.loads(json.dumps(self.integration_capture))
+        command_extra["commands"][0]["output"] = "fabricated"
+        cases.append(("command-extra", command_extra, "fields"))
+
+        wrong_merge = json.loads(json.dumps(self.integration_capture))
+        wrong_merge["merge_response"]["merged"] = False
+        cases.append(("wrong-merge", wrong_merge, "merge"))
+
+        wrong_merge_sha = json.loads(json.dumps(self.integration_capture))
+        wrong_merge_sha["merge_response"]["sha"] = "d" * 40
+        cases.append(("wrong-merge-sha", wrong_merge_sha, "merge response sha"))
+
+        wrong_main = json.loads(json.dumps(self.integration_capture))
+        wrong_main["main_ref"]["sha"] = "e" * 40
+        cases.append(("wrong-main", wrong_main, "main ref"))
+
+        for name, capture, expected in cases:
+            with self.subTest(name=name):
+                self.write_json(self.integration_capture_path, capture)
+                result, _, stderr = self.invoke()
+                self.assertEqual(result, 1, stderr)
+                self.assertIn(expected, stderr.lower())
+
+    def test_rejects_malformed_noncanonical_and_clashing_integration_capture(self):
+        self.integration_capture_path.write_bytes(b"{")
+        result, _, stderr = self.invoke()
+        self.assertEqual(result, 1)
+        self.assertIn("malformed", stderr)
+
+        self.write_json(self.integration_capture_path, self.integration_capture, canonical=False)
+        result, _, stderr = self.invoke()
+        self.assertEqual(result, 1)
+        self.assertIn("canonical", stderr)
+
+        self.write_json(self.integration_capture_path, self.integration_capture)
+        target = self.run_dir / "captures/integration-execution-capture.json"
+        target.parent.mkdir(mode=0o700, exist_ok=True)
+        target.write_bytes(b"mismatched-capture")
+        target.chmod(0o600)
+        result, _, stderr = self.invoke()
+        self.assertEqual(result, 1)
+        self.assertTrue("does not match" in stderr or "size differs" in stderr, stderr)
+        self.assertEqual(target.read_bytes(), b"mismatched-capture")
 
     def test_verifies_summary_sources_before_writing_summary(self):
         summary = next(spec for spec in self.contract.summaries if spec.key == "fake-server")
@@ -629,6 +836,11 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
         self.assertEqual(
             tuple(spec.role for spec in PREPARER.PRODUCTION_CONTRACT.release_assets),
             PREPARER.GATE_SOURCE_ROLES["g2"][2:],
+        )
+        self.assertEqual(len(PREPARER.PR_CHECK_NAMES), 8)
+        self.assertEqual(
+            PREPARER.PR_CHECK_NAMES,
+            tuple(sorted(PREPARER.PR_CHECK_NAMES, key=lambda name: name.encode("utf-8"))),
         )
 
 

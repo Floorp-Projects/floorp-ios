@@ -10,11 +10,20 @@ Files are published with no-clobber semantics.  A pre-existing managed file is
 accepted only when it is a regular, non-symlink, owner-only file containing the
 exact expected bytes.  The integration receipt is never created here; the
 assembler remains its sole producer.
+
+The required integration execution capture is canonical JSON with exactly six
+root fields: ``schema_version``, ``pull_request``, ``pr_checks``,
+``commands``, ``merge_response``, and ``main_ref``.  It records the guarded PR
+base/head, all eight PR checks in deterministic UTF-8 bytewise sorted order,
+four exact terminal command records, the successful merge response, and the
+resulting main ref.  The recipe command list and receipt digest are derived
+from this capture.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -56,6 +65,24 @@ ARTIFACT_METADATA_KEYS = {
     "head_sha",
     "run_id",
 }
+INTEGRATION_CAPTURE_KEYS = {
+    "commands",
+    "main_ref",
+    "merge_response",
+    "pr_checks",
+    "pull_request",
+    "schema_version",
+}
+PR_CHECK_NAMES = (
+    "Adaptive sidebar UI (iPad (A16))",
+    "Adaptive sidebar UI (iPhone 17)",
+    "Build and unit test",
+    "Notes UI (iPad (A16), en-US)",
+    "Notes UI (iPad (A16), ja-JP)",
+    "Notes UI (iPhone 17, en-US)",
+    "Notes UI (iPhone 17, ja-JP)",
+    "Validate workflows",
+)
 GATE_SOURCE_ROLES = {
     "g1": (
         "task-manifest",
@@ -720,19 +747,59 @@ def materialize_file(
         os.close(source_fd)
 
 
-def git_command(worktree: Path, arguments: Iterable[str], label: str, *, accepted: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess[bytes]:
+def git_command(
+    worktree: Path,
+    arguments: Iterable[str],
+    label: str,
+    *,
+    accepted: tuple[int, ...] = (0,),
+) -> subprocess.CompletedProcess[bytes]:
+    hardened_configuration = (
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.bare=false",
+        "-c",
+        f"core.worktree={worktree}",
+        "-c",
+        "maintenance.auto=false",
+        "-c",
+        "gc.auto=0",
+        "-c",
+        "fetch.recurseSubmodules=false",
+        "-c",
+        "submodule.recurse=false",
+        "-c",
+        "credential.helper=",
+        "-c",
+        "core.askPass=",
+    )
     try:
         result = subprocess.run(
-            [GIT, "-C", os.fspath(worktree), *arguments],
+            [GIT, *hardened_configuration, "-C", os.fspath(worktree), *arguments],
             check=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env={
                 "HOME": os.environ.get("HOME", ""),
+                "GCM_INTERACTIVE": "Never",
+                "GIT_ALLOW_PROTOCOL": "",
+                "GIT_ASKPASS": "/usr/bin/false",
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_NO_LAZY_FETCH": "1",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_PAGER": "cat",
+                "GIT_TERMINAL_PROMPT": "0",
                 "LANG": "C",
                 "LC_ALL": "C",
+                "PAGER": "cat",
                 "PATH": "/usr/bin:/bin",
+                "SSH_ASKPASS": "/usr/bin/false",
             },
         )
     except OSError as error:
@@ -774,6 +841,24 @@ def validate_merged_worktree(
         accepted=(0, 1),
     )
     require(detached.returncode == 1 and detached.stdout == b"", "merged iOS worktree: HEAD must be detached")
+    index_entries = git_command(
+        path,
+        ("ls-files", "-v", "-z"),
+        "merged iOS worktree index",
+    ).stdout.split(b"\0")
+    for entry in index_entries:
+        if not entry:
+            continue
+        require(len(entry) >= 3 and entry[1:2] == b" ", "merged iOS worktree: malformed index entry")
+        tag = chr(entry[0])
+        if tag == "S":
+            raise PreparationError("merged iOS worktree: skip-worktree index flags are forbidden")
+        if tag.islower():
+            if tag == "s":
+                raise PreparationError(
+                    "merged iOS worktree: assume-unchanged/skip-worktree index flags are forbidden"
+                )
+            raise PreparationError("merged iOS worktree: assume-unchanged index flags are forbidden")
     status = git_command(
         path,
         ("status", "--porcelain=v1", "--untracked-files=all"),
@@ -966,51 +1051,135 @@ def role_only(source: dict[str, Any], role: str) -> dict[str, Any]:
     return rebound
 
 
-def integration_commands(contract: PreparationContract) -> list[dict[str, Any]]:
+def integration_command_argv(contract: PreparationContract) -> tuple[tuple[str, ...], ...]:
     reviewed = contract.reviewed_head_oid
-    return [
-        {
-            "argv": [
-                "/opt/homebrew/bin/gh",
-                "pr",
-                "checks",
-                "83",
-                "--repo",
-                "Floorp-Projects/floorp-ios",
-            ],
-            "exit_code": 0,
-            "terminal": True,
-        },
-        {
-            "argv": ["/usr/bin/test", reviewed, "=", reviewed],
-            "exit_code": 0,
-            "terminal": True,
-        },
-        {
-            "argv": [
-                "/opt/homebrew/bin/gh",
-                "api",
-                "-X",
-                "PUT",
-                "repos/Floorp-Projects/floorp-ios/pulls/83/merge",
-                "-f",
-                f"sha={reviewed}",
-                "-f",
-                "merge_method=squash",
-            ],
-            "exit_code": 0,
-            "terminal": True,
-        },
-        {
-            "argv": [
-                "/opt/homebrew/bin/gh",
-                "api",
-                "repos/Floorp-Projects/floorp-ios/git/ref/heads/main",
-            ],
-            "exit_code": 0,
-            "terminal": True,
-        },
-    ]
+    return (
+        (
+            "/opt/homebrew/bin/gh",
+            "pr",
+            "checks",
+            "83",
+            "--repo",
+            "Floorp-Projects/floorp-ios",
+        ),
+        (
+            "/opt/homebrew/bin/gh",
+            "pr",
+            "view",
+            "83",
+            "--repo",
+            "Floorp-Projects/floorp-ios",
+            "--json",
+            "number,baseRefOid,headRefOid",
+        ),
+        (
+            "/opt/homebrew/bin/gh",
+            "api",
+            "-X",
+            "PUT",
+            "repos/Floorp-Projects/floorp-ios/pulls/83/merge",
+            "-f",
+            f"sha={reviewed}",
+            "-f",
+            "merge_method=squash",
+        ),
+        (
+            "/opt/homebrew/bin/gh",
+            "api",
+            "repos/Floorp-Projects/floorp-ios/git/ref/heads/main",
+        ),
+    )
+
+
+def validate_integration_capture(
+    capture: dict[str, Any],
+    merged_oid: str,
+    contract: PreparationContract,
+) -> list[dict[str, Any]]:
+    label = "integration execution capture"
+    require(set(capture) == INTEGRATION_CAPTURE_KEYS, f"{label}: root fields are not exact")
+    schema_version = capture.get("schema_version")
+    require(
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version == 1,
+        f"{label}: schema_version must be integer 1",
+    )
+
+    pull_request = capture.get("pull_request")
+    require(isinstance(pull_request, dict), f"{label}: pull_request is malformed")
+    require(
+        set(pull_request) == {"base_oid", "head_oid", "number"},
+        f"{label}: pull request fields are not exact",
+    )
+    number = pull_request.get("number")
+    require(
+        isinstance(number, int) and not isinstance(number, bool) and number == 83,
+        f"{label}: pull request number mismatch",
+    )
+    require(pull_request.get("base_oid") == contract.base_oid, f"{label}: pull request base mismatch")
+    require(
+        pull_request.get("head_oid") == contract.reviewed_head_oid,
+        f"{label}: pull request head mismatch",
+    )
+
+    checks = capture.get("pr_checks")
+    require(isinstance(checks, list), f"{label}: PR checks are malformed")
+    check_names: list[str] = []
+    for index, check in enumerate(checks):
+        require(isinstance(check, dict), f"{label}: PR check {index} is malformed")
+        require(
+            set(check) == {"conclusion", "name"},
+            f"{label}: PR check {index} fields are not exact",
+        )
+        require(check.get("conclusion") == "success", f"{label}: PR checks did not all succeed")
+        name = check.get("name")
+        require(isinstance(name, str) and bool(name), f"{label}: PR check name is malformed")
+        check_names.append(name)
+    require(len(check_names) == len(set(check_names)), f"{label}: PR checks contain a duplicate")
+    require(
+        check_names == sorted(check_names, key=lambda name: name.encode("utf-8")),
+        f"{label}: PR checks are not in deterministic UTF-8 sorted order",
+    )
+    require(tuple(check_names) == PR_CHECK_NAMES, f"{label}: PR checks are not exact")
+
+    commands = capture.get("commands")
+    expected_argv = integration_command_argv(contract)
+    require(
+        isinstance(commands, list) and len(commands) == len(expected_argv),
+        f"{label}: command set is not exact",
+    )
+    for index, (command, expected) in enumerate(zip(commands, expected_argv)):
+        require(isinstance(command, dict), f"{label}: command {index} is malformed")
+        require(
+            set(command) == {"argv", "exit_code", "terminal"},
+            f"{label}: command {index} fields are not exact",
+        )
+        require(command.get("argv") == list(expected), f"{label}: command {index} argv mismatch")
+        exit_code = command.get("exit_code")
+        require(
+            isinstance(exit_code, int)
+            and not isinstance(exit_code, bool)
+            and exit_code == 0,
+            f"{label}: command {index} exit_code must be integer 0",
+        )
+        require(command.get("terminal") is True, f"{label}: command {index} terminal must be true")
+
+    merge_response = capture.get("merge_response")
+    require(isinstance(merge_response, dict), f"{label}: merge response is malformed")
+    require(
+        set(merge_response) == {"merged", "sha"},
+        f"{label}: merge response fields are not exact",
+    )
+    require(merge_response.get("merged") is True, f"{label}: merge response is not merged")
+    require(merge_response.get("sha") == merged_oid, f"{label}: merge response SHA mismatch")
+
+    main_ref = capture.get("main_ref")
+    require(isinstance(main_ref, dict), f"{label}: main ref is malformed")
+    require(set(main_ref) == {"ref", "sha"}, f"{label}: main ref fields are not exact")
+    require(main_ref.get("ref") == "refs/heads/main", f"{label}: main ref name mismatch")
+    require(main_ref.get("sha") == merged_oid, f"{label}: main ref SHA mismatch")
+    return copy.deepcopy(commands)
 
 
 def build_release_inputs(
@@ -1141,6 +1310,7 @@ def prepare(
     g3_xcresult_zip: Path,
     desktop_run_json: Path,
     runtime_run_json: Path,
+    integration_execution_capture: Path,
     output_recipe: Path,
     evidence_root: Path,
     contract: PreparationContract,
@@ -1180,6 +1350,11 @@ def prepare(
     artifact_metadata, artifact_metadata_raw = parse_canonical_json(
         absolute_path(g3_artifact_metadata_json), "G3 artifact metadata"
     )
+    integration_capture, integration_capture_raw = parse_canonical_json(
+        absolute_path(integration_execution_capture),
+        "integration execution capture",
+    )
+    commands = validate_integration_capture(integration_capture, merged_oid, contract)
 
     g3_created, _ = validate_run_payload(
         g3_run,
@@ -1303,6 +1478,12 @@ def prepare(
         "G3 artifact metadata material",
         expected_sha256=sha256_bytes(artifact_metadata_raw),
     )
+    materialize_file(
+        absolute_path(integration_execution_capture),
+        target_path(material_root, "captures/integration-execution-capture.json"),
+        "integration execution capture material",
+        expected_sha256=sha256_bytes(integration_capture_raw),
+    )
     xcresult_sha256 = materialize_file(
         absolute_path(g3_xcresult_zip),
         target_path(material_root, "captures/g3-xcresult.zip"),
@@ -1311,7 +1492,6 @@ def prepare(
     )
 
     release_inputs = build_release_inputs(merged_oid, contract)
-    commands = integration_commands(contract)
     receipt = {
         "commands": commands,
         "repositories": [
@@ -1496,6 +1676,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--g3-xcresult-zip", required=True, type=Path)
     parser.add_argument("--desktop-run-json", required=True, type=Path)
     parser.add_argument("--runtime-run-json", required=True, type=Path)
+    parser.add_argument("--integration-execution-capture", required=True, type=Path)
     parser.add_argument("--output-recipe", required=True, type=Path)
     parser.add_argument(
         "--evidence-root",
@@ -1516,6 +1697,7 @@ def main(argv: list[str] | None = None) -> int:
             g3_xcresult_zip=arguments.g3_xcresult_zip,
             desktop_run_json=arguments.desktop_run_json,
             runtime_run_json=arguments.runtime_run_json,
+            integration_execution_capture=arguments.integration_execution_capture,
             output_recipe=arguments.output_recipe,
             evidence_root=arguments.evidence_root,
             contract=PRODUCTION_CONTRACT,
