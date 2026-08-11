@@ -303,6 +303,21 @@ def synthetic_xcresult_zip(
     return output.getvalue()
 
 
+def contents_root_xcresult_zip(
+    summary: bytes = b"synthetic-only test metadata",
+) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        for path, raw in (
+            ("Info.plist", b"<?xml version='1.0'?><plist version='1.0'><dict/></plist>"),
+            ("Data/test-summary", summary),
+        ):
+            info = zipfile.ZipInfo(path, date_time=(2026, 8, 10, 0, 0, 0))
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, raw)
+    return output.getvalue()
+
+
 TEST_SOURCE_BYTES = {
     "todo16-contract": canonical_bytes(
         {
@@ -1137,6 +1152,37 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
     def test_valid_production_qa_g1_g4_evidence_passes(self):
         result = self.run_validator(make_production_qa_evidence())
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_xcresult_archive_accepts_artifact_contents_root(self):
+        for raw in (
+            contents_root_xcresult_zip(),
+            synthetic_xcresult_zip(),
+        ):
+            with self.subTest(shape=raw[:8]):
+                VALIDATOR_MODULE.validate_xcresult_archive(
+                    io.BytesIO(raw),
+                    "xcresult",
+                )
+
+    def test_xcresult_archive_rejects_unexpected_roots(self):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+            for path, raw in (
+                ("Info.plist", b"x"),
+                ("Data/test-summary", b"y"),
+                ("Junk/extra", b"z"),
+            ):
+                info = zipfile.ZipInfo(path, date_time=(2026, 8, 10, 0, 0, 0))
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, raw)
+        with self.assertRaisesRegex(
+            VALIDATOR_MODULE.ValidationError,
+            "root is not one xcresult",
+        ):
+            VALIDATOR_MODULE.validate_xcresult_archive(
+                io.BytesIO(output.getvalue()),
+                "xcresult",
+            )
 
     def test_g3_rejects_completed_terminal_manifest_as_integration_receipt(self):
         evidence = make_production_qa_evidence()

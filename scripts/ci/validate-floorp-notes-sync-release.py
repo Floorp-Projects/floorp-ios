@@ -671,8 +671,6 @@ def gh_api_download_digest(
                     TRUSTED_GITHUB_HOST,
                     "--method",
                     "GET",
-                    "-H",
-                    "Accept: application/octet-stream",
                     endpoint,
                 ],
                 stdout=output,
@@ -766,10 +764,20 @@ def validate_xcresult_archive(
     except (OSError, RuntimeError, EOFError, zipfile.BadZipFile, zipfile.LargeZipFile) as error:
         raise ValidationError(f"{label}: artifact is not a valid xcresult ZIP") from error
     roots = {path.split("/", 1)[0] for path in paths}
-    check(len(roots) == 1 and next(iter(roots)).endswith(".xcresult"), f"{label}: ZIP root is not one xcresult")
-    root = next(iter(roots))
-    check(f"{root}/Info.plist" in paths, f"{label}: xcresult ZIP is missing Info.plist")
-    check(any(path.startswith(f"{root}/Data/") for path in paths), f"{label}: xcresult ZIP is missing Data")
+    if len(roots) == 1 and next(iter(roots)).endswith(".xcresult"):
+        root = next(iter(roots))
+        prefix = f"{root}/"
+    elif roots <= {"Data", "Info.plist"}:
+        # actions/upload-artifact archives a single directory as its
+        # contents, so a live GitHub artifact of an xcresult bundle has
+        # Data/ and Info.plist at the ZIP root instead of a .xcresult
+        # wrapper directory. The bundle content is identical.
+        root = ""
+        prefix = ""
+    else:
+        check(False, f"{label}: ZIP root is not one xcresult")
+    check(f"{prefix}Info.plist" in paths, f"{label}: xcresult ZIP is missing Info.plist")
+    check(any(path.startswith(f"{prefix}Data/") for path in paths), f"{label}: xcresult ZIP is missing Data")
     if required_test is not None:
         if test_results is None:
             test_results = xcresult_test_results(archive, root, label)
