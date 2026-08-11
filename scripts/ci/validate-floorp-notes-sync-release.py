@@ -671,8 +671,6 @@ def gh_api_download_digest(
                     TRUSTED_GITHUB_HOST,
                     "--method",
                     "GET",
-                    "-H",
-                    "Accept: application/octet-stream",
                     endpoint,
                 ],
                 stdout=output,
