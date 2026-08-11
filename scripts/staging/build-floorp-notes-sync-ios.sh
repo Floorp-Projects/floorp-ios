@@ -1699,20 +1699,29 @@ def parse_signature(path):
 
 app_fields, app_authorities = parse_signature(app_signature_raw)
 binary_fields, binary_authorities = parse_signature(binary_signature_raw)
-expected_app_authorities = [
+apple_mac_os_application_signing = [
     "Apple Mac OS Application Signing",
     "Apple Worldwide Developer Relations Certification Authority",
     "Apple Root CA",
 ]
+apple_software_signing = [
+    "Software Signing",
+    "Apple Code Signing Certification Authority",
+    "Apple Root CA",
+]
 allowed_binary_authorities = [
-    ["Software Signing", "Apple Code Signing Certification Authority", "Apple Root CA"],
-    expected_app_authorities,
+    apple_software_signing,
+    apple_mac_os_application_signing,
+]
+allowed_app_authorities = [
+    apple_mac_os_application_signing,
+    apple_software_signing,
 ]
 if app_fields.get("Identifier") != "com.apple.dt.Xcode":
     reject("selected Xcode app has an unexpected signing identifier")
 if app_fields.get("TeamIdentifier") != "59GAB85EFG":
     reject("selected Xcode app is not signed by Apple's Xcode team")
-if app_fields.get("Signature") == "adhoc" or app_authorities != expected_app_authorities:
+if app_fields.get("Signature") == "adhoc" or app_authorities not in allowed_app_authorities:
     reject("selected Xcode app does not have the approved Apple authority chain")
 if binary_fields.get("Identifier") != "com.apple.dt.xcodebuild":
     reject("selected xcodebuild has an unexpected signing identifier")

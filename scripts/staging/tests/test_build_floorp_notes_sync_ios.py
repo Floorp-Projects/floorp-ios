@@ -751,6 +751,15 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                             "Signature=adhoc",
                             "TeamIdentifier=not set",
                         ]
+                    elif xcode_signature_mode == "software-chain":
+                        lines = [
+                            "Identifier=com.apple.dt.Xcode",
+                            "Authority=Software Signing",
+                            "Authority=Apple Code Signing Certification Authority",
+                            "Authority=Apple Root CA",
+                            "TeamIdentifier=59GAB85EFG",
+                            "CDHash=3333333333333333333333333333333333333333",
+                        ]
                     else:
                         xcode_team = (
                             "BADTEAM123"
@@ -1669,6 +1678,14 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 self.assertIn("xcode", result.stderr.lower())
                 self.assertFalse(manifest.exists())
                 self.assertFalse(xcode_record.exists())
+
+    def test_software_signing_xcode_app_chain_is_accepted(self):
+        result, manifest, _, xcode_record, _ = self.run_script(
+            env={"FAKE_XCODE_SIGNATURE_MODE": "software-chain"}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(manifest.exists())
+        self.assertTrue(xcode_record.exists())
 
     def test_allow_signing_rejects_ad_hoc_and_unexpected_entitlements(self):
         for signing_mode in ("adhoc", "unexpected-entitlement", "get-task-allow"):

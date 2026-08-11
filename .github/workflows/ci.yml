@@ -97,8 +97,10 @@ jobs:
 
       - name: Run Floorp release contract tests
         run: |
-          python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
-          python3 -m unittest discover -s scripts/staging/tests -p 'test_*.py'
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            python3 -m unittest discover -s scripts/staging/tests -p 'test_*.py'
 
       - name: Select Xcode
         run: |
