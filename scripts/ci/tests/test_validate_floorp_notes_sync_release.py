@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import zipfile
 from pathlib import Path
@@ -1183,6 +1184,40 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
                 io.BytesIO(output.getvalue()),
                 "xcresult",
             )
+
+    def test_download_digest_headers_differ_for_artifact_and_release_asset(self):
+        record = self.key_dir / "download-args.jsonl"
+        fake_gh = self.key_dir / "fake-gh-download"
+        fake_gh.write_text(
+            textwrap.dedent(
+                """\
+                #!/usr/bin/python3
+                import json, os, sys
+                with open(os.environ["FAKE_GH_RECORD"], "a") as handle:
+                    handle.write(json.dumps(sys.argv[1:]) + "\\n")
+                """
+            ),
+            encoding="utf-8",
+        )
+        fake_gh.chmod(fake_gh.stat().st_mode | stat.S_IXUSR)
+        environment = {"FAKE_GH_RECORD": str(record)}
+        VALIDATOR_MODULE.gh_api_download_digest(
+            fake_gh,
+            "repos/F/repos/a/actions/artifacts/1/zip",
+            "artifact",
+            environment,
+        )
+        VALIDATOR_MODULE.gh_api_download_digest(
+            fake_gh,
+            "repos/F/repos/a/releases/assets/1",
+            "asset",
+            environment,
+            release_asset=True,
+        )
+        calls = [json.loads(line) for line in record.read_text().splitlines()]
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("Accept: application/octet-stream", calls[0])
+        self.assertIn("Accept: application/octet-stream", calls[1])
 
     def test_g3_rejects_completed_terminal_manifest_as_integration_receipt(self):
         evidence = make_production_qa_evidence()
