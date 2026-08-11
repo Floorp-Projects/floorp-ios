@@ -658,21 +658,29 @@ def gh_api_download_digest(
     label: str,
     environment: Mapping[str, str],
     *,
+    release_asset: bool = False,
     require_xcresult: bool = False,
     required_xcresult_test: str | None = None,
 ) -> str:
     with tempfile.TemporaryFile() as output:
+        command = [
+            str(gh_bin),
+            "api",
+            "--hostname",
+            TRUSTED_GITHUB_HOST,
+            "--method",
+            "GET",
+        ]
+        if release_asset:
+            # The release-asset endpoint serves the binary only when the
+            # octet-stream Accept header is sent; the Actions artifact ZIP
+            # endpoint rejects that header with HTTP 415 and is fetched
+            # without it.
+            command += ["-H", "Accept: application/octet-stream"]
+        command.append(endpoint)
         try:
             result = subprocess.run(
-                [
-                    str(gh_bin),
-                    "api",
-                    "--hostname",
-                    TRUSTED_GITHUB_HOST,
-                    "--method",
-                    "GET",
-                    endpoint,
-                ],
+                command,
                 stdout=output,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
@@ -1679,6 +1687,7 @@ def verify_github_release_asset(
         f"repos/{source['repository']}/releases/assets/{source['asset_id']}",
         label,
         gh_environment,
+        release_asset=True,
     )
 
 
