@@ -28,6 +28,7 @@
 		F10A00222F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */; };
 		F10A00262F50000100000001 /* FloorpBrandingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00272F50000100000001 /* FloorpBrandingUITests.swift */; };
 		F10A002A2F50000100000001 /* FloorpNotesLocalV1UITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A002B2F50000100000001 /* FloorpNotesLocalV1UITests.swift */; };
+		F20A20022F52000100000001 /* FloorpNotesSyncProductionQAConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20A20032F52000100000001 /* FloorpNotesSyncProductionQAConfigurationTests.swift */; };
 		032CE5F62EBA0C04007CCC0D /* ToUExperiencePointsCalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032CE5F52EBA0C04007CCC0D /* ToUExperiencePointsCalculatorTests.swift */; };
 		033A5FCC2E5F001200A84E8A /* TermsOfUseTelemetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 033A5FCB2E5F001200A84E8A /* TermsOfUseTelemetryTests.swift */; };
 		033A62002E77FE9900A84E8A /* ResetTermsOfServiceAcceptancePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 033A61FF2E77FE9900A84E8A /* ResetTermsOfServiceAcceptancePage.swift */; };
@@ -2814,6 +2815,7 @@
 		F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPrivateHeaderBrandingUITests.swift; sourceTree = "<group>"; };
 		F10A00272F50000100000001 /* FloorpBrandingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpBrandingUITests.swift; sourceTree = "<group>"; };
 		F10A002B2F50000100000001 /* FloorpNotesLocalV1UITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesLocalV1UITests.swift; sourceTree = "<group>"; };
+		F20A20032F52000100000001 /* FloorpNotesSyncProductionQAConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNotesSyncProductionQAConfigurationTests.swift; sourceTree = "<group>"; };
 		001348F79CA80B94DCD3E535 /* km */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = km; path = km.lproj/PrivateBrowsing.strings; sourceTree = "<group>"; };
 		00218A431FC749D7BC8EC05D /* homepageStoryCategoriesOn.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = homepageStoryCategoriesOn.json; sourceTree = "<group>"; };
 		003141C6B19507C79B6C399C /* ga */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ga; path = ga.lproj/Menu.strings; sourceTree = "<group>"; };
@@ -13562,6 +13564,7 @@
 				F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */,
 				F10A00272F50000100000001 /* FloorpBrandingUITests.swift */,
 				F10A002B2F50000100000001 /* FloorpNotesLocalV1UITests.swift */,
+				F20A20032F52000100000001 /* FloorpNotesSyncProductionQAConfigurationTests.swift */,
 				5FEB88322D6F5E4A00ECE6B1 /* A11yHomePageTests.swift */,
 				5F7C8A032D09A62A00C9F89D /* A11yOnboardingTests.swift */,
 				5FACA10F2D099DCD00B289BC /* A11ySearchTest.swift */,
@@ -19604,6 +19607,7 @@
 				F10A00222F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift in Sources */,
 				F10A00262F50000100000001 /* FloorpBrandingUITests.swift in Sources */,
 				F10A002A2F50000100000001 /* FloorpNotesLocalV1UITests.swift in Sources */,
+				F20A20022F52000100000001 /* FloorpNotesSyncProductionQAConfigurationTests.swift in Sources */,
 				2CA16FDE1E5F089100332277 /* SearchTest.swift in Sources */,
 				8A9F0B5827C59E1800FE09AE /* ImageIdentifiers.swift in Sources */,
 				EDDC4F732F68697E00E0B8FA /* ModernKitOnboardingTests.swift in Sources */,
@@ -30211,6 +30215,23 @@
 			};
 			name = FirefoxBeta;
 		};
+		F20A20012F52000100000001 /* FloorpRelease */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				COPY_PHASE_STRIP = NO;
+				GCC_TREAT_WARNINGS_AS_ERRORS = NO;
+				INFOPLIST_FILE = "firefox-ios-tests/Tests/XCUITests/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MOZ_BUNDLE_ID)";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/firefox-ios-tests/Tests/XCUITests/XCUITests-Bridging-Header.h";
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Client;
+			};
+			name = FloorpRelease;
+		};
 		4354D3E124EEEEC5001184F6 /* Fennec */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -34052,6 +34073,7 @@
 				3BFE4B0F1D342FB900DDF53F /* Firefox */,
 				3BFE4B101D342FB900DDF53F /* FirefoxBeta */,
 				5A9F8FE02D91C3A60019C311 /* FirefoxStaging */,
+				F20A20012F52000100000001 /* FloorpRelease */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Fennec;

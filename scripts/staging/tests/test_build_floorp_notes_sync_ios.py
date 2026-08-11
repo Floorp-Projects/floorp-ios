@@ -163,6 +163,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             '    FAKE_MUTATE_GENERATED_MANIFEST="${FAKE_MUTATE_GENERATED_MANIFEST:-0}" \\\n'
             '    FAKE_MUTATE_GENERATED_SOURCE="${FAKE_MUTATE_GENERATED_SOURCE:-0}" \\\n'
             '    FAKE_MUTATE_LOCAL_SNAPSHOT="${FAKE_MUTATE_LOCAL_SNAPSHOT:-0}" \\\n'
+            '    FAKE_XCTESTRUN_MODE="${FAKE_XCTESTRUN_MODE:-valid}" \\\n'
             '    FAKE_G6_EMBEDDING="${FAKE_G6_EMBEDDING:-}" \\\n'
             '    FAKE_SIGNING_MODE="${FAKE_SIGNING_MODE:-valid}" \\\n'
             '    "$XCODEBUILD_BIN" "${XCODE_ARGS[@]}"'
@@ -368,6 +369,11 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 if "publication-inputs" in evidence.parts:
                     app_binary = pathlib.Path(os.environ["FAKE_APP_TO_MUTATE"])
                     app_binary.write_bytes(app_binary.read_bytes() + b"mutated")
+            if os.environ.get("FAKE_MUTATE_TEST_PRODUCTS_AFTER_FINAL_VALIDATION") == "1":
+                evidence = pathlib.Path(sys.argv[sys.argv.index("--evidence") + 1])
+                if "publication-inputs" in evidence.parts:
+                    xctestrun = pathlib.Path(os.environ["FAKE_XCTESTRUN_TO_MUTATE"])
+                    xctestrun.write_bytes(xctestrun.read_bytes() + b"mutated")
             raise SystemExit(int(os.environ.get("FAKE_VALIDATOR_EXIT", "0")))
         """))
 
@@ -562,6 +568,26 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             else:
                 derived = pathlib.Path(args[args.index("-derivedDataPath") + 1])
                 app = derived / "Build/Products/FloorpRelease-iphonesimulator/Client.app"
+            if args[0] == "build-for-testing":
+                test_products = pathlib.Path(
+                    args[args.index("-testProductsPath") + 1]
+                )
+                test_products.mkdir(parents=True)
+                xctestrun = test_products / "FloorpNotesSyncQA.xctestrun"
+                xctestrun_mode = os.environ.get("FAKE_XCTESTRUN_MODE", "valid")
+                if xctestrun_mode == "valid":
+                    xctestrun.write_text("synthetic test products")
+                elif xctestrun_mode == "outside-symlink":
+                    escaped = test_products.parent / "escaped.xctestrun"
+                    escaped.write_text("escaped test products")
+                    xctestrun.symlink_to(escaped)
+                elif xctestrun_mode == "internal-relative-symlink":
+                    xctestrun.write_text("synthetic test products")
+                    (test_products / "internal-relative-link").symlink_to(
+                        "FloorpNotesSyncQA.xctestrun"
+                    )
+                else:
+                    raise SystemExit("unsupported FAKE_XCTESTRUN_MODE: " + xctestrun_mode)
             app.mkdir(parents=True)
             generated_manifest = pathlib.Path(
                 next(
@@ -1315,6 +1341,106 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 self.assertIn("production-qa", result.stderr)
                 self.assertFalse(xcode_record.exists())
 
+    def test_production_qa_build_for_testing_binds_external_xcconfig(self):
+        result, manifest_path, _, xcode_record, output = self.run_script(
+            "production-qa", extra=["--action", "build-for-testing"]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        xcode_args = json.loads(xcode_record.read_text().splitlines()[0])
+        self.assertEqual(xcode_args[0], "build-for-testing")
+        self.assertEqual(xcode_args[xcode_args.index("-scheme") + 1], "FloorpNotesSyncQA")
+        self.assertEqual(
+            xcode_args[xcode_args.index("-testPlan") + 1], "FloorpNotesSyncQA"
+        )
+        test_products = Path(
+            xcode_args[xcode_args.index("-testProductsPath") + 1]
+        ).resolve()
+        self.assertTrue(test_products.is_relative_to(output.resolve()))
+        self.assertIn("-xcconfig", xcode_args)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", xcode_args)
+
+        manifest = json.loads(manifest_path.read_text())
+        self.assertEqual(manifest["build"]["action"], "build-for-testing")
+        self.assertEqual(manifest["build"]["scheme"], "FloorpNotesSyncQA")
+        self.assertEqual(manifest["build"]["test_plan"], "FloorpNotesSyncQA")
+        xcconfig = Path(manifest["contract_inputs"]["xcconfig_path"])
+        self.assertEqual(xcode_args[xcode_args.index("-xcconfig") + 1], str(xcconfig))
+        self.assertEqual(
+            manifest["contract_inputs"]["xcconfig_sha256"],
+            hashlib.sha256(xcconfig.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(Path(manifest["paths"]["test_products"]), test_products)
+        xctestrun = Path(manifest["paths"]["xctestrun"])
+        self.assertTrue(xctestrun.is_file())
+        self.assertTrue(xctestrun.is_relative_to(test_products))
+        self.assertEqual(
+            manifest["artifacts"]["xctestrun"]["sha256"],
+            hashlib.sha256(xctestrun.read_bytes()).hexdigest(),
+        )
+        test_products_digest = hashlib.sha256()
+        test_products_digest.update(
+            (
+                "F\0FloorpNotesSyncQA.xctestrun\0"
+                f"{xctestrun.stat().st_size}\0"
+                f"{hashlib.sha256(xctestrun.read_bytes()).hexdigest()}\n"
+            ).encode("utf-8")
+        )
+        self.assertEqual(
+            manifest["artifacts"]["test_products_merkle_sha256"],
+            test_products_digest.hexdigest(),
+        )
+        self.assertEqual(manifest["paths"]["archive"], None)
+        self.assertEqual(manifest["gate"], {"requested": True, "effective": True})
+
+    def test_build_for_testing_requires_production_qa(self):
+        for mode in ("release-disabled", "release-enabled"):
+            with self.subTest(mode=mode):
+                result, _, _, xcode_record, _ = self.run_script(
+                    mode, extra=["--action", "build-for-testing"]
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("build-for-testing", result.stderr)
+                self.assertFalse(xcode_record.exists())
+
+    def test_build_for_testing_refuses_archive_signing_and_device_destination(self):
+        cases = (
+            (
+                ["--archive-path", str(self.root / "unexpected.xcarchive")],
+                "archive-path",
+            ),
+            (["--allow-signing"], "production-qa"),
+            (["--destination", "generic/platform=iOS"], "iOS Simulator"),
+        )
+        for extra, expected_error in cases:
+            with self.subTest(extra=extra):
+                result, _, _, xcode_record, _ = self.run_script(
+                    "production-qa",
+                    extra=["--action", "build-for-testing", *extra],
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr)
+                self.assertFalse(xcode_record.exists())
+
+    def test_build_for_testing_rejects_test_products_symlink_escape(self):
+        result, manifest, _, xcode_record, _ = self.run_script(
+            "production-qa",
+            extra=["--action", "build-for-testing"],
+            env={"FAKE_XCTESTRUN_MODE": "outside-symlink"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("escapes its isolated test-products output", result.stderr)
+        self.assertTrue(xcode_record.exists())
+        self.assertFalse(manifest.exists())
+
+    def test_build_for_testing_allows_internal_relative_test_products_symlink(self):
+        result, manifest, _, _, _ = self.run_script(
+            "production-qa",
+            extra=["--action", "build-for-testing"],
+            env={"FAKE_XCTESTRUN_MODE": "internal-relative-symlink"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(manifest.exists())
+
     def test_release_enabled_archive_binds_g1_g5_and_all_artifacts(self):
         archive_parent = self.root / "final-output"
         archive_parent.mkdir(mode=0o700)
@@ -1610,6 +1736,26 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len(validator_record.read_text().splitlines()), 2)
         self.assertIn("changed after release validation", result.stderr.lower())
+        self.assertFalse(manifest.exists())
+
+    def test_test_products_mutation_after_final_validation_fails_before_publication(self):
+        next_output = self.root / f"output-{self.run_index + 1}"
+        xctestrun = (
+            next_output
+            / "FloorpNotesSyncQA.xctestproducts/FloorpNotesSyncQA.xctestrun"
+        )
+        result, manifest, validator_record, _, _ = self.run_script(
+            "production-qa",
+            extra=["--action", "build-for-testing"],
+            env={
+                "FAKE_MUTATE_TEST_PRODUCTS_AFTER_FINAL_VALIDATION": "1",
+                "FAKE_XCTESTRUN_TO_MUTATE": str(xctestrun),
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(validator_record.read_text().splitlines()), 2)
+        self.assertIn("test-products changed after release validation", result.stderr.lower())
         self.assertFalse(manifest.exists())
 
     def test_allow_signing_requires_release_enabled_device_archive(self):

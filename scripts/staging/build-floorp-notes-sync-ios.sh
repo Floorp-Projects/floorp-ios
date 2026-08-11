@@ -60,12 +60,14 @@ Usage:
     --source-sha SHA --output-dir PATH --manifest PATH \
     [--evidence PATH --validation-clock-manifest PATH] \
     [--schema PATH] [--endpoint-matrix PATH] \
-    [--action build|archive] [--archive-path PATH] \
+    [--action build|build-for-testing|archive] [--archive-path PATH] \
     [--destination DESTINATION] [--allow-signing]
 
 Modes:
   production-qa   Requires validated G1-G4 evidence and a validation clock.
                   Uses production FxA/Sync, but refuses archive and signing.
+                  build-for-testing creates an unsigned, external-xcconfig-bound
+                  XCTest product only; it does not run or establish G5/G6.
   release-disabled
                   Builds ordinary FloorpRelease with no evidence and an
                   effective false gate. Signing is refused.
@@ -124,7 +126,7 @@ case "$MODE" in
     *) fail "unsupported mode: $MODE" ;;
 esac
 case "$ACTION" in
-    build|archive) ;;
+    build|build-for-testing|archive) ;;
     *) fail "unsupported action: $ACTION" ;;
 esac
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "source-sha must be a lowercase 40-character Git SHA"
@@ -181,8 +183,12 @@ PY
     || fail "manifest already exists; build manifests are append-only: $MANIFEST"
 
 if [[ "$MODE" == "production-qa" ]]; then
-    [[ "$ACTION" == "build" ]] || fail "production-qa refuses archive actions"
+    [[ "$ACTION" == "build" || "$ACTION" == "build-for-testing" ]] \
+        || fail "production-qa refuses archive actions"
     [[ "$ALLOW_SIGNING" -eq 0 ]] || fail "production-qa refuses signing"
+fi
+if [[ "$ACTION" == "build-for-testing" && "$MODE" != "production-qa" ]]; then
+    fail "build-for-testing requires production-qa mode"
 fi
 if [[ "$MODE" == "release-disabled" ]]; then
     [[ -z "$EVIDENCE" && -z "$VALIDATION_CLOCK" ]] \
@@ -191,7 +197,7 @@ else
     [[ -n "$EVIDENCE" ]] || fail "$MODE requires --evidence"
     [[ -n "$VALIDATION_CLOCK" ]] || fail "$MODE requires --validation-clock-manifest"
 fi
-if [[ "$ACTION" == "build" && -n "$ARCHIVE_PATH" ]]; then
+if [[ "$ACTION" != "archive" && -n "$ARCHIVE_PATH" ]]; then
     fail "--archive-path is only valid with --action archive"
 fi
 if [[ "$ACTION" == "archive" ]]; then
@@ -211,6 +217,10 @@ fi
 DESTINATION="${DESTINATION:-generic/platform=iOS Simulator}"
 if [[ "$ACTION" == "archive" && "$DESTINATION_SET" -eq 0 ]]; then
     DESTINATION="generic/platform=iOS"
+fi
+if [[ "$ACTION" == "build-for-testing" ]]; then
+    [[ "$DESTINATION" == *"platform=iOS Simulator"* ]] \
+        || fail "build-for-testing requires an iOS Simulator destination"
 fi
 if [[ "$ALLOW_SIGNING" -eq 1 ]]; then
     [[ "$MODE" == "release-enabled" && "$ACTION" == "archive" ]] \
@@ -308,6 +318,15 @@ XC_CONFIG="$CONTRACT_DIR/FloorpNotesSyncBuild.xcconfig"
 COMMAND_JSON="$CONTRACT_DIR/xcodebuild-command.json"
 XCODE_VERSION_FILE="$CONTRACT_DIR/xcode-version.txt"
 TOOLCHAIN_RECORD="$CONTRACT_DIR/xcode-toolchain.json"
+XCODE_SCHEME="Floorp"
+TEST_PLAN=""
+TEST_PRODUCTS=""
+XCTESTRUN=""
+if [[ "$ACTION" == "build-for-testing" ]]; then
+    XCODE_SCHEME="FloorpNotesSyncQA"
+    TEST_PLAN="FloorpNotesSyncQA"
+    TEST_PRODUCTS="$OUTPUT_DIR/FloorpNotesSyncQA.xctestproducts"
+fi
 EVIDENCE_RESOURCE=""
 EVIDENCE_SNAPSHOT=""
 VALIDATION_CLOCK_SNAPSHOT=""
@@ -1796,7 +1815,7 @@ PY
 XCODE_ARGS=(
     "$ACTION"
     -project "$PROJECT"
-    -scheme Floorp
+    -scheme "$XCODE_SCHEME"
     -configuration FloorpRelease
     -destination "$DESTINATION"
     -derivedDataPath "$DERIVED_DATA"
@@ -1817,6 +1836,9 @@ XCODE_ARGS=(
 )
 if [[ "$ACTION" == "archive" ]]; then
     XCODE_ARGS+=( -archivePath "$ARCHIVE_PATH" )
+fi
+if [[ "$ACTION" == "build-for-testing" ]]; then
+    XCODE_ARGS+=( -testPlan "$TEST_PLAN" -testProductsPath "$TEST_PRODUCTS" )
 fi
 if [[ "$ALLOW_SIGNING" -eq 0 ]]; then
     XCODE_ARGS+=( CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO )
@@ -1865,6 +1887,59 @@ else
 fi
 [[ -n "$APP" && -d "$APP" ]] || fail "built Client.app was not found"
 APP="$(absolute_path "$APP")"
+
+if [[ "$ACTION" == "build-for-testing" ]]; then
+    [[ -d "$TEST_PRODUCTS" && ! -L "$TEST_PRODUCTS" ]] \
+        || fail "build-for-testing did not create a regular test-products directory"
+    XCTESTRUN="$("$PYTHON_BIN" - "$TEST_PRODUCTS" <<'PY'
+import sys
+from pathlib import Path
+
+raw_root = Path(sys.argv[1])
+
+
+def reject(message):
+    print(f"build-floorp-notes-sync-ios: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+if raw_root.is_symlink():
+    reject("test-products output may not be a symlink")
+try:
+    root = raw_root.resolve(strict=True)
+except OSError as error:
+    reject(f"test-products output is unavailable ({error})")
+if not root.is_dir():
+    reject("test-products output is not a directory")
+for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+    if not path.is_symlink():
+        continue
+    try:
+        target = path.resolve(strict=True)
+    except OSError as error:
+        reject(f"test-products symlink is dangling ({error})")
+    try:
+        target.relative_to(root)
+    except ValueError:
+        reject("test-products symlink escapes its isolated test-products output")
+candidates = sorted(
+    (
+        path
+        for path in root.rglob("*.xctestrun")
+        if path.is_file() and not path.is_symlink()
+    ),
+    key=lambda item: item.relative_to(root).as_posix(),
+)
+if len(candidates) != 1:
+    reject("build-for-testing did not create exactly one regular .xctestrun file")
+print(candidates[0])
+PY
+)" || exit $?
+    [[ -n "$XCTESTRUN" && -f "$XCTESTRUN" && ! -L "$XCTESTRUN" ]] \
+        || fail "build-for-testing did not create exactly one regular .xctestrun file"
+    TEST_PRODUCTS="$(absolute_path "$TEST_PRODUCTS")"
+    XCTESTRUN="$(absolute_path "$XCTESTRUN")"
+fi
 
 SOURCE_STATUS_AFTER="$("$GIT_BIN" -C "$ROOT" status --porcelain=v1 --untracked-files=all)"
 [[ "$SOURCE_STATUS_AFTER" == "$SOURCE_STATUS_BEFORE" && -z "$SOURCE_STATUS_AFTER" ]] \
@@ -2074,7 +2149,8 @@ fi
 
 MANIFEST_TMP="$MANIFEST.tmp.$$"
 "$PYTHON_BIN" - "$APP" "$ARCHIVE_PATH" "$MANIFEST_TMP" "$MODE" "$SOURCE_SHA" "$ACTUAL_TREE" \
-    "$ACTION" "$DESTINATION" "$ALLOW_SIGNING" "$OUTPUT_DIR" "$BUILD_LOG" "$XC_CONFIG" \
+    "$ACTION" "$XCODE_SCHEME" "$TEST_PLAN" "$TEST_PRODUCTS" "$XCTESTRUN" "$DESTINATION" \
+    "$ALLOW_SIGNING" "$OUTPUT_DIR" "$BUILD_LOG" "$XC_CONFIG" \
     "$FINAL_EVIDENCE_RESOURCE" "$EVIDENCE_DIGEST" "$FINAL_VALIDATOR" "$FINAL_SCHEMA" "$FINAL_PREFLIGHT" \
     "$XCODE_VERSION_FILE" "$COMMAND_JSON" "$ENTITLEMENTS_SOURCE" "$SNAPSHOT_RECORD" \
     "$SNAPSHOT_RECORD_SHA256" "$FINAL_SNAPSHOT_RECORD" "$FINAL_SNAPSHOT_RECORD_SHA256" \
@@ -2101,6 +2177,10 @@ from pathlib import Path
     source_sha,
     source_tree,
     action,
+    scheme,
+    test_plan,
+    test_products_raw,
+    xctestrun_raw,
     destination,
     allow_signing_raw,
     output_raw,
@@ -2132,6 +2212,8 @@ from pathlib import Path
 app = Path(app_raw).resolve()
 manifest_path = Path(manifest_raw).resolve()
 archive = Path(archive_raw).resolve() if archive_raw else None
+test_products = Path(test_products_raw).resolve() if test_products_raw else None
+xctestrun = Path(xctestrun_raw).resolve() if xctestrun_raw else None
 output = Path(output_raw).resolve()
 build_log = Path(build_log_raw).resolve()
 xcconfig = Path(xcconfig_raw).resolve()
@@ -2213,6 +2295,60 @@ def merkle_digest(root):
             continue
         digest.update(row.encode("utf-8"))
     return digest.hexdigest()
+
+
+try:
+    xcodebuild_arguments = json.loads(command_json_path.read_text())
+except (OSError, json.JSONDecodeError) as error:
+    reject(f"xcodebuild command record is unreadable ({error})")
+if not isinstance(xcodebuild_arguments, list) or not xcodebuild_arguments:
+    reject("xcodebuild command record is not a nonempty argument list")
+if xcodebuild_arguments[0] != action:
+    reject("xcodebuild command action does not match the manifest action")
+
+
+def command_option_value(option):
+    indexes = [
+        index for index, value in enumerate(xcodebuild_arguments) if value == option
+    ]
+    if len(indexes) != 1 or indexes[0] + 1 >= len(xcodebuild_arguments):
+        reject(f"xcodebuild command has no unique {option} option")
+    return xcodebuild_arguments[indexes[0] + 1]
+
+
+if command_option_value("-scheme") != scheme:
+    reject("xcodebuild command scheme does not match the manifest scheme")
+if command_option_value("-xcconfig") != str(xcconfig):
+    reject("xcodebuild command is not bound to the generated external xcconfig")
+if action == "build-for-testing":
+    expected_test_products = output / "FloorpNotesSyncQA.xctestproducts"
+    if mode != "production-qa":
+        reject("build-for-testing is only valid for production-qa")
+    if "platform=iOS Simulator" not in destination:
+        reject("build-for-testing destination is not an iOS Simulator")
+    if scheme != "FloorpNotesSyncQA" or test_plan != "FloorpNotesSyncQA":
+        reject("build-for-testing must use the dedicated Floorp Notes Sync QA scheme")
+    if test_products is None or xctestrun is None:
+        reject("build-for-testing has no test-products or xctestrun output")
+    if test_products != expected_test_products:
+        reject("build-for-testing test-products path is outside its isolated output")
+    if Path(test_products_raw).is_symlink() or not test_products.is_dir():
+        reject("build-for-testing test-products output is not a regular directory")
+    if Path(xctestrun_raw).is_symlink() or not xctestrun.is_file():
+        reject("build-for-testing xctestrun output is not a regular file")
+    if xctestrun.suffix != ".xctestrun" or not xctestrun.is_relative_to(test_products):
+        reject("build-for-testing xctestrun is not contained by its test-products output")
+    if command_option_value("-testPlan") != test_plan:
+        reject("xcodebuild command test plan does not match the manifest")
+    if command_option_value("-testProductsPath") != str(test_products):
+        reject("xcodebuild command test-products path does not match the manifest")
+    if "CODE_SIGNING_ALLOWED=NO" not in xcodebuild_arguments:
+        reject("build-for-testing must remain unsigned")
+else:
+    if scheme != "Floorp" or test_plan or test_products is not None or xctestrun is not None:
+        reject("non-test build has unexpected test-products metadata")
+    if "-testPlan" in xcodebuild_arguments or "-testProductsPath" in xcodebuild_arguments:
+        reject("non-test build unexpectedly requested test-products output")
 
 
 info_path = app / "Info.plist"
@@ -2555,7 +2691,8 @@ manifest = {
     },
     "build": {
         "action": action,
-        "scheme": "Floorp",
+        "scheme": scheme,
+        "test_plan": test_plan or None,
         "configuration": "FloorpRelease",
         "destination": destination,
         "marketing_version": str(info.get("CFBundleShortVersionString", "")),
@@ -2567,12 +2704,14 @@ manifest = {
         "provisioning_profile": provisioning_profile_record,
         "xcode_version": xcode_version_path.read_text().splitlines(),
         "toolchain": json.loads(toolchain_record_path.read_text()),
-        "xcodebuild_arguments": json.loads(command_json_path.read_text()),
+        "xcodebuild_arguments": xcodebuild_arguments,
     },
     "paths": {
         "output": str(output),
         "app": str(app),
         "archive": str(archive) if archive else None,
+        "test_products": str(test_products) if test_products else None,
+        "xctestrun": str(xctestrun) if xctestrun else None,
         "build_log": str(build_log),
     },
     "contract_inputs": {
@@ -2633,6 +2772,12 @@ manifest = {
     },
     "artifacts": {
         "app_merkle_sha256": merkle_digest(app),
+        "test_products_merkle_sha256": (
+            merkle_digest(test_products) if test_products else None
+        ),
+        "xctestrun": file_record(xctestrun, base=test_products)
+        if xctestrun
+        else None,
         "executable": file_record(executable, base=app),
         "info_plist": file_record(info_path, base=app),
         "entitlements": {
@@ -2728,10 +2873,42 @@ try:
     manifest = json.loads(payload)
     app = Path(manifest["paths"]["app"]).resolve(strict=True)
     expected_app_digest = manifest["artifacts"]["app_merkle_sha256"]
+    action = manifest["build"]["action"]
+    test_products_raw = manifest["paths"]["test_products"]
+    xctestrun_raw = manifest["paths"]["xctestrun"]
+    expected_test_products_digest = manifest["artifacts"]["test_products_merkle_sha256"]
+    expected_xctestrun_digest = manifest["artifacts"]["xctestrun"]["sha256"] \
+        if manifest["artifacts"]["xctestrun"] is not None else None
 except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
     reject(f"temporary manifest artifact binding is invalid ({error})")
 if not app.is_dir() or app.is_symlink():
     reject("built app is unavailable immediately before publication")
+if action == "build-for-testing":
+    if not isinstance(test_products_raw, str) or not isinstance(xctestrun_raw, str):
+        reject("build-for-testing manifest has no test-products paths")
+    raw_test_products = Path(test_products_raw)
+    raw_xctestrun = Path(xctestrun_raw)
+    if raw_test_products.is_symlink() or raw_xctestrun.is_symlink():
+        reject("build-for-testing manifest test-products paths may not be symlinks")
+    try:
+        test_products = raw_test_products.resolve(strict=True)
+        xctestrun = raw_xctestrun.resolve(strict=True)
+    except OSError as error:
+        reject(f"build-for-testing output is unavailable before publication ({error})")
+    if (
+        not test_products.is_dir()
+        or not xctestrun.is_file()
+        or xctestrun.suffix != ".xctestrun"
+        or not xctestrun.is_relative_to(test_products)
+    ):
+        reject("build-for-testing output is invalid before publication")
+elif (
+    test_products_raw is not None
+    or xctestrun_raw is not None
+    or expected_test_products_digest is not None
+    or expected_xctestrun_digest is not None
+):
+    reject("non-test build manifest has unexpected test-products metadata")
 
 
 def sha256(path):
@@ -2761,6 +2938,11 @@ def merkle_digest(root):
 
 if merkle_digest(app) != expected_app_digest:
     reject("built app changed after release validation")
+if action == "build-for-testing":
+    if merkle_digest(test_products) != expected_test_products_digest:
+        reject("test-products changed after release validation")
+    if sha256(xctestrun) != expected_xctestrun_digest:
+        reject("xctestrun changed after release validation")
 parent = target.parent.resolve(strict=True)
 parent_flags = (
     os.O_RDONLY
