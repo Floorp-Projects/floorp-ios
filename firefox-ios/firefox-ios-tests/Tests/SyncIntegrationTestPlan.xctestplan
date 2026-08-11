@@ -193,7 +193,8 @@
         "ZoomingTestsTAE\/testZoomForceCloseFirefox_tabTrayExperimentOff()",
         "ZoomingTestsTAE\/testZoomForceCloseFirefox_tabTrayExperimentOn()",
         "ZoomingTestsTAE\/testZoomingActions()",
-        "ZoomingTestsTAE\/testZoomingActionsLandscape_tabTrayExperimentOff()"
+        "ZoomingTestsTAE\/testZoomingActionsLandscape_tabTrayExperimentOff()",
+        "FloorpNotesSyncProductionQAConfigurationTests\/testReleaseBuildConfigurationIsExplicit()"
       ],
       "target" : {
         "containerPath" : "container:Client.xcodeproj",
