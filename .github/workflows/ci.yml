@@ -257,7 +257,8 @@ jobs:
         with:
           name: floorp-ios-release-disabled-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/floorp-notes-sync-release-disabled
+            ${{ runner.temp }}/floorp-notes-sync-release-disabled/contract-inputs
+            ${{ runner.temp }}/floorp-notes-sync-release-disabled/xcodebuild.log
             ${{ runner.temp }}/floorp-notes-sync-release-disabled-manifest.json
           if-no-files-found: ignore
           retention-days: 7

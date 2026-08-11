@@ -2119,6 +2119,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         xcode_args = json.loads(xcode_record.read_text().splitlines()[0])
         self.assertIn("-disableAutomaticPackageResolution", xcode_args)
         self.assertIn("-onlyUsePackageVersionsFromResolvedFile", xcode_args)
+        self.assertIn("-skipMacroValidation", xcode_args)
         index = xcode_args.index("-clonedSourcePackagesDirPath")
         clones = Path(xcode_args[index + 1]).resolve()
         self.assertFalse(clones.is_relative_to(Path.home()))
@@ -2126,6 +2127,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text())
         xcode_manifest_args = manifest["build"]["xcodebuild_arguments"]
         self.assertIn("-disableAutomaticPackageResolution", xcode_manifest_args)
+        self.assertIn("-skipMacroValidation", xcode_manifest_args)
         self.assertIn(
             "-clonedSourcePackagesDirPath",
             xcode_manifest_args,

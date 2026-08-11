@@ -1803,6 +1803,7 @@ XCODE_ARGS=(
     -disableAutomaticPackageResolution
     -onlyUsePackageVersionsFromResolvedFile
     -clonedSourcePackagesDirPath "$XCODE_PACKAGE_CLONES"
+    -skipMacroValidation
     -xcconfig "$XC_CONFIG"
     COMPILER_INDEX_STORE_ENABLE=NO
     "FLOORP_GENERATED_SOURCE_MANIFEST=$GENERATED_SOURCE_RECORD"
