@@ -41,14 +41,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ACTION=build SOURCE_ROOT="${FIREFOX_ROOT}" PROJECT=Client \
-    bash "${GENERATOR}" -g Glean -o "${temporary_dir}" "${definitions[@]}"
+ACTION=build FLOORP_GLEAN_VERIFY_ONLY=NO SOURCE_ROOT="${FIREFOX_ROOT}" PROJECT=Client \
+    bash "${GENERATOR}" -g Glean -o "${temporary_dir}" -b 0 "${definitions[@]}"
 
 generated_file="${temporary_dir}/Metrics.swift"
 if [[ ! -s "${generated_file}" ]]; then
     echo "Glean generator did not produce Metrics.swift" >&2
     exit 1
 fi
+
+case "${FLOORP_GENERATED_SOURCES_PREPARED:-NO}" in
+    YES)
+        expected_file="${OUTPUT_DIR}/Metrics.swift"
+        if [[ ! -f "${expected_file}" ]] || ! cmp -s "${generated_file}" "${expected_file}"; then
+            echo "Prepared Glean Metrics.swift does not match regenerated output" >&2
+            exit 1
+        fi
+        echo "Prepared Glean Metrics.swift matches regenerated output."
+        exit 0
+        ;;
+    NO) ;;
+    *)
+        echo "FLOORP_GENERATED_SOURCES_PREPARED must be YES or NO" >&2
+        exit 2
+        ;;
+esac
 
 mkdir -p "${OUTPUT_DIR}"
 staged_file="$(mktemp "${OUTPUT_DIR}/.Metrics.swift.XXXXXX")"

@@ -26,6 +26,7 @@
 set -e
 
 GLEAN_PARSER_VERSION=20.0
+GLEAN_PARSER_DISTRIBUTION_VERSION=20.0.0
 
 # CMDNAME is used in the usage text below.
 # shellcheck disable=SC2034
@@ -173,10 +174,150 @@ if [ -z "$PROJECT" ]; then
     exit 2
 fi
 
-VENVDIR="${SOURCE_ROOT}/.venv"
+if [ -n "${FLOORP_GLEAN_VENV:-}" ]; then
+    if [ -z "${FLOORP_GLEAN_TOOL_ROOT:-}" ] || [ -z "${FLOORP_GLEAN_VERIFY_ROOT:-}" ]; then
+        echo "Error: external Glean tooling requires \$FLOORP_GLEAN_TOOL_ROOT and \$FLOORP_GLEAN_VERIFY_ROOT." >&2
+        exit 2
+    fi
+    /usr/bin/python3 -I -S - \
+        "${SOURCE_ROOT}" "${FLOORP_GLEAN_TOOL_ROOT}" \
+        "${FLOORP_GLEAN_VENV}" "${FLOORP_GLEAN_VERIFY_ROOT}" <<'PY'
+import os
+import pathlib
+import stat
+import sys
 
-[ -x "${VENVDIR}/bin/python" ] || python3 -m venv "${VENVDIR}"
-"${VENVDIR}"/bin/pip install --disable-pip-version-check "glean_parser==$GLEAN_PARSER_VERSION"
+
+def reject(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+source = pathlib.Path(sys.argv[1]).resolve(strict=True)
+raw_tool = pathlib.Path(sys.argv[2])
+raw_venv = pathlib.Path(sys.argv[3])
+raw_verify = pathlib.Path(sys.argv[4])
+if raw_tool.is_symlink() or raw_verify.is_symlink() or raw_venv.is_symlink():
+    reject("Error: external Glean tool paths must not be symlinks.")
+tool = raw_tool.resolve(strict=True)
+venv = raw_venv.resolve(strict=False)
+verify = raw_verify.resolve(strict=True)
+
+if not pathlib.Path(sys.argv[2]).is_absolute() or not pathlib.Path(sys.argv[3]).is_absolute():
+    reject("Error: external Glean tool paths must be absolute paths.")
+if not pathlib.Path(sys.argv[4]).is_absolute():
+    reject("Error: external Glean verify path must be an absolute path.")
+if venv != tool / "glean-venv" or verify != tool / "verify":
+    reject("Error: external Glean paths do not match the private tool root.")
+try:
+    venv.relative_to(source)
+except ValueError:
+    pass
+else:
+    reject("Error: external Glean venv must be outside SOURCE_ROOT.")
+for path, label in ((tool, "tool root"), (verify, "verify root")):
+    metadata = path.lstat()
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        reject(f"Error: external Glean {label} is not a safe directory.")
+    if stat.S_IMODE(metadata.st_mode) != 0o700:
+        reject(f"Error: external Glean {label} mode must be 0700.")
+PY
+    VENVDIR="${FLOORP_GLEAN_VENV}"
+else
+    VENVDIR="${SOURCE_ROOT}/.venv"
+fi
+
+if [ -n "${FLOORP_GLEAN_VENV:-}" ]; then
+    GLEAN_LOCK=""
+    for candidate in \
+        "${FLOORP_GLEAN_TOOL_ROOT}/glean-requirements.lock" \
+        "${SOURCE_ROOT}/../scripts/staging/glean-requirements.lock"; do
+        if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+            GLEAN_LOCK="$candidate"
+            break
+        fi
+    done
+    if [ -z "$GLEAN_LOCK" ]; then
+        echo "error: Glean requirements lock is missing" >&2
+        exit 2
+    fi
+    if [ ! -x "${VENVDIR}/bin/python" ]; then
+        python3 -m venv "${VENVDIR}"
+    fi
+    if ! "${VENVDIR}"/bin/python -I -c \
+        "import importlib.metadata; raise SystemExit(importlib.metadata.version('glean_parser') != '${GLEAN_PARSER_DISTRIBUTION_VERSION}')"; then
+        "${VENVDIR}"/bin/pip install --disable-pip-version-check --require-hashes -r "$GLEAN_LOCK"
+    fi
+    if [ "${FLOORP_GLEAN_VERIFY_ONLY:-NO}" = "YES" ]; then
+        if [ -z "${FLOORP_GENERATED_SOURCE_MANIFEST:-}" ]; then
+            echo "error: verify-only Glean generation requires the generated-source manifest" >&2
+            exit 2
+        fi
+        GLEAN_FREEZE="$("${VENVDIR}"/bin/python -I -m pip freeze --all 2>/dev/null || true)"
+        "${VENVDIR}"/bin/python -I - "$FLOORP_GENERATED_SOURCE_MANIFEST" "$GLEAN_FREEZE" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+
+def reject(message):
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+manifest_path = pathlib.Path(sys.argv[1])
+freeze = sorted(line for line in sys.argv[2].splitlines() if line)
+try:
+    payload = json.loads(manifest_path.read_text())
+except (OSError, ValueError) as error:
+    reject(f"generated-source manifest is unreadable ({error})")
+try:
+    tools = payload["tools"]
+    record = tools["glean_python"]
+    installed = tools["installed_packages"]
+except (KeyError, TypeError):
+    reject("generated-source manifest Glean schema is missing")
+resolved = pathlib.Path(record.get("resolved_path", "")).resolve(strict=False)
+if not resolved.is_file() or resolved.is_symlink():
+    reject("Glean venv Python is missing or unsafe")
+if hashlib.sha256(resolved.read_bytes()).hexdigest() != record.get("sha256"):
+    reject("Glean venv Python does not match the canonical manifest")
+if freeze != sorted(installed):
+    reject("Glean installed packages do not match the canonical manifest")
+PY
+    fi
+else
+    [ -x "${VENVDIR}/bin/python" ] || python3 -m venv "${VENVDIR}"
+    if ! "${VENVDIR}"/bin/python -I -c \
+        "import importlib.metadata; raise SystemExit(importlib.metadata.version('glean_parser') != '${GLEAN_PARSER_DISTRIBUTION_VERSION}')"; then
+        "${VENVDIR}"/bin/pip install --disable-pip-version-check "glean_parser==$GLEAN_PARSER_VERSION"
+    fi
+fi
+
+VERIFY_ONLY="${FLOORP_GLEAN_VERIFY_ONLY:-NO}"
+case "${VERIFY_ONLY}" in
+    YES|NO) ;;
+    *) echo "Error: \$FLOORP_GLEAN_VERIFY_ONLY must be YES or NO." >&2; exit 2 ;;
+esac
+EXPECTED_OUTPUT_DIR="${OUTPUT_DIR}"
+EXPECTED_DOCS_DIRECTORY="${DOCS_DIRECTORY}"
+VERIFY_TEMP=""
+if [ "${VERIFY_ONLY}" = "YES" ]; then
+    if [ -z "${FLOORP_GLEAN_VERIFY_ROOT:-}" ]; then
+        echo "Error: verify-only generation requires \$FLOORP_GLEAN_VERIFY_ROOT." >&2
+        exit 2
+    fi
+    VERIFY_TEMP="$(mktemp -d "${FLOORP_GLEAN_VERIFY_ROOT}/sdk.XXXXXX")"
+    cleanup_verify_temp() {
+        rm -rf -- "${VERIFY_TEMP}"
+    }
+    trap cleanup_verify_temp EXIT
+    OUTPUT_DIR="${VERIFY_TEMP}/generated"
+    if [ -n "${DOCS_DIRECTORY}" ]; then
+        DOCS_DIRECTORY="${VERIFY_TEMP}/markdown"
+    fi
+fi
 
 # Run the glinter
 # Turn its warnings into warnings visible in Xcode (but don't do for the success message)
@@ -206,6 +347,18 @@ if [ -n "$DOCS_DIRECTORY" ]; then
         -o "${DOCS_DIRECTORY}" \
         $ALLOW_RESERVED \
         "${YAML_FILES[@]}"
+fi
+
+if [ "${VERIFY_ONLY}" = "YES" ]; then
+    if ! diff -r -q -- "${EXPECTED_OUTPUT_DIR}" "${OUTPUT_DIR}"; then
+        echo "error: prepared Glean output does not match regenerated output." >&2
+        exit 1
+    fi
+    if [ -n "${EXPECTED_DOCS_DIRECTORY}" ] \
+        && ! diff -r -q -- "${EXPECTED_DOCS_DIRECTORY}" "${DOCS_DIRECTORY}"; then
+        echo "error: prepared Glean markdown does not match regenerated output." >&2
+        exit 1
+    fi
 fi
 
 exit 0

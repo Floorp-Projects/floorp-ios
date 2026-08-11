@@ -19246,7 +19246,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "bash $PWD/bin/sdk_generator.sh -g Glean -o $SRCROOT/Storage/Generated\n";
+			shellScript = "bash $PWD/bin/sdk_generator.sh -g Glean -o $SRCROOT/Storage/Generated -b 0\n";
 		};
 		5FA2232B27F6FA00005B3D87 /* Glean SDK Generator Script */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -19290,7 +19290,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"$ACTION\" != \"indexbuild\" ]; then\n    /usr/bin/env -i HOME=$HOME PROJECT=$PROJECT CONFIGURATION=$CONFIGURATION SOURCE_ROOT=$SOURCE_ROOT bash \"$SOURCE_ROOT/bin/nimbus-fml.sh\" --verbose\nfi\n\n";
+			shellScript = "if [ \"$ACTION\" != \"indexbuild\" ]; then\n    if [ \"${FLOORP_GENERATED_SOURCES_PREPARED:-NO}\" = \"YES\" ]; then\n        if [ -z \"${FLOORP_GENERATED_SOURCE_MANIFEST:-}\" ]; then\n            echo \"error: prepared generated-source manifest is missing\" >&2\n            exit 1\n        fi\n        if [ -z \"${FLOORP_GENERATED_SOURCE_SHA:-}\" ] || [ -z \"${FLOORP_SOURCE_ARCHIVE:-}\" ]; then\n            echo \"error: prepared generated-source identity is missing\" >&2\n            exit 1\n        fi\n        /usr/bin/python3 -I -S \"$SOURCE_ROOT/../scripts/staging/prepare-floorp-ios-source-snapshot.py\" verify --source-root \"$SOURCE_ROOT/..\" --manifest \"$FLOORP_GENERATED_SOURCE_MANIFEST\" --source-sha \"$FLOORP_GENERATED_SOURCE_SHA\" --source-archive \"$FLOORP_SOURCE_ARCHIVE\"\n    else\n        /usr/bin/env -i HOME=$HOME PROJECT=$PROJECT CONFIGURATION=$CONFIGURATION SOURCE_ROOT=$SOURCE_ROOT bash \"$SOURCE_ROOT/bin/nimbus-fml.sh\" --verbose\n    fi\nfi\n\n";
 		};
 		C2A1EA152F4383FE00DD202A /* Run Periphery */ = {
 			isa = PBXShellScriptBuildPhase;

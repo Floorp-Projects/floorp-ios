@@ -295,10 +295,14 @@ if action == "archive" and archive is not None:
 PY
 CONTRACT_DIR="$OUTPUT_DIR/contract-inputs"
 DERIVED_DATA="$OUTPUT_DIR/DerivedData"
+TOOL_STATE="$OUTPUT_DIR/tool-state"
+GLEAN_VENV="$TOOL_STATE/glean-venv"
+GLEAN_VERIFY_ROOT="$TOOL_STATE/verify"
 BUILD_LOG="$OUTPUT_DIR/xcodebuild.log"
 SOURCE_ARCHIVE="$OUTPUT_DIR/source-$SOURCE_SHA.tar"
 SOURCE_SNAPSHOT="$OUTPUT_DIR/source-$SOURCE_SHA"
 SOURCE_SNAPSHOT_RECORD="$CONTRACT_DIR/source-snapshot.json"
+GENERATED_SOURCE_RECORD="$CONTRACT_DIR/generated-source-inputs.json"
 PREFLIGHT="$CONTRACT_DIR/preflight.json"
 XC_CONFIG="$CONTRACT_DIR/FloorpNotesSyncBuild.xcconfig"
 COMMAND_JSON="$CONTRACT_DIR/xcodebuild-command.json"
@@ -323,11 +327,62 @@ mkdir -p "$SOURCE_SNAPSHOT"
 ARCHIVED_COMMIT="$("$GIT_BIN" get-tar-commit-id < "$SOURCE_ARCHIVE")"
 [[ "$ARCHIVED_COMMIT" == "$SOURCE_SHA" ]] \
     || fail "source archive is not bound to the requested commit"
+"$PYTHON_BIN" - "$SOURCE_ARCHIVE" <<'PY'
+import os
+import sys
+import tarfile
+
+
+def reject(message):
+    print(f"build-floorp-notes-sync-ios: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+archive_path = sys.argv[1]
+try:
+    opened = tarfile.open(archive_path, mode="r:")
+except (OSError, tarfile.TarError) as error:
+    reject(f"source archive cannot be audited ({error})")
+observed: set[str] = set()
+with opened:
+    for member in opened:
+        name = member.name
+        if member.isdir() and name.endswith("/"):
+            name = name[:-1]
+        if not name or name == "." or name.endswith("/."):
+            reject(f"source archive member has an unsafe name: {name!r}")
+        if name.startswith("/") or name.startswith("\\") or "\\" in name:
+            reject(f"source archive member has an absolute path: {name}")
+        parts = name.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            reject(f"source archive member escapes the snapshot: {name}")
+        if member.issym():
+            reject(f"source archive contains a symlink member: {name}")
+        if member.islnk():
+            reject(f"source archive contains a hardlink member: {name}")
+        if not (member.isreg() or member.isdir()):
+            reject(f"source archive contains a special-file member: {name}")
+        if name in observed:
+            reject(f"source archive contains a duplicate member: {name}")
+        observed.add(name)
+PY
 "$TAR_BIN" -xf "$SOURCE_ARCHIVE" -C "$SOURCE_SNAPSHOT"
+GENERATED_SOURCE_PREPARER="$SOURCE_SNAPSHOT/scripts/staging/prepare-floorp-ios-source-snapshot.py"
+[[ -f "$GENERATED_SOURCE_PREPARER" ]] \
+    || fail "exact-commit generated-source preparer is missing"
+"$PYTHON_BIN" "$GENERATED_SOURCE_PREPARER" prepare \
+    --source-root "$SOURCE_SNAPSHOT" \
+    --source-archive "$SOURCE_ARCHIVE" \
+    --source-sha "$SOURCE_SHA" \
+    --output-root "$OUTPUT_DIR" \
+    --tool-state "$TOOL_STATE" \
+    --output "$GENERATED_SOURCE_RECORD"
+GENERATED_SOURCE_DIGEST="$("$SHASUM_BIN" -a 256 "$GENERATED_SOURCE_RECORD" | "$AWK_BIN" '{print $1}')"
 "$CHMOD_BIN" -R a-w "$SOURCE_SNAPSHOT"
 
 SOURCE_SNAPSHOT_DIGEST="$("$PYTHON_BIN" - "$SOURCE_SNAPSHOT" "$SOURCE_ARCHIVE" \
-    "$SOURCE_SNAPSHOT_RECORD" "$SOURCE_SHA" "$ACTUAL_TREE" <<'PY'
+    "$SOURCE_SNAPSHOT_RECORD" "$SOURCE_SHA" "$ACTUAL_TREE" \
+    "$GENERATED_SOURCE_RECORD" "$GENERATED_SOURCE_DIGEST" <<'PY'
 import hashlib
 import json
 import os
@@ -338,7 +393,7 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve(strict=True)
 archive = Path(sys.argv[2]).resolve(strict=True)
 record_path = Path(sys.argv[3]).resolve(strict=False)
-source_sha, source_tree = sys.argv[4:]
+source_sha, source_tree, generated_record, generated_digest = sys.argv[4:]
 
 
 def reject(message):
@@ -382,6 +437,10 @@ record = {
     "archive_sha256": archive_digest,
     "commit": source_sha,
     "file_count": file_count,
+    "generated_source_inputs": {
+        "path": str(Path(generated_record).resolve(strict=True)),
+        "sha256": generated_digest,
+    },
     "read_only": True,
     "snapshot_path": str(root),
     "snapshot_tree_sha256": tree_digest.hexdigest(),
@@ -407,7 +466,8 @@ PY
 
 verify_source_snapshot() {
     "$PYTHON_BIN" - "$SOURCE_SNAPSHOT" "$SOURCE_ARCHIVE" "$SOURCE_SNAPSHOT_RECORD" \
-        "$SOURCE_SNAPSHOT_DIGEST" <<'PY'
+        "$SOURCE_SNAPSHOT_DIGEST" "$GENERATED_SOURCE_RECORD" \
+        "$GENERATED_SOURCE_DIGEST" <<'PY'
 import hashlib
 import json
 import os
@@ -419,6 +479,8 @@ root = Path(sys.argv[1]).resolve(strict=True)
 archive = Path(sys.argv[2]).resolve(strict=True)
 record_path = Path(sys.argv[3]).resolve(strict=True)
 expected_tree_digest = sys.argv[4]
+generated_record_path = Path(sys.argv[5]).resolve(strict=True)
+expected_generated_digest = sys.argv[6]
 record = json.loads(record_path.read_text())
 
 
@@ -437,6 +499,13 @@ def file_digest(path):
 
 if file_digest(archive) != record.get("archive_sha256"):
     reject("source archive changed after exact-commit extraction")
+if file_digest(generated_record_path) != expected_generated_digest:
+    reject("generated-source manifest changed after preparation")
+if record.get("generated_source_inputs") != {
+    "path": str(generated_record_path),
+    "sha256": expected_generated_digest,
+}:
+    reject("source snapshot record does not bind generated-source inputs")
 tree_digest = hashlib.sha256()
 file_count = 0
 for directory, names, files in os.walk(root, topdown=True, followlinks=False):
@@ -463,6 +532,11 @@ if tree_digest.hexdigest() != expected_tree_digest:
 if file_count != record.get("file_count"):
     reject("source snapshot file count changed during the build")
 PY
+    "$PYTHON_BIN" "$GENERATED_SOURCE_PREPARER" verify \
+        --source-root "$SOURCE_SNAPSHOT" \
+        --manifest "$GENERATED_SOURCE_RECORD" \
+        --source-sha "$SOURCE_SHA" \
+        --source-archive "$SOURCE_ARCHIVE"
 }
 
 DEFAULT_SCHEMA="$ROOT/docs/floorp-notes-sync-release-evidence.schema.json"
@@ -1625,20 +1699,29 @@ def parse_signature(path):
 
 app_fields, app_authorities = parse_signature(app_signature_raw)
 binary_fields, binary_authorities = parse_signature(binary_signature_raw)
-expected_app_authorities = [
+apple_mac_os_application_signing = [
     "Apple Mac OS Application Signing",
     "Apple Worldwide Developer Relations Certification Authority",
     "Apple Root CA",
 ]
+apple_software_signing = [
+    "Software Signing",
+    "Apple Code Signing Certification Authority",
+    "Apple Root CA",
+]
 allowed_binary_authorities = [
-    ["Software Signing", "Apple Code Signing Certification Authority", "Apple Root CA"],
-    expected_app_authorities,
+    apple_software_signing,
+    apple_mac_os_application_signing,
+]
+allowed_app_authorities = [
+    apple_mac_os_application_signing,
+    apple_software_signing,
 ]
 if app_fields.get("Identifier") != "com.apple.dt.Xcode":
     reject("selected Xcode app has an unexpected signing identifier")
 if app_fields.get("TeamIdentifier") != "59GAB85EFG":
     reject("selected Xcode app is not signed by Apple's Xcode team")
-if app_fields.get("Signature") == "adhoc" or app_authorities != expected_app_authorities:
+if app_fields.get("Signature") == "adhoc" or app_authorities not in allowed_app_authorities:
     reject("selected Xcode app does not have the approved Apple authority chain")
 if binary_fields.get("Identifier") != "com.apple.dt.xcodebuild":
     reject("selected xcodebuild has an unexpected signing identifier")
@@ -1689,6 +1772,27 @@ DEVELOPER_DIR="$SELECTED_DEVELOPER" "$XCODEBUILD_BIN" -version > "$XCODE_VERSION
 verify_contract_snapshots
 verify_source_snapshot
 
+XCODE_PRIVATE_HOME="$OUTPUT_DIR/xcode-home"
+XCODE_PRIVATE_TMP="$OUTPUT_DIR/xcode-tmp"
+XCODE_PACKAGE_CLONES="$OUTPUT_DIR/swiftpm-packages"
+"$PYTHON_BIN" - "$XCODE_PRIVATE_HOME" "$XCODE_PRIVATE_TMP" "$XCODE_PACKAGE_CLONES" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+for raw in sys.argv[1:]:
+    path = Path(raw)
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    if metadata is not None:
+        print(f"build-floorp-notes-sync-ios: private Xcode path already exists: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    os.mkdir(path, 0o700)
+PY
+
 XCODE_ARGS=(
     "$ACTION"
     -project "$PROJECT"
@@ -1696,8 +1800,20 @@ XCODE_ARGS=(
     -configuration FloorpRelease
     -destination "$DESTINATION"
     -derivedDataPath "$DERIVED_DATA"
+    -disableAutomaticPackageResolution
+    -onlyUsePackageVersionsFromResolvedFile
+    -clonedSourcePackagesDirPath "$XCODE_PACKAGE_CLONES"
+    -skipMacroValidation
     -xcconfig "$XC_CONFIG"
     COMPILER_INDEX_STORE_ENABLE=NO
+    "FLOORP_GENERATED_SOURCE_MANIFEST=$GENERATED_SOURCE_RECORD"
+    "FLOORP_GENERATED_SOURCE_SHA=$SOURCE_SHA"
+    "FLOORP_SOURCE_ARCHIVE=$SOURCE_ARCHIVE"
+    FLOORP_GENERATED_SOURCES_PREPARED=YES
+    "FLOORP_GLEAN_TOOL_ROOT=$TOOL_STATE"
+    "FLOORP_GLEAN_VENV=$GLEAN_VENV"
+    "FLOORP_GLEAN_VERIFY_ROOT=$GLEAN_VERIFY_ROOT"
+    FLOORP_GLEAN_VERIFY_ONLY=YES
 )
 if [[ "$ACTION" == "archive" ]]; then
     XCODE_ARGS+=( -archivePath "$ARCHIVE_PATH" )
@@ -1713,17 +1829,22 @@ Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:], indent=2) + "\n")
 PY
 
 set -o pipefail
-XCODE_HOME="${HOME:?HOME is required for Xcode and signing}"
 XCODE_USER="${USER:-$(/usr/bin/id -un)}"
-XCODE_TMPDIR="${TMPDIR:-/tmp}"
 XCODE_LANG="${LANG:-en_US.UTF-8}"
 if ! /usr/bin/env -i \
     PATH="$SYSTEM_PATH" \
-    HOME="$XCODE_HOME" \
+    HOME="$XCODE_PRIVATE_HOME" \
     USER="$XCODE_USER" \
     LOGNAME="$XCODE_USER" \
-    TMPDIR="$XCODE_TMPDIR" \
+    TMPDIR="$XCODE_PRIVATE_TMP" \
     LANG="$XCODE_LANG" \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_COUNT=2 \
+    GIT_CONFIG_KEY_0=core.fsmonitor \
+    GIT_CONFIG_VALUE_0=false \
+    GIT_CONFIG_KEY_1=core.hooksPath \
+    GIT_CONFIG_VALUE_1=/dev/null \
     DEVELOPER_DIR="$SELECTED_DEVELOPER" \
     "$XCODEBUILD_BIN" "${XCODE_ARGS[@]}" 2>&1 | "$TEE_BIN" "$BUILD_LOG"; then
     echo "build-floorp-notes-sync-ios: xcodebuild failed" >&2
@@ -2190,8 +2311,8 @@ for framework in sorted(app.rglob("*.framework")):
     binary = framework / framework.stem
     if binary.is_file():
         frameworks.append(file_record(binary, base=app))
-if not any("MozillaRustComponents.framework" in row["relative_path"] for row in frameworks):
-    reject("built app has no MozillaRustComponents framework evidence")
+if not any("RustMozillaAppServices.framework" in row["relative_path"] for row in frameworks):
+    reject("built app has no RustMozillaAppServices framework evidence")
 
 with entitlements_path.open("rb") as handle:
     configured_entitlements = plistlib.load(handle)

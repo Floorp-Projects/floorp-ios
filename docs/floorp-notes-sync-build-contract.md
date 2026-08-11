@@ -226,12 +226,25 @@ environment variables.
 
 The source worktree must be clean, `--source-sha` must equal `HEAD`, and Git
 status must remain unchanged through publication. The wrapper creates a Git
-archive for that exact commit, verifies the archive's embedded commit ID,
-extracts it outside the worktree, removes every write bit, rejects symlinks or
-special files, and records a content Merkle digest. Xcode receives only the
-project inside this read-only snapshot; the live worktree is never a build
-source. Archive, snapshot, and worktree identity are rechecked after the build
-and immediately before publication.
+archive for that exact commit, verifies the archive's embedded commit ID, and
+extracts it outside the worktree. Before freezing the snapshot, the reviewed
+generated-source preparer runs bootstrap, Glean, and Nimbus with fresh private
+tool state below the exclusive output directory. It proves that every archive
+file and executable bit is unchanged, permits only the exact reviewed
+generated JS/Swift path set, removes package and generator caches, and emits a
+canonical manifest containing every generated-file digest plus Node, npm,
+Nimbus, Python, Glean-version, and installed-package identities. The wrapper
+downloads the exact `.nvmrc` Node release from the versioned Node.js archive,
+requires its reviewed SHA-256 before private extraction, and never uses a
+mutable Homebrew Node installation. The wrapper
+then removes every source-snapshot write bit, rejects symlinks or special
+files, and records a content Merkle digest that binds the generated-source
+manifest. Xcode receives only this read-only snapshot; the live worktree is
+never a build source. Glean phases regenerate into private external temporary
+directories and compare bytes, while the Nimbus phase verifies the canonical
+manifest instead of writing source files. Archive, generated-input, snapshot,
+and worktree identity are rechecked after the build and immediately before
+publication.
 
 The output directory, manifest, archive, temporary xcconfig, all contract
 snapshots, and evidence resource must be outside the worktree. The output and
@@ -252,7 +265,8 @@ sealed artifact outside this scoped wrapper contract; validation must not be
 weakened to conceal that trust boundary.
 
 The emitted JSON manifest records absolute app/archive paths, source commit and
-tree, dirty state, configuration, Xcode version and arguments, version/build,
+tree, generated-source manifest path/digest, dirty state, configuration, Xcode
+version and arguments, version/build,
 configured and observed signed entitlements, executable and Info.plist hashes,
 Application Services pin/framework hashes, app Merkle digest, production
 endpoint authority, embedded evidence digest, validation-clock run ID, and the
