@@ -178,6 +178,10 @@ G4_ATTESTATION_XCRESULT_TEST = (
     "FloorpNotesSyncEngineSelectionTests/"
     "testG4AttestationBindsTask18Evidence()"
 )
+G5_TWO_CLIENT_XCRESULT_TEST = (
+    "FloorpNotesSyncTwoClientMatrixTests/"
+    "testTwoClientProductionMatrix()"
+)
 EXPECTED_FXA_HOSTS = (
     "accounts.firefox.com",
     "api.accounts.firefox.com",
@@ -1754,6 +1758,8 @@ def verify_github_actions_artifact(
         required_xcresult_test=(
             G4_ATTESTATION_XCRESULT_TEST
             if source.get("role") == "g4-attestation-xcresult"
+            else G5_TWO_CLIENT_XCRESULT_TEST
+            if source.get("artifact_name") == "floorp-notes-sync-two-client-xcresult"
             else None
         ),
     )
@@ -1784,6 +1790,8 @@ def verify_artifact_source(
             required_test = (
                 G4_ATTESTATION_XCRESULT_TEST
                 if source.get("role") == "g4-attestation-xcresult"
+                else G5_TWO_CLIENT_XCRESULT_TEST
+                if source.get("artifact_name") == "floorp-notes-sync-two-client-xcresult"
                 else None
             )
             validate_xcresult_archive(
@@ -1870,7 +1878,11 @@ def validate_task_manifest(
     label = f"{gate_name} task manifest"
     check(isinstance(manifest, dict), f"{label}: root must be an object")
     check(manifest.get("task_id") == TASK_BY_GATE[gate_name], f"{label}: wrong task ID")
-    check(manifest.get("state") == "completed", f"{label}: task is not completed")
+    expected_state = "g5_completed" if gate_name == "g5" else "completed"
+    check(
+        manifest.get("state") == expected_state,
+        f"{label}: state is not {expected_state}",
+    )
     validate_terminal_commands(manifest, label)
     if gate_name == "g1":
         floorp = manifest_repository(manifest, "Floorp", label)
@@ -1889,9 +1901,10 @@ def validate_task_manifest(
     elif gate_name == "g5":
         ios = manifest_repository(manifest, "floorp-ios", label)
         check(
-            inputs["ios"]["source_sha"] in (ios.get("head_oid"), ios.get("merged_oid")),
-            f"{label}: iOS provenance mismatch",
+            ios.get("head_oid") == inputs["ios"]["source_sha"],
+            f"{label}: iOS candidate provenance mismatch",
         )
+        check("merged_oid" not in ios, f"{label}: G5 operation must not claim a merged OID")
     return manifest
 
 
@@ -2312,23 +2325,59 @@ def validate_gate_source_semantics(
             xcresult["artifact_name"] == "floorp-notes-sync-two-client-xcresult",
             f"{label}: two-client xcresult artifact name is not canonical",
         )
+        ci_run_payload = payloads["ci-run"]
+        check(isinstance(ci_run_payload, dict), f"{label}: two-client CI run metadata is malformed")
+        check(
+            (ci_run_payload.get("event"), ci_run_payload.get("head_branch"))
+            == ("workflow_dispatch", "main"),
+            f"{label}: two-client CI run is not an explicit main dispatch",
+        )
         isolation = require_source(sources, "account-isolation-run", ("local-file",), "metadata-json", label)
         proxy = require_source(sources, "proxy-trace", ("local-file",), "network-metadata-json", label)
         check(isolation["sha256"] == gate["account_isolation_run_sha256"], f"{label}: isolation digest mismatch")
         check(proxy["sha256"] == gate["proxy_trace_sha256"], f"{label}: proxy digest mismatch")
         isolation_payload = payloads["account-isolation-run"]
         check(isinstance(isolation_payload, dict), f"{label}: isolation summary is malformed")
-        check(isolation_payload.get("accounts") == 2, f"{label}: exactly two accounts were not proven")
-        check(isolation_payload.get("isolated") is True, f"{label}: account isolation was not proven")
-        check(isolation_payload.get("payload_retained") is False, f"{label}: Notes payload-retention proof is missing")
+        expected_isolation = {
+            "accounts": 2,
+            "base_advanced_after_upload": True,
+            "cleanup_completed": True,
+            "fixture_sha256": EXPECTED_FIXTURE_SHA256,
+            "isolated": True,
+            "local_only_fallback_succeeded": True,
+            "payload_retained": False,
+            "rollback_succeeded": True,
+            "secrets_retained": False,
+        }
+        check(
+            isolation_payload == expected_isolation,
+            f"{label}: isolation, cleanup, rollback, or local-only fallback proof is incomplete",
+        )
         proxy_payload = payloads["proxy-trace"]
         check(isinstance(proxy_payload, dict), f"{label}: proxy summary is malformed")
-        check(proxy_payload.get("metadata_only") is True, f"{label}: proxy trace is not metadata-only")
         hosts = proxy_payload.get("hosts")
         check(isinstance(hosts, list) and bool(hosts), f"{label}: proxy hosts are missing")
         check(
             set(hosts) <= set(EXPECTED_FXA_HOSTS) | set(EXPECTED_SYNC_HOSTS),
             f"{label}: proxy trace contains an unapproved host",
+        )
+        check(
+            "sync.services.mozilla.com" in hosts,
+            f"{label}: proxy trace does not prove an approved Sync host",
+        )
+        expected_proxy = {
+            "endpoint_policy_sha256": EXPECTED_ENDPOINT_POLICY_SHA256,
+            "hosts": hosts,
+            "metadata_only": True,
+            "payload_retained": False,
+            "port": 443,
+            "secrets_retained": False,
+            "tls_interception": False,
+            "tls_verified": True,
+        }
+        check(
+            proxy_payload == expected_proxy,
+            f"{label}: proxy trace lacks exact metadata-only TLS evidence",
         )
 
 

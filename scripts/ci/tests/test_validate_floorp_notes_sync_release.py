@@ -360,6 +360,10 @@ TEST_SOURCE_BYTES = {
         b"ClientTests/FloorpNotesSyncEngineSelectionTests/"
         b"testG4AttestationBindsTask18Evidence()"
     ),
+    "g5-xcresult": synthetic_xcresult_zip(
+        b"XCUITests/FloorpNotesSyncTwoClientMatrixTests/"
+        b"testTwoClientProductionMatrix()"
+    ),
     "task18-execution-verdict": canonical_bytes(
         {
             "errors": [],
@@ -374,12 +378,29 @@ TEST_SOURCE_BYTES = {
     "tps-run": canonical_bytes(
         {"failed": 0, "passed": 1, "payload_retained": False, "secrets_retained": False}
     ),
-    "account-isolation-run": canonical_bytes({"accounts": 2, "isolated": True, "payload_retained": False}),
+    "account-isolation-run": canonical_bytes(
+        {
+            "accounts": 2,
+            "base_advanced_after_upload": True,
+            "cleanup_completed": True,
+            "fixture_sha256": "2597e5311c7c4ea4bb9d6a806ffa183aae3b3bd7380893b664b02ac829d665fd",
+            "isolated": True,
+            "local_only_fallback_succeeded": True,
+            "payload_retained": False,
+            "rollback_succeeded": True,
+            "secrets_retained": False,
+        }
+    ),
     "proxy-trace": canonical_bytes(
         {
+            "endpoint_policy_sha256": "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca",
             "hosts": ["accounts.firefox.com", "sync.services.mozilla.com"],
             "metadata_only": True,
-            "status_codes": [200],
+            "payload_retained": False,
+            "port": 443,
+            "secrets_retained": False,
+            "tls_interception": False,
+            "tls_verified": True,
         }
     ),
 }
@@ -484,7 +505,6 @@ def task_manifest_bytes(task_id: int, inputs: dict[str, object]) -> bytes:
             {
                 "base_oid": inputs["ios"]["source_sha"],
                 "head_oid": inputs["ios"]["source_sha"],
-                "merged_oid": inputs["ios"]["source_sha"],
                 "name": "floorp-ios",
             }
         ],
@@ -500,7 +520,7 @@ def task_manifest_bytes(task_id: int, inputs: dict[str, object]) -> bytes:
             ],
             "repositories": repositories_by_task[task_id],
             "schema_version": 1,
-            "state": "completed",
+            "state": "g5_completed" if task_id == 20 else "completed",
             "task_id": task_id,
         }
     )
@@ -726,7 +746,7 @@ def make_gate_sources(inputs: dict[str, object]) -> dict[str, list[dict[str, obj
             500000005,
             "floorp-notes-sync-two-client-xcresult",
             inputs["ios"]["source_sha"],
-            TEST_SOURCE_BYTES["xcresult"],
+            TEST_SOURCE_BYTES["g5-xcresult"],
         ),
         local_source(
             "account-isolation-run",
@@ -895,7 +915,11 @@ def test_materials(evidence: dict[str, object]) -> tuple[dict[str, bytes], dict[
                     )
                 )
             elif kind == "github-actions-artifact":
-                raw = TEST_SOURCE_BYTES["xcresult"]
+                raw = (
+                    TEST_SOURCE_BYTES["g5-xcresult"]
+                    if gate_name == "g5" and role == "xcresult"
+                    else TEST_SOURCE_BYTES["xcresult"]
+                )
             else:
                 raw = TEST_SOURCE_BYTES[role]
             if kind == "local-file":
@@ -1071,6 +1095,7 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         g6_trust_bundle: dict[str, bytes] | None = None,
         local_artifact_overrides: dict[str, bytes] | None = None,
         remote_artifact_overrides: dict[str, bytes] | None = None,
+        test_xcresult_results: dict[str, str | list[str]] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -1120,11 +1145,15 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
                     test_gh_bin=self.mock_gh,
                     test_gh_environment={"MOCK_GH_SCENARIO": gh_scenario},
                     test_remote_artifacts=remote_artifacts,
-                    test_xcresult_results={
+                    test_xcresult_results=test_xcresult_results or {
                         (
                             "FloorpNotesSyncEngineSelectionTests/"
                             "testG4AttestationBindsTask18Evidence()"
-                        ): "Passed"
+                        ): "Passed",
+                        (
+                            "FloorpNotesSyncTwoClientMatrixTests/"
+                            "testTwoClientProductionMatrix()"
+                        ): "Passed",
                     },
                     test_g6_trust_bundle=g6_trust_bundle,
                     test_ssh_keygen=SSH_KEYGEN if g6_trust_bundle is not None else None,
@@ -1149,6 +1178,150 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
     def test_valid_release_enabled_g1_g5_evidence_passes_without_g6_files(self):
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_g5_rejects_a_terminal_todo20_completion_claim(self):
+        evidence = make_evidence()
+        source = evidence["gates"]["g5"]["artifact"]["sources"][0]
+        manifest = json.loads(task_manifest_bytes(20, evidence["release_inputs"]))
+        manifest["state"] = "completed"
+        raw = canonical_bytes(manifest)
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+            evidence["gates"]["g5"]["artifact"]["sources"]
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("state is not g5_completed", result.stderr)
+
+    def test_g5_rejects_an_unverified_todo20_merged_oid_claim(self):
+        evidence = make_evidence()
+        source = evidence["gates"]["g5"]["artifact"]["sources"][0]
+        manifest = json.loads(task_manifest_bytes(20, evidence["release_inputs"]))
+        manifest["repositories"][0]["merged_oid"] = evidence["release_inputs"]["ios"]["source_sha"]
+        raw = canonical_bytes(manifest)
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+            evidence["gates"]["g5"]["artifact"]["sources"]
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("must not claim a merged OID", result.stderr)
+
+    def test_g5_rejects_missing_cleanup_rollback_or_local_only_fallback_proof(self):
+        evidence = make_evidence()
+        source = evidence["gates"]["g5"]["artifact"]["sources"][3]
+        payload = json.loads(TEST_SOURCE_BYTES["account-isolation-run"])
+        del payload["cleanup_completed"]
+        raw = canonical_bytes(payload)
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g5"]["account_isolation_run_sha256"] = source["sha256"]
+        evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+            evidence["gates"]["g5"]["artifact"]["sources"]
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cleanup, rollback, or local-only fallback", result.stderr)
+
+    def test_g5_rejects_tls_interception_or_unbound_endpoint_policy(self):
+        evidence = make_evidence()
+        source = evidence["gates"]["g5"]["artifact"]["sources"][4]
+        payload = json.loads(TEST_SOURCE_BYTES["proxy-trace"])
+        payload["tls_interception"] = True
+        raw = canonical_bytes(payload)
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g5"]["proxy_trace_sha256"] = source["sha256"]
+        evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+            evidence["gates"]["g5"]["artifact"]["sources"]
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("metadata-only TLS evidence", result.stderr)
+
+    def test_g5_requires_a_sync_service_host_in_the_proxy_evidence(self):
+        evidence = make_evidence()
+        source = evidence["gates"]["g5"]["artifact"]["sources"][4]
+        payload = json.loads(TEST_SOURCE_BYTES["proxy-trace"])
+        payload["hosts"] = ["accounts.firefox.com"]
+        raw = canonical_bytes(payload)
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g5"]["proxy_trace_sha256"] = source["sha256"]
+        evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+            evidence["gates"]["g5"]["artifact"]["sources"]
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            local_artifact_overrides={source["path"]: raw},
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not prove an approved Sync host", result.stderr)
+
+    def test_g5_rejects_noninteractive_ci_run(self):
+        evidence = make_evidence()
+        source = evidence["gates"]["g5"]["artifact"]["sources"][1]
+        raw = canonical_bytes(
+            actions_run_payload(
+                source["repository"],
+                source["run_id"],
+                source["workflow_path"],
+                source["head_sha"],
+                event="push",
+                head_branch="main",
+            )
+        )
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+            evidence["gates"]["g5"]["artifact"]["sources"]
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            remote_artifact_overrides={source_identity_key(source): raw},
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not an explicit main dispatch", result.stderr)
+
+    def test_g5_requires_the_dedicated_two_client_xcresult_node(self):
+        evidence = make_evidence()
+        source = evidence["gates"]["g5"]["artifact"]["sources"][2]
+        raw = TEST_SOURCE_BYTES["xcresult"]
+        source["sha256"] = hashlib.sha256(raw).hexdigest()
+        evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+            evidence["gates"]["g5"]["artifact"]["sources"]
+        )
+        rehash(evidence)
+        result = self.run_validator(
+            evidence,
+            remote_artifact_overrides={source_identity_key(source): raw},
+            test_xcresult_results={
+                (
+                    "FloorpNotesSyncEngineSelectionTests/"
+                    "testG4AttestationBindsTask18Evidence()"
+                ): "Passed",
+                (
+                    "FloorpNotesSyncTwoClientMatrixTests/"
+                    "testTwoClientProductionMatrix()"
+                ): "Failed",
+            },
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("required XCTest did not have Passed result nodes", result.stderr)
 
     def test_valid_production_qa_g1_g4_evidence_passes(self):
         result = self.run_validator(make_production_qa_evidence())

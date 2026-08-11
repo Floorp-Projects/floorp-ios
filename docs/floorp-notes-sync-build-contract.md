@@ -128,6 +128,22 @@ expires no later than the earliest source or notarization-artifact deadline.
 The post-build clock dispatch passes the canonical workflow file name
 `floorp-notes-sync-validation-clock.yml` to the public clock client.
 
+## G5 two-client evidence boundary
+
+G5 is valid only when a successful, manually dispatched `main` run of
+`.github/workflows/ci.yml` publishes
+`floorp-notes-sync-two-client-xcresult`. The archive must contain a passing
+`FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()` node;
+renaming an ordinary FloorpCI result does not satisfy this requirement.
+
+The public records are exact metadata-only summaries. Account isolation must
+prove two isolated accounts, post-upload base advancement, cleanup, rollback,
+and local-only fallback against the pinned fixture. Network evidence must prove
+the pinned endpoint policy, approved hosts, port 443, TLS verification without
+interception, and no retained payload or secret. A G5 operation record has
+`state: g5_completed`; it is not the terminal Todo 20 manifest and cannot claim
+completion before the separately validated G6 signatures.
+
 ## App integration interface
 
 The generated xcconfig provides these build settings:
