@@ -623,17 +623,17 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             executable = app / "Client"
             shutil.copyfile("/usr/bin/true", executable)
             executable.chmod(0o755)
-            framework = app / "Frameworks/MozillaRustComponents.framework"
+            framework = app / "Frameworks/RustMozillaAppServices.framework"
             framework.mkdir(parents=True)
-            framework_binary = framework / "MozillaRustComponents"
+            framework_binary = framework / "RustMozillaAppServices"
             shutil.copyfile("/usr/bin/true", framework_binary)
             framework_binary.chmod(0o755)
             with (framework / "Info.plist").open("wb") as handle:
                 plistlib.dump(
                     {
-                        "CFBundleExecutable": "MozillaRustComponents",
-                        "CFBundleIdentifier": "test.MozillaRustComponents",
-                        "CFBundleName": "MozillaRustComponents",
+                        "CFBundleExecutable": "RustMozillaAppServices",
+                        "CFBundleIdentifier": "test.RustMozillaAppServices",
+                        "CFBundleName": "RustMozillaAppServices",
                         "CFBundlePackageType": "FMWK",
                         "CFBundleVersion": "1",
                     },

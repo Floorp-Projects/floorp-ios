@@ -2311,8 +2311,8 @@ for framework in sorted(app.rglob("*.framework")):
     binary = framework / framework.stem
     if binary.is_file():
         frameworks.append(file_record(binary, base=app))
-if not any("MozillaRustComponents.framework" in row["relative_path"] for row in frameworks):
-    reject("built app has no MozillaRustComponents framework evidence")
+if not any("RustMozillaAppServices.framework" in row["relative_path"] for row in frameworks):
+    reject("built app has no RustMozillaAppServices framework evidence")
 
 with entitlements_path.open("rb") as handle:
     configured_entitlements = plistlib.load(handle)
