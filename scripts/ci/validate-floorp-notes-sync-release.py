@@ -182,6 +182,12 @@ G5_TWO_CLIENT_XCRESULT_TEST = (
     "FloorpNotesSyncTwoClientMatrixTests/"
     "testTwoClientProductionMatrix()"
 )
+G5_CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
+G5_CI_EVENT = "workflow_dispatch"
+G5_CI_HEAD_BRANCH = "main"
+G5_XCRESULT_ARTIFACT_NAME = "floorp-notes-sync-two-client-xcresult"
+G5_XCRESULT_ARTIFACT_KIND = "github-actions-artifact"
+G5_REQUIRED_SYNC_HOST = "sync.services.mozilla.com"
 EXPECTED_FXA_HOSTS = (
     "accounts.firefox.com",
     "api.accounts.firefox.com",
@@ -2106,7 +2112,7 @@ def validate_gate_source_semantics(
         )
         check(
             (ci_run["repository"], ci_run["head_sha"], ci_run["workflow_path"])
-            == (inputs["ios"]["repository"], inputs["ios"]["source_sha"], ".github/workflows/ci.yml"),
+            == (inputs["ios"]["repository"], inputs["ios"]["source_sha"], G5_CI_WORKFLOW_PATH),
             f"{label}: iOS CI run is not bound to the candidate",
         )
         xcresult = require_source(
@@ -2298,7 +2304,7 @@ def validate_gate_source_semantics(
         ci_run = require_source(sources, "ci-run", ("github-actions-run",), "metadata-json", label)
         check(
             (ci_run["repository"], ci_run["head_sha"], ci_run["workflow_path"])
-            == (inputs["ios"]["repository"], inputs["ios"]["source_sha"], ".github/workflows/ci.yml"),
+            == (inputs["ios"]["repository"], inputs["ios"]["source_sha"], G5_CI_WORKFLOW_PATH),
             f"{label}: two-client CI run is not bound to the candidate",
         )
         xcresult = require_source(
@@ -2322,14 +2328,14 @@ def validate_gate_source_semantics(
             f"{label}: xcresult artifact is not bound to the two-client CI run",
         )
         check(
-            xcresult["artifact_name"] == "floorp-notes-sync-two-client-xcresult",
+            xcresult["artifact_name"] == G5_XCRESULT_ARTIFACT_NAME,
             f"{label}: two-client xcresult artifact name is not canonical",
         )
         ci_run_payload = payloads["ci-run"]
         check(isinstance(ci_run_payload, dict), f"{label}: two-client CI run metadata is malformed")
         check(
             (ci_run_payload.get("event"), ci_run_payload.get("head_branch"))
-            == ("workflow_dispatch", "main"),
+            == (G5_CI_EVENT, G5_CI_HEAD_BRANCH),
             f"{label}: two-client CI run is not an explicit main dispatch",
         )
         isolation = require_source(sources, "account-isolation-run", ("local-file",), "metadata-json", label)
@@ -2356,13 +2362,19 @@ def validate_gate_source_semantics(
         proxy_payload = payloads["proxy-trace"]
         check(isinstance(proxy_payload, dict), f"{label}: proxy summary is malformed")
         hosts = proxy_payload.get("hosts")
-        check(isinstance(hosts, list) and bool(hosts), f"{label}: proxy hosts are missing")
+        check(
+            isinstance(hosts, list)
+            and bool(hosts)
+            and all(isinstance(host, str) for host in hosts)
+            and len(hosts) == len(set(hosts)),
+            f"{label}: proxy hosts are malformed or duplicated",
+        )
         check(
             set(hosts) <= set(EXPECTED_FXA_HOSTS) | set(EXPECTED_SYNC_HOSTS),
             f"{label}: proxy trace contains an unapproved host",
         )
         check(
-            "sync.services.mozilla.com" in hosts,
+            G5_REQUIRED_SYNC_HOST in hosts,
             f"{label}: proxy trace does not prove an approved Sync host",
         )
         expected_proxy = {

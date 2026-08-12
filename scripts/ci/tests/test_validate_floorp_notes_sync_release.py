@@ -1272,6 +1272,30 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("does not prove an approved Sync host", result.stderr)
 
+    def test_g5_rejects_duplicate_or_non_string_proxy_hosts(self):
+        for hosts in (
+            ["sync.services.mozilla.com", "sync.services.mozilla.com"],
+            [{"host": "sync.services.mozilla.com"}],
+        ):
+            with self.subTest(hosts=hosts):
+                evidence = make_evidence()
+                source = evidence["gates"]["g5"]["artifact"]["sources"][4]
+                payload = json.loads(TEST_SOURCE_BYTES["proxy-trace"])
+                payload["hosts"] = hosts
+                raw = canonical_bytes(payload)
+                source["sha256"] = hashlib.sha256(raw).hexdigest()
+                evidence["gates"]["g5"]["proxy_trace_sha256"] = source["sha256"]
+                evidence["gates"]["g5"]["artifact"] = artifact_bundle(
+                    evidence["gates"]["g5"]["artifact"]["sources"]
+                )
+                rehash(evidence)
+                result = self.run_validator(
+                    evidence,
+                    local_artifact_overrides={source["path"]: raw},
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("proxy hosts", result.stderr)
+
     def test_g5_rejects_noninteractive_ci_run(self):
         evidence = make_evidence()
         source = evidence["gates"]["g5"]["artifact"]["sources"][1]
