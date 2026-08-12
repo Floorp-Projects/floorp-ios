@@ -1971,6 +1971,11 @@ final class FloorpNotesPrefsSyncDelegateTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(context.ownerAccountID, "account-a")
         XCTAssertEqual(context.baseState, FloorpNotesSyncBaseState(accountID: "account-a", notes: [local]))
         XCTAssertEqual(context.applicationServicesState?.lastModifiedMillis, 42)
+        let evidence = try await restarted.loadSyncEvidenceSnapshot()
+        XCTAssertTrue(evidence.hasSyncOwner)
+        XCTAssertTrue(evidence.hasSyncBaseState)
+        XCTAssertTrue(evidence.hasApplicationServicesAssociation)
+        XCTAssertEqual(evidence.noteCount, 1)
         let restartedNotes = try await restarted.loadNotes()
         XCTAssertEqual(restartedNotes, [local])
     }

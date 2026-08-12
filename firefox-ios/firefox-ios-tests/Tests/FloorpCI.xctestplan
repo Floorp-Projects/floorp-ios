@@ -302,6 +302,7 @@
         "FloorpNotesStoreTests/testRichContentWithImageIsReadOnlyAndDoesNotExposeSource()",
         "FloorpNotesStoreTests/testRichDocumentPreflightUsesWholeArchiveBudgetWithoutWriting()",
         "FloorpNotesStoreTests/testRichEditorProjectionPreservesMeaningfulWhitespace()",
+        "FloorpNotesStoreTests/testSyncEvidenceSnapshotIsContentFreeStableAcrossRestartAndTracksArchiveState()",
         "FloorpNotesStoreTests/testStaleEditIsRejectedAndTimestampAdvancesWhenClockDoesNot()",
         "FloorpNotesStoreTests/testTipTapProjectionSupportsParagraphs()",
         "FloorpNotesStoreTests/testUnsupportedNewerSchemaIsLeftByteForByteUntouched()",

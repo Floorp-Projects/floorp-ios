@@ -95,6 +95,40 @@ final class FloorpNotesStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(emptyNotes, [])
     }
 
+    func testSyncEvidenceSnapshotIsContentFreeStableAcrossRestartAndTracksArchiveState() async throws {
+        let location = try makeTemporaryArchiveLocation()
+        defer { try? FileManager.default.removeItem(at: location.directory) }
+
+        let store = FloorpNotesStore(fileURL: location.archive)
+        let empty = try await store.loadSyncEvidenceSnapshot()
+
+        XCTAssertEqual(empty.noteCount, 0)
+        XCTAssertEqual(empty.revision, 0)
+        XCTAssertFalse(empty.hasSyncOwner)
+        XCTAssertFalse(empty.hasSyncBaseState)
+        XCTAssertFalse(empty.hasApplicationServicesAssociation)
+        XCTAssertNotNil(
+            empty.archiveSHA256.range(
+                of: "^[0-9a-f]{64}$",
+                options: .regularExpression
+            )
+        )
+
+        _ = try await store.createNote(title: "One", content: "One")
+        let afterWrite = try await store.loadSyncEvidenceSnapshot()
+
+        XCTAssertEqual(afterWrite.noteCount, 1)
+        XCTAssertGreaterThan(afterWrite.revision, empty.revision)
+        XCTAssertNotEqual(afterWrite.archiveSHA256, empty.archiveSHA256)
+        XCTAssertFalse(afterWrite.hasSyncOwner)
+        XCTAssertFalse(afterWrite.hasSyncBaseState)
+        XCTAssertFalse(afterWrite.hasApplicationServicesAssociation)
+
+        let restartedStore = FloorpNotesStore(fileURL: location.archive)
+        let afterRestart = try await restartedStore.loadSyncEvidenceSnapshot()
+        XCTAssertEqual(afterRestart, afterWrite)
+    }
+
     func testConcurrentUpdatesToDifferentNotesDoNotOverwriteEachOther() async throws {
         let location = try makeTemporaryArchiveLocation()
         defer { try? FileManager.default.removeItem(at: location.directory) }
