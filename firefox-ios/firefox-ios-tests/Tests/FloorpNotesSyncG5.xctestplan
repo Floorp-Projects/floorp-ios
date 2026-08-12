@@ -1,0 +1,28 @@
+{
+  "configurations" : [
+    {
+      "id" : "5F3476F1-6A1B-49F6-88B6-1C6E0DC0CDE5",
+      "name" : "Floorp Notes Sync G5",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "language" : "en-US",
+    "region" : "US"
+  },
+  "testTargets" : [
+    {
+      "selectedTests" : [
+        "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+      ],
+      "target" : {
+        "containerPath" : "container:Client.xcodeproj",
+        "identifier" : "3BFE4B061D342FB800DDF53F",
+        "name" : "XCUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

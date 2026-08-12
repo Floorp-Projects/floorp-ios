@@ -136,6 +136,11 @@ G5 is valid only when a successful, manually dispatched `main` run of
 `FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()` node;
 renaming an ordinary FloorpCI result does not satisfy this requirement.
 
+Ordinary PR/main CI compiles the protected selector without executing its protected selector.
+This compile-only output has no production-QA
+authorization, credentials, artifact upload, or operational evidence and
+cannot satisfy G5 evidence.
+
 The public records are exact metadata-only summaries. Account isolation must
 prove two isolated accounts, post-upload base advancement, cleanup, rollback,
 and local-only fallback against the pinned fixture. Network evidence must prove
