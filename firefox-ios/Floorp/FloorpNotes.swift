@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import CryptoKit
 import Foundation
 
 // MARK: - Note model
@@ -707,6 +708,19 @@ struct FloorpNotesSyncContext: Equatable, Sendable {
     let applicationServicesState: FloorpNotesApplicationServicesState?
 }
 
+/// Content-free local persistence state for two-client QA evidence.
+///
+/// This is an observation of one device's archive only. It does not establish
+/// network activity, cross-client equality, or a successful Sync operation.
+struct FloorpNotesSyncEvidenceSnapshot: Equatable, Sendable {
+    let archiveSHA256: String
+    let noteCount: Int
+    let revision: UInt64
+    let hasSyncOwner: Bool
+    let hasSyncBaseState: Bool
+    let hasApplicationServicesAssociation: Bool
+}
+
 enum FloorpNotesPersistenceAccountAvailability: Equatable, Sendable {
     case available
     case accountMismatch
@@ -1086,6 +1100,25 @@ final class FloorpNotesPersistenceCore: @unchecked Sendable {
             ownerAccountID: archive.syncOwnerAccountID,
             baseState: archive.syncBaseState,
             applicationServicesState: archive.applicationServicesState
+        )
+    }
+
+    func loadSyncEvidenceSnapshot() throws -> FloorpNotesSyncEvidenceSnapshot {
+        let archive = try loadArchive()
+        let archiveSHA256 = SHA256.hash(data: try encodedArchiveData(archive))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let applicationServicesState = archive.applicationServicesState
+        let hasApplicationServicesAssociation = applicationServicesState?.globalSyncID != nil
+            && applicationServicesState?.collectionSyncID != nil
+
+        return FloorpNotesSyncEvidenceSnapshot(
+            archiveSHA256: archiveSHA256,
+            noteCount: archive.notes.count,
+            revision: archive.revision,
+            hasSyncOwner: archive.syncOwnerAccountID != nil,
+            hasSyncBaseState: archive.syncBaseState != nil,
+            hasApplicationServicesAssociation: hasApplicationServicesAssociation
         )
     }
 
@@ -1862,6 +1895,10 @@ actor FloorpNotesStore {
 
     func loadSyncContext() throws -> FloorpNotesSyncContext {
         try syncPersistenceCore.withLock { try syncPersistenceCore.loadSyncContext() }
+    }
+
+    func loadSyncEvidenceSnapshot() throws -> FloorpNotesSyncEvidenceSnapshot {
+        try syncPersistenceCore.withLock { try syncPersistenceCore.loadSyncEvidenceSnapshot() }
     }
 
     nonisolated func syncAccountAvailability(
