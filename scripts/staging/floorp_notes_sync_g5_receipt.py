@@ -112,19 +112,28 @@ def _positive_int(value: Any, label: str) -> int:
     return value
 
 
-def _validate_run_binding(value: Any, expected: Mapping[str, Any]) -> dict[str, object]:
+def _canonical_run_binding(value: Any, label: str) -> dict[str, object]:
     binding = _exact_object(
         value,
         frozenset({"head_sha", "repository", "run_attempt", "run_id", "workflow_path"}),
-        "run binding",
+        label,
     )
-    _require(binding["repository"] == EXPECTED_REPOSITORY, "receipt repository is not floorp-ios")
-    _require(binding["workflow_path"] == EXPECTED_WORKFLOW_PATH, "receipt workflow is not canonical")
-    _require(isinstance(binding["head_sha"], str) and _SHA40.fullmatch(binding["head_sha"]) is not None, "receipt head SHA is invalid")
-    _positive_int(binding["run_id"], "receipt run ID")
-    _positive_int(binding["run_attempt"], "receipt run attempt")
-    _require(dict(binding) == dict(expected), "receipt is not bound to the expected workflow run")
+    _require(binding["repository"] == EXPECTED_REPOSITORY, f"{label} repository is not floorp-ios")
+    _require(binding["workflow_path"] == EXPECTED_WORKFLOW_PATH, f"{label} workflow is not canonical")
+    _require(
+        isinstance(binding["head_sha"], str) and _SHA40.fullmatch(binding["head_sha"]) is not None,
+        f"{label} head SHA is invalid",
+    )
+    _positive_int(binding["run_id"], f"{label} run ID")
+    _positive_int(binding["run_attempt"], f"{label} run attempt")
     return dict(binding)
+
+
+def _validate_run_binding(value: Any, expected: Any) -> dict[str, object]:
+    binding = _canonical_run_binding(value, "receipt run binding")
+    expected_binding = _canonical_run_binding(expected, "expected run binding")
+    _require(binding == expected_binding, "receipt is not bound to the expected workflow run")
+    return binding
 
 
 def _validate_matrix(value: Any) -> None:
