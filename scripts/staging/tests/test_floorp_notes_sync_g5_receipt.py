@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import unittest
+from collections.abc import Iterator, Mapping
 from unittest.mock import patch
 
 from scripts.staging.floorp_notes_sync_g5_receipt import (
@@ -27,6 +28,30 @@ FIXTURE_DIGEST = "b" * 64
 class AlwaysEqual:
     def __eq__(self, _: object) -> bool:
         return True
+
+
+class AlwaysEqualSha(str):
+    def __eq__(self, _: object) -> bool:
+        return True
+
+
+class CanonicalByteForgingPayload(str):
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+        return str(self).rstrip("\n").encode(encoding, errors)
+
+
+class ExpectedBindingMapping(Mapping[str, object]):
+    def __init__(self, values: dict[str, object]) -> None:
+        self._values = values
+
+    def __getitem__(self, key: str) -> object:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
 
 
 def expected_run_binding() -> dict[str, object]:
@@ -117,6 +142,15 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
         with self.assertRaises(ReceiptError):
             parse_and_validate_receipt(
                 duplicate_schema,
+                expected_run_binding=expected_run_binding(),
+            )
+
+    def test_rejects_string_subclasses_that_forge_canonical_bytes(self) -> None:
+        forged = CanonicalByteForgingPayload(canonical_payload() + "\n")
+
+        with self.assertRaises(ReceiptError):
+            parse_and_validate_receipt(
+                forged,
                 expected_run_binding=expected_run_binding(),
             )
 
@@ -376,6 +410,18 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
                 binding[key] = AlwaysEqual()
                 with self.assertRaises(ReceiptError):
                     validate_receipt(valid_receipt(), expected_run_binding=binding)
+
+    def test_rejects_forged_string_and_mapping_expected_run_bindings(self) -> None:
+        forged_sha = expected_run_binding()
+        forged_sha["head_sha"] = AlwaysEqualSha("c" * 40)
+
+        for binding in (
+            forged_sha,
+            ExpectedBindingMapping(expected_run_binding()),
+        ):
+            with self.subTest(binding_type=type(binding).__name__):
+                with self.assertRaises(ReceiptError):
+                    validate_receipt(valid_receipt(), expected_run_binding=binding)  # type: ignore[arg-type]
 
     def test_rejects_unapproved_or_incomplete_network_observations(self) -> None:
         mutations = (

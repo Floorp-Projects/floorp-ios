@@ -180,6 +180,7 @@ def _canonical_json_bytes(value: Any) -> bytes:
 
 
 def _canonical_run_binding(value: Any, label: str) -> dict[str, object]:
+    _require(type(value) is dict, f"{label} must be a plain JSON object")
     binding = _exact_object(
         value,
         frozenset({"head_sha", "repository", "run_attempt", "run_id", "workflow_path"}),
@@ -194,7 +195,7 @@ def _canonical_run_binding(value: Any, label: str) -> dict[str, object]:
         f"{label} workflow is not canonical",
     )
     _require(
-        isinstance(binding["head_sha"], str) and _SHA40.fullmatch(binding["head_sha"]) is not None,
+        type(binding["head_sha"]) is str and _SHA40.fullmatch(binding["head_sha"]) is not None,
         f"{label} head SHA is invalid",
     )
     _positive_int(binding["run_id"], f"{label} run ID")
@@ -293,7 +294,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def parse_and_validate_receipt(payload: str, *, expected_run_binding: Mapping[str, Any]) -> dict[str, object]:
     """Parse strict JSON then apply :func:`validate_receipt`."""
 
-    _require(isinstance(payload, str), "receipt payload must be JSON text")
+    _require(type(payload) is str, "receipt payload must be plain JSON text")
     try:
         payload_bytes = payload.encode("utf-8")
         receipt = json.loads(
