@@ -9,7 +9,7 @@ on:
     inputs:
       run_floorp_notes_sync_protected_preflight:
         description: Compile the protected Notes Sync G5 selector without executing it.
-        required: true
+        required: false
         default: false
         type: boolean
 

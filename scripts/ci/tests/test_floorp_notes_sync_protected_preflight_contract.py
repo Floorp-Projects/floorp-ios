@@ -16,6 +16,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
+UPSTREAM_SYNC_WORKFLOW = ROOT / ".github/workflows/upstream-sync.yml"
 BUILD_CONTRACT = ROOT / "docs/floorp-notes-sync-build-contract.md"
 RELEASE_CONFIG = ROOT / "firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
 RUBY = "/usr/bin/ruby"
@@ -58,12 +59,17 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
                 return step
         raise AssertionError(f"missing step: {name}")
 
-    def test_dispatch_requires_one_explicit_boolean_opt_in(self) -> None:
+    def test_dispatch_adds_an_optional_false_by_default_boolean_opt_in(self) -> None:
         self.assertEqual(set(self.dispatch["inputs"]), {DISPATCH_INPUT})
         option = self.dispatch["inputs"][DISPATCH_INPUT]
         self.assertEqual(option["type"], "boolean")
-        self.assertIs(option["required"], True)
+        self.assertIs(option["required"], False)
         self.assertIs(option["default"], False)
+
+    def test_inputless_upstream_ci_dispatch_remains_compatible(self) -> None:
+        source = UPSTREAM_SYNC_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("actions/workflows/ci.yml/dispatches", source)
+        self.assertIn('--data "{\\"ref\\":\\"${SYNC_BRANCH}\\"}"', source)
 
     def test_job_is_manual_main_only_and_environment_bound(self) -> None:
         job = self.jobs[JOB_ID]
