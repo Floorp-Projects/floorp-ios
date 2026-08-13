@@ -27,6 +27,16 @@ TEST_SOURCE = (
     / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
     "FloorpNotesSyncTwoClientMatrixTests.swift"
 )
+POLICY_SOURCE = (
+    ROOT
+    / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
+    "FloorpNotesSyncG5LaunchPolicy.swift"
+)
+POLICY_TEST_SOURCE = (
+    ROOT
+    / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
+    "FloorpNotesSyncG5LaunchPolicyTests.swift"
+)
 QA_TEST_PLAN = ROOT / "firefox-ios/firefox-ios-tests/Tests/FloorpNotesSyncQA.xctestplan"
 TEST_PLAN_DIRECTORY = ROOT / "firefox-ios/firefox-ios-tests/Tests"
 RUBY = "/usr/bin/ruby"
@@ -36,6 +46,10 @@ G5_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
 QA_TEST = "FloorpNotesSyncProductionQAConfigurationTests/testReleaseBuildConfigurationIsExplicit()"
 G5_BUILD_FILE_ID = "F20A20122F52000100000001"
 G5_FILE_REFERENCE_ID = "F20A20132F52000100000001"
+G5_POLICY_BUILD_FILE_ID = "F20A20222F52000100000001"
+G5_POLICY_FILE_REFERENCE_ID = "F20A20232F52000100000001"
+G5_POLICY_TEST_BUILD_FILE_ID = "F20A20322F52000100000001"
+G5_POLICY_TEST_FILE_REFERENCE_ID = "F20A20332F52000100000001"
 CANONICAL_G5_ARTIFACT = "floorp-notes-sync-two-client-xcresult"
 
 
@@ -116,9 +130,13 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         source = TEST_SOURCE.read_text(encoding="utf-8")
         self.assertIn("final class FloorpNotesSyncTwoClientMatrixTests: XCTestCase", source)
         self.assertIn("func testTwoClientProductionMatrix()", source)
-        self.assertIn("FLOORP_NOTES_SYNC_G5_RUN", source)
-        self.assertIn("FLOORP_NOTES_SYNC_PRODUCTION_QA", source)
-        self.assertIn("FIREFOX_USE_STAGE_SERVER", source)
+        self.assertIn(
+            "FloorpNotesSyncG5LaunchPolicy.allows(environment: environment)",
+            source,
+        )
+        self.assertNotIn('environment["FLOORP_NOTES_SYNC_G5_RUN"]', source)
+        self.assertNotIn('environment["FLOORP_NOTES_SYNC_PRODUCTION_QA"]', source)
+        self.assertNotIn('environment["FIREFOX_USE_STAGE_SERVER"]', source)
         for forbidden in (
             "BaseTestCase",
             "StageServer",
@@ -137,18 +155,81 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_non_live_launch_policy_is_pure_and_fail_closed(self) -> None:
+        self.assertTrue(POLICY_SOURCE.is_file(), "the G5 selector needs a pure launch policy")
+        if not POLICY_SOURCE.is_file():
+            return
+        source = POLICY_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("enum FloorpNotesSyncG5LaunchPolicy", source)
+        self.assertIn("static func allows(environment: [String: String]) -> Bool", source)
+        for required in (
+            '"FLOORP_NOTES_SYNC_G5_RUN"',
+            '"FLOORP_NOTES_SYNC_PRODUCTION_QA"',
+            '"FIREFOX_USE_STAGE_SERVER"',
+            '"CUSTOM_FXA_SERVER"',
+            '"CUSTOM_SYNC_TOKEN_SERVER"',
+            '"FIREFOX_USE_CHINA_SYNC_SERVICE"',
+            '"FIREFOX_USE_CUSTOM_FXA_CONTENT_SERVER"',
+            '"FIREFOX_USE_CUSTOM_SYNC_TOKEN_SERVER"',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "ProcessInfo",
+            "XCUIApplication",
+            "BaseTestCase",
+            "URLSession",
+            "XCTAttachment",
+            "screenshot()",
+            "debugDescription",
+            "Logger",
+            "NSLog",
+            "print(",
+            "EMAIL",
+            "PASSWORD",
+            "CREDENTIAL",
+            "SECRET",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_launch_policy_has_direct_xctest_coverage(self) -> None:
+        self.assertTrue(POLICY_TEST_SOURCE.is_file(), "the pure launch policy needs XCTest coverage")
+        if not POLICY_TEST_SOURCE.is_file():
+            return
+        source = POLICY_TEST_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("final class FloorpNotesSyncG5LaunchPolicyTests: XCTestCase", source)
+        self.assertIn("testAllowsExactlyTheTwoExplicitIntentFlags", source)
+        self.assertIn("testRejectsEachNonProductionEndpointOverride", source)
+        for forbidden in (
+            "XCUIApplication",
+            "BaseTestCase",
+            "XCTAttachment",
+            "screenshot()",
+            "Logger",
+            "NSLog",
+            "print(",
+            "EMAIL",
+            "PASSWORD",
+            "CREDENTIAL",
+            "SECRET",
+        ):
+            self.assertNotIn(forbidden, source)
+
     def test_source_is_wired_into_the_existing_xcui_target(self) -> None:
         project = PROJECT.read_text(encoding="utf-8")
-        self.assertIn(
-            f"{G5_BUILD_FILE_ID} /* FloorpNotesSyncTwoClientMatrixTests.swift in Sources */",
-            project,
-        )
-        self.assertIn(
-            f"{G5_FILE_REFERENCE_ID} /* FloorpNotesSyncTwoClientMatrixTests.swift */",
-            project,
-        )
-        self.assertEqual(project.count(G5_BUILD_FILE_ID), 2)
-        self.assertEqual(project.count(G5_FILE_REFERENCE_ID), 3)
+        for build_file_id, filename in (
+            (G5_BUILD_FILE_ID, "FloorpNotesSyncTwoClientMatrixTests.swift"),
+            (G5_POLICY_BUILD_FILE_ID, "FloorpNotesSyncG5LaunchPolicy.swift"),
+            (G5_POLICY_TEST_BUILD_FILE_ID, "FloorpNotesSyncG5LaunchPolicyTests.swift"),
+        ):
+            self.assertIn(f"{build_file_id} /* {filename} in Sources */", project)
+            self.assertEqual(project.count(build_file_id), 2)
+        for file_reference_id, filename in (
+            (G5_FILE_REFERENCE_ID, "FloorpNotesSyncTwoClientMatrixTests.swift"),
+            (G5_POLICY_FILE_REFERENCE_ID, "FloorpNotesSyncG5LaunchPolicy.swift"),
+            (G5_POLICY_TEST_FILE_REFERENCE_ID, "FloorpNotesSyncG5LaunchPolicyTests.swift"),
+        ):
+            self.assertIn(f"{file_reference_id} /* {filename} */", project)
+            self.assertEqual(project.count(file_reference_id), 3)
 
     def test_ordinary_unbounded_plans_explicitly_skip_the_protected_g5_selector(self) -> None:
         for plan_path in sorted(TEST_PLAN_DIRECTORY.glob("*.xctestplan")):
