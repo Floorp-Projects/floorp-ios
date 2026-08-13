@@ -53,6 +53,7 @@ _DANGEROUS_VALUE = re.compile(
 )
 _SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 _SHA64 = re.compile(r"[0-9a-f]{64}\Z")
+_MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _SAFE_POLICY_FIELD_PATHS = frozenset(
     {
         ("retention", "payload_retained"),
@@ -108,8 +109,48 @@ def _exact_object(value: Any, expected: frozenset[str], label: str) -> Mapping[s
 
 
 def _positive_int(value: Any, label: str) -> int:
-    _require(isinstance(value, int) and not isinstance(value, bool) and value > 0, f"{label} must be positive")
+    _require(
+        isinstance(value, int) and not isinstance(value, bool) and 0 < value <= _MAX_SAFE_INTEGER,
+        f"{label} must be a positive safe integer",
+    )
     return value
+
+
+def _reject_float(_: str) -> None:
+    _reject("receipt must not contain floating-point values")
+
+
+def _reject_constant(_: str) -> None:
+    _reject("receipt must not contain non-finite JSON constants")
+
+
+def _require_unicode_scalars(value: Any) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            _require_unicode_scalars(key)
+            _require_unicode_scalars(child)
+    elif isinstance(value, list):
+        for child in value:
+            _require_unicode_scalars(child)
+    elif isinstance(value, str):
+        _require(
+            all(not 0xD800 <= ord(character) <= 0xDFFF for character in value),
+            "receipt contains an unpaired Unicode surrogate",
+        )
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    _require_unicode_scalars(value)
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, UnicodeEncodeError, ValueError) as error:
+        raise ReceiptError("receipt cannot be encoded as canonical UTF-8 JSON") from error
 
 
 def _canonical_run_binding(value: Any, label: str) -> dict[str, object]:
@@ -218,7 +259,14 @@ def parse_and_validate_receipt(payload: str, *, expected_run_binding: Mapping[st
 
     _require(isinstance(payload, str), "receipt payload must be JSON text")
     try:
-        receipt = json.loads(payload, object_pairs_hook=_reject_duplicate_keys)
+        payload_bytes = payload.encode("utf-8")
+        receipt = json.loads(
+            payload,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_constant,
+            parse_float=_reject_float,
+        )
     except (json.JSONDecodeError, TypeError) as error:
         raise ReceiptError("receipt payload is not valid JSON") from error
+    _require(payload_bytes == _canonical_json_bytes(receipt), "receipt JSON bytes are not canonical")
     return validate_receipt(receipt, expected_run_binding=expected_run_binding)

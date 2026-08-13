@@ -75,6 +75,15 @@ def valid_receipt() -> dict[str, object]:
     }
 
 
+def canonical_payload(receipt: dict[str, object] | None = None, *, sort_keys: bool = True) -> str:
+    return json.dumps(
+        valid_receipt() if receipt is None else receipt,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=sort_keys,
+    )
+
+
 class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
     def test_accepts_exact_safe_receipt_bound_to_expected_run(self) -> None:
         receipt = valid_receipt()
@@ -88,7 +97,7 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
 
     def test_parses_only_json_without_duplicate_fields(self) -> None:
         parsed = parse_and_validate_receipt(
-            json.dumps(valid_receipt()),
+            canonical_payload(),
             expected_run_binding=expected_run_binding(),
         )
         self.assertEqual(parsed["status"], "receipt-valid")
@@ -110,10 +119,10 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
                     )
 
     def test_rejects_nested_duplicate_json_fields(self) -> None:
-        payload = json.dumps(valid_receipt())
+        payload = canonical_payload()
         payload = payload.replace(
-            '"run_id": 123456789,',
-            '"run_id": 123456789, "run_id": 123456789,',
+            '"run_id":123456789,',
+            '"run_id":123456789,"run_id":123456789,',
         )
 
         with self.assertRaises(ReceiptError):
@@ -121,6 +130,44 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
                 payload,
                 expected_run_binding=expected_run_binding(),
             )
+
+    def test_rejects_noncanonical_whitespace_and_key_order_bytes(self) -> None:
+        canonical = canonical_payload()
+        original = valid_receipt()
+        reordered_receipt = {"schema_version": original["schema_version"]}
+        reordered_receipt.update(
+            {key: value for key, value in original.items() if key != "schema_version"}
+        )
+        variants = (
+            canonical + "\n",
+            canonical.replace(":", ": ", 1),
+            canonical_payload(reordered_receipt, sort_keys=False),
+        )
+        for payload in variants:
+            with self.subTest(payload=payload[:48]):
+                with self.assertRaises(ReceiptError):
+                    parse_and_validate_receipt(
+                        payload,
+                        expected_run_binding=expected_run_binding(),
+                    )
+
+    def test_rejects_floats_constants_over_safe_integers_and_unpaired_surrogates(self) -> None:
+        canonical = canonical_payload()
+        payloads = (
+            canonical.replace('"run_id":123456789', '"run_id":123456789.0'),
+            canonical.replace('"run_id":123456789', '"run_id":NaN'),
+            canonical.replace('"run_id":123456789', '"run_id":Infinity'),
+            canonical.replace('"run_id":123456789', '"run_id":-Infinity'),
+            canonical.replace('"run_id":123456789', '"run_id":9007199254740992'),
+            canonical.replace('"status":"passed"', '"status":"\\ud800"'),
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ReceiptError):
+                    parse_and_validate_receipt(
+                        payload,
+                        expected_run_binding=expected_run_binding(),
+                    )
 
     def test_rejects_unknown_and_credential_or_content_like_fields(self) -> None:
         for path, value in (
