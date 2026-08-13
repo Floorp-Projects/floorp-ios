@@ -119,14 +119,22 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
         job = self.jobs[JOB_ID]
         self.assertEqual(
             set(job),
-            {"name", "if", "environment", "runs-on", "timeout-minutes", "steps"},
+            {
+                "name",
+                "if",
+                "environment",
+                "permissions",
+                "env",
+                "runs-on",
+                "timeout-minutes",
+                "steps",
+            },
         )
         self.assertNotIn("needs", job)
-        self.assertNotIn("permissions", job)
         self.assertEqual(
             [step["name"] for step in job["steps"]],
             [
-                "Check out source",
+                "Check out source anonymously",
                 "Set up Node.js",
                 "Select Xcode",
                 "Bootstrap generated sources",
@@ -148,12 +156,46 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             self.assertIn(expected, runs)
         self.assertNotRegex(runs, r"\bxcodebuild\s+test(?:\s|$)")
 
+    def test_job_uses_no_github_token_or_authenticated_source_checkout(self) -> None:
+        job = self.jobs[JOB_ID]
+        self.assertEqual(job["permissions"], {})
+        self.assertEqual(
+            job["env"],
+            {
+                "GITHUB_TOKEN": "",
+                "GH_TOKEN": "",
+                "NODE_AUTH_TOKEN": "",
+                "NPM_TOKEN": "",
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_ASKPASS": "/usr/bin/false",
+            },
+        )
+
+        checkout = self.named_step(job, "Check out source anonymously")
+        self.assertNotIn("uses", checkout)
+        self.assertIn("https://github.com/${GITHUB_REPOSITORY}.git", checkout["run"])
+        for expected in (
+            "credential.helper=",
+            "http.https://github.com/.extraheader=",
+            "GITHUB_SHA",
+        ):
+            self.assertIn(expected, checkout["run"])
+
+        setup_node = self.named_step(job, "Set up Node.js")
+        self.assertRegex(setup_node["uses"], r"@[0-9a-f]{40}$")
+        self.assertEqual(
+            setup_node["with"],
+            {
+                "node-version-file": ".nvmrc",
+                "token": "",
+                "package-manager-cache": False,
+            },
+        )
+
     def test_job_builds_only_the_unsigned_guard_selector(self) -> None:
         job = self.jobs[JOB_ID]
-        checkout = self.named_step(job, "Check out source")
-        self.assertFalse(checkout["with"]["persist-credentials"])
-        self.assertRegex(checkout["uses"], r"@[0-9a-f]{40}$")
-
         setup_node = self.named_step(job, "Set up Node.js")
         self.assertRegex(setup_node["uses"], r"@[0-9a-f]{40}$")
         self.assertEqual(
@@ -220,6 +262,10 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             "does not execute the selector",
             "does not authorize G5",
             "cannot satisfy G5 evidence",
+            "anonymous source checkout",
+            "pass a GitHub token to checkout, setup, cache, shell, or tool calls",
+            "makes no nonissuance claim",
+            "does not reference that context",
         ):
             self.assertIn(expected, contract)
 

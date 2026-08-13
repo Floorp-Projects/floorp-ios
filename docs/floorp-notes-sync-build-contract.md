@@ -144,9 +144,16 @@ cannot satisfy G5 evidence.
 The protected manual preflight is a `workflow_dispatch` job restricted to
 `main` and the `floorp-notes-sync-production-qa` Environment. It compiles the
 guard selector with `build-for-testing`; it does not execute the selector,
-does not authorize G5, consumes no credential or endpoint input, and uploads
-no artifact. The Environment is a scheduling boundary, not a G5 approval;
-this preflight cannot satisfy G5 evidence.
+does not authorize G5, consumes no FxA/Sync credential or endpoint input, and
+uploads no artifact. It uses an anonymous source checkout from the public
+repository, has empty job-level GitHub permissions, explicitly clears GitHub,
+Node, and npm token inputs, and disables the Node package cache. It does not
+pass a GitHub token to checkout, setup, cache, shell, or tool calls. GitHub
+Actions may still provide its platform-managed `github.token` context; this
+job makes no nonissuance claim, does not reference that context, and does not
+forward it to any configured action or command. The Environment is a
+scheduling boundary, not a G5 approval; this preflight cannot satisfy G5
+evidence.
 
 The public records are exact metadata-only summaries. Account isolation must
 prove two isolated accounts, post-upload base advancement, cleanup, rollback,

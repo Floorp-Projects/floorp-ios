@@ -317,21 +317,43 @@ jobs:
       github.ref == 'refs/heads/main' &&
       inputs.run_floorp_notes_sync_protected_preflight == true
     environment: floorp-notes-sync-production-qa
+    # Override the workflow-wide read permission. This job must not receive a
+    # usable GitHub token or invoke a token-defaulting source checkout action.
+    permissions: {}
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
     runs-on: macos-26
     timeout-minutes: 90
 
     steps:
-      - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - name: Check out source anonymously
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
-          cache: npm
+          token: ""
+          package-manager-cache: false
 
       - name: Select Xcode
         run: |
