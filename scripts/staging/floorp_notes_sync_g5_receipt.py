@@ -110,7 +110,7 @@ def _exact_object(value: Any, expected: frozenset[str], label: str) -> Mapping[s
 
 def _positive_int(value: Any, label: str) -> int:
     _require(
-        isinstance(value, int) and not isinstance(value, bool) and 0 < value <= _MAX_SAFE_INTEGER,
+        type(value) is int and 0 < value <= _MAX_SAFE_INTEGER,
         f"{label} must be a positive safe integer",
     )
     return value
@@ -124,33 +124,59 @@ def _reject_constant(_: str) -> None:
     _reject("receipt must not contain non-finite JSON constants")
 
 
-def _require_unicode_scalars(value: Any) -> None:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            _require_unicode_scalars(key)
-            _require_unicode_scalars(child)
-    elif isinstance(value, list):
-        for child in value:
-            _require_unicode_scalars(child)
-    elif isinstance(value, str):
+def _parse_safe_int(value: str) -> int:
+    parsed = int(value)
+    _require(abs(parsed) <= _MAX_SAFE_INTEGER, "receipt integer exceeds the interoperable safe range")
+    return parsed
+
+
+def _validate_json_domain(value: Any) -> None:
+    if value is None or type(value) is bool:
+        return
+    if type(value) is int:
+        _require(abs(value) <= _MAX_SAFE_INTEGER, "receipt integer exceeds the interoperable safe range")
+        return
+    if type(value) is str:
         _require(
             all(not 0xD800 <= ord(character) <= 0xDFFF for character in value),
             "receipt contains an unpaired Unicode surrogate",
         )
+        return
+    if type(value) is list:
+        for child in value:
+            _validate_json_domain(child)
+        return
+    if type(value) is dict:
+        for key, child in value.items():
+            _require(type(key) is str, "receipt JSON object has a non-string key")
+            _validate_json_domain(key)
+            _validate_json_domain(child)
+        return
+    _reject(f"receipt has unsupported JSON value type {type(value).__name__}")
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
-    _require_unicode_scalars(value)
-    try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, UnicodeEncodeError, ValueError) as error:
-        raise ReceiptError("receipt cannot be encoded as canonical UTF-8 JSON") from error
+    _validate_json_domain(value)
+    if value is None:
+        return b"null"
+    if value is True:
+        return b"true"
+    if value is False:
+        return b"false"
+    if type(value) is int:
+        return str(value).encode("ascii")
+    if type(value) is str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if type(value) is list:
+        return b"[" + b",".join(_canonical_json_bytes(child) for child in value) + b"]"
+    if type(value) is dict:
+        ordered_keys = sorted(value, key=lambda key: key.encode("utf-16-be"))
+        members = (
+            _canonical_json_bytes(key) + b":" + _canonical_json_bytes(value[key])
+            for key in ordered_keys
+        )
+        return b"{" + b",".join(members) + b"}"
+    _reject(f"receipt cannot be encoded from {type(value).__name__}")
 
 
 def _canonical_run_binding(value: Any, label: str) -> dict[str, object]:
@@ -215,7 +241,7 @@ def _validate_network(value: Any) -> None:
         _require(isinstance(host, str) and host in APPROVED_HOSTS, "network host is not approved")
         _require(host not in seen_hosts, "network hosts must not be duplicated")
         seen_hosts.add(host)
-        _require(event["port"] == 443, "network port must be 443")
+        _require(type(event["port"]) is int and event["port"] == 443, "network port must be 443")
         _require(event["tls_verified"] is True, "network TLS must be verified")
         _require(event["outcome"] == "succeeded", "network outcome is not canonical")
     _require(REQUIRED_SYNC_HOST in seen_hosts, "network evidence lacks required Sync host")
@@ -225,18 +251,22 @@ def validate_receipt(receipt: Any, *, expected_run_binding: Mapping[str, Any]) -
     """Validate a pre-retrieved canonical receipt without authorizing G5."""
 
     _reject_sensitive_values(receipt)
+    _validate_json_domain(receipt)
     root = _exact_object(
         receipt,
         frozenset({"matrix", "network", "outcomes", "retention", "run_binding", "schema_version"}),
         "G5 receipt",
     )
-    _require(root["schema_version"] == 1, "receipt schema is unsupported")
+    _require(type(root["schema_version"]) is int and root["schema_version"] == 1, "receipt schema is unsupported")
     binding = _validate_run_binding(root["run_binding"], expected_run_binding)
     _validate_matrix(root["matrix"])
     _validate_outcomes(root["outcomes"])
     _validate_network(root["network"])
     retention = _exact_object(root["retention"], frozenset({"payload_retained", "secrets_retained"}), "retention")
-    _require(retention == {"payload_retained": False, "secrets_retained": False}, "receipt retains payloads or secrets")
+    _require(
+        retention["payload_retained"] is False and retention["secrets_retained"] is False,
+        "receipt retains payloads or secrets",
+    )
     return {
         "execution_authorization": "not-granted",
         "g5_result": "not-assessed",
@@ -265,6 +295,7 @@ def parse_and_validate_receipt(payload: str, *, expected_run_binding: Mapping[st
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_constant,
             parse_float=_reject_float,
+            parse_int=_parse_safe_int,
         )
     except (json.JSONDecodeError, TypeError) as error:
         raise ReceiptError("receipt payload is not valid JSON") from error

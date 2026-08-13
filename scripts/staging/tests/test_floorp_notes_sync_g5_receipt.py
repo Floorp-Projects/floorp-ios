@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import unittest
+from unittest.mock import patch
 
 from scripts.staging.floorp_notes_sync_g5_receipt import (
     EXPECTED_REPOSITORY,
@@ -75,13 +76,18 @@ def valid_receipt() -> dict[str, object]:
     }
 
 
-def canonical_payload(receipt: dict[str, object] | None = None, *, sort_keys: bool = True) -> str:
-    return json.dumps(
-        valid_receipt() if receipt is None else receipt,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=sort_keys,
-    )
+def canonical_payload(receipt: dict[str, object] | None = None) -> str:
+    value = valid_receipt() if receipt is None else receipt
+
+    def encode(item: object) -> str:
+        if isinstance(item, dict):
+            keys = sorted(item, key=lambda key: key.encode("utf-16-be"))
+            return "{" + ",".join(f"{encode(key)}:{encode(item[key])}" for key in keys) + "}"
+        if isinstance(item, list):
+            return "[" + ",".join(encode(child) for child in item) + "]"
+        return json.dumps(item, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+    return encode(value)
 
 
 class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
@@ -141,7 +147,7 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
         variants = (
             canonical + "\n",
             canonical.replace(":", ": ", 1),
-            canonical_payload(reordered_receipt, sort_keys=False),
+            json.dumps(reordered_receipt, ensure_ascii=False, separators=(",", ":")),
         )
         for payload in variants:
             with self.subTest(payload=payload[:48]):
@@ -168,6 +174,82 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
                         payload,
                         expected_run_binding=expected_run_binding(),
                     )
+
+    def test_rejects_numeric_and_boolean_type_aliases_direct_and_parsed(self) -> None:
+        direct_mutations = (
+            (("schema_version",), True),
+            (("schema_version",), 1.0),
+            (("network", "observations", 0, "port"), 443.0),
+            (("retention", "payload_retained"), 0),
+            (("retention", "payload_retained"), 0.0),
+            (("retention", "secrets_retained"), 0),
+            (("retention", "secrets_retained"), 0.0),
+            (("run_binding", "run_id"), 9_007_199_254_740_992),
+        )
+        for path, value in direct_mutations:
+            with self.subTest(path=path, value=value):
+                receipt = valid_receipt()
+                target: object = receipt
+                for key in path[:-1]:
+                    target = target[key]  # type: ignore[index]
+                target[path[-1]] = value  # type: ignore[index]
+                with self.assertRaises(ReceiptError):
+                    validate_receipt(receipt, expected_run_binding=expected_run_binding())
+
+        canonical = canonical_payload()
+        parsed_mutations = (
+            canonical.replace('"schema_version":1', '"schema_version":true'),
+            canonical.replace('"schema_version":1', '"schema_version":1.0'),
+            canonical.replace('"port":443', '"port":443.0', 1),
+            canonical.replace('"payload_retained":false', '"payload_retained":0'),
+            canonical.replace('"secrets_retained":false', '"secrets_retained":0.0'),
+            canonical.replace('"run_id":123456789', '"run_id":9007199254740992'),
+        )
+        for payload in parsed_mutations:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ReceiptError):
+                    parse_and_validate_receipt(
+                        payload,
+                        expected_run_binding=expected_run_binding(),
+                    )
+
+    def test_uses_utf16be_key_order_for_canonical_receipt_bytes(self) -> None:
+        receipt = valid_receipt()
+        receipt["matrix"] = {
+            "\ue000": receipt["matrix"],
+            "😀": receipt["matrix"],
+            "client_slots": ["client-a", "client-b"],
+            "fixture_digest": FIXTURE_DIGEST,
+            "status": "passed",
+        }
+        # The added keys intentionally make this semantically invalid; canonical
+        # bytes must be checked before schema validation for this ordering proof.
+        utf16_payload = canonical_payload(receipt)
+        code_point_payload = json.dumps(
+            receipt,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.assertNotEqual(utf16_payload, code_point_payload)
+
+        with self.assertRaises(ReceiptError) as rejected:
+            parse_and_validate_receipt(
+                code_point_payload,
+                expected_run_binding=expected_run_binding(),
+            )
+        self.assertEqual(str(rejected.exception), "receipt JSON bytes are not canonical")
+
+        with patch(
+            "scripts.staging.floorp_notes_sync_g5_receipt.validate_receipt",
+            return_value={"status": "receipt-valid"},
+        ) as validate:
+            parsed = parse_and_validate_receipt(
+                utf16_payload,
+                expected_run_binding=expected_run_binding(),
+            )
+        self.assertEqual(parsed, {"status": "receipt-valid"})
+        validate.assert_called_once()
 
     def test_rejects_unknown_and_credential_or_content_like_fields(self) -> None:
         for path, value in (
