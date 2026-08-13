@@ -22,6 +22,7 @@ RELEASE_CONFIG = ROOT / "firefox-ios/Client/Configuration/FloorpRelease.xcconfig
 RUBY = "/usr/bin/ruby"
 
 DISPATCH_INPUT = "run_floorp_notes_sync_protected_preflight"
+OPERATION_CONTRACT_INPUT = "prepare_floorp_notes_sync_g5_contract"
 JOB_ID = "notes-sync-protected-preflight"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
@@ -60,11 +61,15 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
         raise AssertionError(f"missing step: {name}")
 
     def test_dispatch_adds_an_optional_false_by_default_boolean_opt_in(self) -> None:
-        self.assertEqual(set(self.dispatch["inputs"]), {DISPATCH_INPUT})
-        option = self.dispatch["inputs"][DISPATCH_INPUT]
-        self.assertEqual(option["type"], "boolean")
-        self.assertIs(option["required"], False)
-        self.assertIs(option["default"], False)
+        self.assertEqual(
+            set(self.dispatch["inputs"]),
+            {DISPATCH_INPUT, OPERATION_CONTRACT_INPUT},
+        )
+        for input_name in (DISPATCH_INPUT, OPERATION_CONTRACT_INPUT):
+            option = self.dispatch["inputs"][input_name]
+            self.assertEqual(option["type"], "boolean")
+            self.assertIs(option["required"], False)
+            self.assertIs(option["default"], False)
 
     def test_inputless_upstream_ci_dispatch_remains_compatible(self) -> None:
         source = UPSTREAM_SYNC_WORKFLOW.read_text(encoding="utf-8")
@@ -77,17 +82,19 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
         self.assertEqual(job["timeout-minutes"], 90)
         self.assertEqual(job["environment"], ENVIRONMENT)
         self.assertEqual(
-            " ".join(job["if"].split()),
+            " ".join(job["if"].split()).replace("( ", "(").replace(" )", ")"),
             "github.event_name == 'workflow_dispatch' && "
             "github.ref == 'refs/heads/main' && "
-            f"inputs.{DISPATCH_INPUT} == true",
+            f"inputs.{DISPATCH_INPUT} == true && "
+            f"inputs.{OPERATION_CONTRACT_INPUT} != true",
         )
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
 
     def test_manual_preflight_isolates_the_normal_build_jobs(self) -> None:
         expected_skip = (
-            "github.event_name != 'workflow_dispatch' || "
-            f"inputs.{DISPATCH_INPUT} != true"
+            "github.event_name != 'workflow_dispatch' || ("
+            f"inputs.{DISPATCH_INPUT} != true && "
+            f"inputs.{OPERATION_CONTRACT_INPUT} != true)"
         )
         for job_id in (
             "workflow-lint",
@@ -95,7 +102,9 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             "release-disabled-wrapper",
         ):
             self.assertEqual(
-                " ".join(self.jobs[job_id]["if"].split()),
+                " ".join(self.jobs[job_id]["if"].split())
+                .replace("( ", "(")
+                .replace(" )", ")"),
                 expected_skip,
                 f"{job_id} must not run during the protected manual preflight",
             )
@@ -109,10 +118,14 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
         concurrency = self.workflow["concurrency"]
         self.assertIn("github.run_id", concurrency["group"])
         self.assertIn(DISPATCH_INPUT, concurrency["group"])
+        self.assertIn(OPERATION_CONTRACT_INPUT, concurrency["group"])
         self.assertEqual(
-            " ".join(concurrency["cancel-in-progress"].split()),
-            "${{ github.event_name != 'workflow_dispatch' || "
-            f"inputs.{DISPATCH_INPUT} != true " + "}}",
+            " ".join(concurrency["cancel-in-progress"].split())
+            .replace("( ", "(")
+            .replace(" )", ")"),
+            "${{ github.event_name != 'workflow_dispatch' || ("
+            f"inputs.{DISPATCH_INPUT} != true && "
+            f"inputs.{OPERATION_CONTRACT_INPUT} != true)" + " }}",
         )
 
     def test_job_shape_steps_and_xcode_commands_are_allowlisted(self) -> None:
