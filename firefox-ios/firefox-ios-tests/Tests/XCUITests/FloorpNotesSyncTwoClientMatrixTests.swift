@@ -12,17 +12,9 @@ final class FloorpNotesSyncTwoClientMatrixTests: XCTestCase {
     func testTwoClientProductionMatrix() {
         let environment = ProcessInfo.processInfo.environment
 
-        guard environment["FLOORP_NOTES_SYNC_G5_RUN"] == "1" else {
-            XCTFail("G5 preflight was not explicitly authorized.")
-            return
-        }
-        guard environment["FLOORP_NOTES_SYNC_PRODUCTION_QA"] == "1" else {
-            XCTFail("G5 preflight requires the protected production-QA route.")
-            return
-        }
-        guard environment["FIREFOX_USE_STAGE_SERVER"] == nil else {
-            XCTFail("G5 preflight rejects a staging server override.")
-            return
-        }
+        XCTAssertTrue(
+            FloorpNotesSyncG5LaunchPolicy.allows(environment: environment),
+            "G5 preflight requires only its two explicit intent flags and no endpoint override."
+        )
     }
 }
