@@ -24,6 +24,11 @@ HEAD_SHA = "a" * 40
 FIXTURE_DIGEST = "b" * 64
 
 
+class AlwaysEqual:
+    def __eq__(self, _: object) -> bool:
+        return True
+
+
 def expected_run_binding() -> dict[str, object]:
     return {
         "head_sha": HEAD_SHA,
@@ -363,6 +368,14 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
             with self.subTest(binding=binding):
                 with self.assertRaises(ReceiptError):
                     validate_receipt(valid_receipt(), expected_run_binding=binding)  # type: ignore[arg-type]
+
+    def test_rejects_always_equal_repository_and_workflow_binding_values(self) -> None:
+        for key in ("repository", "workflow_path"):
+            with self.subTest(key=key):
+                binding = expected_run_binding()
+                binding[key] = AlwaysEqual()
+                with self.assertRaises(ReceiptError):
+                    validate_receipt(valid_receipt(), expected_run_binding=binding)
 
     def test_rejects_unapproved_or_incomplete_network_observations(self) -> None:
         mutations = (

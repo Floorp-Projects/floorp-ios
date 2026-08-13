@@ -185,8 +185,14 @@ def _canonical_run_binding(value: Any, label: str) -> dict[str, object]:
         frozenset({"head_sha", "repository", "run_attempt", "run_id", "workflow_path"}),
         label,
     )
-    _require(binding["repository"] == EXPECTED_REPOSITORY, f"{label} repository is not floorp-ios")
-    _require(binding["workflow_path"] == EXPECTED_WORKFLOW_PATH, f"{label} workflow is not canonical")
+    _require(
+        type(binding["repository"]) is str and binding["repository"] == EXPECTED_REPOSITORY,
+        f"{label} repository is not floorp-ios",
+    )
+    _require(
+        type(binding["workflow_path"]) is str and binding["workflow_path"] == EXPECTED_WORKFLOW_PATH,
+        f"{label} workflow is not canonical",
+    )
     _require(
         isinstance(binding["head_sha"], str) and _SHA40.fullmatch(binding["head_sha"]) is not None,
         f"{label} head SHA is invalid",
