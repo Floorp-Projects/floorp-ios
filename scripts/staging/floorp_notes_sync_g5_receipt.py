@@ -297,7 +297,7 @@ def parse_and_validate_receipt(payload: str, *, expected_run_binding: Mapping[st
             parse_float=_reject_float,
             parse_int=_parse_safe_int,
         )
-    except (json.JSONDecodeError, TypeError) as error:
+    except (json.JSONDecodeError, TypeError, UnicodeEncodeError) as error:
         raise ReceiptError("receipt payload is not valid JSON") from error
     _require(payload_bytes == _canonical_json_bytes(receipt), "receipt JSON bytes are not canonical")
     return validate_receipt(receipt, expected_run_binding=expected_run_binding)

@@ -124,6 +124,15 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
                         expected_run_binding=expected_run_binding(),
                     )
 
+    def test_rejects_direct_python_payload_with_unpaired_surrogate(self) -> None:
+        payload = '{"invalid":"' + chr(0xD800) + '"}'
+
+        with self.assertRaises(ReceiptError):
+            parse_and_validate_receipt(
+                payload,
+                expected_run_binding=expected_run_binding(),
+            )
+
     def test_rejects_nested_duplicate_json_fields(self) -> None:
         payload = canonical_payload()
         payload = payload.replace(
