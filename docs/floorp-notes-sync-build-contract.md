@@ -141,6 +141,13 @@ This compile-only output has no production-QA
 authorization, credentials, artifact upload, or operational evidence and
 cannot satisfy G5 evidence.
 
+The protected manual preflight is a `workflow_dispatch` job restricted to
+`main` and the `floorp-notes-sync-production-qa` Environment. It compiles the
+guard selector with `build-for-testing`; it does not execute the selector,
+does not authorize G5, consumes no credential or endpoint input, and uploads
+no artifact. The Environment is a scheduling boundary, not a G5 approval;
+this preflight cannot satisfy G5 evidence.
+
 The public records are exact metadata-only summaries. Account isolation must
 prove two isolated accounts, post-upload base advancement, cleanup, rollback,
 and local-only fallback against the pinned fixture. Network evidence must prove

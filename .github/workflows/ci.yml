@@ -6,13 +6,24 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_floorp_notes_sync_protected_preflight:
+        description: Compile the protected Notes Sync G5 selector without executing it.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: floorp-ios-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: >-
+    floorp-ios-ci-${{ github.event_name }}-${{
+    inputs.run_floorp_notes_sync_protected_preflight == true && github.run_id ||
+    github.event.pull_request.number || github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name != 'workflow_dispatch' ||
+    inputs.run_floorp_notes_sync_protected_preflight != true }}
 
 env:
   L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
@@ -27,6 +38,9 @@ env:
 jobs:
   workflow-lint:
     name: Validate workflows
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.run_floorp_notes_sync_protected_preflight != true
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -60,6 +74,9 @@ jobs:
 
   build-and-test:
     name: Build and unit test
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.run_floorp_notes_sync_protected_preflight != true
     runs-on: macos-26
     timeout-minutes: 90
 
@@ -251,6 +268,9 @@ jobs:
 
   release-disabled-wrapper:
     name: Release-disabled wrapper build
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.run_floorp_notes_sync_protected_preflight != true
     runs-on: macos-26
     timeout-minutes: 90
     needs: workflow-lint
@@ -286,3 +306,85 @@ jobs:
             ${{ runner.temp }}/floorp-notes-sync-release-disabled-manifest.json
           if-no-files-found: ignore
           retention-days: 7
+
+  # This Environment-bound job is a manual scheduling preflight only. It
+  # compiles the guard XCTest without executing it and must not be treated as
+  # G5 evidence or execution authorization.
+  notes-sync-protected-preflight:
+    name: Protected Notes Sync compile-only preflight
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_floorp_notes_sync_protected_preflight == true
+    environment: floorp-notes-sync-production-qa
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Select Xcode
+        run: |
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Prepare iOS Simulator
+        timeout-minutes: 10
+        run: |
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIMULATOR_OS//./-}"
+          simulator_id="$(
+            xcrun simctl list devices available --json \
+              | jq -er --arg runtime "$runtime" --arg name "$SIMULATOR_NAME" \
+                '.devices[$runtime] | map(select(.name == $name)) | first | .udid'
+          )"
+          simulator_arch="$(uname -m)"
+
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf 'DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+            "$simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
+
+      - name: Compile protected G5 XCTest route
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -quiet \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -configuration FloorpRelease \
+            -destination "$DESTINATION" \
+            -testPlan FloorpNotesSyncG5 \
+            -only-testing:XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix \
+            -derivedDataPath "$RUNNER_TEMP/ProtectedG5PreflightDerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -parallel-testing-enabled NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/protected-g5-preflight-compile.log"
