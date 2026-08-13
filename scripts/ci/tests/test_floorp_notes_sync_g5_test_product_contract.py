@@ -213,6 +213,14 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, serialized)
 
+    def test_primary_ci_time_budget_covers_compile_only_route_and_unit_tests(self) -> None:
+        job = self.jobs["build-and-test"]
+        self.assertEqual(job["timeout-minutes"], 120)
+        self.assertEqual(
+            self.named_step(job, "Run unit tests")["timeout-minutes"],
+            30,
+        )
+
     def test_primary_ci_job_cannot_confuse_compile_output_with_g5_evidence(self) -> None:
         serialized = json.dumps(self.jobs["build-and-test"], sort_keys=True).lower()
         self.assertNotIn("floorp-notes-sync-production-qa", serialized)
