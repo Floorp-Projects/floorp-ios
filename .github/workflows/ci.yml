@@ -171,6 +171,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee "$RUNNER_TEMP/build.log"
 
+      # Compile only: normal PR/main CI has no production-QA authorization,
+      # credentials, or G5 evidence role.
+      - name: Compile release-disabled G5 XCTest route
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -quiet \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -configuration FloorpRelease \
+            -destination "$DESTINATION" \
+            -testPlan FloorpNotesSyncG5 \
+            -only-testing:XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix \
+            -derivedDataPath "$RUNNER_TEMP/G5RouteCompileDerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -parallel-testing-enabled NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/g5-route-compile.log"
+
       - name: Run unit tests
         timeout-minutes: 30
         run: |
