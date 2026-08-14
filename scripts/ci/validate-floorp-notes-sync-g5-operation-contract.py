@@ -4,7 +4,9 @@
 This utility is deliberately static: it reads one checked-in JSON document and
 never accepts credentials, launches a client, contacts a service, or produces
 G5 evidence.  A valid result records only that a future operation must still
-use the separately protected execution boundary.
+use the separately protected execution boundary.  That future boundary assigns
+coordination, credential handling, and network capture to an external driver;
+an iOS XCTest may participate only through content-free metadata observation.
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ G5_EVENT = RELEASE_VALIDATOR.G5_CI_EVENT
 G5_HEAD_BRANCH = RELEASE_VALIDATOR.G5_CI_HEAD_BRANCH
 G5_ARTIFACT_KIND = RELEASE_VALIDATOR.G5_XCRESULT_ARTIFACT_KIND
 G5_ARTIFACT_NAME = RELEASE_VALIDATOR.G5_XCRESULT_ARTIFACT_NAME
-G5_REQUIRED_TEST = RELEASE_VALIDATOR.G5_TWO_CLIENT_XCRESULT_TEST
+G5_REQUIRED_TEST = RELEASE_VALIDATOR.G5_ACTUAL_TWO_CLIENT_XCRESULT_TEST
 G5_REQUIRED_SYNC_HOST = RELEASE_VALIDATOR.G5_REQUIRED_SYNC_HOST
 APPROVED_HOSTS = frozenset(RELEASE_VALIDATOR.EXPECTED_FXA_HOSTS) | frozenset(
     RELEASE_VALIDATOR.EXPECTED_SYNC_HOSTS
@@ -118,6 +120,7 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
                 "future_g5_artifact",
                 "isolation_contract",
                 "network_contract",
+                "participant_contract",
                 "schema_version",
                 "workflow",
             }
@@ -156,6 +159,33 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
             "retrieval": "required-after-run",
         },
         "future G5 artifact is not canonical",
+    )
+
+    participant = require_exact_keys(
+        root["participant_contract"],
+        frozenset(
+            {
+                "coordinator",
+                "credential_handling",
+                "ios_participant",
+                "network_capture",
+                "payload_observation",
+                "test_attachments",
+            }
+        ),
+        "participant contract",
+    )
+    require(
+        participant
+        == {
+            "coordinator": "external-driver-only",
+            "credential_handling": "external-driver-only",
+            "ios_participant": "metadata-only-observer",
+            "network_capture": "external-driver-only",
+            "payload_observation": "forbidden",
+            "test_attachments": "forbidden",
+        },
+        "participant contract assigns coordinator, credentials, network, or retained data unsafely",
     )
 
     boundary = require_exact_keys(

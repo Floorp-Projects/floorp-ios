@@ -178,9 +178,17 @@ G4_ATTESTATION_XCRESULT_TEST = (
     "FloorpNotesSyncEngineSelectionTests/"
     "testG4AttestationBindsTask18Evidence()"
 )
-G5_TWO_CLIENT_XCRESULT_TEST = (
+G5_STATIC_PREFLIGHT_XCTEST_SELECTOR = (
+    "XCUITests/FloorpNotesSyncTwoClientMatrixTests/"
+    "testTwoClientProductionMatrix"
+)
+G5_STATIC_PREFLIGHT_XCRESULT_TEST = (
     "FloorpNotesSyncTwoClientMatrixTests/"
     "testTwoClientProductionMatrix()"
+)
+G5_ACTUAL_TWO_CLIENT_XCRESULT_TEST = (
+    "FloorpNotesSyncActualG5TwoClientTests/"
+    "testActualG5TwoClientProductionMatrix()"
 )
 G5_CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 G5_CI_EVENT = "workflow_dispatch"
@@ -1701,6 +1709,14 @@ def verify_github_release_asset(
     )
 
 
+def required_xcresult_test_for_source(source: Mapping[str, Any]) -> str | None:
+    if source.get("role") == "g4-attestation-xcresult":
+        return G4_ATTESTATION_XCRESULT_TEST
+    if source.get("artifact_name") == G5_XCRESULT_ARTIFACT_NAME:
+        return G5_ACTUAL_TWO_CLIENT_XCRESULT_TEST
+    return None
+
+
 def verify_github_actions_artifact(
     source: dict[str, Any],
     gh_bin: Path,
@@ -1761,13 +1777,7 @@ def verify_github_actions_artifact(
         label,
         gh_environment,
         require_xcresult=True,
-        required_xcresult_test=(
-            G4_ATTESTATION_XCRESULT_TEST
-            if source.get("role") == "g4-attestation-xcresult"
-            else G5_TWO_CLIENT_XCRESULT_TEST
-            if source.get("artifact_name") == "floorp-notes-sync-two-client-xcresult"
-            else None
-        ),
+        required_xcresult_test=required_xcresult_test_for_source(source),
     )
 
 
@@ -1793,13 +1803,7 @@ def verify_artifact_source(
         check(key in test_remote_artifacts, f"{label}: test remote artifact is unavailable")
         raw = test_remote_artifacts[key]
         if kind == "github-actions-artifact":
-            required_test = (
-                G4_ATTESTATION_XCRESULT_TEST
-                if source.get("role") == "g4-attestation-xcresult"
-                else G5_TWO_CLIENT_XCRESULT_TEST
-                if source.get("artifact_name") == "floorp-notes-sync-two-client-xcresult"
-                else None
-            )
+            required_test = required_xcresult_test_for_source(source)
             validate_xcresult_archive(
                 io.BytesIO(raw),
                 label,

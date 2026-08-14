@@ -133,12 +133,17 @@ The post-build clock dispatch passes the canonical workflow file name
 G5 is valid only when a successful, manually dispatched `main` run of
 `.github/workflows/ci.yml` publishes
 `floorp-notes-sync-two-client-xcresult`. The archive must contain a passing
-`FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()` node;
-renaming an ordinary FloorpCI result does not satisfy this requirement.
+`FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()`
+node. This execution-only node is separate from the current static preflight
+selector; a passed
+`FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()` node,
+renaming an ordinary FloorpCI result, or reusing the canonical artifact name
+does not satisfy this requirement.
 
-Ordinary PR/main CI compiles the protected selector without executing its protected selector.
-This compile-only output has no production-QA
-authorization, credentials, artifact upload, or operational evidence and
+Ordinary PR/main CI compiles only the static preflight selector
+`XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix`
+without executing its protected selector. This compile-only output has no
+production-QA authorization, credentials, artifact upload, or operational evidence and
 cannot satisfy G5 evidence.
 
 The protected manual preflight is a `workflow_dispatch` job restricted to
@@ -154,6 +159,14 @@ job makes no nonissuance claim, does not reference that context, and does not
 forward it to any configured action or command. The Environment is a
 scheduling boundary, not a G5 approval; this preflight cannot satisfy G5
 evidence.
+
+Any future G5 operation has a strict participant split: the external driver is
+the coordinator. A separate iOS XCTest may be a metadata-only participant, but
+it must not carry credentials, coordinate a Desktop client or proxy, initiate
+or capture network traffic, inspect Notes payloads, or retain attachments,
+screenshots, or UI hierarchy. The existing protected selector remains a
+non-live preflight; this contract does not authorize a future driver or iOS
+participant implementation.
 
 The public records are exact metadata-only summaries. Account isolation must
 prove two isolated accounts, post-upload base advancement, cleanup, rollback,

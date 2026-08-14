@@ -42,7 +42,13 @@ TEST_PLAN_DIRECTORY = ROOT / "firefox-ios/firefox-ios-tests/Tests"
 RUBY = "/usr/bin/ruby"
 
 XCUITESTS_TARGET_ID = "3BFE4B061D342FB800DDF53F"
-G5_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+STATIC_G5_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+STATIC_G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
+ACTUAL_G5_TEST = "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()"
+ACTUAL_G5_SELECTOR = (
+    "XCUITests/FloorpNotesSyncActualG5TwoClientTests/"
+    "testActualG5TwoClientProductionMatrix"
+)
 QA_TEST = "FloorpNotesSyncProductionQAConfigurationTests/testReleaseBuildConfigurationIsExplicit()"
 G5_BUILD_FILE_ID = "F20A20122F52000100000001"
 G5_FILE_REFERENCE_ID = "F20A20132F52000100000001"
@@ -121,7 +127,9 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
                 "name": "XCUITests",
             },
         )
-        self.assertEqual(target["selectedTests"], [G5_TEST])
+        self.assertEqual(target["selectedTests"], [STATIC_G5_TEST])
+        self.assertNotIn(ACTUAL_G5_TEST, target["selectedTests"])
+        self.assertNotIn(ACTUAL_G5_TEST, TEST_PLAN.read_text(encoding="utf-8"))
 
     def test_preflight_is_direct_xctest_and_has_no_operational_side_effect(self) -> None:
         self.assertTrue(TEST_SOURCE.is_file(), "the G5 selector must be an actual XCTest source")
@@ -130,6 +138,7 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         source = TEST_SOURCE.read_text(encoding="utf-8")
         self.assertIn("final class FloorpNotesSyncTwoClientMatrixTests: XCTestCase", source)
         self.assertIn("func testTwoClientProductionMatrix()", source)
+        self.assertNotIn(ACTUAL_G5_TEST, source)
         self.assertIn(
             "FloorpNotesSyncG5LaunchPolicy.allows(environment: environment)",
             source,
@@ -236,12 +245,17 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             if plan_path == TEST_PLAN:
                 continue
             plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            self.assertNotIn(
+                ACTUAL_G5_TEST,
+                json.dumps(plan, sort_keys=True),
+                f"{plan_path.name} must not reserve the future actual G5 test",
+            )
             for target in plan["testTargets"]:
                 if target["target"].get("name") != "XCUITests":
                     continue
                 if "selectedTests" not in target:
                     self.assertIn(
-                        G5_TEST,
+                        STATIC_G5_TEST,
                         target.get("skippedTests", []),
                         f"{plan_path.name} could execute the protected G5 XCTest",
                     )
@@ -249,7 +263,8 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
     def test_existing_production_qa_plan_remains_configuration_only(self) -> None:
         plan = json.loads(QA_TEST_PLAN.read_text(encoding="utf-8"))
         self.assertEqual(plan["testTargets"][0]["selectedTests"], [QA_TEST])
-        self.assertNotIn(G5_TEST, plan["testTargets"][0]["selectedTests"])
+        self.assertNotIn(STATIC_G5_TEST, plan["testTargets"][0]["selectedTests"])
+        self.assertNotIn(ACTUAL_G5_TEST, plan["testTargets"][0]["selectedTests"])
 
     def test_primary_ci_compiles_but_cannot_execute_or_publish_the_route(self) -> None:
         compile_step = self.named_step(
@@ -264,7 +279,7 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             "-configuration FloorpRelease",
             "-destination \"$DESTINATION\"",
             "-testPlan FloorpNotesSyncG5",
-            "-only-testing:XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix",
+            f"-only-testing:{STATIC_G5_SELECTOR}",
             "-derivedDataPath \"$RUNNER_TEMP/G5RouteCompileDerivedData\"",
             "-clonedSourcePackagesDirPath \"$RUNNER_TEMP/SourcePackages\"",
             "-disableAutomaticPackageResolution",
@@ -276,6 +291,7 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             "CODE_SIGNING_ALLOWED=NO",
         ):
             self.assertIn(expected, run)
+        self.assertNotIn(f"-only-testing:{ACTUAL_G5_SELECTOR}", run)
 
         serialized = json.dumps(compile_step, sort_keys=True).lower()
         for forbidden in (
@@ -307,12 +323,19 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         self.assertNotIn("floorp-notes-sync-production-qa", serialized)
         self.assertNotIn(CANONICAL_G5_ARTIFACT, serialized)
         self.assertNotIn("run_g5_", serialized)
+        self.assertNotIn(ACTUAL_G5_SELECTOR, WORKFLOW.read_text(encoding="utf-8"))
 
     def test_build_contract_excludes_compile_only_results_from_g5_evidence(self) -> None:
         source = BUILD_CONTRACT.read_text(encoding="utf-8")
         self.assertIn("Ordinary PR/main CI compiles", source)
         self.assertIn("without executing its protected selector", source)
         self.assertIn("cannot satisfy G5 evidence", source)
+        self.assertIn(ACTUAL_G5_TEST, source)
+        self.assertIn("static preflight selector", source)
+        self.assertRegex(source, r"external driver is\s+the coordinator")
+        self.assertIn("metadata-only participant", source)
+        self.assertIn("must not carry credentials", source)
+        self.assertIn("or retain attachments", source)
 
     def test_all_actions_in_primary_ci_remain_pinned(self) -> None:
         serialized = json.dumps(self.jobs["build-and-test"], sort_keys=True)
