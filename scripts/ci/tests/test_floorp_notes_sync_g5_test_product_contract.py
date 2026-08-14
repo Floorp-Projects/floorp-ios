@@ -27,6 +27,11 @@ TEST_SOURCE = (
     / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
     "FloorpNotesSyncTwoClientMatrixTests.swift"
 )
+ACTUAL_TEST_SOURCE = (
+    ROOT
+    / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
+    "FloorpNotesSyncActualG5TwoClientTests.swift"
+)
 POLICY_SOURCE = (
     ROOT
     / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
@@ -56,6 +61,8 @@ G5_POLICY_BUILD_FILE_ID = "F20A20222F52000100000001"
 G5_POLICY_FILE_REFERENCE_ID = "F20A20232F52000100000001"
 G5_POLICY_TEST_BUILD_FILE_ID = "F20A20322F52000100000001"
 G5_POLICY_TEST_FILE_REFERENCE_ID = "F20A20332F52000100000001"
+ACTUAL_G5_BUILD_FILE_ID = "F20A20422F52000100000001"
+ACTUAL_G5_FILE_REFERENCE_ID = "F20A20432F52000100000001"
 CANONICAL_G5_ARTIFACT = "floorp-notes-sync-two-client-xcresult"
 
 
@@ -229,6 +236,7 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             (G5_BUILD_FILE_ID, "FloorpNotesSyncTwoClientMatrixTests.swift"),
             (G5_POLICY_BUILD_FILE_ID, "FloorpNotesSyncG5LaunchPolicy.swift"),
             (G5_POLICY_TEST_BUILD_FILE_ID, "FloorpNotesSyncG5LaunchPolicyTests.swift"),
+            (ACTUAL_G5_BUILD_FILE_ID, "FloorpNotesSyncActualG5TwoClientTests.swift"),
         ):
             self.assertIn(f"{build_file_id} /* {filename} in Sources */", project)
             self.assertEqual(project.count(build_file_id), 2)
@@ -236,29 +244,59 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             (G5_FILE_REFERENCE_ID, "FloorpNotesSyncTwoClientMatrixTests.swift"),
             (G5_POLICY_FILE_REFERENCE_ID, "FloorpNotesSyncG5LaunchPolicy.swift"),
             (G5_POLICY_TEST_FILE_REFERENCE_ID, "FloorpNotesSyncG5LaunchPolicyTests.swift"),
+            (ACTUAL_G5_FILE_REFERENCE_ID, "FloorpNotesSyncActualG5TwoClientTests.swift"),
         ):
             self.assertIn(f"{file_reference_id} /* {filename} */", project)
             self.assertEqual(project.count(file_reference_id), 3)
+
+    def test_actual_selector_is_compiled_but_fails_closed_before_runner_admission(self) -> None:
+        self.assertTrue(ACTUAL_TEST_SOURCE.is_file(), "the actual G5 selector must exist in XCUITests")
+        if not ACTUAL_TEST_SOURCE.is_file():
+            return
+        source = ACTUAL_TEST_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("final class FloorpNotesSyncActualG5TwoClientTests: XCTestCase", source)
+        self.assertIn("func testActualG5TwoClientProductionMatrix()", source)
+        self.assertIn("throw XCTSkip(", source)
+        self.assertIn("UPSTREAM_ARTIFACT_MISSING", source)
+        for forbidden in (
+            "ProcessInfo",
+            "XCUIApplication",
+            "BaseTestCase",
+            "URLSession",
+            "XCTAttachment",
+            "screenshot()",
+            "debugDescription",
+            "Logger",
+            "NSLog",
+            "print(",
+            "EMAIL",
+            "PASSWORD",
+            "TOKEN",
+            "CREDENTIAL",
+            "SECRET",
+        ):
+            self.assertNotIn(forbidden, source)
 
     def test_ordinary_unbounded_plans_explicitly_skip_the_protected_g5_selector(self) -> None:
         for plan_path in sorted(TEST_PLAN_DIRECTORY.glob("*.xctestplan")):
             if plan_path == TEST_PLAN:
                 continue
             plan = json.loads(plan_path.read_text(encoding="utf-8"))
-            self.assertNotIn(
-                ACTUAL_G5_TEST,
-                json.dumps(plan, sort_keys=True),
-                f"{plan_path.name} must not reserve the future actual G5 test",
-            )
             for target in plan["testTargets"]:
                 if target["target"].get("name") != "XCUITests":
                     continue
+                self.assertNotIn(
+                    ACTUAL_G5_TEST,
+                    target.get("selectedTests", []),
+                    f"{plan_path.name} must not select the future actual G5 test",
+                )
                 if "selectedTests" not in target:
-                    self.assertIn(
-                        STATIC_G5_TEST,
-                        target.get("skippedTests", []),
-                        f"{plan_path.name} could execute the protected G5 XCTest",
-                    )
+                    for protected_test in (STATIC_G5_TEST, ACTUAL_G5_TEST):
+                        self.assertIn(
+                            protected_test,
+                            target.get("skippedTests", []),
+                            f"{plan_path.name} could execute a protected G5 XCTest",
+                        )
 
     def test_existing_production_qa_plan_remains_configuration_only(self) -> None:
         plan = json.loads(QA_TEST_PLAN.read_text(encoding="utf-8"))
@@ -331,6 +369,7 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         self.assertIn("without executing its protected selector", source)
         self.assertIn("cannot satisfy G5 evidence", source)
         self.assertIn(ACTUAL_G5_TEST, source)
+        self.assertIn("unconditionally skipped", source)
         self.assertIn("static preflight selector", source)
         self.assertRegex(source, r"external driver is\s+the coordinator")
         self.assertIn("metadata-only participant", source)
