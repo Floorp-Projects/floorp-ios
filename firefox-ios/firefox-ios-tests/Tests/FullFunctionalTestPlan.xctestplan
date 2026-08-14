@@ -358,7 +358,8 @@
         "ZoomingTestsTAE\/testZoomingActions()",
         "ZoomingTestsTAE\/testZoomingActionsLandscape_tabTrayExperimentOff()",
         "FloorpNotesSyncProductionQAConfigurationTests\/testReleaseBuildConfigurationIsExplicit()",
-        "FloorpNotesSyncTwoClientMatrixTests\/testTwoClientProductionMatrix()"
+        "FloorpNotesSyncTwoClientMatrixTests\/testTwoClientProductionMatrix()",
+        "FloorpNotesSyncActualG5TwoClientTests\/testActualG5TwoClientProductionMatrix()"
       ],
       "target" : {
         "containerPath" : "container:Client.xcodeproj",

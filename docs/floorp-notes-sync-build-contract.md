@@ -146,6 +146,13 @@ without executing its protected selector. This compile-only output has no
 production-QA authorization, credentials, artifact upload, or operational evidence and
 cannot satisfy G5 evidence.
 
+`FloorpNotesSyncActualG5TwoClientTests` is compiled into `XCUITests` so the
+future evidence selector has a stable product identity. Until the external
+driver, disposable protected runner, cleanup receipt, metadata-only network
+record, and fresh G1-G4 inputs are admitted together, that selector is
+unconditionally skipped with `UPSTREAM_ARTIFACT_MISSING`. It does not inspect
+environment values, launch an app, contact a service, or access credentials.
+
 The protected manual preflight is a `workflow_dispatch` job restricted to
 `main` and the `floorp-notes-sync-production-qa` Environment. It compiles the
 guard selector with `build-for-testing`; it does not execute the selector,
