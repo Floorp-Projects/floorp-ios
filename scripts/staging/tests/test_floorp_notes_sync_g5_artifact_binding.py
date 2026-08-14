@@ -7,6 +7,8 @@ artifact, authorize G5, or access any account, credential, browser, or device.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import unittest
 from collections.abc import Iterator, Mapping
 
@@ -18,12 +20,14 @@ from scripts.staging.floorp_notes_sync_g5_receipt import (
     EXPECTED_REPOSITORY,
     EXPECTED_WORKFLOW_PATH,
 )
+from scripts.staging.floorp_notes_sync_g5_admission import CI_WORKFLOW_PATH
 
 
 HEAD_SHA = "a" * 40
 ZIP_SHA256 = "b" * 64
-RECEIPT_MEMBER_SHA256 = "c" * 64
 ARTIFACT_NAME = "floorp-notes-sync-two-client-xcresult"
+LEGACY_G5_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-g5.yml"
+FIXTURE_DIGEST = "d" * 64
 
 
 class AlwaysEqual:
@@ -60,6 +64,44 @@ def expected_run_binding() -> dict[str, object]:
     }
 
 
+def canonical_receipt_payload(*, fixture_digest: str = FIXTURE_DIGEST) -> str:
+    receipt = {
+        "matrix": {
+            "client_slots": ["client-a", "client-b"],
+            "fixture_digest": fixture_digest,
+            "status": "passed",
+        },
+        "network": {
+            "metadata_only": True,
+            "observations": [
+                {
+                    "host": "sync.services.mozilla.com",
+                    "outcome": "succeeded",
+                    "port": 443,
+                    "tls_verified": True,
+                }
+            ],
+            "tls_interception": False,
+        },
+        "outcomes": {
+            "base_advanced": True,
+            "desktop_cleanup_verified": True,
+            "ios_cleanup_verified": True,
+            "local_only_fallback_verified": True,
+            "remote_cleanup_verified": True,
+            "rollback_verified": True,
+        },
+        "retention": {"payload_retained": False, "secrets_retained": False},
+        "run_binding": expected_run_binding(),
+        "schema_version": 1,
+    }
+    return json.dumps(receipt, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def receipt_member_sha256(*, fixture_digest: str = FIXTURE_DIGEST) -> str:
+    return hashlib.sha256(canonical_receipt_payload(fixture_digest=fixture_digest).encode("utf-8")).hexdigest()
+
+
 def receipt_metadata() -> dict[str, object]:
     return {
         "execution_authorization": "not-granted",
@@ -76,7 +118,7 @@ def provenance_snapshot() -> dict[str, object]:
         "artifact_run_id": 123456789,
         "artifact_zip_sha256": ZIP_SHA256,
         "head_sha": HEAD_SHA,
-        "receipt_member_sha256": RECEIPT_MEMBER_SHA256,
+        "receipt_member_sha256": receipt_member_sha256(),
         "repository": EXPECTED_REPOSITORY,
         "run_attempt": 1,
         "run_id": 123456789,
@@ -91,7 +133,7 @@ def expected_artifact_binding() -> dict[str, object]:
 class FloorpNotesSyncG5ArtifactBindingTests(unittest.TestCase):
     def test_accepts_exact_receipt_metadata_and_bound_snapshot(self) -> None:
         decision = validate_artifact_provenance_binding(
-            receipt_metadata(),
+            canonical_receipt_payload(),
             provenance_snapshot(),
             expected_artifact_binding=expected_artifact_binding(),
         )
@@ -102,26 +144,19 @@ class FloorpNotesSyncG5ArtifactBindingTests(unittest.TestCase):
         self.assertEqual(decision["g5_result"], "not-assessed")
         self.assertEqual(decision["run_binding"], expected_run_binding())
 
-    def test_rejects_non_receipt_valid_metadata_and_extra_fields(self) -> None:
-        mutations = (
-            ("status", "g5-passed"),
-            ("execution_authorization", "granted"),
-            ("g5_result", "passed"),
-        )
-        for key, value in mutations:
-            with self.subTest(key=key):
-                metadata = receipt_metadata()
-                metadata[key] = value
-                with self.assertRaises(ArtifactBindingError):
-                    validate_artifact_provenance_binding(
-                        metadata, provenance_snapshot(), expected_artifact_binding=expected_artifact_binding()
-                    )
-
-        metadata = receipt_metadata()
-        metadata["extra"] = "value"
+    def test_rejects_metadata_and_noncanonical_receipt_substitutes(self) -> None:
         with self.assertRaises(ArtifactBindingError):
             validate_artifact_provenance_binding(
-                metadata, provenance_snapshot(), expected_artifact_binding=expected_artifact_binding()
+                receipt_metadata(),
+                provenance_snapshot(),
+                expected_artifact_binding=expected_artifact_binding(),
+            )
+
+        with self.assertRaises(ArtifactBindingError):
+            validate_artifact_provenance_binding(
+                canonical_receipt_payload() + "\n",
+                provenance_snapshot(),
+                expected_artifact_binding=expected_artifact_binding(),
             )
 
     def test_rejects_wrong_artifact_identity_or_digest(self) -> None:
@@ -140,7 +175,7 @@ class FloorpNotesSyncG5ArtifactBindingTests(unittest.TestCase):
                 snapshot[key] = value
                 with self.assertRaises(ArtifactBindingError):
                     validate_artifact_provenance_binding(
-                        receipt_metadata(), snapshot, expected_artifact_binding=expected_artifact_binding()
+                        canonical_receipt_payload(), snapshot, expected_artifact_binding=expected_artifact_binding()
                     )
 
     def test_rejects_every_run_binding_mismatch(self) -> None:
@@ -157,14 +192,14 @@ class FloorpNotesSyncG5ArtifactBindingTests(unittest.TestCase):
                 snapshot[key] = value
                 with self.assertRaises(ArtifactBindingError):
                     validate_artifact_provenance_binding(
-                        receipt_metadata(), snapshot, expected_artifact_binding=expected_artifact_binding()
+                        canonical_receipt_payload(), snapshot, expected_artifact_binding=expected_artifact_binding()
                     )
 
     def test_rejects_non_builtin_objects_and_equality_forgery(self) -> None:
         for metadata, snapshot, expected in (
             (MappingProxy(receipt_metadata()), provenance_snapshot(), expected_artifact_binding()),
-            (receipt_metadata(), MappingProxy(provenance_snapshot()), expected_artifact_binding()),
-            (receipt_metadata(), provenance_snapshot(), MappingProxy(expected_artifact_binding())),
+            (canonical_receipt_payload(), MappingProxy(provenance_snapshot()), expected_artifact_binding()),
+            (canonical_receipt_payload(), provenance_snapshot(), MappingProxy(expected_artifact_binding())),
         ):
             with self.subTest(value_type=type(metadata).__name__):
                 with self.assertRaises(ArtifactBindingError):
@@ -178,18 +213,20 @@ class FloorpNotesSyncG5ArtifactBindingTests(unittest.TestCase):
             ("expected", "repository"),
         ):
             with self.subTest(container=container):
-                metadata = receipt_metadata()
+                metadata: object = canonical_receipt_payload()
                 snapshot = provenance_snapshot()
                 expected = expected_artifact_binding()
-                target = {"metadata": metadata, "snapshot": snapshot, "expected": expected}[container]
-                target[key] = ForgedString(str(target[key]))
+                if container == "metadata":
+                    metadata = ForgedString(str(metadata))
+                else:
+                    target = {"snapshot": snapshot, "expected": expected}[container]
+                    target[key] = ForgedString(str(target[key]))
                 with self.assertRaises(ArtifactBindingError):
                     validate_artifact_provenance_binding(
                         metadata, snapshot, expected_artifact_binding=expected
                     )
 
-        metadata = receipt_metadata()
-        metadata["status"] = AlwaysEqual()
+        metadata = AlwaysEqual()
         with self.assertRaises(ArtifactBindingError):
             validate_artifact_provenance_binding(
                 metadata, provenance_snapshot(), expected_artifact_binding=expected_artifact_binding()
@@ -209,14 +246,45 @@ class FloorpNotesSyncG5ArtifactBindingTests(unittest.TestCase):
                 snapshot[key] = value
                 with self.assertRaises(ArtifactBindingError):
                     validate_artifact_provenance_binding(
-                        receipt_metadata(), snapshot, expected_artifact_binding=expected_artifact_binding()
+                        canonical_receipt_payload(), snapshot, expected_artifact_binding=expected_artifact_binding()
                     )
 
         snapshot = copy.deepcopy(provenance_snapshot())
         snapshot["unexpected"] = "value"
         with self.assertRaises(ArtifactBindingError):
             validate_artifact_provenance_binding(
-                receipt_metadata(), snapshot, expected_artifact_binding=expected_artifact_binding()
+                canonical_receipt_payload(), snapshot, expected_artifact_binding=expected_artifact_binding()
+            )
+
+    def test_binds_receipt_digest_to_canonical_payload_and_rejects_legacy_workflow(self) -> None:
+        self.assertEqual(EXPECTED_WORKFLOW_PATH, CI_WORKFLOW_PATH)
+        self.assertEqual(CI_WORKFLOW_PATH, ".github/workflows/ci.yml")
+
+        altered_payload = canonical_receipt_payload(fixture_digest="e" * 64)
+        with self.assertRaises(ArtifactBindingError):
+            validate_artifact_provenance_binding(
+                altered_payload,
+                provenance_snapshot(),
+                expected_artifact_binding=expected_artifact_binding(),
+            )
+
+        snapshot = provenance_snapshot()
+        expected = expected_artifact_binding()
+        snapshot["receipt_member_sha256"] = "f" * 64
+        expected["receipt_member_sha256"] = "f" * 64
+        with self.assertRaises(ArtifactBindingError):
+            validate_artifact_provenance_binding(
+                canonical_receipt_payload(), snapshot, expected_artifact_binding=expected
+            )
+
+        legacy_payload = canonical_receipt_payload().replace(
+            CI_WORKFLOW_PATH, LEGACY_G5_WORKFLOW_PATH
+        )
+        with self.assertRaises(ArtifactBindingError):
+            validate_artifact_provenance_binding(
+                legacy_payload,
+                provenance_snapshot(),
+                expected_artifact_binding=expected_artifact_binding(),
             )
 
 

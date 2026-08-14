@@ -7,12 +7,15 @@ network, browser, Xcode, FxA, or Sync operation.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any, Mapping
 
 from scripts.staging.floorp_notes_sync_g5_receipt import (
     EXPECTED_REPOSITORY,
     EXPECTED_WORKFLOW_PATH,
+    ReceiptError,
+    parse_and_validate_receipt,
 )
 
 
@@ -22,9 +25,6 @@ _MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _ARTIFACT_NAME = "floorp-notes-sync-two-client-xcresult"
 _RUN_BINDING_FIELDS = frozenset(
     {"head_sha", "repository", "run_attempt", "run_id", "workflow_path"}
-)
-_RECEIPT_METADATA_FIELDS = frozenset(
-    {"execution_authorization", "g5_result", "run_binding", "status"}
 )
 _SNAPSHOT_FIELDS = frozenset(
     {
@@ -109,25 +109,15 @@ def _require_same_run(left: dict[str, object], right: dict[str, object], label: 
         _require(left[field] == right[field], f"{label} {field} does not match")
 
 
-def _validate_receipt_metadata(value: Any, expected_run_binding: Any) -> dict[str, object]:
-    metadata = _exact_plain_object(value, _RECEIPT_METADATA_FIELDS, "receipt metadata")
-    _require(
-        type(metadata["status"]) is str and metadata["status"] == "receipt-valid",
-        "receipt metadata status is not receipt-valid",
-    )
-    _require(
-        type(metadata["execution_authorization"]) is str
-        and metadata["execution_authorization"] == "not-granted",
-        "receipt metadata authorizes execution",
-    )
-    _require(
-        type(metadata["g5_result"]) is str and metadata["g5_result"] == "not-assessed",
-        "receipt metadata claims a G5 result",
-    )
-    receipt_binding = _canonical_run_binding(metadata["run_binding"], "receipt run binding")
-    expected_binding = _canonical_run_binding(expected_run_binding, "expected run binding")
-    _require_same_run(receipt_binding, expected_binding, "receipt run binding")
-    return receipt_binding
+def _validate_canonical_receipt(payload: Any, expected_run_binding: dict[str, object]) -> tuple[dict[str, object], str]:
+    _require(type(payload) is str, "receipt payload must be canonical JSON text")
+    try:
+        metadata = parse_and_validate_receipt(payload, expected_run_binding=expected_run_binding)
+    except ReceiptError as error:
+        raise ArtifactBindingError(str(error)) from error
+    binding = _canonical_run_binding(metadata["run_binding"], "receipt run binding")
+    _require_same_run(binding, expected_run_binding, "receipt run binding")
+    return binding, hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _validate_snapshot(value: Any, run_binding: dict[str, object]) -> dict[str, object]:
@@ -165,7 +155,7 @@ def _require_same_artifact(
 
 
 def validate_artifact_provenance_binding(
-    receipt_metadata: Any,
+    canonical_receipt_payload: Any,
     artifact_provenance_snapshot: Any,
     *,
     expected_artifact_binding: Mapping[str, Any],
@@ -183,9 +173,15 @@ def validate_artifact_provenance_binding(
     expected_binding = _run_binding_from_snapshot(
         _exact_plain_object(expected_artifact_binding, _SNAPSHOT_FIELDS, "expected artifact binding")
     )
-    receipt_binding = _validate_receipt_metadata(receipt_metadata, expected_binding)
+    receipt_binding, receipt_sha256 = _validate_canonical_receipt(
+        canonical_receipt_payload, expected_binding
+    )
     artifact = _validate_snapshot(artifact_provenance_snapshot, receipt_binding)
     _require_same_artifact(artifact, expected_snapshot)
+    _require(
+        artifact["receipt_member_sha256"] == receipt_sha256,
+        "artifact receipt member SHA-256 does not match canonical receipt bytes",
+    )
     return {
         "artifact_provenance": "binding-valid",
         "artifact": artifact,
