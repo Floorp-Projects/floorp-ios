@@ -245,6 +245,25 @@ manifest's `previous_manifest_sha256` against the currently accepted external
 record before replacing either artifact. This static loader does not install a
 trust bundle or establish a broker, runner, lease, cleanup, or G5 result.
 
+`scripts/staging/floorp_notes_sync_g5_broker_admission.py` is the next,
+metadata-only connection between those two static controls. Its sole public
+entry point accepts one canonical signed admission envelope plus expected
+run/release bindings and a broker-provided trusted clock. It reloads the fixed
+owner-pinned trust source on every call, then immediately passes that freshly
+loaded bundle to the existing driver-admission verifier. It accepts no caller
+supplied trust bundle, prior loader result, path, signature verifier, SSH
+executable, execution callback, or force/override flag. Even after both
+checks succeed, it returns exactly `execution_authorization: not-granted` and
+`g5_result: not-assessed`; it deliberately discards the validation metadata so
+this library cannot become an execution capability or a G5 receipt.
+
+The bridge is not the future root-owned broker. An eventual Operations-owned
+broker must install and invoke its reviewed code from a root-controlled
+location, supply a separately trusted clock, atomically manage the external
+high-water record, provide the isolated runner lease and credential boundary,
+and retain independently verified cleanup evidence. Repository code and a
+workflow checkout never substitute for those controls.
+
 The eventual runner must be an ephemeral runner in a dedicated restricted
 runner group, under a dedicated OS account and an expiring lease. It must be
 destroyed after the operation, with an independent watchdog responsible for
