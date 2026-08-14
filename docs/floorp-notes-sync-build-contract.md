@@ -197,6 +197,54 @@ from an immutable owner-controlled path, verify its signature, expiry and
 monotonic version, and reject rollback or any bundle supplied by the workflow
 or a repository checkout.
 
+`scripts/staging/floorp_notes_sync_g5_owner_trust.py` implements the
+fail-closed loader portion of that boundary. Its only public entry point reads
+the fixed `/opt/floorp-notes-sync/driver-trust` path as root-owned material;
+it does not accept a caller-supplied path, bytes, or `ssh-keygen` executable.
+The loader requires `O_NOFOLLOW` and `O_DIRECTORY` support, walks the
+production path through non-symlink, root-owned, non-group/world-writable
+directories, then opens only root-owned, regular, non-group/world-writable,
+single-link files without following a final symlink. It validates these six
+files in the trust root:
+
+- `owner-allowed-signers`, containing exactly one distinct driver-trust owner
+  public key;
+- canonical `manifest.json` and its detached `manifest.sig`, signed under the
+  `floorp-notes-sync-g5-driver-trust-v1` namespace;
+- `allowed-signers`, `driver-registry.json`, and `revocations.json`, whose
+  SHA-256 digests are bound by the signed manifest.
+
+It additionally reads
+`/private/var/db/floorp-notes-sync/driver-trust-high-water.json` from a
+separate root-owned, non-symlink, non-group/world-writable directory chain.
+The physical `/private/var` path is intentional: on macOS `/var` is a symlink,
+which this loader rejects. The high-water record must exactly bind the manifest
+digest and version. It is not stored with the replaceable trust bundle: the
+broker must atomically advance this separate persistent record before accepting
+a newer signed bundle. Consequently, restoring a complete older
+manifest/signature/revocation bundle cannot make the loader accept it after the
+high-water mark has advanced.
+
+The manifest has the distinct `g5-driver-trust-owner` role, owner login/key
+fingerprint, a different driver login/key fingerprint, strict UTC issuance and
+expiry, version and previous-digest fields, and the three driver-bundle
+digests. The loader checks the owner signature against the separately stored
+owner root key before it makes the driver trust bundle available to the
+separate admission verifier. It rejects an expired, forged, untrusted,
+noncanonical, revoked, tampered, or rollback-inconsistent bundle. A valid load
+still returns `execution_authorization: not-granted` and
+`g5_result: not-assessed`.
+
+The owner root key, the initial signed version-1 bundle, the external
+high-water record, their root-only installation, and later rotation/revocation
+are Operations-owned inputs. They are never generated from a workflow, stored
+in this repository, or replaced by the five G6 approval keys. The following
+broker/runner implementation must atomically persist and advance the external
+high-water record. When advancing a version, that broker must verify the new
+manifest's `previous_manifest_sha256` against the currently accepted external
+record before replacing either artifact. This static loader does not install a
+trust bundle or establish a broker, runner, lease, cleanup, or G5 result.
+
 The eventual runner must be an ephemeral runner in a dedicated restricted
 runner group, under a dedicated OS account and an expiring lease. It must be
 destroyed after the operation, with an independent watchdog responsible for
