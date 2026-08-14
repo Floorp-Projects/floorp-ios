@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
+import sys
 import unittest
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts.staging.floorp_notes_sync_g5_receipt import (
@@ -19,10 +22,12 @@ from scripts.staging.floorp_notes_sync_g5_receipt import (
     parse_and_validate_receipt,
     validate_receipt,
 )
+from scripts.staging.floorp_notes_sync_g5_admission import CI_WORKFLOW_PATH
 
 
 HEAD_SHA = "a" * 40
 FIXTURE_DIGEST = "b" * 64
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 class AlwaysEqual:
@@ -121,6 +126,40 @@ def canonical_payload(receipt: dict[str, object] | None = None) -> str:
 
 
 class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
+    def test_receipt_import_does_not_initialize_the_admission_loader(self) -> None:
+        source = "\n".join(
+            (
+                "import sys",
+                f"sys.path.insert(0, {str(REPOSITORY_ROOT)!r})",
+                "import scripts.staging.floorp_notes_sync_g5_receipt",
+                "assert 'scripts.staging.floorp_notes_sync_g5_admission' not in sys.modules",
+            )
+        )
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", source],
+            capture_output=True,
+            env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+            stdin=subprocess.DEVNULL,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_binds_g5_receipts_to_the_release_validator_workflow(self) -> None:
+        self.assertEqual(EXPECTED_WORKFLOW_PATH, CI_WORKFLOW_PATH)
+        self.assertEqual(CI_WORKFLOW_PATH, ".github/workflows/ci.yml")
+
+        legacy = expected_run_binding()
+        legacy["workflow_path"] = ".github/workflows/floorp-notes-sync-g5.yml"
+        with self.assertRaises(ReceiptError):
+            validate_receipt(valid_receipt(), expected_run_binding=legacy)
+
+        legacy_receipt = valid_receipt()
+        legacy_receipt["run_binding"]["workflow_path"] = (
+            ".github/workflows/floorp-notes-sync-g5.yml"
+        )
+        with self.assertRaises(ReceiptError):
+            validate_receipt(legacy_receipt, expected_run_binding=expected_run_binding())
+
     def test_accepts_exact_safe_receipt_bound_to_expected_run(self) -> None:
         receipt = valid_receipt()
 
