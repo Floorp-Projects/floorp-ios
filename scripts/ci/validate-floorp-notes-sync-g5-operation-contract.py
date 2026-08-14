@@ -4,7 +4,9 @@
 This utility is deliberately static: it reads one checked-in JSON document and
 never accepts credentials, launches a client, contacts a service, or produces
 G5 evidence.  A valid result records only that a future operation must still
-use the separately protected execution boundary.
+use the separately protected execution boundary.  That future boundary assigns
+coordination, credential handling, and network capture to an external driver;
+an iOS XCTest may participate only through content-free metadata observation.
 """
 
 from __future__ import annotations
@@ -118,6 +120,7 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
                 "future_g5_artifact",
                 "isolation_contract",
                 "network_contract",
+                "participant_contract",
                 "schema_version",
                 "workflow",
             }
@@ -156,6 +159,33 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
             "retrieval": "required-after-run",
         },
         "future G5 artifact is not canonical",
+    )
+
+    participant = require_exact_keys(
+        root["participant_contract"],
+        frozenset(
+            {
+                "coordinator",
+                "credential_handling",
+                "ios_participant",
+                "network_capture",
+                "payload_observation",
+                "test_attachments",
+            }
+        ),
+        "participant contract",
+    )
+    require(
+        participant
+        == {
+            "coordinator": "external-driver-only",
+            "credential_handling": "external-driver-only",
+            "ios_participant": "metadata-only-observer",
+            "network_capture": "external-driver-only",
+            "payload_observation": "forbidden",
+            "test_attachments": "forbidden",
+        },
+        "participant contract assigns coordinator, credentials, network, or retained data unsafely",
     )
 
     boundary = require_exact_keys(

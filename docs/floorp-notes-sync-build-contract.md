@@ -155,6 +155,14 @@ forward it to any configured action or command. The Environment is a
 scheduling boundary, not a G5 approval; this preflight cannot satisfy G5
 evidence.
 
+Any future G5 operation has a strict participant split: the external driver is
+the coordinator. A separate iOS XCTest may be a metadata-only participant, but
+it must not carry credentials, coordinate a Desktop client or proxy, initiate
+or capture network traffic, inspect Notes payloads, or retain attachments,
+screenshots, or UI hierarchy. The existing protected selector remains a
+non-live preflight; this contract does not authorize a future driver or iOS
+participant implementation.
+
 The public records are exact metadata-only summaries. Account isolation must
 prove two isolated accounts, post-upload base advancement, cleanup, rollback,
 and local-only fallback against the pinned fixture. Network evidence must prove

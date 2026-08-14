@@ -313,6 +313,10 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         self.assertIn("Ordinary PR/main CI compiles", source)
         self.assertIn("without executing its protected selector", source)
         self.assertIn("cannot satisfy G5 evidence", source)
+        self.assertRegex(source, r"external driver is\s+the coordinator")
+        self.assertIn("metadata-only participant", source)
+        self.assertIn("must not carry credentials", source)
+        self.assertIn("or retain attachments", source)
 
     def test_all_actions_in_primary_ci_remain_pinned(self) -> None:
         serialized = json.dumps(self.jobs["build-and-test"], sort_keys=True)

@@ -30,6 +30,14 @@ ENVIRONMENT = "floorp-notes-sync-production-qa"
 G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
 CANONICAL_G5_ARTIFACT = "floorp-notes-sync-two-client-xcresult"
 G5_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+PARTICIPANT_CONTRACT = {
+    "coordinator": "external-driver-only",
+    "credential_handling": "external-driver-only",
+    "ios_participant": "metadata-only-observer",
+    "network_capture": "external-driver-only",
+    "payload_observation": "forbidden",
+    "test_attachments": "forbidden",
+}
 
 
 def load_validator() -> Any:
@@ -115,6 +123,25 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
                 "retrieval": "required-after-run",
             },
         )
+        self.assertEqual(contract["participant_contract"], PARTICIPANT_CONTRACT)
+
+    def test_contract_rejects_an_ios_coordinator_or_retained_participant_data(self) -> None:
+        mutations = (
+            (("participant_contract", "coordinator"), "ios-xctest", "iOS coordinator"),
+            (("participant_contract", "credential_handling"), "ios-xctest", "iOS credentials"),
+            (("participant_contract", "network_capture"), "ios-xctest", "iOS network capture"),
+            (("participant_contract", "payload_observation"), "metadata-only", "payload observation"),
+            (("participant_contract", "test_attachments"), "allowed", "test attachments"),
+        )
+        for path, value, label in mutations:
+            with self.subTest(label=label):
+                contract = self.checked_in_contract()
+                target = contract
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                with self.assertRaises(OPERATION_CONTRACT.OperationContractError):
+                    OPERATION_CONTRACT.validate_operation_contract(contract)
 
     def test_contract_rejects_credential_authorization_and_g5_claims(self) -> None:
         mutations = (
