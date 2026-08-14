@@ -258,6 +258,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
                 "Check out source anonymously",
                 "Set up Node.js",
                 "Validate non-live G5 operation contract",
+                "Validate external G5 driver prerequisites contract",
                 "Select Xcode",
                 "Bootstrap generated sources",
                 "Resolve Swift packages",
