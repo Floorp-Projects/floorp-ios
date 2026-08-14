@@ -184,6 +184,19 @@ same-release inputs. Credentials must reach the driver only through a
 root-owned broker; they must not be put in a workflow step environment, repo
 script, XCTest process, command argument, output file, or artifact.
 
+scripts/staging/floorp_notes_sync_g5_driver_admission.py is only a
+metadata-only verifier for that future attestation. Its production-facing
+entry point accepts canonical raw admission bytes plus a separately
+owner-pinned trust bundle and expected run and release bindings. A successful
+verification still returns "execution_authorization": "not-granted" and
+"g5_result": "not-assessed"; it does not establish broker, runner, cleanup,
+or G5 evidence requirements.
+The verifier deliberately does not source or approve its trust bundle. Before
+an actual run, a root-owned broker must load a distinct driver trust manifest
+from an immutable owner-controlled path, verify its signature, expiry and
+monotonic version, and reject rollback or any bundle supplied by the workflow
+or a repository checkout.
+
 The eventual runner must be an ephemeral runner in a dedicated restricted
 runner group, under a dedicated OS account and an expiring lease. It must be
 destroyed after the operation, with an independent watchdog responsible for
