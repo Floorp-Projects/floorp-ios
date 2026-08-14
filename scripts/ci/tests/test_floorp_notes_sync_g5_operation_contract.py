@@ -27,9 +27,13 @@ DISPATCH_INPUT = "prepare_floorp_notes_sync_g5_contract"
 PROTECTED_PREFLIGHT_INPUT = "run_floorp_notes_sync_protected_preflight"
 JOB_ID = "notes-sync-g5-operation-contract-preflight"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
-G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
+STATIC_G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
+ACTUAL_G5_SELECTOR = (
+    "XCUITests/FloorpNotesSyncActualG5TwoClientTests/"
+    "testActualG5TwoClientProductionMatrix"
+)
 CANONICAL_G5_ARTIFACT = "floorp-notes-sync-two-client-xcresult"
-G5_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+ACTUAL_G5_TEST = "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()"
 PARTICIPANT_CONTRACT = {
     "coordinator": "external-driver-only",
     "credential_handling": "external-driver-only",
@@ -119,7 +123,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             {
                 "artifact_kind": "github-actions-artifact",
                 "artifact_name": CANONICAL_G5_ARTIFACT,
-                "required_test": G5_TEST,
+                "required_test": ACTUAL_G5_TEST,
                 "retrieval": "required-after-run",
             },
         )
@@ -280,7 +284,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             "-configuration FloorpRelease",
             "-destination 'generic/platform=iOS Simulator'",
             "-testPlan FloorpNotesSyncG5",
-            f"-only-testing:{G5_SELECTOR}",
+            f"-only-testing:{STATIC_G5_SELECTOR}",
             '-derivedDataPath "$RUNNER_TEMP/OperationContractG5CompileDerivedData"',
             '-clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"',
             "-disableAutomaticPackageResolution",
@@ -292,6 +296,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             "CODE_SIGNING_ALLOWED=NO",
         ):
             self.assertIn(expected, run)
+        self.assertNotIn(f"-only-testing:{ACTUAL_G5_SELECTOR}", run)
 
         serialized = json.dumps(job, sort_keys=True).lower()
         for forbidden in (

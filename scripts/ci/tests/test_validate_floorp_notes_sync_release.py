@@ -38,6 +38,10 @@ PRODUCTION_QA_MODE = "production-qa"
 RELEASE_ENABLED_MODE = "release-enabled"
 G1_G4_NAMES = ("g1", "g2", "g3", "g4")
 G1_G5_NAMES = (*G1_G4_NAMES, "g5")
+STATIC_G5_XCRESULT_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+ACTUAL_G5_XCRESULT_TEST = (
+    "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()"
+)
 
 VALIDATOR_SPEC = importlib.util.spec_from_file_location(
     "floorp_notes_sync_release_validator",
@@ -361,6 +365,10 @@ TEST_SOURCE_BYTES = {
         b"testG4AttestationBindsTask18Evidence()"
     ),
     "g5-xcresult": synthetic_xcresult_zip(
+        b"XCUITests/FloorpNotesSyncActualG5TwoClientTests/"
+        b"testActualG5TwoClientProductionMatrix()"
+    ),
+    "static-g5-xcresult": synthetic_xcresult_zip(
         b"XCUITests/FloorpNotesSyncTwoClientMatrixTests/"
         b"testTwoClientProductionMatrix()"
     ),
@@ -1145,16 +1153,17 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
                     test_gh_bin=self.mock_gh,
                     test_gh_environment={"MOCK_GH_SCENARIO": gh_scenario},
                     test_remote_artifacts=remote_artifacts,
-                    test_xcresult_results=test_xcresult_results or {
-                        (
-                            "FloorpNotesSyncEngineSelectionTests/"
-                            "testG4AttestationBindsTask18Evidence()"
-                        ): "Passed",
-                        (
-                            "FloorpNotesSyncTwoClientMatrixTests/"
-                            "testTwoClientProductionMatrix()"
-                        ): "Passed",
-                    },
+                    test_xcresult_results=(
+                        test_xcresult_results
+                        if test_xcresult_results is not None
+                        else {
+                            (
+                                "FloorpNotesSyncEngineSelectionTests/"
+                                "testG4AttestationBindsTask18Evidence()"
+                            ): "Passed",
+                            ACTUAL_G5_XCRESULT_TEST: "Passed",
+                        }
+                    ),
                     test_g6_trust_bundle=g6_trust_bundle,
                     test_ssh_keygen=SSH_KEYGEN if g6_trust_bundle is not None else None,
                     test_expected_ios_build_number=release_inputs()["ios"]["build_number"],
@@ -1321,10 +1330,10 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not an explicit main dispatch", result.stderr)
 
-    def test_g5_requires_the_dedicated_two_client_xcresult_node(self):
+    def test_g5_rejects_a_passed_static_preflight_xcresult_node(self):
         evidence = make_evidence()
         source = evidence["gates"]["g5"]["artifact"]["sources"][2]
-        raw = TEST_SOURCE_BYTES["xcresult"]
+        raw = TEST_SOURCE_BYTES["static-g5-xcresult"]
         source["sha256"] = hashlib.sha256(raw).hexdigest()
         evidence["gates"]["g5"]["artifact"] = artifact_bundle(
             evidence["gates"]["g5"]["artifact"]["sources"]
@@ -1338,12 +1347,14 @@ class FloorpNotesSyncReleaseValidatorTests(unittest.TestCase):
                     "FloorpNotesSyncEngineSelectionTests/"
                     "testG4AttestationBindsTask18Evidence()"
                 ): "Passed",
-                (
-                    "FloorpNotesSyncTwoClientMatrixTests/"
-                    "testTwoClientProductionMatrix()"
-                ): "Failed",
+                STATIC_G5_XCRESULT_TEST: "Passed",
             },
         )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("required XCTest did not have Passed result nodes", result.stderr)
+
+    def test_g5_rejects_an_explicitly_empty_xcresult_result_map(self):
+        result = self.run_validator(make_evidence(), test_xcresult_results={})
         self.assertEqual(result.returncode, 1)
         self.assertIn("required XCTest did not have Passed result nodes", result.stderr)
 

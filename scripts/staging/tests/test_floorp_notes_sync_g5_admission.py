@@ -13,13 +13,14 @@ from scripts.staging.floorp_notes_sync_g5_admission import (
     G5_ARTIFACT_NAME,
     G5_ARTIFACT_KIND,
     G5_REQUIRED_SYNC_HOST,
+    G5_TEST,
     RELEASE_VALIDATOR,
     validate_admission_contract,
 )
 
 
 IOS_REPOSITORY = "Floorp-Projects/floorp-ios"
-G5_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+ACTUAL_G5_TEST = "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()"
 FXA_HOSTS = [
     "accounts.firefox.com",
     "api.accounts.firefox.com",
@@ -39,7 +40,7 @@ def valid_admission_contract() -> dict[str, object]:
         "artifact_contract": {
             "artifact_kind": "github-actions-artifact",
             "artifact_name": "floorp-notes-sync-two-client-xcresult",
-            "required_test": G5_TEST,
+            "required_test": ACTUAL_G5_TEST,
             "retrieval": "required-after-run",
         },
         "boundary": {
@@ -86,6 +87,7 @@ class FloorpNotesSyncG5AdmissionTests(unittest.TestCase):
         self.assertEqual(G5_ARTIFACT_NAME, RELEASE_VALIDATOR.G5_XCRESULT_ARTIFACT_NAME)
         self.assertEqual(G5_ARTIFACT_KIND, RELEASE_VALIDATOR.G5_XCRESULT_ARTIFACT_KIND)
         self.assertEqual(G5_REQUIRED_SYNC_HOST, RELEASE_VALIDATOR.G5_REQUIRED_SYNC_HOST)
+        self.assertEqual(G5_TEST, RELEASE_VALIDATOR.G5_ACTUAL_TWO_CLIENT_XCRESULT_TEST)
 
     def test_exact_contract_is_not_execution_authorization(self) -> None:
         decision = validate_admission_contract(valid_admission_contract())

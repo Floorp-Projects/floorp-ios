@@ -133,12 +133,17 @@ The post-build clock dispatch passes the canonical workflow file name
 G5 is valid only when a successful, manually dispatched `main` run of
 `.github/workflows/ci.yml` publishes
 `floorp-notes-sync-two-client-xcresult`. The archive must contain a passing
-`FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()` node;
-renaming an ordinary FloorpCI result does not satisfy this requirement.
+`FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()`
+node. This execution-only node is separate from the current static preflight
+selector; a passed
+`FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()` node,
+renaming an ordinary FloorpCI result, or reusing the canonical artifact name
+does not satisfy this requirement.
 
-Ordinary PR/main CI compiles the protected selector without executing its protected selector.
-This compile-only output has no production-QA
-authorization, credentials, artifact upload, or operational evidence and
+Ordinary PR/main CI compiles only the static preflight selector
+`XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix`
+without executing its protected selector. This compile-only output has no
+production-QA authorization, credentials, artifact upload, or operational evidence and
 cannot satisfy G5 evidence.
 
 The protected manual preflight is a `workflow_dispatch` job restricted to

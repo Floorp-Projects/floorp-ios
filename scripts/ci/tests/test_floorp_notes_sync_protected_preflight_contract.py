@@ -25,7 +25,11 @@ DISPATCH_INPUT = "run_floorp_notes_sync_protected_preflight"
 OPERATION_CONTRACT_INPUT = "prepare_floorp_notes_sync_g5_contract"
 JOB_ID = "notes-sync-protected-preflight"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
-G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
+STATIC_G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
+ACTUAL_G5_SELECTOR = (
+    "XCUITests/FloorpNotesSyncActualG5TwoClientTests/"
+    "testActualG5TwoClientProductionMatrix"
+)
 
 
 class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
@@ -224,7 +228,7 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             "-configuration FloorpRelease",
             '-destination "$DESTINATION"',
             "-testPlan FloorpNotesSyncG5",
-            f"-only-testing:{G5_SELECTOR}",
+            f"-only-testing:{STATIC_G5_SELECTOR}",
             '-derivedDataPath "$RUNNER_TEMP/ProtectedG5PreflightDerivedData"',
             '-clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"',
             "-disableAutomaticPackageResolution",
@@ -236,6 +240,7 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             "CODE_SIGNING_ALLOWED=NO",
         ):
             self.assertIn(expected, run)
+        self.assertNotIn(f"-only-testing:{ACTUAL_G5_SELECTOR}", run)
 
     def test_job_cannot_execute_or_publish_g5(self) -> None:
         serialized = json.dumps(self.jobs[JOB_ID], sort_keys=True).lower()
