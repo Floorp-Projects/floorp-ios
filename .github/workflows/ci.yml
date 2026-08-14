@@ -474,6 +474,14 @@ jobs:
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py \
             --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json
 
+      # This validates only public requirements for a future separately
+      # admitted driver. It neither schedules that runner nor references an
+      # Environment secret, actual XCTest selector, or G5 artifact.
+      - name: Validate external G5 driver prerequisites contract
+        run: |
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-external-driver-admission-contract.py \
+            --contract scripts/ci/floorp-notes-sync-g5-external-driver-admission-contract.json
+
       - name: Select Xcode
         run: |
           xcode_version="$(<.xcode-version)"

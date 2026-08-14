@@ -167,6 +167,30 @@ forward it to any configured action or command. The Environment is a
 scheduling boundary, not a G5 approval; this preflight cannot satisfy G5
 evidence.
 
+### Future external-driver prerequisites
+
+The same non-live protected preflight also validates
+`scripts/ci/floorp-notes-sync-g5-external-driver-admission-contract.json`.
+That document is public policy only: it neither schedules a self-hosted runner
+nor invokes a driver, receives an Environment secret, executes the actual
+selector, or uploads an artifact. It cannot satisfy G5 evidence.
+This preflight does not validate a driver admission attestation; it only proves
+that the checked-in policy requires one before execution.
+
+Before any later actual-run PR may remove the unconditional skip, an external
+driver must have a fresh, independently verified driver admission attestation
+that binds its binary digest, expiry, revocation status, run/head/attempt and
+same-release inputs. Credentials must reach the driver only through a
+root-owned broker; they must not be put in a workflow step environment, repo
+script, XCTest process, command argument, output file, or artifact.
+
+The eventual runner must be an ephemeral runner in a dedicated restricted
+runner group, under a dedicated OS account and an expiring lease. It must be
+destroyed after the operation, with an independent watchdog responsible for
+remote cleanup, lease revocation, simulator/keychain erasure, and refusal to
+admit an incomplete cleanup receipt. A label or Environment approval alone is
+not a runner-isolation or secret-isolation boundary.
+
 Any future G5 operation has a strict participant split: the external driver is
 the coordinator. A separate iOS XCTest may be a metadata-only participant, but
 it must not carry credentials, coordinate a Desktop client or proxy, initiate
