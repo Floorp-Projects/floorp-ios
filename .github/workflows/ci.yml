@@ -566,7 +566,7 @@ jobs:
       # protected Environment review artifacts.
       FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
       FLOORP_TODO20_MERGE_AUDIT_JSON: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_JSON }}
-      FLOORP_TODO20_SUBAGENT_REVIEW_JSON: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_JSON }}
+      FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
 
     steps:
       - name: Check out source anonymously
@@ -592,7 +592,7 @@ jobs:
           test -n "$FLOORP_TODO20_PR_NUMBER"
           test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON"
           test -n "$FLOORP_TODO20_MERGE_AUDIT_JSON"
-          test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_JSON"
+          test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
           curl --fail --silent --show-error --location --retry 3 \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$FLOORP_TODO20_PR_NUMBER" \
             -H "Accept: application/vnd.github+json" \
@@ -608,9 +608,11 @@ jobs:
           base_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["sha"])' "$qa_root/pr.json")"
           head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$qa_root/pr.json")"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
           printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$qa_root/owner-review.json"
           printf "%s\n" "$FLOORP_TODO20_MERGE_AUDIT_JSON" > "$qa_root/merge-audit.json"
-          printf "%s\n" "$FLOORP_TODO20_SUBAGENT_REVIEW_JSON" > "$qa_root/subagent-review.json"
+          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" > "$qa_root/subagent-review.json"
           /usr/bin/python3 -I scripts/ci/capture-floorp-notes-sync-review-receipt.py \
             --pr-json "$qa_root/pr.json" \
             --reviews-json "$qa_root/reviews.json" \
@@ -618,11 +620,16 @@ jobs:
             --repository-root "$GITHUB_WORKSPACE" \
             --pr-number "$FLOORP_TODO20_PR_NUMBER" \
             --merged-oid "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
             --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
             --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
             --owner-review "$qa_root/owner-review.json" \
             --merge-audit "$qa_root/merge-audit.json" \
             --subagent-review "$qa_root/subagent-review.json" \
+            --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
+            --pr-projection "$qa_root/pr-metadata.json" \
+            --reviews-projection "$qa_root/reviews-metadata.json" \
+            --ruleset-projection "$qa_root/ruleset-metadata.json" \
             --output "$qa_root/review-receipt.json"
           printf "FLOORP_NOTES_SYNC_REVIEW_RECEIPT=%s\n" "$qa_root/review-receipt.json" >> "$GITHUB_ENV"
 
@@ -747,7 +754,8 @@ jobs:
         run: |
           set -euo pipefail
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa.py \
-            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json"
+            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json" \
+            --xcresult "$FLOORP_NOTES_SYNC_QA_ROOT/floorp-notes-sync-two-client.xcresult"
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-cleanup.py \
             --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json" \
             --receipt "$FLOORP_NOTES_SYNC_QA_ROOT/cleanup-receipt.json"
@@ -776,6 +784,9 @@ jobs:
             --target "$qa_root/production-qa-capability.json" \
             --target "$qa_root/production-qa.xcconfig" \
             --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json" \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
@@ -801,7 +812,28 @@ jobs:
             --production-qa-capability "$qa_root/production-qa-capability.json" \
             --production-qa-xcconfig "$qa_root/production-qa.xcconfig" \
             --secret-scan "$qa_root/secret-scan-pre.json" \
-            --review-receipt "$qa_root/review-receipt.json"
+            --review-receipt "$qa_root/review-receipt.json" \
+            --pr-metadata "$qa_root/pr-metadata.json" \
+            --reviews-metadata "$qa_root/reviews-metadata.json" \
+            --ruleset-metadata "$qa_root/ruleset-metadata.json"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
+            --receipt "$qa_root/secret-scan-pre.json" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$manifest" \
+            --pre-attestation \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig" \
+            --target "$qa_root/review-receipt.json" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json"
           /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-self-attestation.py \
             --output "$qa_root/self-attestation.jsonl" \
             --manifest "$manifest" \
@@ -844,6 +876,9 @@ jobs:
             --target "$qa_root/production-qa.xcconfig" \
             --target "$qa_root/self-attestation.jsonl" \
             --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json" \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
@@ -853,6 +888,7 @@ jobs:
             --head-sha "$GITHUB_SHA" \
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$qa_root/qa-manifest.json" \
             --target "$qa_root/qa-summary.json" \
             --target "$qa_root/cleanup-receipt.json" \
             --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
@@ -861,7 +897,10 @@ jobs:
             --target "$qa_root/production-qa-capability.json" \
             --target "$qa_root/production-qa.xcconfig" \
             --target "$qa_root/self-attestation.jsonl" \
-            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT"
+            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json"
 
       - name: Clean up test accounts and client state
         if: always()
@@ -905,6 +944,9 @@ jobs:
             ${{ runner.temp }}/floorp-notes-sync-production-qa/production-qa.xcconfig
             ${{ runner.temp }}/floorp-notes-sync-production-qa/self-attestation.jsonl
             ${{ runner.temp }}/floorp-notes-sync-production-qa/review-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/pr-metadata.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/reviews-metadata.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/ruleset-metadata.json
           if-no-files-found: error
           retention-days: 7
 
@@ -1007,6 +1049,7 @@ jobs:
             --head-sha "$GITHUB_SHA" \
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-manifest.json" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
@@ -1015,7 +1058,10 @@ jobs:
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
-            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json"
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/pr-metadata.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/reviews-metadata.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/ruleset-metadata.json"
 
       - name: Create non-distributed enablement record
         env:
@@ -1035,6 +1081,9 @@ jobs:
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/pr-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/reviews-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/ruleset-metadata.json" \
             --output "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Validate non-distributed enablement record
@@ -1053,6 +1102,9 @@ jobs:
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/pr-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/reviews-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/ruleset-metadata.json" \
             --enablement-record "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Upload enablement metadata

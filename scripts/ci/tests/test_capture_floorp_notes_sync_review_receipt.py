@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -76,6 +77,7 @@ def owner_review() -> dict[str, Any]:
         "pr_number": 106,
         "base_oid": "1" * 40,
         "head_sha": "2" * 40,
+        "desktop_sha": "5" * 40,
         "diff_sha256": "d" * 64,
         "plan_sha256": "a" * 64,
         "amendment_sha256": "b" * 64,
@@ -99,9 +101,14 @@ def merge_audit() -> dict[str, Any]:
         "base_oid": "1" * 40,
         "head_sha": "2" * 40,
         "merged_oid": "4" * 40,
+        "bypass_requested": False,
+        "merge_endpoint": "PUT /repos/Floorp-Projects/floorp-ios/pulls/106/merge",
         "merge_method": "squash",
+        "merge_response_sha256": "6" * 64,
         "oid_guarded": True,
         "admin_bypass_used": False,
+        "server_merge_sha": "4" * 40,
+        "server_merged": True,
     }
 
 
@@ -110,6 +117,10 @@ def subagent_review() -> dict[str, Any]:
         "schema_version": 1,
         "repository": CAPTURE.REPOSITORY,
         "head_sha": "2" * 40,
+        "desktop_sha": "5" * 40,
+        "independence": True,
+        "reviewer_id": "01234567-89ab-cdef-0123-456789abcdef",
+        "review_method": "codex-read-only-diff",
         "status": "GO",
         "findings": [],
         "reviewed_at_utc": "2026-08-15T00:00:00Z",
@@ -170,14 +181,19 @@ class CaptureReceiptTests(unittest.TestCase):
                 subagent_review(),
                 "d" * 64,
                 "4" * 40,
+                "5" * 40,
                 CAPTURE.sha256_bytes(b"contract"),
                 CAPTURE.sha256_bytes(b"binding"),
                 CAPTURE.sha256_bytes(b"owner"),
                 CAPTURE.sha256_bytes(b"merge"),
                 CAPTURE.sha256_bytes(b"subagent"),
+                "3" * 40,
                 CAPTURE.sha256_bytes(b"pr"),
                 CAPTURE.sha256_bytes(b"reviews"),
                 CAPTURE.sha256_bytes(b"ruleset"),
+                CAPTURE.sha256_bytes(b"pr-projection"),
+                CAPTURE.sha256_bytes(b"reviews-projection"),
+                CAPTURE.sha256_bytes(b"ruleset-projection"),
             )
             self.assertEqual(receipt["base_oid"], "1" * 40)
             self.assertEqual(receipt["head_sha"], "2" * 40)
@@ -229,14 +245,19 @@ class CaptureReceiptTests(unittest.TestCase):
                 subagent_review(),
                 "d" * 64,
                 "4" * 40,
+                "5" * 40,
                 "a" * 64,
                 "b" * 64,
                 "c" * 64,
                 "d" * 64,
                 "e" * 64,
                 "f" * 64,
+                "3" * 40,
                 "0" * 64,
                 "1" * 64,
+                "2" * 64,
+                "3" * 64,
+                "4" * 64,
             )
 
     def test_non_main_ruleset_target_is_rejected(self) -> None:
@@ -253,6 +274,43 @@ class CaptureReceiptTests(unittest.TestCase):
         }
         with self.assertRaises(CAPTURE.ReviewReceiptError):
             CAPTURE.validate_ruleset(ruleset)
+
+    def test_multiple_pull_request_rules_are_rejected(self) -> None:
+        ruleset = {
+            "id": 20229460,
+            "name": "Protect Floorp iOS main",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": CAPTURE.REPOSITORY,
+            "enforcement": "active",
+            "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
+            "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}],
+            "rules": [
+                {"type": "pull_request", "parameters": {"required_approving_review_count": 0, "required_reviewers": []}},
+                {"type": "pull_request", "parameters": {"required_approving_review_count": 1, "required_reviewers": []}},
+            ],
+        }
+        with self.assertRaises(CAPTURE.ReviewReceiptError):
+            CAPTURE.validate_ruleset(ruleset)
+
+    def test_subagent_artifact_is_bound_to_one_immutable_commit_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs").mkdir()
+            raw = CAPTURE.canonical(subagent_review())
+            artifact = root / "docs/floorp-notes-sync-todo20-subagent-review.json"
+            artifact.write_bytes(raw)
+            subprocess.run(["/usr/bin/git", "-C", str(root), "init", "--quiet"], check=True)
+            subprocess.run(["/usr/bin/git", "-C", str(root), "add", "docs/floorp-notes-sync-todo20-subagent-review.json"], check=True)
+            subprocess.run(
+                ["/usr/bin/git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "attestation"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            commit = subprocess.check_output(["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            CAPTURE.verify_immutable_subagent_commit(root, commit, raw)
+            with self.assertRaises(CAPTURE.ReviewReceiptError):
+                CAPTURE.verify_immutable_subagent_commit(root, commit, raw + b" ")
 
 
 if __name__ == "__main__":

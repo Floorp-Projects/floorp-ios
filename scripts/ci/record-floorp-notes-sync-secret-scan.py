@@ -50,6 +50,9 @@ SCOPE_BY_NAME = {
     "production-qa.xcconfig": "production-qa-xcconfig",
     "self-attestation.jsonl": "self-attestation-ledger",
     "review-receipt.json": "review-receipt",
+    "pr-metadata.json": "pr-metadata",
+    "reviews-metadata.json": "reviews-metadata",
+    "ruleset-metadata.json": "ruleset-metadata",
 }
 SECRET_ENV_NAMES = (
     "FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL",
@@ -95,7 +98,9 @@ def digest_target(path: Path, secret_values: tuple[bytes, ...] = ()) -> dict[str
         byte_count += len(raw)
         entries.append(relative.encode() + b"\0" + hashlib.sha256(raw).hexdigest().encode())
     digest = hashlib.sha256(b"\n".join(entries)).hexdigest()
+    artifact_sha256 = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else digest
     return {
+        "artifact_sha256": artifact_sha256,
         "byte_count": byte_count,
         "file_count": len(files),
         "name": path.name,

@@ -199,8 +199,8 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
     def test_qa_job_requires_phase_one_before_enablement_and_cleans_up(self) -> None:
         job = self.jobs[JOB_ID]
         self.assertEqual(
-            job["env"]["FLOORP_TODO20_SUBAGENT_REVIEW_JSON"],
-            "${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_JSON }}",
+            job["env"]["FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"],
+            "${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}",
         )
         names = [step["name"] for step in job["steps"]]
         self.assertIn("Create protected Todo 20 production-QA capability", names)
@@ -212,7 +212,8 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertIn("Upload live QA evidence", names)
         capture = self.named_step(job, "Capture source-bound Todo 20 review receipt")
         self.assertIn('--subagent-review "$qa_root/subagent-review.json"', capture["run"])
-        self.assertNotIn("docs/floorp-notes-sync-todo20-subagent-review.json", capture["run"])
+        self.assertIn("docs/floorp-notes-sync-todo20-subagent-review.json", capture["run"])
+        self.assertIn('--subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"', capture["run"])
         self.assertNotIn("Validate Todo 20 operation contract", names)
         self.assertNotIn(CANONICAL_ARTIFACT, json.dumps(self.jobs["build-and-test"], sort_keys=True))
 

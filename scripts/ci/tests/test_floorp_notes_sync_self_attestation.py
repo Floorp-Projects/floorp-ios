@@ -53,57 +53,25 @@ class SelfAttestationTests(unittest.TestCase):
             "cleanup": root / "cleanup-receipt.json",
             "secret_scan": root / "secret-scan.json",
             "review_receipt": root / "review-receipt.json",
+            "pr_metadata": root / "pr-metadata.json",
+            "reviews_metadata": root / "reviews-metadata.json",
+            "ruleset_metadata": root / "ruleset-metadata.json",
         }
         for name, path in paths.items():
+            if name == "manifest":
+                continue
             path.write_bytes(json.dumps({"artifact": name}, sort_keys=True, separators=(",", ":")).encode() + b"\n")
-        paths["manifest"].write_bytes(
-            json.dumps(
-                {
-                    "accounts": 2,
-                    "artifacts": [
-                        {
-                            "byte_count": paths["review_receipt"].stat().st_size if role == "review-receipt" else 1,
-                            "name": "review-receipt.json" if role == "review-receipt" else f"{role}.json",
-                            "role": role,
-                            "sha256": hashlib.sha256(paths["review_receipt"].read_bytes()).hexdigest() if role == "review-receipt" else "0" * 64,
-                        }
-                        for role in (
-                            "qa-summary",
-                            "cleanup-receipt",
-                            "xcresult",
-                            "xcodebuild-log",
-                            "desktop-log",
-                            "production-qa-capability",
-                            "production-qa-xcconfig",
-                            "review-receipt",
-                            "secret-scan",
-                        )
-                    ],
-                    "desktop_sha": "b" * 40,
-                    "environment": RECORD.ENVIRONMENT,
-                    "head_sha": "a" * 40,
-                    "public_release": False,
-                    "repository": RECORD.REPOSITORY,
-                    "schema_version": 1,
-                    "workflow_path": RECORD.WORKFLOW_PATH,
-                    "workflow_run_attempt": 1,
-                    "workflow_run_id": 123,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode()
-            + b"\n"
-        )
         paths["review_receipt"].write_bytes(
             json.dumps(
                 {
                     "admin_bypass_used": False,
                     "amendment_sha256": "e" * 64,
                     "base_oid": "b" * 40,
+                    "bypass_requested": False,
                     "combined_plan_hash": "f" * 64,
                     "contract_sha256": "2" * 64,
                     "diff_sha256": "c" * 64,
+                    "desktop_sha": "b" * 40,
                     "environment": RECORD.ENVIRONMENT,
                     "head_sha": "1" * 40,
                     "independence": False,
@@ -113,9 +81,14 @@ class SelfAttestationTests(unittest.TestCase):
                     "operator_id": "operator",
                     "owner_review_receipt_sha256": "3" * 64,
                     "merge_audit_sha256": "4" * 64,
+                    "merge_endpoint": "PUT /repos/Floorp-Projects/floorp-ios/pulls/106/merge",
+                    "merge_response_sha256": "9" * 64,
+                    "server_merge_sha": "a" * 40,
+                    "server_merged": True,
                     "plan_binding_sha256": "5" * 64,
                     "plan_sha256": "d" * 64,
                     "pr_api_sha256": "6" * 64,
+                    "pr_projection_sha256": hashlib.sha256(paths["pr_metadata"].read_bytes()).hexdigest(),
                     "pr_number": 106,
                     "public_release": False,
                     "repository": RECORD.REPOSITORY,
@@ -128,10 +101,65 @@ class SelfAttestationTests(unittest.TestCase):
                     "self_review_exception": True,
                     "subagent_review_digests": ["1" * 64],
                     "subagent_review_receipt_sha256": "1" * 64,
+                    "subagent_review_commit_sha": "9" * 40,
                     "two_disposable_accounts_only": True,
                     "unresolved_blocking_findings": [],
                     "reviews_api_sha256": "7" * 64,
+                    "reviews_projection_sha256": hashlib.sha256(paths["reviews_metadata"].read_bytes()).hexdigest(),
                     "ruleset_api_sha256": "8" * 64,
+                    "ruleset_projection_sha256": hashlib.sha256(paths["ruleset_metadata"].read_bytes()).hexdigest(),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+            + b"\n"
+        )
+        roles = (
+            "qa-summary",
+            "cleanup-receipt",
+            "xcresult",
+            "xcodebuild-log",
+            "desktop-log",
+            "production-qa-capability",
+            "production-qa-xcconfig",
+            "review-receipt",
+            "pr-metadata",
+            "reviews-metadata",
+            "ruleset-metadata",
+            "secret-scan",
+        )
+        role_paths = {
+            "review-receipt": paths["review_receipt"],
+            "pr-metadata": paths["pr_metadata"],
+            "reviews-metadata": paths["reviews_metadata"],
+            "ruleset-metadata": paths["ruleset_metadata"],
+        }
+        artifacts = []
+        for role in roles:
+            target = role_paths.get(role)
+            artifacts.append(
+                {
+                    "byte_count": target.stat().st_size if target else 1,
+                    "name": target.name if target else f"{role}.json",
+                    "role": role,
+                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest() if target else "0" * 64,
+                }
+            )
+        paths["manifest"].write_bytes(
+            json.dumps(
+                {
+                    "accounts": 2,
+                    "artifacts": artifacts,
+                    "desktop_sha": "b" * 40,
+                    "environment": RECORD.ENVIRONMENT,
+                    "head_sha": "a" * 40,
+                    "public_release": False,
+                    "repository": RECORD.REPOSITORY,
+                    "schema_version": 1,
+                    "workflow_path": RECORD.WORKFLOW_PATH,
+                    "workflow_run_attempt": 1,
+                    "workflow_run_id": 123,
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),

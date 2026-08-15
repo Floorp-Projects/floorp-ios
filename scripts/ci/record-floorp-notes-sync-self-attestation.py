@@ -61,8 +61,9 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         raise RuntimeError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_invalid_json") from error
     expected = {
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
+        "bypass_requested", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
         "contract_sha256", "diff_sha256", "environment", "head_sha",
-        "independence", "local_test_accounts_accessed", "merged_oid",
+        "desktop_sha", "independence", "local_test_accounts_accessed", "merged_oid",
         "native_github_approval", "operator_id", "owner_review_receipt_sha256",
         "merge_audit_sha256", "plan_binding_sha256", "plan_sha256", "pr_number",
         "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
@@ -70,7 +71,8 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         "roles", "ruleset_required_review_count", "reviews_count", "schema_version",
         "self_review_exception", "subagent_review_digests",
         "subagent_review_receipt_sha256", "two_disposable_accounts_only",
-        "unresolved_blocking_findings",
+        "unresolved_blocking_findings", "pr_projection_sha256", "reviews_projection_sha256",
+        "ruleset_projection_sha256", "subagent_review_commit_sha",
     }
     if not isinstance(value, dict) or set(value) != expected or raw != canonical(value):
         raise RuntimeError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_fields_invalid")
@@ -84,6 +86,10 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         or value["independence"] is not False
         or value["native_github_approval"] is not False
         or value["admin_bypass_used"] is not False
+        or value["bypass_requested"] is not False
+        or value["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{value['pr_number']}/merge"
+        or value["server_merged"] is not True
+        or value["server_merge_sha"] != value["merged_oid"]
         or value["ruleset_required_review_count"] != 0
         or value["reviews_count"] != 0
         or value["two_disposable_accounts_only"] is not True
@@ -97,7 +103,9 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         or not value["reviewed_at_utc"].endswith("Z")
         or not SHA1.fullmatch(value["base_oid"])
         or not SHA1.fullmatch(value["head_sha"])
+        or not SHA1.fullmatch(value["desktop_sha"])
         or not SHA1.fullmatch(value["merged_oid"])
+        or not SHA1.fullmatch(value["subagent_review_commit_sha"])
         or not isinstance(value["subagent_review_digests"], list)
         or not value["subagent_review_digests"]
     ):
@@ -107,6 +115,8 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         "owner_review_receipt_sha256", "merge_audit_sha256", "plan_binding_sha256",
         "plan_sha256", "subagent_review_receipt_sha256",
         "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
+        "pr_projection_sha256", "reviews_projection_sha256", "ruleset_projection_sha256",
+        "merge_response_sha256",
     ):
         if not SHA256.fullmatch(value[field]):
             raise RuntimeError(f"[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_{field}_invalid")
@@ -153,6 +163,7 @@ def main(arguments: list[str] | None = None) -> int:
         event = {
             "accounts": 2,
             "admin_bypass_used": review["admin_bypass_used"],
+            "bypass_requested": review["bypass_requested"],
             "amendment_sha256": review["amendment_sha256"],
             "base_oid": review["base_oid"],
             "cleanup": {
@@ -168,7 +179,12 @@ def main(arguments: list[str] | None = None) -> int:
             "manifest_sha256": manifest_sha256,
             "head_sha": review["head_sha"],
             "merged_oid": review["merged_oid"],
+            "desktop_sha": review["desktop_sha"],
             "native_github_approval": review["native_github_approval"],
+            "merge_endpoint": review["merge_endpoint"],
+            "merge_response_sha256": review["merge_response_sha256"],
+            "server_merge_sha": review["server_merge_sha"],
+            "server_merged": review["server_merged"],
             "operator_id": review["operator_id"],
             "previous_event_sha256": "0" * 64,
             "public_release": False,
@@ -179,6 +195,9 @@ def main(arguments: list[str] | None = None) -> int:
             "pr_api_sha256": review["pr_api_sha256"],
             "reviews_api_sha256": review["reviews_api_sha256"],
             "ruleset_api_sha256": review["ruleset_api_sha256"],
+            "pr_projection_sha256": review["pr_projection_sha256"],
+            "reviews_projection_sha256": review["reviews_projection_sha256"],
+            "ruleset_projection_sha256": review["ruleset_projection_sha256"],
             "review_scope": review["review_scope"],
             "reviewed_at_utc": review["reviewed_at_utc"],
             "roles": review["roles"],
@@ -202,6 +221,7 @@ def main(arguments: list[str] | None = None) -> int:
             "owner_review_receipt_sha256": review["owner_review_receipt_sha256"],
             "merge_audit_sha256": review["merge_audit_sha256"],
             "subagent_review_receipt_sha256": review["subagent_review_receipt_sha256"],
+            "subagent_review_commit_sha": review["subagent_review_commit_sha"],
             "review_receipt_sha256": review_receipt_sha256,
             "validator_sha256": hashlib.sha256(
                 Path(__file__).with_name("validate-floorp-notes-sync-self-attestation.py").read_bytes()

@@ -57,6 +57,9 @@ class ProductionQAManifestTests(unittest.TestCase):
                 "production-qa-capability": root / "production-qa-capability.json",
                 "production-qa-xcconfig": root / "production-qa.xcconfig",
                 "secret-scan": root / "secret-scan-pre.json",
+                "pr-metadata": root / "pr-metadata.json",
+                "reviews-metadata": root / "reviews-metadata.json",
+                "ruleset-metadata": root / "ruleset-metadata.json",
             }
             for path in names.values():
                 path.write_text("metadata\n")
@@ -76,13 +79,16 @@ class ProductionQAManifestTests(unittest.TestCase):
                 "--production-qa-xcconfig", str(names["production-qa-xcconfig"]),
                 "--secret-scan", str(names["secret-scan"]),
                 "--review-receipt", str(review_receipt),
+                "--pr-metadata", str(names["pr-metadata"]),
+                "--reviews-metadata", str(names["reviews-metadata"]),
+                "--ruleset-metadata", str(names["ruleset-metadata"]),
             ]
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": CREATE.REPOSITORY}, clear=False):
                 self.assertEqual(CREATE.main(args), 0)
             manifest = json.loads(output.read_text())
             self.assertEqual(manifest["accounts"], 2)
             self.assertEqual({item["role"] for item in manifest["artifacts"]}, {role for role, _ in CREATE.ARTIFACTS})
-            self.assertNotIn("metadata", output.read_text())
+            self.assertNotIn("metadata\n", output.read_text())
 
     def test_incomplete_cleanup_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

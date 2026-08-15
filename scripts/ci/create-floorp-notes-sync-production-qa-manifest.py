@@ -32,6 +32,9 @@ ARTIFACTS = (
     ("production-qa-xcconfig", "production-qa.xcconfig"),
     ("secret-scan", "secret-scan-pre.json"),
     ("review-receipt", "review-receipt.json"),
+    ("pr-metadata", "pr-metadata.json"),
+    ("reviews-metadata", "reviews-metadata.json"),
+    ("ruleset-metadata", "ruleset-metadata.json"),
 )
 
 

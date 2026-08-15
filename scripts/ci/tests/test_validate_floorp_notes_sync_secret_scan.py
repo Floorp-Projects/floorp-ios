@@ -43,7 +43,7 @@ def receipt() -> dict[str, Any]:
         "schema_version": 1,
         "scope": list(SCAN.SCOPE),
         "target_digests": [
-            {"byte_count": 1, "file_count": 1, "name": name, "sha256": "0" * 64}
+            {"artifact_sha256": "0" * 64, "byte_count": 1, "file_count": 1, "name": name, "sha256": "0" * 64}
             for name in sorted(SCAN.REQUIRED_TARGETS)
         ],
         "source": {
@@ -70,6 +70,9 @@ def materialize_targets(root: Path, text: str = "safe\n") -> list[Path]:
         root / "production-qa.xcconfig",
         root / "self-attestation.jsonl",
         root / "review-receipt.json",
+        root / "pr-metadata.json",
+        root / "reviews-metadata.json",
+        root / "ruleset-metadata.json",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text(text)
@@ -127,6 +130,9 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                         "--target", str(targets[6]),
                         "--target", str(targets[7]),
                         "--target", str(targets[8]),
+                        "--target", str(targets[9]),
+                        "--target", str(targets[10]),
+                        "--target", str(targets[11]),
                     ]
                 ),
                 0,
@@ -143,9 +149,12 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
             capability = root / "production-qa-capability.json"
             xcconfig = root / "production-qa.xcconfig"
             attestation = root / "self-attestation.jsonl"
+            pr_metadata = root / "pr-metadata.json"
+            reviews_metadata = root / "reviews-metadata.json"
+            ruleset_metadata = root / "ruleset-metadata.json"
             xcresult.mkdir()
             (xcresult / "result").write_text("safe metadata\n")
-            for path in (summary, cleanup, log, desktop_log, capability, xcconfig, attestation):
+            for path in (summary, cleanup, log, desktop_log, capability, xcconfig, attestation, pr_metadata, reviews_metadata, ruleset_metadata):
                 path.write_text("safe metadata\n")
             review_receipt = root / "review-receipt.json"
             review_receipt.write_text("safe metadata\n")
@@ -174,6 +183,9 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                             "--target", str(xcconfig),
                             "--target", str(attestation),
                             "--target", str(review_receipt),
+                            "--target", str(pr_metadata),
+                            "--target", str(reviews_metadata),
+                            "--target", str(ruleset_metadata),
                             "--secret-env", RECORD.SECRET_ENV_NAMES[0],
                             "--secret-env", RECORD.SECRET_ENV_NAMES[1],
                             "--secret-env", RECORD.SECRET_ENV_NAMES[2],
@@ -183,7 +195,7 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                     0,
                 )
             value, raw = SCAN.load(output)
-            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1, [summary, cleanup, xcresult, log, desktop_log, capability, xcconfig, attestation, review_receipt])
+            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1, [summary, cleanup, xcresult, log, desktop_log, capability, xcconfig, attestation, review_receipt, root / "pr-metadata.json", root / "reviews-metadata.json", root / "ruleset-metadata.json"])
             self.assertNotIn(b"safe metadata", raw)
 
     def test_target_digest_mismatch_is_rejected(self) -> None:
@@ -199,6 +211,9 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                 root / "production-qa.xcconfig",
                 root / "self-attestation.jsonl",
                 root / "review-receipt.json",
+                root / "pr-metadata.json",
+                root / "reviews-metadata.json",
+                root / "ruleset-metadata.json",
             ]
             targets[2].mkdir()
             (targets[2] / "result").write_text("actual\n")

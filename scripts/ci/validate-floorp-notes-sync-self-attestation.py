@@ -27,6 +27,9 @@ MANIFEST_ROLES = {
     "production-qa-capability",
     "production-qa-xcconfig",
     "review-receipt",
+    "pr-metadata",
+    "reviews-metadata",
+    "ruleset-metadata",
     "secret-scan",
 }
 
@@ -138,6 +141,17 @@ def load_manifest(path: Path, head_sha: str, run_id: int, run_attempt: int, revi
     receipt_descriptor = receipt_descriptors[0]
     if receipt_descriptor["name"] != review_receipt.name or receipt_descriptor["sha256"] != digest(review_receipt):
         raise AttestationError("evidence manifest review receipt is not bound")
+    receipt = load_review_receipt(review_receipt)
+    if value["desktop_sha"] != receipt.get("desktop_sha"):
+        raise AttestationError("evidence manifest Desktop source is not bound to the review receipt")
+    for field, role, name in (
+        ("pr_projection_sha256", "pr-metadata", "pr-metadata.json"),
+        ("reviews_projection_sha256", "reviews-metadata", "reviews-metadata.json"),
+        ("ruleset_projection_sha256", "ruleset-metadata", "ruleset-metadata.json"),
+    ):
+        descriptors = [item for item in artifacts if item.get("role") == role]
+        if len(descriptors) != 1 or descriptors[0]["name"] != name or descriptors[0]["sha256"] != receipt.get(field):
+            raise AttestationError(f"evidence manifest {role} is not bound to the review receipt")
     return raw
 
 
@@ -155,9 +169,10 @@ def validate(
 ) -> None:
     expected = {
         "accounts", "admin_bypass_used", "amendment_sha256", "base_oid", "cleanup",
+        "bypass_requested", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
         "cleanup_receipt_sha256", "combined_plan_hash", "diff_sha256",
         "contract_sha256", "evidence_manifest_sha256", "environment", "event", "event_sha256",
-        "head_sha", "independence", "local_test_accounts_accessed",
+        "head_sha", "desktop_sha", "independence", "local_test_accounts_accessed",
         "manifest_sha256", "merged_oid", "native_github_approval", "operator_id", "plan_binding_sha256",
         "plan_sha256",
         "pr_number", "previous_event_sha256", "public_release", "repository",
@@ -168,7 +183,8 @@ def validate(
         "two_disposable_accounts_only", "unresolved_blocking_findings",
         "validator_sha256", "owner_review_receipt_sha256", "merge_audit_sha256",
         "subagent_review_receipt_sha256", "pr_api_sha256", "reviews_api_sha256",
-        "ruleset_api_sha256", "workflow_job", "workflow_path",
+        "ruleset_api_sha256", "pr_projection_sha256", "reviews_projection_sha256",
+        "ruleset_projection_sha256", "subagent_review_commit_sha", "workflow_job", "workflow_path",
         "workflow_run_attempt", "workflow_run_id",
     }
     if set(value) != expected:
@@ -195,6 +211,10 @@ def validate(
         or value["ruleset_required_review_count"] != 0
         or value["reviews_count"] != 0
         or value["admin_bypass_used"] is not False
+        or value["bypass_requested"] is not False
+        or value["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{value['pr_number']}/merge"
+        or value["server_merged"] is not True
+        or value["server_merge_sha"] != value["merged_oid"]
         or value["two_disposable_accounts_only"] is not True
         or value["local_test_accounts_accessed"] is not False
         or value["unresolved_blocking_findings"] != []
@@ -204,7 +224,9 @@ def validate(
         or not isinstance(value["operator_id"], str)
         or not value["operator_id"]
         or not SHA1.fullmatch(value["base_oid"])
+        or not SHA1.fullmatch(value["desktop_sha"])
         or not SHA1.fullmatch(value["merged_oid"])
+        or not SHA1.fullmatch(value["subagent_review_commit_sha"])
         or not SHA1.fullmatch(merged_oid)
         or value["merged_oid"] != merged_oid
         or not isinstance(value["pr_number"], int)
@@ -243,6 +265,10 @@ def validate(
         "pr_api_sha256",
         "reviews_api_sha256",
         "ruleset_api_sha256",
+        "pr_projection_sha256",
+        "reviews_projection_sha256",
+        "ruleset_projection_sha256",
+        "merge_response_sha256",
     ):
         if not SHA256.fullmatch(value[field]):
             raise AttestationError(f"attestation {field} is invalid")
@@ -252,7 +278,9 @@ def validate(
     receipt = load_review_receipt(review_receipt)
     receipt_fields = (
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
+        "bypass_requested", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
         "contract_sha256", "diff_sha256", "environment", "head_sha", "independence",
+        "desktop_sha",
         "local_test_accounts_accessed", "merged_oid", "native_github_approval",
         "operator_id", "owner_review_receipt_sha256", "merge_audit_sha256",
         "plan_binding_sha256", "plan_sha256", "pr_number", "public_release",
@@ -260,6 +288,8 @@ def validate(
         "ruleset_required_review_count", "reviews_count", "self_review_exception",
         "subagent_review_digests", "subagent_review_receipt_sha256",
         "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
+        "pr_projection_sha256", "reviews_projection_sha256", "ruleset_projection_sha256",
+        "subagent_review_commit_sha",
         "two_disposable_accounts_only", "unresolved_blocking_findings",
     )
     if any(receipt.get(field) != value[field] for field in receipt_fields):

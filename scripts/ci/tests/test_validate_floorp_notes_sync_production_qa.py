@@ -5,11 +5,13 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -127,6 +129,37 @@ class ValidateFloorpNotesSyncProductionQATests(unittest.TestCase):
             link.symlink_to(source)
             with self.assertRaises(QA.ProductionQAError):
                 QA.load_and_validate(link)
+
+    def test_xcresult_requires_the_selected_matrix_test_to_pass(self) -> None:
+        payload = {
+            "testNodes": [
+                {
+                    "nodeType": "Test Suite",
+                    "children": [
+                        {
+                            "nodeType": "Test Case",
+                            "nodeIdentifier": "XCUITests/FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix",
+                            "result": "Passed",
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / "result.xcresult"
+            bundle.mkdir()
+            completed = subprocess.CompletedProcess([], 0, json.dumps(payload), "")
+            with patch.object(QA.subprocess, "run", return_value=completed):
+                self.assertEqual(QA.validate_xcresult(bundle)["passed_nodes"], 1)
+            failed = copy.deepcopy(payload)
+            failed["testNodes"][0]["children"][0]["result"] = "Failed"
+            with patch.object(
+                QA.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess([], 0, json.dumps(failed), ""),
+            ):
+                with self.assertRaises(QA.ProductionQAError):
+                    QA.validate_xcresult(bundle)
 
 
 if __name__ == "__main__":
