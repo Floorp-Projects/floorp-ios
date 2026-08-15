@@ -460,3 +460,50 @@ publish a release, submit to App Store Connect, or create a TestFlight link.
 Enabled modes do make narrowly scoped GitHub API requests through the pinned
 `gh` copy to validate retrievable evidence and to dispatch and capture the
 validation-clock workflow.
+
+## Formal Todo 20 rescope boundary — 2026-08-15
+
+The append-only plan amendment
+`.omo/plans/floorp-ios-next-milestone-production-sync-amendment.md` is the
+authoritative Todo 20 acceptance overlay. It supersedes the earlier G5/G6
+driver-admission text in this document for this milestone. The old text remains
+historical documentation of PR #104 and is not an active requirement for the
+bounded QA described here.
+
+Todo 20 has two phases: a protected production-endpoint desktop/mobile
+integrity QA using exactly two disposable FxA accounts, followed by a reviewed
+production Sync enablement bound to the Phase 1 digest. The existing FxA,
+Application Services, and `sync15` path is used. no direct REST/token calls,
+custom endpoint overrides, user accounts, and Notes payload retention remain
+forbidden.
+
+The active Phase 1 boundary is `single-operator-protected-qa` in the
+`floorp-notes-sync-production-qa` Environment. Owner/Operations/executor
+self-attestation is permitted for this pre-public QA, while ordinary PR
+review, CI, validator, evidence hashing, cleanup, local-only fallback, and
+append-only ledger requirements remain mandatory. Mozilla approval, five G6
+signatures, a custom broker, a dedicated runner group, a driver trust bundle,
+and a driver-admission chain are not Todo 20 gates.
+G6 and broker requirements are not Todo 20 gates.
+
+The `notes-sync-production-qa` workflow job uses a standard GitHub-hosted
+macOS runner. It consumes credentials only from protected Environment secrets;
+the app/test process receives no credential environment values. The existing
+client pair must produce a canonical metadata-only summary and an XCResult
+with no Notes content, titles, tokens, keys, authorization headers, screenshots,
+or attachments. The job validates the requested data-loss matrix, approved
+hosts, `sync15`, account isolation, cleanup, and base/revision confirmation
+before any Phase 2 enablement is accepted.
+
+`release-enabled` archive signing and any distribution-oriented build are not
+part of this amendment. Phase 2 means only the reviewed production Sync path
+is enabled in a non-distributed QA/release configuration after Phase 1
+validator `APPROVE`; App Store, TestFlight, and general-user publication stay
+outside the Todo and require separate approval.
+
+The phrase “user accounts” above means unrelated general-user accounts. The
+amendment permits exactly two disposable FxA test accounts, delivered only by
+the protected Environment. The active workflow additionally binds the
+metadata summary to its exact dispatch/run/head/job and provides a dependent
+Phase 2 enablement-record job; neither job claims live QA when the existing
+desktop/mobile pair or protected capability is absent.

@@ -15,7 +15,7 @@
   "testTargets" : [
     {
       "selectedTests" : [
-        "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
+        "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()"
       ],
       "target" : {
         "containerPath" : "container:Client.xcodeproj",

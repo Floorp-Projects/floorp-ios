@@ -17,6 +17,16 @@ on:
         required: false
         default: false
         type: boolean
+      run_floorp_notes_sync_production_qa:
+        description: Run the protected two-account production Sync data-integrity QA matrix.
+        required: false
+        default: false
+        type: boolean
+      run_floorp_notes_sync_production_enablement:
+        description: Record non-distributed production Sync enablement only after the QA matrix succeeds.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -25,12 +35,16 @@ concurrency:
   group: >-
     floorp-ios-ci-${{ github.event_name }}-${{
     (inputs.run_floorp_notes_sync_protected_preflight == true ||
-    inputs.prepare_floorp_notes_sync_g5_contract == true) && github.run_id ||
+    inputs.prepare_floorp_notes_sync_g5_contract == true ||
+    inputs.run_floorp_notes_sync_production_qa == true ||
+    inputs.run_floorp_notes_sync_production_enablement == true) && github.run_id ||
     github.event.pull_request.number || github.ref }}
   cancel-in-progress: >-
     ${{ github.event_name != 'workflow_dispatch' ||
     (inputs.run_floorp_notes_sync_protected_preflight != true &&
-    inputs.prepare_floorp_notes_sync_g5_contract != true) }}
+    inputs.prepare_floorp_notes_sync_g5_contract != true &&
+    inputs.run_floorp_notes_sync_production_qa != true &&
+    inputs.run_floorp_notes_sync_production_enablement != true) }}
 
 env:
   L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
@@ -48,7 +62,9 @@ jobs:
     if: >-
       github.event_name != 'workflow_dispatch' || (
       inputs.run_floorp_notes_sync_protected_preflight != true &&
-      inputs.prepare_floorp_notes_sync_g5_contract != true)
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -85,7 +101,9 @@ jobs:
     if: >-
       github.event_name != 'workflow_dispatch' || (
       inputs.run_floorp_notes_sync_protected_preflight != true &&
-      inputs.prepare_floorp_notes_sync_g5_contract != true)
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true)
     runs-on: macos-26
     timeout-minutes: 120
 
@@ -280,7 +298,9 @@ jobs:
     if: >-
       github.event_name != 'workflow_dispatch' || (
       inputs.run_floorp_notes_sync_protected_preflight != true &&
-      inputs.prepare_floorp_notes_sync_g5_contract != true)
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true)
     runs-on: macos-26
     timeout-minutes: 90
     needs: workflow-lint
@@ -326,7 +346,9 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       inputs.run_floorp_notes_sync_protected_preflight == true &&
-      inputs.prepare_floorp_notes_sync_g5_contract != true
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true
     environment: floorp-notes-sync-production-qa
     # Override the workflow-wide read permission. This job must not receive a
     # usable GitHub token or invoke a token-defaulting source checkout action.
@@ -422,16 +444,18 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee "$RUNNER_TEMP/protected-g5-preflight-compile.log"
 
-  # This Environment-bound job validates a checked-in future-operation
-  # contract and compiles the guard selector only. It does not authorize or
-  # perform G5, receive credentials, execute tests, or publish G5 artifacts.
+  # This Environment-bound job validates the checked-in Todo 20 contract and
+  # compiles the guard selector only. It is not Phase 1 QA and receives no
+  # account secrets.
   notes-sync-g5-operation-contract-preflight:
-    name: Non-live Notes Sync G5 operation-contract preflight
+    name: Todo 20 operation-contract compile preflight
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       inputs.prepare_floorp_notes_sync_g5_contract == true &&
-      inputs.run_floorp_notes_sync_protected_preflight != true
+      inputs.run_floorp_notes_sync_protected_preflight != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true
     environment: floorp-notes-sync-production-qa
     permissions: {}
     env:
@@ -474,14 +498,6 @@ jobs:
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py \
             --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json
 
-      # This validates only public requirements for a future separately
-      # admitted driver. It neither schedules that runner nor references an
-      # Environment secret, actual XCTest selector, or G5 artifact.
-      - name: Validate external G5 driver prerequisites contract
-        run: |
-          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-external-driver-admission-contract.py \
-            --contract scripts/ci/floorp-notes-sync-g5-external-driver-admission-contract.json
-
       - name: Select Xcode
         run: |
           xcode_version="$(<.xcode-version)"
@@ -522,3 +538,296 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             | tee "$RUNNER_TEMP/operation-contract-g5-compile.log"
+
+  notes-sync-production-qa:
+    name: Todo 20 protected two-client production QA
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_floorp_notes_sync_production_qa == true
+    environment: floorp-notes-sync-production-qa
+    permissions: {}
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
+
+    steps:
+      - name: Check out source anonymously
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Validate Todo 20 operation contract
+        run: |
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json
+
+      - name: Select Xcode
+        run: |
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Prepare dedicated QA Simulator
+        run: |
+          set -euo pipefail
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIMULATOR_OS//./-}"
+          simulator_id="$(
+            xcrun simctl list devices available --json \
+              | jq -er --arg runtime "$runtime" --arg name "$SIMULATOR_NAME" \
+                '.devices[$runtime] | map(select(.name == $name)) | first | .udid'
+          )"
+          simulator_arch="$(uname -m)"
+          xcrun simctl boot "$simulator_id" 2>/dev/null || true
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf 'FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID=%s\n' "$simulator_id" >> "$GITHUB_ENV"
+          printf 'FLOORP_NOTES_SYNC_QA_DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+            "$simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
+
+      - name: Run protected two-client integrity QA
+        id: client-pair
+        env:
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/run-floorp-notes-sync-production-qa.py \
+            --summary "$RUNNER_TEMP/floorp-notes-sync-production-qa/qa-summary.json"
+
+      - name: Execute metadata-only QA XCTest assertion
+        env:
+          FLOORP_NOTES_SYNC_PRODUCTION_QA: "1"
+          FLOORP_NOTES_SYNC_QA_RESULT: ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-summary.json
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ""
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ""
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ""
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          xcodebuild test -quiet \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -configuration FloorpRelease \
+            -destination "$FLOORP_NOTES_SYNC_QA_DESTINATION" \
+            -testPlan FloorpNotesSyncG5 \
+            -only-testing:XCUITests/FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix \
+            -resultBundlePath "$RUNNER_TEMP/floorp-notes-sync-production-qa/floorp-notes-sync-two-client.xcresult" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -parallel-testing-enabled NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$RUNNER_TEMP/floorp-notes-sync-production-qa/xcodebuild.log"
+
+      - name: Verify client-pair cleanup receipt
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-cleanup.py \
+            --summary "$RUNNER_TEMP/floorp-notes-sync-production-qa/qa-summary.json" \
+            --receipt "$RUNNER_TEMP/floorp-notes-sync-production-qa/cleanup-receipt.json"
+
+      - name: Scan QA material for secrets
+        if: always()
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          scan_targets=()
+          for path in "$qa_root" "$qa_root/floorp-notes-sync-two-client.xcresult"; do
+            if [ -e "$path" ]; then
+              scan_targets+=("$path")
+            fi
+          done
+          if [ "${#scan_targets[@]}" -eq 0 ]; then
+            echo "secret-log scan could not find any QA material"
+            exit 1
+          fi
+          if rg -l -i \
+            'password|access_token|refresh_token|sync_key|authorization|bearer |cookie|credential|secret|begin private key|oauth_token|note(_|s_)(content|title|payload)|request_body|response_body' \
+            "${scan_targets[@]}" >/dev/null 2>&1; then
+            echo "secret-log scan failed"
+            exit 1
+          fi
+          if ps eww -ax | rg -i 'password|access_token|refresh_token|sync_key|authorization|bearer |cookie|credential|secret|begin private key|oauth_token|note(_|s_)(content|title|payload)|request_body|response_body' >/dev/null 2>&1; then
+            echo "process argv/environment secret scan failed"
+            exit 1
+          fi
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-secret-scan.py \
+            --output "$qa_root/secret-scan.json"
+
+      - name: Clean up test accounts and client state
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-production-qa/client-state"
+
+      - name: Clean up Simulator Keychain and local cache
+        if: always()
+        run: |
+          set -euo pipefail
+          test -n "${FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID:-}"
+          xcrun simctl shutdown "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID" || true
+          xcrun simctl erase "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID"
+
+      - name: Upload metadata-only QA evidence
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-two-client-xcresult
+          path: ${{ runner.temp }}/floorp-notes-sync-production-qa/floorp-notes-sync-two-client.xcresult
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload QA metadata summary
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-two-client-qa-metadata-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-summary.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/cleanup-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/secret-scan.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove runner-local QA material
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-production-qa"
+
+  notes-sync-production-enablement:
+    name: Todo 20 non-distributed production Sync enablement gate
+    needs: notes-sync-production-qa
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_floorp_notes_sync_production_qa == true &&
+      inputs.run_floorp_notes_sync_production_enablement == true &&
+      needs['notes-sync-production-qa'].result == 'success'
+    environment: floorp-notes-sync-production-qa
+    permissions:
+      actions: read
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source anonymously
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_TERMINAL_PROMPT: "0"
+          GIT_ASKPASS: /usr/bin/false
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Download Phase 1 metadata-only summary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-two-client-qa-metadata-${{ github.run_id }}
+          path: ${{ runner.temp }}/floorp-notes-sync-phase1
+
+      - name: Verify Phase 1 cleanup receipt
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-cleanup.py \
+            --summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json"
+
+      - name: Verify Phase 1 secret-scan receipt
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
+            --receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Create non-distributed enablement record
+        env:
+          FLOORP_NOTES_SYNC_ENABLEMENT_APPROVED: "1"
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-enablement.py \
+            --phase1-summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
+            --output "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
+
+      - name: Validate non-distributed enablement record
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-enablement.py \
+            --phase1-summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --enablement-record "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
+
+      - name: Upload enablement metadata
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-production-enablement-${{ github.run_id }}
+          path: ${{ runner.temp }}/floorp-notes-sync-phase2/enablement-record.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove enablement runner-local material
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-phase1"
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-phase2"
