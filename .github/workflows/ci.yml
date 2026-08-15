@@ -698,7 +698,7 @@ jobs:
             --receipt "$FLOORP_NOTES_SYNC_QA_ROOT/cleanup-receipt.json"
 
       - name: Scan QA material for secrets
-        if: success()
+        if: always()
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"

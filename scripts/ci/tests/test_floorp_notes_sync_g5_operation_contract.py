@@ -205,6 +205,10 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertNotIn("Validate Todo 20 operation contract", names)
         self.assertNotIn(CANONICAL_ARTIFACT, json.dumps(self.jobs["build-and-test"], sort_keys=True))
 
+    def test_pre_attestation_secret_scan_is_attempted_after_failure(self) -> None:
+        scan = self.named_step(self.jobs[JOB_ID], "Scan QA material for secrets")
+        self.assertEqual(scan.get("if"), "always()")
+
 
 if __name__ == "__main__":
     unittest.main()
