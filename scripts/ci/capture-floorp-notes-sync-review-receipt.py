@@ -231,6 +231,7 @@ def validate_pr(pr: dict[str, Any], pr_number: int, merged_oid: str) -> None:
 def validate_ruleset(ruleset: dict[str, Any]) -> int:
     if ruleset.get("id") != 20229460 or ruleset.get("enforcement") != "active":
         raise ReviewReceiptError("ruleset identity or enforcement is invalid")
+    found_status_checks = False
     for rule in ruleset.get("rules", []):
         if rule.get("type") == "pull_request":
             parameters = rule.get("parameters", {})
@@ -238,7 +239,20 @@ def validate_ruleset(ruleset: dict[str, Any]) -> int:
                 raise ReviewReceiptError("ruleset has unexpected required reviewers")
             required = parameters.get("required_approving_review_count")
             if required == 0:
-                return required
+                continue
+        if rule.get("type") == "required_status_checks":
+            contexts = {
+                item.get("context")
+                for item in rule.get("parameters", {}).get("required_status_checks", [])
+                if isinstance(item, dict)
+            }
+            if {"Validate workflows", "Build and unit test"}.issubset(contexts):
+                found_status_checks = True
+    if not found_status_checks:
+        raise ReviewReceiptError("ruleset required status checks are unavailable")
+    for rule in ruleset.get("rules", []):
+        if rule.get("type") == "pull_request" and rule.get("parameters", {}).get("required_approving_review_count") == 0:
+            return 0
     raise ReviewReceiptError("active ruleset review requirement is unavailable")
 
 
@@ -345,6 +359,18 @@ def git_diff_sha256(repository_root: Path, base_oid: str, head_oid: str) -> str:
     return sha256_bytes(result.stdout)
 
 
+def verify_merged_parent(repository_root: Path, base_oid: str, merged_oid: str) -> None:
+    result = subprocess.run(
+        ["/usr/bin/git", "-C", str(repository_root), "show", "-s", "--format=%P", merged_oid],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0 or result.stdout.strip().split() != [base_oid]:
+        raise ReviewReceiptError("merged OID is not the guarded squash child of the PR base")
+
+
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pr-json", type=Path, required=True)
@@ -381,6 +407,7 @@ def main(arguments: list[str] | None = None) -> int:
         if not isinstance(reviews, list):
             raise ReviewReceiptError("review API metadata is malformed")
         diff_sha256 = git_diff_sha256(args.repository_root, pr["base"]["sha"], pr["head"]["sha"])
+        verify_merged_parent(args.repository_root, pr["base"]["sha"], args.merged_oid)
         receipt = build_receipt(
             pr,
             reviews,

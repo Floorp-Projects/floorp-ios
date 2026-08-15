@@ -146,7 +146,16 @@ class CaptureReceiptTests(unittest.TestCase):
                                 "required_approving_review_count": 0,
                                 "required_reviewers": [],
                             },
-                        }
+                        },
+                        {
+                            "type": "required_status_checks",
+                            "parameters": {
+                                "required_status_checks": [
+                                    {"context": "Validate workflows"},
+                                    {"context": "Build and unit test"},
+                                ]
+                            },
+                        },
                     ],
                 },
                 contract(),
@@ -188,7 +197,16 @@ class CaptureReceiptTests(unittest.TestCase):
                                 "required_approving_review_count": 0,
                                 "required_reviewers": [],
                             },
-                        }
+                        },
+                        {
+                            "type": "required_status_checks",
+                            "parameters": {
+                                "required_status_checks": [
+                                    {"context": "Validate workflows"},
+                                    {"context": "Build and unit test"},
+                                ]
+                            },
+                        },
                     ],
                 },
                 contract(),
