@@ -272,6 +272,9 @@ def build_receipt(
     owner_sha256: str,
     merge_sha256: str,
     subagent_sha256: str,
+    pr_api_sha256: str,
+    reviews_api_sha256: str,
+    ruleset_api_sha256: str,
 ) -> dict[str, Any]:
     validate_pr(pr, owner["pr_number"], merged_oid)
     if not isinstance(reviews, list):
@@ -291,6 +294,9 @@ def build_receipt(
         (owner_sha256, "owner review digest"),
         (merge_sha256, "merge audit digest"),
         (subagent_sha256, "subagent review digest"),
+        (pr_api_sha256, "PR API digest"),
+        (reviews_api_sha256, "reviews API digest"),
+        (ruleset_api_sha256, "ruleset API digest"),
     ):
         require_sha(value, SHA256, label)
     return {
@@ -309,6 +315,7 @@ def build_receipt(
         "operator_id": owner["operator_id"],
         "plan_binding_sha256": binding_sha256,
         "plan_sha256": binding["plan_sha256"],
+        "pr_api_sha256": pr_api_sha256,
         "pr_number": pr["number"],
         "public_release": safety["public_release"],
         "repository": REPOSITORY,
@@ -316,7 +323,9 @@ def build_receipt(
         "reviewed_at_utc": owner["reviewed_at_utc"],
         "roles": ["owner", "operations", "executor", "reviewer"],
         "ruleset_required_review_count": required_review_count,
+        "reviews_api_sha256": reviews_api_sha256,
         "reviews_count": len(reviews),
+        "ruleset_api_sha256": ruleset_api_sha256,
         "schema_version": 2,
         "self_review_exception": owner["self_review_exception"],
         "subagent_review_digests": [subagent_sha256],
@@ -391,9 +400,9 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
 def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
-        pr, _ = load_json(args.pr_json)
-        reviews, _ = load_json(args.reviews_json)
-        ruleset, _ = load_json(args.ruleset_json)
+        pr, pr_raw = load_json(args.pr_json)
+        reviews, reviews_raw = load_json(args.reviews_json)
+        ruleset, ruleset_raw = load_json(args.ruleset_json)
         contract, contract_raw = load_canonical(args.contract, "operation contract")
         binding, binding_raw = load_canonical(args.plan_binding, "plan binding")
         owner, owner_raw = load_canonical(args.owner_review, "owner review")
@@ -424,6 +433,9 @@ def main(arguments: list[str] | None = None) -> int:
             sha256_bytes(owner_raw),
             sha256_bytes(merge_raw),
             sha256_bytes(subagent_raw),
+            sha256_bytes(pr_raw),
+            sha256_bytes(reviews_raw),
+            sha256_bytes(ruleset_raw),
         )
         args.output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with args.output.open("xb") as handle:

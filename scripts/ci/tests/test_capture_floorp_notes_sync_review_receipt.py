@@ -170,6 +170,9 @@ class CaptureReceiptTests(unittest.TestCase):
                 CAPTURE.sha256_bytes(b"owner"),
                 CAPTURE.sha256_bytes(b"merge"),
                 CAPTURE.sha256_bytes(b"subagent"),
+                CAPTURE.sha256_bytes(b"pr"),
+                CAPTURE.sha256_bytes(b"reviews"),
+                CAPTURE.sha256_bytes(b"ruleset"),
             )
             self.assertEqual(receipt["base_oid"], "1" * 40)
             self.assertEqual(receipt["head_sha"], "2" * 40)
@@ -221,6 +224,9 @@ class CaptureReceiptTests(unittest.TestCase):
                 "c" * 64,
                 "d" * 64,
                 "e" * 64,
+                "f" * 64,
+                "0" * 64,
+                "1" * 64,
             )
 
 

@@ -160,7 +160,8 @@ def validate(
         "review_receipt_sha256", "sequence", "self_review_exception", "subagent_review_digests",
         "two_disposable_accounts_only", "unresolved_blocking_findings",
         "validator_sha256", "owner_review_receipt_sha256", "merge_audit_sha256",
-        "subagent_review_receipt_sha256", "workflow_job", "workflow_path",
+        "subagent_review_receipt_sha256", "pr_api_sha256", "reviews_api_sha256",
+        "ruleset_api_sha256", "workflow_job", "workflow_path",
         "workflow_run_attempt", "workflow_run_id",
     }
     if set(value) != expected:
@@ -232,6 +233,9 @@ def validate(
         "owner_review_receipt_sha256",
         "merge_audit_sha256",
         "subagent_review_receipt_sha256",
+        "pr_api_sha256",
+        "reviews_api_sha256",
+        "ruleset_api_sha256",
     ):
         if not SHA256.fullmatch(value[field]):
             raise AttestationError(f"attestation {field} is invalid")
@@ -248,6 +252,7 @@ def validate(
         "repository", "review_scope", "reviewed_at_utc", "roles",
         "ruleset_required_review_count", "reviews_count", "self_review_exception",
         "subagent_review_digests", "subagent_review_receipt_sha256",
+        "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
         "two_disposable_accounts_only", "unresolved_blocking_findings",
     )
     if any(receipt.get(field) != value[field] for field in receipt_fields):

@@ -65,6 +65,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         "independence", "local_test_accounts_accessed", "merged_oid",
         "native_github_approval", "operator_id", "owner_review_receipt_sha256",
         "merge_audit_sha256", "plan_binding_sha256", "plan_sha256", "pr_number",
+        "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
         "public_release", "repository", "review_scope", "reviewed_at_utc",
         "roles", "ruleset_required_review_count", "reviews_count", "schema_version",
         "self_review_exception", "subagent_review_digests",
@@ -105,6 +106,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         "amendment_sha256", "combined_plan_hash", "contract_sha256", "diff_sha256",
         "owner_review_receipt_sha256", "merge_audit_sha256", "plan_binding_sha256",
         "plan_sha256", "subagent_review_receipt_sha256",
+        "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
     ):
         if not SHA256.fullmatch(value[field]):
             raise RuntimeError(f"[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_{field}_invalid")
@@ -174,6 +176,9 @@ def main(arguments: list[str] | None = None) -> int:
             "qa_summary_sha256": summary_sha256,
             "repository": review["repository"],
             "pr_number": review["pr_number"],
+            "pr_api_sha256": review["pr_api_sha256"],
+            "reviews_api_sha256": review["reviews_api_sha256"],
+            "ruleset_api_sha256": review["ruleset_api_sha256"],
             "review_scope": review["review_scope"],
             "reviewed_at_utc": review["reviewed_at_utc"],
             "roles": review["roles"],
