@@ -22,6 +22,29 @@ SCOPE = [
     "xcodebuild-log",
     "process-argv-environment-markers",
 ]
+MARKERS = (
+    "password",
+    "access_token",
+    "refresh_token",
+    "sync_key",
+    "authorization",
+    "bearer ",
+    "cookie",
+    "credential",
+    "secret",
+    "begin private key",
+    "oauth_token",
+    "note(_|s_)(content|title|payload)",
+    "request_body",
+    "response_body",
+)
+MARKER_SET_SHA256 = hashlib.sha256("\n".join(MARKERS).encode()).hexdigest()
+REQUIRED_TARGETS = {
+    "qa-summary.json",
+    "cleanup-receipt.json",
+    "floorp-notes-sync-two-client.xcresult",
+    "xcodebuild.log",
+}
 
 
 class SecretScanError(ValueError):
@@ -57,14 +80,37 @@ def load(path: Path) -> tuple[dict[str, Any], bytes]:
 
 
 def validate(value: dict[str, Any], head_sha: str, run_id: int, run_attempt: int) -> None:
-    if set(value) != {"job_name", "passed", "repository", "schema_version", "scope", "source"}:
+    if set(value) != {
+        "job_name",
+        "marker_set_sha256",
+        "passed",
+        "repository",
+        "schema_version",
+        "scope",
+        "source",
+        "target_digests",
+    }:
         raise SecretScanError("secret-scan receipt fields are not exact")
     if value["schema_version"] != 1 or value["passed"] is not True:
         raise SecretScanError("secret-scan receipt is not a passing scan")
+    if value["marker_set_sha256"] != MARKER_SET_SHA256:
+        raise SecretScanError("secret-scan marker set is not bound")
     if value["job_name"] != "notes-sync-production-qa" or value["repository"] != REPOSITORY:
         raise SecretScanError("secret-scan receipt job/repository is invalid")
     if value["scope"] != SCOPE:
         raise SecretScanError("secret-scan scope is incomplete")
+    targets = value["target_digests"]
+    if not isinstance(targets, list) or {target.get("name") for target in targets if isinstance(target, dict)} != REQUIRED_TARGETS:
+        raise SecretScanError("secret-scan target digest set is incomplete")
+    for target in targets:
+        if not isinstance(target, dict) or set(target) != {"byte_count", "file_count", "name", "sha256"}:
+            raise SecretScanError("secret-scan target digest is malformed")
+        if not isinstance(target["byte_count"], int) or target["byte_count"] < 0:
+            raise SecretScanError("secret-scan target byte count is invalid")
+        if not isinstance(target["file_count"], int) or target["file_count"] < 1:
+            raise SecretScanError("secret-scan target file count is invalid")
+        if not isinstance(target["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", target["sha256"]):
+            raise SecretScanError("secret-scan target digest is invalid")
     source = value["source"]
     if not isinstance(source, dict) or set(source) != {
         "head_sha",

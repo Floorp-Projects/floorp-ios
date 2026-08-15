@@ -87,25 +87,39 @@ def runtime_context() -> dict[str, Any]:
         "GITHUB_SHA",
         "GITHUB_WORKFLOW_REF",
     )
-    require(all(os.environ.get(name) for name in required), "[blocked] ENABLEMENT_CONTEXT_MISSING")
+    require(
+        all(os.environ.get(name) for name in required),
+        "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_context_missing",
+    )
     require(
         os.environ.get("FLOORP_NOTES_SYNC_ENABLEMENT_APPROVED") == "1",
-        "[blocked] ENABLEMENT_APPROVAL_MISSING owner=Operations resume=obtain protected Environment approval",
+        "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_approval_missing resume=obtain protected Environment approval",
     )
-    require(os.environ["GITHUB_REPOSITORY"] == REPOSITORY, "[blocked] ENABLEMENT_REPOSITORY_MISMATCH")
-    require(os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch", "[blocked] ENABLEMENT_EVENT_MISMATCH")
-    require(os.environ["GITHUB_JOB"] == "notes-sync-production-enablement", "[blocked] ENABLEMENT_JOB_MISMATCH")
+    require(
+        os.environ["GITHUB_REPOSITORY"] == REPOSITORY,
+        "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_repository_mismatch",
+    )
+    require(
+        os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch",
+        "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_event_mismatch",
+    )
+    require(
+        os.environ["GITHUB_JOB"] == "notes-sync-production-enablement",
+        "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_job_mismatch",
+    )
     require(
         os.environ["GITHUB_WORKFLOW_REF"].startswith(
             f"{REPOSITORY}/{WORKFLOW_PATH}@"
         ),
-        "[blocked] ENABLEMENT_WORKFLOW_MISMATCH",
+        "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_workflow_mismatch",
     )
     try:
         run_id = int(os.environ["GITHUB_RUN_ID"])
         run_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
     except ValueError as error:
-        raise EnablementPreparationError("[blocked] ENABLEMENT_CONTEXT_INVALID") from error
+        raise EnablementPreparationError(
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_context_invalid"
+        ) from error
     return {
         "actor": os.environ["GITHUB_ACTOR"],
         "head_sha": os.environ["GITHUB_SHA"],
@@ -140,13 +154,25 @@ def main(arguments: list[str] | None = None) -> int:
         phase1_raw = args.phase1_summary.read_bytes()
         phase1 = QA.validate_summary(QA.parse_bytes(phase1_raw))
         source = phase1["source"]
-        require(source["repository"] == REPOSITORY, "[blocked] ENABLEMENT_PHASE1_REPOSITORY_MISMATCH")
-        require(source["head_sha"] == context["head_sha"], "[blocked] ENABLEMENT_PHASE1_HEAD_MISMATCH")
-        require(source["workflow_run_id"] == context["run_id"], "[blocked] ENABLEMENT_PHASE1_RUN_MISMATCH")
-        require(source["workflow_run_attempt"] == context["run_attempt"], "[blocked] ENABLEMENT_PHASE1_ATTEMPT_MISMATCH")
+        require(
+            source["repository"] == REPOSITORY,
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_phase1_repository_mismatch",
+        )
+        require(
+            source["head_sha"] == context["head_sha"],
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_phase1_head_mismatch",
+        )
+        require(
+            source["workflow_run_id"] == context["run_id"],
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_phase1_run_mismatch",
+        )
+        require(
+            source["workflow_run_attempt"] == context["run_attempt"],
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_phase1_attempt_mismatch",
+        )
         require(
             phase1["self_attestation"]["operator_id"] == context["actor"],
-            "[blocked] ENABLEMENT_OPERATOR_MISMATCH",
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_operator_mismatch",
         )
         cleanup_receipt, cleanup_receipt_raw = CLEANUP.parse_canonical(args.cleanup_receipt)
         CLEANUP.validate_receipt(cleanup_receipt, phase1, cleanup_receipt_raw)
@@ -161,6 +187,10 @@ def main(arguments: list[str] | None = None) -> int:
             "app_store_submission": False,
             "approved": True,
             "configuration": "production-sync-enabled-qa",
+            "cleanup_receipt_sha256": hashlib.sha256(cleanup_receipt_raw).hexdigest(),
+            "cleanup_validator_sha256": hashlib.sha256(
+                CLEANUP_VALIDATOR_PATH.read_bytes()
+            ).hexdigest(),
             "enablement_validator_sha256": hashlib.sha256(
                 ENABLEMENT_VALIDATOR_PATH.read_bytes()
             ).hexdigest(),
@@ -175,6 +205,9 @@ def main(arguments: list[str] | None = None) -> int:
             "public_release": False,
             "repository": REPOSITORY,
             "schema_version": 1,
+            "secret_scan_validator_sha256": hashlib.sha256(
+                SECRET_SCAN_VALIDATOR_PATH.read_bytes()
+            ).hexdigest(),
             "source_head_sha": context["head_sha"],
             "testflight_distribution": False,
             "wire_protocol": "sync15",
@@ -185,7 +218,13 @@ def main(arguments: list[str] | None = None) -> int:
             "workflow_run_attempt": context["run_attempt"],
             "workflow_run_id": context["run_id"],
         }
-        ENABLEMENT.validate_enablement(record, phase1, phase1_raw)
+        ENABLEMENT.validate_enablement(
+            record,
+            phase1,
+            phase1_raw,
+            cleanup_receipt_raw,
+            secret_scan_raw,
+        )
         write_exclusive(args.output, canonical_bytes(record))
     except (
         OSError,

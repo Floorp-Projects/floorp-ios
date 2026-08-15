@@ -23,11 +23,17 @@ class CleanupError(RuntimeError):
 def require_runner_temp_child(path: Path) -> Path:
     runner_temp = os.environ.get("RUNNER_TEMP")
     if not runner_temp:
-        raise CleanupError("[blocked] CLEANUP_SCOPE_UNKNOWN owner=Operations resume=run on a CI runner with RUNNER_TEMP")
+        raise CleanupError(
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=cleanup_scope_unknown "
+            "resume=run on a CI runner with RUNNER_TEMP"
+        )
     root = Path(runner_temp).resolve(strict=False)
     candidate = path.resolve(strict=False)
     if candidate == root or root not in candidate.parents:
-        raise CleanupError("[blocked] CLEANUP_SCOPE_UNKNOWN owner=Operations resume=provide a RUNNER_TEMP child path")
+        raise CleanupError(
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=cleanup_scope_unknown "
+            "resume=provide a RUNNER_TEMP child path"
+        )
     return candidate
 
 
@@ -43,7 +49,10 @@ def main(arguments: list[str] | None = None) -> int:
         target = require_runner_temp_child(args.work_root)
         if target.exists() or target.is_symlink():
             if target.is_symlink() or not target.is_dir():
-                raise CleanupError("[blocked] CLEANUP_SCOPE_UNKNOWN owner=Operations resume=use a real runner temp directory")
+                raise CleanupError(
+                    "[blocked] AUTHORIZATION_MISSING owner=Operations reason=cleanup_scope_unknown "
+                    "resume=use a real runner temp directory"
+                )
             shutil.rmtree(target)
     except (CleanupError, OSError) as error:
         print(str(error), file=sys.stderr)

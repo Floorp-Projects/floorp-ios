@@ -507,3 +507,10 @@ the protected Environment. The active workflow additionally binds the
 metadata summary to its exact dispatch/run/head/job and provides a dependent
 Phase 2 enablement-record job; neither job claims live QA when the existing
 desktop/mobile pair or protected capability is absent.
+
+### Todo 20 Phase 2 binding tightening (2026-08-15)
+
+The non-distributed enablement record is accepted only when the cleanup and
+secret-scan receipts are revalidated for the same Phase 1 run and their exact
+bytes and validator digests are recorded. Secret scans retain hashes only;
+payloads, credentials, and process contents are never artifacts.

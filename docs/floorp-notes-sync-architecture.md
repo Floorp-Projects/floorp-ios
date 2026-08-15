@@ -263,3 +263,10 @@ non-distributed `production-sync-enabled-qa` record against the Phase 1
 summary digest; it does not change the checked-in default or publish a build.
 Absent protected capability or an existing client pair is a blocker, never a
 passing summary.
+
+### Todo 20 receipt-binding tightening (2026-08-15)
+
+Phase 2 revalidates the exact Phase 1 cleanup and secret-scan receipt bytes,
+including their validator digests. The scan receipt contains only a fixed
+marker-set digest and target-file digests. Missing capability diagnostics use
+the repository's existing authorization or upstream-artifact blocker taxonomy.

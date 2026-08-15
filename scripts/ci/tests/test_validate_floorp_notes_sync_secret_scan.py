@@ -9,10 +9,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
 VALIDATOR = ROOT / "scripts/ci/validate-floorp-notes-sync-secret-scan.py"
+RECORDER = ROOT / "scripts/ci/record-floorp-notes-sync-secret-scan.py"
 
 
 def load_module(path: Path, name: str) -> Any:
@@ -26,15 +28,21 @@ def load_module(path: Path, name: str) -> Any:
 
 
 SCAN = load_module(VALIDATOR, "floorp_notes_sync_secret_scan_validator_test")
+RECORD = load_module(RECORDER, "floorp_notes_sync_secret_scan_recorder_test")
 
 
 def receipt() -> dict[str, Any]:
     return {
         "job_name": "notes-sync-production-qa",
+        "marker_set_sha256": SCAN.MARKER_SET_SHA256,
         "passed": True,
         "repository": SCAN.REPOSITORY,
         "schema_version": 1,
         "scope": list(SCAN.SCOPE),
+        "target_digests": [
+            {"byte_count": 1, "file_count": 1, "name": name, "sha256": "0" * 64}
+            for name in sorted(SCAN.REQUIRED_TARGETS)
+        ],
         "source": {
             "head_sha": "0123456789abcdef0123456789abcdef01234567",
             "workflow_path": SCAN.WORKFLOW_PATH,
@@ -79,6 +87,41 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_recorder_hashes_only_declared_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = root / "qa-summary.json"
+            cleanup = root / "cleanup-receipt.json"
+            xcresult = root / "floorp-notes-sync-two-client.xcresult"
+            log = root / "xcodebuild.log"
+            xcresult.mkdir()
+            (xcresult / "result").write_text("safe metadata\n")
+            for path in (summary, cleanup, log):
+                path.write_text("safe metadata\n")
+            output = root / "secret-scan.json"
+            environment = {
+                "GITHUB_REPOSITORY": SCAN.REPOSITORY,
+                "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_RUN_ID": "123456",
+                "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
+            }
+            with patch.dict(RECORD.os.environ, environment, clear=False):
+                self.assertEqual(
+                    RECORD.main(
+                        [
+                            "--output", str(output),
+                            "--target", str(summary),
+                            "--target", str(cleanup),
+                            "--target", str(xcresult),
+                            "--target", str(log),
+                        ]
+                    ),
+                    0,
+                )
+            value, raw = SCAN.load(output)
+            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1)
+            self.assertNotIn(b"safe metadata", raw)
 
 
 if __name__ == "__main__":

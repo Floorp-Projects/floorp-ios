@@ -691,7 +691,11 @@ jobs:
             exit 1
           fi
           /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-secret-scan.py \
-            --output "$qa_root/secret-scan.json"
+            --output "$qa_root/secret-scan.json" \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log"
 
       - name: Clean up test accounts and client state
         if: always()
@@ -812,6 +816,8 @@ jobs:
           set -euo pipefail
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-enablement.py \
             --phase1-summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
             --enablement-record "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Upload enablement metadata

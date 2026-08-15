@@ -78,6 +78,7 @@ def canonical(value: dict[str, Any]) -> bytes:
 def secret_scan_receipt() -> dict[str, Any]:
     return {
         "job_name": "notes-sync-production-qa",
+        "marker_set_sha256": CREATE.SECRET_SCAN.MARKER_SET_SHA256,
         "passed": True,
         "repository": QA.REPOSITORY,
         "schema_version": 1,
@@ -87,6 +88,15 @@ def secret_scan_receipt() -> dict[str, Any]:
             "xcresult",
             "xcodebuild-log",
             "process-argv-environment-markers",
+        ],
+        "target_digests": [
+            {"byte_count": 1, "file_count": 1, "name": name, "sha256": "0" * 64}
+            for name in (
+                "qa-summary.json",
+                "cleanup-receipt.json",
+                "floorp-notes-sync-two-client.xcresult",
+                "xcodebuild.log",
+            )
         ],
         "source": {
             "head_sha": "0123456789abcdef0123456789abcdef01234567",
@@ -103,6 +113,7 @@ def cleanup_receipt() -> dict[str, Any]:
         "environment": QA.ENVIRONMENT,
         "local_cache": True,
         "phase": "production-qa",
+        "runner_temp": True,
         "schema_version": 1,
         "simulator_keychain": True,
         "source": {

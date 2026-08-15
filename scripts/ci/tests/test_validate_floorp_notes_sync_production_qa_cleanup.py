@@ -79,6 +79,7 @@ def receipt() -> dict[str, Any]:
         "environment": QA.ENVIRONMENT,
         "local_cache": True,
         "phase": "production-qa",
+        "runner_temp": True,
         "schema_version": 1,
         "simulator_keychain": True,
         "source": {

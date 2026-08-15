@@ -74,7 +74,7 @@ def require_runtime_binding(summary: dict[str, Any]) -> None:
     missing = [name for name in required_environment if not os.environ.get(name)]
     if missing:
         raise ProductionQARunError(
-            "[blocked] EXECUTION_CONTEXT_MISSING owner=Operations "
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_missing "
             "resume=run only inside the protected GitHub workflow with its immutable source context"
         )
 
@@ -87,7 +87,7 @@ def require_runtime_binding(summary: dict[str, Any]) -> None:
         run_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
     except ValueError as error:
         raise ProductionQARunError(
-            "[blocked] EXECUTION_CONTEXT_INVALID owner=Operations "
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_invalid "
             "resume=provide numeric GitHub run metadata"
         ) from error
     expected = {
@@ -101,17 +101,17 @@ def require_runtime_binding(summary: dict[str, Any]) -> None:
     }
     if not SHA1.fullmatch(expected["head_sha"]) or not workflow_ref.startswith(workflow_prefix):
         raise ProductionQARunError(
-            "[blocked] EXECUTION_CONTEXT_INVALID owner=Operations "
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_invalid "
             "resume=bind the summary to the exact checked-in workflow and commit"
         )
     if any(source[key] != value for key, value in expected.items()):
         raise ProductionQARunError(
-            "[blocked] EXECUTION_CONTEXT_MISMATCH owner=Operations "
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_mismatch "
             "resume=regenerate the client-pair summary for this exact workflow run"
         )
     if summary["self_attestation"]["operator_id"] != os.environ["GITHUB_ACTOR"]:
         raise ProductionQARunError(
-            "[blocked] SELF_ATTESTATION_MISMATCH owner=Operations "
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=self_attestation_mismatch "
             "resume=bind the owner/Operations/executor attestation to the dispatch actor"
         )
 
@@ -128,7 +128,7 @@ def main(arguments: list[str] | None = None) -> int:
         require_protected_secrets()
         if not args.summary.is_file() or args.summary.is_symlink():
             raise ProductionQARunError(
-                "[blocked] CLIENT_PAIR_UNAVAILABLE owner=Operations "
+                "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=client_pair_summary "
                 "resume=run the existing desktop/mobile clients and emit the required metadata-only summary"
             )
         summary = VALIDATOR.load_and_validate(args.summary)
