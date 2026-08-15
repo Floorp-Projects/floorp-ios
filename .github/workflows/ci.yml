@@ -562,9 +562,11 @@ jobs:
       FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
       FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
       # Metadata-only review inputs. Their source is verified against the
-      # read-only GitHub PR/ruleset API and checked-in artifacts.
+      # read-only GitHub PR/ruleset API, checked-in contract/binding, and
+      # protected Environment review artifacts.
       FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
       FLOORP_TODO20_MERGE_AUDIT_JSON: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_JSON }}
+      FLOORP_TODO20_SUBAGENT_REVIEW_JSON: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_JSON }}
 
     steps:
       - name: Check out source anonymously
@@ -590,6 +592,7 @@ jobs:
           test -n "$FLOORP_TODO20_PR_NUMBER"
           test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON"
           test -n "$FLOORP_TODO20_MERGE_AUDIT_JSON"
+          test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_JSON"
           curl --fail --silent --show-error --location --retry 3 \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$FLOORP_TODO20_PR_NUMBER" \
             -H "Accept: application/vnd.github+json" \
@@ -607,6 +610,7 @@ jobs:
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"
           printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$qa_root/owner-review.json"
           printf "%s\n" "$FLOORP_TODO20_MERGE_AUDIT_JSON" > "$qa_root/merge-audit.json"
+          printf "%s\n" "$FLOORP_TODO20_SUBAGENT_REVIEW_JSON" > "$qa_root/subagent-review.json"
           /usr/bin/python3 -I scripts/ci/capture-floorp-notes-sync-review-receipt.py \
             --pr-json "$qa_root/pr.json" \
             --reviews-json "$qa_root/reviews.json" \
@@ -618,7 +622,7 @@ jobs:
             --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
             --owner-review "$qa_root/owner-review.json" \
             --merge-audit "$qa_root/merge-audit.json" \
-            --subagent-review docs/floorp-notes-sync-todo20-subagent-review.json \
+            --subagent-review "$qa_root/subagent-review.json" \
             --output "$qa_root/review-receipt.json"
           printf "FLOORP_NOTES_SYNC_REVIEW_RECEIPT=%s\n" "$qa_root/review-receipt.json" >> "$GITHUB_ENV"
 
