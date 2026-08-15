@@ -27,6 +27,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_floorp_notes_sync_guarded_merge:
+        description: Execute the protected OID-guarded Todo 20 squash merge and emit metadata-only merge evidence.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -37,14 +42,16 @@ concurrency:
     (inputs.run_floorp_notes_sync_protected_preflight == true ||
     inputs.prepare_floorp_notes_sync_g5_contract == true ||
     inputs.run_floorp_notes_sync_production_qa == true ||
-    inputs.run_floorp_notes_sync_production_enablement == true) && github.run_id ||
+    inputs.run_floorp_notes_sync_production_enablement == true ||
+    inputs.run_floorp_notes_sync_guarded_merge == true) && github.run_id ||
     github.event.pull_request.number || github.ref }}
   cancel-in-progress: >-
     ${{ github.event_name != 'workflow_dispatch' ||
     (inputs.run_floorp_notes_sync_protected_preflight != true &&
     inputs.prepare_floorp_notes_sync_g5_contract != true &&
     inputs.run_floorp_notes_sync_production_qa != true &&
-    inputs.run_floorp_notes_sync_production_enablement != true) }}
+    inputs.run_floorp_notes_sync_production_enablement != true &&
+    inputs.run_floorp_notes_sync_guarded_merge != true) }}
 
 env:
   L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
@@ -64,7 +71,8 @@ jobs:
       inputs.run_floorp_notes_sync_protected_preflight != true &&
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
-      inputs.run_floorp_notes_sync_production_enablement != true)
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -103,7 +111,8 @@ jobs:
       inputs.run_floorp_notes_sync_protected_preflight != true &&
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
-      inputs.run_floorp_notes_sync_production_enablement != true)
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true)
     runs-on: macos-26
     timeout-minutes: 120
 
@@ -300,7 +309,8 @@ jobs:
       inputs.run_floorp_notes_sync_protected_preflight != true &&
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
-      inputs.run_floorp_notes_sync_production_enablement != true)
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true)
     runs-on: macos-26
     timeout-minutes: 90
     needs: workflow-lint
@@ -348,7 +358,8 @@ jobs:
       inputs.run_floorp_notes_sync_protected_preflight == true &&
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
-      inputs.run_floorp_notes_sync_production_enablement != true
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true
     environment: floorp-notes-sync-production-qa
     # Override the workflow-wide read permission. This job must not receive a
     # usable GitHub token or invoke a token-defaulting source checkout action.
@@ -455,7 +466,8 @@ jobs:
       inputs.prepare_floorp_notes_sync_g5_contract == true &&
       inputs.run_floorp_notes_sync_protected_preflight != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
-      inputs.run_floorp_notes_sync_production_enablement != true
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true
     environment: floorp-notes-sync-production-qa
     permissions: {}
     env:
@@ -538,6 +550,114 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             | tee "$RUNNER_TEMP/operation-contract-g5-compile.log"
+
+  todo20-guarded-merge:
+    name: Todo 20 protected OID-guarded merge and audit receipt
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/agent/floorp-plan-t20-live-executor' &&
+      inputs.run_floorp_notes_sync_guarded_merge == true &&
+      inputs.run_floorp_notes_sync_protected_preflight != true &&
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true
+    environment: floorp-notes-sync-production-qa
+    permissions: {}
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ${{ secrets.FLOORP_TODO20_GH_MERGE_TOKEN }}
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
+      FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
+      FLOORP_TODO20_EXPECTED_HEAD_SHA: ${{ vars.FLOORP_TODO20_EXPECTED_HEAD_SHA }}
+
+    steps:
+      - name: Check out source anonymously
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Check guarded merge prerequisites
+        run: |
+          set -euo pipefail
+          test -n "${GH_TOKEN:-}" || {
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=guarded_merge_token_missing resume=configure protected Environment secret FLOORP_TODO20_GH_MERGE_TOKEN with pull-request merge authority' >&2
+            exit 78
+          }
+          test -n "$FLOORP_TODO20_PR_NUMBER"
+          test "$GITHUB_SHA" = "$FLOORP_TODO20_EXPECTED_HEAD_SHA" || {
+            printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=guarded_merge_expected_head_mismatch resume=update protected expected head only after exact-head CI and subagent GO' >&2
+            exit 78
+          }
+
+      - name: Execute repository-owned OID-guarded merge
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-notes-sync-guarded-merge"
+          install -d -m 700 "$root"
+          /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge.py \
+            --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+            --output "$root/merge-operation-receipt.json"
+          printf 'FLOORP_TODO20_MERGE_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+
+      - name: Capture protected organization audit response
+        env:
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+          GH_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${FLOORP_TODO20_GH_AUDIT_TOKEN:-}" || {
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_secret_missing resume=configure protected Environment secret FLOORP_TODO20_GH_AUDIT_TOKEN with read-only organization audit-log authority' >&2
+            exit 78
+          }
+          /opt/homebrew/bin/gh api --paginate --slurp \
+            "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
+            -H "Accept: application/vnd.github+json" \
+            > "$FLOORP_TODO20_MERGE_ROOT/audit-log.json"
+
+      - name: Create same-run metadata-only merge audit
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-merge-audit.py \
+            --operation-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
+            --audit-json "$FLOORP_TODO20_MERGE_ROOT/audit-log.json" \
+            --output "$FLOORP_TODO20_MERGE_ROOT/merge-audit.json"
+
+      - name: Upload immutable guarded-merge metadata
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-guarded-merge-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-audit.json
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-operation-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove guarded-merge runner-local material
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-guarded-merge"
 
   notes-sync-production-qa:
     name: Todo 20 protected two-client production QA

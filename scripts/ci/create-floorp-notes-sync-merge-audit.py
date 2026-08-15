@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -103,6 +104,17 @@ def event_id(event: dict[str, Any]) -> str:
     raise MergeAuditError("audit merge event has no immutable event ID")
 
 
+def event_merge_oid(event: dict[str, Any]) -> str:
+    candidates = [event.get("merge_commit_sha"), event.get("merged_oid"), event.get("sha")]
+    data = event.get("data")
+    if isinstance(data, dict):
+        candidates.extend((data.get("merge_commit_sha"), data.get("merged_oid"), data.get("sha")))
+    for value in candidates:
+        if isinstance(value, str) and SHA1.fullmatch(value):
+            return value
+    raise MergeAuditError("audit merge event has no merge OID")
+
+
 def is_bypass_event(event: dict[str, Any]) -> bool:
     if event_repository(event) != REPOSITORY:
         return False
@@ -126,6 +138,7 @@ def audit_projection(events: list[dict[str, Any]], pr_number: int) -> tuple[dict
             {
                 "action": "pull_request.merge",
                 "event_id_sha256": sha256(event_id(event).encode("utf-8")),
+                "merge_oid": event_merge_oid(event),
                 "pull_request_path": expected_path,
                 "repository": REPOSITORY,
                 "timestamp": event_timestamp(event),
@@ -144,9 +157,23 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(arguments)
 
 
+def workflow_source() -> tuple[int, str]:
+    if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
+        raise MergeAuditError("merge audit workflow repository is invalid")
+    try:
+        run_id = int(os.environ["GITHUB_RUN_ID"])
+    except (KeyError, ValueError) as error:
+        raise MergeAuditError("merge audit workflow run ID is unavailable") from error
+    source_sha = os.environ.get("GITHUB_SHA")
+    if run_id <= 0 or not isinstance(source_sha, str) or not SHA1.fullmatch(source_sha):
+        raise MergeAuditError("merge audit workflow source SHA is invalid")
+    return run_id, source_sha
+
+
 def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
+        source_run_id, source_sha = workflow_source()
         operation, operation_raw = load_json(args.operation_receipt)
         if not isinstance(operation, dict) or operation_raw != canonical(operation):
             raise MergeAuditError("merge operation receipt is not canonical JSON")
@@ -193,6 +220,8 @@ def main(arguments: list[str] | None = None) -> int:
         if len(projection["merge_events"]) != 1:
             raise MergeAuditError("audit log does not contain exactly one exact pull_request.merge event")
         audit_event = projection["merge_events"][0]
+        if audit_event["merge_oid"] != operation["merged_oid"]:
+            raise MergeAuditError("audit merge event OID does not match the guarded PUT result")
         response_digest = sha256(canonical(merge_projection))
         projection_digest = sha256(canonical(projection))
         artifact = {
@@ -220,6 +249,9 @@ def main(arguments: list[str] | None = None) -> int:
             "server_merge_sha": operation["server_merge_sha"],
             "server_merged": True,
             "server_merged_at": operation["server_merged_at"],
+            "source_workflow_run_id": source_run_id,
+            "source_workflow_sha": source_sha,
+            "source_workflow": "protected-guarded-merge-workflow",
         }
         raw = canonical(artifact)
         args.output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

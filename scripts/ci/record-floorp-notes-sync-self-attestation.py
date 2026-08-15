@@ -61,7 +61,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         raise RuntimeError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_invalid_json") from error
     expected = {
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
-        "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "operation_receipt_sha256", "server_merge_sha", "server_merged", "server_merged_at",
+        "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "operation_receipt_sha256", "server_merge_sha", "server_merged", "server_merged_at", "source_workflow", "source_workflow_run_id", "source_workflow_sha",
         "contract_sha256", "diff_sha256", "environment", "head_sha",
         "desktop_sha", "independence", "local_test_accounts_accessed", "merged_oid",
         "native_github_approval", "operator_id", "owner_review_receipt_sha256",
@@ -93,6 +93,10 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         or not isinstance(value["audit_event_timestamp"], (int, float, str))
         or not isinstance(value["server_merged_at"], str)
         or not value["server_merged_at"]
+        or value["source_workflow"] != "protected-guarded-merge-workflow"
+        or not isinstance(value["source_workflow_run_id"], int)
+        or value["source_workflow_run_id"] <= 0
+        or value["source_workflow_sha"] != value["head_sha"]
         or value["bypass_requested"] is not False
         or value["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{value['pr_number']}/merge"
         or value["server_merged"] is not True
@@ -202,6 +206,9 @@ def main(arguments: list[str] | None = None) -> int:
             "server_merge_sha": review["server_merge_sha"],
             "server_merged": review["server_merged"],
             "server_merged_at": review["server_merged_at"],
+            "source_workflow": review["source_workflow"],
+            "source_workflow_run_id": review["source_workflow_run_id"],
+            "source_workflow_sha": review["source_workflow_sha"],
             "operator_id": review["operator_id"],
             "previous_event_sha256": "0" * 64,
             "public_release": False,

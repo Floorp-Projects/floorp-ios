@@ -140,6 +140,17 @@ def _audit_event_id(event: dict[str, Any]) -> str:
     raise ReviewReceiptError("GitHub audit merge event has no immutable event ID")
 
 
+def _audit_merge_oid(event: dict[str, Any]) -> str:
+    candidates = [event.get("merge_commit_sha"), event.get("merged_oid"), event.get("sha")]
+    data = event.get("data")
+    if isinstance(data, dict):
+        candidates.extend((data.get("merge_commit_sha"), data.get("merged_oid"), data.get("sha")))
+    for value in candidates:
+        if isinstance(value, str) and SHA1.fullmatch(value):
+            return value
+    raise ReviewReceiptError("GitHub audit merge event has no merge OID")
+
+
 def _is_bypass_event(event: dict[str, Any]) -> bool:
     if _audit_repository(event) != REPOSITORY:
         return False
@@ -164,6 +175,7 @@ def _audit_merge_projection(events: list[dict[str, Any]], pr_number: int) -> dic
             {
                 "action": "pull_request.merge",
                 "event_id_sha256": sha256_bytes(_audit_event_id(event).encode("utf-8")),
+                "merge_oid": _audit_merge_oid(event),
                 "pull_request_path": expected_path,
                 "repository": REPOSITORY,
                 "timestamp": _audit_timestamp(event),
@@ -223,6 +235,7 @@ def validate_github_audit_log(
         or merge.get("audit_bypass_event_count") != bypass_event_count
         or merge.get("audit_event_id_sha256") != audit_event["event_id_sha256"]
         or merge.get("audit_event_timestamp") != audit_event["timestamp"]
+        or audit_event["merge_oid"] != merged_oid
         or merge.get("repository") != REPOSITORY
         or merge.get("pr_number") != pr["number"]
         or merge.get("merged_oid") != merged_oid
@@ -457,6 +470,7 @@ def validate_merge_audit(
             "merge_method", "merge_response", "merge_response_sha256", "merge_response_source",
             "merged_oid", "oid_guarded", "operation_receipt_sha256", "pr_number", "repository",
             "schema_version", "server_merge_sha", "server_merged", "server_merged_at",
+            "source_workflow", "source_workflow_run_id", "source_workflow_sha",
         },
         "merge audit",
     )
@@ -479,6 +493,10 @@ def validate_merge_audit(
         or merge["server_merged_at"] != pr.get("merged_at")
         or not isinstance(merge["server_merged_at"], str)
         or not merge["server_merged_at"]
+        or merge["source_workflow"] != "protected-guarded-merge-workflow"
+        or not isinstance(merge["source_workflow_run_id"], int)
+        or merge["source_workflow_run_id"] <= 0
+        or merge["source_workflow_sha"] != pr["head"]["sha"]
     ):
         raise ReviewReceiptError("merge audit is not bound to the guarded squash merge")
     require_exact(merge["merge_response"], {"merged", "sha"}, "merge response projection")
@@ -720,6 +738,9 @@ def build_receipt(
         "server_merged": merge["server_merged"],
         "server_merge_sha": merge["server_merge_sha"],
         "server_merged_at": merge["server_merged_at"],
+        "source_workflow": merge["source_workflow"],
+        "source_workflow_run_id": merge["source_workflow_run_id"],
+        "source_workflow_sha": merge["source_workflow_sha"],
         "native_github_approval": safety["native_github_approval"],
         "operator_id": owner["operator_id"],
         "plan_binding_sha256": binding_sha256,

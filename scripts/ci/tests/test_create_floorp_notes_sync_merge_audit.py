@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -64,7 +65,7 @@ class MergeAuditTests(unittest.TestCase):
                         "repo": AUDIT.REPOSITORY,
                         "@timestamp": "2026-08-15T00:00:00Z",
                         "_document_id": "event-1",
-                        "data": {"url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge"},
+                        "data": {"merge_commit_sha": "4" * 40, "url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge"},
                     }
                 ],
                 separators=(",", ":"),
@@ -86,7 +87,12 @@ class MergeAuditTests(unittest.TestCase):
             root = Path(directory)
             operation, audit_log = self.write_inputs(root)
             output = root / "docs/floorp-notes-sync-todo20-merge-audit.json"
-            self.assertEqual(AUDIT.main(self.arguments(root, operation, audit_log, output)), 0)
+            with patch.dict(
+                AUDIT.os.environ,
+                {"GITHUB_REPOSITORY": AUDIT.REPOSITORY, "GITHUB_RUN_ID": "999", "GITHUB_SHA": "2" * 40},
+                clear=False,
+            ):
+                self.assertEqual(AUDIT.main(self.arguments(root, operation, audit_log, output)), 0)
             value = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(value["schema_version"], 2)
             self.assertEqual(value["merge_response"], {"merged": True, "sha": "4" * 40})
@@ -107,7 +113,12 @@ class MergeAuditTests(unittest.TestCase):
                 encoding="utf-8",
             )
             output = root / "merge-audit.json"
-            self.assertNotEqual(AUDIT.main(self.arguments(root, operation, audit_log, output)), 0)
+            with patch.dict(
+                AUDIT.os.environ,
+                {"GITHUB_REPOSITORY": AUDIT.REPOSITORY, "GITHUB_RUN_ID": "999", "GITHUB_SHA": "2" * 40},
+                clear=False,
+            ):
+                self.assertNotEqual(AUDIT.main(self.arguments(root, operation, audit_log, output)), 0)
             self.assertFalse(output.exists())
 
 

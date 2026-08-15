@@ -100,6 +100,7 @@ def merge_audit() -> dict[str, Any]:
             {
                 "action": "pull_request.merge",
                 "event_id_sha256": CAPTURE.sha256_bytes(b"event-1"),
+                "merge_oid": "4" * 40,
                 "pull_request_path": "/pull/106/merge",
                 "repository": CAPTURE.REPOSITORY,
                 "timestamp": "2026-08-15T00:00:00Z",
@@ -131,6 +132,9 @@ def merge_audit() -> dict[str, Any]:
         "server_merged": True,
         "server_merged_at": "2026-08-15T00:00:00Z",
         "operation_receipt_sha256": "6" * 64,
+        "source_workflow": "protected-guarded-merge-workflow",
+        "source_workflow_run_id": 123,
+        "source_workflow_sha": "2" * 40,
     }
 
 
@@ -368,7 +372,7 @@ class CaptureReceiptTests(unittest.TestCase):
                 "repo": CAPTURE.REPOSITORY,
                 "@timestamp": "2026-08-15T00:00:00Z",
                 "_document_id": "event-1",
-                "data": {"url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge"},
+                "data": {"merge_commit_sha": "4" * 40, "url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge"},
             }
         ]
         projection = {
@@ -376,6 +380,7 @@ class CaptureReceiptTests(unittest.TestCase):
                 {
                     "action": "pull_request.merge",
                     "event_id_sha256": CAPTURE.sha256_bytes(b"event-1"),
+                    "merge_oid": "4" * 40,
                     "pull_request_path": "/pull/106/merge",
                     "repository": CAPTURE.REPOSITORY,
                     "timestamp": "2026-08-15T00:00:00Z",
@@ -390,6 +395,32 @@ class CaptureReceiptTests(unittest.TestCase):
             CAPTURE.validate_github_audit_log(audit, audit_raw, merge, pr(), "4" * 40),
             (merge["audit_projection_sha256"], 1),
         )
+        wrong_oid_audit = [
+            {
+                **audit[0],
+                "data": {
+                    "merge_commit_sha": "9" * 40,
+                    "url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge",
+                },
+            }
+        ]
+        wrong_oid_projection = {
+            "merge_events": [
+                {
+                    **projection["merge_events"][0],
+                    "merge_oid": "9" * 40,
+                }
+            ]
+        }
+        wrong_oid_merge = {**merge, "audit_projection_sha256": CAPTURE.sha256_bytes(CAPTURE.canonical(wrong_oid_projection))}
+        with self.assertRaises(CAPTURE.ReviewReceiptError):
+            CAPTURE.validate_github_audit_log(
+                wrong_oid_audit,
+                json.dumps(wrong_oid_audit, separators=(",", ":")).encode(),
+                wrong_oid_merge,
+                pr(),
+                "4" * 40,
+            )
         bypass = [
             *audit,
             {"action": "protected_branch.policy_override", "repo": CAPTURE.REPOSITORY},

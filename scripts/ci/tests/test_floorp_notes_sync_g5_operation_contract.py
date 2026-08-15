@@ -163,6 +163,10 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertEqual(option["type"], "boolean")
         self.assertFalse(option["required"])
         self.assertFalse(option["default"])
+        guarded = self.dispatch["inputs"]["run_floorp_notes_sync_guarded_merge"]
+        self.assertEqual(guarded["type"], "boolean")
+        self.assertFalse(guarded["required"])
+        self.assertFalse(guarded["default"])
 
     def test_qa_job_is_main_only_environment_bound_and_secret_redacted(self) -> None:
         job = self.jobs[JOB_ID]
@@ -219,6 +223,18 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertIn('--audit-json "$qa_root/audit-log.json"', capture["run"])
         self.assertNotIn("Validate Todo 20 operation contract", names)
         self.assertNotIn(CANONICAL_ARTIFACT, json.dumps(self.jobs["build-and-test"], sort_keys=True))
+
+    def test_guarded_merge_job_uses_the_repository_owned_executor(self) -> None:
+        job = self.jobs["todo20-guarded-merge"]
+        self.assertEqual(job["environment"], ENVIRONMENT)
+        self.assertEqual(job["permissions"], {})
+        serialized = json.dumps(job, sort_keys=True).lower()
+        self.assertIn("execute-floorp-notes-sync-merge.py", serialized)
+        self.assertIn("create-floorp-notes-sync-merge-audit.py", serialized)
+        self.assertIn("floorp_todo20_gh_merge_token", serialized)
+        self.assertIn("floorp_todo20_gh_audit_token", serialized)
+        self.assertIn("merge-operation-receipt.json", serialized)
+        self.assertNotIn("bypass", serialized)
 
     def test_pre_attestation_secret_scan_is_attempted_after_failure(self) -> None:
         scan = self.named_step(self.jobs[JOB_ID], "Scan QA material for secrets")
