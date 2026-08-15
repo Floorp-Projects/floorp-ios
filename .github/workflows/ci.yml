@@ -598,7 +598,7 @@ jobs:
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
-          mkdir -m 700 -p "$qa_root"
+          install -d -m 700 "$qa_root"
           capability="$qa_root/production-qa-capability.json"
           xcconfig="$qa_root/production-qa.xcconfig"
           /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-qa-capability.py \
@@ -622,9 +622,11 @@ jobs:
             --output "$xcconfig"
           /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-self-attestation.py \
             --output "$qa_root/self-attestation.jsonl"
-          printf 'FLOORP_NOTES_SYNC_QA_ROOT=%s\n' "$qa_root" >> "$GITHUB_ENV"
-          printf 'FLOORP_NOTES_SYNC_QA_CAPABILITY=%s\n' "$capability" >> "$GITHUB_ENV"
-          printf 'FLOORP_NOTES_SYNC_QA_XCCONFIG=%s\n' "$xcconfig" >> "$GITHUB_ENV"
+          {
+            printf 'FLOORP_NOTES_SYNC_QA_ROOT=%s\n' "$qa_root"
+            printf 'FLOORP_NOTES_SYNC_QA_CAPABILITY=%s\n' "$capability"
+            printf 'FLOORP_NOTES_SYNC_QA_XCCONFIG=%s\n' "$xcconfig"
+          } >> "$GITHUB_ENV"
 
       - name: Select Xcode
         run: |
