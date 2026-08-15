@@ -120,6 +120,7 @@ def merge_audit() -> dict[str, Any]:
         "merge_response": merge_response,
         "merge_response_sha256": CAPTURE.sha256_bytes(CAPTURE.canonical(merge_response)),
         "merge_response_source": "github-api-put-merge-executor",
+        "merge_admission_receipt_sha256": "5" * 64,
         "audit_bypass_event_count": 0,
         "audit_event_count": 1,
         "audit_event_id_sha256": CAPTURE.sha256_bytes(b"event-1"),

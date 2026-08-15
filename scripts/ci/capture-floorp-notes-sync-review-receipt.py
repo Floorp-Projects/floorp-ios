@@ -468,7 +468,7 @@ def validate_merge_audit(
             "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp",
             "audit_projection_sha256", "audit_source",
             "merge_method", "merge_response", "merge_response_sha256", "merge_response_source",
-            "merged_oid", "oid_guarded", "operation_receipt_sha256", "pr_number", "repository",
+            "merge_admission_receipt_sha256", "merged_oid", "oid_guarded", "operation_receipt_sha256", "pr_number", "repository",
             "schema_version", "server_merge_sha", "server_merged", "server_merged_at",
             "source_workflow", "source_workflow_run_id", "source_workflow_sha",
         },
@@ -505,6 +505,7 @@ def validate_merge_audit(
     if merge["merge_response_sha256"] != sha256_bytes(canonical(merge["merge_response"])):
         raise ReviewReceiptError("merge response digest is not bound to the actual PUT response projection")
     require_sha(merge["merge_response_sha256"], SHA256, "merge response digest")
+    require_sha(merge["merge_admission_receipt_sha256"], SHA256, "merge admission receipt digest")
     require_sha(merge["operation_receipt_sha256"], SHA256, "merge operation receipt digest")
     require_sha(merge["audit_event_id_sha256"], SHA256, "GitHub audit event ID digest")
     require_sha(merge["audit_projection_sha256"], SHA256, "GitHub audit projection digest")
@@ -733,6 +734,7 @@ def build_receipt(
         "merged_oid": merged_oid,
         "bypass_requested": merge["bypass_requested"],
         "merge_endpoint": merge["merge_endpoint"],
+        "merge_admission_receipt_sha256": merge["merge_admission_receipt_sha256"],
         "merge_response_sha256": merge["merge_response_sha256"],
         "operation_receipt_sha256": merge["operation_receipt_sha256"],
         "server_merged": merge["server_merged"],

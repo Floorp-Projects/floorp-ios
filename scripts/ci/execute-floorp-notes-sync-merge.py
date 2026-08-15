@@ -68,6 +68,17 @@ def load_object(raw: bytes, label: str) -> dict[str, Any]:
     return value
 
 
+def load_canonical(path: Path, label: str) -> tuple[dict[str, Any], bytes]:
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise MergeExecutionError(f"{label} is not valid JSON") from error
+    if path.is_symlink() or not path.is_file() or not isinstance(value, dict) or raw != canonical(value):
+        raise MergeExecutionError(f"{label} is not canonical JSON")
+    return value, raw
+
+
 def require_sha(value: Any, label: str) -> str:
     if not isinstance(value, str) or not SHA1.fullmatch(value):
         raise MergeExecutionError(f"{label} is invalid")
@@ -78,6 +89,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pr-number", required=True, type=int)
     parser.add_argument("--expected-head-sha", required=True)
+    parser.add_argument("--admission-receipt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(arguments)
 
@@ -88,6 +100,38 @@ def main(arguments: list[str] | None = None) -> int:
         if args.pr_number <= 0:
             raise MergeExecutionError("PR number is invalid")
         expected_head_sha = require_sha(args.expected_head_sha, "expected head SHA")
+        admission, admission_raw = load_canonical(args.admission_receipt, "merge admission receipt")
+        expected_admission_fields = {
+            "admin_bypass_used", "checks_count", "checks_sha256", "head_sha", "native_github_approval",
+            "operator_id", "owner_review_sha256", "plan_binding_sha256", "pr_number", "repository",
+            "schema_version", "status", "subagent_review_commit_sha", "subagent_review_sha256", "terminal_ci",
+        }
+        if set(admission) != expected_admission_fields:
+            raise MergeExecutionError("merge admission receipt fields are not exact")
+        for value, label in (
+            (admission["checks_sha256"], "merge admission checks digest"),
+            (admission["owner_review_sha256"], "merge admission owner digest"),
+            (admission["plan_binding_sha256"], "merge admission plan digest"),
+            (admission["subagent_review_sha256"], "merge admission subagent digest"),
+        ):
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}\Z", value):
+                raise MergeExecutionError(f"{label} is invalid")
+        if (
+            admission["schema_version"] != 1
+            or admission["status"] != "GO"
+            or admission["repository"] != REPOSITORY
+            or admission["pr_number"] != args.pr_number
+            or admission["head_sha"] != expected_head_sha
+            or admission["admin_bypass_used"] is not False
+            or admission["native_github_approval"] is not False
+            or admission["terminal_ci"] is not True
+            or not isinstance(admission["checks_count"], int)
+            or admission["checks_count"] <= 0
+            or not isinstance(admission["operator_id"], str)
+            or not admission["operator_id"]
+            or not SHA1.fullmatch(admission["subagent_review_commit_sha"])
+        ):
+            raise MergeExecutionError("merge admission receipt is not an exact-head terminal GO")
         current_head = load_object(
             run_gh(["pr", "view", str(args.pr_number), "--repo", REPOSITORY, "--json", "headRefOid"]),
             "PR head response",
@@ -142,6 +186,7 @@ def main(arguments: list[str] | None = None) -> int:
             "merge_response": merge_projection,
             "merge_response_sha256": sha256(canonical(merge_projection)),
             "merge_response_source": "github-api-put-merge-executor",
+            "merge_admission_receipt_sha256": sha256(admission_raw),
             "merged_oid": merged_oid,
             "oid_guarded": True,
             "pr_number": args.pr_number,

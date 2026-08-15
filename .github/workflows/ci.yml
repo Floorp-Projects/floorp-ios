@@ -574,6 +574,8 @@ jobs:
       GIT_ASKPASS: /usr/bin/false
       FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
       FLOORP_TODO20_EXPECTED_HEAD_SHA: ${{ vars.FLOORP_TODO20_EXPECTED_HEAD_SHA }}
+      FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
+      FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
 
     steps:
       - name: Check out source anonymously
@@ -607,16 +609,48 @@ jobs:
             exit 78
           }
 
-      - name: Execute repository-owned OID-guarded merge
+      - name: Verify exact-head merge admission
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/floorp-notes-sync-guarded-merge"
           install -d -m 700 "$root"
+          test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON" || {
+            printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=owner_review_receipt_missing resume=populate protected Environment variable FLOORP_TODO20_OWNER_REVIEW_JSON after self-review of the exact head' >&2
+            exit 78
+          }
+          test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" || {
+            printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=subagent_review_commit_missing resume=populate protected Environment variable FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT with the exact-head independent GO commit' >&2
+            exit 78
+          }
+          printf '%s\n' "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$root/owner-review.json"
+          /opt/homebrew/bin/gh pr checks "$FLOORP_TODO20_PR_NUMBER" \
+            --repo Floorp-Projects/floorp-ios \
+            --json name,state,conclusion > "$root/checks.json"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
+          git -C "$GITHUB_WORKSPACE" show \
+            "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" \
+            > "$root/subagent-review.json"
+          /usr/bin/python3 -I scripts/ci/verify-floorp-notes-sync-merge-admission.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --owner-review "$root/owner-review.json" \
+            --subagent-review "$root/subagent-review.json" \
+            --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
+            --checks-json "$root/checks.json" \
+            --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
+            --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+            --output "$root/merge-admission.json"
+          printf 'FLOORP_TODO20_MERGE_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+
+      - name: Execute repository-owned OID-guarded merge
+        run: |
+          set -euo pipefail
           /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge.py \
             --pr-number "$FLOORP_TODO20_PR_NUMBER" \
             --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
-            --output "$root/merge-operation-receipt.json"
-          printf 'FLOORP_TODO20_MERGE_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+            --admission-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-admission.json" \
+            --output "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json"
 
       - name: Capture protected organization audit response
         env:
@@ -643,12 +677,37 @@ jobs:
 
       - name: Upload immutable guarded-merge metadata
         if: success()
+        id: upload-guarded-merge
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: floorp-notes-sync-guarded-merge-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-admission.json
             ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-audit.json
             ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-operation-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record protected artifact identity
+        if: success()
+        env:
+          FLOORP_TODO20_GUARDED_ARTIFACT_ID: ${{ steps.upload-guarded-merge.outputs.artifact-id }}
+          FLOORP_TODO20_GUARDED_ARTIFACT_DIGEST: ${{ steps.upload-guarded-merge.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-merge-artifact-metadata.py \
+            --run-id "$GITHUB_RUN_ID" \
+            --artifact-id "$FLOORP_TODO20_GUARDED_ARTIFACT_ID" \
+            --artifact-digest "$FLOORP_TODO20_GUARDED_ARTIFACT_DIGEST" \
+            --head-sha "$GITHUB_SHA" \
+            --output "$FLOORP_TODO20_MERGE_ROOT/merge-artifact-metadata.json"
+
+      - name: Upload protected artifact identity
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-guarded-merge-metadata-${{ github.run_id }}
+          path: ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-artifact-metadata.json
           if-no-files-found: error
           retention-days: 7
 
@@ -666,7 +725,8 @@ jobs:
       github.ref == 'refs/heads/main' &&
       inputs.run_floorp_notes_sync_production_qa == true
     environment: floorp-notes-sync-production-qa
-    permissions: {}
+    permissions:
+      actions: read
     runs-on: macos-26
     timeout-minutes: 180
     env:
@@ -681,6 +741,7 @@ jobs:
       # Updated only after the reviewed Desktop UI-hook PR is squash-merged.
       FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
       FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
+      FLOORP_TODO20_GUARDED_MERGE_RUN_ID: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
       # Metadata-only review inputs. Their source is verified against the
       # read-only GitHub PR/ruleset API, checked-in contract/binding, and
       # protected Environment review artifacts.
@@ -704,6 +765,50 @@ jobs:
           git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
           test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
 
+      - name: Check guarded merge artifact selector
+        run: |
+          set -euo pipefail
+          test -n "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_missing resume=populate protected Environment variable FLOORP_TODO20_GUARDED_MERGE_RUN_ID with the successful guarded-merge workflow run ID' >&2
+            exit 78
+          }
+          test "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" -gt 0 || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_invalid resume=populate a positive guarded-merge workflow run ID' >&2
+            exit 78
+          }
+
+      - name: Download protected guarded-merge artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-guarded-merge-${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          path: ${{ runner.temp }}/floorp-notes-sync-production-qa/guarded-merge-artifact
+          run-id: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Download protected artifact identity
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-guarded-merge-metadata-${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          path: ${{ runner.temp }}/floorp-notes-sync-production-qa/guarded-merge-artifact
+          run-id: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Read back protected merge Actions metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          install -d -m 700 "$qa_root"
+          /opt/homebrew/bin/gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" \
+            > "$qa_root/guarded-merge-run.json"
+          /opt/homebrew/bin/gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$FLOORP_TODO20_GUARDED_MERGE_RUN_ID/artifacts?per_page=100" \
+            > "$qa_root/guarded-merge-artifacts.json"
+
       - name: Capture source-bound Todo 20 review receipt
         env:
           FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
@@ -717,6 +822,14 @@ jobs:
             exit 78
           fi
           test -n "$FLOORP_TODO20_PR_NUMBER"
+          test -n "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_missing resume=populate protected Environment variable FLOORP_TODO20_GUARDED_MERGE_RUN_ID with the successful guarded-merge workflow run ID' >&2
+            exit 78
+          }
+          test "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" -gt 0 || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_invalid resume=populate a positive guarded-merge workflow run ID' >&2
+            exit 78
+          }
           test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON"
           test -n "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
           test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
@@ -744,7 +857,25 @@ jobs:
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_MERGE_AUDIT_COMMIT^{commit}"
           printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$qa_root/owner-review.json"
-          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_MERGE_AUDIT_COMMIT:docs/floorp-notes-sync-todo20-merge-audit.json" > "$qa_root/merge-audit.json"
+          test -f "$qa_root/guarded-merge-artifact/merge-audit.json"
+          test -f "$qa_root/guarded-merge-artifact/merge-operation-receipt.json"
+          /usr/bin/python3 -I scripts/ci/verify-floorp-notes-sync-guarded-merge-artifact.py \
+            --merge-audit "$qa_root/guarded-merge-artifact/merge-audit.json" \
+            --operation-receipt "$qa_root/guarded-merge-artifact/merge-operation-receipt.json" \
+            --admission-receipt "$qa_root/guarded-merge-artifact/merge-admission.json" \
+            --run-json "$qa_root/guarded-merge-run.json" \
+            --artifacts-json "$qa_root/guarded-merge-artifacts.json" \
+            --artifact-metadata "$qa_root/guarded-merge-artifact/merge-artifact-metadata.json" \
+            --expected-run-id "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" \
+            --expected-pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --expected-head-sha "$head_oid" \
+            --expected-merged-oid "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_MERGE_AUDIT_COMMIT:docs/floorp-notes-sync-todo20-merge-audit.json" > "$qa_root/merge-audit-commit.json"
+          cmp -s "$qa_root/guarded-merge-artifact/merge-audit.json" "$qa_root/merge-audit-commit.json" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_artifact_commit_parity_mismatch resume=publish the exact protected merge-run artifact to the immutable merge-audit commit' >&2
+            exit 78
+          }
+          cp "$qa_root/guarded-merge-artifact/merge-audit.json" "$qa_root/merge-audit.json"
           git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" > "$qa_root/subagent-review.json"
           /usr/bin/python3 -I scripts/ci/capture-floorp-notes-sync-review-receipt.py \
             --pr-json "$qa_root/pr.json" \

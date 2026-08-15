@@ -172,7 +172,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         job = self.jobs[JOB_ID]
         self.assertEqual(job["runs-on"], "macos-26")
         self.assertEqual(job["environment"], ENVIRONMENT)
-        self.assertEqual(job["permissions"], {})
+        self.assertEqual(job["permissions"], {"actions": "read"})
         self.assertEqual(
             " ".join(job["if"].split()),
             "github.event_name == 'workflow_dispatch' && "
@@ -199,6 +199,13 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, serialized)
         self.assertIn("api.github.com", serialized)
         self.assertIn("audit-log", serialized)
+        self.assertEqual(
+            job["env"]["FLOORP_TODO20_GUARDED_MERGE_RUN_ID"],
+            "${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}",
+        )
+        self.assertIn("download-artifact", serialized)
+        self.assertIn("verify-floorp-notes-sync-guarded-merge-artifact.py", serialized)
+        self.assertIn("guarded_merge_artifact_commit_parity_mismatch", serialized)
         self.assertNotIn("accounts.firefox.com", serialized)
         self.assertNotIn("sync.services.mozilla.com", serialized)
 
@@ -230,10 +237,17 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertEqual(job["permissions"], {})
         serialized = json.dumps(job, sort_keys=True).lower()
         self.assertIn("execute-floorp-notes-sync-merge.py", serialized)
+        self.assertIn("verify-floorp-notes-sync-merge-admission.py", serialized)
         self.assertIn("create-floorp-notes-sync-merge-audit.py", serialized)
+        self.assertIn("record-floorp-notes-sync-merge-artifact-metadata.py", serialized)
         self.assertIn("floorp_todo20_gh_merge_token", serialized)
         self.assertIn("floorp_todo20_gh_audit_token", serialized)
+        self.assertIn("floorp_todo20_owner_review_json", serialized)
+        self.assertIn("floorp_todo20_subagent_review_commit", serialized)
+        self.assertIn("gh pr checks", serialized)
         self.assertIn("merge-operation-receipt.json", serialized)
+        self.assertIn("merge-admission.json", serialized)
+        self.assertIn("artifact-digest", serialized)
         self.assertNotIn("bypass", serialized)
 
     def test_pre_attestation_secret_scan_is_attempted_after_failure(self) -> None:

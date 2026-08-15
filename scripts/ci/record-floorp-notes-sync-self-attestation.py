@@ -61,7 +61,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         raise RuntimeError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_invalid_json") from error
     expected = {
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
-        "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "operation_receipt_sha256", "server_merge_sha", "server_merged", "server_merged_at", "source_workflow", "source_workflow_run_id", "source_workflow_sha",
+        "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_admission_receipt_sha256", "merge_endpoint", "merge_response_sha256", "operation_receipt_sha256", "server_merge_sha", "server_merged", "server_merged_at", "source_workflow", "source_workflow_run_id", "source_workflow_sha",
         "contract_sha256", "diff_sha256", "environment", "head_sha",
         "desktop_sha", "independence", "local_test_accounts_accessed", "merged_oid",
         "native_github_approval", "operator_id", "owner_review_receipt_sha256",
@@ -124,7 +124,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         raise RuntimeError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_binding_invalid")
     for field in (
         "amendment_sha256", "combined_plan_hash", "contract_sha256", "diff_sha256",
-        "owner_review_receipt_sha256", "merge_audit_sha256", "plan_binding_sha256",
+        "owner_review_receipt_sha256", "merge_audit_sha256", "merge_admission_receipt_sha256", "plan_binding_sha256",
         "plan_sha256", "subagent_review_receipt_sha256",
         "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
         "pr_projection_sha256", "reviews_projection_sha256", "ruleset_projection_sha256",
@@ -183,6 +183,7 @@ def main(arguments: list[str] | None = None) -> int:
             "audit_source": review["audit_source"],
             "bypass_requested": review["bypass_requested"],
             "merge_audit_commit_sha": review["merge_audit_commit_sha"],
+            "merge_admission_receipt_sha256": review["merge_admission_receipt_sha256"],
             "amendment_sha256": review["amendment_sha256"],
             "base_oid": review["base_oid"],
             "cleanup": {

@@ -41,6 +41,7 @@ class MergeAuditTests(unittest.TestCase):
                     "merge_response": {"merged": True, "sha": "4" * 40},
                     "merge_response_sha256": AUDIT.sha256(AUDIT.canonical({"merged": True, "sha": "4" * 40})),
                     "merge_response_source": "github-api-put-merge-executor",
+                    "merge_admission_receipt_sha256": "5" * 64,
                     "merged_oid": "4" * 40,
                     "oid_guarded": True,
                     "pr_number": 106,

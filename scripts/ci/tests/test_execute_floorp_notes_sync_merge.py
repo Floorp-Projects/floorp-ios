@@ -29,9 +29,31 @@ EXECUTOR = load_module(SCRIPT, "floorp_notes_sync_merge_executor_test")
 
 
 class MergeExecutorTests(unittest.TestCase):
+    @staticmethod
+    def admission_receipt() -> dict[str, object]:
+        return {
+            "admin_bypass_used": False,
+            "checks_count": 4,
+            "checks_sha256": "a" * 64,
+            "head_sha": "2" * 40,
+            "native_github_approval": False,
+            "operator_id": "operator",
+            "owner_review_sha256": "b" * 64,
+            "plan_binding_sha256": "c" * 64,
+            "pr_number": 106,
+            "repository": EXECUTOR.REPOSITORY,
+            "schema_version": 1,
+            "status": "GO",
+            "subagent_review_commit_sha": "3" * 40,
+            "subagent_review_sha256": "d" * 64,
+            "terminal_ci": True,
+        }
+
     def test_executor_observes_head_then_executes_only_guarded_squash_put(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "merge-operation-receipt.json"
+            admission = Path(directory) / "merge-admission.json"
+            admission.write_bytes(EXECUTOR.canonical(self.admission_receipt()))
             responses = iter(
                 [
                     json.dumps({"headRefOid": "2" * 40}).encode(),
@@ -60,6 +82,7 @@ class MergeExecutorTests(unittest.TestCase):
                         [
                             "--pr-number", "106",
                             "--expected-head-sha", "2" * 40,
+                            "--admission-receipt", str(admission),
                             "--output", str(output),
                         ]
                     ),
@@ -73,16 +96,20 @@ class MergeExecutorTests(unittest.TestCase):
             value = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(value["merge_response_source"], "github-api-put-merge-executor")
             self.assertEqual(value["server_merged_at"], "2026-08-15T00:00:00Z")
+            self.assertEqual(value["merge_admission_receipt_sha256"], EXECUTOR.sha256(admission.read_bytes()))
 
     def test_head_drift_stops_before_put(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "merge-operation-receipt.json"
+            admission = Path(directory) / "merge-admission.json"
+            admission.write_bytes(EXECUTOR.canonical(self.admission_receipt()))
             with patch.object(EXECUTOR, "run_gh", return_value=json.dumps({"headRefOid": "9" * 40}).encode()) as run:
                 self.assertNotEqual(
                     EXECUTOR.main(
                         [
                             "--pr-number", "106",
                             "--expected-head-sha", "2" * 40,
+                            "--admission-receipt", str(admission),
                             "--output", str(output),
                         ]
                     ),

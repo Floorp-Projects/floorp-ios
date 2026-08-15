@@ -179,7 +179,7 @@ def main(arguments: list[str] | None = None) -> int:
             raise MergeAuditError("merge operation receipt is not canonical JSON")
         expected_operation_fields = {
             "base_oid", "head_sha", "merge_endpoint", "merge_method", "merge_response",
-            "merge_response_sha256", "merge_response_source", "merged_oid", "oid_guarded",
+            "merge_response_sha256", "merge_response_source", "merge_admission_receipt_sha256", "merged_oid", "oid_guarded",
             "pr_number", "repository", "schema_version", "server_merge_sha", "server_merged",
             "server_merged_at",
         }
@@ -192,6 +192,8 @@ def main(arguments: list[str] | None = None) -> int:
         ):
             if not SHA1.fullmatch(value):
                 raise MergeAuditError(f"{label} is invalid")
+        if not SHA256.fullmatch(operation["merge_admission_receipt_sha256"]):
+            raise MergeAuditError("merge admission receipt digest is invalid")
         if operation["schema_version"] != 1 or operation["repository"] != REPOSITORY or operation["pr_number"] <= 0:
             raise MergeAuditError("merge operation receipt identity is invalid")
         if (
@@ -240,6 +242,7 @@ def main(arguments: list[str] | None = None) -> int:
             "merge_response": merge_projection,
             "merge_response_sha256": response_digest,
             "merge_response_source": MERGE_RESPONSE_SOURCE,
+            "merge_admission_receipt_sha256": operation["merge_admission_receipt_sha256"],
             "merged_oid": operation["merged_oid"],
             "oid_guarded": True,
             "operation_receipt_sha256": sha256(operation_raw),
