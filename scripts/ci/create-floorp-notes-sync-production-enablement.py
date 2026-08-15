@@ -72,6 +72,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--phase1-summary", type=Path, required=True)
     parser.add_argument("--cleanup-receipt", type=Path, required=True)
     parser.add_argument("--secret-scan-receipt", type=Path, required=True)
+    parser.add_argument("--secret-scan-target", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(arguments)
 
@@ -182,6 +183,7 @@ def main(arguments: list[str] | None = None) -> int:
             context["head_sha"],
             context["run_id"],
             context["run_attempt"],
+            args.secret_scan_target,
         )
         record = {
             "app_store_submission": False,
@@ -224,6 +226,7 @@ def main(arguments: list[str] | None = None) -> int:
             phase1_raw,
             cleanup_receipt_raw,
             secret_scan_raw,
+            args.secret_scan_target,
         )
         write_exclusive(args.output, canonical_bytes(record))
     except (

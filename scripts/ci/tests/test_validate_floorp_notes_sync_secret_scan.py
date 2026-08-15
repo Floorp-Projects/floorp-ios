@@ -70,8 +70,21 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
 
     def test_cli_requires_canonical_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "scan.json"
-            path.write_bytes(canonical(receipt()))
+            root = Path(directory)
+            path = root / "scan.json"
+            targets = [
+                root / "qa-summary.json",
+                root / "cleanup-receipt.json",
+                root / "floorp-notes-sync-two-client.xcresult",
+                root / "xcodebuild.log",
+            ]
+            targets[2].mkdir()
+            (targets[2] / "result").write_text("safe\n")
+            for target in (*targets[:2], targets[3]):
+                target.write_text("safe\n")
+            value = receipt()
+            value["target_digests"] = [SCAN.digest_target(target) for target in targets]
+            path.write_bytes(canonical(value))
             self.assertEqual(
                 SCAN.main(
                     [
@@ -83,6 +96,10 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                         "123456",
                         "--run-attempt",
                         "1",
+                        "--target", str(targets[0]),
+                        "--target", str(targets[1]),
+                        "--target", str(targets[2]),
+                        "--target", str(targets[3]),
                     ]
                 ),
                 0,
@@ -120,8 +137,24 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                     0,
                 )
             value, raw = SCAN.load(output)
-            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1)
+            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1, [summary, cleanup, xcresult, log])
             self.assertNotIn(b"safe metadata", raw)
+
+    def test_target_digest_mismatch_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets = [
+                root / "qa-summary.json",
+                root / "cleanup-receipt.json",
+                root / "floorp-notes-sync-two-client.xcresult",
+                root / "xcodebuild.log",
+            ]
+            targets[2].mkdir()
+            (targets[2] / "result").write_text("actual\n")
+            for target in (*targets[:2], targets[3]):
+                target.write_text("actual\n")
+            with self.assertRaises(SCAN.SecretScanError):
+                SCAN.validate(receipt(), "0123456789abcdef0123456789abcdef01234567", 123456, 1, targets)
 
 
 if __name__ == "__main__":

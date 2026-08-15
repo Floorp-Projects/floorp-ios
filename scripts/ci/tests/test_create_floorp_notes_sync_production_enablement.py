@@ -125,6 +125,20 @@ def cleanup_receipt() -> dict[str, Any]:
     }
 
 
+def scan_targets(root: Path) -> list[Path]:
+    targets = [
+        root / "qa-summary.json",
+        root / "cleanup-receipt.json",
+        root / "floorp-notes-sync-two-client.xcresult",
+        root / "xcodebuild.log",
+    ]
+    targets[2].mkdir()
+    (targets[2] / "result").write_text("safe\n")
+    for target in (*targets[:2], targets[3]):
+        target.write_text("safe\n")
+    return targets
+
+
 class CreateProductionEnablementTests(unittest.TestCase):
     def environment(self) -> dict[str, str]:
         return {
@@ -146,12 +160,15 @@ class CreateProductionEnablementTests(unittest.TestCase):
             cleanup = root / "cleanup.json"
             scan = root / "secret-scan.json"
             output = root / "enablement.json"
+            targets = scan_targets(root)
             cleanup_raw = canonical(cleanup_receipt())
             summary_value = summary()
             summary_value["cleanup_receipt_sha256"] = hashlib.sha256(cleanup_raw).hexdigest()
             phase1.write_bytes(canonical(summary_value))
             cleanup.write_bytes(cleanup_raw)
-            scan.write_bytes(canonical(secret_scan_receipt()))
+            scan_value = secret_scan_receipt()
+            scan_value["target_digests"] = [CREATE.SECRET_SCAN.digest_target(target) for target in targets]
+            scan.write_bytes(canonical(scan_value))
             with patch.dict(os.environ, self.environment(), clear=False):
                 self.assertEqual(
                     CREATE.main(
@@ -162,6 +179,14 @@ class CreateProductionEnablementTests(unittest.TestCase):
                             str(cleanup),
                             "--secret-scan-receipt",
                             str(scan),
+                            "--secret-scan-target",
+                            str(targets[0]),
+                            "--secret-scan-target",
+                            str(targets[1]),
+                            "--secret-scan-target",
+                            str(targets[2]),
+                            "--secret-scan-target",
+                            str(targets[3]),
                             "--output",
                             str(output),
                         ]
@@ -181,12 +206,15 @@ class CreateProductionEnablementTests(unittest.TestCase):
             cleanup = root / "cleanup.json"
             scan = root / "secret-scan.json"
             output = root / "enablement.json"
+            targets = scan_targets(root)
             cleanup_raw = canonical(cleanup_receipt())
             summary_value = summary()
             summary_value["cleanup_receipt_sha256"] = hashlib.sha256(cleanup_raw).hexdigest()
             phase1.write_bytes(canonical(summary_value))
             cleanup.write_bytes(cleanup_raw)
-            scan.write_bytes(canonical(secret_scan_receipt()))
+            scan_value = secret_scan_receipt()
+            scan_value["target_digests"] = [CREATE.SECRET_SCAN.digest_target(target) for target in targets]
+            scan.write_bytes(canonical(scan_value))
             environment = self.environment()
             environment.pop("FLOORP_NOTES_SYNC_ENABLEMENT_APPROVED")
             with patch.dict(os.environ, environment, clear=False):
@@ -199,6 +227,14 @@ class CreateProductionEnablementTests(unittest.TestCase):
                             str(cleanup),
                             "--secret-scan-receipt",
                             str(scan),
+                            "--secret-scan-target",
+                            str(targets[0]),
+                            "--secret-scan-target",
+                            str(targets[1]),
+                            "--secret-scan-target",
+                            str(targets[2]),
+                            "--secret-scan-target",
+                            str(targets[3]),
                             "--output",
                             str(output),
                         ]

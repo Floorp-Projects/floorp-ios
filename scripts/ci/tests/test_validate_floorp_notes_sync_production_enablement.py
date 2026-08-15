@@ -176,14 +176,27 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
                     ENABLEMENT.validate_enablement(altered, summary, summary_raw, cleanup_raw, secret_scan_raw)
 
     def test_main_rechecks_phase1_summary_before_accepting_record(self) -> None:
-        summary, raw, cleanup_raw, secret_scan_raw = test_inputs()
-        record = enablement_record(summary, raw, cleanup_raw, secret_scan_raw)
+        summary, raw, cleanup_raw, _ = test_inputs()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             phase1_path = root / "phase1.json"
             cleanup_path = root / "cleanup.json"
             secret_scan_path = root / "secret-scan.json"
             record_path = root / "enablement.json"
+            targets = [
+                root / "qa-summary.json",
+                root / "cleanup-receipt.json",
+                root / "floorp-notes-sync-two-client.xcresult",
+                root / "xcodebuild.log",
+            ]
+            targets[2].mkdir()
+            (targets[2] / "result").write_text("safe\n")
+            for target in (*targets[:2], targets[3]):
+                target.write_text("safe\n")
+            scan_value = secret_scan_receipt()
+            scan_value["target_digests"] = [ENABLEMENT.SECRET_SCAN.digest_target(target) for target in targets]
+            secret_scan_raw = canonical(scan_value)
+            record = enablement_record(summary, raw, cleanup_raw, secret_scan_raw)
             phase1_path.write_bytes(raw)
             cleanup_path.write_bytes(cleanup_raw)
             secret_scan_path.write_bytes(secret_scan_raw)
@@ -194,6 +207,10 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
                         "--phase1-summary", str(phase1_path),
                         "--cleanup-receipt", str(cleanup_path),
                         "--secret-scan-receipt", str(secret_scan_path),
+                        "--secret-scan-target", str(targets[0]),
+                        "--secret-scan-target", str(targets[1]),
+                        "--secret-scan-target", str(targets[2]),
+                        "--secret-scan-target", str(targets[3]),
                         "--enablement-record", str(record_path),
                     ]
                 ),

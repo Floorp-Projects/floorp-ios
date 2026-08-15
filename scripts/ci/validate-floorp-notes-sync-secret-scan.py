@@ -57,6 +57,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--run-id", required=True, type=int)
     parser.add_argument("--run-attempt", required=True, type=int)
+    parser.add_argument("--target", type=Path, action="append", required=True)
     return parser.parse_args(arguments)
 
 
@@ -79,7 +80,40 @@ def load(path: Path) -> tuple[dict[str, Any], bytes]:
     return value, raw
 
 
-def validate(value: dict[str, Any], head_sha: str, run_id: int, run_attempt: int) -> None:
+def digest_target(path: Path) -> dict[str, object]:
+    if path.is_symlink() or not path.exists():
+        raise SecretScanError(f"secret-scan target is unavailable: {path.name}")
+    entries: list[bytes] = []
+    byte_count = 0
+    if path.is_file():
+        files = [(path.name, path)]
+    elif path.is_dir():
+        files = [
+            (child.relative_to(path).as_posix(), child)
+            for child in sorted(path.rglob("*"))
+            if child.is_file() and not child.is_symlink()
+        ]
+    else:
+        raise SecretScanError(f"secret-scan target is not a regular file or directory: {path.name}")
+    for relative, child in files:
+        raw = child.read_bytes()
+        byte_count += len(raw)
+        entries.append(relative.encode() + b"\0" + hashlib.sha256(raw).hexdigest().encode())
+    return {
+        "byte_count": byte_count,
+        "file_count": len(files),
+        "name": path.name,
+        "sha256": hashlib.sha256(b"\n".join(entries)).hexdigest(),
+    }
+
+
+def validate(
+    value: dict[str, Any],
+    head_sha: str,
+    run_id: int,
+    run_attempt: int,
+    target_paths: list[Path] | None = None,
+) -> None:
     if set(value) != {
         "job_name",
         "marker_set_sha256",
@@ -111,6 +145,12 @@ def validate(value: dict[str, Any], head_sha: str, run_id: int, run_attempt: int
             raise SecretScanError("secret-scan target file count is invalid")
         if not isinstance(target["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", target["sha256"]):
             raise SecretScanError("secret-scan target digest is invalid")
+    if target_paths is not None:
+        actual = [digest_target(path) for path in target_paths]
+        expected_by_name = {target["name"]: target for target in targets}
+        actual_by_name = {target["name"]: target for target in actual}
+        if actual_by_name != expected_by_name:
+            raise SecretScanError("secret-scan target digest does not match the artifact bytes")
     source = value["source"]
     if not isinstance(source, dict) or set(source) != {
         "head_sha",
@@ -133,7 +173,7 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         value, raw = load(args.receipt)
-        validate(value, args.head_sha, args.run_id, args.run_attempt)
+        validate(value, args.head_sha, args.run_id, args.run_attempt, args.target)
     except (OSError, SecretScanError) as error:
         print(f"secret-scan receipt rejected: {error}", file=sys.stderr)
         return 2

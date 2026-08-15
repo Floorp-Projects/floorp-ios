@@ -107,6 +107,7 @@ def validate_enablement(
     phase1_raw: bytes,
     cleanup_receipt_raw: bytes,
     secret_scan_receipt_raw: bytes,
+    secret_scan_targets: list[Path] | None = None,
 ) -> dict[str, Any]:
     require(isinstance(record, dict), "enablement record must be an object")
     expected_keys = {
@@ -198,6 +199,7 @@ def validate_enablement(
         phase1["source"]["head_sha"],
         phase1["source"]["workflow_run_id"],
         phase1["source"]["workflow_run_attempt"],
+        secret_scan_targets,
     )
     require(
         record["cleanup_receipt_sha256"] == hashlib.sha256(cleanup_receipt_raw).hexdigest(),
@@ -215,6 +217,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--phase1-summary", type=Path, required=True)
     parser.add_argument("--cleanup-receipt", type=Path, required=True)
     parser.add_argument("--secret-scan-receipt", type=Path, required=True)
+    parser.add_argument("--secret-scan-target", type=Path, action="append", required=True)
     parser.add_argument("--enablement-record", type=Path, required=True)
     return parser.parse_args(arguments)
 
@@ -233,6 +236,7 @@ def main(arguments: list[str] | None = None) -> int:
             phase1_raw,
             cleanup_receipt_raw,
             secret_scan_receipt_raw,
+            args.secret_scan_target,
         )
     except (OSError, QA.ProductionQAError, EnablementError) as error:
         print(f"production Sync enablement rejected: {error}", file=sys.stderr)

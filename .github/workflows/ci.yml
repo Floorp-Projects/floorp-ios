@@ -730,6 +730,7 @@ jobs:
             ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-summary.json
             ${{ runner.temp }}/floorp-notes-sync-production-qa/cleanup-receipt.json
             ${{ runner.temp }}/floorp-notes-sync-production-qa/secret-scan.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
 
@@ -784,6 +785,12 @@ jobs:
           name: floorp-notes-sync-two-client-qa-metadata-${{ github.run_id }}
           path: ${{ runner.temp }}/floorp-notes-sync-phase1
 
+      - name: Download Phase 1 XCResult
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-two-client-xcresult
+          path: ${{ runner.temp }}/floorp-notes-sync-phase1
+
       - name: Verify Phase 1 cleanup receipt
         run: |
           set -euo pipefail
@@ -798,7 +805,11 @@ jobs:
             --receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
             --head-sha "$GITHUB_SHA" \
             --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log"
 
       - name: Create non-distributed enablement record
         env:
@@ -809,6 +820,10 @@ jobs:
             --phase1-summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
             --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
             --secret-scan-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
             --output "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Validate non-distributed enablement record
@@ -818,6 +833,10 @@ jobs:
             --phase1-summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
             --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
             --secret-scan-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
             --enablement-record "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Upload enablement metadata
