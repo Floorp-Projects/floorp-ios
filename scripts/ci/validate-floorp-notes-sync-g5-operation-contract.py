@@ -162,7 +162,12 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
             {
                 "environment",
                 "global_governance_unchanged",
+                "independence",
+                "native_github_approval",
+                "required_approving_review_count",
+                "reviews_count",
                 "self_attestation",
+                "self_review_exception",
             }
         ),
         "approval model",
@@ -172,7 +177,12 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
         == {
             "environment": ENVIRONMENT,
             "global_governance_unchanged": True,
-            "self_attestation": "owner-operations-executor",
+            "independence": False,
+            "native_github_approval": False,
+            "required_approving_review_count": 0,
+            "reviews_count": 0,
+            "self_attestation": "owner-operations-executor-reviewer",
+            "self_review_exception": True,
         },
         "approval model is not the bounded single-operator exception",
     )

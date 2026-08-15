@@ -102,8 +102,13 @@ class FloorpNotesSyncT20RescopeContractTests(unittest.TestCase):
         self.assertEqual(contract["workflow"]["enablement_job"], "notes-sync-production-enablement")
         self.assertEqual(
             contract["approval_model"]["self_attestation"],
-            "owner-operations-executor",
+            "owner-operations-executor-reviewer",
         )
+        self.assertTrue(contract["approval_model"]["self_review_exception"])
+        self.assertFalse(contract["approval_model"]["independence"])
+        self.assertFalse(contract["approval_model"]["native_github_approval"])
+        self.assertEqual(contract["approval_model"]["required_approving_review_count"], 0)
+        self.assertEqual(contract["approval_model"]["reviews_count"], 0)
 
     def test_contract_contains_the_complete_data_integrity_matrix(self) -> None:
         contract = self.checked_in_contract()

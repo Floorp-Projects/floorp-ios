@@ -61,6 +61,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--head-sha", required=True)
+    parser.add_argument("--merged-oid", required=True)
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--run-attempt", type=int, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -122,6 +123,7 @@ def load_manifest(path: Path, head_sha: str, run_id: int, run_attempt: int) -> b
 def validate(
     value: dict[str, Any],
     head_sha: str,
+    merged_oid: str,
     run_id: int,
     run_attempt: int,
     manifest: Path,
@@ -130,11 +132,19 @@ def validate(
     secret_scan: Path,
 ) -> None:
     expected = {
-        "accounts", "cleanup", "cleanup_receipt_sha256", "evidence_manifest_sha256", "environment", "event",
-        "event_sha256", "head_sha", "operator_id",
-        "previous_event_sha256", "public_release", "roles", "schema_version",
-        "qa_summary_sha256", "secret_scan_scope", "secret_scan_sha256", "sequence", "workflow_job", "workflow_path", "workflow_run_attempt",
-        "workflow_run_id",
+        "accounts", "admin_bypass_used", "amendment_sha256", "base_oid", "cleanup",
+        "cleanup_receipt_sha256", "combined_plan_hash", "diff_sha256",
+        "evidence_manifest_sha256", "environment", "event", "event_sha256",
+        "head_sha", "independence", "local_test_accounts_accessed",
+        "manifest_sha256", "merged_oid", "operator_id", "plan_sha256",
+        "pr_number", "previous_event_sha256", "public_release", "repository",
+        "review_scope", "reviewed_at_utc", "roles",
+        "ruleset_required_review_count", "reviews_count", "schema_version",
+        "qa_summary_sha256", "secret_scan_scope", "secret_scan_sha256",
+        "sequence", "self_review_exception", "subagent_review_digests",
+        "two_disposable_accounts_only", "unresolved_blocking_findings",
+        "validator_sha256", "workflow_job", "workflow_path",
+        "workflow_run_attempt", "workflow_run_id",
     }
     if set(value) != expected:
         raise AttestationError("attestation fields are not exact")
@@ -152,16 +162,38 @@ def validate(
         or value["workflow_job"] != JOB
         or value["workflow_path"] != WORKFLOW_PATH
         or value["public_release"] is not False
-        or value["roles"] != ["owner", "operations", "executor"]
-        or value["schema_version"] != 1
+        or value["repository"] != REPOSITORY
+        or value["roles"] != ["owner", "operations", "executor", "reviewer"]
+        or value["self_review_exception"] is not True
+        or value["independence"] is not False
+        or value["ruleset_required_review_count"] != 0
+        or value["reviews_count"] != 0
+        or value["admin_bypass_used"] is not False
+        or value["two_disposable_accounts_only"] is not True
+        or value["local_test_accounts_accessed"] is not False
+        or value["unresolved_blocking_findings"] != []
+        or value["schema_version"] != 2
         or value["sequence"] != 1
         or value["previous_event_sha256"] != "0" * 64
         or not isinstance(value["operator_id"], str)
         or not value["operator_id"]
+        or not SHA1.fullmatch(value["base_oid"])
+        or not SHA1.fullmatch(value["merged_oid"])
+        or not SHA1.fullmatch(merged_oid)
+        or value["merged_oid"] != merged_oid
+        or not isinstance(value["pr_number"], int)
+        or value["pr_number"] <= 0
+        or value["review_scope"] != "todo-20-pr-and-production-qa"
+        or not isinstance(value["reviewed_at_utc"], str)
+        or not value["reviewed_at_utc"].endswith("Z")
+        or not isinstance(value["subagent_review_digests"], list)
+        or not value["subagent_review_digests"]
+        or any(not SHA256.fullmatch(item) for item in value["subagent_review_digests"])
     ):
         raise AttestationError("attestation approval boundary is invalid")
     for field, path in (
         ("evidence_manifest_sha256", manifest),
+        ("manifest_sha256", manifest),
         ("qa_summary_sha256", summary),
         ("cleanup_receipt_sha256", cleanup_receipt),
         ("secret_scan_sha256", secret_scan),
@@ -170,6 +202,18 @@ def validate(
             raise AttestationError(f"attestation {field} is not bound to evidence")
     if not SHA256.fullmatch(value["secret_scan_sha256"]):
         raise AttestationError("attestation secret scan digest is invalid")
+    for field in (
+        "plan_sha256",
+        "amendment_sha256",
+        "combined_plan_hash",
+        "diff_sha256",
+        "validator_sha256",
+    ):
+        if not SHA256.fullmatch(value[field]):
+            raise AttestationError(f"attestation {field} is invalid")
+    validator_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    if value["validator_sha256"] != validator_sha256:
+        raise AttestationError("attestation validator digest is not bound")
     if value["secret_scan_scope"] != "pre-attestation":
         raise AttestationError("attestation secret scan scope is invalid")
     if (
@@ -190,10 +234,11 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         value, raw = load(args.ledger)
-        load_manifest(args.manifest, args.head_sha, args.run_id, args.run_attempt)
+        load_manifest(args.manifest, args.merged_oid, args.run_id, args.run_attempt)
         validate(
             value,
             args.head_sha,
+            args.merged_oid,
             args.run_id,
             args.run_attempt,
             args.manifest,
