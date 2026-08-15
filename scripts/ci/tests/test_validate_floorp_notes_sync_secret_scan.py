@@ -56,34 +56,48 @@ def canonical(value: dict[str, Any]) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True).encode() + b"\n"
 
 
+def materialize_targets(root: Path, text: str = "safe\n") -> list[Path]:
+    targets = [
+        root / "qa-summary.json",
+        root / "cleanup-receipt.json",
+        root / "floorp-notes-sync-two-client.xcresult",
+        root / "xcodebuild.log",
+    ]
+    targets[2].mkdir()
+    (targets[2] / "result").write_text(text)
+    for target in (*targets[:2], targets[3]):
+        target.write_text(text)
+    return targets
+
+
+def receipt_for_targets(targets: list[Path]) -> dict[str, Any]:
+    value = receipt()
+    value["target_digests"] = [SCAN.digest_target(target) for target in targets]
+    return value
+
+
 class ValidateSecretScanReceiptTests(unittest.TestCase):
     def test_exact_receipt_is_bound_to_run(self) -> None:
-        SCAN.validate(receipt(), "0123456789abcdef0123456789abcdef01234567", 123456, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            targets = materialize_targets(Path(directory))
+            SCAN.validate(receipt_for_targets(targets), "0123456789abcdef0123456789abcdef01234567", 123456, 1, targets)
 
     def test_scope_or_run_mismatch_is_rejected(self) -> None:
-        value = receipt()
-        value["scope"] = ["qa-summary"]
-        with self.assertRaises(SCAN.SecretScanError):
-            SCAN.validate(value, "0123456789abcdef0123456789abcdef01234567", 123456, 1)
-        with self.assertRaises(SCAN.SecretScanError):
-            SCAN.validate(receipt(), "fedcba9876543210fedcba9876543210fedcba98", 123456, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            targets = materialize_targets(Path(directory))
+            value = receipt_for_targets(targets)
+            value["scope"] = ["qa-summary"]
+            with self.assertRaises(SCAN.SecretScanError):
+                SCAN.validate(value, "0123456789abcdef0123456789abcdef01234567", 123456, 1, targets)
+            with self.assertRaises(SCAN.SecretScanError):
+                SCAN.validate(receipt_for_targets(targets), "fedcba9876543210fedcba9876543210fedcba98", 123456, 1, targets)
 
     def test_cli_requires_canonical_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / "scan.json"
-            targets = [
-                root / "qa-summary.json",
-                root / "cleanup-receipt.json",
-                root / "floorp-notes-sync-two-client.xcresult",
-                root / "xcodebuild.log",
-            ]
-            targets[2].mkdir()
-            (targets[2] / "result").write_text("safe\n")
-            for target in (*targets[:2], targets[3]):
-                target.write_text("safe\n")
-            value = receipt()
-            value["target_digests"] = [SCAN.digest_target(target) for target in targets]
+            targets = materialize_targets(root)
+            value = receipt_for_targets(targets)
             path.write_bytes(canonical(value))
             self.assertEqual(
                 SCAN.main(

@@ -112,7 +112,7 @@ def validate(
     head_sha: str,
     run_id: int,
     run_attempt: int,
-    target_paths: list[Path] | None = None,
+    target_paths: list[Path],
 ) -> None:
     if set(value) != {
         "job_name",
@@ -145,12 +145,11 @@ def validate(
             raise SecretScanError("secret-scan target file count is invalid")
         if not isinstance(target["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", target["sha256"]):
             raise SecretScanError("secret-scan target digest is invalid")
-    if target_paths is not None:
-        actual = [digest_target(path) for path in target_paths]
-        expected_by_name = {target["name"]: target for target in targets}
-        actual_by_name = {target["name"]: target for target in actual}
-        if actual_by_name != expected_by_name:
-            raise SecretScanError("secret-scan target digest does not match the artifact bytes")
+    actual = [digest_target(path) for path in target_paths]
+    expected_by_name = {target["name"]: target for target in targets}
+    actual_by_name = {target["name"]: target for target in actual}
+    if actual_by_name != expected_by_name:
+        raise SecretScanError("secret-scan target digest does not match the artifact bytes")
     source = value["source"]
     if not isinstance(source, dict) or set(source) != {
         "head_sha",

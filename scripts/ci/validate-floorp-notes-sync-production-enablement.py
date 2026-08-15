@@ -107,7 +107,7 @@ def validate_enablement(
     phase1_raw: bytes,
     cleanup_receipt_raw: bytes,
     secret_scan_receipt_raw: bytes,
-    secret_scan_targets: list[Path] | None = None,
+    secret_scan_targets: list[Path],
 ) -> dict[str, Any]:
     require(isinstance(record, dict), "enablement record must be an object")
     expected_keys = {
