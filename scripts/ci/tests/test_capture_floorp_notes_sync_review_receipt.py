@@ -123,8 +123,8 @@ def pr() -> dict[str, Any]:
         "merged": True,
         "merged_at": "2026-08-15T00:00:00Z",
         "merge_commit_sha": "4" * 40,
-        "base": {"sha": "1" * 40},
-        "head": {"sha": "2" * 40},
+        "base": {"sha": "1" * 40, "ref": "main", "repo": {"full_name": CAPTURE.REPOSITORY}},
+        "head": {"sha": "2" * 40, "repo": {"full_name": CAPTURE.REPOSITORY}},
     }
 
 
@@ -138,7 +138,12 @@ class CaptureReceiptTests(unittest.TestCase):
                 {
                     "id": 20229460,
                     "name": "Protect Floorp iOS main",
+                    "target": "branch",
+                    "source_type": "Repository",
+                    "source": CAPTURE.REPOSITORY,
                     "enforcement": "active",
+                    "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
+                    "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}],
                     "rules": [
                         {
                             "type": "pull_request",
@@ -192,7 +197,12 @@ class CaptureReceiptTests(unittest.TestCase):
                 {
                     "id": 20229460,
                     "name": "Protect Floorp iOS main",
+                    "target": "branch",
+                    "source_type": "Repository",
+                    "source": CAPTURE.REPOSITORY,
                     "enforcement": "active",
+                    "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
+                    "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}],
                     "rules": [
                         {
                             "type": "pull_request",
@@ -228,6 +238,21 @@ class CaptureReceiptTests(unittest.TestCase):
                 "0" * 64,
                 "1" * 64,
             )
+
+    def test_non_main_ruleset_target_is_rejected(self) -> None:
+        ruleset = {
+            "id": 20229460,
+            "name": "Protect Floorp iOS main",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": CAPTURE.REPOSITORY,
+            "enforcement": "active",
+            "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/release"]}},
+            "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}],
+            "rules": [],
+        }
+        with self.assertRaises(CAPTURE.ReviewReceiptError):
+            CAPTURE.validate_ruleset(ruleset)
 
 
 if __name__ == "__main__":

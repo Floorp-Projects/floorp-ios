@@ -213,24 +213,49 @@ def validate_subagent_review(subagent: dict[str, Any], pr: dict[str, Any]) -> No
 
 
 def validate_pr(pr: dict[str, Any], pr_number: int, merged_oid: str) -> None:
+    base = pr.get("base")
+    head = pr.get("head")
     if (
         pr.get("number") != pr_number
         or pr.get("state") != "closed"
         or pr.get("merged") is not True
         or not pr.get("merged_at")
         or pr.get("merge_commit_sha") != merged_oid
-        or not isinstance(pr.get("base"), dict)
-        or not isinstance(pr.get("head"), dict)
+        or not isinstance(base, dict)
+        or not isinstance(head, dict)
+        or base.get("ref") != "main"
+        or head.get("repo", {}).get("full_name") != REPOSITORY
+        or base.get("repo", {}).get("full_name") != REPOSITORY
     ):
         raise ReviewReceiptError("PR metadata is not a merged exact-head record")
-    require_sha(pr["base"].get("sha"), SHA1, "PR base OID")
-    require_sha(pr["head"].get("sha"), SHA1, "PR head OID")
+    require_sha(base.get("sha"), SHA1, "PR base OID")
+    require_sha(head.get("sha"), SHA1, "PR head OID")
     require_sha(merged_oid, SHA1, "merged OID")
 
 
 def validate_ruleset(ruleset: dict[str, Any]) -> int:
-    if ruleset.get("id") != 20229460 or ruleset.get("enforcement") != "active":
+    if (
+        ruleset.get("id") != 20229460
+        or ruleset.get("name") != "Protect Floorp iOS main"
+        or ruleset.get("target") != "branch"
+        or ruleset.get("source_type") != "Repository"
+        or ruleset.get("source") != REPOSITORY
+        or ruleset.get("enforcement") != "active"
+        or ruleset.get("conditions") != {
+            "ref_name": {"exclude": [], "include": ["refs/heads/main"]}
+        }
+    ):
         raise ReviewReceiptError("ruleset identity or enforcement is invalid")
+    bypass_actors = ruleset.get("bypass_actors")
+    if not isinstance(bypass_actors, list):
+        raise ReviewReceiptError("ruleset bypass policy is unavailable")
+    bypass_shape = sorted(
+        (item.get("actor_type"), item.get("bypass_mode"))
+        for item in bypass_actors
+        if isinstance(item, dict)
+    )
+    if bypass_shape != [("OrganizationAdmin", "pull_request")]:
+        raise ReviewReceiptError("ruleset bypass policy changed unexpectedly")
     found_status_checks = False
     for rule in ruleset.get("rules", []):
         if rule.get("type") == "pull_request":
