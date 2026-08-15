@@ -94,8 +94,19 @@ def owner_review() -> dict[str, Any]:
 
 
 def merge_audit() -> dict[str, Any]:
+    merge_response = {"merged": True, "sha": "4" * 40}
+    audit_projection = {
+        "merge_events": [
+            {
+                "action": "pull_request.merge",
+                "pull_request_path": "/pull/106/merge",
+                "repository": CAPTURE.REPOSITORY,
+                "timestamp": 123,
+            }
+        ]
+    }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "repository": CAPTURE.REPOSITORY,
         "pr_number": 106,
         "base_oid": "1" * 40,
@@ -104,7 +115,13 @@ def merge_audit() -> dict[str, Any]:
         "bypass_requested": False,
         "merge_endpoint": "PUT /repos/Floorp-Projects/floorp-ios/pulls/106/merge",
         "merge_method": "squash",
-        "merge_response_sha256": CAPTURE.sha256_bytes(CAPTURE.canonical(CAPTURE.project_merge_metadata(pr()))),
+        "merge_response": merge_response,
+        "merge_response_sha256": CAPTURE.sha256_bytes(CAPTURE.canonical(merge_response)),
+        "merge_response_source": "github-api-put-merge",
+        "audit_bypass_event_count": 0,
+        "audit_event_count": 1,
+        "audit_projection_sha256": CAPTURE.sha256_bytes(CAPTURE.canonical(audit_projection)),
+        "audit_source": "github-org-audit-log",
         "oid_guarded": True,
         "admin_bypass_used": False,
         "server_merge_sha": "4" * 40,
@@ -204,6 +221,52 @@ class CaptureReceiptTests(unittest.TestCase):
             self.assertEqual(receipt["subagent_review_digests"], [CAPTURE.sha256_bytes(b"subagent")])
             self.assertFalse(receipt["admin_bypass_used"])
 
+    def test_merge_digest_does_not_rederive_from_later_pr_projection(self) -> None:
+        later_pr = pr()
+        later_pr["merged_at"] = "2026-08-16T00:00:00Z"
+        # A changed later PR observation must not change the digest captured
+        # from the original PUT response projection.
+        receipt = CAPTURE.build_receipt(
+                later_pr,
+                [],
+                {
+                    "id": 20229460,
+                    "name": "Protect Floorp iOS main",
+                    "target": "branch",
+                    "source_type": "Repository",
+                    "source": CAPTURE.REPOSITORY,
+                    "enforcement": "active",
+                    "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
+                    "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}],
+                    "rules": [
+                        {"type": "pull_request", "parameters": {"required_approving_review_count": 0, "required_reviewers": []}},
+                        {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "Validate workflows"}, {"context": "Build and unit test"}]}},
+                    ],
+                },
+                contract(),
+                plan_binding(),
+                owner_review(),
+                merge_audit(),
+                subagent_review(),
+                "d" * 64,
+                "4" * 40,
+                "5" * 40,
+                "7" * 40,
+                "a" * 64,
+                "b" * 64,
+                "c" * 64,
+                "d" * 64,
+                "e" * 64,
+                "3" * 40,
+                "0" * 64,
+                "1" * 64,
+                "2" * 64,
+                "3" * 64,
+                "4" * 64,
+                "5" * 64,
+        )
+        self.assertEqual(receipt["merge_response_sha256"], merge_audit()["merge_response_sha256"])
+
     def test_stale_owner_receipt_is_rejected(self) -> None:
         with self.assertRaises(CAPTURE.ReviewReceiptError):
             stale = owner_review()
@@ -294,6 +357,46 @@ class CaptureReceiptTests(unittest.TestCase):
         }
         with self.assertRaises(CAPTURE.ReviewReceiptError):
             CAPTURE.validate_ruleset(ruleset)
+
+    def test_audit_log_requires_exact_merge_event_and_rejects_bypass(self) -> None:
+        audit = [
+            {
+                "action": "pull_request.merge",
+                "repo": CAPTURE.REPOSITORY,
+                "@timestamp": 123,
+                "data": {"url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge"},
+            }
+        ]
+        projection = {
+            "merge_events": [
+                {
+                    "action": "pull_request.merge",
+                    "pull_request_path": "/pull/106/merge",
+                    "repository": CAPTURE.REPOSITORY,
+                    "timestamp": 123,
+                }
+            ]
+        }
+        merge = merge_audit()
+        merge["audit_projection_sha256"] = CAPTURE.sha256_bytes(CAPTURE.canonical(projection))
+        merge["audit_event_count"] = 1
+        audit_raw = json.dumps(audit, separators=(",", ":")).encode()
+        self.assertEqual(
+            CAPTURE.validate_github_audit_log(audit, audit_raw, merge, pr(), "4" * 40),
+            (merge["audit_projection_sha256"], 1),
+        )
+        bypass = [
+            *audit,
+            {"action": "protected_branch.policy_override", "repo": CAPTURE.REPOSITORY},
+        ]
+        with self.assertRaises(CAPTURE.ReviewReceiptError):
+            CAPTURE.validate_github_audit_log(
+                bypass,
+                json.dumps(bypass, separators=(",", ":")).encode(),
+                merge,
+                pr(),
+                "4" * 40,
+            )
 
     def test_subagent_artifact_is_bound_to_one_immutable_commit_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

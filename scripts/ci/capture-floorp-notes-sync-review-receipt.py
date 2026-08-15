@@ -91,6 +91,108 @@ def project_merge_metadata(pr: dict[str, Any]) -> dict[str, Any]:
     return projection
 
 
+def flatten_audit_events(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        return value
+    if isinstance(value, list) and all(isinstance(item, list) for item in value):
+        flattened = [event for page in value for event in page if isinstance(event, dict)]
+        if sum(len(page) for page in value) != len(flattened):
+            raise ReviewReceiptError("GitHub audit response contains malformed events")
+        return flattened
+    raise ReviewReceiptError("GitHub audit response is not a paginated event list")
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [item for child in value.values() for item in _string_values(child)]
+    if isinstance(value, list):
+        return [item for child in value for item in _string_values(child)]
+    return []
+
+
+def _audit_repository(event: dict[str, Any]) -> str | None:
+    for key in ("repo", "repository"):
+        value = event.get(key)
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _audit_timestamp(event: dict[str, Any]) -> int | float | str:
+    for key in ("@timestamp", "created_at"):
+        value = event.get(key)
+        if isinstance(value, (int, float, str)) and not isinstance(value, bool):
+            return value
+    raise ReviewReceiptError("GitHub audit merge event has no timestamp")
+
+
+def _is_bypass_event(event: dict[str, Any]) -> bool:
+    if _audit_repository(event) != REPOSITORY:
+        return False
+    action = event.get("action")
+    action_text = action.lower() if isinstance(action, str) else ""
+    if any(marker in action_text for marker in ("bypass", "policy_override", "override")):
+        return True
+    serialized = json.dumps(event, ensure_ascii=False, sort_keys=True).lower()
+    return "overridden_codes" in serialized or "bypass" in serialized or "policy_override" in serialized
+
+
+def _audit_merge_projection(events: list[dict[str, Any]], pr_number: int) -> dict[str, Any]:
+    expected_path = f"/pull/{pr_number}/merge"
+    projections: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("action") != "pull_request.merge" or _audit_repository(event) != REPOSITORY:
+            continue
+        paths = [value for value in _string_values(event) if expected_path in value]
+        if not paths:
+            continue
+        projections.append(
+            {
+                "action": "pull_request.merge",
+                "pull_request_path": expected_path,
+                "repository": REPOSITORY,
+                "timestamp": _audit_timestamp(event),
+            }
+        )
+    projections.sort(key=lambda value: canonical(value))
+    return {"merge_events": projections}
+
+
+def validate_github_audit_log(
+    audit: Any,
+    audit_raw: bytes,
+    merge: dict[str, Any],
+    pr: dict[str, Any],
+    merged_oid: str,
+) -> tuple[str, int]:
+    try:
+        if json.loads(audit_raw.decode("utf-8")) != audit:
+            raise ReviewReceiptError("GitHub audit JSON bytes do not match the parsed response")
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ReviewReceiptError("GitHub audit JSON is not valid UTF-8 JSON") from error
+    events = flatten_audit_events(audit)
+    bypass_event_count = sum(1 for event in events if _is_bypass_event(event))
+    if bypass_event_count:
+        raise ReviewReceiptError("GitHub audit log reports a protected-branch bypass event")
+    projection = _audit_merge_projection(events, pr["number"])
+    if not projection["merge_events"]:
+        raise ReviewReceiptError("GitHub audit log has no exact pull_request.merge event")
+    audit_projection_sha256 = sha256_bytes(canonical(projection))
+    if (
+        merge.get("audit_source") != "github-org-audit-log"
+        or merge.get("audit_projection_sha256") != audit_projection_sha256
+        or merge.get("audit_event_count") != len(projection["merge_events"])
+        or merge.get("audit_bypass_event_count") != bypass_event_count
+        or merge.get("repository") != REPOSITORY
+        or merge.get("pr_number") != pr["number"]
+        or merge.get("merged_oid") != merged_oid
+    ):
+        raise ReviewReceiptError("merge audit is not bound to the GitHub organization audit response")
+    return audit_projection_sha256, len(projection["merge_events"])
+
+
 def project_ruleset_metadata(ruleset: dict[str, Any]) -> dict[str, Any]:
     """Project policy shape without actor identities, URLs, or opaque parameters."""
     projected_rules: list[dict[str, Any]] = []
@@ -307,19 +409,20 @@ def validate_merge_audit(
     merge: dict[str, Any],
     pr: dict[str, Any],
     merged_oid: str,
-    merge_response_sha256: str,
 ) -> None:
     require_exact(
         merge,
         {
             "admin_bypass_used", "base_oid", "bypass_requested", "head_sha", "merge_endpoint",
-            "merge_method", "merge_response_sha256", "merged_oid", "oid_guarded", "pr_number",
-            "repository", "schema_version", "server_merge_sha", "server_merged",
+            "audit_bypass_event_count", "audit_event_count", "audit_projection_sha256", "audit_source",
+            "merge_method", "merge_response", "merge_response_sha256", "merge_response_source",
+            "merged_oid", "oid_guarded", "pr_number", "repository",
+            "schema_version", "server_merge_sha", "server_merged",
         },
         "merge audit",
     )
     if (
-        merge["schema_version"] != 1
+        merge["schema_version"] != 2
         or merge["repository"] != REPOSITORY
         or merge["pr_number"] != pr["number"]
         or merge["base_oid"] != pr["base"]["sha"]
@@ -330,12 +433,23 @@ def validate_merge_audit(
         or merge["admin_bypass_used"] is not False
         or merge["bypass_requested"] is not False
         or merge["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{pr['number']}/merge"
-        or merge["merge_response_sha256"] != merge_response_sha256
+        or merge["merge_response_source"] != "github-api-put-merge"
+        or merge["merge_response"] != {"merged": True, "sha": merged_oid}
         or merge["server_merged"] is not True
         or merge["server_merge_sha"] != merged_oid
     ):
         raise ReviewReceiptError("merge audit is not bound to the guarded squash merge")
+    require_exact(merge["merge_response"], {"merged", "sha"}, "merge response projection")
+    if merge["merge_response"] != {"merged": True, "sha": merged_oid}:
+        raise ReviewReceiptError("merge response projection is not the actual guarded merge result")
+    if merge["merge_response_sha256"] != sha256_bytes(canonical(merge["merge_response"])):
+        raise ReviewReceiptError("merge response digest is not bound to the actual PUT response projection")
     require_sha(merge["merge_response_sha256"], SHA256, "merge response digest")
+    require_sha(merge["audit_projection_sha256"], SHA256, "GitHub audit projection digest")
+    if merge["audit_bypass_event_count"] != 0:
+        raise ReviewReceiptError("merge audit reports a protected-branch bypass event")
+    if not isinstance(merge["audit_event_count"], int) or merge["audit_event_count"] < 0:
+        raise ReviewReceiptError("GitHub audit merge event count is invalid")
 
 
 def validate_subagent_review(
@@ -516,8 +630,7 @@ def build_receipt(
     safety = contract_safety(contract)
     validate_plan_binding(binding)
     validate_owner_review(owner, pr, binding, diff_sha256, desktop_sha)
-    merge_response_sha256 = sha256_bytes(canonical(project_merge_metadata(pr)))
-    validate_merge_audit(merge, pr, merged_oid, merge_response_sha256)
+    validate_merge_audit(merge, pr, merged_oid)
     validate_subagent_review(subagent, pr, owner, desktop_sha)
     require_sha(desktop_sha, SHA1, "Desktop commit")
     require_sha(merge_audit_commit_sha, SHA1, "merge audit commit")
@@ -539,6 +652,10 @@ def build_receipt(
         require_sha(value, SHA256, label)
     return {
         "admin_bypass_used": merge["admin_bypass_used"],
+        "audit_bypass_event_count": merge["audit_bypass_event_count"],
+        "audit_event_count": merge["audit_event_count"],
+        "audit_projection_sha256": merge["audit_projection_sha256"],
+        "audit_source": merge["audit_source"],
         "amendment_sha256": binding["amendment_sha256"],
         "base_oid": pr["base"]["sha"],
         "combined_plan_hash": binding["combined_plan_hash"],
@@ -643,6 +760,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--owner-review", type=Path, required=True)
     parser.add_argument("--merge-audit", type=Path, required=True)
     parser.add_argument("--merge-audit-commit", required=True)
+    parser.add_argument("--audit-json", type=Path, required=True)
     parser.add_argument("--subagent-review", type=Path, required=True)
     parser.add_argument("--subagent-review-commit", required=True)
     parser.add_argument("--pr-projection", type=Path, required=True)
@@ -662,6 +780,7 @@ def main(arguments: list[str] | None = None) -> int:
         binding, binding_raw = load_canonical(args.plan_binding, "plan binding")
         owner, owner_raw = load_canonical(args.owner_review, "owner review")
         merge, merge_raw = load_canonical(args.merge_audit, "merge audit")
+        audit, audit_raw = load_json(args.audit_json)
         subagent, subagent_raw = load_canonical(args.subagent_review, "subagent review")
         reject_sensitive(owner, "owner review")
         reject_sensitive(merge, "merge audit")
@@ -672,6 +791,7 @@ def main(arguments: list[str] | None = None) -> int:
             raise ReviewReceiptError("review API metadata is malformed")
         verify_immutable_subagent_commit(args.repository_root, args.subagent_review_commit, subagent_raw)
         verify_immutable_merge_audit_commit(args.repository_root, args.merge_audit_commit, merge_raw)
+        validate_github_audit_log(audit, audit_raw, merge, pr, args.merged_oid)
         projections = (
             canonical(project_pr_metadata(pr)),
             canonical(project_reviews_metadata(reviews)),

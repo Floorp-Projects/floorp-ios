@@ -585,10 +585,17 @@ jobs:
           test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Capture source-bound Todo 20 review receipt
+        env:
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+          GH_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
           install -d -m 700 "$qa_root"
+          if [ -z "${FLOORP_TODO20_GH_AUDIT_TOKEN:-}" ]; then
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_secret_missing resume=configure protected Environment secret FLOORP_TODO20_GH_AUDIT_TOKEN with read-only organization audit-log authority' >&2
+            exit 78
+          fi
           test -n "$FLOORP_TODO20_PR_NUMBER"
           test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON"
           test -n "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
@@ -605,6 +612,10 @@ jobs:
             "https://api.github.com/repos/$GITHUB_REPOSITORY/rulesets/20229460" \
             -H "Accept: application/vnd.github+json" \
             -o "$qa_root/ruleset.json"
+          /opt/homebrew/bin/gh api --paginate --slurp \
+            "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
+            -H "Accept: application/vnd.github+json" \
+            > "$qa_root/audit-log.json"
           base_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["sha"])' "$qa_root/pr.json")"
           head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$qa_root/pr.json")"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"
@@ -628,6 +639,7 @@ jobs:
             --owner-review "$qa_root/owner-review.json" \
             --merge-audit "$qa_root/merge-audit.json" \
             --merge-audit-commit "$FLOORP_TODO20_MERGE_AUDIT_COMMIT" \
+            --audit-json "$qa_root/audit-log.json" \
             --subagent-review "$qa_root/subagent-review.json" \
             --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
             --pr-projection "$qa_root/pr-metadata.json" \
@@ -770,6 +782,7 @@ jobs:
           FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
           FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
           FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
@@ -793,7 +806,8 @@ jobs:
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
-            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD \
+            --secret-env FLOORP_TODO20_GH_AUDIT_TOKEN
 
       - name: Bind evidence manifest and single-operator self-attestation
         if: success()
@@ -865,6 +879,7 @@ jobs:
           FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
           FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
           FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
@@ -885,7 +900,8 @@ jobs:
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
             --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
-            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD \
+            --secret-env FLOORP_TODO20_GH_AUDIT_TOKEN
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
             --receipt "$qa_root/secret-scan.json" \
             --head-sha "$GITHUB_SHA" \

@@ -181,6 +181,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             "floorp_notes_sync_account_a_password",
             "floorp_notes_sync_account_b_email",
             "floorp_notes_sync_account_b_password",
+            "floorp_todo20_gh_audit_token",
         ):
             self.assertIn(secret_name, serialized)
         for forbidden in (
@@ -189,10 +190,11 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             "external-driver",
             "root-owned-broker",
             "dedicated-g5-runner",
-            "gh api",
+            "gh api -x put",
         ):
             self.assertNotIn(forbidden, serialized)
         self.assertIn("api.github.com", serialized)
+        self.assertIn("audit-log", serialized)
         self.assertNotIn("accounts.firefox.com", serialized)
         self.assertNotIn("sync.services.mozilla.com", serialized)
 
@@ -214,6 +216,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertIn('--subagent-review "$qa_root/subagent-review.json"', capture["run"])
         self.assertIn("docs/floorp-notes-sync-todo20-subagent-review.json", capture["run"])
         self.assertIn('--subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"', capture["run"])
+        self.assertIn('--audit-json "$qa_root/audit-log.json"', capture["run"])
         self.assertNotIn("Validate Todo 20 operation contract", names)
         self.assertNotIn(CANONICAL_ARTIFACT, json.dumps(self.jobs["build-and-test"], sort_keys=True))
 

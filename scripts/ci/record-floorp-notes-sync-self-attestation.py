@@ -61,7 +61,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         raise RuntimeError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_invalid_json") from error
     expected = {
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
-        "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
+        "audit_bypass_event_count", "audit_event_count", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
         "contract_sha256", "diff_sha256", "environment", "head_sha",
         "desktop_sha", "independence", "local_test_accounts_accessed", "merged_oid",
         "native_github_approval", "operator_id", "owner_review_receipt_sha256",
@@ -86,6 +86,10 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         or value["independence"] is not False
         or value["native_github_approval"] is not False
         or value["admin_bypass_used"] is not False
+        or value["audit_source"] != "github-org-audit-log"
+        or value["audit_bypass_event_count"] != 0
+        or not isinstance(value["audit_event_count"], int)
+        or value["audit_event_count"] < 0
         or value["bypass_requested"] is not False
         or value["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{value['pr_number']}/merge"
         or value["server_merged"] is not True
@@ -117,7 +121,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         "plan_sha256", "subagent_review_receipt_sha256",
         "pr_api_sha256", "reviews_api_sha256", "ruleset_api_sha256",
         "pr_projection_sha256", "reviews_projection_sha256", "ruleset_projection_sha256",
-        "merge_response_sha256",
+        "merge_response_sha256", "audit_projection_sha256",
     ):
         if not SHA256.fullmatch(value[field]):
             raise RuntimeError(f"[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_{field}_invalid")
@@ -164,6 +168,10 @@ def main(arguments: list[str] | None = None) -> int:
         event = {
             "accounts": 2,
             "admin_bypass_used": review["admin_bypass_used"],
+            "audit_bypass_event_count": review["audit_bypass_event_count"],
+            "audit_event_count": review["audit_event_count"],
+            "audit_projection_sha256": review["audit_projection_sha256"],
+            "audit_source": review["audit_source"],
             "bypass_requested": review["bypass_requested"],
             "merge_audit_commit_sha": review["merge_audit_commit_sha"],
             "amendment_sha256": review["amendment_sha256"],

@@ -168,6 +168,7 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                 SCAN.SECRET_ENV_NAMES[1]: "A-password-not-for-real-use",
                 SCAN.SECRET_ENV_NAMES[2]: "account-b@example.invalid",
                 SCAN.SECRET_ENV_NAMES[3]: "B-password-not-for-real-use",
+                SCAN.SECRET_ENV_NAMES[4]: "github-audit-token-not-for-real-use",
             }
             with patch.dict(RECORD.os.environ, environment, clear=False):
                 self.assertEqual(
@@ -190,6 +191,7 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                             "--secret-env", RECORD.SECRET_ENV_NAMES[1],
                             "--secret-env", RECORD.SECRET_ENV_NAMES[2],
                             "--secret-env", RECORD.SECRET_ENV_NAMES[3],
+                            "--secret-env", RECORD.SECRET_ENV_NAMES[4],
                         ]
                     ),
                     0,
@@ -238,6 +240,7 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                 RECORD.SECRET_ENV_NAMES[1]: leaked,
                 RECORD.SECRET_ENV_NAMES[2]: "account-b@example.invalid",
                 RECORD.SECRET_ENV_NAMES[3]: "OtherOpaqueSecretValue-67890",
+                RECORD.SECRET_ENV_NAMES[4]: "github-audit-token-not-for-real-use",
             }
             with patch.dict(RECORD.os.environ, environment, clear=False):
                 self.assertEqual(
