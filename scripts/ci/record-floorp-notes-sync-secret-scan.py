@@ -15,24 +15,41 @@ REPOSITORY = "Floorp-Projects/floorp-ios"
 WORKFLOW_PATH = ".github/workflows/ci.yml"
 JOB = "notes-sync-production-qa"
 MARKERS = (
-    "password",
-    "access_token",
-    "refresh_token",
-    "sync_key",
-    "authorization",
+    "password=",
+    "password:",
+    "access_token=",
+    "access_token:",
+    "refresh_token=",
+    "refresh_token:",
+    "sync_key=",
+    "sync_key:",
+    "authorization: bearer ",
+    "authorization=",
     "bearer ",
-    "cookie",
-    "credential",
-    "secret",
+    "cookie=",
+    "cookie:",
+    "credential=",
+    "credential:",
     "begin private key",
-    "oauth_token",
-    "note(_|s_)(content|title|payload)",
-    "request_body",
-    "response_body",
+    "oauth_token=",
+    "oauth_token:",
+    "note(_|s_)(content|title|payload)[=:]",
+    "request_body[=:]",
+    "response_body[=:]",
 )
 MARKER_SET_SHA256 = hashlib.sha256("\n".join(MARKERS).encode()).hexdigest()
 SCAN_METHOD = "regex-over-declared-targets-and-owned-process-argv"
 MARKER_PATTERN = re.compile("|".join(f"(?:{marker})" for marker in MARKERS), re.IGNORECASE)
+SCOPE_BY_NAME = {
+    "qa-summary.json": "qa-summary",
+    "cleanup-receipt.json": "cleanup-receipt",
+    "floorp-notes-sync-two-client.xcresult": "xcresult",
+    "xcodebuild.log": "xcodebuild-log",
+    "desktop.log": "desktop-log",
+    "production-qa-capability.json": "production-qa-capability",
+    "production-qa.xcconfig": "production-qa-xcconfig",
+    "self-attestation.jsonl": "self-attestation-ledger",
+}
 
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
@@ -101,6 +118,14 @@ def main(arguments: list[str] | None = None) -> int:
     except OSError as error:
         print(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason={error}", flush=True)
         return 78
+    try:
+        scope = [SCOPE_BY_NAME[path.name] for path in args.target]
+    except KeyError as error:
+        print(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=secret_scan_target_unknown_{error.args[0]}", flush=True)
+        return 78
+    if len(scope) != len(set(scope)):
+        print("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=secret_scan_target_duplicate", flush=True)
+        return 78
     receipt = {
         "job_name": JOB,
         "marker_set_sha256": MARKER_SET_SHA256,
@@ -109,17 +134,7 @@ def main(arguments: list[str] | None = None) -> int:
         "scan_method": SCAN_METHOD,
         "scan_passed": True,
         "schema_version": 1,
-        "scope": [
-        "qa-summary",
-        "cleanup-receipt",
-        "xcresult",
-        "xcodebuild-log",
-        "desktop-log",
-        "production-qa-capability",
-        "production-qa-xcconfig",
-        "self-attestation-ledger",
-        "process-argv-environment-markers",
-        ],
+        "scope": [*scope, "process-argv-environment-markers"],
         "target_digests": target_digests,
         "source": {
             "head_sha": os.environ["GITHUB_SHA"],

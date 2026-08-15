@@ -45,27 +45,87 @@ class SelfAttestationTests(unittest.TestCase):
             "GITHUB_WORKFLOW_REF": f"{RECORD.REPOSITORY}/{RECORD.WORKFLOW_PATH}@{'a' * 40}",
         }
 
+    def evidence(self, root: Path) -> dict[str, Path]:
+        paths = {
+            "manifest": root / "qa-manifest.json",
+            "summary": root / "qa-summary.json",
+            "cleanup": root / "cleanup-receipt.json",
+            "secret_scan": root / "secret-scan.json",
+        }
+        for name, path in paths.items():
+            path.write_bytes(json.dumps({"artifact": name}, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+        paths["manifest"].write_bytes(
+            json.dumps(
+                {
+                    "accounts": 2,
+                    "artifacts": [
+                        {
+                            "byte_count": 1,
+                            "name": f"{role}.json",
+                            "role": role,
+                            "sha256": "0" * 64,
+                        }
+                        for role in (
+                            "qa-summary",
+                            "cleanup-receipt",
+                            "xcresult",
+                            "xcodebuild-log",
+                            "desktop-log",
+                            "production-qa-capability",
+                            "production-qa-xcconfig",
+                            "secret-scan",
+                        )
+                    ],
+                    "desktop_sha": "b" * 40,
+                    "environment": RECORD.ENVIRONMENT,
+                    "head_sha": "a" * 40,
+                    "public_release": False,
+                    "repository": RECORD.REPOSITORY,
+                    "schema_version": 1,
+                    "workflow_path": RECORD.WORKFLOW_PATH,
+                    "workflow_run_attempt": 1,
+                    "workflow_run_id": 123,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+            + b"\n"
+        )
+        return paths
+
+    def arguments(self, output: Path, paths: dict[str, Path]) -> list[str]:
+        return [
+            "--output", str(output),
+            "--manifest", str(paths["manifest"]),
+            "--summary", str(paths["summary"]),
+            "--cleanup-receipt", str(paths["cleanup"]),
+            "--secret-scan", str(paths["secret_scan"]),
+        ]
+
     def test_record_and_validate_one_append_only_event(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "self-attestation.jsonl"
+            paths = self.evidence(Path(directory))
             with patch.dict(os.environ, self.environment(), clear=True):
-                self.assertEqual(RECORD.main(["--output", str(path)]), 0)
+                self.assertEqual(RECORD.main(self.arguments(path, paths)), 0)
             value, raw = VALIDATE.load(path)
-            VALIDATE.validate(value, "a" * 40, 123, 1)
+            VALIDATE.validate(value, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"])
             self.assertEqual(raw.count(b"\n"), 1)
 
     def test_event_hash_or_run_binding_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "self-attestation.jsonl"
+            paths = self.evidence(Path(directory))
             with patch.dict(os.environ, self.environment(), clear=True):
-                RECORD.main(["--output", str(path)])
+                RECORD.main(self.arguments(path, paths))
             value, _ = VALIDATE.load(path)
             value["public_release"] = True
             with self.assertRaises(VALIDATE.AttestationError):
-                VALIDATE.validate(value, "a" * 40, 123, 1)
+                VALIDATE.validate(value, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"])
             value, _ = VALIDATE.load(path)
             with self.assertRaises(VALIDATE.AttestationError):
-                VALIDATE.validate(value, "b" * 40, 123, 1)
+                VALIDATE.validate(value, "b" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"])
 
 
 if __name__ == "__main__":

@@ -63,17 +63,17 @@ INVARIANT_CASES = {
 }
 CASE_BLOCKERS = {
     CASE_NAMES[5]: (
-        "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+        "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
         "reason=upload_save_commit_failure_observation_missing "
         "resume=provide deterministic UI-level upload-save-commit fault injection and retry evidence"
     ),
     CASE_NAMES[7]: (
-        "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+        "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
         "reason=legacy_client_artifact_and_driver_missing "
         "resume=provide a reproducible pinned legacy client, isolated profile, and reviewed UI driver"
     ),
     CASE_NAMES[11]: (
-        "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+        "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
         "reason=base_revision_observation_missing "
         "resume=provide metadata-only base/revision observation before failure and after authoritative commit"
     ),
@@ -257,8 +257,19 @@ class SimulatorCoordination:
             time.sleep(0.5)
         raise LiveExecutorError("coordination event timed out")
 
-    def remove(self) -> None:
-        self._spawn(["/bin/rm", "-rf", self.root], check=False)
+    def remove(self) -> bool:
+        removed = self._spawn(["/bin/rm", "-rf", self.root], check=False)
+        if removed.returncode != 0:
+            return False
+        verification = self._spawn(
+            [
+                "/bin/sh",
+                "-c",
+                f"test ! -e {shlex.quote(self.root)} && test ! -L {shlex.quote(self.root)}",
+            ],
+            check=False,
+        )
+        return verification.returncode == 0
 
 
 class MarionetteClient:
@@ -434,7 +445,7 @@ class DesktopNotesClient:
                 return
             time.sleep(1)
         raise LiveExecutorError(
-            "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+            "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
             "reason=FxA_UI_AUTHORIZATION_PENDING "
             "resume=complete the disposable account's production FxA authorization flow"
         )
@@ -720,7 +731,7 @@ class LiveExecutor:
                             time.sleep(1)
             time.sleep(1)
         raise LiveExecutorError(
-            "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+            "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
             "reason=desktop_marionette_unavailable "
             "resume=provide a staged Desktop build with a bounded Marionette endpoint"
         )
@@ -856,7 +867,7 @@ class LiveExecutor:
             )
             if mobile_complete["phase"] == "failed":
                 raise LiveExecutorError(
-                    "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+                    "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
                     "reason=mobile_case_not_observed "
                     "resume=provide the missing live fault/client capability"
                 )
@@ -930,7 +941,7 @@ class LiveExecutor:
             ).returncode
             == 0
         )
-        self.coordination.remove()
+        coordination_root = self.coordination.remove()
         runner_temp = True
         if self.paths.client_state.exists() or self.paths.client_state.is_symlink():
             if self.paths.client_state.is_symlink() or not self.paths.client_state.is_dir():
@@ -944,14 +955,15 @@ class LiveExecutor:
                     )
                 except (OSError, subprocess.CalledProcessError):
                     runner_temp = False
-        if not all((account_cleanup, local_cache, runner_temp, simulator_keychain)):
+        if not all((account_cleanup, local_cache, runner_temp, simulator_keychain, coordination_root)):
             raise LiveExecutorError(
-                "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+                "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
                 "reason=disposable_account_or_client_cleanup_unproven "
                 "resume=complete the FxA account deletion UI and cleanup boundary"
             )
         receipt = {
             "accounts": True,
+            "coordination_root": True,
             "environment": ENVIRONMENT,
             "local_cache": True,
             "phase": "production-qa",
@@ -982,7 +994,7 @@ class LiveExecutor:
         if not all(invariant_results.values()):
             raise LiveExecutorError("not all data-integrity invariants were observed")
         raise LiveExecutorError(
-            "[blocked] UPSTREAM_CAPABILITY_MISSING owner=Operations "
+            "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
             "reason=network_transport_observation_missing "
             "resume=provide metadata-only client or transport observation for approved FxA/Sync hosts and TLS"
         )

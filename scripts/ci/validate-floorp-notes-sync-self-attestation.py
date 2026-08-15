@@ -18,6 +18,16 @@ JOB = "notes-sync-production-qa"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+MANIFEST_ROLES = {
+    "qa-summary",
+    "cleanup-receipt",
+    "xcresult",
+    "xcodebuild-log",
+    "desktop-log",
+    "production-qa-capability",
+    "production-qa-xcconfig",
+    "secret-scan",
+}
 
 
 class AttestationError(ValueError):
@@ -53,14 +63,77 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--run-attempt", type=int, required=True)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--summary", type=Path, required=True)
+    parser.add_argument("--cleanup-receipt", type=Path, required=True)
+    parser.add_argument("--secret-scan", type=Path, required=True)
     return parser.parse_args(arguments)
 
 
-def validate(value: dict[str, Any], head_sha: str, run_id: int, run_attempt: int) -> None:
+def digest(path: Path) -> str:
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise AttestationError(f"attestation evidence is unavailable: {path.name}") from error
+    if path.is_symlink() or not path.is_file():
+        raise AttestationError(f"attestation evidence is not a regular file: {path.name}")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def load_manifest(path: Path, head_sha: str, run_id: int, run_attempt: int) -> bytes:
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise AttestationError("evidence manifest is not canonical JSON") from error
+    canonical_raw = canonical(value)
+    if raw != canonical_raw or not isinstance(value, dict):
+        raise AttestationError("evidence manifest is not canonical JSON")
     expected = {
-        "environment", "event", "event_sha256", "head_sha", "operator_id",
+        "accounts", "artifacts", "desktop_sha", "environment", "head_sha",
+        "public_release", "repository", "schema_version", "workflow_path",
+        "workflow_run_attempt", "workflow_run_id",
+    }
+    if set(value) != expected:
+        raise AttestationError("evidence manifest fields are not exact")
+    if (
+        value["accounts"] != 2
+        or value["environment"] != ENVIRONMENT
+        or value["public_release"] is not False
+        or value["repository"] != REPOSITORY
+        or value["workflow_path"] != WORKFLOW_PATH
+        or value["head_sha"] != head_sha
+        or value["workflow_run_id"] != run_id
+        or value["workflow_run_attempt"] != run_attempt
+        or not SHA1.fullmatch(value["desktop_sha"])
+    ):
+        raise AttestationError("evidence manifest source binding is invalid")
+    artifacts = value["artifacts"]
+    if not isinstance(artifacts, list) or {item.get("role") for item in artifacts if isinstance(item, dict)} != MANIFEST_ROLES:
+        raise AttestationError("evidence manifest artifact set is incomplete")
+    for item in artifacts:
+        if not isinstance(item, dict) or set(item) != {"byte_count", "name", "role", "sha256"}:
+            raise AttestationError("evidence manifest artifact descriptor is malformed")
+        if not isinstance(item["byte_count"], int) or item["byte_count"] < 0 or not SHA256.fullmatch(item["sha256"]):
+            raise AttestationError("evidence manifest artifact digest is invalid")
+    return raw
+
+
+def validate(
+    value: dict[str, Any],
+    head_sha: str,
+    run_id: int,
+    run_attempt: int,
+    manifest: Path,
+    summary: Path,
+    cleanup_receipt: Path,
+    secret_scan: Path,
+) -> None:
+    expected = {
+        "accounts", "cleanup", "cleanup_receipt_sha256", "evidence_manifest_sha256", "environment", "event",
+        "event_sha256", "head_sha", "operator_id",
         "previous_event_sha256", "public_release", "roles", "schema_version",
-        "sequence", "workflow_job", "workflow_path", "workflow_run_attempt",
+        "qa_summary_sha256", "secret_scan_scope", "secret_scan_sha256", "sequence", "workflow_job", "workflow_path", "workflow_run_attempt",
         "workflow_run_id",
     }
     if set(value) != expected:
@@ -68,6 +141,14 @@ def validate(value: dict[str, Any], head_sha: str, run_id: int, run_attempt: int
     if (
         value["environment"] != ENVIRONMENT
         or value["event"] != "self-attestation"
+        or value["accounts"] != 2
+        or value["cleanup"] != {
+            "accounts": True,
+            "coordination_root": True,
+            "local_cache": True,
+            "runner_temp": True,
+            "simulator_keychain": True,
+        }
         or value["workflow_job"] != JOB
         or value["workflow_path"] != WORKFLOW_PATH
         or value["public_release"] is not False
@@ -79,6 +160,18 @@ def validate(value: dict[str, Any], head_sha: str, run_id: int, run_attempt: int
         or not value["operator_id"]
     ):
         raise AttestationError("attestation approval boundary is invalid")
+    for field, path in (
+        ("evidence_manifest_sha256", manifest),
+        ("qa_summary_sha256", summary),
+        ("cleanup_receipt_sha256", cleanup_receipt),
+        ("secret_scan_sha256", secret_scan),
+    ):
+        if not SHA256.fullmatch(value[field]) or value[field] != digest(path):
+            raise AttestationError(f"attestation {field} is not bound to evidence")
+    if not SHA256.fullmatch(value["secret_scan_sha256"]):
+        raise AttestationError("attestation secret scan digest is invalid")
+    if value["secret_scan_scope"] != "pre-attestation":
+        raise AttestationError("attestation secret scan scope is invalid")
     if (
         not SHA1.fullmatch(head_sha)
         or value["head_sha"] != head_sha
@@ -97,7 +190,17 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         value, raw = load(args.ledger)
-        validate(value, args.head_sha, args.run_id, args.run_attempt)
+        load_manifest(args.manifest, args.head_sha, args.run_id, args.run_attempt)
+        validate(
+            value,
+            args.head_sha,
+            args.run_id,
+            args.run_attempt,
+            args.manifest,
+            args.summary,
+            args.cleanup_receipt,
+            args.secret_scan,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, AttestationError) as error:
         print(f"self-attestation ledger rejected: {error}", file=sys.stderr)
         return 2

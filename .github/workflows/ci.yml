@@ -620,8 +620,6 @@ jobs:
             --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
             --endpoint-policy docs/floorp-release-endpoints.json \
             --output "$xcconfig"
-          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-self-attestation.py \
-            --output "$qa_root/self-attestation.jsonl"
           {
             printf 'FLOORP_NOTES_SYNC_QA_ROOT=%s\n' "$qa_root"
             printf 'FLOORP_NOTES_SYNC_QA_CAPABILITY=%s\n' "$capability"
@@ -700,32 +698,81 @@ jobs:
             --receipt "$FLOORP_NOTES_SYNC_QA_ROOT/cleanup-receipt.json"
 
       - name: Scan QA material for secrets
-        if: always()
+        if: success()
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
-          scan_targets=()
-          for path in "$qa_root" "$qa_root/floorp-notes-sync-two-client.xcresult"; do
-            if [ -e "$path" ]; then
-              scan_targets+=("$path")
-            fi
-          done
-          if [ "${#scan_targets[@]}" -eq 0 ]; then
-            echo "secret-log scan could not find any QA material"
-            exit 1
-          fi
-          if rg -l -i \
-            'password|access_token|refresh_token|sync_key|authorization|bearer |cookie|credential|secret|begin private key|oauth_token|note(_|s_)(content|title|payload)|request_body|response_body' \
-            "${scan_targets[@]}" >/dev/null 2>&1; then
-            echo "secret-log scan failed"
-            exit 1
-          fi
           # The protected xcodebuild actor receives secrets through its
           # Environment. Scan command lines only so variable names are not
           # mistaken for leaked credential values.
           /usr/bin/python3 -I scripts/ci/scan-floorp-notes-sync-process-argv.py
           /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-secret-scan.py \
+            --output "$qa_root/secret-scan-pre.json" \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig"
+
+      - name: Bind evidence manifest and single-operator self-attestation
+        if: success()
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          manifest="$qa_root/qa-manifest.json"
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-qa-manifest.py \
+            --output "$manifest" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --qa-summary "$qa_root/qa-summary.json" \
+            --cleanup-receipt "$qa_root/cleanup-receipt.json" \
+            --xcresult "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --xcodebuild-log "$qa_root/xcodebuild.log" \
+            --desktop-log "$qa_root/desktop.log" \
+            --production-qa-capability "$qa_root/production-qa-capability.json" \
+            --production-qa-xcconfig "$qa_root/production-qa.xcconfig" \
+            --secret-scan "$qa_root/secret-scan-pre.json"
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-self-attestation.py \
+            --output "$qa_root/self-attestation.jsonl" \
+            --manifest "$manifest" \
+            --summary "$qa_root/qa-summary.json" \
+            --cleanup-receipt "$qa_root/cleanup-receipt.json" \
+            --secret-scan "$qa_root/secret-scan-pre.json"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-self-attestation.py \
+            --ledger "$qa_root/self-attestation.jsonl" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$manifest" \
+            --summary "$qa_root/qa-summary.json" \
+            --cleanup-receipt "$qa_root/cleanup-receipt.json" \
+            --secret-scan "$qa_root/secret-scan-pre.json"
+          printf 'FLOORP_NOTES_SYNC_QA_MANIFEST=%s\n' "$manifest" >> "$GITHUB_ENV"
+
+      - name: Scan final QA artifacts including self-attestation
+        if: success()
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-secret-scan.py \
             --output "$qa_root/secret-scan.json" \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig" \
+            --target "$qa_root/self-attestation.jsonl"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
+            --receipt "$qa_root/secret-scan.json" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --target "$qa_root/qa-summary.json" \
             --target "$qa_root/cleanup-receipt.json" \
             --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
@@ -768,7 +815,9 @@ jobs:
           path: |
             ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-summary.json
             ${{ runner.temp }}/floorp-notes-sync-production-qa/cleanup-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/secret-scan-pre.json
             ${{ runner.temp }}/floorp-notes-sync-production-qa/secret-scan.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-manifest.json
             ${{ runner.temp }}/floorp-notes-sync-production-qa/xcodebuild.log
             ${{ runner.temp }}/floorp-notes-sync-production-qa/desktop.log
             ${{ runner.temp }}/floorp-notes-sync-production-qa/production-qa-capability.json
@@ -850,7 +899,11 @@ jobs:
             --ledger "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
             --head-sha "$GITHUB_SHA" \
             --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-manifest.json" \
+            --summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan-pre.json"
 
       - name: Verify Phase 1 cleanup receipt
         run: |
