@@ -39,6 +39,7 @@ def receipt() -> dict[str, Any]:
         "repository": SCAN.REPOSITORY,
         "scan_method": SCAN.SCAN_METHOD,
         "scan_passed": True,
+        "secret_env_names": list(SCAN.SECRET_ENV_NAMES),
         "schema_version": 1,
         "scope": list(SCAN.SCOPE),
         "target_digests": [
@@ -68,6 +69,7 @@ def materialize_targets(root: Path, text: str = "safe\n") -> list[Path]:
         root / "production-qa-capability.json",
         root / "production-qa.xcconfig",
         root / "self-attestation.jsonl",
+        root / "review-receipt.json",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text(text)
@@ -124,6 +126,7 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                         "--target", str(targets[5]),
                         "--target", str(targets[6]),
                         "--target", str(targets[7]),
+                        "--target", str(targets[8]),
                     ]
                 ),
                 0,
@@ -144,12 +147,18 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
             (xcresult / "result").write_text("safe metadata\n")
             for path in (summary, cleanup, log, desktop_log, capability, xcconfig, attestation):
                 path.write_text("safe metadata\n")
+            review_receipt = root / "review-receipt.json"
+            review_receipt.write_text("safe metadata\n")
             output = root / "secret-scan.json"
             environment = {
                 "GITHUB_REPOSITORY": SCAN.REPOSITORY,
                 "GITHUB_RUN_ATTEMPT": "1",
                 "GITHUB_RUN_ID": "123456",
                 "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
+                SCAN.SECRET_ENV_NAMES[0]: "account-a@example.invalid",
+                SCAN.SECRET_ENV_NAMES[1]: "A-password-not-for-real-use",
+                SCAN.SECRET_ENV_NAMES[2]: "account-b@example.invalid",
+                SCAN.SECRET_ENV_NAMES[3]: "B-password-not-for-real-use",
             }
             with patch.dict(RECORD.os.environ, environment, clear=False):
                 self.assertEqual(
@@ -164,12 +173,17 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                             "--target", str(capability),
                             "--target", str(xcconfig),
                             "--target", str(attestation),
+                            "--target", str(review_receipt),
+                            "--secret-env", RECORD.SECRET_ENV_NAMES[0],
+                            "--secret-env", RECORD.SECRET_ENV_NAMES[1],
+                            "--secret-env", RECORD.SECRET_ENV_NAMES[2],
+                            "--secret-env", RECORD.SECRET_ENV_NAMES[3],
                         ]
                     ),
                     0,
                 )
             value, raw = SCAN.load(output)
-            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1, [summary, cleanup, xcresult, log, desktop_log, capability, xcconfig, attestation])
+            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1, [summary, cleanup, xcresult, log, desktop_log, capability, xcconfig, attestation, review_receipt])
             self.assertNotIn(b"safe metadata", raw)
 
     def test_target_digest_mismatch_is_rejected(self) -> None:
@@ -184,6 +198,7 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                 root / "production-qa-capability.json",
                 root / "production-qa.xcconfig",
                 root / "self-attestation.jsonl",
+                root / "review-receipt.json",
             ]
             targets[2].mkdir()
             (targets[2] / "result").write_text("actual\n")
@@ -191,6 +206,36 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                 target.write_text("actual\n")
             with self.assertRaises(SCAN.SecretScanError):
                 SCAN.validate(receipt(), "0123456789abcdef0123456789abcdef01234567", 123456, 1, targets)
+
+    def test_recorder_rejects_exact_secret_value_in_declared_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets = materialize_targets(root)
+            leaked = "OpaqueSecretValue-12345"
+            targets[4].write_text(leaked + "\n")
+            output = root / "secret-scan.json"
+            environment = {
+                "GITHUB_REPOSITORY": RECORD.REPOSITORY,
+                "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_RUN_ID": "123456",
+                "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
+                RECORD.SECRET_ENV_NAMES[0]: "account-a@example.invalid",
+                RECORD.SECRET_ENV_NAMES[1]: leaked,
+                RECORD.SECRET_ENV_NAMES[2]: "account-b@example.invalid",
+                RECORD.SECRET_ENV_NAMES[3]: "OtherOpaqueSecretValue-67890",
+            }
+            with patch.dict(RECORD.os.environ, environment, clear=False):
+                self.assertEqual(
+                    RECORD.main(
+                        [
+                            "--output", str(output),
+                            *sum((["--target", str(target)] for target in targets), []),
+                            *sum((["--secret-env", name] for name in RECORD.SECRET_ENV_NAMES), []),
+                        ]
+                    ),
+                    78,
+                )
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

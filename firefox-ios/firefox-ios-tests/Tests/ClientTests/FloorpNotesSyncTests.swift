@@ -2483,7 +2483,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
             "accounts": 2,
             "build_contract_mode": "production-qa",
             "clients": ["desktop", "mobile"],
-            "contract_sha256": "aaee8cdaafc86a616772b9c4183f3c755bb3d7ab7db02af6e40fa88a65fe7714",
+            "contract_sha256": "e935ab08c60cd7fcdbe66699764cd2805410f90bb0e3651d97b2c65c58f98764",
             "desktop": [
                 "repository": "Floorp-Projects/Floorp",
                 "source_sha": String(repeating: "b", count: 40),

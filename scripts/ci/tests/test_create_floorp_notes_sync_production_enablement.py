@@ -83,6 +83,7 @@ def secret_scan_receipt() -> dict[str, Any]:
         "repository": QA.REPOSITORY,
         "scan_method": CREATE.SECRET_SCAN.SCAN_METHOD,
         "scan_passed": True,
+        "secret_env_names": list(CREATE.SECRET_SCAN.SECRET_ENV_NAMES),
         "schema_version": 1,
         "scope": [
             "qa-summary",
@@ -93,6 +94,8 @@ def secret_scan_receipt() -> dict[str, Any]:
             "production-qa-capability",
             "production-qa-xcconfig",
             "self-attestation-ledger",
+            "review-receipt",
+            "exact-secret-values",
             "process-argv-environment-markers",
         ],
         "target_digests": [
@@ -106,6 +109,7 @@ def secret_scan_receipt() -> dict[str, Any]:
                 "production-qa-capability.json",
                 "production-qa.xcconfig",
                 "self-attestation.jsonl",
+                "review-receipt.json",
             )
         ],
         "source": {
@@ -146,6 +150,7 @@ def scan_targets(root: Path) -> list[Path]:
         root / "production-qa-capability.json",
         root / "production-qa.xcconfig",
         root / "self-attestation.jsonl",
+        root / "review-receipt.json",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text("safe\n")
@@ -210,6 +215,8 @@ class CreateProductionEnablementTests(unittest.TestCase):
                             str(targets[6]),
                             "--secret-scan-target",
                             str(targets[7]),
+                            "--secret-scan-target",
+                            str(targets[8]),
                             "--output",
                             str(output),
                         ]
@@ -266,6 +273,8 @@ class CreateProductionEnablementTests(unittest.TestCase):
                             str(targets[6]),
                             "--secret-scan-target",
                             str(targets[7]),
+                            "--secret-scan-target",
+                            str(targets[8]),
                             "--output",
                             str(output),
                         ]

@@ -754,6 +754,11 @@ jobs:
 
       - name: Scan QA material for secrets
         if: always()
+        env:
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
@@ -770,7 +775,11 @@ jobs:
             --target "$qa_root/desktop.log" \
             --target "$qa_root/production-qa-capability.json" \
             --target "$qa_root/production-qa.xcconfig" \
-            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT"
+            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD
 
       - name: Bind evidence manifest and single-operator self-attestation
         if: success()
@@ -791,7 +800,8 @@ jobs:
             --desktop-log "$qa_root/desktop.log" \
             --production-qa-capability "$qa_root/production-qa-capability.json" \
             --production-qa-xcconfig "$qa_root/production-qa.xcconfig" \
-            --secret-scan "$qa_root/secret-scan-pre.json"
+            --secret-scan "$qa_root/secret-scan-pre.json" \
+            --review-receipt "$qa_root/review-receipt.json"
           /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-self-attestation.py \
             --output "$qa_root/self-attestation.jsonl" \
             --manifest "$manifest" \
@@ -815,6 +825,11 @@ jobs:
 
       - name: Scan final QA artifacts including self-attestation
         if: success()
+        env:
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
@@ -828,7 +843,11 @@ jobs:
             --target "$qa_root/production-qa-capability.json" \
             --target "$qa_root/production-qa.xcconfig" \
             --target "$qa_root/self-attestation.jsonl" \
-            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT"
+            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
             --receipt "$qa_root/secret-scan.json" \
             --head-sha "$GITHUB_SHA" \
@@ -995,7 +1014,8 @@ jobs:
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/desktop.log" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
-            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl"
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json"
 
       - name: Create non-distributed enablement record
         env:
@@ -1014,6 +1034,7 @@ jobs:
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
             --output "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Validate non-distributed enablement record
@@ -1031,6 +1052,7 @@ jobs:
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
             --enablement-record "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Upload enablement metadata

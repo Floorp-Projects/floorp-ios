@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import sys
@@ -61,10 +62,10 @@ class SelfAttestationTests(unittest.TestCase):
                     "accounts": 2,
                     "artifacts": [
                         {
-                            "byte_count": 1,
-                            "name": f"{role}.json",
+                            "byte_count": paths["review_receipt"].stat().st_size if role == "review-receipt" else 1,
+                            "name": "review-receipt.json" if role == "review-receipt" else f"{role}.json",
                             "role": role,
-                            "sha256": "0" * 64,
+                            "sha256": hashlib.sha256(paths["review_receipt"].read_bytes()).hexdigest() if role == "review-receipt" else "0" * 64,
                         }
                         for role in (
                             "qa-summary",
@@ -74,6 +75,7 @@ class SelfAttestationTests(unittest.TestCase):
                             "desktop-log",
                             "production-qa-capability",
                             "production-qa-xcconfig",
+                            "review-receipt",
                             "secret-scan",
                         )
                     ],

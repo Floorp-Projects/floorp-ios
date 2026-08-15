@@ -865,10 +865,10 @@ class LiveExecutor:
                 actor="mobile",
                 sequence=spec.complete_sequence,
             )
-            if mobile_complete["phase"] == "failed":
+            if mobile_complete["phase"] != "complete" or mobile_complete["outcome"] != "passed":
                 raise LiveExecutorError(
                     "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
-                    "reason=mobile_case_not_observed "
+                    "reason=mobile_case_not_completed "
                     "resume=provide the missing live fault/client capability"
                 )
             if mobile_complete["case_name"] != name:

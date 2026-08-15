@@ -100,6 +100,7 @@ def secret_scan_receipt() -> dict[str, Any]:
         "repository": QA.REPOSITORY,
         "scan_method": ENABLEMENT.SECRET_SCAN.SCAN_METHOD,
         "scan_passed": True,
+        "secret_env_names": list(ENABLEMENT.SECRET_SCAN.SECRET_ENV_NAMES),
         "schema_version": 1,
         "scope": list(ENABLEMENT.SECRET_SCAN.SCOPE),
         "target_digests": [
@@ -125,6 +126,7 @@ def materialize_targets(root: Path) -> list[Path]:
         root / "production-qa-capability.json",
         root / "production-qa.xcconfig",
         root / "self-attestation.jsonl",
+        root / "review-receipt.json",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text("safe\n")
@@ -228,6 +230,7 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
                         "--secret-scan-target", str(targets[5]),
                         "--secret-scan-target", str(targets[6]),
                         "--secret-scan-target", str(targets[7]),
+                        "--secret-scan-target", str(targets[8]),
                         "--enablement-record", str(record_path),
                     ]
                 ),

@@ -24,6 +24,8 @@ SCOPE = [
     "production-qa-capability",
     "production-qa-xcconfig",
     "self-attestation-ledger",
+    "review-receipt",
+    "exact-secret-values",
     "process-argv-environment-markers",
 ]
 MARKERS = (
@@ -50,7 +52,7 @@ MARKERS = (
     "response_body[=:]",
 )
 MARKER_SET_SHA256 = hashlib.sha256("\n".join(MARKERS).encode()).hexdigest()
-SCAN_METHOD = "regex-over-declared-targets-and-owned-process-argv"
+SCAN_METHOD = "regex-and-exact-secret-values-over-declared-targets-and-owned-process-argv"
 MARKER_PATTERN = re.compile("|".join(f"(?:{marker})" for marker in MARKERS), re.IGNORECASE)
 REQUIRED_TARGETS = {
     "qa-summary.json",
@@ -61,7 +63,14 @@ REQUIRED_TARGETS = {
     "production-qa-capability.json",
     "production-qa.xcconfig",
     "self-attestation.jsonl",
+    "review-receipt.json",
 }
+SECRET_ENV_NAMES = [
+    "FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL",
+    "FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD",
+    "FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL",
+    "FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD",
+]
 
 
 class SecretScanError(ValueError):
@@ -144,6 +153,7 @@ def validate(
         "repository",
         "scan_method",
         "scan_passed",
+        "secret_env_names",
         "schema_version",
         "scope",
         "source",
@@ -154,6 +164,8 @@ def validate(
         raise SecretScanError("secret-scan receipt is not a passing scan")
     if value["scan_method"] != SCAN_METHOD or value["scan_passed"] is not True:
         raise SecretScanError("secret-scan execution method is not bound")
+    if value["secret_env_names"] != SECRET_ENV_NAMES:
+        raise SecretScanError("secret-scan secret-value scope is incomplete")
     if value["marker_set_sha256"] != MARKER_SET_SHA256:
         raise SecretScanError("secret-scan marker set is not bound")
     if value["job_name"] != "notes-sync-production-qa" or value["repository"] != REPOSITORY:

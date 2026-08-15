@@ -681,7 +681,7 @@ enum FloorpNotesSyncReleaseGate {
     ]
     static let evidenceResourceName = "FloorpNotesSyncReleaseEvidence"
     static let rescopedProductionQACapabilityVersion = "todo20-production-sync-integrity-v1"
-    private static let rescopedContractSHA256 = "aaee8cdaafc86a616772b9c4183f3c755bb3d7ab7db02af6e40fa88a65fe7714"
+    private static let rescopedContractSHA256 = "e935ab08c60cd7fcdbe66699764cd2805410f90bb0e3651d97b2c65c58f98764"
     private static let rescopedIntegrityMatrixSHA256 = "53828225b7ae183212df954e7076e577879a74acac73e5cbaf50389d7dd0df45"
     static let buildAllowsKey = "MozAllowFloorpNotesSync"
     static let buildModeKey = "MozFloorpNotesSyncBuildMode"

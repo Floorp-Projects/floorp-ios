@@ -38,6 +38,7 @@ class ProductionQAManifestTests(unittest.TestCase):
             root = Path(directory)
             summary = root / "qa-summary.json"
             cleanup = root / "cleanup-receipt.json"
+            review_receipt = root / "review-receipt.json"
             xcresult = root / "floorp-notes-sync-two-client.xcresult"
             xcresult.mkdir()
             (xcresult / "metadata").write_text("metadata\n")
@@ -49,6 +50,7 @@ class ProductionQAManifestTests(unittest.TestCase):
                 "runner_temp": True,
                 "simulator_keychain": True,
             }))
+            review_receipt.write_text("metadata\n")
             names = {
                 "xcodebuild-log": root / "xcodebuild.log",
                 "desktop-log": root / "desktop.log",
@@ -73,6 +75,7 @@ class ProductionQAManifestTests(unittest.TestCase):
                 "--production-qa-capability", str(names["production-qa-capability"]),
                 "--production-qa-xcconfig", str(names["production-qa-xcconfig"]),
                 "--secret-scan", str(names["secret-scan"]),
+                "--review-receipt", str(review_receipt),
             ]
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": CREATE.REPOSITORY}, clear=False):
                 self.assertEqual(CREATE.main(args), 0)
@@ -97,8 +100,9 @@ class ProductionQAManifestTests(unittest.TestCase):
                     "--run-attempt", "1",
                     "--qa-summary", str(summary),
                     "--cleanup-receipt", str(cleanup),
-                    *sum(([f"--{role}", str(root / f"{role}.json")] for role, _ in CREATE.ARTIFACTS if role not in {"qa-summary", "cleanup-receipt", "xcresult"}), []),
+                    *sum(([f"--{role}", str(root / f"{role}.json")] for role, _ in CREATE.ARTIFACTS if role not in {"qa-summary", "cleanup-receipt", "xcresult", "review-receipt"}), []),
                     "--xcresult", str(root / "missing.xcresult"),
+                    "--review-receipt", str(root / "review-receipt.json"),
                 ]),
                 2,
             )

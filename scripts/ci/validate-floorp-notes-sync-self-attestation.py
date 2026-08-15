@@ -26,6 +26,7 @@ MANIFEST_ROLES = {
     "desktop-log",
     "production-qa-capability",
     "production-qa-xcconfig",
+    "review-receipt",
     "secret-scan",
 }
 
@@ -95,7 +96,7 @@ def load_review_receipt(path: Path) -> dict[str, Any]:
     return value
 
 
-def load_manifest(path: Path, head_sha: str, run_id: int, run_attempt: int) -> bytes:
+def load_manifest(path: Path, head_sha: str, run_id: int, run_attempt: int, review_receipt: Path) -> bytes:
     try:
         raw = path.read_bytes()
         value = json.loads(raw.decode("utf-8"))
@@ -131,6 +132,12 @@ def load_manifest(path: Path, head_sha: str, run_id: int, run_attempt: int) -> b
             raise AttestationError("evidence manifest artifact descriptor is malformed")
         if not isinstance(item["byte_count"], int) or item["byte_count"] < 0 or not SHA256.fullmatch(item["sha256"]):
             raise AttestationError("evidence manifest artifact digest is invalid")
+    receipt_descriptors = [item for item in artifacts if item.get("role") == "review-receipt"]
+    if len(receipt_descriptors) != 1:
+        raise AttestationError("evidence manifest review receipt is missing")
+    receipt_descriptor = receipt_descriptors[0]
+    if receipt_descriptor["name"] != review_receipt.name or receipt_descriptor["sha256"] != digest(review_receipt):
+        raise AttestationError("evidence manifest review receipt is not bound")
     return raw
 
 
@@ -279,7 +286,7 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         value, raw = load(args.ledger)
-        load_manifest(args.manifest, args.merged_oid, args.run_id, args.run_attempt)
+        load_manifest(args.manifest, args.merged_oid, args.run_id, args.run_attempt, args.review_receipt)
         validate(
             value,
             args.head_sha,
