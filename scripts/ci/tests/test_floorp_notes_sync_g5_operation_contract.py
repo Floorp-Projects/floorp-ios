@@ -189,10 +189,12 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             "external-driver",
             "root-owned-broker",
             "dedicated-g5-runner",
-            "curl ",
             "gh api",
         ):
             self.assertNotIn(forbidden, serialized)
+        self.assertIn("api.github.com", serialized)
+        self.assertNotIn("accounts.firefox.com", serialized)
+        self.assertNotIn("sync.services.mozilla.com", serialized)
 
     def test_qa_job_requires_phase_one_before_enablement_and_cleans_up(self) -> None:
         job = self.jobs[JOB_ID]
@@ -200,6 +202,8 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertIn("Create protected Todo 20 production-QA capability", names)
         self.assertIn("Run protected two-client integrity QA", names)
         self.assertIn("Scan QA material for secrets", names)
+        self.assertIn("Capture source-bound Todo 20 review receipt", names)
+        self.assertIn("Validate Todo 20 contract semantics in protected QA path", names)
         self.assertIn("Clean up test accounts and client state", names)
         self.assertIn("Upload live QA evidence", names)
         self.assertNotIn("Validate Todo 20 operation contract", names)

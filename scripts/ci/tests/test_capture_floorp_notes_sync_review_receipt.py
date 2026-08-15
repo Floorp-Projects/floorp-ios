@@ -1,0 +1,210 @@
+"""TDD tests for source-bound Todo 20 review receipts."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = ROOT / "scripts/ci/capture-floorp-notes-sync-review-receipt.py"
+
+
+def load_module(path: Path, name: str) -> Any:
+    specification = importlib.util.spec_from_file_location(name, path)
+    if specification is None or specification.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+CAPTURE = load_module(SCRIPT, "floorp_notes_sync_review_receipt_capture_test")
+
+
+def contract() -> dict[str, Any]:
+    return {
+        "approval_model": {
+            "environment": CAPTURE.ENVIRONMENT,
+            "global_governance_unchanged": True,
+            "independence": False,
+            "native_github_approval": False,
+            "required_approving_review_count": 0,
+            "reviews_count": 0,
+            "self_attestation": "owner-operations-executor-reviewer",
+            "self_review_exception": True,
+        },
+        "boundary": {
+            "credential_delivery": "protected-environment-secrets-only",
+            "execution_authorization": "single-operator-protected-qa",
+            "phase_1_result": "data-integrity-qa-required",
+            "public_release": "forbidden",
+        },
+        "integrity_matrix": {"accounts": 2, "payload_observation": "forbidden"},
+        "isolation_contract": {"accounts": 2, "payload_retained": False},
+        "participant_contract": {"test_attachments": "forbidden"},
+        "safety_boundary": {
+            "admin_bypass_allowed": False,
+            "local_test_accounts_accessed": False,
+            "native_github_approval": False,
+            "public_release": False,
+            "two_disposable_accounts_only": True,
+        },
+    }
+
+
+def plan_binding() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "task_id": 20,
+        "plan_sha256": "a" * 64,
+        "amendment_sha256": "b" * 64,
+        "combined_plan_hash": "c" * 64,
+    }
+
+
+def owner_review() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "repository": CAPTURE.REPOSITORY,
+        "pr_number": 106,
+        "base_oid": "1" * 40,
+        "head_sha": "2" * 40,
+        "diff_sha256": "d" * 64,
+        "plan_sha256": "a" * 64,
+        "amendment_sha256": "b" * 64,
+        "combined_plan_hash": "c" * 64,
+        "self_review_exception": True,
+        "independence": False,
+        "operator_id": "operator",
+        "public_release": False,
+        "unresolved_blocking_findings": [],
+        "reviewed_at_utc": "2026-08-15T00:00:00Z",
+        "checklist": {"exact_head": True, "scope": True, "security": True},
+        "attestation_statement": "Todo 20 bounded owner self-review recorded.",
+    }
+
+
+def merge_audit() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "repository": CAPTURE.REPOSITORY,
+        "pr_number": 106,
+        "base_oid": "1" * 40,
+        "head_sha": "2" * 40,
+        "merged_oid": "4" * 40,
+        "merge_method": "squash",
+        "oid_guarded": True,
+        "admin_bypass_used": False,
+    }
+
+
+def subagent_review() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "repository": CAPTURE.REPOSITORY,
+        "head_sha": "2" * 40,
+        "status": "GO",
+        "findings": [],
+        "reviewed_at_utc": "2026-08-15T00:00:00Z",
+    }
+
+
+def pr() -> dict[str, Any]:
+    return {
+        "number": 106,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-08-15T00:00:00Z",
+        "merge_commit_sha": "4" * 40,
+        "base": {"sha": "1" * 40},
+        "head": {"sha": "2" * 40},
+    }
+
+
+class CaptureReceiptTests(unittest.TestCase):
+    def test_receipt_uses_api_git_and_artifact_bound_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt = CAPTURE.build_receipt(
+                pr(),
+                [],
+                {
+                    "id": 20229460,
+                    "name": "Protect Floorp iOS main",
+                    "enforcement": "active",
+                    "rules": [
+                        {
+                            "type": "pull_request",
+                            "parameters": {
+                                "required_approving_review_count": 0,
+                                "required_reviewers": [],
+                            },
+                        }
+                    ],
+                },
+                contract(),
+                plan_binding(),
+                owner_review(),
+                merge_audit(),
+                subagent_review(),
+                "d" * 64,
+                "4" * 40,
+                CAPTURE.sha256_bytes(b"contract"),
+                CAPTURE.sha256_bytes(b"binding"),
+                CAPTURE.sha256_bytes(b"owner"),
+                CAPTURE.sha256_bytes(b"merge"),
+                CAPTURE.sha256_bytes(b"subagent"),
+            )
+            self.assertEqual(receipt["base_oid"], "1" * 40)
+            self.assertEqual(receipt["head_sha"], "2" * 40)
+            self.assertEqual(receipt["merged_oid"], "4" * 40)
+            self.assertEqual(receipt["diff_sha256"], "d" * 64)
+            self.assertEqual(receipt["reviews_count"], 0)
+            self.assertEqual(receipt["subagent_review_digests"], [CAPTURE.sha256_bytes(b"subagent")])
+            self.assertFalse(receipt["admin_bypass_used"])
+
+    def test_stale_owner_receipt_is_rejected(self) -> None:
+        with self.assertRaises(CAPTURE.ReviewReceiptError):
+            stale = owner_review()
+            stale["head_sha"] = "9" * 40
+            CAPTURE.build_receipt(
+                pr(),
+                [],
+                {
+                    "id": 20229460,
+                    "name": "Protect Floorp iOS main",
+                    "enforcement": "active",
+                    "rules": [
+                        {
+                            "type": "pull_request",
+                            "parameters": {
+                                "required_approving_review_count": 0,
+                                "required_reviewers": [],
+                            },
+                        }
+                    ],
+                },
+                contract(),
+                plan_binding(),
+                stale,
+                merge_audit(),
+                subagent_review(),
+                "d" * 64,
+                "4" * 40,
+                "a" * 64,
+                "b" * 64,
+                "c" * 64,
+                "d" * 64,
+                "e" * 64,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -148,6 +148,7 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
                 "network_contract",
                 "participant_contract",
                 "qa_artifact",
+                "safety_boundary",
                 "schema_version",
                 "workflow",
             }
@@ -185,6 +186,31 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
             "self_review_exception": True,
         },
         "approval model is not the bounded single-operator exception",
+    )
+
+    safety = require_exact_keys(
+        root["safety_boundary"],
+        frozenset(
+            {
+                "admin_bypass_allowed",
+                "local_test_accounts_accessed",
+                "native_github_approval",
+                "public_release",
+                "two_disposable_accounts_only",
+            }
+        ),
+        "safety boundary",
+    )
+    require(
+        safety
+        == {
+            "admin_bypass_allowed": False,
+            "local_test_accounts_accessed": False,
+            "native_github_approval": False,
+            "public_release": False,
+            "two_disposable_accounts_only": True,
+        },
+        "safety boundary is not fail-closed",
     )
 
     boundary = require_exact_keys(

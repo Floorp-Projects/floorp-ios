@@ -43,16 +43,6 @@ class SelfAttestationTests(unittest.TestCase):
             "GITHUB_RUN_ID": "123",
             "GITHUB_SHA": "a" * 40,
             "GITHUB_WORKFLOW_REF": f"{RECORD.REPOSITORY}/{RECORD.WORKFLOW_PATH}@{'a' * 40}",
-            "FLOORP_TODO20_BASE_OID": "b" * 40,
-            "FLOORP_TODO20_HEAD_SHA": "1" * 40,
-            "FLOORP_TODO20_MERGED_OID": "a" * 40,
-            "FLOORP_TODO20_PR_NUMBER": "106",
-            "FLOORP_TODO20_DIFF_SHA256": "c" * 64,
-            "FLOORP_TODO20_PLAN_SHA256": "d" * 64,
-            "FLOORP_TODO20_AMENDMENT_SHA256": "e" * 64,
-            "FLOORP_TODO20_COMBINED_PLAN_HASH": "f" * 64,
-            "FLOORP_TODO20_SUBAGENT_REVIEW_DIGESTS": "1" * 64,
-            "FLOORP_TODO20_REVIEWED_AT_UTC": "2026-08-15T00:00:00Z",
         }
 
     def evidence(self, root: Path) -> dict[str, Path]:
@@ -61,6 +51,7 @@ class SelfAttestationTests(unittest.TestCase):
             "summary": root / "qa-summary.json",
             "cleanup": root / "cleanup-receipt.json",
             "secret_scan": root / "secret-scan.json",
+            "review_receipt": root / "review-receipt.json",
         }
         for name, path in paths.items():
             path.write_bytes(json.dumps({"artifact": name}, sort_keys=True, separators=(",", ":")).encode() + b"\n")
@@ -102,6 +93,47 @@ class SelfAttestationTests(unittest.TestCase):
             ).encode()
             + b"\n"
         )
+        paths["review_receipt"].write_bytes(
+            json.dumps(
+                {
+                    "admin_bypass_used": False,
+                    "amendment_sha256": "e" * 64,
+                    "base_oid": "b" * 40,
+                    "combined_plan_hash": "f" * 64,
+                    "contract_sha256": "2" * 64,
+                    "diff_sha256": "c" * 64,
+                    "environment": RECORD.ENVIRONMENT,
+                    "head_sha": "1" * 40,
+                    "independence": False,
+                    "local_test_accounts_accessed": False,
+                    "merged_oid": "a" * 40,
+                    "native_github_approval": False,
+                    "operator_id": "operator",
+                    "owner_review_receipt_sha256": "3" * 64,
+                    "merge_audit_sha256": "4" * 64,
+                    "plan_binding_sha256": "5" * 64,
+                    "plan_sha256": "d" * 64,
+                    "pr_number": 106,
+                    "public_release": False,
+                    "repository": RECORD.REPOSITORY,
+                    "review_scope": "todo-20-pr-and-production-qa",
+                    "reviewed_at_utc": "2026-08-15T00:00:00Z",
+                    "roles": ["owner", "operations", "executor", "reviewer"],
+                    "ruleset_required_review_count": 0,
+                    "reviews_count": 0,
+                    "schema_version": 2,
+                    "self_review_exception": True,
+                    "subagent_review_digests": ["1" * 64],
+                    "subagent_review_receipt_sha256": "1" * 64,
+                    "two_disposable_accounts_only": True,
+                    "unresolved_blocking_findings": [],
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+            + b"\n"
+        )
         return paths
 
     def arguments(self, output: Path, paths: dict[str, Path]) -> list[str]:
@@ -111,6 +143,7 @@ class SelfAttestationTests(unittest.TestCase):
             "--summary", str(paths["summary"]),
             "--cleanup-receipt", str(paths["cleanup"]),
             "--secret-scan", str(paths["secret_scan"]),
+            "--review-receipt", str(paths["review_receipt"]),
         ]
 
     def test_record_and_validate_one_append_only_event(self) -> None:
@@ -120,7 +153,7 @@ class SelfAttestationTests(unittest.TestCase):
             with patch.dict(os.environ, self.environment(), clear=True):
                 self.assertEqual(RECORD.main(self.arguments(path, paths)), 0)
             value, raw = VALIDATE.load(path)
-            VALIDATE.validate(value, "1" * 40, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"])
+            VALIDATE.validate(value, "1" * 40, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"], paths["review_receipt"])
             self.assertEqual(raw.count(b"\n"), 1)
             self.assertEqual(value["roles"], ["owner", "operations", "executor", "reviewer"])
             self.assertTrue(value["self_review_exception"])
@@ -140,18 +173,17 @@ class SelfAttestationTests(unittest.TestCase):
             value, _ = VALIDATE.load(path)
             value["public_release"] = True
             with self.assertRaises(VALIDATE.AttestationError):
-                VALIDATE.validate(value, "1" * 40, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"])
+                VALIDATE.validate(value, "1" * 40, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"], paths["review_receipt"])
             value, _ = VALIDATE.load(path)
             with self.assertRaises(VALIDATE.AttestationError):
-                VALIDATE.validate(value, "b" * 40, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"])
+                VALIDATE.validate(value, "b" * 40, "a" * 40, 123, 1, paths["manifest"], paths["summary"], paths["cleanup"], paths["secret_scan"], paths["review_receipt"])
 
     def test_missing_review_metadata_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "self-attestation.jsonl"
             paths = self.evidence(Path(directory))
-            environment = self.environment()
-            environment.pop("FLOORP_TODO20_SUBAGENT_REVIEW_DIGESTS")
-            with patch.dict(os.environ, environment, clear=True):
+            paths["review_receipt"].unlink()
+            with patch.dict(os.environ, self.environment(), clear=True):
                 self.assertEqual(RECORD.main(self.arguments(path, paths)), 78)
             self.assertFalse(path.exists())
 
