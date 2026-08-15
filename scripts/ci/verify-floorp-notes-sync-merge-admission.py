@@ -21,12 +21,19 @@ from typing import Any
 
 
 REPOSITORY = "Floorp-Projects/floorp-ios"
+REPOSITORY_API_URL = "https://api.github.com/repos/Floorp-Projects/floorp-ios"
 SUBAGENT_REVIEW_PATH = "docs/floorp-notes-sync-todo20-subagent-review.json"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 AGENT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 RUN_JOB_LINK = re.compile(r"/actions/runs/(?P<run_id>[0-9]+)/job/(?P<job_id>[0-9]+)(?:$|[?#])")
 EXPECTED_BRANCH = "agent/floorp-plan-t20-live-executor"
+EXPECTED_BASE_BRANCH = "main"
+EXPECTED_WORKFLOW_PATHS = {
+    "Floorp iOS CI": ".github/workflows/ci.yml",
+    "Floorp Notes UI smoke": ".github/workflows/notes-ui.yml",
+    "Floorp adaptive sidebar UI": ".github/workflows/adaptive-sidebar-ui.yml",
+}
 REQUIRED_CHECKS = {"Validate workflows", "Build and unit test", "Release-disabled wrapper build"}
 
 
@@ -190,11 +197,38 @@ def collection(value: Any, key: str, label: str) -> list[dict[str, Any]]:
     return rows
 
 
-def require_pull_request(rows: Any, pr_number: int, label: str) -> None:
-    if not isinstance(rows, list) or not any(
-        isinstance(row, dict) and row.get("number") == pr_number for row in rows
-    ):
+def require_pull_request(
+    rows: Any,
+    pr_number: int,
+    expected_head_sha: str,
+    expected_base_sha: str,
+    label: str,
+) -> None:
+    if not isinstance(rows, list):
         raise MergeAdmissionError(f"{label} is not bound to PR {pr_number}")
+    expected_url = f"{REPOSITORY_API_URL}/pulls/{pr_number}"
+    for row in rows:
+        if not isinstance(row, dict) or row.get("number") != pr_number:
+            continue
+        base = row.get("base")
+        head = row.get("head")
+        if not isinstance(base, dict) or not isinstance(head, dict):
+            continue
+        base_repo = base.get("repo")
+        head_repo = head.get("repo")
+        if (
+            row.get("url") == expected_url
+            and base.get("ref") == EXPECTED_BASE_BRANCH
+            and base.get("sha") == expected_base_sha
+            and head.get("ref") == EXPECTED_BRANCH
+            and head.get("sha") == expected_head_sha
+            and isinstance(base_repo, dict)
+            and base_repo.get("url") == REPOSITORY_API_URL
+            and isinstance(head_repo, dict)
+            and head_repo.get("url") == REPOSITORY_API_URL
+        ):
+            return
+    raise MergeAdmissionError(f"{label} is not exactly bound to PR {pr_number}")
 
 
 def validate_checks(
@@ -203,6 +237,7 @@ def validate_checks(
     workflow_runs_payload: Any,
     pr_number: int,
     expected_head_sha: str,
+    expected_base_sha: str,
 ) -> int:
     if not isinstance(checks, list) or not checks:
         raise MergeAdmissionError("GitHub check response is empty or malformed")
@@ -259,17 +294,24 @@ def validate_checks(
             raise MergeAdmissionError(f"GitHub check-run head SHA is not exact: {name}")
         if check_run.get("status") != "completed":
             raise MergeAdmissionError(f"GitHub check-run is not completed: {name}")
-        require_pull_request(check_run.get("pull_requests"), pr_number, f"GitHub check-run {name}")
+        require_pull_request(
+            check_run.get("pull_requests"),
+            pr_number,
+            expected_head_sha,
+            expected_base_sha,
+            f"GitHub check-run {name}",
+        )
         workflow_run = workflow_runs_by_id.get(run_id)
         if workflow_run is None:
             raise MergeAdmissionError(f"GitHub workflow-run is missing: {name}")
         referenced_workflow_run_ids.add(run_id)
         workflow_path = workflow_run.get("path")
+        expected_workflow_path = EXPECTED_WORKFLOW_PATHS.get(check["workflow"])
         if (
-            workflow_run.get("name") != check["workflow"]
+            expected_workflow_path is None
+            or workflow_run.get("name") != check["workflow"]
             or not isinstance(workflow_path, str)
-            or not workflow_path.startswith(".github/workflows/")
-            or not workflow_path.endswith((".yml", ".yaml"))
+            or workflow_path != expected_workflow_path
             or workflow_run.get("event") != "pull_request"
             or workflow_run.get("head_branch") != EXPECTED_BRANCH
             or workflow_run.get("head_sha") != expected_head_sha
@@ -277,7 +319,13 @@ def validate_checks(
             or workflow_run.get("conclusion") != "success"
         ):
             raise MergeAdmissionError(f"GitHub workflow provenance is not exact: {name}")
-        require_pull_request(workflow_run.get("pull_requests"), pr_number, f"GitHub workflow-run {name}")
+        require_pull_request(
+            workflow_run.get("pull_requests"),
+            pr_number,
+            expected_head_sha,
+            expected_base_sha,
+            f"GitHub workflow-run {name}",
+        )
         state = str(check.get("state", "")).upper()
         bucket = check.get("bucket")
         check_conclusion = str(check_run.get("conclusion", "")).lower()
@@ -339,6 +387,7 @@ def main(arguments: list[str] | None = None) -> int:
             workflow_runs,
             args.pr_number,
             args.expected_head_sha,
+            owner["base_oid"],
         )
         validate_plan_binding(binding)
         if (
@@ -350,11 +399,14 @@ def main(arguments: list[str] | None = None) -> int:
         verify_immutable_subagent_commit(args.repository_root, args.subagent_review_commit, subagent_raw)
         receipt = {
             "admin_bypass_used": False,
+            "base_oid": owner["base_oid"],
+            "base_ref_name": EXPECTED_BASE_BRANCH,
             "checks_count": check_count,
             # The legacy field now binds the complete read-only check provenance
             # bundle, not only the gh-pr-checks projection.
             "checks_sha256": sha256(checks_raw + check_runs_raw + workflow_runs_raw),
             "head_sha": args.expected_head_sha,
+            "head_ref_name": EXPECTED_BRANCH,
             "native_github_approval": False,
             "operator_id": owner["operator_id"],
             "owner_review_sha256": sha256(owner_raw),

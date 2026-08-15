@@ -31,9 +31,12 @@ class GuardedMergeArtifactTests(unittest.TestCase):
     def write_inputs(self, root: Path) -> tuple[Path, Path, Path, Path, Path, Path]:
         admission = {
             "admin_bypass_used": False,
+            "base_oid": "1" * 40,
+            "base_ref_name": "main",
             "checks_count": 4,
             "checks_sha256": "a" * 64,
             "head_sha": "2" * 40,
+            "head_ref_name": "agent/floorp-plan-t20-live-executor",
             "native_github_approval": False,
             "operator_id": "operator",
             "owner_review_sha256": "b" * 64,

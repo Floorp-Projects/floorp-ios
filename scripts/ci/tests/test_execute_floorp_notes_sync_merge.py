@@ -33,9 +33,12 @@ class MergeExecutorTests(unittest.TestCase):
     def admission_receipt() -> dict[str, object]:
         return {
             "admin_bypass_used": False,
+            "base_oid": "1" * 40,
+            "base_ref_name": "main",
             "checks_count": 4,
             "checks_sha256": "a" * 64,
             "head_sha": "2" * 40,
+            "head_ref_name": "agent/floorp-plan-t20-live-executor",
             "native_github_approval": False,
             "operator_id": "operator",
             "owner_review_sha256": "b" * 64,
@@ -56,12 +59,19 @@ class MergeExecutorTests(unittest.TestCase):
             admission.write_bytes(EXECUTOR.canonical(self.admission_receipt()))
             responses = iter(
                 [
-                    json.dumps({"headRefOid": "2" * 40}).encode(),
+                    json.dumps(
+                        {
+                            "baseRefName": "main",
+                            "baseRefOid": "1" * 40,
+                            "headRefName": "agent/floorp-plan-t20-live-executor",
+                            "headRefOid": "2" * 40,
+                        }
+                    ).encode(),
                     json.dumps({"merged": True, "sha": "4" * 40}).encode(),
                     json.dumps(
                         {
-                            "base": {"sha": "1" * 40},
-                            "head": {"sha": "2" * 40},
+                            "base": {"ref": "main", "sha": "1" * 40},
+                            "head": {"ref": "agent/floorp-plan-t20-live-executor", "sha": "2" * 40},
                             "merge_commit_sha": "4" * 40,
                             "merged": True,
                             "merged_at": "2026-08-15T00:00:00Z",
@@ -104,6 +114,37 @@ class MergeExecutorTests(unittest.TestCase):
             admission = Path(directory) / "merge-admission.json"
             admission.write_bytes(EXECUTOR.canonical(self.admission_receipt()))
             with patch.object(EXECUTOR, "run_gh", return_value=json.dumps({"headRefOid": "9" * 40}).encode()) as run:
+                self.assertNotEqual(
+                    EXECUTOR.main(
+                        [
+                            "--pr-number", "106",
+                            "--expected-head-sha", "2" * 40,
+                            "--admission-receipt", str(admission),
+                            "--output", str(output),
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(run.call_count, 1)
+            self.assertFalse(output.exists())
+
+    def test_base_ref_drift_stops_before_put(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "merge-operation-receipt.json"
+            admission = Path(directory) / "merge-admission.json"
+            admission.write_bytes(EXECUTOR.canonical(self.admission_receipt()))
+            with patch.object(
+                EXECUTOR,
+                "run_gh",
+                return_value=json.dumps(
+                    {
+                        "baseRefName": "release",
+                        "baseRefOid": "1" * 40,
+                        "headRefName": "agent/floorp-plan-t20-live-executor",
+                        "headRefOid": "2" * 40,
+                    }
+                ).encode(),
+            ) as run:
                 self.assertNotEqual(
                     EXECUTOR.main(
                         [

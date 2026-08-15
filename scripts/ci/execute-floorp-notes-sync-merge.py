@@ -23,6 +23,8 @@ from typing import Any
 REPOSITORY = "Floorp-Projects/floorp-ios"
 GH = "/opt/homebrew/bin/gh"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
+EXPECTED_BASE_REF = "main"
+EXPECTED_HEAD_REF = "agent/floorp-plan-t20-live-executor"
 
 
 class MergeExecutionError(RuntimeError):
@@ -102,12 +104,13 @@ def main(arguments: list[str] | None = None) -> int:
         expected_head_sha = require_sha(args.expected_head_sha, "expected head SHA")
         admission, admission_raw = load_canonical(args.admission_receipt, "merge admission receipt")
         expected_admission_fields = {
-            "admin_bypass_used", "checks_count", "checks_sha256", "head_sha", "native_github_approval",
+            "admin_bypass_used", "base_oid", "base_ref_name", "checks_count", "checks_sha256", "head_ref_name", "head_sha", "native_github_approval",
             "operator_id", "owner_review_sha256", "plan_binding_sha256", "pr_number", "repository",
             "schema_version", "status", "subagent_review_commit_sha", "subagent_review_sha256", "terminal_ci",
         }
         if set(admission) != expected_admission_fields:
             raise MergeExecutionError("merge admission receipt fields are not exact")
+        require_sha(admission["base_oid"], "merge admission base OID")
         for value, label in (
             (admission["checks_sha256"], "merge admission checks digest"),
             (admission["owner_review_sha256"], "merge admission owner digest"),
@@ -121,6 +124,8 @@ def main(arguments: list[str] | None = None) -> int:
             or admission["status"] != "GO"
             or admission["repository"] != REPOSITORY
             or admission["pr_number"] != args.pr_number
+            or admission["base_ref_name"] != EXPECTED_BASE_REF
+            or admission["head_ref_name"] != EXPECTED_HEAD_REF
             or admission["head_sha"] != expected_head_sha
             or admission["admin_bypass_used"] is not False
             or admission["native_github_approval"] is not False
@@ -132,12 +137,22 @@ def main(arguments: list[str] | None = None) -> int:
             or not SHA1.fullmatch(admission["subagent_review_commit_sha"])
         ):
             raise MergeExecutionError("merge admission receipt is not an exact-head terminal GO")
-        current_head = load_object(
-            run_gh(["pr", "view", str(args.pr_number), "--repo", REPOSITORY, "--json", "headRefOid"]),
-            "PR head response",
-        ).get("headRefOid")
-        if current_head != expected_head_sha:
-            raise MergeExecutionError("PR head drifted before the guarded merge")
+        current_pr = load_object(
+            run_gh(
+                [
+                    "pr", "view", str(args.pr_number), "--repo", REPOSITORY,
+                    "--json", "baseRefName,baseRefOid,headRefName,headRefOid",
+                ]
+            ),
+            "PR ref response",
+        )
+        if (
+            current_pr.get("baseRefName") != EXPECTED_BASE_REF
+            or current_pr.get("baseRefOid") != admission["base_oid"]
+            or current_pr.get("headRefName") != EXPECTED_HEAD_REF
+            or current_pr.get("headRefOid") != expected_head_sha
+        ):
+            raise MergeExecutionError("PR base/head refs drifted before the guarded merge")
 
         merge_response = load_object(
             run_gh(
@@ -173,6 +188,8 @@ def main(arguments: list[str] | None = None) -> int:
             merged_pr.get("number") != args.pr_number
             or merged_pr.get("merged") is not True
             or merged_pr.get("merge_commit_sha") != merged_oid
+            or base.get("ref") != EXPECTED_BASE_REF
+            or head.get("ref") != EXPECTED_HEAD_REF
             or head.get("sha") != expected_head_sha
             or not isinstance(merged_pr.get("merged_at"), str)
             or not merged_pr["merged_at"]

@@ -85,6 +85,17 @@ class MergeAdmissionTests(unittest.TestCase):
         ).strip()
 
         run_id = 1001
+        repository_url = "https://api.github.com/repos/Floorp-Projects/floorp-ios"
+        pr_association = {
+            "base": {"ref": "main", "sha": base, "repo": {"url": repository_url}},
+            "head": {
+                "ref": "agent/floorp-plan-t20-live-executor",
+                "sha": head,
+                "repo": {"url": repository_url},
+            },
+            "number": 106,
+            "url": f"{repository_url}/pulls/106",
+        }
         check_specs = [
             ("Validate workflows", "pass", "SUCCESS", "success", 2001),
             ("Build and unit test", "pass", "SUCCESS", "success", 2002),
@@ -117,7 +128,7 @@ class MergeAdmissionTests(unittest.TestCase):
                             "head_sha": head,
                             "status": "completed",
                             "conclusion": conclusion,
-                            "pull_requests": [{"number": 106}],
+                            "pull_requests": [pr_association],
                         }
                         for name, _bucket, _state, conclusion, job_id in check_specs
                     ],
@@ -141,7 +152,7 @@ class MergeAdmissionTests(unittest.TestCase):
                             "head_sha": head,
                             "status": "completed",
                             "conclusion": "success",
-                            "pull_requests": [{"number": 106}],
+                            "pull_requests": [pr_association],
                         }
                     ],
                 }
@@ -230,6 +241,24 @@ class MergeAdmissionTests(unittest.TestCase):
             workflow_runs = json.loads(workflow_runs_path.read_text(encoding="utf-8"))
             workflow_runs["workflow_runs"][0]["head_branch"] = "main"
             workflow_runs_path.write_text(json.dumps(workflow_runs) + "\n", encoding="utf-8")
+            self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
+
+    def test_workflow_path_provenance_drift_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.write_inputs(Path(directory))
+            workflow_runs_path = Path(values["workflow_runs"])
+            workflow_runs = json.loads(workflow_runs_path.read_text(encoding="utf-8"))
+            workflow_runs["workflow_runs"][0]["path"] = ".github/workflows/notes-ui.yml"
+            workflow_runs_path.write_text(json.dumps(workflow_runs) + "\n", encoding="utf-8")
+            self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
+
+    def test_pull_request_association_head_drift_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.write_inputs(Path(directory))
+            check_runs_path = Path(values["check_runs"])
+            check_runs = json.loads(check_runs_path.read_text(encoding="utf-8"))
+            check_runs["check_runs"][0]["pull_requests"][0]["head"]["sha"] = "9" * 40
+            check_runs_path.write_text(json.dumps(check_runs) + "\n", encoding="utf-8")
             self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
 
     def test_owner_head_drift_is_fail_closed(self) -> None:

@@ -22,6 +22,7 @@ REPOSITORY = "Floorp-Projects/floorp-ios"
 MERGE_RESPONSE_SOURCE = "github-api-put-merge-executor"
 WORKFLOW_SOURCE = "protected-guarded-merge-workflow"
 WORKFLOW_PATH = ".github/workflows/ci.yml"
+BASE_BRANCH = "main"
 HEAD_BRANCH = "agent/floorp-plan-t20-live-executor"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -152,12 +153,13 @@ def validate(
     require_sha(expected_head_sha, SHA1, "expected head SHA")
     require_sha(expected_merged_oid, SHA1, "expected merged OID")
     admission_fields = {
-        "admin_bypass_used", "checks_count", "checks_sha256", "head_sha", "native_github_approval",
+        "admin_bypass_used", "base_oid", "base_ref_name", "checks_count", "checks_sha256", "head_ref_name", "head_sha", "native_github_approval",
         "operator_id", "owner_review_sha256", "plan_binding_sha256", "pr_number", "repository",
         "schema_version", "status", "subagent_review_commit_sha", "subagent_review_sha256", "terminal_ci",
     }
     if set(admission) != admission_fields:
         raise GuardedMergeArtifactError("merge admission receipt fields are not exact")
+    require_sha(admission["base_oid"], SHA1, "admission base OID")
     for value, label in (
         (admission["checks_sha256"], "admission checks digest"),
         (admission["owner_review_sha256"], "admission owner digest"),
@@ -171,6 +173,8 @@ def validate(
         or admission["repository"] != REPOSITORY
         or not isinstance(admission["pr_number"], int)
         or admission["pr_number"] <= 0
+        or admission["base_ref_name"] != BASE_BRANCH
+        or admission["head_ref_name"] != HEAD_BRANCH
         or admission["head_sha"] != expected_head_sha
         or admission["admin_bypass_used"] is not False
         or admission["native_github_approval"] is not False
