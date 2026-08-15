@@ -169,7 +169,7 @@ def validate(
 ) -> None:
     expected = {
         "accounts", "admin_bypass_used", "amendment_sha256", "base_oid", "cleanup",
-        "bypass_requested", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
+        "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
         "cleanup_receipt_sha256", "combined_plan_hash", "diff_sha256",
         "contract_sha256", "evidence_manifest_sha256", "environment", "event", "event_sha256",
         "head_sha", "desktop_sha", "independence", "local_test_accounts_accessed",
@@ -226,6 +226,7 @@ def validate(
         or not SHA1.fullmatch(value["base_oid"])
         or not SHA1.fullmatch(value["desktop_sha"])
         or not SHA1.fullmatch(value["merged_oid"])
+        or not SHA1.fullmatch(value["merge_audit_commit_sha"])
         or not SHA1.fullmatch(value["subagent_review_commit_sha"])
         or not SHA1.fullmatch(merged_oid)
         or value["merged_oid"] != merged_oid
@@ -278,7 +279,7 @@ def validate(
     receipt = load_review_receipt(review_receipt)
     receipt_fields = (
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
-        "bypass_requested", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
+        "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
         "contract_sha256", "diff_sha256", "environment", "head_sha", "independence",
         "desktop_sha",
         "local_test_accounts_accessed", "merged_oid", "native_github_approval",

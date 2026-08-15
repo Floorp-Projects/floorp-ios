@@ -565,7 +565,7 @@ jobs:
       # read-only GitHub PR/ruleset API, checked-in contract/binding, and
       # protected Environment review artifacts.
       FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
-      FLOORP_TODO20_MERGE_AUDIT_JSON: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_JSON }}
+      FLOORP_TODO20_MERGE_AUDIT_COMMIT: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_COMMIT }}
       FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
 
     steps:
@@ -591,7 +591,7 @@ jobs:
           install -d -m 700 "$qa_root"
           test -n "$FLOORP_TODO20_PR_NUMBER"
           test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON"
-          test -n "$FLOORP_TODO20_MERGE_AUDIT_JSON"
+          test -n "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
           test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
           curl --fail --silent --show-error --location --retry 3 \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$FLOORP_TODO20_PR_NUMBER" \
@@ -609,9 +609,11 @@ jobs:
           head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$qa_root/pr.json")"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_MERGE_AUDIT_COMMIT^{commit}"
           printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$qa_root/owner-review.json"
-          printf "%s\n" "$FLOORP_TODO20_MERGE_AUDIT_JSON" > "$qa_root/merge-audit.json"
+          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_MERGE_AUDIT_COMMIT:docs/floorp-notes-sync-todo20-merge-audit.json" > "$qa_root/merge-audit.json"
           git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" > "$qa_root/subagent-review.json"
           /usr/bin/python3 -I scripts/ci/capture-floorp-notes-sync-review-receipt.py \
             --pr-json "$qa_root/pr.json" \
@@ -625,6 +627,7 @@ jobs:
             --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
             --owner-review "$qa_root/owner-review.json" \
             --merge-audit "$qa_root/merge-audit.json" \
+            --merge-audit-commit "$FLOORP_TODO20_MERGE_AUDIT_COMMIT" \
             --subagent-review "$qa_root/subagent-review.json" \
             --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
             --pr-projection "$qa_root/pr-metadata.json" \

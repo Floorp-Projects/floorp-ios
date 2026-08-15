@@ -361,7 +361,7 @@ def validate_xcresult(path: Path) -> dict[str, Any]:
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", type=Path, required=True)
-    parser.add_argument("--xcresult", type=Path)
+    parser.add_argument("--xcresult", type=Path, required=True)
     return parser.parse_args(arguments)
 
 
@@ -369,7 +369,7 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         summary = load_and_validate(args.summary)
-        xcresult = validate_xcresult(args.xcresult) if args.xcresult is not None else None
+        xcresult = validate_xcresult(args.xcresult)
     except ProductionQAError as error:
         print(f"production QA summary rejected: {error}", file=sys.stderr)
         return 2

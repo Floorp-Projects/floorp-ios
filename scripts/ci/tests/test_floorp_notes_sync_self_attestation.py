@@ -81,6 +81,7 @@ class SelfAttestationTests(unittest.TestCase):
                     "operator_id": "operator",
                     "owner_review_receipt_sha256": "3" * 64,
                     "merge_audit_sha256": "4" * 64,
+                    "merge_audit_commit_sha": "8" * 40,
                     "merge_endpoint": "PUT /repos/Floorp-Projects/floorp-ios/pulls/106/merge",
                     "merge_response_sha256": "9" * 64,
                     "server_merge_sha": "a" * 40,

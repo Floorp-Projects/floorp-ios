@@ -61,7 +61,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         raise RuntimeError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=review_receipt_invalid_json") from error
     expected = {
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
-        "bypass_requested", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
+        "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
         "contract_sha256", "diff_sha256", "environment", "head_sha",
         "desktop_sha", "independence", "local_test_accounts_accessed", "merged_oid",
         "native_github_approval", "operator_id", "owner_review_receipt_sha256",
@@ -105,6 +105,7 @@ def load_review_receipt(path: Path, source: dict[str, Any]) -> tuple[dict[str, A
         or not SHA1.fullmatch(value["head_sha"])
         or not SHA1.fullmatch(value["desktop_sha"])
         or not SHA1.fullmatch(value["merged_oid"])
+        or not SHA1.fullmatch(value["merge_audit_commit_sha"])
         or not SHA1.fullmatch(value["subagent_review_commit_sha"])
         or not isinstance(value["subagent_review_digests"], list)
         or not value["subagent_review_digests"]
@@ -164,6 +165,7 @@ def main(arguments: list[str] | None = None) -> int:
             "accounts": 2,
             "admin_bypass_used": review["admin_bypass_used"],
             "bypass_requested": review["bypass_requested"],
+            "merge_audit_commit_sha": review["merge_audit_commit_sha"],
             "amendment_sha256": review["amendment_sha256"],
             "base_oid": review["base_oid"],
             "cleanup": {

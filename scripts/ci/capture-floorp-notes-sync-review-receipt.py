@@ -19,6 +19,8 @@ SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 AGENT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 SENSITIVE_MARKERS = ("password", "authorization", "notes_payload", "private_key", "token")
+SUBAGENT_REVIEW_PATH = "docs/floorp-notes-sync-todo20-subagent-review.json"
+MERGE_AUDIT_PATH = "docs/floorp-notes-sync-todo20-merge-audit.json"
 
 
 class ReviewReceiptError(ValueError):
@@ -72,6 +74,20 @@ def project_reviews_metadata(reviews: list[Any]) -> dict[str, Any]:
         "states": [item.get("state") if isinstance(item, dict) else None for item in reviews],
     }
     reject_sensitive(projection, "reviews metadata projection")
+    return projection
+
+
+def project_merge_metadata(pr: dict[str, Any]) -> dict[str, Any]:
+    """Project only server-observed merge facts from the PR response."""
+    projection = {
+        "base_oid": pr.get("base", {}).get("sha") if isinstance(pr.get("base"), dict) else None,
+        "head_sha": pr.get("head", {}).get("sha") if isinstance(pr.get("head"), dict) else None,
+        "merge_commit_sha": pr.get("merge_commit_sha"),
+        "merged": pr.get("merged"),
+        "merged_at": pr.get("merged_at"),
+        "pr_number": pr.get("number"),
+    }
+    reject_sensitive(projection, "merge metadata projection")
     return projection
 
 
@@ -287,7 +303,12 @@ def validate_owner_review(
         raise ReviewReceiptError("owner review is stale or incomplete")
 
 
-def validate_merge_audit(merge: dict[str, Any], pr: dict[str, Any], merged_oid: str) -> None:
+def validate_merge_audit(
+    merge: dict[str, Any],
+    pr: dict[str, Any],
+    merged_oid: str,
+    merge_response_sha256: str,
+) -> None:
     require_exact(
         merge,
         {
@@ -309,6 +330,7 @@ def validate_merge_audit(merge: dict[str, Any], pr: dict[str, Any], merged_oid: 
         or merge["admin_bypass_used"] is not False
         or merge["bypass_requested"] is not False
         or merge["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{pr['number']}/merge"
+        or merge["merge_response_sha256"] != merge_response_sha256
         or merge["server_merged"] is not True
         or merge["server_merge_sha"] != merged_oid
     ):
@@ -348,8 +370,8 @@ def validate_subagent_review(
         raise ReviewReceiptError("subagent review is stale or not a clean GO")
 
 
-def verify_immutable_subagent_commit(repository_root: Path, commit_sha: str, subagent_raw: bytes) -> None:
-    require_sha(commit_sha, SHA1, "subagent review commit")
+def verify_immutable_commit(repository_root: Path, commit_sha: str, path: str, raw: bytes, label: str) -> None:
+    require_sha(commit_sha, SHA1, f"{label} commit")
     object_check = subprocess.run(
         ["/usr/bin/git", "-C", str(repository_root), "cat-file", "-e", f"{commit_sha}^{{commit}}"],
         check=False,
@@ -357,16 +379,15 @@ def verify_immutable_subagent_commit(repository_root: Path, commit_sha: str, sub
         stderr=subprocess.DEVNULL,
     )
     if object_check.returncode != 0:
-        raise ReviewReceiptError("subagent review commit is unavailable")
-    path = "docs/floorp-notes-sync-todo20-subagent-review.json"
+        raise ReviewReceiptError(f"{label} commit is unavailable")
     content = subprocess.run(
         ["/usr/bin/git", "-C", str(repository_root), "show", f"{commit_sha}:{path}"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    if content.returncode != 0 or content.stdout != subagent_raw:
-        raise ReviewReceiptError("subagent review artifact is not bound to its immutable commit")
+    if content.returncode != 0 or content.stdout != raw:
+        raise ReviewReceiptError(f"{label} artifact is not bound to its immutable commit")
     changed = subprocess.run(
         ["/usr/bin/git", "-C", str(repository_root), "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", commit_sha],
         check=False,
@@ -375,7 +396,15 @@ def verify_immutable_subagent_commit(repository_root: Path, commit_sha: str, sub
         text=True,
     )
     if changed.returncode != 0 or changed.stdout.splitlines() != [path]:
-        raise ReviewReceiptError("subagent review commit contains unexpected files")
+        raise ReviewReceiptError(f"{label} commit contains unexpected files")
+
+
+def verify_immutable_subagent_commit(repository_root: Path, commit_sha: str, subagent_raw: bytes) -> None:
+    verify_immutable_commit(repository_root, commit_sha, SUBAGENT_REVIEW_PATH, subagent_raw, "subagent review")
+
+
+def verify_immutable_merge_audit_commit(repository_root: Path, commit_sha: str, merge_raw: bytes) -> None:
+    verify_immutable_commit(repository_root, commit_sha, MERGE_AUDIT_PATH, merge_raw, "merge audit")
 
 
 def validate_pr(pr: dict[str, Any], pr_number: int, merged_oid: str) -> None:
@@ -464,6 +493,7 @@ def build_receipt(
     diff_sha256: str,
     merged_oid: str,
     desktop_sha: str,
+    merge_audit_commit_sha: str,
     contract_sha256: str,
     binding_sha256: str,
     owner_sha256: str,
@@ -486,9 +516,11 @@ def build_receipt(
     safety = contract_safety(contract)
     validate_plan_binding(binding)
     validate_owner_review(owner, pr, binding, diff_sha256, desktop_sha)
-    validate_merge_audit(merge, pr, merged_oid)
+    merge_response_sha256 = sha256_bytes(canonical(project_merge_metadata(pr)))
+    validate_merge_audit(merge, pr, merged_oid, merge_response_sha256)
     validate_subagent_review(subagent, pr, owner, desktop_sha)
     require_sha(desktop_sha, SHA1, "Desktop commit")
+    require_sha(merge_audit_commit_sha, SHA1, "merge audit commit")
     require_sha(subagent_review_commit_sha, SHA1, "subagent review commit")
     for value, label in (
         (diff_sha256, "diff digest"),
@@ -548,6 +580,7 @@ def build_receipt(
         "subagent_review_receipt_sha256": subagent_sha256,
         "owner_review_receipt_sha256": owner_sha256,
         "merge_audit_sha256": merge_sha256,
+        "merge_audit_commit_sha": merge_audit_commit_sha,
         "two_disposable_accounts_only": safety["two_disposable_accounts_only"],
         "unresolved_blocking_findings": owner["unresolved_blocking_findings"],
     }
@@ -609,6 +642,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--plan-binding", type=Path, required=True)
     parser.add_argument("--owner-review", type=Path, required=True)
     parser.add_argument("--merge-audit", type=Path, required=True)
+    parser.add_argument("--merge-audit-commit", required=True)
     parser.add_argument("--subagent-review", type=Path, required=True)
     parser.add_argument("--subagent-review-commit", required=True)
     parser.add_argument("--pr-projection", type=Path, required=True)
@@ -637,6 +671,7 @@ def main(arguments: list[str] | None = None) -> int:
         if not isinstance(reviews, list):
             raise ReviewReceiptError("review API metadata is malformed")
         verify_immutable_subagent_commit(args.repository_root, args.subagent_review_commit, subagent_raw)
+        verify_immutable_merge_audit_commit(args.repository_root, args.merge_audit_commit, merge_raw)
         projections = (
             canonical(project_pr_metadata(pr)),
             canonical(project_reviews_metadata(reviews)),
@@ -656,6 +691,7 @@ def main(arguments: list[str] | None = None) -> int:
             diff_sha256,
             args.merged_oid,
             args.desktop_sha,
+            args.merge_audit_commit,
             sha256_bytes(contract_raw),
             sha256_bytes(binding_raw),
             sha256_bytes(owner_raw),
