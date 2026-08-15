@@ -514,3 +514,6 @@ The non-distributed enablement record is accepted only when the cleanup and
 secret-scan receipts are revalidated for the same Phase 1 run and their exact
 bytes and validator digests are recorded. Secret scans retain hashes only;
 payloads, credentials, and process contents are never artifacts.
+
+Phase 2 supplies the four downloaded target paths to the scan validator, which
+recomputes each target digest before accepting the enablement record.

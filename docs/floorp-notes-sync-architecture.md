@@ -270,3 +270,6 @@ Phase 2 revalidates the exact Phase 1 cleanup and secret-scan receipt bytes,
 including their validator digests. The scan receipt contains only a fixed
 marker-set digest and target-file digests. Missing capability diagnostics use
 the repository's existing authorization or upstream-artifact blocker taxonomy.
+
+The scan validator requires all four target paths and recomputes their bytes;
+target omission is a rejection rather than a successful metadata-only scan.
