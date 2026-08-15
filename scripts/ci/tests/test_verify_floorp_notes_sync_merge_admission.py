@@ -84,14 +84,71 @@ class MergeAdmissionTests(unittest.TestCase):
             ["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"], text=True
         ).strip()
 
+        run_id = 1001
+        check_specs = [
+            ("Validate workflows", "pass", "SUCCESS", "success", 2001),
+            ("Build and unit test", "pass", "SUCCESS", "success", 2002),
+            ("Release-disabled wrapper build", "pass", "SUCCESS", "success", 2003),
+            ("Todo 20 protected OID-guarded merge and audit receipt", "skipping", "SKIPPED", "skipped", 2004),
+        ]
         checks = [
-            {"name": "Validate workflows", "state": "COMPLETED", "conclusion": "SUCCESS"},
-            {"name": "Build and unit test", "state": "COMPLETED", "conclusion": "SUCCESS"},
-            {"name": "Release-disabled wrapper build", "state": "COMPLETED", "conclusion": "SUCCESS"},
-            {"name": "Todo 20 protected OID-guarded merge and audit receipt", "state": "COMPLETED", "conclusion": "SKIPPED"},
+            {
+                "bucket": bucket,
+                "completedAt": "2026-08-15T00:00:00Z",
+                "event": "pull_request",
+                "link": f"https://github.com/Floorp-Projects/floorp-ios/actions/runs/{run_id}/job/{job_id}",
+                "name": name,
+                "state": state,
+                "workflow": "Floorp iOS CI",
+            }
+            for name, bucket, state, conclusion, job_id in check_specs
         ]
         checks_path = root / "checks.json"
         checks_path.write_text(json.dumps(checks) + "\n", encoding="utf-8")
+        check_runs_path = root / "check-runs.json"
+        check_runs_path.write_text(
+            json.dumps(
+                {
+                    "total_count": len(check_specs),
+                    "check_runs": [
+                        {
+                            "id": job_id,
+                            "name": name,
+                            "head_sha": head,
+                            "status": "completed",
+                            "conclusion": conclusion,
+                            "pull_requests": [{"number": 106}],
+                        }
+                        for name, _bucket, _state, conclusion, job_id in check_specs
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        workflow_runs_path = root / "workflow-runs.json"
+        workflow_runs_path.write_text(
+            json.dumps(
+                {
+                    "total_count": 1,
+                    "workflow_runs": [
+                        {
+                            "id": run_id,
+                            "name": "Floorp iOS CI",
+                            "path": ".github/workflows/ci.yml",
+                            "event": "pull_request",
+                            "head_branch": "agent/floorp-plan-t20-live-executor",
+                            "head_sha": head,
+                            "status": "completed",
+                            "conclusion": "success",
+                            "pull_requests": [{"number": 106}],
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         binding_path = root / "plan-binding.json"
         binding_path.write_bytes(
             ADMISSION.canonical(
@@ -109,6 +166,8 @@ class MergeAdmissionTests(unittest.TestCase):
             "owner": owner_path,
             "subagent": subagent_path,
             "checks": checks_path,
+            "check_runs": check_runs_path,
+            "workflow_runs": workflow_runs_path,
             "binding": binding_path,
             "output": output_path,
             "commit": subagent_commit,
@@ -122,6 +181,8 @@ class MergeAdmissionTests(unittest.TestCase):
             "--subagent-review", str(values["subagent"]),
             "--subagent-review-commit", str(values["commit"]),
             "--checks-json", str(values["checks"]),
+            "--check-runs-json", str(values["check_runs"]),
+            "--workflow-runs-json", str(values["workflow_runs"]),
             "--plan-binding", str(values["binding"]),
             "--pr-number", "106",
             "--expected-head-sha", str(values["head"]),
@@ -140,9 +201,35 @@ class MergeAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             values = self.write_inputs(Path(directory))
             Path(values["checks"]).write_text(
-                json.dumps([{"name": "Build and unit test", "state": "IN_PROGRESS", "conclusion": None}]) + "\n",
+                json.dumps([{
+                    "bucket": "pending",
+                    "completedAt": "0001-01-01T00:00:00Z",
+                    "event": "pull_request",
+                    "link": "https://github.com/Floorp-Projects/floorp-ios/actions/runs/1001/job/2002",
+                    "name": "Build and unit test",
+                    "state": "IN_PROGRESS",
+                    "workflow": "Floorp iOS CI",
+                }]) + "\n",
                 encoding="utf-8",
             )
+            self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
+
+    def test_check_run_head_drift_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.write_inputs(Path(directory))
+            check_runs_path = Path(values["check_runs"])
+            check_runs = json.loads(check_runs_path.read_text(encoding="utf-8"))
+            check_runs["check_runs"][0]["head_sha"] = "9" * 40
+            check_runs_path.write_text(json.dumps(check_runs) + "\n", encoding="utf-8")
+            self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
+
+    def test_workflow_branch_provenance_drift_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.write_inputs(Path(directory))
+            workflow_runs_path = Path(values["workflow_runs"])
+            workflow_runs = json.loads(workflow_runs_path.read_text(encoding="utf-8"))
+            workflow_runs["workflow_runs"][0]["head_branch"] = "main"
+            workflow_runs_path.write_text(json.dumps(workflow_runs) + "\n", encoding="utf-8")
             self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
 
     def test_owner_head_drift_is_fail_closed(self) -> None:

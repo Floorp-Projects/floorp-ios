@@ -625,7 +625,13 @@ jobs:
           printf '%s\n' "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$root/owner-review.json"
           /opt/homebrew/bin/gh pr checks "$FLOORP_TODO20_PR_NUMBER" \
             --repo Floorp-Projects/floorp-ios \
-            --json name,state,conclusion > "$root/checks.json"
+            --json name,bucket,state,completedAt,event,workflow,link > "$root/checks.json"
+          /opt/homebrew/bin/gh api \
+            "repos/Floorp-Projects/floorp-ios/commits/$FLOORP_TODO20_EXPECTED_HEAD_SHA/check-runs?per_page=100" \
+            > "$root/check-runs.json"
+          /opt/homebrew/bin/gh api \
+            "repos/Floorp-Projects/floorp-ios/actions/runs?head_sha=$FLOORP_TODO20_EXPECTED_HEAD_SHA&per_page=100" \
+            > "$root/workflow-runs.json"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
           git -C "$GITHUB_WORKSPACE" show \
@@ -637,6 +643,8 @@ jobs:
             --subagent-review "$root/subagent-review.json" \
             --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
             --checks-json "$root/checks.json" \
+            --check-runs-json "$root/check-runs.json" \
+            --workflow-runs-json "$root/workflow-runs.json" \
             --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
             --pr-number "$FLOORP_TODO20_PR_NUMBER" \
             --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \

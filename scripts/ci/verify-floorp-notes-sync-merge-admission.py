@@ -25,6 +25,8 @@ SUBAGENT_REVIEW_PATH = "docs/floorp-notes-sync-todo20-subagent-review.json"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 AGENT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+RUN_JOB_LINK = re.compile(r"/actions/runs/(?P<run_id>[0-9]+)/job/(?P<job_id>[0-9]+)(?:$|[?#])")
+EXPECTED_BRANCH = "agent/floorp-plan-t20-live-executor"
 REQUIRED_CHECKS = {"Validate workflows", "Build and unit test", "Release-disabled wrapper build"}
 
 
@@ -176,26 +178,120 @@ def validate_subagent(subagent: dict[str, Any], pr_number: int, expected_head_sh
         raise MergeAdmissionError("subagent review is not an exact-head independent GO")
 
 
-def validate_checks(checks: Any) -> int:
+def collection(value: Any, key: str, label: str) -> list[dict[str, Any]]:
+    pages = value if isinstance(value, list) else [value]
+    rows: list[dict[str, Any]] = []
+    for page in pages:
+        if not isinstance(page, dict) or not isinstance(page.get(key), list):
+            raise MergeAdmissionError(f"{label} is malformed")
+        rows.extend(page[key])
+    if not rows or not all(isinstance(row, dict) for row in rows):
+        raise MergeAdmissionError(f"{label} is empty or malformed")
+    return rows
+
+
+def require_pull_request(rows: Any, pr_number: int, label: str) -> None:
+    if not isinstance(rows, list) or not any(
+        isinstance(row, dict) and row.get("number") == pr_number for row in rows
+    ):
+        raise MergeAdmissionError(f"{label} is not bound to PR {pr_number}")
+
+
+def validate_checks(
+    checks: Any,
+    check_runs_payload: Any,
+    workflow_runs_payload: Any,
+    pr_number: int,
+    expected_head_sha: str,
+) -> int:
     if not isinstance(checks, list) or not checks:
         raise MergeAdmissionError("GitHub check response is empty or malformed")
+    check_runs = collection(check_runs_payload, "check_runs", "GitHub check-runs response")
+    workflow_runs = collection(workflow_runs_payload, "workflow_runs", "GitHub workflow-runs response")
+    check_runs_by_id: dict[str, dict[str, Any]] = {}
+    for check_run in check_runs:
+        check_run_id = check_run.get("id")
+        if not isinstance(check_run_id, int) or check_run_id <= 0:
+            raise MergeAdmissionError("GitHub check-run id is invalid")
+        key = str(check_run_id)
+        if key in check_runs_by_id:
+            raise MergeAdmissionError("GitHub check-run ids are duplicated")
+        check_runs_by_id[key] = check_run
+        if check_run.get("head_sha") != expected_head_sha:
+            raise MergeAdmissionError("GitHub check-run head SHA is not exact")
+
+    workflow_runs_by_id: dict[str, dict[str, Any]] = {}
+    for workflow_run in workflow_runs:
+        workflow_run_id = workflow_run.get("id")
+        if not isinstance(workflow_run_id, int) or workflow_run_id <= 0:
+            raise MergeAdmissionError("GitHub workflow-run id is invalid")
+        key = str(workflow_run_id)
+        if key in workflow_runs_by_id:
+            raise MergeAdmissionError("GitHub workflow-run ids are duplicated")
+        workflow_runs_by_id[key] = workflow_run
+        if workflow_run.get("head_sha") != expected_head_sha:
+            raise MergeAdmissionError("GitHub workflow-run head SHA is not exact")
+
     names: set[str] = set()
+    referenced_workflow_run_ids: set[str] = set()
     for check in checks:
         if not isinstance(check, dict) or not isinstance(check.get("name"), str):
             raise MergeAdmissionError("GitHub check response contains malformed rows")
         name = check["name"]
         names.add(name)
+        if check.get("event") != "pull_request" or not isinstance(check.get("workflow"), str):
+            raise MergeAdmissionError(f"GitHub check provenance is invalid: {name}")
+        completed_at = check.get("completedAt")
+        if not isinstance(completed_at, str) or completed_at.startswith("0001-"):
+            raise MergeAdmissionError(f"GitHub check is not terminal: {name}")
+        link = check.get("link")
+        if not isinstance(link, str):
+            raise MergeAdmissionError(f"GitHub check link is missing: {name}")
+        link_match = RUN_JOB_LINK.search(link)
+        if link_match is None:
+            raise MergeAdmissionError(f"GitHub check link is not an Actions job: {name}")
+        run_id = link_match.group("run_id")
+        job_id = link_match.group("job_id")
+        check_run = check_runs_by_id.get(job_id)
+        if check_run is None or check_run.get("name") != name:
+            raise MergeAdmissionError(f"GitHub check is not bound to its check-run: {name}")
+        if check_run.get("head_sha") != expected_head_sha:
+            raise MergeAdmissionError(f"GitHub check-run head SHA is not exact: {name}")
+        if check_run.get("status") != "completed":
+            raise MergeAdmissionError(f"GitHub check-run is not completed: {name}")
+        require_pull_request(check_run.get("pull_requests"), pr_number, f"GitHub check-run {name}")
+        workflow_run = workflow_runs_by_id.get(run_id)
+        if workflow_run is None:
+            raise MergeAdmissionError(f"GitHub workflow-run is missing: {name}")
+        referenced_workflow_run_ids.add(run_id)
+        workflow_path = workflow_run.get("path")
+        if (
+            workflow_run.get("name") != check["workflow"]
+            or not isinstance(workflow_path, str)
+            or not workflow_path.startswith(".github/workflows/")
+            or not workflow_path.endswith((".yml", ".yaml"))
+            or workflow_run.get("event") != "pull_request"
+            or workflow_run.get("head_branch") != EXPECTED_BRANCH
+            or workflow_run.get("head_sha") != expected_head_sha
+            or workflow_run.get("status") != "completed"
+            or workflow_run.get("conclusion") != "success"
+        ):
+            raise MergeAdmissionError(f"GitHub workflow provenance is not exact: {name}")
+        require_pull_request(workflow_run.get("pull_requests"), pr_number, f"GitHub workflow-run {name}")
         state = str(check.get("state", "")).upper()
-        conclusion = str(check.get("conclusion", "")).upper()
-        if state == "COMPLETED" and conclusion == "SUCCESS":
+        bucket = check.get("bucket")
+        check_conclusion = str(check_run.get("conclusion", "")).lower()
+        if bucket == "pass" and state == "SUCCESS" and check_conclusion == "success":
             continue
-        if state == "COMPLETED" and conclusion == "SKIPPED" and (
+        if bucket == "skipping" and state == "SKIPPED" and check_conclusion == "skipped" and (
             name.startswith("Todo 20 ") or name.startswith("Protected Notes Sync")
         ):
             continue
         raise MergeAdmissionError(f"GitHub check is not terminal success: {name}")
     if not REQUIRED_CHECKS.issubset(names):
         raise MergeAdmissionError("required terminal CI checks are missing")
+    if not referenced_workflow_run_ids:
+        raise MergeAdmissionError("GitHub workflow provenance is empty")
     return len(checks)
 
 
@@ -214,6 +310,8 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--subagent-review", type=Path, required=True)
     parser.add_argument("--subagent-review-commit", required=True)
     parser.add_argument("--checks-json", type=Path, required=True)
+    parser.add_argument("--check-runs-json", type=Path, required=True)
+    parser.add_argument("--workflow-runs-json", type=Path, required=True)
     parser.add_argument("--plan-binding", type=Path, required=True)
     parser.add_argument("--pr-number", type=int, required=True)
     parser.add_argument("--expected-head-sha", required=True)
@@ -230,10 +328,18 @@ def main(arguments: list[str] | None = None) -> int:
         owner, owner_raw = load_canonical(args.owner_review, "owner review")
         subagent, subagent_raw = load_canonical(args.subagent_review, "subagent review")
         checks, checks_raw = load_json(args.checks_json, "GitHub checks")
+        check_runs, check_runs_raw = load_json(args.check_runs_json, "GitHub check-runs")
+        workflow_runs, workflow_runs_raw = load_json(args.workflow_runs_json, "GitHub workflow-runs")
         binding, binding_raw = load_canonical(args.plan_binding, "plan binding")
         validate_owner(owner, args.pr_number, args.expected_head_sha)
         validate_subagent(subagent, args.pr_number, args.expected_head_sha)
-        check_count = validate_checks(checks)
+        check_count = validate_checks(
+            checks,
+            check_runs,
+            workflow_runs,
+            args.pr_number,
+            args.expected_head_sha,
+        )
         validate_plan_binding(binding)
         if (
             owner["plan_sha256"] != binding["plan_sha256"]
@@ -245,7 +351,9 @@ def main(arguments: list[str] | None = None) -> int:
         receipt = {
             "admin_bypass_used": False,
             "checks_count": check_count,
-            "checks_sha256": sha256(checks_raw),
+            # The legacy field now binds the complete read-only check provenance
+            # bundle, not only the gh-pr-checks projection.
+            "checks_sha256": sha256(checks_raw + check_runs_raw + workflow_runs_raw),
             "head_sha": args.expected_head_sha,
             "native_github_approval": False,
             "operator_id": owner["operator_id"],
