@@ -144,8 +144,10 @@ class FloorpNotesSyncT20RescopeContractTests(unittest.TestCase):
         self.assertIn("floorp_notes_sync_account_b_password", serialized)
         self.assertNotIn("validate external g5 driver prerequisites contract", serialized)
         self.assertNotIn("dedicated-g5-runner", serialized)
-        self.assertIn("verify client-pair cleanup receipt", serialized)
+        self.assertIn("validate live production-qa summary and cleanup receipt", serialized)
         self.assertIn("record-floorp-notes-sync-secret-scan.py", serialized)
+        self.assertIn("record-floorp-notes-sync-self-attestation.py", serialized)
+        self.assertIn("validate-floorp-notes-sync-self-attestation.py", json.dumps(self.workflow, sort_keys=True).lower())
 
         enablement = self.jobs["notes-sync-production-enablement"]
         self.assertEqual(enablement["needs"], "notes-sync-production-qa")

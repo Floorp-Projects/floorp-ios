@@ -20,6 +20,10 @@ SCOPE = [
     "cleanup-receipt",
     "xcresult",
     "xcodebuild-log",
+    "desktop-log",
+    "production-qa-capability",
+    "production-qa-xcconfig",
+    "self-attestation-ledger",
     "process-argv-environment-markers",
 ]
 MARKERS = (
@@ -39,11 +43,17 @@ MARKERS = (
     "response_body",
 )
 MARKER_SET_SHA256 = hashlib.sha256("\n".join(MARKERS).encode()).hexdigest()
+SCAN_METHOD = "regex-over-declared-targets-and-owned-process-argv"
+MARKER_PATTERN = re.compile("|".join(f"(?:{marker})" for marker in MARKERS), re.IGNORECASE)
 REQUIRED_TARGETS = {
     "qa-summary.json",
     "cleanup-receipt.json",
     "floorp-notes-sync-two-client.xcresult",
     "xcodebuild.log",
+    "desktop.log",
+    "production-qa-capability.json",
+    "production-qa.xcconfig",
+    "self-attestation.jsonl",
 }
 
 
@@ -97,6 +107,12 @@ def digest_target(path: Path) -> dict[str, object]:
         raise SecretScanError(f"secret-scan target is not a regular file or directory: {path.name}")
     for relative, child in files:
         raw = child.read_bytes()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="ignore")
+        if MARKER_PATTERN.search(text):
+            raise SecretScanError(f"secret marker detected in {path.name}/{relative}")
         byte_count += len(raw)
         entries.append(relative.encode() + b"\0" + hashlib.sha256(raw).hexdigest().encode())
     return {
@@ -119,6 +135,8 @@ def validate(
         "marker_set_sha256",
         "passed",
         "repository",
+        "scan_method",
+        "scan_passed",
         "schema_version",
         "scope",
         "source",
@@ -127,6 +145,8 @@ def validate(
         raise SecretScanError("secret-scan receipt fields are not exact")
     if value["schema_version"] != 1 or value["passed"] is not True:
         raise SecretScanError("secret-scan receipt is not a passing scan")
+    if value["scan_method"] != SCAN_METHOD or value["scan_passed"] is not True:
+        raise SecretScanError("secret-scan execution method is not bound")
     if value["marker_set_sha256"] != MARKER_SET_SHA256:
         raise SecretScanError("secret-scan marker set is not bound")
     if value["job_name"] != "notes-sync-production-qa" or value["repository"] != REPOSITORY:

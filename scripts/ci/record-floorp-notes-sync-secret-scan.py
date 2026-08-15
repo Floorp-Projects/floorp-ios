@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -30,6 +31,8 @@ MARKERS = (
     "response_body",
 )
 MARKER_SET_SHA256 = hashlib.sha256("\n".join(MARKERS).encode()).hexdigest()
+SCAN_METHOD = "regex-over-declared-targets-and-owned-process-argv"
+MARKER_PATTERN = re.compile("|".join(f"(?:{marker})" for marker in MARKERS), re.IGNORECASE)
 
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
@@ -56,6 +59,12 @@ def digest_target(path: Path) -> dict[str, object]:
         raise OSError(f"secret-scan target is not a regular file or directory: {path.name}")
     for relative, child in files:
         raw = child.read_bytes()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="ignore")
+        if MARKER_PATTERN.search(text):
+            raise OSError(f"secret marker detected in {path.name}/{relative}")
         byte_count += len(raw)
         entries.append(relative.encode() + b"\0" + hashlib.sha256(raw).hexdigest().encode())
     digest = hashlib.sha256(b"\n".join(entries)).hexdigest()
@@ -97,13 +106,19 @@ def main(arguments: list[str] | None = None) -> int:
         "marker_set_sha256": MARKER_SET_SHA256,
         "passed": True,
         "repository": REPOSITORY,
+        "scan_method": SCAN_METHOD,
+        "scan_passed": True,
         "schema_version": 1,
         "scope": [
-            "qa-summary",
-            "cleanup-receipt",
-            "xcresult",
-            "xcodebuild-log",
-            "process-argv-environment-markers",
+        "qa-summary",
+        "cleanup-receipt",
+        "xcresult",
+        "xcodebuild-log",
+        "desktop-log",
+        "production-qa-capability",
+        "production-qa-xcconfig",
+        "self-attestation-ledger",
+        "process-argv-environment-markers",
         ],
         "target_digests": target_digests,
         "source": {

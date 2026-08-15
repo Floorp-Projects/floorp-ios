@@ -81,12 +81,18 @@ def secret_scan_receipt() -> dict[str, Any]:
         "marker_set_sha256": CREATE.SECRET_SCAN.MARKER_SET_SHA256,
         "passed": True,
         "repository": QA.REPOSITORY,
+        "scan_method": CREATE.SECRET_SCAN.SCAN_METHOD,
+        "scan_passed": True,
         "schema_version": 1,
         "scope": [
             "qa-summary",
             "cleanup-receipt",
             "xcresult",
             "xcodebuild-log",
+            "desktop-log",
+            "production-qa-capability",
+            "production-qa-xcconfig",
+            "self-attestation-ledger",
             "process-argv-environment-markers",
         ],
         "target_digests": [
@@ -96,6 +102,10 @@ def secret_scan_receipt() -> dict[str, Any]:
                 "cleanup-receipt.json",
                 "floorp-notes-sync-two-client.xcresult",
                 "xcodebuild.log",
+                "desktop.log",
+                "production-qa-capability.json",
+                "production-qa.xcconfig",
+                "self-attestation.jsonl",
             )
         ],
         "source": {
@@ -131,10 +141,14 @@ def scan_targets(root: Path) -> list[Path]:
         root / "cleanup-receipt.json",
         root / "floorp-notes-sync-two-client.xcresult",
         root / "xcodebuild.log",
+        root / "desktop.log",
+        root / "production-qa-capability.json",
+        root / "production-qa.xcconfig",
+        root / "self-attestation.jsonl",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text("safe\n")
-    for target in (*targets[:2], targets[3]):
+    for target in (*targets[:2], *targets[3:]):
         target.write_text("safe\n")
     return targets
 
@@ -187,6 +201,14 @@ class CreateProductionEnablementTests(unittest.TestCase):
                             str(targets[2]),
                             "--secret-scan-target",
                             str(targets[3]),
+                            "--secret-scan-target",
+                            str(targets[4]),
+                            "--secret-scan-target",
+                            str(targets[5]),
+                            "--secret-scan-target",
+                            str(targets[6]),
+                            "--secret-scan-target",
+                            str(targets[7]),
                             "--output",
                             str(output),
                         ]
@@ -235,6 +257,14 @@ class CreateProductionEnablementTests(unittest.TestCase):
                             str(targets[2]),
                             "--secret-scan-target",
                             str(targets[3]),
+                            "--secret-scan-target",
+                            str(targets[4]),
+                            "--secret-scan-target",
+                            str(targets[5]),
+                            "--secret-scan-target",
+                            str(targets[6]),
+                            "--secret-scan-target",
+                            str(targets[7]),
                             "--output",
                             str(output),
                         ]

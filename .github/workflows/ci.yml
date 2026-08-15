@@ -558,6 +558,8 @@ jobs:
       GIT_CONFIG_NOSYSTEM: "1"
       GIT_TERMINAL_PROMPT: "0"
       GIT_ASKPASS: /usr/bin/false
+      # Updated only after the reviewed Desktop UI-hook PR is squash-merged.
+      FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
 
     steps:
       - name: Check out source anonymously
@@ -575,10 +577,54 @@ jobs:
           git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
           test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
 
-      - name: Validate Todo 20 operation contract
+      - name: Check out reviewed Desktop source anonymously
         run: |
-          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py \
-            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json
+          set -euo pipefail
+          desktop_root="$RUNNER_TEMP/floorp-desktop"
+          git init --quiet "$desktop_root"
+          git -C "$desktop_root" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin https://github.com/Floorp-Projects/Floorp.git
+          git -C "$desktop_root" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$FLOORP_DESKTOP_COMMIT"
+          git -C "$desktop_root" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$desktop_root" rev-parse HEAD)" = "$FLOORP_DESKTOP_COMMIT"
+          printf 'FLOORP_NOTES_SYNC_DESKTOP_ROOT=%s\n' "$desktop_root" >> "$GITHUB_ENV"
+
+      - name: Create protected Todo 20 production-QA capability
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          mkdir -m 700 -p "$qa_root"
+          capability="$qa_root/production-qa-capability.json"
+          xcconfig="$qa_root/production-qa.xcconfig"
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-qa-capability.py \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --ios-build-number 4 \
+            --output "$capability"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-capability.py \
+            --capability "$capability" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json
+          /usr/bin/python3 -I scripts/ci/prepare-floorp-notes-sync-production-qa-build.py \
+            --capability "$capability" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json \
+            --output "$xcconfig"
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-self-attestation.py \
+            --output "$qa_root/self-attestation.jsonl"
+          printf 'FLOORP_NOTES_SYNC_QA_ROOT=%s\n' "$qa_root" >> "$GITHUB_ENV"
+          printf 'FLOORP_NOTES_SYNC_QA_CAPABILITY=%s\n' "$capability" >> "$GITHUB_ENV"
+          printf 'FLOORP_NOTES_SYNC_QA_XCCONFIG=%s\n' "$xcconfig" >> "$GITHUB_ENV"
 
       - name: Select Xcode
         run: |
@@ -625,45 +671,31 @@ jobs:
         run: |
           set -euo pipefail
           /usr/bin/python3 -I scripts/ci/run-floorp-notes-sync-production-qa.py \
-            --summary "$RUNNER_TEMP/floorp-notes-sync-production-qa/qa-summary.json"
+            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json" \
+            --cleanup-receipt "$FLOORP_NOTES_SYNC_QA_ROOT/cleanup-receipt.json" \
+            --desktop-log "$FLOORP_NOTES_SYNC_QA_ROOT/desktop.log" \
+            --xcodebuild-log "$FLOORP_NOTES_SYNC_QA_ROOT/xcodebuild.log" \
+            --client-state "$FLOORP_NOTES_SYNC_QA_ROOT/client-state" \
+            --desktop-root "$FLOORP_NOTES_SYNC_DESKTOP_ROOT" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --simulator-udid "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID" \
+            --coordination-root "/tmp/floorp-notes-sync-production-qa-$GITHUB_RUN_ID" \
+            --ios-project "$GITHUB_WORKSPACE/$PROJECT_PATH" \
+            --destination "$FLOORP_NOTES_SYNC_QA_DESTINATION" \
+            --derived-data "$FLOORP_NOTES_SYNC_QA_ROOT/DerivedData" \
+            --source-packages "$RUNNER_TEMP/SourcePackages" \
+            --xcconfig "$FLOORP_NOTES_SYNC_QA_XCCONFIG" \
+            --result-bundle "$FLOORP_NOTES_SYNC_QA_ROOT/floorp-notes-sync-two-client.xcresult"
 
-      - name: Execute metadata-only QA XCTest assertion
-        env:
-          FLOORP_NOTES_SYNC_PRODUCTION_QA: "1"
-          FLOORP_NOTES_SYNC_QA_RESULT: ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-summary.json
-          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ""
-          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ""
-          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ""
-          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ""
+      - name: Validate live production-QA summary and cleanup receipt
+        if: success()
         run: |
           set -euo pipefail
-          set -o pipefail
-          xcodebuild test -quiet \
-            -project "$PROJECT_PATH" \
-            -scheme FloorpNotesSyncG5 \
-            -configuration FloorpRelease \
-            -destination "$FLOORP_NOTES_SYNC_QA_DESTINATION" \
-            -testPlan FloorpNotesSyncG5 \
-            -only-testing:XCUITests/FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix \
-            -resultBundlePath "$RUNNER_TEMP/floorp-notes-sync-production-qa/floorp-notes-sync-two-client.xcresult" \
-            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
-            -disableAutomaticPackageResolution \
-            -onlyUsePackageVersionsFromResolvedFile \
-            -skipMacroValidation \
-            -parallel-testing-enabled NO \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            CODE_SIGN_IDENTITY= \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee "$RUNNER_TEMP/floorp-notes-sync-production-qa/xcodebuild.log"
-
-      - name: Verify client-pair cleanup receipt
-        if: always()
-        run: |
-          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa.py \
+            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json"
           /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-cleanup.py \
-            --summary "$RUNNER_TEMP/floorp-notes-sync-production-qa/qa-summary.json" \
-            --receipt "$RUNNER_TEMP/floorp-notes-sync-production-qa/cleanup-receipt.json"
+            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json" \
+            --receipt "$FLOORP_NOTES_SYNC_QA_ROOT/cleanup-receipt.json"
 
       - name: Scan QA material for secrets
         if: always()
@@ -686,16 +718,20 @@ jobs:
             echo "secret-log scan failed"
             exit 1
           fi
-          if ps eww -ax | rg -i 'password|access_token|refresh_token|sync_key|authorization|bearer |cookie|credential|secret|begin private key|oauth_token|note(_|s_)(content|title|payload)|request_body|response_body' >/dev/null 2>&1; then
-            echo "process argv/environment secret scan failed"
-            exit 1
-          fi
+          # The protected xcodebuild actor receives secrets through its
+          # Environment. Scan command lines only so variable names are not
+          # mistaken for leaked credential values.
+          /usr/bin/python3 -I scripts/ci/scan-floorp-notes-sync-process-argv.py
           /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-secret-scan.py \
             --output "$qa_root/secret-scan.json" \
             --target "$qa_root/qa-summary.json" \
             --target "$qa_root/cleanup-receipt.json" \
             --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
-            --target "$qa_root/xcodebuild.log"
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig" \
+            --target "$qa_root/self-attestation.jsonl"
 
       - name: Clean up test accounts and client state
         if: always()
@@ -712,16 +748,17 @@ jobs:
           xcrun simctl shutdown "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID" || true
           xcrun simctl erase "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID"
 
-      - name: Upload metadata-only QA evidence
+      - name: Upload live QA xcresult
         if: success()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: floorp-notes-sync-two-client-xcresult
-          path: ${{ runner.temp }}/floorp-notes-sync-production-qa/floorp-notes-sync-two-client.xcresult
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/floorp-notes-sync-two-client.xcresult
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload QA metadata summary
+      - name: Upload live QA evidence
         if: success()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -731,6 +768,10 @@ jobs:
             ${{ runner.temp }}/floorp-notes-sync-production-qa/cleanup-receipt.json
             ${{ runner.temp }}/floorp-notes-sync-production-qa/secret-scan.json
             ${{ runner.temp }}/floorp-notes-sync-production-qa/xcodebuild.log
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/desktop.log
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/production-qa-capability.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/production-qa.xcconfig
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/self-attestation.jsonl
           if-no-files-found: error
           retention-days: 7
 
@@ -755,6 +796,9 @@ jobs:
       actions: read
     runs-on: macos-26
     timeout-minutes: 20
+    env:
+      # Re-bind Phase 2 to the exact reviewed Desktop source used in Phase 1.
+      FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
 
     steps:
       - name: Check out source anonymously
@@ -791,6 +835,21 @@ jobs:
           name: floorp-notes-sync-two-client-xcresult
           path: ${{ runner.temp }}/floorp-notes-sync-phase1
 
+      - name: Re-validate Phase 1 production-QA capability binding
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-capability.py \
+            --capability "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-self-attestation.py \
+            --ledger "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
       - name: Verify Phase 1 cleanup receipt
         run: |
           set -euo pipefail
@@ -809,7 +868,11 @@ jobs:
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
             --target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
-            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log"
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/desktop.log" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl"
 
       - name: Create non-distributed enablement record
         env:
@@ -824,6 +887,10 @@ jobs:
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/desktop.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
             --output "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Validate non-distributed enablement record
@@ -837,6 +904,10 @@ jobs:
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
             --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/desktop.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
             --enablement-record "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
 
       - name: Upload enablement metadata

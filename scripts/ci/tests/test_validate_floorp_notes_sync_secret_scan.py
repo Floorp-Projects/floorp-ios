@@ -37,6 +37,8 @@ def receipt() -> dict[str, Any]:
         "marker_set_sha256": SCAN.MARKER_SET_SHA256,
         "passed": True,
         "repository": SCAN.REPOSITORY,
+        "scan_method": SCAN.SCAN_METHOD,
+        "scan_passed": True,
         "schema_version": 1,
         "scope": list(SCAN.SCOPE),
         "target_digests": [
@@ -62,10 +64,14 @@ def materialize_targets(root: Path, text: str = "safe\n") -> list[Path]:
         root / "cleanup-receipt.json",
         root / "floorp-notes-sync-two-client.xcresult",
         root / "xcodebuild.log",
+        root / "desktop.log",
+        root / "production-qa-capability.json",
+        root / "production-qa.xcconfig",
+        root / "self-attestation.jsonl",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text(text)
-    for target in (*targets[:2], targets[3]):
+    for target in (*targets[:2], *targets[3:]):
         target.write_text(text)
     return targets
 
@@ -114,6 +120,10 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                         "--target", str(targets[1]),
                         "--target", str(targets[2]),
                         "--target", str(targets[3]),
+                        "--target", str(targets[4]),
+                        "--target", str(targets[5]),
+                        "--target", str(targets[6]),
+                        "--target", str(targets[7]),
                     ]
                 ),
                 0,
@@ -126,9 +136,13 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
             cleanup = root / "cleanup-receipt.json"
             xcresult = root / "floorp-notes-sync-two-client.xcresult"
             log = root / "xcodebuild.log"
+            desktop_log = root / "desktop.log"
+            capability = root / "production-qa-capability.json"
+            xcconfig = root / "production-qa.xcconfig"
+            attestation = root / "self-attestation.jsonl"
             xcresult.mkdir()
             (xcresult / "result").write_text("safe metadata\n")
-            for path in (summary, cleanup, log):
+            for path in (summary, cleanup, log, desktop_log, capability, xcconfig, attestation):
                 path.write_text("safe metadata\n")
             output = root / "secret-scan.json"
             environment = {
@@ -146,12 +160,16 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                             "--target", str(cleanup),
                             "--target", str(xcresult),
                             "--target", str(log),
+                            "--target", str(desktop_log),
+                            "--target", str(capability),
+                            "--target", str(xcconfig),
+                            "--target", str(attestation),
                         ]
                     ),
                     0,
                 )
             value, raw = SCAN.load(output)
-            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1, [summary, cleanup, xcresult, log])
+            SCAN.validate(value, environment["GITHUB_SHA"], 123456, 1, [summary, cleanup, xcresult, log, desktop_log, capability, xcconfig, attestation])
             self.assertNotIn(b"safe metadata", raw)
 
     def test_target_digest_mismatch_is_rejected(self) -> None:
@@ -162,10 +180,14 @@ class ValidateSecretScanReceiptTests(unittest.TestCase):
                 root / "cleanup-receipt.json",
                 root / "floorp-notes-sync-two-client.xcresult",
                 root / "xcodebuild.log",
+                root / "desktop.log",
+                root / "production-qa-capability.json",
+                root / "production-qa.xcconfig",
+                root / "self-attestation.jsonl",
             ]
             targets[2].mkdir()
             (targets[2] / "result").write_text("actual\n")
-            for target in (*targets[:2], targets[3]):
+            for target in (*targets[:2], *targets[3:]):
                 target.write_text("actual\n")
             with self.assertRaises(SCAN.SecretScanError):
                 SCAN.validate(receipt(), "0123456789abcdef0123456789abcdef01234567", 123456, 1, targets)

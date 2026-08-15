@@ -75,6 +75,41 @@ def canonical(value: dict[str, Any]) -> bytes:
 
 
 class RunProductionQATests(unittest.TestCase):
+    def arguments(self, directory: str, summary_path: str) -> list[str]:
+        root = Path(directory)
+        return [
+            "--summary",
+            summary_path,
+            "--cleanup-receipt",
+            str(root / "cleanup-receipt.json"),
+            "--desktop-log",
+            str(root / "desktop.log"),
+            "--xcodebuild-log",
+            str(root / "xcodebuild.log"),
+            "--client-state",
+            str(root / "client-state"),
+            "--desktop-root",
+            str(root / "desktop"),
+            "--desktop-sha",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--simulator-udid",
+            "simulator",
+            "--coordination-root",
+            "/tmp/floorp-notes-sync-test",
+            "--ios-project",
+            str(root / "Client.xcodeproj"),
+            "--destination",
+            "platform=iOS Simulator,id=simulator",
+            "--derived-data",
+            str(root / "DerivedData"),
+            "--source-packages",
+            str(root / "SourcePackages"),
+            "--xcconfig",
+            str(root / "production-qa.xcconfig"),
+            "--result-bundle",
+            str(root / "result.xcresult"),
+        ]
+
     def environment(self) -> dict[str, str]:
         return {
             "FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL": "a",
@@ -84,6 +119,7 @@ class RunProductionQATests(unittest.TestCase):
             "GITHUB_ACTOR": "operator",
             "GITHUB_EVENT_NAME": "workflow_dispatch",
             "GITHUB_JOB": "notes-sync-production-qa",
+            "GITHUB_REF": "refs/heads/main",
             "GITHUB_REPOSITORY": QA.REPOSITORY,
             "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_RUN_ID": "123456",
@@ -93,19 +129,20 @@ class RunProductionQATests(unittest.TestCase):
 
     def test_missing_protected_secret_blocks_without_reading_a_local_account_path(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(RUN.main(["--summary", "/nonexistent/summary.json"]), 78)
+            self.assertEqual(
+                RUN.main(self.arguments("/tmp/floorp-t20-runner-test", "/nonexistent/summary.json")),
+                78,
+            )
 
-    def test_exact_runtime_binding_is_required_before_acceptance(self) -> None:
+    def test_live_desktop_checkout_is_required_before_execution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             summary_path = Path(directory) / "summary.json"
             summary_path.write_bytes(canonical(summary()))
             with patch.dict(os.environ, self.environment(), clear=False):
-                self.assertEqual(RUN.main(["--summary", str(summary_path)]), 0)
-
-            mismatched = self.environment()
-            mismatched["GITHUB_SHA"] = "fedcba9876543210fedcba9876543210fedcba98"
-            with patch.dict(os.environ, mismatched, clear=False):
-                self.assertEqual(RUN.main(["--summary", str(summary_path)]), 78)
+                self.assertEqual(
+                    RUN.main(self.arguments(directory, str(summary_path))),
+                    78,
+                )
 
 
 if __name__ == "__main__":

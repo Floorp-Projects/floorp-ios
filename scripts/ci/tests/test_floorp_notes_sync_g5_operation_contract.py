@@ -197,11 +197,12 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
     def test_qa_job_requires_phase_one_before_enablement_and_cleans_up(self) -> None:
         job = self.jobs[JOB_ID]
         names = [step["name"] for step in job["steps"]]
-        self.assertIn("Validate Todo 20 operation contract", names)
+        self.assertIn("Create protected Todo 20 production-QA capability", names)
         self.assertIn("Run protected two-client integrity QA", names)
         self.assertIn("Scan QA material for secrets", names)
         self.assertIn("Clean up test accounts and client state", names)
-        self.assertIn("Upload metadata-only QA evidence", names)
+        self.assertIn("Upload live QA evidence", names)
+        self.assertNotIn("Validate Todo 20 operation contract", names)
         self.assertNotIn(CANONICAL_ARTIFACT, json.dumps(self.jobs["build-and-test"], sort_keys=True))
 
 

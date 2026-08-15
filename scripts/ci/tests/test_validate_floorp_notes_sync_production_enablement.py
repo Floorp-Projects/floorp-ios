@@ -97,6 +97,8 @@ def secret_scan_receipt() -> dict[str, Any]:
         "marker_set_sha256": ENABLEMENT.SECRET_SCAN.MARKER_SET_SHA256,
         "passed": True,
         "repository": QA.REPOSITORY,
+        "scan_method": ENABLEMENT.SECRET_SCAN.SCAN_METHOD,
+        "scan_passed": True,
         "schema_version": 1,
         "scope": list(ENABLEMENT.SECRET_SCAN.SCOPE),
         "target_digests": [
@@ -118,10 +120,14 @@ def materialize_targets(root: Path) -> list[Path]:
         root / "cleanup-receipt.json",
         root / "floorp-notes-sync-two-client.xcresult",
         root / "xcodebuild.log",
+        root / "desktop.log",
+        root / "production-qa-capability.json",
+        root / "production-qa.xcconfig",
+        root / "self-attestation.jsonl",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text("safe\n")
-    for target in (*targets[:2], targets[3]):
+    for target in (*targets[:2], *targets[3:]):
         target.write_text("safe\n")
     return targets
 
@@ -217,6 +223,10 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
                         "--secret-scan-target", str(targets[1]),
                         "--secret-scan-target", str(targets[2]),
                         "--secret-scan-target", str(targets[3]),
+                        "--secret-scan-target", str(targets[4]),
+                        "--secret-scan-target", str(targets[5]),
+                        "--secret-scan-target", str(targets[6]),
+                        "--secret-scan-target", str(targets[7]),
                         "--enablement-record", str(record_path),
                     ]
                 ),
