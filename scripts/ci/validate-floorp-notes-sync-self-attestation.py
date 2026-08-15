@@ -169,7 +169,7 @@ def validate(
 ) -> None:
     expected = {
         "accounts", "admin_bypass_used", "amendment_sha256", "base_oid", "cleanup",
-        "audit_bypass_event_count", "audit_event_count", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
+        "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "operation_receipt_sha256", "server_merge_sha", "server_merged", "server_merged_at",
         "cleanup_receipt_sha256", "combined_plan_hash", "diff_sha256",
         "contract_sha256", "evidence_manifest_sha256", "environment", "event", "event_sha256",
         "head_sha", "desktop_sha", "independence", "local_test_accounts_accessed",
@@ -215,6 +215,9 @@ def validate(
         or value["audit_bypass_event_count"] != 0
         or not isinstance(value["audit_event_count"], int)
         or value["audit_event_count"] < 0
+        or not isinstance(value["audit_event_timestamp"], (int, float, str))
+        or not isinstance(value["server_merged_at"], str)
+        or not value["server_merged_at"]
         or value["bypass_requested"] is not False
         or value["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{value['pr_number']}/merge"
         or value["server_merged"] is not True
@@ -274,6 +277,8 @@ def validate(
         "reviews_projection_sha256",
         "ruleset_projection_sha256",
         "merge_response_sha256",
+        "operation_receipt_sha256",
+        "audit_event_id_sha256",
         "audit_projection_sha256",
     ):
         if not SHA256.fullmatch(value[field]):
@@ -284,7 +289,7 @@ def validate(
     receipt = load_review_receipt(review_receipt)
     receipt_fields = (
         "admin_bypass_used", "amendment_sha256", "base_oid", "combined_plan_hash",
-        "audit_bypass_event_count", "audit_event_count", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "server_merge_sha", "server_merged",
+        "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256", "audit_source", "bypass_requested", "merge_audit_commit_sha", "merge_endpoint", "merge_response_sha256", "operation_receipt_sha256", "server_merge_sha", "server_merged", "server_merged_at",
         "contract_sha256", "diff_sha256", "environment", "head_sha", "independence",
         "desktop_sha",
         "local_test_accounts_accessed", "merged_oid", "native_github_approval",

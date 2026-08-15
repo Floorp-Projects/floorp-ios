@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import re
@@ -128,6 +129,17 @@ def _audit_timestamp(event: dict[str, Any]) -> int | float | str:
     raise ReviewReceiptError("GitHub audit merge event has no timestamp")
 
 
+def _audit_event_id(event: dict[str, Any]) -> str:
+    candidates = [event.get("_document_id"), event.get("id")]
+    data = event.get("data")
+    if isinstance(data, dict):
+        candidates.append(data.get("request_id"))
+    for value in candidates:
+        if isinstance(value, (int, str)) and not isinstance(value, bool) and str(value):
+            return str(value)
+    raise ReviewReceiptError("GitHub audit merge event has no immutable event ID")
+
+
 def _is_bypass_event(event: dict[str, Any]) -> bool:
     if _audit_repository(event) != REPOSITORY:
         return False
@@ -151,6 +163,7 @@ def _audit_merge_projection(events: list[dict[str, Any]], pr_number: int) -> dic
         projections.append(
             {
                 "action": "pull_request.merge",
+                "event_id_sha256": sha256_bytes(_audit_event_id(event).encode("utf-8")),
                 "pull_request_path": expected_path,
                 "repository": REPOSITORY,
                 "timestamp": _audit_timestamp(event),
@@ -158,6 +171,24 @@ def _audit_merge_projection(events: list[dict[str, Any]], pr_number: int) -> dic
         )
     projections.sort(key=lambda value: canonical(value))
     return {"merge_events": projections}
+
+
+def _timestamp_millis(value: Any) -> int:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = int(value)
+        return number if abs(number) >= 100_000_000_000 else number * 1000
+    if isinstance(value, str):
+        if value.isdigit():
+            number = int(value)
+            return number if abs(number) >= 100_000_000_000 else number * 1000
+        try:
+            parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ReviewReceiptError("GitHub audit timestamp is invalid") from error
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return int(parsed.timestamp() * 1000)
+    raise ReviewReceiptError("GitHub audit timestamp is invalid")
 
 
 def validate_github_audit_log(
@@ -177,14 +208,21 @@ def validate_github_audit_log(
     if bypass_event_count:
         raise ReviewReceiptError("GitHub audit log reports a protected-branch bypass event")
     projection = _audit_merge_projection(events, pr["number"])
-    if not projection["merge_events"]:
-        raise ReviewReceiptError("GitHub audit log has no exact pull_request.merge event")
+    if len(projection["merge_events"]) != 1:
+        raise ReviewReceiptError("GitHub audit log does not contain exactly one exact pull_request.merge event")
+    audit_event = projection["merge_events"][0]
+    if merge.get("server_merged_at") != pr.get("merged_at"):
+        raise ReviewReceiptError("merge audit server merged_at is not bound to the current PR")
+    if abs(_timestamp_millis(audit_event["timestamp"]) - _timestamp_millis(pr["merged_at"])) > 15 * 60 * 1000:
+        raise ReviewReceiptError("GitHub audit merge event is not contemporaneous with the current PR merge")
     audit_projection_sha256 = sha256_bytes(canonical(projection))
     if (
         merge.get("audit_source") != "github-org-audit-log"
         or merge.get("audit_projection_sha256") != audit_projection_sha256
         or merge.get("audit_event_count") != len(projection["merge_events"])
         or merge.get("audit_bypass_event_count") != bypass_event_count
+        or merge.get("audit_event_id_sha256") != audit_event["event_id_sha256"]
+        or merge.get("audit_event_timestamp") != audit_event["timestamp"]
         or merge.get("repository") != REPOSITORY
         or merge.get("pr_number") != pr["number"]
         or merge.get("merged_oid") != merged_oid
@@ -414,10 +452,11 @@ def validate_merge_audit(
         merge,
         {
             "admin_bypass_used", "base_oid", "bypass_requested", "head_sha", "merge_endpoint",
-            "audit_bypass_event_count", "audit_event_count", "audit_projection_sha256", "audit_source",
+            "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp",
+            "audit_projection_sha256", "audit_source",
             "merge_method", "merge_response", "merge_response_sha256", "merge_response_source",
-            "merged_oid", "oid_guarded", "pr_number", "repository",
-            "schema_version", "server_merge_sha", "server_merged",
+            "merged_oid", "oid_guarded", "operation_receipt_sha256", "pr_number", "repository",
+            "schema_version", "server_merge_sha", "server_merged", "server_merged_at",
         },
         "merge audit",
     )
@@ -433,10 +472,13 @@ def validate_merge_audit(
         or merge["admin_bypass_used"] is not False
         or merge["bypass_requested"] is not False
         or merge["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{pr['number']}/merge"
-        or merge["merge_response_source"] != "github-api-put-merge"
+        or merge["merge_response_source"] != "github-api-put-merge-executor"
         or merge["merge_response"] != {"merged": True, "sha": merged_oid}
         or merge["server_merged"] is not True
         or merge["server_merge_sha"] != merged_oid
+        or merge["server_merged_at"] != pr.get("merged_at")
+        or not isinstance(merge["server_merged_at"], str)
+        or not merge["server_merged_at"]
     ):
         raise ReviewReceiptError("merge audit is not bound to the guarded squash merge")
     require_exact(merge["merge_response"], {"merged", "sha"}, "merge response projection")
@@ -445,6 +487,8 @@ def validate_merge_audit(
     if merge["merge_response_sha256"] != sha256_bytes(canonical(merge["merge_response"])):
         raise ReviewReceiptError("merge response digest is not bound to the actual PUT response projection")
     require_sha(merge["merge_response_sha256"], SHA256, "merge response digest")
+    require_sha(merge["operation_receipt_sha256"], SHA256, "merge operation receipt digest")
+    require_sha(merge["audit_event_id_sha256"], SHA256, "GitHub audit event ID digest")
     require_sha(merge["audit_projection_sha256"], SHA256, "GitHub audit projection digest")
     if merge["audit_bypass_event_count"] != 0:
         raise ReviewReceiptError("merge audit reports a protected-branch bypass event")
@@ -654,6 +698,8 @@ def build_receipt(
         "admin_bypass_used": merge["admin_bypass_used"],
         "audit_bypass_event_count": merge["audit_bypass_event_count"],
         "audit_event_count": merge["audit_event_count"],
+        "audit_event_id_sha256": merge["audit_event_id_sha256"],
+        "audit_event_timestamp": merge["audit_event_timestamp"],
         "audit_projection_sha256": merge["audit_projection_sha256"],
         "audit_source": merge["audit_source"],
         "amendment_sha256": binding["amendment_sha256"],
@@ -670,8 +716,10 @@ def build_receipt(
         "bypass_requested": merge["bypass_requested"],
         "merge_endpoint": merge["merge_endpoint"],
         "merge_response_sha256": merge["merge_response_sha256"],
+        "operation_receipt_sha256": merge["operation_receipt_sha256"],
         "server_merged": merge["server_merged"],
         "server_merge_sha": merge["server_merge_sha"],
+        "server_merged_at": merge["server_merged_at"],
         "native_github_approval": safety["native_github_approval"],
         "operator_id": owner["operator_id"],
         "plan_binding_sha256": binding_sha256,

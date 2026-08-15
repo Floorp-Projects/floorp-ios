@@ -1,10 +1,11 @@
 #!/usr/bin/python3 -I
 """Create the immutable metadata-only Todo 20 merge-audit artifact.
 
-The merge response input must be the exact JSON returned by the guarded
-``PUT /pulls/{number}/merge`` operation. Only its safe ``merged``/``sha``
-projection is retained. The audit input is read only to project the exact
-repository pull-request merge event and to fail closed on bypass evidence.
+The operation input must be the canonical receipt emitted by the guarded
+merge executor. The executor, rather than this command, performs the PUT and
+records its safe ``merged``/``sha`` projection. This command only binds that
+receipt to the exact repository pull-request audit event and fails closed on
+bypass evidence.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import Any
 
 REPOSITORY = "Floorp-Projects/floorp-ios"
 MERGE_AUDIT_SOURCE = "github-org-audit-log"
-MERGE_RESPONSE_SOURCE = "github-api-put-merge"
+MERGE_RESPONSE_SOURCE = "github-api-put-merge-executor"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -91,6 +92,17 @@ def event_timestamp(event: dict[str, Any]) -> int | float | str:
     raise MergeAuditError("audit merge event has no timestamp")
 
 
+def event_id(event: dict[str, Any]) -> str:
+    candidates = [event.get("_document_id"), event.get("id")]
+    data = event.get("data")
+    if isinstance(data, dict):
+        candidates.append(data.get("request_id"))
+    for value in candidates:
+        if isinstance(value, (int, str)) and not isinstance(value, bool) and str(value):
+            return str(value)
+    raise MergeAuditError("audit merge event has no immutable event ID")
+
+
 def is_bypass_event(event: dict[str, Any]) -> bool:
     if event_repository(event) != REPOSITORY:
         return False
@@ -113,6 +125,7 @@ def audit_projection(events: list[dict[str, Any]], pr_number: int) -> tuple[dict
         merge_events.append(
             {
                 "action": "pull_request.merge",
+                "event_id_sha256": sha256(event_id(event).encode("utf-8")),
                 "pull_request_path": expected_path,
                 "repository": REPOSITORY,
                 "timestamp": event_timestamp(event),
@@ -125,12 +138,8 @@ def audit_projection(events: list[dict[str, Any]], pr_number: int) -> tuple[dict
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--merge-response", type=Path, required=True)
+    parser.add_argument("--operation-receipt", type=Path, required=True)
     parser.add_argument("--audit-json", type=Path, required=True)
-    parser.add_argument("--base-oid", required=True)
-    parser.add_argument("--head-sha", required=True)
-    parser.add_argument("--merged-oid", required=True)
-    parser.add_argument("--pr-number", required=True, type=int)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(arguments)
 
@@ -138,56 +147,79 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
 def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
+        operation, operation_raw = load_json(args.operation_receipt)
+        if not isinstance(operation, dict) or operation_raw != canonical(operation):
+            raise MergeAuditError("merge operation receipt is not canonical JSON")
+        expected_operation_fields = {
+            "base_oid", "head_sha", "merge_endpoint", "merge_method", "merge_response",
+            "merge_response_sha256", "merge_response_source", "merged_oid", "oid_guarded",
+            "pr_number", "repository", "schema_version", "server_merge_sha", "server_merged",
+            "server_merged_at",
+        }
+        if set(operation) != expected_operation_fields:
+            raise MergeAuditError("merge operation receipt fields are not exact")
         for value, label in (
-            (args.base_oid, "base OID"),
-            (args.head_sha, "head SHA"),
-            (args.merged_oid, "merged OID"),
+            (operation["base_oid"], "base OID"),
+            (operation["head_sha"], "head SHA"),
+            (operation["merged_oid"], "merged OID"),
         ):
             if not SHA1.fullmatch(value):
                 raise MergeAuditError(f"{label} is invalid")
-        if args.pr_number <= 0:
-            raise MergeAuditError("PR number is invalid")
-        merge_response, _ = load_json(args.merge_response)
-        if not isinstance(merge_response, dict):
-            raise MergeAuditError("merge response is not an object")
-        merge_projection = {
-            "merged": merge_response.get("merged"),
-            "sha": merge_response.get("sha"),
-        }
-        if merge_projection != {"merged": True, "sha": args.merged_oid}:
+        if operation["schema_version"] != 1 or operation["repository"] != REPOSITORY or operation["pr_number"] <= 0:
+            raise MergeAuditError("merge operation receipt identity is invalid")
+        if (
+            operation["merge_method"] != "squash"
+            or operation["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{operation['pr_number']}/merge"
+            or operation["merge_response_source"] != MERGE_RESPONSE_SOURCE
+            or operation["oid_guarded"] is not True
+            or operation["server_merged"] is not True
+            or operation["server_merge_sha"] != operation["merged_oid"]
+            or not isinstance(operation["server_merged_at"], str)
+            or not operation["server_merged_at"]
+        ):
+            raise MergeAuditError("merge operation receipt is not the guarded executor result")
+        merge_projection = operation["merge_response"]
+        if merge_projection != {"merged": True, "sha": operation["merged_oid"]}:
             raise MergeAuditError("actual PUT merge response is not the guarded squash result")
+        if operation["merge_response_sha256"] != sha256(canonical(merge_projection)):
+            raise MergeAuditError("merge operation response digest is invalid")
         audit, audit_raw = load_json(args.audit_json)
         if json.loads(audit_raw.decode("utf-8")) != audit:
             raise MergeAuditError("audit JSON bytes do not match the parsed response")
         events = flatten_events(audit)
-        projection, bypass_count = audit_projection(events, args.pr_number)
+        projection, bypass_count = audit_projection(events, operation["pr_number"])
         if bypass_count:
             raise MergeAuditError("audit log reports a protected-branch bypass event")
-        if not projection["merge_events"]:
-            raise MergeAuditError("audit log has no exact pull_request.merge event")
+        if len(projection["merge_events"]) != 1:
+            raise MergeAuditError("audit log does not contain exactly one exact pull_request.merge event")
+        audit_event = projection["merge_events"][0]
         response_digest = sha256(canonical(merge_projection))
         projection_digest = sha256(canonical(projection))
         artifact = {
             "admin_bypass_used": False,
             "audit_bypass_event_count": bypass_count,
             "audit_event_count": len(projection["merge_events"]),
+            "audit_event_id_sha256": audit_event["event_id_sha256"],
+            "audit_event_timestamp": audit_event["timestamp"],
             "audit_projection_sha256": projection_digest,
             "audit_source": MERGE_AUDIT_SOURCE,
-            "base_oid": args.base_oid,
+            "base_oid": operation["base_oid"],
             "bypass_requested": False,
-            "head_sha": args.head_sha,
-            "merge_endpoint": f"PUT /repos/{REPOSITORY}/pulls/{args.pr_number}/merge",
+            "head_sha": operation["head_sha"],
+            "merge_endpoint": operation["merge_endpoint"],
             "merge_method": "squash",
             "merge_response": merge_projection,
             "merge_response_sha256": response_digest,
             "merge_response_source": MERGE_RESPONSE_SOURCE,
-            "merged_oid": args.merged_oid,
+            "merged_oid": operation["merged_oid"],
             "oid_guarded": True,
-            "pr_number": args.pr_number,
+            "operation_receipt_sha256": sha256(operation_raw),
+            "pr_number": operation["pr_number"],
             "repository": REPOSITORY,
             "schema_version": 2,
-            "server_merge_sha": args.merged_oid,
+            "server_merge_sha": operation["server_merge_sha"],
             "server_merged": True,
+            "server_merged_at": operation["server_merged_at"],
         }
         raw = canonical(artifact)
         args.output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

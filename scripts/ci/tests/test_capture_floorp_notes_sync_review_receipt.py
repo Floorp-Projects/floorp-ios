@@ -99,9 +99,10 @@ def merge_audit() -> dict[str, Any]:
         "merge_events": [
             {
                 "action": "pull_request.merge",
+                "event_id_sha256": CAPTURE.sha256_bytes(b"event-1"),
                 "pull_request_path": "/pull/106/merge",
                 "repository": CAPTURE.REPOSITORY,
-                "timestamp": 123,
+                "timestamp": "2026-08-15T00:00:00Z",
             }
         ]
     }
@@ -117,15 +118,19 @@ def merge_audit() -> dict[str, Any]:
         "merge_method": "squash",
         "merge_response": merge_response,
         "merge_response_sha256": CAPTURE.sha256_bytes(CAPTURE.canonical(merge_response)),
-        "merge_response_source": "github-api-put-merge",
+        "merge_response_source": "github-api-put-merge-executor",
         "audit_bypass_event_count": 0,
         "audit_event_count": 1,
+        "audit_event_id_sha256": CAPTURE.sha256_bytes(b"event-1"),
+        "audit_event_timestamp": "2026-08-15T00:00:00Z",
         "audit_projection_sha256": CAPTURE.sha256_bytes(CAPTURE.canonical(audit_projection)),
         "audit_source": "github-org-audit-log",
         "oid_guarded": True,
         "admin_bypass_used": False,
         "server_merge_sha": "4" * 40,
         "server_merged": True,
+        "server_merged_at": "2026-08-15T00:00:00Z",
+        "operation_receipt_sha256": "6" * 64,
     }
 
 
@@ -221,12 +226,11 @@ class CaptureReceiptTests(unittest.TestCase):
             self.assertEqual(receipt["subagent_review_digests"], [CAPTURE.sha256_bytes(b"subagent")])
             self.assertFalse(receipt["admin_bypass_used"])
 
-    def test_merge_digest_does_not_rederive_from_later_pr_projection(self) -> None:
+    def test_stale_server_merged_at_is_rejected(self) -> None:
         later_pr = pr()
         later_pr["merged_at"] = "2026-08-16T00:00:00Z"
-        # A changed later PR observation must not change the digest captured
-        # from the original PUT response projection.
-        receipt = CAPTURE.build_receipt(
+        with self.assertRaises(CAPTURE.ReviewReceiptError):
+            CAPTURE.build_receipt(
                 later_pr,
                 [],
                 {
@@ -264,8 +268,7 @@ class CaptureReceiptTests(unittest.TestCase):
                 "3" * 64,
                 "4" * 64,
                 "5" * 64,
-        )
-        self.assertEqual(receipt["merge_response_sha256"], merge_audit()["merge_response_sha256"])
+            )
 
     def test_stale_owner_receipt_is_rejected(self) -> None:
         with self.assertRaises(CAPTURE.ReviewReceiptError):
@@ -363,7 +366,8 @@ class CaptureReceiptTests(unittest.TestCase):
             {
                 "action": "pull_request.merge",
                 "repo": CAPTURE.REPOSITORY,
-                "@timestamp": 123,
+                "@timestamp": "2026-08-15T00:00:00Z",
+                "_document_id": "event-1",
                 "data": {"url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge"},
             }
         ]
@@ -371,9 +375,10 @@ class CaptureReceiptTests(unittest.TestCase):
             "merge_events": [
                 {
                     "action": "pull_request.merge",
+                    "event_id_sha256": CAPTURE.sha256_bytes(b"event-1"),
                     "pull_request_path": "/pull/106/merge",
                     "repository": CAPTURE.REPOSITORY,
-                    "timestamp": 123,
+                    "timestamp": "2026-08-15T00:00:00Z",
                 }
             ]
         }

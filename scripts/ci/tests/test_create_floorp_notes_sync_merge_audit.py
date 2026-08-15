@@ -29,8 +29,32 @@ AUDIT = load_module(SCRIPT, "floorp_notes_sync_merge_audit_test")
 
 class MergeAuditTests(unittest.TestCase):
     def write_inputs(self, root: Path) -> tuple[Path, Path]:
-        merge_response = root / "merge-response.json"
-        merge_response.write_text(json.dumps({"merged": True, "sha": "4" * 40}) + "\n", encoding="utf-8")
+        operation = root / "merge-operation-receipt.json"
+        operation.write_text(
+            json.dumps(
+                {
+                    "base_oid": "1" * 40,
+                    "head_sha": "2" * 40,
+                    "merge_endpoint": "PUT /repos/Floorp-Projects/floorp-ios/pulls/106/merge",
+                    "merge_method": "squash",
+                    "merge_response": {"merged": True, "sha": "4" * 40},
+                    "merge_response_sha256": AUDIT.sha256(AUDIT.canonical({"merged": True, "sha": "4" * 40})),
+                    "merge_response_source": "github-api-put-merge-executor",
+                    "merged_oid": "4" * 40,
+                    "oid_guarded": True,
+                    "pr_number": 106,
+                    "repository": AUDIT.REPOSITORY,
+                    "schema_version": 1,
+                    "server_merge_sha": "4" * 40,
+                    "server_merged": True,
+                    "server_merged_at": "2026-08-15T00:00:00Z",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         audit_log = root / "audit-log.json"
         audit_log.write_text(
             json.dumps(
@@ -38,7 +62,8 @@ class MergeAuditTests(unittest.TestCase):
                     {
                         "action": "pull_request.merge",
                         "repo": AUDIT.REPOSITORY,
-                        "@timestamp": 123,
+                        "@timestamp": "2026-08-15T00:00:00Z",
+                        "_document_id": "event-1",
                         "data": {"url": "https://github.com/Floorp-Projects/floorp-ios/pull/106/merge"},
                     }
                 ],
@@ -47,29 +72,25 @@ class MergeAuditTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        return merge_response, audit_log
+        return operation, audit_log
 
-    def arguments(self, root: Path, merge_response: Path, audit_log: Path, output: Path) -> list[str]:
+    def arguments(self, root: Path, operation: Path, audit_log: Path, output: Path) -> list[str]:
         return [
-            "--merge-response", str(merge_response),
+            "--operation-receipt", str(operation),
             "--audit-json", str(audit_log),
-            "--base-oid", "1" * 40,
-            "--head-sha", "2" * 40,
-            "--merged-oid", "4" * 40,
-            "--pr-number", "106",
             "--output", str(output),
         ]
 
     def test_actual_put_projection_and_audit_projection_are_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            merge_response, audit_log = self.write_inputs(root)
+            operation, audit_log = self.write_inputs(root)
             output = root / "docs/floorp-notes-sync-todo20-merge-audit.json"
-            self.assertEqual(AUDIT.main(self.arguments(root, merge_response, audit_log, output)), 0)
+            self.assertEqual(AUDIT.main(self.arguments(root, operation, audit_log, output)), 0)
             value = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(value["schema_version"], 2)
             self.assertEqual(value["merge_response"], {"merged": True, "sha": "4" * 40})
-            self.assertEqual(value["merge_response_source"], "github-api-put-merge")
+            self.assertEqual(value["merge_response_source"], "github-api-put-merge-executor")
             self.assertEqual(value["audit_event_count"], 1)
             self.assertEqual(value["audit_bypass_event_count"], 0)
             self.assertTrue(output.read_bytes().endswith(b"\n"))
@@ -77,7 +98,7 @@ class MergeAuditTests(unittest.TestCase):
     def test_bypass_event_is_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            merge_response, audit_log = self.write_inputs(root)
+            operation, audit_log = self.write_inputs(root)
             audit_log.write_text(
                 json.dumps(
                     [{"action": "protected_branch.policy_override", "repo": AUDIT.REPOSITORY}]
@@ -86,7 +107,7 @@ class MergeAuditTests(unittest.TestCase):
                 encoding="utf-8",
             )
             output = root / "merge-audit.json"
-            self.assertNotEqual(AUDIT.main(self.arguments(root, merge_response, audit_log, output)), 0)
+            self.assertNotEqual(AUDIT.main(self.arguments(root, operation, audit_log, output)), 0)
             self.assertFalse(output.exists())
 
 
