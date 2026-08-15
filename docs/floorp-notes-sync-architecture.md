@@ -235,3 +235,41 @@ Network Sync stays disabled until all of the following pass:
    repeated retries.
 6. Binary provenance, security, privacy, retention, and rollout ownership
    approval for the Floorp Application Services artifact.
+
+## Todo 20 approval overlay — 2026-08-15
+
+For the bounded pre-public Todo 20 QA, the rollout-ownership item above is
+implemented as a protected `floorp-notes-sync-production-qa` Environment
+self-attestation by the single Floorp owner acting as owner, Operations, and
+executor. The attestation is bound to the exact workflow run, source SHA,
+metadata-only evidence digest, cleanup result, and append-only ledger entry.
+It does not change global governance or authorize public distribution.
+
+The Todo 20 threat model is cross-client data loss, conflict corruption,
+retry/idempotence failure, and account mixing. Existing FxA/Application
+Services/`sync15`, approved production hosts, no direct REST/token path,
+secret redaction, cleanup, rollback, local-only fallback, and validator/hash
+checks remain required. Mozilla reviewers, five G6 signatures, a custom
+root-owned broker, a dedicated runner, and driver trust admission are not
+acceptance gates for this limited QA because no such service boundary is
+introduced.
+
+The Phase 1 summary is additionally bound to the exact workflow dispatch,
+repository head, workflow path, job, run/attempt, and dispatch actor. The
+manual job performs an always-run marker scan, erases the dedicated Simulator
+for Keychain/local-cache cleanup, and removes runner-local material after
+artifact publication. Phase 2 is a dependent protected job that validates a
+non-distributed `production-sync-enabled-qa` record against the Phase 1
+summary digest; it does not change the checked-in default or publish a build.
+Absent protected capability or an existing client pair is a blocker, never a
+passing summary.
+
+### Todo 20 receipt-binding tightening (2026-08-15)
+
+Phase 2 revalidates the exact Phase 1 cleanup and secret-scan receipt bytes,
+including their validator digests. The scan receipt contains only a fixed
+marker-set digest and target-file digests. Missing capability diagnostics use
+the repository's existing authorization or upstream-artifact blocker taxonomy.
+
+The scan validator requires all four target paths and recomputes their bytes;
+target omission is a rejection rather than a successful metadata-only scan.

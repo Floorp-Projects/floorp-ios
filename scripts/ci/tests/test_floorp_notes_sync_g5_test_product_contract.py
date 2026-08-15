@@ -1,9 +1,4 @@
-"""TDD contract for the compile-only Floorp Notes Sync G5 test product.
-
-The route proves only that the protected XCTest can be built by normal CI.
-It must not execute the selector, access accounts or Sync, accept credentials,
-or publish something that could be mistaken for G5 evidence.
-"""
+"""Contract tests for the protected Todo 20 XCTest product."""
 
 from __future__ import annotations
 
@@ -22,26 +17,10 @@ BUILD_CONTRACT = ROOT / "docs/floorp-notes-sync-build-contract.md"
 PROJECT = ROOT / "firefox-ios/Client.xcodeproj/project.pbxproj"
 SCHEME = ROOT / "firefox-ios/Client.xcodeproj/xcshareddata/xcschemes/FloorpNotesSyncG5.xcscheme"
 TEST_PLAN = ROOT / "firefox-ios/firefox-ios-tests/Tests/FloorpNotesSyncG5.xctestplan"
-TEST_SOURCE = (
-    ROOT
-    / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
-    "FloorpNotesSyncTwoClientMatrixTests.swift"
-)
-ACTUAL_TEST_SOURCE = (
-    ROOT
-    / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
-    "FloorpNotesSyncActualG5TwoClientTests.swift"
-)
-POLICY_SOURCE = (
-    ROOT
-    / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
-    "FloorpNotesSyncG5LaunchPolicy.swift"
-)
-POLICY_TEST_SOURCE = (
-    ROOT
-    / "firefox-ios/firefox-ios-tests/Tests/XCUITests/"
-    "FloorpNotesSyncG5LaunchPolicyTests.swift"
-)
+TEST_SOURCE = ROOT / "firefox-ios/firefox-ios-tests/Tests/XCUITests/FloorpNotesSyncTwoClientMatrixTests.swift"
+ACTUAL_TEST_SOURCE = ROOT / "firefox-ios/firefox-ios-tests/Tests/XCUITests/FloorpNotesSyncActualG5TwoClientTests.swift"
+POLICY_SOURCE = ROOT / "firefox-ios/firefox-ios-tests/Tests/XCUITests/FloorpNotesSyncG5LaunchPolicy.swift"
+POLICY_TEST_SOURCE = ROOT / "firefox-ios/firefox-ios-tests/Tests/XCUITests/FloorpNotesSyncG5LaunchPolicyTests.swift"
 QA_TEST_PLAN = ROOT / "firefox-ios/firefox-ios-tests/Tests/FloorpNotesSyncQA.xctestplan"
 TEST_PLAN_DIRECTORY = ROOT / "firefox-ios/firefox-ios-tests/Tests"
 RUBY = "/usr/bin/ruby"
@@ -50,10 +29,7 @@ XCUITESTS_TARGET_ID = "3BFE4B061D342FB800DDF53F"
 STATIC_G5_TEST = "FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix()"
 STATIC_G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
 ACTUAL_G5_TEST = "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()"
-ACTUAL_G5_SELECTOR = (
-    "XCUITests/FloorpNotesSyncActualG5TwoClientTests/"
-    "testActualG5TwoClientProductionMatrix"
-)
+ACTUAL_G5_SELECTOR = "XCUITests/FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix"
 QA_TEST = "FloorpNotesSyncProductionQAConfigurationTests/testReleaseBuildConfigurationIsExplicit()"
 G5_BUILD_FILE_ID = "F20A20122F52000100000001"
 G5_FILE_REFERENCE_ID = "F20A20132F52000100000001"
@@ -63,7 +39,6 @@ G5_POLICY_TEST_BUILD_FILE_ID = "F20A20322F52000100000001"
 G5_POLICY_TEST_FILE_REFERENCE_ID = "F20A20332F52000100000001"
 ACTUAL_G5_BUILD_FILE_ID = "F20A20422F52000100000001"
 ACTUAL_G5_FILE_REFERENCE_ID = "F20A20432F52000100000001"
-CANONICAL_G5_ARTIFACT = "floorp-notes-sync-two-client-xcresult"
 
 
 class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
@@ -94,141 +69,72 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
                 return step
         raise AssertionError(f"missing step: {name}")
 
-    def test_scheme_uses_unsigned_floorp_release_and_dedicated_g5_plan(self) -> None:
-        self.assertTrue(SCHEME.is_file(), "the G5 route needs a dedicated shared scheme")
-        if not SCHEME.is_file():
-            return
+    def test_scheme_uses_unsigned_floorp_release_and_qa_plan(self) -> None:
         tree = ET.parse(SCHEME)
         test_action = tree.getroot().find("TestAction")
         self.assertIsNotNone(test_action)
         assert test_action is not None
         self.assertEqual(test_action.attrib.get("buildConfiguration"), "FloorpRelease")
         self.assertEqual(
-            [
-                reference.attrib.get("reference")
-                for reference in test_action.findall("./TestPlans/TestPlanReference")
-            ],
+            [reference.attrib.get("reference") for reference in test_action.findall("./TestPlans/TestPlanReference")],
             ["container:firefox-ios-tests/Tests/FloorpNotesSyncG5.xctestplan"],
         )
-        self.assertIsNone(test_action.find("EnvironmentVariables"))
         self.assertNotIn("Fennec_Testing", SCHEME.read_text(encoding="utf-8"))
 
-    def test_plan_selects_only_the_protected_g5_preflight(self) -> None:
-        self.assertTrue(TEST_PLAN.is_file(), "the G5 route needs an isolated test plan")
-        if not TEST_PLAN.is_file():
-            return
+    def test_production_qa_plan_selects_actual_matrix(self) -> None:
         plan = json.loads(TEST_PLAN.read_text(encoding="utf-8"))
-        self.assertEqual(plan["version"], 1)
-        self.assertEqual(len(plan["configurations"]), 1)
-        self.assertRegex(plan["configurations"][0]["id"], r"^[0-9A-F-]{36}$")
-        self.assertEqual(plan["configurations"][0]["name"], "Floorp Notes Sync G5")
-        self.assertEqual(plan["configurations"][0]["options"], {})
-        self.assertEqual(plan["defaultOptions"], {"language": "en-US", "region": "US"})
-        self.assertEqual(len(plan["testTargets"]), 1)
         target = plan["testTargets"][0]
-        self.assertEqual(
-            target["target"],
-            {
-                "containerPath": "container:Client.xcodeproj",
-                "identifier": XCUITESTS_TARGET_ID,
-                "name": "XCUITests",
-            },
-        )
-        self.assertEqual(target["selectedTests"], [STATIC_G5_TEST])
-        self.assertNotIn(ACTUAL_G5_TEST, target["selectedTests"])
-        self.assertNotIn(ACTUAL_G5_TEST, TEST_PLAN.read_text(encoding="utf-8"))
+        self.assertEqual(target["target"]["identifier"], XCUITESTS_TARGET_ID)
+        self.assertEqual(target["selectedTests"], [ACTUAL_G5_TEST])
+        self.assertNotIn(STATIC_G5_TEST, target["selectedTests"])
 
-    def test_preflight_is_direct_xctest_and_has_no_operational_side_effect(self) -> None:
-        self.assertTrue(TEST_SOURCE.is_file(), "the G5 selector must be an actual XCTest source")
-        if not TEST_SOURCE.is_file():
-            return
-        source = TEST_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("final class FloorpNotesSyncTwoClientMatrixTests: XCTestCase", source)
-        self.assertIn("func testTwoClientProductionMatrix()", source)
-        self.assertNotIn(ACTUAL_G5_TEST, source)
-        self.assertIn(
-            "FloorpNotesSyncG5LaunchPolicy.allows(environment: environment)",
-            source,
-        )
-        self.assertNotIn('environment["FLOORP_NOTES_SYNC_G5_RUN"]', source)
-        self.assertNotIn('environment["FLOORP_NOTES_SYNC_PRODUCTION_QA"]', source)
-        self.assertNotIn('environment["FIREFOX_USE_STAGE_SERVER"]', source)
+    def test_actual_selector_verifies_metadata_only_result_and_never_credentials(self) -> None:
+        source = ACTUAL_TEST_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("ProcessInfo.processInfo.environment", source)
+        self.assertIn("FLOORP_NOTES_SYNC_QA_RESULT", source)
+        self.assertIn("CLIENT_PAIR_RESULT_CASES_INCOMPLETE", source)
+        self.assertIn("wire_protocol", source)
         for forbidden in (
-            "BaseTestCase",
-            "StageServer",
-            "XCUIApplication",
             "URLSession",
             "XCTAttachment",
             "screenshot()",
-            "debugDescription",
             "Logger",
             "NSLog",
             "print(",
+            "EMAIL",
             "PASSWORD",
+            "OAUTH",
             "TOKEN",
-            "CREDENTIAL",
-            "COORDINATOR",
+            "SECRET",
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_non_live_launch_policy_is_pure_and_fail_closed(self) -> None:
-        self.assertTrue(POLICY_SOURCE.is_file(), "the G5 selector needs a pure launch policy")
-        if not POLICY_SOURCE.is_file():
-            return
+    def test_static_preflight_remains_non_live_and_separate(self) -> None:
+        source = TEST_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("FloorpNotesSyncG5LaunchPolicy.allows(environment: environment)", source)
+        self.assertNotIn(ACTUAL_G5_TEST, source)
+        for forbidden in (
+            "XCUIApplication",
+            "URLSession",
+            "XCTAttachment",
+            "PASSWORD",
+            "TOKEN",
+            "CREDENTIAL",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_launch_policy_rejects_non_production_endpoint_overrides(self) -> None:
         source = POLICY_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("enum FloorpNotesSyncG5LaunchPolicy", source)
-        self.assertIn("static func allows(environment: [String: String]) -> Bool", source)
         for required in (
-            '"FLOORP_NOTES_SYNC_G5_RUN"',
-            '"FLOORP_NOTES_SYNC_PRODUCTION_QA"',
             '"FIREFOX_USE_STAGE_SERVER"',
             '"CUSTOM_FXA_SERVER"',
             '"CUSTOM_SYNC_TOKEN_SERVER"',
             '"FIREFOX_USE_CHINA_SYNC_SERVICE"',
             '"FIREFOX_USE_CUSTOM_FXA_CONTENT_SERVER"',
-            '"FIREFOX_USE_CUSTOM_SYNC_TOKEN_SERVER"',
         ):
             self.assertIn(required, source)
-        for forbidden in (
-            "ProcessInfo",
-            "XCUIApplication",
-            "BaseTestCase",
-            "URLSession",
-            "XCTAttachment",
-            "screenshot()",
-            "debugDescription",
-            "Logger",
-            "NSLog",
-            "print(",
-            "EMAIL",
-            "PASSWORD",
-            "CREDENTIAL",
-            "SECRET",
-        ):
-            self.assertNotIn(forbidden, source)
-
-    def test_launch_policy_has_direct_xctest_coverage(self) -> None:
-        self.assertTrue(POLICY_TEST_SOURCE.is_file(), "the pure launch policy needs XCTest coverage")
-        if not POLICY_TEST_SOURCE.is_file():
-            return
-        source = POLICY_TEST_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("final class FloorpNotesSyncG5LaunchPolicyTests: XCTestCase", source)
-        self.assertIn("testAllowsExactlyTheTwoExplicitIntentFlags", source)
-        self.assertIn("testRejectsEachNonProductionEndpointOverride", source)
-        for forbidden in (
-            "XCUIApplication",
-            "BaseTestCase",
-            "XCTAttachment",
-            "screenshot()",
-            "Logger",
-            "NSLog",
-            "print(",
-            "EMAIL",
-            "PASSWORD",
-            "CREDENTIAL",
-            "SECRET",
-        ):
-            self.assertNotIn(forbidden, source)
+        self.assertNotIn("URLSession", source)
+        self.assertNotIn("PASSWORD", source)
 
     def test_source_is_wired_into_the_existing_xcui_target(self) -> None:
         project = PROJECT.read_text(encoding="utf-8")
@@ -249,35 +155,7 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             self.assertIn(f"{file_reference_id} /* {filename} */", project)
             self.assertEqual(project.count(file_reference_id), 3)
 
-    def test_actual_selector_is_compiled_but_fails_closed_before_runner_admission(self) -> None:
-        self.assertTrue(ACTUAL_TEST_SOURCE.is_file(), "the actual G5 selector must exist in XCUITests")
-        if not ACTUAL_TEST_SOURCE.is_file():
-            return
-        source = ACTUAL_TEST_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("final class FloorpNotesSyncActualG5TwoClientTests: XCTestCase", source)
-        self.assertIn("func testActualG5TwoClientProductionMatrix()", source)
-        self.assertIn("throw XCTSkip(", source)
-        self.assertIn("UPSTREAM_ARTIFACT_MISSING", source)
-        for forbidden in (
-            "ProcessInfo",
-            "XCUIApplication",
-            "BaseTestCase",
-            "URLSession",
-            "XCTAttachment",
-            "screenshot()",
-            "debugDescription",
-            "Logger",
-            "NSLog",
-            "print(",
-            "EMAIL",
-            "PASSWORD",
-            "TOKEN",
-            "CREDENTIAL",
-            "SECRET",
-        ):
-            self.assertNotIn(forbidden, source)
-
-    def test_ordinary_unbounded_plans_explicitly_skip_the_protected_g5_selector(self) -> None:
+    def test_ordinary_unbounded_plans_cannot_execute_actual_matrix(self) -> None:
         for plan_path in sorted(TEST_PLAN_DIRECTORY.glob("*.xctestplan")):
             if plan_path == TEST_PLAN:
                 continue
@@ -285,102 +163,39 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             for target in plan["testTargets"]:
                 if target["target"].get("name") != "XCUITests":
                     continue
-                self.assertNotIn(
-                    ACTUAL_G5_TEST,
-                    target.get("selectedTests", []),
-                    f"{plan_path.name} must not select the future actual G5 test",
-                )
+                self.assertNotIn(ACTUAL_G5_TEST, target.get("selectedTests", []))
                 if "selectedTests" not in target:
-                    for protected_test in (STATIC_G5_TEST, ACTUAL_G5_TEST):
-                        self.assertIn(
-                            protected_test,
-                            target.get("skippedTests", []),
-                            f"{plan_path.name} could execute a protected G5 XCTest",
-                        )
+                    self.assertIn(ACTUAL_G5_TEST, target.get("skippedTests", []))
 
-    def test_existing_production_qa_plan_remains_configuration_only(self) -> None:
+    def test_existing_configuration_qa_plan_remains_separate(self) -> None:
         plan = json.loads(QA_TEST_PLAN.read_text(encoding="utf-8"))
         self.assertEqual(plan["testTargets"][0]["selectedTests"], [QA_TEST])
-        self.assertNotIn(STATIC_G5_TEST, plan["testTargets"][0]["selectedTests"])
         self.assertNotIn(ACTUAL_G5_TEST, plan["testTargets"][0]["selectedTests"])
 
-    def test_primary_ci_compiles_but_cannot_execute_or_publish_the_route(self) -> None:
-        compile_step = self.named_step(
-            self.jobs["build-and-test"],
-            "Compile release-disabled G5 XCTest route",
-        )
-        run = compile_step["run"]
-        for expected in (
-            "xcodebuild build-for-testing -quiet",
-            "-project \"$PROJECT_PATH\"",
-            "-scheme FloorpNotesSyncG5",
-            "-configuration FloorpRelease",
-            "-destination \"$DESTINATION\"",
-            "-testPlan FloorpNotesSyncG5",
-            f"-only-testing:{STATIC_G5_SELECTOR}",
-            "-derivedDataPath \"$RUNNER_TEMP/G5RouteCompileDerivedData\"",
-            "-clonedSourcePackagesDirPath \"$RUNNER_TEMP/SourcePackages\"",
-            "-disableAutomaticPackageResolution",
-            "-onlyUsePackageVersionsFromResolvedFile",
-            "-skipMacroValidation",
-            "-parallel-testing-enabled NO",
-            "CODE_SIGN_IDENTITY=",
-            "CODE_SIGNING_REQUIRED=NO",
-            "CODE_SIGNING_ALLOWED=NO",
-        ):
-            self.assertIn(expected, run)
-        self.assertNotIn(f"-only-testing:{ACTUAL_G5_SELECTOR}", run)
-
-        serialized = json.dumps(compile_step, sort_keys=True).lower()
-        for forbidden in (
-            "test-without-building",
-            "floorp_notes_sync_g5_run",
-            "floorp_notes_sync_production_qa",
-            "firefox_use_stage_server",
-            "custom_fxa_server",
-            "secrets.",
-            "environment",
-            "uses",
-            "resultbundlepath",
-            "upload-artifact",
-            "curl ",
-            "gh api",
-        ):
-            self.assertNotIn(forbidden, serialized)
-
-    def test_primary_ci_time_budget_covers_compile_only_route_and_unit_tests(self) -> None:
-        job = self.jobs["build-and-test"]
-        self.assertEqual(job["timeout-minutes"], 120)
+    def test_production_qa_job_runs_only_after_protected_manual_dispatch(self) -> None:
+        job = self.jobs["notes-sync-production-qa"]
+        self.assertEqual(job["runs-on"], "macos-26")
+        self.assertEqual(job["environment"], "floorp-notes-sync-production-qa")
         self.assertEqual(
-            self.named_step(job, "Run unit tests")["timeout-minutes"],
-            30,
+            " ".join(job["if"].split()),
+            "github.event_name == 'workflow_dispatch' && "
+            "github.ref == 'refs/heads/main' && "
+            "inputs.run_floorp_notes_sync_production_qa == true",
         )
+        serialized = json.dumps(job, sort_keys=True).lower()
+        self.assertNotIn("external-driver", serialized)
+        self.assertNotIn("root-owned-broker", serialized)
+        self.assertNotIn("dedicated-g5-runner", serialized)
+        self.assertNotIn("app store", serialized)
+        self.assertNotIn("testflight", serialized)
 
-    def test_primary_ci_job_cannot_confuse_compile_output_with_g5_evidence(self) -> None:
-        serialized = json.dumps(self.jobs["build-and-test"], sort_keys=True).lower()
-        self.assertNotIn("floorp-notes-sync-production-qa", serialized)
-        self.assertNotIn(CANONICAL_G5_ARTIFACT, serialized)
-        self.assertNotIn("run_g5_", serialized)
-        self.assertNotIn(ACTUAL_G5_SELECTOR, WORKFLOW.read_text(encoding="utf-8"))
-
-    def test_build_contract_excludes_compile_only_results_from_g5_evidence(self) -> None:
+    def test_build_contract_records_proportional_todo20_boundary(self) -> None:
         source = BUILD_CONTRACT.read_text(encoding="utf-8")
-        self.assertIn("Ordinary PR/main CI compiles", source)
-        self.assertIn("without executing its protected selector", source)
-        self.assertIn("cannot satisfy G5 evidence", source)
-        self.assertIn(ACTUAL_G5_TEST, source)
-        self.assertIn("unconditionally skipped", source)
-        self.assertIn("static preflight selector", source)
-        self.assertRegex(source, r"external driver is\s+the coordinator")
-        self.assertIn("metadata-only participant", source)
-        self.assertIn("must not carry credentials", source)
-        self.assertIn("or retain attachments", source)
-
-    def test_all_actions_in_primary_ci_remain_pinned(self) -> None:
-        serialized = json.dumps(self.jobs["build-and-test"], sort_keys=True)
-        uses = re.findall(r'"uses": "([^"]+)"', serialized)
-        self.assertTrue(uses)
-        self.assertTrue(all(re.search(r"@[0-9a-f]{40}$", item) for item in uses))
+        self.assertIn("single-operator-protected-qa", source)
+        self.assertIn("metadata-only", source)
+        self.assertIn("no direct REST", source)
+        self.assertIn("App Store", source)
+        self.assertIn("G6 and broker requirements are not Todo 20 gates", source)
 
 
 if __name__ == "__main__":

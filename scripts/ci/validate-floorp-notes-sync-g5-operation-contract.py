@@ -1,12 +1,10 @@
 #!/usr/bin/python3 -I
-"""Validate the checked-in, non-live Notes Sync G5 operation contract.
+"""Validate the protected, proportional Todo 20 production-QA contract.
 
-This utility is deliberately static: it reads one checked-in JSON document and
-never accepts credentials, launches a client, contacts a service, or produces
-G5 evidence.  A valid result records only that a future operation must still
-use the separately protected execution boundary.  That future boundary assigns
-coordination, credential handling, and network capture to an external driver;
-an iOS XCTest may participate only through content-free metadata observation.
+This validator is a static policy boundary. It never accepts credentials,
+launches a client, contacts FxA/Sync, reads a local account file, or produces
+QA evidence. The actual run is a separate, manually dispatched job bound to a
+protected GitHub Environment and two disposable test accounts.
 """
 
 from __future__ import annotations
@@ -14,7 +12,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import re
 import stat
 import sys
 from pathlib import Path
@@ -25,6 +22,37 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_VALIDATOR_PATH = REPOSITORY_ROOT / "scripts" / "ci" / "validate-floorp-notes-sync-release.py"
 CONTRACT_RELATIVE_PATH = Path("scripts/ci/floorp-notes-sync-g5-operation-contract.json")
 MAX_CONTRACT_BYTES = 64 * 1024
+
+ENVIRONMENT = "floorp-notes-sync-production-qa"
+DISPATCH_INPUT = "run_floorp_notes_sync_production_qa"
+G5_WORKFLOW_PATH = ".github/workflows/ci.yml"
+G5_EVENT = "workflow_dispatch"
+G5_HEAD_BRANCH = "main"
+QA_ARTIFACT_NAME = "floorp-notes-sync-two-client-xcresult"
+QA_ARTIFACT_KIND = "github-actions-artifact"
+QA_REQUIRED_TEST = "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()"
+REQUIRED_CASES = (
+    "desktop-create-mobile-sync-desktop-recheck",
+    "mobile-create-desktop-sync-mobile-recheck",
+    "same-record-concurrent-edit",
+    "update-delete-conflict",
+    "offline-edit-reconnect-retry",
+    "upload-save-commit-failure",
+    "restart-preserves-unsynced-local-data",
+    "old-new-client-mixed",
+    "large-empty-multiple-records",
+    "account-switch-isolation",
+    "retry-idempotence",
+    "base-revision-confirmation-gate",
+)
+REQUIRED_INVARIANTS = (
+    "no-data-loss",
+    "no-duplicate-records",
+    "no-incorrect-delete-or-resurrection",
+    "no-account-mixing",
+    "no-rollback-on-retry",
+    "base-revision-after-confirmation-only",
+)
 
 
 class OperationContractError(ValueError):
@@ -50,18 +78,9 @@ def load_release_validator() -> Any:
 
 
 RELEASE_VALIDATOR = load_release_validator()
-IOS_REPOSITORY = RELEASE_VALIDATOR.EXPECTED_REPOSITORY
-G5_WORKFLOW_PATH = RELEASE_VALIDATOR.G5_CI_WORKFLOW_PATH
-G5_EVENT = RELEASE_VALIDATOR.G5_CI_EVENT
-G5_HEAD_BRANCH = RELEASE_VALIDATOR.G5_CI_HEAD_BRANCH
-G5_ARTIFACT_KIND = RELEASE_VALIDATOR.G5_XCRESULT_ARTIFACT_KIND
-G5_ARTIFACT_NAME = RELEASE_VALIDATOR.G5_XCRESULT_ARTIFACT_NAME
-G5_REQUIRED_TEST = RELEASE_VALIDATOR.G5_ACTUAL_TWO_CLIENT_XCRESULT_TEST
-G5_REQUIRED_SYNC_HOST = RELEASE_VALIDATOR.G5_REQUIRED_SYNC_HOST
 APPROVED_HOSTS = frozenset(RELEASE_VALIDATOR.EXPECTED_FXA_HOSTS) | frozenset(
     RELEASE_VALIDATOR.EXPECTED_SYNC_HOSTS
 )
-DISPATCH_INPUT = "prepare_floorp_notes_sync_g5_contract"
 
 
 def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -111,96 +130,119 @@ def require_exact_keys(value: Any, expected: frozenset[str], label: str) -> dict
     return value
 
 
+def require_exact_string_list(value: Any, expected: tuple[str, ...], label: str) -> None:
+    require(isinstance(value, list), f"{label} must be an array")
+    require(value == list(expected), f"{label} is not the canonical ordered list")
+
+
 def validate_operation_contract(contract: Any) -> dict[str, str]:
     root = require_exact_keys(
         contract,
         frozenset(
             {
+                "approval_model",
                 "boundary",
-                "future_g5_artifact",
+                "execution",
+                "integrity_matrix",
                 "isolation_contract",
                 "network_contract",
                 "participant_contract",
+                "qa_artifact",
                 "schema_version",
                 "workflow",
             }
         ),
         "operation contract",
     )
-    require(root["schema_version"] == 1, "operation contract schema is unsupported")
+    require(root["schema_version"] == 2, "operation contract schema is unsupported")
 
-    workflow = require_exact_keys(
-        root["workflow"],
-        frozenset({"dispatch_input", "event", "head_branch", "path"}),
-        "workflow",
-    )
-    require(
-        workflow
-        == {
-            "dispatch_input": DISPATCH_INPUT,
-            "event": G5_EVENT,
-            "head_branch": G5_HEAD_BRANCH,
-            "path": G5_WORKFLOW_PATH,
-        },
-        "operation contract is not bound to the canonical main dispatch",
-    )
-
-    artifact = require_exact_keys(
-        root["future_g5_artifact"],
-        frozenset({"artifact_kind", "artifact_name", "required_test", "retrieval"}),
-        "future G5 artifact",
-    )
-    require(
-        artifact
-        == {
-            "artifact_kind": G5_ARTIFACT_KIND,
-            "artifact_name": G5_ARTIFACT_NAME,
-            "required_test": G5_REQUIRED_TEST,
-            "retrieval": "required-after-run",
-        },
-        "future G5 artifact is not canonical",
-    )
-
-    participant = require_exact_keys(
-        root["participant_contract"],
+    approval = require_exact_keys(
+        root["approval_model"],
         frozenset(
             {
-                "coordinator",
-                "credential_handling",
-                "ios_participant",
-                "network_capture",
-                "payload_observation",
-                "test_attachments",
+                "environment",
+                "global_governance_unchanged",
+                "self_attestation",
             }
         ),
-        "participant contract",
+        "approval model",
     )
     require(
-        participant
+        approval
         == {
-            "coordinator": "external-driver-only",
-            "credential_handling": "external-driver-only",
-            "ios_participant": "metadata-only-observer",
-            "network_capture": "external-driver-only",
-            "payload_observation": "forbidden",
-            "test_attachments": "forbidden",
+            "environment": ENVIRONMENT,
+            "global_governance_unchanged": True,
+            "self_attestation": "owner-operations-executor",
         },
-        "participant contract assigns coordinator, credentials, network, or retained data unsafely",
+        "approval model is not the bounded single-operator exception",
     )
 
     boundary = require_exact_keys(
         root["boundary"],
-        frozenset({"credential_delivery", "execution_authorization", "g5_result"}),
+        frozenset({"credential_delivery", "execution_authorization", "phase_1_result", "public_release"}),
         "boundary",
     )
     require(
         boundary
         == {
-            "credential_delivery": "protected-environment-only",
-            "execution_authorization": "not-authorized",
-            "g5_result": "not-assessed",
+            "credential_delivery": "protected-environment-secrets-only",
+            "execution_authorization": "single-operator-protected-qa",
+            "phase_1_result": "data-integrity-qa-required",
+            "public_release": "forbidden",
         },
-        "operation contract must remain non-live and not-authorized",
+        "operation contract does not describe the bounded production QA boundary",
+    )
+
+    execution = require_exact_keys(
+        root["execution"],
+        frozenset({"mode", "phase_2_enablement_requires_phase_1", "runner"}),
+        "execution",
+    )
+    require(
+        execution
+        == {
+            "mode": "production-qa",
+            "phase_2_enablement_requires_phase_1": True,
+            "runner": "github-hosted-macos",
+        },
+        "execution contract retains an out-of-scope infrastructure requirement",
+    )
+
+    matrix = require_exact_keys(
+        root["integrity_matrix"],
+        frozenset(
+            {
+                "accounts",
+                "clients",
+                "payload_observation",
+                "required_cases",
+                "required_invariants",
+                "result_format",
+            }
+        ),
+        "integrity matrix",
+    )
+    require(matrix["accounts"] == 2, "integrity matrix must use exactly two test accounts")
+    require(matrix["clients"] == ["desktop", "mobile"], "integrity matrix must bind desktop and mobile")
+    require_exact_string_list(matrix["required_cases"], REQUIRED_CASES, "integrity matrix cases")
+    require_exact_string_list(matrix["required_invariants"], REQUIRED_INVARIANTS, "integrity matrix invariants")
+    require(matrix["payload_observation"] == "forbidden", "integrity payload observation must be forbidden")
+    require(matrix["result_format"] == "metadata-only", "integrity results must be metadata-only")
+
+    artifact = require_exact_keys(
+        root["qa_artifact"],
+        frozenset({"artifact_kind", "artifact_name", "required_test", "retrieval"}),
+        "QA artifact",
+    )
+    require(
+        artifact
+        == {
+            "artifact_kind": QA_ARTIFACT_KIND,
+            "artifact_name": QA_ARTIFACT_NAME,
+            "required_test": QA_REQUIRED_TEST,
+            "retrieval": "required-after-run",
+        },
+        "QA artifact is not canonical",
     )
 
     isolation = require_exact_keys(
@@ -209,10 +251,13 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
             {
                 "accounts",
                 "cleanup_required",
+                "keychain_cleanup_required",
                 "local_only_fallback_required",
                 "payload_retained",
                 "rollback_required",
+                "runner_temp_cleanup_required",
                 "secrets_retained",
+                "simulator_cache_cleanup_required",
             }
         ),
         "isolation contract",
@@ -222,18 +267,23 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
         == {
             "accounts": 2,
             "cleanup_required": True,
+            "keychain_cleanup_required": True,
             "local_only_fallback_required": True,
             "payload_retained": False,
             "rollback_required": True,
+            "runner_temp_cleanup_required": True,
             "secrets_retained": False,
+            "simulator_cache_cleanup_required": True,
         },
-        "isolation contract lacks the required isolation and cleanup obligations",
+        "isolation contract lacks cleanup and rollback obligations",
     )
 
     network = require_exact_keys(
         root["network_contract"],
         frozenset(
             {
+                "approved_source",
+                "direct_rest_forbidden",
                 "hosts",
                 "metadata_only",
                 "payload_retained",
@@ -248,16 +298,17 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
     hosts = network["hosts"]
     require(
         isinstance(hosts, list)
-        and bool(hosts)
+        and hosts
         and all(isinstance(host, str) for host in hosts)
         and hosts == sorted(set(hosts))
-        and set(hosts) <= APPROVED_HOSTS
-        and G5_REQUIRED_SYNC_HOST in hosts,
-        "network contract is not an approved canonical metadata-only host policy",
+        and set(hosts) == APPROVED_HOSTS,
+        "network contract is not the exact approved production host set",
     )
     require(
         network
         == {
+            "approved_source": "docs/floorp-release-endpoints.json",
+            "direct_rest_forbidden": True,
             "hosts": hosts,
             "metadata_only": True,
             "payload_retained": False,
@@ -266,13 +317,70 @@ def validate_operation_contract(contract: Any) -> dict[str, str]:
             "tls_interception": False,
             "tls_verified": True,
         },
-        "network contract lacks metadata-only TLS and retention guarantees",
+        "network contract lacks the approved TLS-only boundary",
+    )
+
+    participant = require_exact_keys(
+        root["participant_contract"],
+        frozenset(
+            {
+                "coordinator",
+                "credential_handling",
+                "desktop_mobile_execution",
+                "network_capture",
+                "payload_observation",
+                "test_attachments",
+            }
+        ),
+        "participant contract",
+    )
+    require(
+        participant
+        == {
+            "coordinator": "single-operator-protected-workflow",
+            "credential_handling": "protected-environment-secret-only",
+            "desktop_mobile_execution": "existing-client-pair",
+            "network_capture": "metadata-only",
+            "payload_observation": "forbidden",
+            "test_attachments": "forbidden",
+        },
+        "participant contract permits unsafe credential or payload handling",
+    )
+
+    workflow = require_exact_keys(
+        root["workflow"],
+        frozenset(
+            {
+                "dispatch_input",
+                "enablement_dispatch_input",
+                "enablement_job",
+                "environment",
+                "event",
+                "head_branch",
+                "path",
+            }
+        ),
+        "workflow",
+    )
+    require(
+        workflow
+        == {
+            "dispatch_input": DISPATCH_INPUT,
+            "enablement_dispatch_input": "run_floorp_notes_sync_production_enablement",
+            "enablement_job": "notes-sync-production-enablement",
+            "environment": ENVIRONMENT,
+            "event": G5_EVENT,
+            "head_branch": G5_HEAD_BRANCH,
+            "path": G5_WORKFLOW_PATH,
+        },
+        "operation contract is not bound to the protected main workflow",
     )
 
     return {
-        "credential_delivery": "protected-environment-only",
-        "execution_authorization": "not-authorized",
-        "g5_result": "not-assessed",
+        "credential_delivery": "protected-environment-secrets-only",
+        "execution_authorization": "single-operator-protected-qa",
+        "phase_1_result": "data-integrity-qa-required",
+        "phase_2_enablement": "requires-validator-approve",
         "status": "operation-contract-valid",
     }
 
@@ -307,7 +415,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
         "--contract",
         type=Path,
         required=True,
-        help="the repository's checked-in non-live G5 operation contract",
+        help="the repository's checked-in protected Todo 20 operation contract",
     )
     return parser.parse_args(arguments)
 
