@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -186,6 +187,143 @@ def enablement_record(
 
 
 class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
+    def waived_record(
+        self, merge_audit_raw: bytes, review_receipt_raw: bytes
+    ) -> dict[str, Any]:
+        return {
+            "app_store_submission": False,
+            "approved": True,
+            "audit_endpoint_unavailable": True,
+            "audit_source": "github-org-audit-log-unavailable-owner-waived",
+            "configuration": "production-sync-enabled-qa",
+            "enablement_validator_sha256": hashlib.sha256(
+                (ROOT / "scripts/ci/validate-floorp-notes-sync-production-enablement.py").read_bytes()
+            ).hexdigest(),
+            "environment": ENABLEMENT.ENVIRONMENT,
+            "fxa_configuration": "FxAConfig.Server.release",
+            "guarded_merge_run_id": 123,
+            "live_qa": "owner-waived-not-performed",
+            "live_qa_waiver_approved_at_utc": "2026-08-16T00:00:00Z",
+            "live_qa_waiver_operator_id": "test-operator",
+            "live_qa_waiver_plan_hash": "c" * 64,
+            "merge_audit_sha256": hashlib.sha256(merge_audit_raw).hexdigest(),
+            "no_data_loss_claim": False,
+            "operator_id": "test-operator",
+            "phase": "production-sync-enablement",
+            "phase1_summary_sha256": None,
+            "public_release": False,
+            "repository": ENABLEMENT.REPOSITORY,
+            "review_receipt_sha256": hashlib.sha256(review_receipt_raw).hexdigest(),
+            "schema_version": 2,
+            "source_head_sha": "1" * 40,
+            "testflight_distribution": False,
+            "wire_protocol": "sync15",
+            "workflow_event": "workflow_dispatch",
+            "workflow_job": "notes-sync-production-enablement-waived",
+            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_run_attempt": 1,
+            "workflow_run_id": 999,
+        }
+
+    def waived_inputs(self) -> tuple[bytes, bytes, bytes, bytes]:
+        merge_audit = {
+            "admin_bypass_used": None,
+            "audit_bypass_event_count": None,
+            "audit_endpoint_unavailable": True,
+            "audit_event_count": 0,
+            "audit_event_id_sha256": None,
+            "audit_event_timestamp": None,
+            "audit_projection_sha256": None,
+            "audit_source": "github-org-audit-log-unavailable-owner-waived",
+            "schema_version": 3,
+        }
+        merge_audit_raw = json.dumps(
+            merge_audit, separators=(",", ":"), sort_keys=True
+        ).encode() + b"\n"
+        review_receipt_raw = json.dumps(
+            {
+                "merge_audit_sha256": hashlib.sha256(merge_audit_raw).hexdigest(),
+                "source_workflow_run_id": 123,
+                "audit_source": "github-org-audit-log-unavailable-owner-waived",
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode() + b"\n"
+        live_qa_waiver_raw = json.dumps(
+            {
+                "approved_at_utc": "2026-08-16T00:00:00Z",
+                "operator_id": "test-operator",
+                "plan_hash": "c" * 64,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode() + b"\n"
+        binding_raw = json.dumps(
+            {"combined_plan_hash": "c" * 64},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode() + b"\n"
+        return review_receipt_raw, merge_audit_raw, live_qa_waiver_raw, binding_raw
+
+    def env(self) -> dict[str, str]:
+        return {
+            "FLOORP_TODO20_GUARDED_MERGE_RUN_ID": "123",
+            "GITHUB_SHA": "1" * 40,
+            "GITHUB_ACTOR": "test-operator",
+        }
+
+    def test_waived_enablement_record_is_valid(self) -> None:
+        review_receipt_raw, merge_audit_raw, live_qa_waiver_raw, binding_raw = self.waived_inputs()
+        with patch.dict(ENABLEMENT.os.environ, self.env(), clear=False):
+            ENABLEMENT.validate_waived_enablement(
+                self.waived_record(merge_audit_raw, review_receipt_raw),
+                review_receipt_raw,
+                merge_audit_raw,
+                live_qa_waiver_raw,
+                binding_raw,
+            )
+
+    def test_waived_enablement_rejects_phase1_summary_binding(self) -> None:
+        review_receipt_raw, merge_audit_raw, live_qa_waiver_raw, binding_raw = self.waived_inputs()
+        record = self.waived_record(merge_audit_raw, review_receipt_raw)
+        record["phase1_summary_sha256"] = "a" * 64
+        with patch.dict(ENABLEMENT.os.environ, self.env(), clear=False):
+            with self.assertRaises(ENABLEMENT.EnablementError):
+                ENABLEMENT.validate_waived_enablement(
+                    record,
+                    review_receipt_raw,
+                    merge_audit_raw,
+                    live_qa_waiver_raw,
+                    binding_raw,
+                )
+
+    def test_waived_enablement_rejects_live_qa_waiver_plan_mismatch(self) -> None:
+        review_receipt_raw, merge_audit_raw, live_qa_waiver_raw, binding_raw = self.waived_inputs()
+        record = self.waived_record(merge_audit_raw, review_receipt_raw)
+        record["live_qa_waiver_plan_hash"] = "f" * 64
+        with patch.dict(ENABLEMENT.os.environ, self.env(), clear=False):
+            with self.assertRaises(ENABLEMENT.EnablementError):
+                ENABLEMENT.validate_waived_enablement(
+                    record,
+                    review_receipt_raw,
+                    merge_audit_raw,
+                    live_qa_waiver_raw,
+                    binding_raw,
+                )
+
+    def test_waived_enablement_rejects_mismatched_review_receipt_digest(self) -> None:
+        review_receipt_raw, merge_audit_raw, live_qa_waiver_raw, binding_raw = self.waived_inputs()
+        record = self.waived_record(merge_audit_raw, review_receipt_raw)
+        record["merge_audit_sha256"] = "e" * 64
+        with patch.dict(ENABLEMENT.os.environ, self.env(), clear=False):
+            with self.assertRaises(ENABLEMENT.EnablementError):
+                ENABLEMENT.validate_waived_enablement(
+                    record,
+                    review_receipt_raw,
+                    merge_audit_raw,
+                    live_qa_waiver_raw,
+                    binding_raw,
+                )
     def test_exact_phase1_binding_and_no_public_release_are_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             summary, summary_raw, cleanup_raw, secret_scan_raw, targets = test_inputs(Path(directory))

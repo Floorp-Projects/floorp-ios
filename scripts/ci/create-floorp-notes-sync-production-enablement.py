@@ -69,11 +69,24 @@ def require(condition: bool, message: str) -> None:
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase1-summary", type=Path, required=True)
-    parser.add_argument("--cleanup-receipt", type=Path, required=True)
-    parser.add_argument("--secret-scan-receipt", type=Path, required=True)
-    parser.add_argument("--secret-scan-target", type=Path, action="append", required=True)
+    parser.add_argument("--phase1-summary", type=Path, required=False)
+    parser.add_argument("--cleanup-receipt", type=Path, required=False)
+    parser.add_argument("--secret-scan-receipt", type=Path, required=False)
+    parser.add_argument("--secret-scan-target", type=Path, action="append", required=False)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--waived-qa",
+        action="store_true",
+        help=(
+            "create the owner-waived enablement record bound to the "
+            "guarded-merge evidence and the live-QA owner waiver instead of "
+            "a Phase 1 matrix summary"
+        ),
+    )
+    parser.add_argument("--review-receipt", type=Path, required=False)
+    parser.add_argument("--merge-audit", type=Path, required=False)
+    parser.add_argument("--live-qa-waiver", type=Path, required=False)
+    parser.add_argument("--plan-binding", type=Path, required=False)
     return parser.parse_args(arguments)
 
 
@@ -104,10 +117,16 @@ def runtime_context() -> dict[str, Any]:
         os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch",
         "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_event_mismatch",
     )
-    require(
-        os.environ["GITHUB_JOB"] == "notes-sync-production-enablement",
-        "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_job_mismatch",
-    )
+    if os.environ.get("ENABLEMENT_WAIVED_QA") == "1":
+        require(
+            os.environ["GITHUB_JOB"] == "notes-sync-production-enablement-waived",
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_job_mismatch",
+        )
+    else:
+        require(
+            os.environ["GITHUB_JOB"] == "notes-sync-production-enablement",
+            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_job_mismatch",
+        )
     require(
         os.environ["GITHUB_WORKFLOW_REF"].startswith(
             f"{REPOSITORY}/{WORKFLOW_PATH}@"
@@ -152,6 +171,106 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         context = runtime_context()
+        if args.waived_qa:
+            if (
+                args.review_receipt is None
+                or args.merge_audit is None
+                or args.live_qa_waiver is None
+                or args.plan_binding is None
+            ):
+                raise EnablementPreparationError(
+                    "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_inputs_missing"
+                )
+            review_receipt_raw = args.review_receipt.read_bytes()
+            merge_audit_raw = args.merge_audit.read_bytes()
+            live_qa_waiver_raw = args.live_qa_waiver.read_bytes()
+            binding_raw = args.plan_binding.read_bytes()
+            review_receipt = json.loads(review_receipt_raw.decode("utf-8"))
+            merge_audit = json.loads(merge_audit_raw.decode("utf-8"))
+            live_qa_waiver = json.loads(live_qa_waiver_raw.decode("utf-8"))
+            binding = json.loads(binding_raw.decode("utf-8"))
+            require(
+                isinstance(review_receipt, dict)
+                and isinstance(merge_audit, dict)
+                and isinstance(live_qa_waiver, dict)
+                and isinstance(binding, dict),
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_inputs_invalid",
+            )
+            require(
+                live_qa_waiver["operator_id"] == context["actor"],
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_operator_mismatch",
+            )
+            require(
+                live_qa_waiver["plan_hash"] == binding["combined_plan_hash"],
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_plan_mismatch",
+            )
+            require(
+                merge_audit["schema_version"] == 3
+                and merge_audit["audit_source"] == "github-org-audit-log-unavailable-owner-waived"
+                and merge_audit["audit_endpoint_unavailable"] is True
+                and merge_audit["admin_bypass_used"] is None,
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_audit_invalid",
+            )
+            require(
+                review_receipt["merge_audit_sha256"] == sha256(merge_audit_raw),
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_receipt_mismatch",
+            )
+            require(
+                review_receipt["source_workflow_run_id"]
+                == int(os.environ["FLOORP_TODO20_GUARDED_MERGE_RUN_ID"]),
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_run_mismatch",
+            )
+            record = {
+                "app_store_submission": False,
+                "approved": True,
+                "audit_endpoint_unavailable": True,
+                "audit_source": "github-org-audit-log-unavailable-owner-waived",
+                "configuration": "production-sync-enabled-qa",
+                "enablement_validator_sha256": sha256(ENABLEMENT_VALIDATOR_PATH.read_bytes()),
+                "environment": ENABLEMENT.ENVIRONMENT,
+                "fxa_configuration": "FxAConfig.Server.release",
+                "guarded_merge_run_id": review_receipt["source_workflow_run_id"],
+                "live_qa": "owner-waived-not-performed",
+                "live_qa_waiver_approved_at_utc": live_qa_waiver["approved_at_utc"],
+                "live_qa_waiver_operator_id": live_qa_waiver["operator_id"],
+                "live_qa_waiver_plan_hash": live_qa_waiver["plan_hash"],
+                "merge_audit_sha256": sha256(merge_audit_raw),
+                "no_data_loss_claim": False,
+                "operator_id": context["actor"],
+                "phase": "production-sync-enablement",
+                "phase1_summary_sha256": None,
+                "public_release": False,
+                "repository": REPOSITORY,
+                "review_receipt_sha256": sha256(review_receipt_raw),
+                "schema_version": 2,
+                "source_head_sha": context["head_sha"],
+                "testflight_distribution": False,
+                "wire_protocol": "sync15",
+                "workflow_event": "workflow_dispatch",
+                "workflow_job": "notes-sync-production-enablement-waived",
+                "workflow_path": WORKFLOW_PATH,
+                "workflow_run_attempt": context["run_attempt"],
+                "workflow_run_id": context["run_id"],
+            }
+            ENABLEMENT.validate_waived_enablement(
+                record,
+                review_receipt_raw,
+                merge_audit_raw,
+                live_qa_waiver_raw,
+                binding_raw,
+            )
+            write_exclusive(args.output, canonical_bytes(record))
+            print('{"phase":"production-sync-enablement","status":"enablement-record-created-waived"}')
+            return 0
+        if (
+            args.phase1_summary is None
+            or args.cleanup_receipt is None
+            or args.secret_scan_receipt is None
+            or not args.secret_scan_target
+        ):
+            raise EnablementPreparationError(
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=enablement_phase1_inputs_missing"
+            )
         phase1_raw = args.phase1_summary.read_bytes()
         phase1 = QA.validate_summary(QA.parse_bytes(phase1_raw))
         source = phase1["source"]
