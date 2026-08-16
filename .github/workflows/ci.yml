@@ -738,7 +738,7 @@ jobs:
           set -euo pipefail
           if [ -f "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json" ]; then
             waiver_path="$FLOORP_TODO20_MERGE_ROOT/owner-waiver.json"
-            printf '%s' "$FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON" > "$waiver_path"
+            printf '%s\n' "$FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON" > "$waiver_path"
             /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-merge-audit.py \
               --operation-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
               --audit-json "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json" \
