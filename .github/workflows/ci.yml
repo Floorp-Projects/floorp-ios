@@ -670,6 +670,10 @@ jobs:
           git -C "$GITHUB_WORKSPACE" show \
             "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" \
             > "$root/subagent-review.json"
+          recovery_flag=""
+          if [ "${{ inputs.run_floorp_notes_sync_merge_audit_recovery == true }}" = "true" ]; then
+            recovery_flag="--recovery"
+          fi
           /usr/bin/python3 -I scripts/ci/verify-floorp-notes-sync-merge-admission.py \
             --repository-root "$GITHUB_WORKSPACE" \
             --owner-review "$root/owner-review.json" \
@@ -681,6 +685,7 @@ jobs:
             --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
             --pr-number "$FLOORP_TODO20_PR_NUMBER" \
             --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+            $recovery_flag \
             --output "$root/merge-admission.json"
           printf 'FLOORP_TODO20_MERGE_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
 
