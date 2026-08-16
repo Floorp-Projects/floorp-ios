@@ -112,7 +112,6 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--admission-receipt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--recovery-evidence", type=Path, required=True)
-    parser.add_argument("--repository-root", type=Path, required=True)
     return parser.parse_args(arguments)
 
 
@@ -208,25 +207,31 @@ def verify_source_executor_step(jobs: dict[str, Any]) -> None:
         raise MergeRecoveryError("original OID-guarded merge executor step did not succeed")
 
 
-def verify_recovery_head(repository_root: Path, expected_head_sha: str, recovery_head_sha: str) -> None:
+def verify_recovery_head(expected_head_sha: str, recovery_head_sha: str) -> None:
+    """Verify the recovery head is a strict descendant of the expected head.
+
+    Uses the GitHub compare API (server-side ancestry) instead of local git
+    history, because the protected runner checks out shallowly and a fixed
+    fetch depth would break as the recovery branch grows.
+    """
     if expected_head_sha == recovery_head_sha:
         raise MergeRecoveryError("recovery head must differ from the expected head")
-    object_check = subprocess.run(
-        ["/usr/bin/git", "-C", str(repository_root), "cat-file", "-e", f"{expected_head_sha}^{{commit}}"],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    compare = load_object(
+        run_gh(
+            [
+                "api",
+                f"repos/{REPOSITORY}/compare/{expected_head_sha}...{recovery_head_sha}",
+            ]
+        ),
+        "recovery head compare response",
     )
-    if object_check.returncode != 0:
-        raise MergeRecoveryError("expected head object is unavailable in the runner checkout")
-    ancestor_check = subprocess.run(
-        ["/usr/bin/git", "-C", str(repository_root), "merge-base", "--is-ancestor", expected_head_sha, recovery_head_sha],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    if ancestor_check.returncode != 0:
-        raise MergeRecoveryError("recovery head is not a descendant of the expected head")
+    if (
+        compare.get("status") != "ahead"
+        or compare.get("behind_by") != 0
+        or not isinstance(compare.get("ahead_by"), int)
+        or compare["ahead_by"] < 1
+    ):
+        raise MergeRecoveryError("recovery head is not a strict descendant of the expected head")
 
 
 def runtime_context() -> tuple[int, str]:
@@ -270,7 +275,7 @@ def main(arguments: list[str] | None = None) -> int:
         )
         verify_source_executor_step(source_jobs)
         run_id, head_sha = runtime_context()
-        verify_recovery_head(args.repository_root, expected_head_sha, head_sha)
+        verify_recovery_head(expected_head_sha, head_sha)
 
         merge_projection = {"merged": True, "sha": expected_merged_oid}
         operation = {

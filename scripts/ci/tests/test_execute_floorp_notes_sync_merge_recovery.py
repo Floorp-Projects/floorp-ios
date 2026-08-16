@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -118,7 +117,6 @@ class MergeRecoveryTests(unittest.TestCase):
                     "--admission-receipt", str(admission),
                     "--output", str(output),
                     "--recovery-evidence", str(evidence),
-                    "--repository-root", str(directory),
                 ]
             )
         return calls, code, output, evidence
@@ -173,7 +171,6 @@ class MergeRecoveryTests(unittest.TestCase):
                         "--admission-receipt", str(admission),
                         "--output", str(output),
                         "--recovery-evidence", str(Path(directory, "merge-recovery-evidence.json")),
-                        "--repository-root", str(directory),
                     ]
                 )
                 self.assertEqual(run.call_count, 1)
@@ -199,7 +196,6 @@ class MergeRecoveryTests(unittest.TestCase):
                         "--admission-receipt", str(admission),
                         "--output", str(output),
                         "--recovery-evidence", str(Path(directory, "merge-recovery-evidence.json")),
-                        "--repository-root", str(directory),
                     ]
                 )
             self.assertNotEqual(code, 0)
@@ -230,7 +226,6 @@ class MergeRecoveryTests(unittest.TestCase):
                         "--admission-receipt", str(admission),
                         "--output", str(output),
                         "--recovery-evidence", str(Path(directory, "merge-recovery-evidence.json")),
-                        "--repository-root", str(directory),
                     ]
                 )
             self.assertNotEqual(code, 0)
@@ -262,7 +257,6 @@ class MergeRecoveryTests(unittest.TestCase):
                         "--admission-receipt", str(admission),
                         "--output", str(output),
                         "--recovery-evidence", str(Path(directory, "merge-recovery-evidence.json")),
-                        "--repository-root", str(directory),
                     ]
                 )
             self.assertNotEqual(code, 0)
@@ -287,46 +281,42 @@ class MergeRecoveryTests(unittest.TestCase):
                         "--admission-receipt", str(admission),
                         "--output", str(output),
                         "--recovery-evidence", str(Path(directory, "merge-recovery-evidence.json")),
-                        "--repository-root", str(directory),
                     ]
                 )
                 run.assert_not_called()
             self.assertNotEqual(code, 0)
             self.assertFalse(output.exists())
 
-    def test_verify_recovery_head_requires_descendant_of_expected_head(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            subprocess.run(["/usr/bin/git", "-C", str(root), "init", "--quiet"], check=True)
-            (root / "base.txt").write_text("head\n", encoding="utf-8")
-            subprocess.run(["/usr/bin/git", "-C", str(root), "add", "base.txt"], check=True)
-            subprocess.run(
-                ["/usr/bin/git", "-C", str(root), "-c", "user.name=Test", "-c",
-                 "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
-                 "commit", "-m", "head"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-            )
-            expected = subprocess.check_output(
-                ["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"], text=True
-            ).strip()
-            (root / "recovery.txt").write_text("recovery\n", encoding="utf-8")
-            subprocess.run(["/usr/bin/git", "-C", str(root), "add", "recovery.txt"], check=True)
-            subprocess.run(
-                ["/usr/bin/git", "-C", str(root), "-c", "user.name=Test", "-c",
-                 "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
-                 "commit", "-m", "recovery"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-            )
-            recovery = subprocess.check_output(
-                ["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"], text=True
-            ).strip()
-            RECOVERY.verify_recovery_head(root, expected, recovery)
+    def test_verify_recovery_head_uses_server_side_compare(self) -> None:
+        with patch.object(
+            RECOVERY,
+            "run_gh",
+            return_value=json.dumps(
+                {"status": "ahead", "behind_by": 0, "ahead_by": 2}
+            ).encode(),
+        ) as run:
+            RECOVERY.verify_recovery_head("2" * 40, "7" * 40)
+            self.assertIn("compare/", " ".join(run.call_args.args[0]))
+
+    def test_verify_recovery_head_rejects_diverged_or_identical(self) -> None:
+        for response in (
+            {"status": "diverged", "behind_by": 1, "ahead_by": 2},
+            {"status": "behind", "behind_by": 2, "ahead_by": 0},
+            {"status": "identical", "behind_by": 0, "ahead_by": 0},
+        ):
+            with self.subTest(response=response), patch.object(
+                RECOVERY,
+                "run_gh",
+                return_value=json.dumps(response).encode(),
+            ):
+                with self.assertRaises(RECOVERY.MergeRecoveryError):
+                    RECOVERY.verify_recovery_head("2" * 40, "7" * 40)
+
+    def test_verify_recovery_head_rejects_identical_shas(self) -> None:
+        with patch.object(RECOVERY, "run_gh") as run:
             with self.assertRaises(RECOVERY.MergeRecoveryError):
-                RECOVERY.verify_recovery_head(root, recovery, expected)
-            with self.assertRaises(RECOVERY.MergeRecoveryError):
-                RECOVERY.verify_recovery_head(root, expected, expected)
+                RECOVERY.verify_recovery_head("2" * 40, "2" * 40)
+            run.assert_not_called()
 
 
 if __name__ == "__main__":
