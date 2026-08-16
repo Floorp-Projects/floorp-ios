@@ -269,6 +269,8 @@ def main(arguments: list[str] | None = None) -> int:
             "original guarded-merge jobs response",
         )
         verify_source_executor_step(source_jobs)
+        run_id, head_sha = runtime_context()
+        verify_recovery_head(args.repository_root, expected_head_sha, head_sha)
 
         merge_projection = {"merged": True, "sha": expected_merged_oid}
         operation = {
@@ -294,8 +296,6 @@ def main(arguments: list[str] | None = None) -> int:
         with args.output.open("xb") as handle:
             handle.write(raw)
             handle.flush()
-        run_id, head_sha = runtime_context()
-        verify_recovery_head(args.repository_root, expected_head_sha, head_sha)
         evidence = {
             "admission_receipt_sha256": sha256(admission_raw),
             "expected_head_sha": expected_head_sha,
