@@ -26,6 +26,7 @@ OPERATION_CONTRACT_INPUT = "prepare_floorp_notes_sync_g5_contract"
 PRODUCTION_QA_INPUT = "run_floorp_notes_sync_production_qa"
 ENABLEMENT_INPUT = "run_floorp_notes_sync_production_enablement"
 GUARDED_MERGE_INPUT = "run_floorp_notes_sync_guarded_merge"
+RECOVERY_INPUT = "run_floorp_notes_sync_merge_audit_recovery"
 JOB_ID = "notes-sync-protected-preflight"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 STATIC_G5_SELECTOR = "XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix"
@@ -70,9 +71,23 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
     def test_dispatch_adds_an_optional_false_by_default_boolean_opt_in(self) -> None:
         self.assertEqual(
             set(self.dispatch["inputs"]),
-            {DISPATCH_INPUT, OPERATION_CONTRACT_INPUT, PRODUCTION_QA_INPUT, ENABLEMENT_INPUT, GUARDED_MERGE_INPUT},
+            {
+                DISPATCH_INPUT,
+                OPERATION_CONTRACT_INPUT,
+                PRODUCTION_QA_INPUT,
+                ENABLEMENT_INPUT,
+                GUARDED_MERGE_INPUT,
+                RECOVERY_INPUT,
+            },
         )
-        for input_name in (DISPATCH_INPUT, OPERATION_CONTRACT_INPUT, PRODUCTION_QA_INPUT, ENABLEMENT_INPUT, GUARDED_MERGE_INPUT):
+        for input_name in (
+            DISPATCH_INPUT,
+            OPERATION_CONTRACT_INPUT,
+            PRODUCTION_QA_INPUT,
+            ENABLEMENT_INPUT,
+            GUARDED_MERGE_INPUT,
+            RECOVERY_INPUT,
+        ):
             option = self.dispatch["inputs"][input_name]
             self.assertEqual(option["type"], "boolean")
             self.assertIs(option["required"], False)
@@ -96,7 +111,8 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             f"inputs.{OPERATION_CONTRACT_INPUT} != true && "
             f"inputs.{PRODUCTION_QA_INPUT} != true && "
             f"inputs.{ENABLEMENT_INPUT} != true && "
-            f"inputs.{GUARDED_MERGE_INPUT} != true",
+            f"inputs.{GUARDED_MERGE_INPUT} != true && "
+            f"inputs.{RECOVERY_INPUT} != true",
         )
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
 
@@ -107,7 +123,8 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             f"inputs.{OPERATION_CONTRACT_INPUT} != true && "
             f"inputs.{PRODUCTION_QA_INPUT} != true && "
             f"inputs.{ENABLEMENT_INPUT} != true && "
-            f"inputs.{GUARDED_MERGE_INPUT} != true)"
+            f"inputs.{GUARDED_MERGE_INPUT} != true && "
+            f"inputs.{RECOVERY_INPUT} != true)"
         )
         for job_id in (
             "workflow-lint",
@@ -132,6 +149,7 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
         self.assertIn("github.run_id", concurrency["group"])
         self.assertIn(DISPATCH_INPUT, concurrency["group"])
         self.assertIn(OPERATION_CONTRACT_INPUT, concurrency["group"])
+        self.assertIn(RECOVERY_INPUT, concurrency["group"])
         self.assertEqual(
             " ".join(concurrency["cancel-in-progress"].split())
             .replace("( ", "(")
@@ -141,7 +159,8 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             f"inputs.{OPERATION_CONTRACT_INPUT} != true && "
             f"inputs.{PRODUCTION_QA_INPUT} != true && "
             f"inputs.{ENABLEMENT_INPUT} != true && "
-            f"inputs.{GUARDED_MERGE_INPUT} != true)" + " }}",
+            f"inputs.{GUARDED_MERGE_INPUT} != true && "
+            f"inputs.{RECOVERY_INPUT} != true)" + " }}",
         )
 
     def test_job_shape_steps_and_xcode_commands_are_allowlisted(self) -> None:
