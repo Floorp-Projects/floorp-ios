@@ -177,7 +177,8 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             " ".join(job["if"].split()),
             "github.event_name == 'workflow_dispatch' && "
             "github.ref == 'refs/heads/main' && "
-            f"inputs.{DISPATCH_INPUT} == true",
+            f"inputs.{DISPATCH_INPUT} == true && "
+            "inputs.run_floorp_notes_sync_production_enablement_waived != true",
         )
         serialized = json.dumps(job, sort_keys=True).lower()
         for secret_name in (

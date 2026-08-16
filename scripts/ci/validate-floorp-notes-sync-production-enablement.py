@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -212,19 +213,209 @@ def validate_enablement(
     return record
 
 
+WAIVED_ENABLEMENT_FIELDS = {
+    "app_store_submission",
+    "approved",
+    "audit_endpoint_unavailable",
+    "audit_source",
+    "configuration",
+    "enablement_validator_sha256",
+    "environment",
+    "fxa_configuration",
+    "guarded_merge_run_id",
+    "live_qa",
+    "live_qa_waiver_approved_at_utc",
+    "live_qa_waiver_operator_id",
+    "live_qa_waiver_plan_hash",
+    "merge_audit_sha256",
+    "no_data_loss_claim",
+    "operator_id",
+    "phase",
+    "phase1_summary_sha256",
+    "public_release",
+    "repository",
+    "review_receipt_sha256",
+    "schema_version",
+    "source_head_sha",
+    "testflight_distribution",
+    "wire_protocol",
+    "workflow_event",
+    "workflow_job",
+    "workflow_path",
+    "workflow_run_attempt",
+    "workflow_run_id",
+}
+
+
+def validate_waived_enablement(
+    record: Any,
+    review_receipt_raw: bytes,
+    merge_audit_raw: bytes,
+    live_qa_waiver_raw: bytes,
+    binding_raw: bytes,
+) -> dict[str, Any]:
+    require(isinstance(record, dict), "enablement record must be an object")
+    require(
+        set(record) == WAIVED_ENABLEMENT_FIELDS,
+        "enablement record fields are not exact",
+    )
+    require(record["schema_version"] == 2, "enablement schema is unsupported")
+    require(record["phase"] == "production-sync-enablement", "enablement phase is invalid")
+    require(record["environment"] == ENVIRONMENT, "enablement Environment is invalid")
+    require(record["repository"] == REPOSITORY, "enablement repository is invalid")
+    require(record["approved"] is True, "enablement is not approved")
+    require(
+        record["configuration"] == "production-sync-enabled-qa",
+        "enablement configuration is distributable",
+    )
+    require(
+        record["fxa_configuration"] == "FxAConfig.Server.release",
+        "enablement FxA configuration is invalid",
+    )
+    require(record["wire_protocol"] == "sync15", "enablement protocol is invalid")
+    require(record["public_release"] is False, "public release is forbidden")
+    require(record["app_store_submission"] is False, "App Store submission is forbidden")
+    require(record["testflight_distribution"] is False, "TestFlight distribution is forbidden")
+    require(record["live_qa"] == "owner-waived-not-performed", "live QA is not recorded as waived")
+    require(record["no_data_loss_claim"] is False, "no-data-loss must not be claimed")
+    require(record["phase1_summary_sha256"] is None, "waived enablement must not bind a Phase 1 summary")
+    require(
+        record["audit_source"] == "github-org-audit-log-unavailable-owner-waived",
+        "audit source is not the owner-waived unavailability record",
+    )
+    require(record["audit_endpoint_unavailable"] is True, "audit endpoint unavailability is not recorded")
+    for field in ("enablement_validator_sha256", "merge_audit_sha256", "review_receipt_sha256"):
+        require(
+            isinstance(record[field], str) and SHA256.fullmatch(record[field]) is not None,
+            f"{field} is not a SHA-256 digest",
+        )
+    require(
+        str(record["guarded_merge_run_id"])
+        == os.environ.get("FLOORP_TODO20_GUARDED_MERGE_RUN_ID"),
+        "enablement guarded-merge run does not match the protected selector",
+    )
+    require(
+        record["source_head_sha"] == os.environ.get("GITHUB_SHA"),
+        "enablement source head does not match the workflow source",
+    )
+    require(
+        record["operator_id"] == os.environ.get("GITHUB_ACTOR"),
+        "enablement operator does not match the dispatch actor",
+    )
+    require(
+        record["live_qa_waiver_operator_id"] == record["operator_id"],
+        "live-QA waiver operator does not match the enablement operator",
+    )
+    require(
+        record["workflow_event"] == "workflow_dispatch",
+        "enablement event is not a manual dispatch",
+    )
+    require(
+        record["workflow_job"] == "notes-sync-production-enablement-waived",
+        "enablement job is invalid",
+    )
+    require(record["workflow_path"] == ".github/workflows/ci.yml", "enablement workflow is invalid")
+    require(
+        record["enablement_validator_sha256"]
+        == hashlib.sha256(ENABLEMENT_VALIDATOR_SOURCE.read_bytes()).hexdigest(),
+        "enablement does not bind the enablement validator",
+    )
+    require(
+        record["merge_audit_sha256"] == hashlib.sha256(merge_audit_raw).hexdigest(),
+        "enablement is not bound to the exact merge-audit bytes",
+    )
+    require(
+        record["review_receipt_sha256"] == hashlib.sha256(review_receipt_raw).hexdigest(),
+        "enablement is not bound to the exact review-receipt bytes",
+    )
+    binding = json.loads(binding_raw.decode("utf-8"))
+    require(
+        isinstance(binding, dict)
+        and record["live_qa_waiver_plan_hash"] == binding.get("combined_plan_hash"),
+        "enablement live-QA waiver plan hash does not match the checked-in plan binding",
+    )
+    review_receipt = json.loads(review_receipt_raw.decode("utf-8"))
+    require(
+        isinstance(review_receipt, dict)
+        and review_receipt.get("merge_audit_sha256") == record["merge_audit_sha256"],
+        "review receipt is not bound to the enablement merge audit",
+    )
+    require(
+        review_receipt.get("source_workflow_run_id") == record["guarded_merge_run_id"],
+        "review receipt guarded-merge run does not match the enablement record",
+    )
+    require(
+        review_receipt.get("audit_source") == "github-org-audit-log-unavailable-owner-waived",
+        "review receipt is not the owner-waived audit record",
+    )
+    merge_audit = json.loads(merge_audit_raw.decode("utf-8"))
+    require(
+        isinstance(merge_audit, dict)
+        and merge_audit.get("schema_version") == 3
+        and merge_audit.get("audit_source") == "github-org-audit-log-unavailable-owner-waived"
+        and merge_audit.get("audit_endpoint_unavailable") is True
+        and merge_audit.get("admin_bypass_used") is None,
+        "merge audit is not the owner-waived schema-v3 record",
+    )
+    live_qa_waiver = json.loads(live_qa_waiver_raw.decode("utf-8"))
+    require(
+        isinstance(live_qa_waiver, dict)
+        and live_qa_waiver.get("operator_id") == record["operator_id"]
+        and isinstance(live_qa_waiver.get("approved_at_utc"), str)
+        and live_qa_waiver["approved_at_utc"].endswith("Z")
+        and live_qa_waiver.get("plan_hash") == record["live_qa_waiver_plan_hash"],
+        "live-QA waiver receipt is not bound to the enablement record",
+    )
+    return record
+
+
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase1-summary", type=Path, required=True)
-    parser.add_argument("--cleanup-receipt", type=Path, required=True)
-    parser.add_argument("--secret-scan-receipt", type=Path, required=True)
-    parser.add_argument("--secret-scan-target", type=Path, action="append", required=True)
+    parser.add_argument("--phase1-summary", type=Path, required=False)
+    parser.add_argument("--cleanup-receipt", type=Path, required=False)
+    parser.add_argument("--secret-scan-receipt", type=Path, required=False)
+    parser.add_argument("--secret-scan-target", type=Path, action="append", required=False)
     parser.add_argument("--enablement-record", type=Path, required=True)
+    parser.add_argument(
+        "--waived-qa",
+        action="store_true",
+        help="validate the owner-waived enablement record (no live Phase 1 matrix)",
+    )
+    parser.add_argument("--review-receipt", type=Path, required=False)
+    parser.add_argument("--merge-audit", type=Path, required=False)
+    parser.add_argument("--live-qa-waiver", type=Path, required=False)
+    parser.add_argument("--plan-binding", type=Path, required=False)
     return parser.parse_args(arguments)
 
 
 def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
+        record, _ = canonical_json(args.enablement_record)
+        if args.waived_qa:
+            if (
+                args.review_receipt is None
+                or args.merge_audit is None
+                or args.live_qa_waiver is None
+                or args.plan_binding is None
+            ):
+                raise EnablementError("waived-qa mode requires review receipt, merge audit, waiver, and binding")
+            validate_waived_enablement(
+                record,
+                args.review_receipt.read_bytes(),
+                args.merge_audit.read_bytes(),
+                args.live_qa_waiver.read_bytes(),
+                args.plan_binding.read_bytes(),
+            )
+            print('{"phase":"production-sync-enablement","status":"enablement-record-valid-waived"}')
+            return 0
+        if (
+            args.phase1_summary is None
+            or args.cleanup_receipt is None
+            or args.secret_scan_receipt is None
+            or not args.secret_scan_target
+        ):
+            raise EnablementError("live enablement inputs are missing")
         phase1_raw = args.phase1_summary.read_bytes()
         cleanup_receipt_raw = args.cleanup_receipt.read_bytes()
         secret_scan_receipt_raw = args.secret_scan_receipt.read_bytes()
