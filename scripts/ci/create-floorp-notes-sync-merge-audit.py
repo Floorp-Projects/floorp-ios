@@ -154,6 +154,16 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--operation-receipt", type=Path, required=True)
     parser.add_argument("--audit-json", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--waive-audit",
+        action="store_true",
+        help=(
+            "create the schema-v3 owner-waived merge audit when the "
+            "organization audit-log endpoint is unavailable (free org plan); "
+            "the no-bypass fact is explicitly not claimed"
+        ),
+    )
+    parser.add_argument("--owner-waiver", type=Path, required=False)
     return parser.parse_args(arguments)
 
 
@@ -170,10 +180,102 @@ def workflow_source() -> tuple[int, str]:
     return run_id, source_sha
 
 
+WAIVER_FIELDS = {
+    "approved_at_utc", "endpoint_unavailable", "operator_id", "plan_hash",
+    "schema_version", "statement",
+}
+
+
+def load_canonical(path: Path) -> tuple[dict[str, Any], bytes]:
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise MergeAuditError(f"{path.name} is not valid JSON") from error
+    if path.is_symlink() or not path.is_file() or not isinstance(value, dict) or raw != canonical(value):
+        raise MergeAuditError(f"{path.name} is not canonical JSON")
+    return value, raw
+
+
+def validate_owner_waiver(path: Path) -> dict[str, Any]:
+    waiver, _ = load_canonical(path)
+    if set(waiver) != WAIVER_FIELDS:
+        raise MergeAuditError("owner waiver fields are not exact")
+    if (
+        waiver["schema_version"] != 1
+        or not isinstance(waiver["operator_id"], str)
+        or not waiver["operator_id"]
+        or waiver["operator_id"] != os.environ.get("GITHUB_ACTOR")
+        or not isinstance(waiver["approved_at_utc"], str)
+        or not waiver["approved_at_utc"].endswith("Z")
+        or not isinstance(waiver["endpoint_unavailable"], str)
+        or not waiver["endpoint_unavailable"]
+        or not isinstance(waiver["statement"], str)
+        or not waiver["statement"]
+        or not SHA256.fullmatch(waiver["plan_hash"])
+    ):
+        raise MergeAuditError("owner waiver is stale or incomplete")
+    binding_path = Path("docs/floorp-notes-sync-todo20-plan-binding.json")
+    binding, _ = load_canonical(binding_path)
+    if binding.get("combined_plan_hash") != waiver["plan_hash"]:
+        raise MergeAuditError("owner waiver plan hash does not match the checked-in plan binding")
+    return waiver
+
+
+def waived_artifact(
+    operation: dict[str, Any],
+    operation_raw: bytes,
+    source_run_id: int,
+    source_sha: str,
+    waiver: dict[str, Any],
+) -> bytes:
+    merge_projection = operation["merge_response"]
+    response_digest = sha256(canonical(merge_projection))
+    artifact = {
+        "admin_bypass_used": None,
+        "audit_bypass_event_count": None,
+        "audit_endpoint_unavailable": True,
+        "audit_event_count": 0,
+        "audit_event_id_sha256": None,
+        "audit_event_timestamp": None,
+        "audit_projection_sha256": None,
+        "audit_source": "github-org-audit-log-unavailable-owner-waived",
+        "base_oid": operation["base_oid"],
+        "bypass_requested": False,
+        "head_sha": operation["head_sha"],
+        "merge_endpoint": operation["merge_endpoint"],
+        "merge_method": "squash",
+        "merge_response": merge_projection,
+        "merge_response_sha256": response_digest,
+        "merge_response_source": operation["merge_response_source"],
+        "merge_admission_receipt_sha256": operation["merge_admission_receipt_sha256"],
+        "merged_oid": operation["merged_oid"],
+        "oid_guarded": True,
+        "operation_receipt_sha256": sha256(operation_raw),
+        "pr_number": operation["pr_number"],
+        "repository": REPOSITORY,
+        "schema_version": 3,
+        "server_merge_sha": operation["server_merge_sha"],
+        "server_merged": True,
+        "server_merged_at": operation["server_merged_at"],
+        "source_workflow_run_id": source_run_id,
+        "source_workflow_sha": source_sha,
+        "source_workflow": "protected-guarded-merge-workflow",
+        "waiver_approved_at_utc": waiver["approved_at_utc"],
+        "waiver_operator_id": waiver["operator_id"],
+        "waiver_plan_hash": waiver["plan_hash"],
+    }
+    return canonical(artifact)
+
+
 def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         source_run_id, source_sha = workflow_source()
+        if args.waive_audit:
+            if args.owner_waiver is None:
+                raise MergeAuditError("owner waiver receipt is required for the waived audit")
+            waiver = validate_owner_waiver(args.owner_waiver)
         operation, operation_raw = load_json(args.operation_receipt)
         if not isinstance(operation, dict) or operation_raw != canonical(operation):
             raise MergeAuditError("merge operation receipt is not canonical JSON")
@@ -213,6 +315,14 @@ def main(arguments: list[str] | None = None) -> int:
         if operation["merge_response_sha256"] != sha256(canonical(merge_projection)):
             raise MergeAuditError("merge operation response digest is invalid")
         audit, audit_raw = load_json(args.audit_json)
+        if args.waive_audit:
+            raw = waived_artifact(operation, operation_raw, source_run_id, source_sha, waiver)
+            args.output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with args.output.open("xb") as handle:
+                handle.write(raw)
+                handle.flush()
+            print('{"status":"merge-audit-created-waived"}')
+            return 0
         if json.loads(audit_raw.decode("utf-8")) != audit:
             raise MergeAuditError("audit JSON bytes do not match the parsed response")
         events = flatten_events(audit)

@@ -358,6 +358,71 @@ class GuardedMergeArtifactTests(unittest.TestCase):
                 0,
             )
 
+    @staticmethod
+    def to_waived_v3(merge: dict[str, object]) -> dict[str, object]:
+        value = dict(merge)
+        value["schema_version"] = 3
+        value["admin_bypass_used"] = None
+        value["audit_bypass_event_count"] = None
+        value["audit_endpoint_unavailable"] = True
+        value["audit_event_count"] = 0
+        value["audit_event_id_sha256"] = None
+        value["audit_event_timestamp"] = None
+        value["audit_projection_sha256"] = None
+        value["audit_source"] = "github-org-audit-log-unavailable-owner-waived"
+        value["waiver_approved_at_utc"] = "2026-08-16T00:00:00Z"
+        value["waiver_operator_id"] = "operator"
+        value["waiver_plan_hash"] = "c" * 64
+        return value
+
+    def test_waived_v3_merge_audit_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            merge_path, operation_path, admission_path, metadata_path, run_path, artifacts_path = self.write_inputs(Path(directory))
+            value = json.loads(merge_path.read_text(encoding="utf-8"))
+            merge_path.write_bytes(VERIFY.canonical(self.to_waived_v3(value)))
+            self.assertEqual(
+                VERIFY.main(
+                    [
+                        "--merge-audit", str(merge_path),
+                        "--operation-receipt", str(operation_path),
+                        "--admission-receipt", str(admission_path),
+                        "--run-json", str(run_path),
+                        "--artifacts-json", str(artifacts_path),
+                        "--artifact-metadata", str(metadata_path),
+                        "--expected-run-id", "123",
+                        "--expected-pr-number", "106",
+                        "--expected-head-sha", "2" * 40,
+                        "--expected-merged-oid", "4" * 40,
+                    ]
+                ),
+                0,
+            )
+
+    def test_waived_v3_with_bypass_claim_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            merge_path, operation_path, admission_path, metadata_path, run_path, artifacts_path = self.write_inputs(Path(directory))
+            value = json.loads(merge_path.read_text(encoding="utf-8"))
+            waived = self.to_waived_v3(value)
+            waived["admin_bypass_used"] = False
+            merge_path.write_bytes(VERIFY.canonical(waived))
+            self.assertNotEqual(
+                VERIFY.main(
+                    [
+                        "--merge-audit", str(merge_path),
+                        "--operation-receipt", str(operation_path),
+                        "--admission-receipt", str(admission_path),
+                        "--run-json", str(run_path),
+                        "--artifacts-json", str(artifacts_path),
+                        "--artifact-metadata", str(metadata_path),
+                        "--expected-run-id", "123",
+                        "--expected-pr-number", "106",
+                        "--expected-head-sha", "2" * 40,
+                        "--expected-merged-oid", "4" * 40,
+                    ]
+                ),
+                0,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

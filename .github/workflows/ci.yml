@@ -591,6 +591,7 @@ jobs:
       FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
       FLOORP_TODO20_EXPECTED_MERGED_OID: ${{ vars.FLOORP_TODO20_EXPECTED_MERGED_OID }}
       FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID }}
+      FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON: ${{ vars.FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON }}
 
     steps:
       - name: Check out source anonymously
@@ -722,15 +723,34 @@ jobs:
           /opt/homebrew/bin/gh api --paginate --slurp \
             "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
             -H "Accept: application/vnd.github+json" \
-            > "$FLOORP_TODO20_MERGE_ROOT/audit-log.json"
+            > "$FLOORP_TODO20_MERGE_ROOT/audit-log.json" || {
+            if [ -n "${FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON:-}" ] && [ "${FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON}" != "" ]; then
+              printf '%s\n' '{"status":404,"endpoint":"org-audit-log-unavailable","note":"github-free-plan; owner-waived audit record"}' \
+                > "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json"
+            else
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_unavailable resume=configure the owner audit waiver or upgrade the org plan' >&2
+              exit 78
+            fi
+          }
 
       - name: Create same-run metadata-only merge audit
         run: |
           set -euo pipefail
-          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-merge-audit.py \
-            --operation-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
-            --audit-json "$FLOORP_TODO20_MERGE_ROOT/audit-log.json" \
-            --output "$FLOORP_TODO20_MERGE_ROOT/merge-audit.json"
+          if [ -f "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json" ]; then
+            waiver_path="$FLOORP_TODO20_MERGE_ROOT/owner-waiver.json"
+            printf '%s' "$FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON" > "$waiver_path"
+            /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-merge-audit.py \
+              --operation-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
+              --audit-json "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json" \
+              --waive-audit \
+              --owner-waiver "$waiver_path" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-audit.json"
+          else
+            /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-merge-audit.py \
+              --operation-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
+              --audit-json "$FLOORP_TODO20_MERGE_ROOT/audit-log.json" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-audit.json"
+          fi
 
       - name: Upload immutable guarded-merge metadata
         if: success()
@@ -906,7 +926,19 @@ jobs:
           /opt/homebrew/bin/gh api --paginate --slurp \
             "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
             -H "Accept: application/vnd.github+json" \
-            > "$qa_root/audit-log.json"
+            > "$qa_root/audit-log.json" || {
+            merge_audit_schema="$(
+              /usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schema_version"])' \
+                "$qa_root/guarded-merge-artifact/merge-audit.json"
+            )"
+            if [ "$merge_audit_schema" = "3" ]; then
+              printf '%s\n' '{"status":404,"endpoint":"org-audit-log-unavailable","note":"github-free-plan; owner-waived audit record"}' \
+                > "$qa_root/audit-log.json"
+            else
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_unavailable resume=configure the owner audit waiver or upgrade the org plan' >&2
+              exit 78
+            fi
+          }
           base_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["sha"])' "$qa_root/pr.json")"
           head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$qa_root/pr.json")"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"

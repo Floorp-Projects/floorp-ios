@@ -265,7 +265,7 @@ def validate(
     if operation["merge_response_sha256"] != sha256(canonical(operation["merge_response"])):
         raise GuardedMergeArtifactError("executor response digest is invalid")
 
-    merge_fields = {
+    merge_fields_common = {
         "admin_bypass_used", "audit_bypass_event_count", "audit_event_count",
         "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256",
         "audit_source", "base_oid", "bypass_requested", "head_sha", "merge_endpoint",
@@ -274,6 +274,13 @@ def validate(
         "schema_version", "server_merge_sha", "server_merged", "server_merged_at",
         "source_workflow", "source_workflow_run_id", "source_workflow_sha",
     }
+    merge_fields_v3 = merge_fields_common | {
+        "audit_endpoint_unavailable", "waiver_approved_at_utc", "waiver_operator_id",
+        "waiver_plan_hash",
+    }
+    merge_fields = (
+        merge_fields_v3 if merge.get("schema_version") == 3 else merge_fields_common
+    )
     if set(merge) != merge_fields:
         raise GuardedMergeArtifactError("merge audit fields are not exact")
     for value, label in (
@@ -286,11 +293,15 @@ def validate(
     require_sha(merge["operation_receipt_sha256"], SHA256, "operation receipt digest")
     require_sha(merge["merge_admission_receipt_sha256"], SHA256, "merge admission receipt digest")
     require_sha(merge["merge_response_sha256"], SHA256, "merge response digest")
-    require_sha(merge["audit_event_id_sha256"], SHA256, "audit event ID digest")
-    require_sha(merge["audit_projection_sha256"], SHA256, "audit projection digest")
+    if merge.get("schema_version") == 2:
+        require_sha(merge["audit_event_id_sha256"], SHA256, "audit event ID digest")
+        require_sha(merge["audit_projection_sha256"], SHA256, "audit projection digest")
+    elif merge.get("schema_version") == 3:
+        require_sha(merge["waiver_plan_hash"], SHA256, "waiver plan digest")
+    else:
+        raise GuardedMergeArtifactError("merge audit schema version is invalid")
     if (
-        merge["schema_version"] != 2
-        or merge["repository"] != REPOSITORY
+        merge["repository"] != REPOSITORY
         or not isinstance(merge["pr_number"], int)
         or merge["pr_number"] != expected_pr_number
         or merge["base_oid"] != operation["base_oid"]
@@ -304,11 +315,7 @@ def validate(
         or merge["merge_response"] != {"merged": True, "sha": expected_merged_oid}
         or merge["merge_response_sha256"] != operation["merge_response_sha256"]
         or merge["oid_guarded"] is not True
-        or merge["admin_bypass_used"] is not False
         or merge["bypass_requested"] is not False
-        or merge["audit_source"] != "github-org-audit-log"
-        or merge["audit_bypass_event_count"] != 0
-        or merge["audit_event_count"] != 1
         or merge["source_workflow"] != WORKFLOW_SOURCE
         or merge["source_workflow_run_id"] != expected_run_id
         or merge["source_workflow_sha"] != run_head_sha
@@ -316,6 +323,30 @@ def validate(
         or merge["server_merged_at"] != operation["server_merged_at"]
     ):
         raise GuardedMergeArtifactError("merge audit is not bound to the protected merge run")
+    if merge["schema_version"] == 2:
+        if (
+            merge["admin_bypass_used"] is not False
+            or merge["audit_source"] != "github-org-audit-log"
+            or merge["audit_bypass_event_count"] != 0
+            or merge["audit_event_count"] != 1
+        ):
+            raise GuardedMergeArtifactError("merge audit is not the observed no-bypass result")
+    else:
+        if (
+            merge["admin_bypass_used"] is not None
+            or merge["audit_source"] != "github-org-audit-log-unavailable-owner-waived"
+            or merge["audit_bypass_event_count"] is not None
+            or merge["audit_event_count"] != 0
+            or merge["audit_event_id_sha256"] is not None
+            or merge["audit_event_timestamp"] is not None
+            or merge["audit_projection_sha256"] is not None
+            or merge["audit_endpoint_unavailable"] is not True
+            or not isinstance(merge["waiver_operator_id"], str)
+            or not merge["waiver_operator_id"]
+            or not isinstance(merge["waiver_approved_at_utc"], str)
+            or not merge["waiver_approved_at_utc"].endswith("Z")
+        ):
+            raise GuardedMergeArtifactError("merge audit waiver is not the owner-waived unavailability record")
     if merge["operation_receipt_sha256"] != sha256(operation_raw):
         raise GuardedMergeArtifactError("merge audit is not bound to the executor receipt")
     if merge["merge_admission_receipt_sha256"] != sha256(admission_raw):
