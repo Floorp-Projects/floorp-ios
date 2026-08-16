@@ -251,6 +251,7 @@ def validate_checks(
     pr_number: int,
     expected_head_sha: str,
     expected_base_sha: str,
+    recovery: bool,
 ) -> int:
     if not isinstance(checks, list) or not checks:
         raise MergeAdmissionError("GitHub check response is empty or malformed")
@@ -307,13 +308,14 @@ def validate_checks(
             raise MergeAdmissionError(f"GitHub check-run head SHA is not exact: {name}")
         if check_run.get("status") != "completed":
             raise MergeAdmissionError(f"GitHub check-run is not completed: {name}")
-        require_pull_request(
-            check_run.get("pull_requests"),
-            pr_number,
-            expected_head_sha,
-            expected_base_sha,
-            f"GitHub check-run {name}",
-        )
+        if not recovery:
+            require_pull_request(
+                check_run.get("pull_requests"),
+                pr_number,
+                expected_head_sha,
+                expected_base_sha,
+                f"GitHub check-run {name}",
+            )
         workflow_run = workflow_runs_by_id.get(run_id)
         if workflow_run is None:
             raise MergeAdmissionError(f"GitHub workflow-run is missing: {name}")
@@ -332,13 +334,14 @@ def validate_checks(
             or workflow_run.get("conclusion") != "success"
         ):
             raise MergeAdmissionError(f"GitHub workflow provenance is not exact: {name}")
-        require_pull_request(
-            workflow_run.get("pull_requests"),
-            pr_number,
-            expected_head_sha,
-            expected_base_sha,
-            f"GitHub workflow-run {name}",
-        )
+        if not recovery:
+            require_pull_request(
+                workflow_run.get("pull_requests"),
+                pr_number,
+                expected_head_sha,
+                expected_base_sha,
+                f"GitHub workflow-run {name}",
+            )
         state = str(check.get("state", "")).upper()
         bucket = check.get("bucket")
         check_conclusion = str(check_run.get("conclusion", "")).lower()
@@ -376,6 +379,15 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--plan-binding", type=Path, required=True)
     parser.add_argument("--pr-number", type=int, required=True)
     parser.add_argument("--expected-head-sha", required=True)
+    parser.add_argument(
+        "--recovery",
+        action="store_true",
+        help=(
+            "admit an already-merged PR whose GitHub check/workflow-run "
+            "pull-request associations have been cleared after the merge; "
+            "the merged-PR verification is performed by the recovery executor"
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(arguments)
 
@@ -401,6 +413,7 @@ def main(arguments: list[str] | None = None) -> int:
             args.pr_number,
             args.expected_head_sha,
             owner["base_oid"],
+            args.recovery,
         )
         validate_plan_binding(binding)
         if (

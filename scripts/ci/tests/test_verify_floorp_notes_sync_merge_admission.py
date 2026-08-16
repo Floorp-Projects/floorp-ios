@@ -280,6 +280,29 @@ class MergeAdmissionTests(unittest.TestCase):
             self.assertEqual(value["status"], "GO")
             self.assertEqual(value["head_sha"], head)
 
+    def test_recovery_mode_admits_merged_pr_without_run_pr_associations(self) -> None:
+        """After a PR merges, GitHub clears the pull-request associations on
+        its check runs and workflow runs. Recovery mode must admit the
+        terminal exact-head checks without those associations; normal mode
+        must still reject them."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            head, commit = self.build_repo(root)
+            values = self.write_inputs(root, head, commit)
+            check_runs_path = Path(values["check_runs"])
+            check_runs = json.loads(check_runs_path.read_text(encoding="utf-8"))
+            for check_run in check_runs["check_runs"]:
+                check_run["pull_requests"] = []
+            check_runs_path.write_text(json.dumps(check_runs) + "\n", encoding="utf-8")
+            workflow_runs_path = Path(values["workflow_runs"])
+            workflow_runs = json.loads(workflow_runs_path.read_text(encoding="utf-8"))
+            for workflow_run in workflow_runs["workflow_runs"]:
+                workflow_run["pull_requests"] = []
+            workflow_runs_path.write_text(json.dumps(workflow_runs) + "\n", encoding="utf-8")
+            self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
+            recovery_args = self.args(values) + ["--recovery"]
+            self.assertEqual(ADMISSION.main(recovery_args), 0)
+
     def test_pending_ci_is_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
