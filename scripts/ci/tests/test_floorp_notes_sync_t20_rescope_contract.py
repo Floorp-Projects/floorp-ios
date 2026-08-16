@@ -102,8 +102,13 @@ class FloorpNotesSyncT20RescopeContractTests(unittest.TestCase):
         self.assertEqual(contract["workflow"]["enablement_job"], "notes-sync-production-enablement")
         self.assertEqual(
             contract["approval_model"]["self_attestation"],
-            "owner-operations-executor",
+            "owner-operations-executor-reviewer",
         )
+        self.assertTrue(contract["approval_model"]["self_review_exception"])
+        self.assertFalse(contract["approval_model"]["independence"])
+        self.assertFalse(contract["approval_model"]["native_github_approval"])
+        self.assertEqual(contract["approval_model"]["required_approving_review_count"], 0)
+        self.assertEqual(contract["approval_model"]["reviews_count"], 0)
 
     def test_contract_contains_the_complete_data_integrity_matrix(self) -> None:
         contract = self.checked_in_contract()
@@ -144,8 +149,10 @@ class FloorpNotesSyncT20RescopeContractTests(unittest.TestCase):
         self.assertIn("floorp_notes_sync_account_b_password", serialized)
         self.assertNotIn("validate external g5 driver prerequisites contract", serialized)
         self.assertNotIn("dedicated-g5-runner", serialized)
-        self.assertIn("verify client-pair cleanup receipt", serialized)
+        self.assertIn("validate live production-qa summary and cleanup receipt", serialized)
         self.assertIn("record-floorp-notes-sync-secret-scan.py", serialized)
+        self.assertIn("record-floorp-notes-sync-self-attestation.py", serialized)
+        self.assertIn("validate-floorp-notes-sync-self-attestation.py", json.dumps(self.workflow, sort_keys=True).lower())
 
         enablement = self.jobs["notes-sync-production-enablement"]
         self.assertEqual(enablement["needs"], "notes-sync-production-qa")

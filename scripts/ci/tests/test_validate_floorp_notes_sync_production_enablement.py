@@ -76,6 +76,7 @@ def canonical(value: dict[str, Any]) -> bytes:
 def cleanup_receipt() -> dict[str, Any]:
     return {
         "accounts": True,
+        "coordination_root": True,
         "environment": QA.ENVIRONMENT,
         "local_cache": True,
         "phase": "production-qa",
@@ -97,10 +98,13 @@ def secret_scan_receipt() -> dict[str, Any]:
         "marker_set_sha256": ENABLEMENT.SECRET_SCAN.MARKER_SET_SHA256,
         "passed": True,
         "repository": QA.REPOSITORY,
+        "scan_method": ENABLEMENT.SECRET_SCAN.SCAN_METHOD,
+        "scan_passed": True,
+        "secret_env_names": list(ENABLEMENT.SECRET_SCAN.SECRET_ENV_NAMES),
         "schema_version": 1,
         "scope": list(ENABLEMENT.SECRET_SCAN.SCOPE),
         "target_digests": [
-            {"byte_count": 1, "file_count": 1, "name": name, "sha256": "0" * 64}
+            {"artifact_sha256": "0" * 64, "byte_count": 1, "file_count": 1, "name": name, "sha256": "0" * 64}
             for name in sorted(ENABLEMENT.SECRET_SCAN.REQUIRED_TARGETS)
         ],
         "source": {
@@ -118,10 +122,18 @@ def materialize_targets(root: Path) -> list[Path]:
         root / "cleanup-receipt.json",
         root / "floorp-notes-sync-two-client.xcresult",
         root / "xcodebuild.log",
+        root / "desktop.log",
+        root / "production-qa-capability.json",
+        root / "production-qa.xcconfig",
+        root / "self-attestation.jsonl",
+        root / "review-receipt.json",
+        root / "pr-metadata.json",
+        root / "reviews-metadata.json",
+        root / "ruleset-metadata.json",
     ]
     targets[2].mkdir()
     (targets[2] / "result").write_text("safe\n")
-    for target in (*targets[:2], targets[3]):
+    for target in (*targets[:2], *targets[3:]):
         target.write_text("safe\n")
     return targets
 
@@ -217,6 +229,14 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
                         "--secret-scan-target", str(targets[1]),
                         "--secret-scan-target", str(targets[2]),
                         "--secret-scan-target", str(targets[3]),
+                        "--secret-scan-target", str(targets[4]),
+                        "--secret-scan-target", str(targets[5]),
+                        "--secret-scan-target", str(targets[6]),
+                        "--secret-scan-target", str(targets[7]),
+                        "--secret-scan-target", str(targets[8]),
+                        "--secret-scan-target", str(targets[9]),
+                        "--secret-scan-target", str(targets[10]),
+                        "--secret-scan-target", str(targets[11]),
                         "--enablement-record", str(record_path),
                     ]
                 ),

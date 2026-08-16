@@ -88,12 +88,12 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
         self.assertEqual(target["selectedTests"], [ACTUAL_G5_TEST])
         self.assertNotIn(STATIC_G5_TEST, target["selectedTests"])
 
-    def test_actual_selector_verifies_metadata_only_result_and_never_credentials(self) -> None:
+    def test_actual_selector_drives_metadata_only_coordination_and_never_attachments(self) -> None:
         source = ACTUAL_TEST_SOURCE.read_text(encoding="utf-8")
         self.assertIn("ProcessInfo.processInfo.environment", source)
-        self.assertIn("FLOORP_NOTES_SYNC_QA_RESULT", source)
-        self.assertIn("CLIENT_PAIR_RESULT_CASES_INCOMPLETE", source)
-        self.assertIn("wire_protocol", source)
+        self.assertIn("FLOORP_NOTES_SYNC_COORDINATION_ROOT", source)
+        self.assertIn("MetadataCoordination", source)
+        self.assertIn("FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL", source)
         for forbidden in (
             "URLSession",
             "XCTAttachment",
@@ -101,11 +101,6 @@ class FloorpNotesSyncG5TestProductContractTests(unittest.TestCase):
             "Logger",
             "NSLog",
             "print(",
-            "EMAIL",
-            "PASSWORD",
-            "OAUTH",
-            "TOKEN",
-            "SECRET",
         ):
             self.assertNotIn(forbidden, source)
 

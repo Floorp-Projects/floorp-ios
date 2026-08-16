@@ -76,6 +76,7 @@ def summary(receipt_sha: str) -> dict[str, Any]:
 def receipt() -> dict[str, Any]:
     return {
         "accounts": True,
+        "coordination_root": True,
         "environment": QA.ENVIRONMENT,
         "local_cache": True,
         "phase": "production-qa",

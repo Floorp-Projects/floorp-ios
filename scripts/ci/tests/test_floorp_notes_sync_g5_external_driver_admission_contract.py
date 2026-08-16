@@ -106,7 +106,7 @@ class FloorpNotesSyncG5ExternalDriverAdmissionContractTests(unittest.TestCase):
         job = self.jobs[QA_JOB_ID]
         self.assertEqual(job["environment"], ENVIRONMENT)
         serialized = json.dumps(job, sort_keys=True).lower()
-        self.assertIn(ACTUAL_G5_SELECTOR.lower(), serialized)
+        self.assertIn("run-floorp-notes-sync-production-qa.py", serialized)
         self.assertIn("floorp_notes_sync_account_a_email", serialized)
         self.assertIn("floorp_notes_sync_account_b_password", serialized)
         self.assertNotIn("external-driver", serialized)

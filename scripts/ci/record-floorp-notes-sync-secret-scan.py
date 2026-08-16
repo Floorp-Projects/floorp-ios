@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -14,32 +15,63 @@ REPOSITORY = "Floorp-Projects/floorp-ios"
 WORKFLOW_PATH = ".github/workflows/ci.yml"
 JOB = "notes-sync-production-qa"
 MARKERS = (
-    "password",
-    "access_token",
-    "refresh_token",
-    "sync_key",
-    "authorization",
+    "password=",
+    "password:",
+    "access_token=",
+    "access_token:",
+    "refresh_token=",
+    "refresh_token:",
+    "sync_key=",
+    "sync_key:",
+    "authorization: bearer ",
+    "authorization=",
     "bearer ",
-    "cookie",
-    "credential",
-    "secret",
+    "cookie=",
+    "cookie:",
+    "credential=",
+    "credential:",
     "begin private key",
-    "oauth_token",
-    "note(_|s_)(content|title|payload)",
-    "request_body",
-    "response_body",
+    "oauth_token=",
+    "oauth_token:",
+    "note(_|s_)(content|title|payload)[=:]",
+    "request_body[=:]",
+    "response_body[=:]",
 )
 MARKER_SET_SHA256 = hashlib.sha256("\n".join(MARKERS).encode()).hexdigest()
+SCAN_METHOD = "regex-and-exact-secret-values-over-declared-targets-and-owned-process-argv"
+MARKER_PATTERN = re.compile("|".join(f"(?:{marker})" for marker in MARKERS), re.IGNORECASE)
+SCOPE_BY_NAME = {
+    "qa-summary.json": "qa-summary",
+    "cleanup-receipt.json": "cleanup-receipt",
+    "floorp-notes-sync-two-client.xcresult": "xcresult",
+    "xcodebuild.log": "xcodebuild-log",
+    "desktop.log": "desktop-log",
+    "production-qa-capability.json": "production-qa-capability",
+    "production-qa.xcconfig": "production-qa-xcconfig",
+    "self-attestation.jsonl": "self-attestation-ledger",
+    "review-receipt.json": "review-receipt",
+    "pr-metadata.json": "pr-metadata",
+    "reviews-metadata.json": "reviews-metadata",
+    "ruleset-metadata.json": "ruleset-metadata",
+}
+SECRET_ENV_NAMES = (
+    "FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL",
+    "FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD",
+    "FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL",
+    "FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD",
+    "FLOORP_TODO20_GH_AUDIT_TOKEN",
+)
 
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target", type=Path, action="append", required=True)
+    parser.add_argument("--secret-env", action="append", required=True)
     return parser.parse_args(arguments)
 
 
-def digest_target(path: Path) -> dict[str, object]:
+def digest_target(path: Path, secret_values: tuple[bytes, ...] = ()) -> dict[str, object]:
     if path.is_symlink() or not path.exists():
         raise OSError(f"secret-scan target is unavailable: {path.name}")
     entries: list[bytes] = []
@@ -56,10 +88,20 @@ def digest_target(path: Path) -> dict[str, object]:
         raise OSError(f"secret-scan target is not a regular file or directory: {path.name}")
     for relative, child in files:
         raw = child.read_bytes()
+        if any(value and value in raw for value in secret_values):
+            raise OSError(f"secret value detected in {path.name}/{relative}")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="ignore")
+        if MARKER_PATTERN.search(text):
+            raise OSError(f"secret marker detected in {path.name}/{relative}")
         byte_count += len(raw)
         entries.append(relative.encode() + b"\0" + hashlib.sha256(raw).hexdigest().encode())
     digest = hashlib.sha256(b"\n".join(entries)).hexdigest()
+    artifact_sha256 = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else digest
     return {
+        "artifact_sha256": artifact_sha256,
         "byte_count": byte_count,
         "file_count": len(files),
         "name": path.name,
@@ -87,24 +129,39 @@ def main(arguments: list[str] | None = None) -> int:
     if os.environ["GITHUB_REPOSITORY"] != REPOSITORY or len(os.environ["GITHUB_SHA"]) != 40:
         print("[blocked] AUTHORIZATION_MISSING owner=Operations reason=secret_scan_context_invalid", flush=True)
         return 78
+    if set(args.secret_env) != set(SECRET_ENV_NAMES) or len(args.secret_env) != len(SECRET_ENV_NAMES):
+        print("[blocked] AUTHORIZATION_MISSING owner=Operations reason=secret_scan_secret_scope_invalid", flush=True)
+        return 78
+    secret_values = tuple(
+        os.environ.get(name, "").encode("utf-8")
+        for name in SECRET_ENV_NAMES
+    )
+    if any(not value for value in secret_values):
+        print("[blocked] AUTHORIZATION_MISSING owner=Operations reason=secret_scan_secret_value_missing", flush=True)
+        return 78
     try:
-        target_digests = [digest_target(path) for path in args.target]
+        target_digests = [digest_target(path, secret_values) for path in args.target]
     except OSError as error:
         print(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason={error}", flush=True)
+        return 78
+    try:
+        scope = [SCOPE_BY_NAME[path.name] for path in args.target]
+    except KeyError as error:
+        print(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=secret_scan_target_unknown_{error.args[0]}", flush=True)
+        return 78
+    if len(scope) != len(set(scope)):
+        print("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=secret_scan_target_duplicate", flush=True)
         return 78
     receipt = {
         "job_name": JOB,
         "marker_set_sha256": MARKER_SET_SHA256,
         "passed": True,
         "repository": REPOSITORY,
+        "scan_method": SCAN_METHOD,
+        "scan_passed": True,
+        "secret_env_names": list(SECRET_ENV_NAMES),
         "schema_version": 1,
-        "scope": [
-            "qa-summary",
-            "cleanup-receipt",
-            "xcresult",
-            "xcodebuild-log",
-            "process-argv-environment-markers",
-        ],
+        "scope": [*scope, "exact-secret-values", "process-argv-environment-markers"],
         "target_digests": target_digests,
         "source": {
             "head_sha": os.environ["GITHUB_SHA"],

@@ -163,12 +163,16 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertEqual(option["type"], "boolean")
         self.assertFalse(option["required"])
         self.assertFalse(option["default"])
+        guarded = self.dispatch["inputs"]["run_floorp_notes_sync_guarded_merge"]
+        self.assertEqual(guarded["type"], "boolean")
+        self.assertFalse(guarded["required"])
+        self.assertFalse(guarded["default"])
 
     def test_qa_job_is_main_only_environment_bound_and_secret_redacted(self) -> None:
         job = self.jobs[JOB_ID]
         self.assertEqual(job["runs-on"], "macos-26")
         self.assertEqual(job["environment"], ENVIRONMENT)
-        self.assertEqual(job["permissions"], {})
+        self.assertEqual(job["permissions"], {"actions": "read"})
         self.assertEqual(
             " ".join(job["if"].split()),
             "github.event_name == 'workflow_dispatch' && "
@@ -181,6 +185,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             "floorp_notes_sync_account_a_password",
             "floorp_notes_sync_account_b_email",
             "floorp_notes_sync_account_b_password",
+            "floorp_todo20_gh_audit_token",
         ):
             self.assertIn(secret_name, serialized)
         for forbidden in (
@@ -189,20 +194,65 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             "external-driver",
             "root-owned-broker",
             "dedicated-g5-runner",
-            "curl ",
-            "gh api",
+            "gh api -x put",
         ):
             self.assertNotIn(forbidden, serialized)
+        self.assertIn("api.github.com", serialized)
+        self.assertIn("audit-log", serialized)
+        self.assertEqual(
+            job["env"]["FLOORP_TODO20_GUARDED_MERGE_RUN_ID"],
+            "${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}",
+        )
+        self.assertIn("download-artifact", serialized)
+        self.assertIn("verify-floorp-notes-sync-guarded-merge-artifact.py", serialized)
+        self.assertIn("guarded_merge_artifact_commit_parity_mismatch", serialized)
+        self.assertNotIn("accounts.firefox.com", serialized)
+        self.assertNotIn("sync.services.mozilla.com", serialized)
 
     def test_qa_job_requires_phase_one_before_enablement_and_cleans_up(self) -> None:
         job = self.jobs[JOB_ID]
+        self.assertEqual(
+            job["env"]["FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"],
+            "${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}",
+        )
         names = [step["name"] for step in job["steps"]]
-        self.assertIn("Validate Todo 20 operation contract", names)
+        self.assertIn("Create protected Todo 20 production-QA capability", names)
         self.assertIn("Run protected two-client integrity QA", names)
         self.assertIn("Scan QA material for secrets", names)
+        self.assertIn("Capture source-bound Todo 20 review receipt", names)
+        self.assertIn("Validate Todo 20 contract semantics in protected QA path", names)
         self.assertIn("Clean up test accounts and client state", names)
-        self.assertIn("Upload metadata-only QA evidence", names)
+        self.assertIn("Upload live QA evidence", names)
+        capture = self.named_step(job, "Capture source-bound Todo 20 review receipt")
+        self.assertIn('--subagent-review "$qa_root/subagent-review.json"', capture["run"])
+        self.assertIn("docs/floorp-notes-sync-todo20-subagent-review.json", capture["run"])
+        self.assertIn('--subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"', capture["run"])
+        self.assertIn('--audit-json "$qa_root/audit-log.json"', capture["run"])
+        self.assertNotIn("Validate Todo 20 operation contract", names)
         self.assertNotIn(CANONICAL_ARTIFACT, json.dumps(self.jobs["build-and-test"], sort_keys=True))
+
+    def test_guarded_merge_job_uses_the_repository_owned_executor(self) -> None:
+        job = self.jobs["todo20-guarded-merge"]
+        self.assertEqual(job["environment"], ENVIRONMENT)
+        self.assertEqual(job["permissions"], {})
+        serialized = json.dumps(job, sort_keys=True).lower()
+        self.assertIn("execute-floorp-notes-sync-merge.py", serialized)
+        self.assertIn("verify-floorp-notes-sync-merge-admission.py", serialized)
+        self.assertIn("create-floorp-notes-sync-merge-audit.py", serialized)
+        self.assertIn("record-floorp-notes-sync-merge-artifact-metadata.py", serialized)
+        self.assertIn("floorp_todo20_gh_merge_token", serialized)
+        self.assertIn("floorp_todo20_gh_audit_token", serialized)
+        self.assertIn("floorp_todo20_owner_review_json", serialized)
+        self.assertIn("floorp_todo20_subagent_review_commit", serialized)
+        self.assertIn("gh pr checks", serialized)
+        self.assertIn("merge-operation-receipt.json", serialized)
+        self.assertIn("merge-admission.json", serialized)
+        self.assertIn("artifact-digest", serialized)
+        self.assertNotIn("bypass", serialized)
+
+    def test_pre_attestation_secret_scan_is_attempted_after_failure(self) -> None:
+        scan = self.named_step(self.jobs[JOB_ID], "Scan QA material for secrets")
+        self.assertEqual(scan.get("if"), "always()")
 
 
 if __name__ == "__main__":

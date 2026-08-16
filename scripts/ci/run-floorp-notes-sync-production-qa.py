@@ -1,155 +1,170 @@
 #!/usr/bin/python3 -I
-"""Fail-closed entry point for the protected Todo 20 QA run.
+"""Run the protected Todo 20 desktop/mobile production-QA executor.
 
-The existing desktop/mobile clients own the Sync operation and must produce a
-metadata-only summary. This entry point only checks that protected secrets are
-present in the process environment and validates that summary; it never reads
-the local account directory, prints a secret, performs a REST/token request,
-or fabricates a passing result.
+This entry point is intentionally fail-closed. It starts the staged Desktop
+UI actor, starts the real iOS XCTest actor, waits for observed metadata-only
+case events, and writes a summary only after all cases and cleanup are
+proven. It never reads the local test-accounts directory and never prints a
+credential.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import importlib.util
-import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-REQUIRED_SECRET_ENV = (
-    "FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL",
-    "FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD",
-    "FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL",
-    "FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD",
+from floorp_notes_sync_live_executor import (  # noqa: E402
+    LiveExecutor,
+    LiveExecutorError,
+    LiveRunPaths,
+    SECRET_ENV_NAMES,
 )
-VALIDATOR_PATH = Path(__file__).with_name("validate-floorp-notes-sync-production-qa.py")
+
+
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 
 
-class ProductionQARunError(RuntimeError):
-    """The protected execution boundary is unavailable or invalid."""
-
-
-def load_validator() -> Any:
-    specification = importlib.util.spec_from_file_location(
-        "floorp_notes_sync_production_qa_validator_for_runner",
-        VALIDATOR_PATH,
-    )
-    if specification is None or specification.loader is None:
-        raise ProductionQARunError("cannot load the metadata-only QA validator")
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[specification.name] = module
-    specification.loader.exec_module(module)
-    return module
-
-
-VALIDATOR = load_validator()
-
-
 def require_protected_secrets() -> None:
-    missing = [name for name in REQUIRED_SECRET_ENV if not os.environ.get(name)]
+    missing = [name for name in SECRET_ENV_NAMES if not os.environ.get(name)]
     if missing:
-        raise ProductionQARunError(
+        raise LiveExecutorError(
             "[blocked] AUTHORIZATION_MISSING owner=Operations "
             "resume=populate all four protected Environment secrets without using the local account directory"
         )
 
 
-def require_runtime_binding(summary: dict[str, Any]) -> None:
-    required_environment = (
-        "GITHUB_ACTOR",
-        "GITHUB_EVENT_NAME",
-        "GITHUB_JOB",
-        "GITHUB_REPOSITORY",
-        "GITHUB_RUN_ATTEMPT",
-        "GITHUB_RUN_ID",
-        "GITHUB_SHA",
-        "GITHUB_WORKFLOW_REF",
-    )
-    missing = [name for name in required_environment if not os.environ.get(name)]
-    if missing:
-        raise ProductionQARunError(
-            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_missing "
-            "resume=run only inside the protected GitHub workflow with its immutable source context"
+def require_desktop_binding(desktop_root: Path, desktop_sha: str) -> None:
+    if SHA1.fullmatch(desktop_sha) is None:
+        raise LiveExecutorError(
+            "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
+            "reason=desktop_source_invalid "
+            "resume=bind the reviewed Desktop commit"
         )
-
-    source = summary["source"]
-    repository = os.environ["GITHUB_REPOSITORY"]
-    workflow_ref = os.environ["GITHUB_WORKFLOW_REF"]
-    workflow_prefix = f"{repository}/.github/workflows/ci.yml@"
     try:
-        run_id = int(os.environ["GITHUB_RUN_ID"])
-        run_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
-    except ValueError as error:
-        raise ProductionQARunError(
-            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_invalid "
-            "resume=provide numeric GitHub run metadata"
+        actual = subprocess.check_output(
+            ["git", "-C", str(desktop_root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            env={key: value for key, value in os.environ.items() if not key in SECRET_ENV_NAMES},
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise LiveExecutorError(
+            "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
+            "reason=desktop_checkout_unavailable "
+            "resume=checkout the reviewed Desktop commit"
         ) from error
-    expected = {
-        "event": os.environ["GITHUB_EVENT_NAME"],
-        "head_sha": os.environ["GITHUB_SHA"],
-        "job_name": os.environ["GITHUB_JOB"],
-        "repository": repository,
-        "workflow_path": ".github/workflows/ci.yml",
-        "workflow_run_attempt": run_attempt,
-        "workflow_run_id": run_id,
-    }
-    if not SHA1.fullmatch(expected["head_sha"]) or not workflow_ref.startswith(workflow_prefix):
-        raise ProductionQARunError(
-            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_invalid "
-            "resume=bind the summary to the exact checked-in workflow and commit"
-        )
-    if any(source[key] != value for key, value in expected.items()):
-        raise ProductionQARunError(
-            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_mismatch "
-            "resume=regenerate the client-pair summary for this exact workflow run"
-        )
-    if summary["self_attestation"]["operator_id"] != os.environ["GITHUB_ACTOR"]:
-        raise ProductionQARunError(
-            "[blocked] AUTHORIZATION_MISSING owner=Operations reason=self_attestation_mismatch "
-            "resume=bind the owner/Operations/executor attestation to the dispatch actor"
+    if actual != desktop_sha:
+        raise LiveExecutorError(
+            "[blocked] OID_DRIFT owner=Operations "
+            "reason=desktop_checkout_mismatch "
+            "resume=checkout the exact reviewed Desktop SHA"
         )
 
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", type=Path, required=True)
+    parser.add_argument("--cleanup-receipt", type=Path, required=True)
+    parser.add_argument("--desktop-log", type=Path, required=True)
+    parser.add_argument("--xcodebuild-log", type=Path, required=True)
+    parser.add_argument("--client-state", type=Path, required=True)
+    parser.add_argument("--desktop-root", type=Path, required=True)
+    parser.add_argument("--desktop-sha", required=True)
+    parser.add_argument("--simulator-udid", required=True)
+    parser.add_argument("--coordination-root", required=True)
+    parser.add_argument("--ios-project", type=Path, required=True)
+    parser.add_argument("--scheme", default="FloorpNotesSyncG5")
+    parser.add_argument("--configuration", default="FloorpRelease")
+    parser.add_argument("--destination", required=True)
+    parser.add_argument("--test-plan", default="FloorpNotesSyncG5")
+    parser.add_argument("--derived-data", type=Path, required=True)
+    parser.add_argument("--source-packages", type=Path, required=True)
+    parser.add_argument("--xcconfig", type=Path, required=True)
+    parser.add_argument("--result-bundle", type=Path, required=True)
     return parser.parse_args(arguments)
+
+
+def build_xcodebuild_command(args: argparse.Namespace) -> list[str]:
+    selectors = getattr(args, "selectors", None) or [
+        "XCUITests/FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix"
+    ]
+    return [
+        "xcodebuild",
+        "test",
+        "-quiet",
+        "-project",
+        str(args.ios_project),
+        "-scheme",
+        args.scheme,
+        "-configuration",
+        args.configuration,
+        "-destination",
+        args.destination,
+        "-testPlan",
+        args.test_plan,
+        *[f"-only-testing:{selector}" for selector in selectors],
+        "-resultBundlePath",
+        str(args.result_bundle),
+        "-derivedDataPath",
+        str(args.derived_data),
+        "-clonedSourcePackagesDirPath",
+        str(args.source_packages),
+        "-disableAutomaticPackageResolution",
+        "-onlyUsePackageVersionsFromResolvedFile",
+        "-skipMacroValidation",
+        "-parallel-testing-enabled",
+        "NO",
+        "-xcconfig",
+        str(args.xcconfig),
+        "COMPILER_INDEX_STORE_ENABLE=NO",
+        "CODE_SIGN_IDENTITY=",
+        "CODE_SIGNING_REQUIRED=NO",
+        "CODE_SIGNING_ALLOWED=NO",
+    ]
 
 
 def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         require_protected_secrets()
-        if not args.summary.is_file() or args.summary.is_symlink():
-            raise ProductionQARunError(
-                "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=client_pair_summary "
-                "resume=run the existing desktop/mobile clients and emit the required metadata-only summary"
-            )
-        summary = VALIDATOR.load_and_validate(args.summary)
-        require_runtime_binding(summary)
-        summary_sha256 = hashlib.sha256(args.summary.read_bytes()).hexdigest()
-    except ProductionQARunError as error:
-        print(str(error), file=sys.stderr)
-        return 78
-    print(
-        json.dumps(
-            {
-                "cases": len(summary["cases"]),
-                "cleanup": "verified",
-                "phase": "production-qa",
-                "summary_sha256": summary_sha256,
-                "status": "client-pair-summary-accepted",
-            },
-            separators=(",", ":"),
-            sort_keys=True,
+        require_desktop_binding(args.desktop_root, args.desktop_sha)
+        args.client_state.mkdir(mode=0o700, parents=True, exist_ok=False)
+        executor_environment = {
+            "FLOORP_NOTES_SYNC_PRODUCTION_QA": "1",
+            "FLOORP_NOTES_SYNC_G5_RUN": "1",
+            "FLOORP_NOTES_SYNC_CAPABILITY_VERSION": "todo20-production-sync-integrity-v1",
+            "FLOORP_NOTES_SYNC_BUILD_NUMBER": "4",
+            "FLOORP_NOTES_SYNC_COORDINATION_ROOT": args.coordination_root,
+        }
+        executor_environment.update(
+            {name: os.environ[name] for name in SECRET_ENV_NAMES}
         )
-    )
+        executor = LiveExecutor(
+            desktop_root=args.desktop_root.resolve(),
+            simulator_udid=args.simulator_udid,
+            coordination_root=args.coordination_root,
+            xcodebuild_command=build_xcodebuild_command(args),
+            xcodebuild_environment=executor_environment,
+            paths=LiveRunPaths(
+                summary=args.summary.resolve(),
+                cleanup_receipt=args.cleanup_receipt.resolve(),
+                desktop_log=args.desktop_log.resolve(),
+                xcodebuild_log=args.xcodebuild_log.resolve(),
+                client_state=args.client_state.resolve(),
+            ),
+        )
+        executor.run()
+    except (LiveExecutorError, OSError, subprocess.CalledProcessError) as error:
+        message = str(error)
+        print(message, file=sys.stderr)
+        return 78 if message.startswith("[blocked]") else 2
+    print('{\"status\":\"live-production-qa-summary-created\"}')
     return 0
 
 

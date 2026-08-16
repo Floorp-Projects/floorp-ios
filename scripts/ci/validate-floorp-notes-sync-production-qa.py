@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import stat
 import sys
 from pathlib import Path
@@ -59,6 +61,9 @@ REQUIRED_INVARIANTS = (
 )
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
+REQUIRED_XCTEST = "FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix"
+MAX_XCRESULT_NODES = 4096
+MAX_XCRESULT_DEPTH = 64
 
 
 class ProductionQAError(ValueError):
@@ -287,9 +292,76 @@ def load_and_validate(path: Path) -> dict[str, Any]:
     return validate_summary(parse_bytes(raw))
 
 
+def validate_xcresult(path: Path) -> dict[str, Any]:
+    """Require the selected production matrix XCTest to have Passed nodes."""
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise ProductionQAError("xcresult bundle is unavailable") from error
+    require(stat.S_ISDIR(metadata.st_mode) and not path.is_symlink(), "xcresult bundle must be a regular directory")
+    environment = {
+        name: os.environ[name]
+        for name in ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
+        if os.environ.get(name)
+    }
+    environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    try:
+        completed = subprocess.run(
+            [
+                "/usr/bin/xcrun",
+                "xcresulttool",
+                "get",
+                "test-results",
+                "tests",
+                "--path",
+                str(path),
+                "--format",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ProductionQAError("xcresulttool execution failed") from error
+    require(completed.returncode == 0, "xcresulttool rejected the xcresult bundle")
+    try:
+        payload = json.loads(completed.stdout, object_pairs_hook=reject_duplicate_keys)
+    except (json.JSONDecodeError, ProductionQAError) as error:
+        raise ProductionQAError("xcresulttool returned malformed JSON") from error
+    require(isinstance(payload, dict), "xcresulttool result root is malformed")
+    roots = payload.get("testNodes")
+    require(isinstance(roots, list), "xcresulttool testNodes are missing")
+    matching_results: list[str] = []
+    pending = [(node, 1) for node in roots]
+    visited = 0
+    while pending:
+        node, depth = pending.pop()
+        visited += 1
+        require(visited <= MAX_XCRESULT_NODES, "xcresult test-node count exceeds the limit")
+        require(depth <= MAX_XCRESULT_DEPTH, "xcresult test-node depth exceeds the limit")
+        require(isinstance(node, dict), "xcresult test node is malformed")
+        children = node.get("children", [])
+        require(isinstance(children, list), "xcresult test-node children are malformed")
+        pending.extend((child, depth + 1) for child in children)
+        if node.get("nodeType") != "Test Case":
+            continue
+        identifier = node.get("nodeIdentifier")
+        result = node.get("result")
+        require(isinstance(identifier, str) and identifier, "xcresult test identifier is malformed")
+        require(isinstance(result, str) and result, "xcresult test result is malformed")
+        if identifier.endswith(REQUIRED_XCTEST) or identifier.endswith(REQUIRED_XCTEST.replace("/", ".")):
+            matching_results.append(result)
+    require(matching_results and all(result == "Passed" for result in matching_results), "required XCTest did not have Passed result nodes")
+    return {"passed_nodes": len(matching_results), "required_test": REQUIRED_XCTEST}
+
+
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", type=Path, required=True)
+    parser.add_argument("--xcresult", type=Path, required=True)
     return parser.parse_args(arguments)
 
 
@@ -297,6 +369,7 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         summary = load_and_validate(args.summary)
+        xcresult = validate_xcresult(args.xcresult)
     except ProductionQAError as error:
         print(f"production QA summary rejected: {error}", file=sys.stderr)
         return 2
@@ -306,6 +379,7 @@ def main(arguments: list[str] | None = None) -> int:
                 "cases": len(summary["cases"]),
                 "cleanup": "verified",
                 "phase": summary["phase"],
+                "xcresult": xcresult,
                 "status": "production-qa-summary-valid",
             },
             separators=(",", ":"),

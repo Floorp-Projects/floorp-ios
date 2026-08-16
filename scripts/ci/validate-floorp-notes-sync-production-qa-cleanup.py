@@ -62,6 +62,7 @@ def validate_receipt(receipt: Any, summary: dict[str, Any], raw: bytes) -> None:
         set(receipt)
         == {
             "accounts",
+            "coordination_root",
             "environment",
             "local_cache",
             "phase",
@@ -76,6 +77,7 @@ def validate_receipt(receipt: Any, summary: dict[str, Any], raw: bytes) -> None:
     require(receipt["phase"] == "production-qa", "cleanup receipt phase is invalid")
     require(receipt["environment"] == ENVIRONMENT, "cleanup receipt Environment is invalid")
     require(receipt["accounts"] is True, "server-side disposable-account cleanup is not attested")
+    require(receipt["coordination_root"] is True, "Simulator coordination root cleanup is not attested")
     require(receipt["local_cache"] is True, "client local-cache cleanup is not attested")
     require(receipt["runner_temp"] is True, "client-pair runner-temp cleanup is not attested")
     require(receipt["simulator_keychain"] is True, "Simulator Keychain cleanup is not attested")

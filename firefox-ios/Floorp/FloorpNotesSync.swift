@@ -680,6 +680,9 @@ enum FloorpNotesSyncReleaseGate {
         "token.services.mozilla.com",
     ]
     static let evidenceResourceName = "FloorpNotesSyncReleaseEvidence"
+    static let rescopedProductionQACapabilityVersion = "todo20-production-sync-integrity-v1"
+    private static let rescopedContractSHA256 = "e935ab08c60cd7fcdbe66699764cd2805410f90bb0e3651d97b2c65c58f98764"
+    private static let rescopedIntegrityMatrixSHA256 = "53828225b7ae183212df954e7076e577879a74acac73e5cbaf50389d7dd0df45"
     static let buildAllowsKey = "MozAllowFloorpNotesSync"
     static let buildModeKey = "MozFloorpNotesSyncBuildMode"
     static let sourceSHAKey = "MozFloorpNotesSyncSourceSHA"
@@ -745,6 +748,9 @@ enum FloorpNotesSyncReleaseGate {
         #endif
     }
 
+    // The legacy G1-G5 path remains byte-for-byte fail-closed beside the
+    // smaller Todo 20 production-QA capability path.
+    // swiftlint:disable:next function_body_length
     static func allowsCompiledEvidence(
         _ configuration: FloorpNotesSyncCompiledConfiguration,
         evidenceData: Data?,
@@ -774,8 +780,23 @@ enum FloorpNotesSyncReleaseGate {
               let root = try? JSONSerialization.jsonObject(with: evidenceData) as? [String: Any],
               canonicalJSONData(root) == evidenceData,
               isJSONInteger(root["schema_version"], equalTo: 1),
-              root["build_contract_mode"] as? String == mode.rawValue,
-              let releaseInputs = root["release_inputs"] as? [String: Any],
+              root["build_contract_mode"] as? String == mode.rawValue else {
+            return false
+        }
+
+        if mode == .productionQA,
+           root["todo20_contract_version"] != nil {
+            return allowsRescopedProductionQACapability(
+                root,
+                sourceSHA: sourceSHA,
+                buildNumber: buildNumber,
+                endpointMatrixSHA256: endpointMatrixSHA256,
+                evidenceDigest: evidenceDigest,
+                evidenceResourceSHA256: evidenceResourceSHA256
+            )
+        }
+
+        guard let releaseInputs = root["release_inputs"] as? [String: Any],
               compiledReleaseInputsAreBound(
                 releaseInputs,
                 sourceSHA: sourceSHA,
@@ -852,6 +873,75 @@ enum FloorpNotesSyncReleaseGate {
                 "release_inputs": releaseInputs,
             ]
         ) == sameReleaseKey
+    }
+
+    private static func allowsRescopedProductionQACapability(
+        _ root: [String: Any],
+        sourceSHA: String,
+        buildNumber: String,
+        endpointMatrixSHA256: String,
+        evidenceDigest: String,
+        evidenceResourceSHA256: String
+    ) -> Bool {
+        guard hasExactKeys(
+                root,
+                [
+                    "accounts", "build_contract_mode", "clients", "contract_sha256",
+                    "desktop", "endpoint", "integrity_matrix_sha256", "public_release",
+                    "ios_build_number", "schema_version", "self_attestation", "source",
+                    "todo20_contract_version",
+                ]
+              ),
+              root["todo20_contract_version"] as? String == rescopedProductionQACapabilityVersion,
+              isJSONInteger(root["accounts"], equalTo: 2),
+              root["clients"] as? [String] == ["desktop", "mobile"],
+              root["ios_build_number"] as? String == buildNumber,
+              root["public_release"] as? Bool == false,
+              root["contract_sha256"] as? String == rescopedContractSHA256,
+              root["integrity_matrix_sha256"] as? String == rescopedIntegrityMatrixSHA256,
+              evidenceDigest == evidenceResourceSHA256,
+              let source = root["source"] as? [String: Any],
+              hasExactKeys(
+                source,
+                [
+                    "event", "head_sha", "job_name", "repository", "workflow_path",
+                    "workflow_run_attempt", "workflow_run_id",
+                ]
+              ),
+              source["event"] as? String == "workflow_dispatch",
+              source["head_sha"] as? String == sourceSHA,
+              source["job_name"] as? String == "notes-sync-production-qa",
+              source["repository"] as? String == "Floorp-Projects/floorp-ios",
+              source["workflow_path"] as? String == ".github/workflows/ci.yml",
+              isJSONInteger(source["workflow_run_attempt"], greaterThan: 0),
+              isJSONInteger(source["workflow_run_id"], greaterThan: 0),
+              let desktop = root["desktop"] as? [String: Any],
+              hasExactKeys(desktop, ["repository", "source_sha"]),
+              desktop["repository"] as? String == "Floorp-Projects/Floorp",
+              isLowercaseHex(desktop["source_sha"] as? String ?? "", count: 40),
+              let endpoint = root["endpoint"] as? [String: Any],
+              hasExactKeys(
+                endpoint,
+                [
+                    "endpoint_policy_sha256", "fxa_configuration", "fxa_hosts",
+                    "sync_hosts", "wire_protocol",
+                ]
+              ),
+              endpoint["endpoint_policy_sha256"] as? String == endpointMatrixSHA256,
+              endpoint["fxa_configuration"] as? String == "FxAConfig.Server.release",
+              endpoint["fxa_hosts"] as? [String] == fxaHosts,
+              endpoint["sync_hosts"] as? [String] == syncHosts,
+              endpoint["wire_protocol"] as? String == "sync15",
+              let attestation = root["self_attestation"] as? [String: Any],
+              hasExactKeys(attestation, ["approved", "environment", "operator_id", "roles"]),
+              attestation["approved"] as? Bool == true,
+              attestation["environment"] as? String == "floorp-notes-sync-production-qa",
+              isNonempty(attestation["operator_id"] as? String),
+              attestation["roles"] as? [String] == ["owner", "operations", "executor"] else {
+            return false
+        }
+
+        return true
     }
 
     private static func compiledReleaseInputsAreBound(
@@ -1411,6 +1501,14 @@ enum FloorpNotesSyncReleaseGate {
             return false
         }
         return number.doubleValue == Double(expected)
+    }
+
+    private static func isJSONInteger(_ value: Any?, greaterThan expected: Int64) -> Bool {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            return false
+        }
+        return number.int64Value > expected && number.doubleValue == Double(number.int64Value)
     }
 
     private static func isSHA256(_ value: Any?) -> Bool {

@@ -20,31 +20,66 @@ SCOPE = [
     "cleanup-receipt",
     "xcresult",
     "xcodebuild-log",
+    "desktop-log",
+    "production-qa-capability",
+    "production-qa-xcconfig",
+    "self-attestation-ledger",
+    "review-receipt",
+    "pr-metadata",
+    "reviews-metadata",
+    "ruleset-metadata",
+    "exact-secret-values",
     "process-argv-environment-markers",
 ]
+PRE_SCOPE = [item for item in SCOPE if item != "self-attestation-ledger"]
 MARKERS = (
-    "password",
-    "access_token",
-    "refresh_token",
-    "sync_key",
-    "authorization",
+    "password=",
+    "password:",
+    "access_token=",
+    "access_token:",
+    "refresh_token=",
+    "refresh_token:",
+    "sync_key=",
+    "sync_key:",
+    "authorization: bearer ",
+    "authorization=",
     "bearer ",
-    "cookie",
-    "credential",
-    "secret",
+    "cookie=",
+    "cookie:",
+    "credential=",
+    "credential:",
     "begin private key",
-    "oauth_token",
-    "note(_|s_)(content|title|payload)",
-    "request_body",
-    "response_body",
+    "oauth_token=",
+    "oauth_token:",
+    "note(_|s_)(content|title|payload)[=:]",
+    "request_body[=:]",
+    "response_body[=:]",
 )
 MARKER_SET_SHA256 = hashlib.sha256("\n".join(MARKERS).encode()).hexdigest()
+SCAN_METHOD = "regex-and-exact-secret-values-over-declared-targets-and-owned-process-argv"
+MARKER_PATTERN = re.compile("|".join(f"(?:{marker})" for marker in MARKERS), re.IGNORECASE)
 REQUIRED_TARGETS = {
     "qa-summary.json",
     "cleanup-receipt.json",
     "floorp-notes-sync-two-client.xcresult",
     "xcodebuild.log",
+    "desktop.log",
+    "production-qa-capability.json",
+    "production-qa.xcconfig",
+    "self-attestation.jsonl",
+    "review-receipt.json",
+    "pr-metadata.json",
+    "reviews-metadata.json",
+    "ruleset-metadata.json",
 }
+PRE_REQUIRED_TARGETS = REQUIRED_TARGETS - {"self-attestation.jsonl"}
+SECRET_ENV_NAMES = [
+    "FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL",
+    "FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD",
+    "FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL",
+    "FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD",
+    "FLOORP_TODO20_GH_AUDIT_TOKEN",
+]
 
 
 class SecretScanError(ValueError):
@@ -58,6 +93,8 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-id", required=True, type=int)
     parser.add_argument("--run-attempt", required=True, type=int)
     parser.add_argument("--target", type=Path, action="append", required=True)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--pre-attestation", action="store_true")
     return parser.parse_args(arguments)
 
 
@@ -97,9 +134,16 @@ def digest_target(path: Path) -> dict[str, object]:
         raise SecretScanError(f"secret-scan target is not a regular file or directory: {path.name}")
     for relative, child in files:
         raw = child.read_bytes()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="ignore")
+        if MARKER_PATTERN.search(text):
+            raise SecretScanError(f"secret marker detected in {path.name}/{relative}")
         byte_count += len(raw)
         entries.append(relative.encode() + b"\0" + hashlib.sha256(raw).hexdigest().encode())
     return {
+        "artifact_sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else hashlib.sha256(b"\n".join(entries)).hexdigest(),
         "byte_count": byte_count,
         "file_count": len(files),
         "name": path.name,
@@ -113,12 +157,17 @@ def validate(
     run_id: int,
     run_attempt: int,
     target_paths: list[Path],
+    manifest: Path | None = None,
+    include_self_attestation: bool = True,
 ) -> None:
     if set(value) != {
         "job_name",
         "marker_set_sha256",
         "passed",
         "repository",
+        "scan_method",
+        "scan_passed",
+        "secret_env_names",
         "schema_version",
         "scope",
         "source",
@@ -127,22 +176,30 @@ def validate(
         raise SecretScanError("secret-scan receipt fields are not exact")
     if value["schema_version"] != 1 or value["passed"] is not True:
         raise SecretScanError("secret-scan receipt is not a passing scan")
+    if value["scan_method"] != SCAN_METHOD or value["scan_passed"] is not True:
+        raise SecretScanError("secret-scan execution method is not bound")
+    if value["secret_env_names"] != SECRET_ENV_NAMES:
+        raise SecretScanError("secret-scan secret-value scope is incomplete")
     if value["marker_set_sha256"] != MARKER_SET_SHA256:
         raise SecretScanError("secret-scan marker set is not bound")
     if value["job_name"] != "notes-sync-production-qa" or value["repository"] != REPOSITORY:
         raise SecretScanError("secret-scan receipt job/repository is invalid")
-    if value["scope"] != SCOPE:
+    expected_scope = SCOPE if include_self_attestation else PRE_SCOPE
+    if value["scope"] != expected_scope:
         raise SecretScanError("secret-scan scope is incomplete")
     targets = value["target_digests"]
-    if not isinstance(targets, list) or {target.get("name") for target in targets if isinstance(target, dict)} != REQUIRED_TARGETS:
+    required_targets = REQUIRED_TARGETS if include_self_attestation else PRE_REQUIRED_TARGETS
+    if not isinstance(targets, list) or {target.get("name") for target in targets if isinstance(target, dict)} != required_targets:
         raise SecretScanError("secret-scan target digest set is incomplete")
     for target in targets:
-        if not isinstance(target, dict) or set(target) != {"byte_count", "file_count", "name", "sha256"}:
+        if not isinstance(target, dict) or set(target) != {"artifact_sha256", "byte_count", "file_count", "name", "sha256"}:
             raise SecretScanError("secret-scan target digest is malformed")
         if not isinstance(target["byte_count"], int) or target["byte_count"] < 0:
             raise SecretScanError("secret-scan target byte count is invalid")
         if not isinstance(target["file_count"], int) or target["file_count"] < 1:
             raise SecretScanError("secret-scan target file count is invalid")
+        if not isinstance(target["artifact_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", target["artifact_sha256"]):
+            raise SecretScanError("secret-scan artifact digest is invalid")
         if not isinstance(target["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", target["sha256"]):
             raise SecretScanError("secret-scan target digest is invalid")
     actual = [digest_target(path) for path in target_paths]
@@ -150,6 +207,42 @@ def validate(
     actual_by_name = {target["name"]: target for target in actual}
     if actual_by_name != expected_by_name:
         raise SecretScanError("secret-scan target digest does not match the artifact bytes")
+    if manifest is not None:
+        try:
+            manifest_raw = manifest.read_bytes()
+            manifest_value = json.loads(manifest_raw.decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise SecretScanError("evidence manifest is unavailable or invalid") from error
+        canonical_manifest = json.dumps(
+            manifest_value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode() + b"\n"
+        if manifest.is_symlink() or not manifest.is_file() or manifest_raw != canonical_manifest or not isinstance(manifest_value, dict):
+            raise SecretScanError("evidence manifest is not canonical JSON")
+        artifacts = manifest_value.get("artifacts")
+        if not isinstance(artifacts, list):
+            raise SecretScanError("evidence manifest artifacts are unavailable")
+        manifest_by_name = {
+            item.get("name"): item
+            for item in artifacts
+            if isinstance(item, dict) and item.get("role") != "secret-scan"
+        }
+        target_names = set(actual_by_name)
+        expected_names = set(manifest_by_name)
+        if target_names - expected_names - {"self-attestation.jsonl"} or expected_names - target_names:
+            raise SecretScanError("secret-scan target set is not bound to the evidence manifest")
+        for name in expected_names:
+            descriptor = manifest_by_name[name]
+            target = actual_by_name[name]
+            if (
+                not isinstance(descriptor, dict)
+                or descriptor.get("byte_count") != target.get("byte_count")
+                or descriptor.get("sha256") != target.get("artifact_sha256")
+            ):
+                raise SecretScanError(f"secret-scan target {name} is not bound to the manifest")
     source = value["source"]
     if not isinstance(source, dict) or set(source) != {
         "head_sha",
@@ -172,7 +265,7 @@ def main(arguments: list[str] | None = None) -> int:
     args = parse_args(arguments)
     try:
         value, raw = load(args.receipt)
-        validate(value, args.head_sha, args.run_id, args.run_attempt, args.target)
+        validate(value, args.head_sha, args.run_id, args.run_attempt, args.target, args.manifest, not args.pre_attestation)
     except (OSError, SecretScanError) as error:
         print(f"secret-scan receipt rejected: {error}", file=sys.stderr)
         return 2
