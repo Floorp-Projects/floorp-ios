@@ -951,9 +951,10 @@ jobs:
           base_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["sha"])' "$root/pr.json")"
           head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$root/pr.json")"
           merged_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["merge_commit_sha"])' "$root/pr.json")"
-          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"
-          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
-          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
+          # A single shallow fetch keeps the boundary file consistent; the
+          # immutable commits are compared against the exact head/merged trees.
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin \
+            "$base_oid" "$head_oid" "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_MERGE_AUDIT_COMMIT^{commit}"
           printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$root/owner-review.json"
