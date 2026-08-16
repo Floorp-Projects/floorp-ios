@@ -226,6 +226,138 @@ class GuardedMergeArtifactTests(unittest.TestCase):
                 0,
             )
 
+    def write_recovery_state(
+        self,
+        root: Path,
+        paths: tuple[Path, Path, Path, Path, Path, Path],
+        with_evidence: bool,
+    ) -> None:
+        merge_path, _operation_path, _admission_path, metadata_path, run_path, _artifacts_path = paths
+        recovery_head = "5" * 40
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        run["head_sha"] = recovery_head
+        run_path.write_text(json.dumps(run) + "\n", encoding="utf-8")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["head_sha"] = recovery_head
+        metadata_path.write_bytes(VERIFY.canonical(metadata))
+        merge = json.loads(merge_path.read_text(encoding="utf-8"))
+        merge["source_workflow_sha"] = recovery_head
+        merge_path.write_bytes(VERIFY.canonical(merge))
+        evidence_path = root / "merge-recovery-evidence.json"
+        if with_evidence:
+            evidence_path.write_bytes(
+                VERIFY.canonical(
+                    {
+                        "admission_receipt_sha256": VERIFY.sha256(
+                            (root / "merge-admission.json").read_bytes()
+                        ),
+                        "expected_head_sha": "2" * 40,
+                        "expected_merged_oid": "4" * 40,
+                        "merged_at_utc": "2026-08-15T00:00:00Z",
+                        "operation_receipt_sha256": VERIFY.sha256(
+                            (root / "merge-operation-receipt.json").read_bytes()
+                        ),
+                        "recovery_head_sha": recovery_head,
+                        "recovery_run_id": 123,
+                        "schema_version": 1,
+                        "source_executor_step_success": True,
+                        "source_run_id": 1001,
+                    }
+                )
+            )
+
+    def test_recovery_run_with_evidence_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self.write_inputs(root)
+            self.write_recovery_state(root, paths, with_evidence=True)
+            merge_path, operation_path, admission_path, metadata_path, run_path, artifacts_path = paths
+            self.assertEqual(
+                VERIFY.main(
+                    [
+                        "--merge-audit", str(merge_path),
+                        "--operation-receipt", str(operation_path),
+                        "--admission-receipt", str(admission_path),
+                        "--run-json", str(run_path),
+                        "--artifacts-json", str(artifacts_path),
+                        "--artifact-metadata", str(metadata_path),
+                        "--expected-run-id", "123",
+                        "--expected-pr-number", "106",
+                        "--expected-head-sha", "2" * 40,
+                        "--expected-merged-oid", "4" * 40,
+                    ]
+                ),
+                0,
+            )
+
+    def test_recovery_run_without_evidence_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self.write_inputs(root)
+            self.write_recovery_state(root, paths, with_evidence=False)
+            merge_path, operation_path, admission_path, metadata_path, run_path, artifacts_path = paths
+            self.assertNotEqual(
+                VERIFY.main(
+                    [
+                        "--merge-audit", str(merge_path),
+                        "--operation-receipt", str(operation_path),
+                        "--admission-receipt", str(admission_path),
+                        "--run-json", str(run_path),
+                        "--artifacts-json", str(artifacts_path),
+                        "--artifact-metadata", str(metadata_path),
+                        "--expected-run-id", "123",
+                        "--expected-pr-number", "106",
+                        "--expected-head-sha", "2" * 40,
+                        "--expected-merged-oid", "4" * 40,
+                    ]
+                ),
+                0,
+            )
+
+    def test_exact_head_run_with_recovery_evidence_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self.write_inputs(root)
+            merge_path, operation_path, admission_path, metadata_path, run_path, artifacts_path = paths
+            evidence_path = root / "merge-recovery-evidence.json"
+            evidence_path.write_bytes(
+                VERIFY.canonical(
+                    {
+                        "admission_receipt_sha256": VERIFY.sha256(
+                            (root / "merge-admission.json").read_bytes()
+                        ),
+                        "expected_head_sha": "2" * 40,
+                        "expected_merged_oid": "4" * 40,
+                        "merged_at_utc": "2026-08-15T00:00:00Z",
+                        "operation_receipt_sha256": VERIFY.sha256(
+                            (root / "merge-operation-receipt.json").read_bytes()
+                        ),
+                        "recovery_head_sha": "2" * 40,
+                        "recovery_run_id": 123,
+                        "schema_version": 1,
+                        "source_executor_step_success": True,
+                        "source_run_id": 1001,
+                    }
+                )
+            )
+            self.assertNotEqual(
+                VERIFY.main(
+                    [
+                        "--merge-audit", str(merge_path),
+                        "--operation-receipt", str(operation_path),
+                        "--admission-receipt", str(admission_path),
+                        "--run-json", str(run_path),
+                        "--artifacts-json", str(artifacts_path),
+                        "--artifact-metadata", str(metadata_path),
+                        "--expected-run-id", "123",
+                        "--expected-pr-number", "106",
+                        "--expected-head-sha", "2" * 40,
+                        "--expected-merged-oid", "4" * 40,
+                    ]
+                ),
+                0,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_floorp_notes_sync_merge_audit_recovery:
+        description: Reproduce the Todo 20 guarded-merge artifact chain for an already-merged PR whose original audit capture failed (no second mutation).
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -43,7 +48,8 @@ concurrency:
     inputs.prepare_floorp_notes_sync_g5_contract == true ||
     inputs.run_floorp_notes_sync_production_qa == true ||
     inputs.run_floorp_notes_sync_production_enablement == true ||
-    inputs.run_floorp_notes_sync_guarded_merge == true) && github.run_id ||
+    inputs.run_floorp_notes_sync_guarded_merge == true ||
+    inputs.run_floorp_notes_sync_merge_audit_recovery == true) && github.run_id ||
     github.event.pull_request.number || github.ref }}
   cancel-in-progress: >-
     ${{ github.event_name != 'workflow_dispatch' ||
@@ -51,7 +57,8 @@ concurrency:
     inputs.prepare_floorp_notes_sync_g5_contract != true &&
     inputs.run_floorp_notes_sync_production_qa != true &&
     inputs.run_floorp_notes_sync_production_enablement != true &&
-    inputs.run_floorp_notes_sync_guarded_merge != true) }}
+    inputs.run_floorp_notes_sync_guarded_merge != true &&
+    inputs.run_floorp_notes_sync_merge_audit_recovery != true) }}
 
 env:
   L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
@@ -72,7 +79,8 @@ jobs:
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
       inputs.run_floorp_notes_sync_production_enablement != true &&
-      inputs.run_floorp_notes_sync_guarded_merge != true)
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -112,7 +120,8 @@ jobs:
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
       inputs.run_floorp_notes_sync_production_enablement != true &&
-      inputs.run_floorp_notes_sync_guarded_merge != true)
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true)
     runs-on: macos-26
     timeout-minutes: 120
 
@@ -310,7 +319,8 @@ jobs:
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
       inputs.run_floorp_notes_sync_production_enablement != true &&
-      inputs.run_floorp_notes_sync_guarded_merge != true)
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true)
     runs-on: macos-26
     timeout-minutes: 90
     needs: workflow-lint
@@ -359,7 +369,8 @@ jobs:
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
       inputs.run_floorp_notes_sync_production_enablement != true &&
-      inputs.run_floorp_notes_sync_guarded_merge != true
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true
     environment: floorp-notes-sync-production-qa
     # Override the workflow-wide read permission. This job must not receive a
     # usable GitHub token or invoke a token-defaulting source checkout action.
@@ -467,7 +478,8 @@ jobs:
       inputs.run_floorp_notes_sync_protected_preflight != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
       inputs.run_floorp_notes_sync_production_enablement != true &&
-      inputs.run_floorp_notes_sync_guarded_merge != true
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true
     environment: floorp-notes-sync-production-qa
     permissions: {}
     env:
@@ -556,7 +568,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/agent/floorp-plan-t20-live-executor' &&
-      inputs.run_floorp_notes_sync_guarded_merge == true &&
+      (inputs.run_floorp_notes_sync_guarded_merge == true ||
+      inputs.run_floorp_notes_sync_merge_audit_recovery == true) &&
       inputs.run_floorp_notes_sync_protected_preflight != true &&
       inputs.prepare_floorp_notes_sync_g5_contract != true &&
       inputs.run_floorp_notes_sync_production_qa != true &&
@@ -576,6 +589,8 @@ jobs:
       FLOORP_TODO20_EXPECTED_HEAD_SHA: ${{ vars.FLOORP_TODO20_EXPECTED_HEAD_SHA }}
       FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
       FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
+      FLOORP_TODO20_EXPECTED_MERGED_OID: ${{ vars.FLOORP_TODO20_EXPECTED_MERGED_OID }}
+      FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID }}
 
     steps:
       - name: Check out source anonymously
@@ -604,10 +619,25 @@ jobs:
             exit 78
           }
           test -n "$FLOORP_TODO20_PR_NUMBER"
-          test "$GITHUB_SHA" = "$FLOORP_TODO20_EXPECTED_HEAD_SHA" || {
-            printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=guarded_merge_expected_head_mismatch resume=update protected expected head only after exact-head CI and subagent GO' >&2
-            exit 78
-          }
+          if [ "${{ inputs.run_floorp_notes_sync_merge_audit_recovery == true }}" = "true" ]; then
+            test "$GITHUB_SHA" != "$FLOORP_TODO20_EXPECTED_HEAD_SHA" || {
+              printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=merge_recovery_head_not_recovery_commit resume=dispatch recovery only from a commit that adds the reviewed recovery path on top of the expected head' >&2
+              exit 78
+            }
+            test -n "$FLOORP_TODO20_EXPECTED_MERGED_OID" || {
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=merge_recovery_merged_oid_missing resume=populate protected Environment variable FLOORP_TODO20_EXPECTED_MERGED_OID with the actual merged main OID' >&2
+              exit 78
+            }
+            test -n "$FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID" || {
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=merge_recovery_source_run_missing resume=populate protected Environment variable FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID with the original guarded-merge workflow run ID' >&2
+              exit 78
+            }
+          else
+            test "$GITHUB_SHA" = "$FLOORP_TODO20_EXPECTED_HEAD_SHA" || {
+              printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=guarded_merge_expected_head_mismatch resume=update protected expected head only after exact-head CI and subagent GO' >&2
+              exit 78
+            }
+          fi
 
       - name: Verify exact-head merge admission
         run: |
@@ -633,6 +663,9 @@ jobs:
             "repos/Floorp-Projects/floorp-ios/actions/runs?head_sha=$FLOORP_TODO20_EXPECTED_HEAD_SHA&per_page=100" \
             > "$root/workflow-runs.json"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
+          if [ "${{ inputs.run_floorp_notes_sync_merge_audit_recovery == true }}" = "true" ]; then
+            git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_EXPECTED_HEAD_SHA"
+          fi
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
           git -C "$GITHUB_WORKSPACE" show \
             "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" \
@@ -654,11 +687,22 @@ jobs:
       - name: Execute repository-owned OID-guarded merge
         run: |
           set -euo pipefail
-          /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge.py \
-            --pr-number "$FLOORP_TODO20_PR_NUMBER" \
-            --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
-            --admission-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-admission.json" \
-            --output "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json"
+          if [ "${{ inputs.run_floorp_notes_sync_merge_audit_recovery == true }}" = "true" ]; then
+            /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge-recovery.py \
+              --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+              --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+              --expected-merged-oid "$FLOORP_TODO20_EXPECTED_MERGED_OID" \
+              --source-run-id "$FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID" \
+              --admission-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-admission.json" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
+              --recovery-evidence "$FLOORP_TODO20_MERGE_ROOT/merge-recovery-evidence.json"
+          else
+            /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge.py \
+              --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+              --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+              --admission-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-admission.json" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json"
+          fi
 
       - name: Capture protected organization audit response
         env:
@@ -693,6 +737,7 @@ jobs:
             ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-admission.json
             ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-audit.json
             ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-operation-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-recovery-evidence.json
           if-no-files-found: error
           retention-days: 7
 
@@ -901,6 +946,7 @@ jobs:
             --audit-json "$qa_root/audit-log.json" \
             --subagent-review "$qa_root/subagent-review.json" \
             --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
+            --guarded-merge-run "$qa_root/guarded-merge-run.json" \
             --pr-projection "$qa_root/pr-metadata.json" \
             --reviews-projection "$qa_root/reviews-metadata.json" \
             --ruleset-projection "$qa_root/ruleset-metadata.json" \
