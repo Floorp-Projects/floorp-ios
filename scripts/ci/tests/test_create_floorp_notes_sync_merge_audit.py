@@ -122,6 +122,141 @@ class MergeAuditTests(unittest.TestCase):
                 self.assertNotEqual(AUDIT.main(self.arguments(root, operation, audit_log, output)), 0)
             self.assertFalse(output.exists())
 
+    def test_waived_audit_records_owner_waiver_without_bypass_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            operation, audit_log = self.write_inputs(root)
+            output = root / "merge-audit.json"
+            binding = json.loads(
+                (ROOT / "docs/floorp-notes-sync-todo20-plan-binding.json").read_text(encoding="utf-8")
+            )
+            waiver = root / "owner-waiver.json"
+            waiver.write_text(
+                json.dumps(
+                    {
+                        "approved_at_utc": "2026-08-16T00:00:00Z",
+                        "endpoint_unavailable": "org-audit-log-http-404-github-free-plan",
+                        "operator_id": "Ryosuke-Asano",
+                        "plan_hash": binding["combined_plan_hash"],
+                        "schema_version": 1,
+                        "statement": "The org audit-log endpoint is unavailable on the free plan; the no-bypass fact is not claimed.",
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = self.arguments(root, operation, audit_log, output) + [
+                "--waive-audit",
+                "--owner-waiver", str(waiver),
+            ]
+            with patch.dict(
+                AUDIT.os.environ,
+                {
+                    "GITHUB_REPOSITORY": AUDIT.REPOSITORY,
+                    "GITHUB_RUN_ID": "999",
+                    "GITHUB_SHA": "2" * 40,
+                    "GITHUB_ACTOR": "Ryosuke-Asano",
+                },
+                clear=False,
+            ):
+                self.assertEqual(AUDIT.main(args), 0)
+            value = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(value["schema_version"], 3)
+            self.assertEqual(value["audit_source"], "github-org-audit-log-unavailable-owner-waived")
+            self.assertEqual(value["audit_event_count"], 0)
+            self.assertIsNone(value["audit_bypass_event_count"])
+            self.assertIsNone(value["audit_event_id_sha256"])
+            self.assertIsNone(value["audit_event_timestamp"])
+            self.assertIsNone(value["audit_projection_sha256"])
+            self.assertIsNone(value["admin_bypass_used"])
+            self.assertIs(value["bypass_requested"], False)
+            self.assertIs(value["audit_endpoint_unavailable"], True)
+            self.assertEqual(value["waiver_operator_id"], "Ryosuke-Asano")
+            self.assertEqual(value["waiver_plan_hash"], binding["combined_plan_hash"])
+
+    def test_waived_audit_rejects_plan_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            operation, audit_log = self.write_inputs(root)
+            output = root / "merge-audit.json"
+            waiver = root / "owner-waiver.json"
+            waiver.write_text(
+                json.dumps(
+                    {
+                        "approved_at_utc": "2026-08-16T00:00:00Z",
+                        "endpoint_unavailable": "org-audit-log-http-404-github-free-plan",
+                        "operator_id": "Ryosuke-Asano",
+                        "plan_hash": "f" * 64,
+                        "schema_version": 1,
+                        "statement": "stale",
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = self.arguments(root, operation, audit_log, output) + [
+                "--waive-audit",
+                "--owner-waiver", str(waiver),
+            ]
+            with patch.dict(
+                AUDIT.os.environ,
+                {
+                    "GITHUB_REPOSITORY": AUDIT.REPOSITORY,
+                    "GITHUB_RUN_ID": "999",
+                    "GITHUB_SHA": "2" * 40,
+                    "GITHUB_ACTOR": "Ryosuke-Asano",
+                },
+                clear=False,
+            ):
+                self.assertNotEqual(AUDIT.main(args), 0)
+            self.assertFalse(output.exists())
+
+    def test_waived_audit_rejects_actor_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            operation, audit_log = self.write_inputs(root)
+            output = root / "merge-audit.json"
+            binding = json.loads(
+                (ROOT / "docs/floorp-notes-sync-todo20-plan-binding.json").read_text(encoding="utf-8")
+            )
+            waiver = root / "owner-waiver.json"
+            waiver.write_text(
+                json.dumps(
+                    {
+                        "approved_at_utc": "2026-08-16T00:00:00Z",
+                        "endpoint_unavailable": "org-audit-log-http-404-github-free-plan",
+                        "operator_id": "someone-else",
+                        "plan_hash": binding["combined_plan_hash"],
+                        "schema_version": 1,
+                        "statement": "wrong actor",
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = self.arguments(root, operation, audit_log, output) + [
+                "--waive-audit",
+                "--owner-waiver", str(waiver),
+            ]
+            with patch.dict(
+                AUDIT.os.environ,
+                {
+                    "GITHUB_REPOSITORY": AUDIT.REPOSITORY,
+                    "GITHUB_RUN_ID": "999",
+                    "GITHUB_SHA": "2" * 40,
+                    "GITHUB_ACTOR": "Ryosuke-Asano",
+                },
+                clear=False,
+            ):
+                self.assertNotEqual(AUDIT.main(args), 0)
+            self.assertFalse(output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -97,7 +97,6 @@ def validate_run_metadata(
         or metadata["workflow_path"] != WORKFLOW_PATH
         or metadata["event"] != "workflow_dispatch"
         or metadata["head_branch"] != HEAD_BRANCH
-        or metadata["head_sha"] != expected_head_sha
         or metadata["status"] != "completed"
         or metadata["conclusion"] != "success"
     ):
@@ -109,7 +108,7 @@ def validate_run_metadata(
         or run.get("path") != WORKFLOW_PATH
         or run.get("event") != "workflow_dispatch"
         or run.get("head_branch") != HEAD_BRANCH
-        or run.get("head_sha") != expected_head_sha
+        or run.get("head_sha") != metadata["head_sha"]
         or run.get("status") != "completed"
         or run.get("conclusion") != "success"
     ):
@@ -135,6 +134,50 @@ def validate_run_metadata(
         raise GuardedMergeArtifactError("uploaded artifact metadata does not match the Actions API")
 
 
+RECOVERY_EVIDENCE_FIELDS = {
+    "admission_receipt_sha256", "expected_head_sha", "expected_merged_oid",
+    "merged_at_utc", "operation_receipt_sha256", "recovery_head_sha",
+    "recovery_run_id", "schema_version", "source_executor_step_success",
+    "source_run_id",
+}
+
+
+def validate_recovery_evidence(
+    evidence: dict[str, Any],
+    run: dict[str, Any],
+    metadata: dict[str, Any],
+    expected_run_id: int,
+    expected_head_sha: str,
+    expected_merged_oid: str,
+    admission_raw: bytes,
+    operation_raw: bytes,
+) -> None:
+    if set(evidence) != RECOVERY_EVIDENCE_FIELDS:
+        raise GuardedMergeArtifactError("merge recovery evidence fields are not exact")
+    require_sha(evidence["expected_head_sha"], SHA1, "recovery expected head")
+    require_sha(evidence["expected_merged_oid"], SHA1, "recovery expected merged OID")
+    require_sha(evidence["recovery_head_sha"], SHA1, "recovery head SHA")
+    require_sha(evidence["admission_receipt_sha256"], SHA256, "recovery admission digest")
+    require_sha(evidence["operation_receipt_sha256"], SHA256, "recovery operation digest")
+    if (
+        evidence["schema_version"] != 1
+        or evidence["recovery_run_id"] != expected_run_id
+        or evidence["recovery_run_id"] != run.get("id")
+        or evidence["recovery_head_sha"] != run.get("head_sha")
+        or evidence["recovery_head_sha"] != metadata["head_sha"]
+        or evidence["expected_head_sha"] != expected_head_sha
+        or evidence["expected_merged_oid"] != expected_merged_oid
+        or evidence["source_executor_step_success"] is not True
+        or not isinstance(evidence["source_run_id"], int)
+        or evidence["source_run_id"] <= 0
+        or evidence["admission_receipt_sha256"] != sha256(admission_raw)
+        or evidence["operation_receipt_sha256"] != sha256(operation_raw)
+        or not isinstance(evidence["merged_at_utc"], str)
+        or not evidence["merged_at_utc"]
+    ):
+        raise GuardedMergeArtifactError("merge recovery evidence is not bound to the protected recovery run")
+
+
 def validate(
     merge: dict[str, Any],
     operation: dict[str, Any],
@@ -145,6 +188,7 @@ def validate(
     expected_pr_number: int,
     expected_head_sha: str,
     expected_merged_oid: str,
+    run_head_sha: str,
 ) -> None:
     if expected_run_id <= 0:
         raise GuardedMergeArtifactError("expected workflow run ID is invalid")
@@ -221,7 +265,7 @@ def validate(
     if operation["merge_response_sha256"] != sha256(canonical(operation["merge_response"])):
         raise GuardedMergeArtifactError("executor response digest is invalid")
 
-    merge_fields = {
+    merge_fields_common = {
         "admin_bypass_used", "audit_bypass_event_count", "audit_event_count",
         "audit_event_id_sha256", "audit_event_timestamp", "audit_projection_sha256",
         "audit_source", "base_oid", "bypass_requested", "head_sha", "merge_endpoint",
@@ -230,6 +274,13 @@ def validate(
         "schema_version", "server_merge_sha", "server_merged", "server_merged_at",
         "source_workflow", "source_workflow_run_id", "source_workflow_sha",
     }
+    merge_fields_v3 = merge_fields_common | {
+        "audit_endpoint_unavailable", "waiver_approved_at_utc", "waiver_operator_id",
+        "waiver_plan_hash",
+    }
+    merge_fields = (
+        merge_fields_v3 if merge.get("schema_version") == 3 else merge_fields_common
+    )
     if set(merge) != merge_fields:
         raise GuardedMergeArtifactError("merge audit fields are not exact")
     for value, label in (
@@ -242,11 +293,15 @@ def validate(
     require_sha(merge["operation_receipt_sha256"], SHA256, "operation receipt digest")
     require_sha(merge["merge_admission_receipt_sha256"], SHA256, "merge admission receipt digest")
     require_sha(merge["merge_response_sha256"], SHA256, "merge response digest")
-    require_sha(merge["audit_event_id_sha256"], SHA256, "audit event ID digest")
-    require_sha(merge["audit_projection_sha256"], SHA256, "audit projection digest")
+    if merge.get("schema_version") == 2:
+        require_sha(merge["audit_event_id_sha256"], SHA256, "audit event ID digest")
+        require_sha(merge["audit_projection_sha256"], SHA256, "audit projection digest")
+    elif merge.get("schema_version") == 3:
+        require_sha(merge["waiver_plan_hash"], SHA256, "waiver plan digest")
+    else:
+        raise GuardedMergeArtifactError("merge audit schema version is invalid")
     if (
-        merge["schema_version"] != 2
-        or merge["repository"] != REPOSITORY
+        merge["repository"] != REPOSITORY
         or not isinstance(merge["pr_number"], int)
         or merge["pr_number"] != expected_pr_number
         or merge["base_oid"] != operation["base_oid"]
@@ -260,18 +315,38 @@ def validate(
         or merge["merge_response"] != {"merged": True, "sha": expected_merged_oid}
         or merge["merge_response_sha256"] != operation["merge_response_sha256"]
         or merge["oid_guarded"] is not True
-        or merge["admin_bypass_used"] is not False
         or merge["bypass_requested"] is not False
-        or merge["audit_source"] != "github-org-audit-log"
-        or merge["audit_bypass_event_count"] != 0
-        or merge["audit_event_count"] != 1
         or merge["source_workflow"] != WORKFLOW_SOURCE
         or merge["source_workflow_run_id"] != expected_run_id
-        or merge["source_workflow_sha"] != expected_head_sha
+        or merge["source_workflow_sha"] != run_head_sha
         or merge["server_merged"] is not True
         or merge["server_merged_at"] != operation["server_merged_at"]
     ):
         raise GuardedMergeArtifactError("merge audit is not bound to the protected merge run")
+    if merge["schema_version"] == 2:
+        if (
+            merge["admin_bypass_used"] is not False
+            or merge["audit_source"] != "github-org-audit-log"
+            or merge["audit_bypass_event_count"] != 0
+            or merge["audit_event_count"] != 1
+        ):
+            raise GuardedMergeArtifactError("merge audit is not the observed no-bypass result")
+    else:
+        if (
+            merge["admin_bypass_used"] is not None
+            or merge["audit_source"] != "github-org-audit-log-unavailable-owner-waived"
+            or merge["audit_bypass_event_count"] is not None
+            or merge["audit_event_count"] != 0
+            or merge["audit_event_id_sha256"] is not None
+            or merge["audit_event_timestamp"] is not None
+            or merge["audit_projection_sha256"] is not None
+            or merge["audit_endpoint_unavailable"] is not True
+            or not isinstance(merge["waiver_operator_id"], str)
+            or not merge["waiver_operator_id"]
+            or not isinstance(merge["waiver_approved_at_utc"], str)
+            or not merge["waiver_approved_at_utc"].endswith("Z")
+        ):
+            raise GuardedMergeArtifactError("merge audit waiver is not the owner-waived unavailability record")
     if merge["operation_receipt_sha256"] != sha256(operation_raw):
         raise GuardedMergeArtifactError("merge audit is not bound to the executor receipt")
     if merge["merge_admission_receipt_sha256"] != sha256(admission_raw):
@@ -303,6 +378,22 @@ def main(arguments: list[str] | None = None) -> int:
         artifacts, _ = load_json(args.artifacts_json, "artifact metadata")
         metadata, _ = load_canonical(args.artifact_metadata, "uploaded artifact identity")
         validate_run_metadata(run, artifacts, metadata, args.expected_run_id, args.expected_head_sha)
+        recovery_evidence_path = args.merge_audit.parent / "merge-recovery-evidence.json"
+        if run.get("head_sha") == args.expected_head_sha:
+            if recovery_evidence_path.exists():
+                raise GuardedMergeArtifactError("merge recovery evidence is unexpected for an exact-head dispatch")
+        else:
+            evidence, _ = load_canonical(recovery_evidence_path, "merge recovery evidence")
+            validate_recovery_evidence(
+                evidence,
+                run,
+                metadata,
+                args.expected_run_id,
+                args.expected_head_sha,
+                args.expected_merged_oid,
+                admission_raw,
+                operation_raw,
+            )
         validate(
             merge,
             operation,
@@ -313,6 +404,7 @@ def main(arguments: list[str] | None = None) -> int:
             args.expected_pr_number,
             args.expected_head_sha,
             args.expected_merged_oid,
+            run["head_sha"],
         )
     except (GuardedMergeArtifactError, OSError) as error:
         print(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_artifact_invalid_{error}", file=sys.stderr)

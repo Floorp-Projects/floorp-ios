@@ -7,6 +7,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -460,22 +461,30 @@ def validate_merge_audit(
     merge: dict[str, Any],
     pr: dict[str, Any],
     merged_oid: str,
+    guarded_run_head_sha: str,
+    binding: dict[str, Any],
+    owner: dict[str, Any],
 ) -> None:
+    merge_fields_common = {
+        "admin_bypass_used", "base_oid", "bypass_requested", "head_sha", "merge_endpoint",
+        "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp",
+        "audit_projection_sha256", "audit_source",
+        "merge_method", "merge_response", "merge_response_sha256", "merge_response_source",
+        "merge_admission_receipt_sha256", "merged_oid", "oid_guarded", "operation_receipt_sha256", "pr_number", "repository",
+        "schema_version", "server_merge_sha", "server_merged", "server_merged_at",
+        "source_workflow", "source_workflow_run_id", "source_workflow_sha",
+    }
+    merge_fields_v3 = merge_fields_common | {
+        "audit_endpoint_unavailable", "waiver_approved_at_utc", "waiver_operator_id",
+        "waiver_plan_hash",
+    }
     require_exact(
         merge,
-        {
-            "admin_bypass_used", "base_oid", "bypass_requested", "head_sha", "merge_endpoint",
-            "audit_bypass_event_count", "audit_event_count", "audit_event_id_sha256", "audit_event_timestamp",
-            "audit_projection_sha256", "audit_source",
-            "merge_method", "merge_response", "merge_response_sha256", "merge_response_source",
-            "merge_admission_receipt_sha256", "merged_oid", "oid_guarded", "operation_receipt_sha256", "pr_number", "repository",
-            "schema_version", "server_merge_sha", "server_merged", "server_merged_at",
-            "source_workflow", "source_workflow_run_id", "source_workflow_sha",
-        },
+        merge_fields_v3 if merge.get("schema_version") == 3 else merge_fields_common,
         "merge audit",
     )
     if (
-        merge["schema_version"] != 2
+        merge["schema_version"] not in (2, 3)
         or merge["repository"] != REPOSITORY
         or merge["pr_number"] != pr["number"]
         or merge["base_oid"] != pr["base"]["sha"]
@@ -483,7 +492,6 @@ def validate_merge_audit(
         or merge["merged_oid"] != merged_oid
         or merge["merge_method"] != "squash"
         or merge["oid_guarded"] is not True
-        or merge["admin_bypass_used"] is not False
         or merge["bypass_requested"] is not False
         or merge["merge_endpoint"] != f"PUT /repos/{REPOSITORY}/pulls/{pr['number']}/merge"
         or merge["merge_response_source"] != "github-api-put-merge-executor"
@@ -496,7 +504,7 @@ def validate_merge_audit(
         or merge["source_workflow"] != "protected-guarded-merge-workflow"
         or not isinstance(merge["source_workflow_run_id"], int)
         or merge["source_workflow_run_id"] <= 0
-        or merge["source_workflow_sha"] != pr["head"]["sha"]
+        or merge["source_workflow_sha"] not in (pr["head"]["sha"], guarded_run_head_sha)
     ):
         raise ReviewReceiptError("merge audit is not bound to the guarded squash merge")
     require_exact(merge["merge_response"], {"merged", "sha"}, "merge response projection")
@@ -507,12 +515,34 @@ def validate_merge_audit(
     require_sha(merge["merge_response_sha256"], SHA256, "merge response digest")
     require_sha(merge["merge_admission_receipt_sha256"], SHA256, "merge admission receipt digest")
     require_sha(merge["operation_receipt_sha256"], SHA256, "merge operation receipt digest")
-    require_sha(merge["audit_event_id_sha256"], SHA256, "GitHub audit event ID digest")
-    require_sha(merge["audit_projection_sha256"], SHA256, "GitHub audit projection digest")
-    if merge["audit_bypass_event_count"] != 0:
-        raise ReviewReceiptError("merge audit reports a protected-branch bypass event")
-    if not isinstance(merge["audit_event_count"], int) or merge["audit_event_count"] < 0:
-        raise ReviewReceiptError("GitHub audit merge event count is invalid")
+    if merge["schema_version"] == 2:
+        require_sha(merge["audit_event_id_sha256"], SHA256, "GitHub audit event ID digest")
+        require_sha(merge["audit_projection_sha256"], SHA256, "GitHub audit projection digest")
+        if (
+            merge["admin_bypass_used"] is not False
+            or merge["audit_source"] != "github-org-audit-log"
+            or merge["audit_bypass_event_count"] != 0
+            or not isinstance(merge["audit_event_count"], int)
+            or merge["audit_event_count"] != 1
+        ):
+            raise ReviewReceiptError("merge audit is not the observed no-bypass result")
+    else:
+        if (
+            merge["admin_bypass_used"] is not None
+            or merge["audit_source"] != "github-org-audit-log-unavailable-owner-waived"
+            or merge["audit_bypass_event_count"] is not None
+            or merge["audit_event_count"] != 0
+            or merge["audit_event_id_sha256"] is not None
+            or merge["audit_event_timestamp"] is not None
+            or merge["audit_projection_sha256"] is not None
+            or merge["audit_endpoint_unavailable"] is not True
+            or not isinstance(merge["waiver_operator_id"], str)
+            or merge["waiver_operator_id"] != owner["operator_id"]
+            or not isinstance(merge["waiver_approved_at_utc"], str)
+            or not merge["waiver_approved_at_utc"].endswith("Z")
+            or merge["waiver_plan_hash"] != binding["combined_plan_hash"]
+        ):
+            raise ReviewReceiptError("merge audit waiver is not bound to the owner waiver and plan binding")
 
 
 def validate_subagent_review(
@@ -694,6 +724,7 @@ def build_receipt(
     owner: dict[str, Any],
     merge: dict[str, Any],
     subagent: dict[str, Any],
+    guarded_run_head_sha: str,
     diff_sha256: str,
     merged_oid: str,
     desktop_sha: str,
@@ -720,7 +751,7 @@ def build_receipt(
     safety = contract_safety(contract)
     validate_plan_binding(binding)
     validate_owner_review(owner, pr, binding, diff_sha256, desktop_sha)
-    validate_merge_audit(merge, pr, merged_oid)
+    validate_merge_audit(merge, pr, merged_oid, guarded_run_head_sha, binding, owner)
     validate_subagent_review(subagent, pr, owner, desktop_sha)
     require_sha(desktop_sha, SHA1, "Desktop commit")
     require_sha(merge_audit_commit_sha, SHA1, "merge audit commit")
@@ -861,6 +892,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--audit-json", type=Path, required=True)
     parser.add_argument("--subagent-review", type=Path, required=True)
     parser.add_argument("--subagent-review-commit", required=True)
+    parser.add_argument("--guarded-merge-run", type=Path, required=True)
     parser.add_argument("--pr-projection", type=Path, required=True)
     parser.add_argument("--reviews-projection", type=Path, required=True)
     parser.add_argument("--ruleset-projection", type=Path, required=True)
@@ -880,11 +912,25 @@ def main(arguments: list[str] | None = None) -> int:
         merge, merge_raw = load_canonical(args.merge_audit, "merge audit")
         audit, audit_raw = load_json(args.audit_json)
         subagent, subagent_raw = load_canonical(args.subagent_review, "subagent review")
+        guarded_run, _ = load_json(args.guarded_merge_run)
         reject_sensitive(owner, "owner review")
         reject_sensitive(merge, "merge audit")
         reject_sensitive(subagent, "subagent review")
         if not isinstance(pr, dict) or not isinstance(ruleset, dict):
             raise ReviewReceiptError("API metadata is malformed")
+        if not isinstance(guarded_run, dict):
+            raise ReviewReceiptError("guarded merge run metadata is malformed")
+        guarded_run_id = guarded_run.get("id")
+        expected_run_id = os.environ.get("FLOORP_TODO20_GUARDED_MERGE_RUN_ID")
+        if expected_run_id is not None:
+            try:
+                if guarded_run_id != int(expected_run_id):
+                    raise ReviewReceiptError("guarded merge run ID does not match the protected selector")
+            except ValueError as error:
+                raise ReviewReceiptError("guarded merge run selector is invalid") from error
+        guarded_run_head_sha = guarded_run.get("head_sha")
+        if not isinstance(guarded_run_head_sha, str) or not SHA1.fullmatch(guarded_run_head_sha):
+            raise ReviewReceiptError("guarded merge run head SHA is invalid")
         if not isinstance(reviews, list):
             raise ReviewReceiptError("review API metadata is malformed")
         verify_immutable_subagent_commit(
@@ -895,7 +941,8 @@ def main(arguments: list[str] | None = None) -> int:
             args.repository_root, args.merge_audit_commit, merge_raw,
             args.merged_oid,
         )
-        validate_github_audit_log(audit, audit_raw, merge, pr, args.merged_oid)
+        if merge["schema_version"] == 2:
+            validate_github_audit_log(audit, audit_raw, merge, pr, args.merged_oid)
         projections = (
             canonical(project_pr_metadata(pr)),
             canonical(project_reviews_metadata(reviews)),
@@ -912,6 +959,7 @@ def main(arguments: list[str] | None = None) -> int:
             owner,
             merge,
             subagent,
+            guarded_run_head_sha,
             diff_sha256,
             args.merged_oid,
             args.desktop_sha,
