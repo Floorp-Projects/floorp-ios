@@ -210,12 +210,25 @@ def validate(
         or value["independence"] is not False
         or value["ruleset_required_review_count"] != 0
         or value["reviews_count"] != 0
-        or value["admin_bypass_used"] is not False
-        or value["audit_source"] != "github-org-audit-log"
-        or value["audit_bypass_event_count"] != 0
-        or not isinstance(value["audit_event_count"], int)
-        or value["audit_event_count"] < 0
-        or not isinstance(value["audit_event_timestamp"], (int, float, str))
+        or not (
+            (
+                value["admin_bypass_used"] is False
+                and value["audit_source"] == "github-org-audit-log"
+                and value["audit_bypass_event_count"] == 0
+                and isinstance(value["audit_event_count"], int)
+                and value["audit_event_count"] >= 0
+                and isinstance(value["audit_event_timestamp"], (int, float, str))
+            )
+            or (
+                value["admin_bypass_used"] is None
+                and value["audit_source"] == "github-org-audit-log-unavailable-owner-waived"
+                and value["audit_bypass_event_count"] is None
+                and value["audit_event_count"] == 0
+                and value["audit_event_timestamp"] is None
+                and value["audit_event_id_sha256"] is None
+                and value["audit_projection_sha256"] is None
+            )
+        )
         or not isinstance(value["server_merged_at"], str)
         or not value["server_merged_at"]
         or value["source_workflow"] != "protected-guarded-merge-workflow"

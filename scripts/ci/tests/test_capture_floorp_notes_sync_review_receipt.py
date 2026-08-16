@@ -139,6 +139,23 @@ def merge_audit() -> dict[str, Any]:
     }
 
 
+def waived_merge_audit() -> dict[str, Any]:
+    value = merge_audit()
+    value["schema_version"] = 3
+    value["admin_bypass_used"] = None
+    value["audit_bypass_event_count"] = None
+    value["audit_endpoint_unavailable"] = True
+    value["audit_event_count"] = 0
+    value["audit_event_id_sha256"] = None
+    value["audit_event_timestamp"] = None
+    value["audit_projection_sha256"] = None
+    value["audit_source"] = "github-org-audit-log-unavailable-owner-waived"
+    value["waiver_approved_at_utc"] = "2026-08-16T00:00:00Z"
+    value["waiver_operator_id"] = "operator"
+    value["waiver_plan_hash"] = "c" * 64
+    return value
+
+
 def subagent_review() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -167,63 +184,65 @@ def pr() -> dict[str, Any]:
 
 
 class CaptureReceiptTests(unittest.TestCase):
+    def call_build_receipt(self, merge: dict[str, Any]) -> dict[str, Any]:
+        return CAPTURE.build_receipt(
+            pr(),
+            [],
+            {
+                "id": 20229460,
+                "name": "Protect Floorp iOS main",
+                "target": "branch",
+                "source_type": "Repository",
+                "source": CAPTURE.REPOSITORY,
+                "enforcement": "active",
+                "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
+                "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}],
+                "rules": [
+                    {
+                        "type": "pull_request",
+                        "parameters": {
+                            "required_approving_review_count": 0,
+                            "required_reviewers": [],
+                        },
+                    },
+                    {
+                        "type": "required_status_checks",
+                        "parameters": {
+                            "required_status_checks": [
+                                {"context": "Validate workflows"},
+                                {"context": "Build and unit test"},
+                            ]
+                        },
+                    },
+                ],
+            },
+            contract(),
+            plan_binding(),
+            owner_review(),
+            merge,
+            subagent_review(),
+            "2" * 40,
+            "d" * 64,
+            "4" * 40,
+            "5" * 40,
+            "7" * 40,
+            CAPTURE.sha256_bytes(b"contract"),
+            CAPTURE.sha256_bytes(b"binding"),
+            CAPTURE.sha256_bytes(b"owner"),
+            CAPTURE.sha256_bytes(b"merge"),
+            CAPTURE.sha256_bytes(b"subagent"),
+            "3" * 40,
+            CAPTURE.sha256_bytes(b"pr"),
+            CAPTURE.sha256_bytes(b"reviews"),
+            CAPTURE.sha256_bytes(b"ruleset"),
+            CAPTURE.sha256_bytes(b"pr-projection"),
+            CAPTURE.sha256_bytes(b"reviews-projection"),
+            CAPTURE.sha256_bytes(b"ruleset-projection"),
+        )
+
     def test_receipt_uses_api_git_and_artifact_bound_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            receipt = CAPTURE.build_receipt(
-                pr(),
-                [],
-                {
-                    "id": 20229460,
-                    "name": "Protect Floorp iOS main",
-                    "target": "branch",
-                    "source_type": "Repository",
-                    "source": CAPTURE.REPOSITORY,
-                    "enforcement": "active",
-                    "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/main"]}},
-                    "bypass_actors": [{"actor_type": "OrganizationAdmin", "bypass_mode": "pull_request"}],
-                    "rules": [
-                        {
-                            "type": "pull_request",
-                            "parameters": {
-                                "required_approving_review_count": 0,
-                                "required_reviewers": [],
-                            },
-                        },
-                        {
-                            "type": "required_status_checks",
-                            "parameters": {
-                                "required_status_checks": [
-                                    {"context": "Validate workflows"},
-                                    {"context": "Build and unit test"},
-                                ]
-                            },
-                        },
-                    ],
-                },
-                contract(),
-                plan_binding(),
-                owner_review(),
-                merge_audit(),
-                subagent_review(),
-                "2" * 40,
-                "d" * 64,
-                "4" * 40,
-                "5" * 40,
-                "7" * 40,
-                CAPTURE.sha256_bytes(b"contract"),
-                CAPTURE.sha256_bytes(b"binding"),
-                CAPTURE.sha256_bytes(b"owner"),
-                CAPTURE.sha256_bytes(b"merge"),
-                CAPTURE.sha256_bytes(b"subagent"),
-                "3" * 40,
-                CAPTURE.sha256_bytes(b"pr"),
-                CAPTURE.sha256_bytes(b"reviews"),
-                CAPTURE.sha256_bytes(b"ruleset"),
-                CAPTURE.sha256_bytes(b"pr-projection"),
-                CAPTURE.sha256_bytes(b"reviews-projection"),
-                CAPTURE.sha256_bytes(b"ruleset-projection"),
-            )
+            receipt = self.call_build_receipt(merge_audit())
             self.assertEqual(receipt["base_oid"], "1" * 40)
             self.assertEqual(receipt["head_sha"], "2" * 40)
             self.assertEqual(receipt["merged_oid"], "4" * 40)
@@ -231,6 +250,16 @@ class CaptureReceiptTests(unittest.TestCase):
             self.assertEqual(receipt["reviews_count"], 0)
             self.assertEqual(receipt["subagent_review_digests"], [CAPTURE.sha256_bytes(b"subagent")])
             self.assertFalse(receipt["admin_bypass_used"])
+
+    def test_waived_v3_merge_audit_is_bound_in_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = self.call_build_receipt(waived_merge_audit())
+            self.assertEqual(receipt["merged_oid"], "4" * 40)
+            self.assertEqual(receipt["head_sha"], "2" * 40)
+            self.assertIsNone(receipt.get("admin_bypass_used"))
+            self.assertEqual(receipt["audit_source"], "github-org-audit-log-unavailable-owner-waived")
+            self.assertEqual(receipt["audit_event_count"], 0)
+            self.assertIsNone(receipt["audit_bypass_event_count"])
 
     def test_stale_server_merged_at_is_rejected(self) -> None:
         later_pr = pr()
