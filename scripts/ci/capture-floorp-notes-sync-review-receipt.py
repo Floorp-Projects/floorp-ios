@@ -547,8 +547,22 @@ def validate_subagent_review(
         raise ReviewReceiptError("subagent review is stale or not a clean GO")
 
 
-def verify_immutable_commit(repository_root: Path, commit_sha: str, path: str, raw: bytes, label: str) -> None:
+def verify_immutable_commit(
+    repository_root: Path, commit_sha: str, path: str, raw: bytes, label: str,
+    reference_sha: str,
+) -> None:
+    """Verify the immutable commit differs from the reference tree only at
+    the single expected path.
+
+    The commit tree is compared against the reference tree (the exact PR head
+    for the subagent review, the merged main OID for the merge audit) instead
+    of the commit parent: the protected runner fetches these commits with
+    ``--depth=1``, so parents are absent and ``diff-tree --root`` would list
+    the entire tree. Tree comparison keeps the one-file-scope check valid for
+    shallow fetches and enforces the source binding.
+    """
     require_sha(commit_sha, SHA1, f"{label} commit")
+    require_sha(reference_sha, SHA1, f"{label} reference")
     object_check = subprocess.run(
         ["/usr/bin/git", "-C", str(repository_root), "cat-file", "-e", f"{commit_sha}^{{commit}}"],
         check=False,
@@ -566,7 +580,10 @@ def verify_immutable_commit(repository_root: Path, commit_sha: str, path: str, r
     if content.returncode != 0 or content.stdout != raw:
         raise ReviewReceiptError(f"{label} artifact is not bound to its immutable commit")
     changed = subprocess.run(
-        ["/usr/bin/git", "-C", str(repository_root), "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", commit_sha],
+        [
+            "/usr/bin/git", "-C", str(repository_root), "diff-tree", "--no-commit-id",
+            "--name-only", "-r", reference_sha, commit_sha,
+        ],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -576,12 +593,22 @@ def verify_immutable_commit(repository_root: Path, commit_sha: str, path: str, r
         raise ReviewReceiptError(f"{label} commit contains unexpected files")
 
 
-def verify_immutable_subagent_commit(repository_root: Path, commit_sha: str, subagent_raw: bytes) -> None:
-    verify_immutable_commit(repository_root, commit_sha, SUBAGENT_REVIEW_PATH, subagent_raw, "subagent review")
+def verify_immutable_subagent_commit(
+    repository_root: Path, commit_sha: str, subagent_raw: bytes, reference_sha: str,
+) -> None:
+    verify_immutable_commit(
+        repository_root, commit_sha, SUBAGENT_REVIEW_PATH, subagent_raw,
+        "subagent review", reference_sha,
+    )
 
 
-def verify_immutable_merge_audit_commit(repository_root: Path, commit_sha: str, merge_raw: bytes) -> None:
-    verify_immutable_commit(repository_root, commit_sha, MERGE_AUDIT_PATH, merge_raw, "merge audit")
+def verify_immutable_merge_audit_commit(
+    repository_root: Path, commit_sha: str, merge_raw: bytes, reference_sha: str,
+) -> None:
+    verify_immutable_commit(
+        repository_root, commit_sha, MERGE_AUDIT_PATH, merge_raw,
+        "merge audit", reference_sha,
+    )
 
 
 def validate_pr(pr: dict[str, Any], pr_number: int, merged_oid: str) -> None:
@@ -860,8 +887,14 @@ def main(arguments: list[str] | None = None) -> int:
             raise ReviewReceiptError("API metadata is malformed")
         if not isinstance(reviews, list):
             raise ReviewReceiptError("review API metadata is malformed")
-        verify_immutable_subagent_commit(args.repository_root, args.subagent_review_commit, subagent_raw)
-        verify_immutable_merge_audit_commit(args.repository_root, args.merge_audit_commit, merge_raw)
+        verify_immutable_subagent_commit(
+            args.repository_root, args.subagent_review_commit, subagent_raw,
+            pr["head"]["sha"],
+        )
+        verify_immutable_merge_audit_commit(
+            args.repository_root, args.merge_audit_commit, merge_raw,
+            args.merged_oid,
+        )
         validate_github_audit_log(audit, audit_raw, merge, pr, args.merged_oid)
         projections = (
             canonical(project_pr_metadata(pr)),

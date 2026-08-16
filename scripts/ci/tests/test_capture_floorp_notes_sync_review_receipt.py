@@ -435,24 +435,75 @@ class CaptureReceiptTests(unittest.TestCase):
                 "4" * 40,
             )
 
+    def _build_head_and_review_commit(self, root: Path) -> tuple[str, str]:
+        raw = CAPTURE.canonical(subagent_review())
+        (root / "base.txt").write_text("head tree\n", encoding="utf-8")
+        subprocess.run(["/usr/bin/git", "-C", str(root), "init", "--quiet"], check=True)
+        subprocess.run(["/usr/bin/git", "-C", str(root), "add", "base.txt"], check=True)
+        subprocess.run(
+            ["/usr/bin/git", "-C", str(root), "-c", "user.name=Test", "-c",
+             "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+             "commit", "-m", "head"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        head = subprocess.check_output(
+            ["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ).strip()
+        artifact = root / "docs/floorp-notes-sync-todo20-subagent-review.json"
+        artifact.parent.mkdir()
+        artifact.write_bytes(raw)
+        subprocess.run(
+            ["/usr/bin/git", "-C", str(root), "add", "docs/floorp-notes-sync-todo20-subagent-review.json"],
+            check=True,
+        )
+        subprocess.run(
+            ["/usr/bin/git", "-C", str(root), "-c", "user.name=Test", "-c",
+             "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+             "commit", "-m", "attestation"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        commit = subprocess.check_output(
+            ["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ).strip()
+        return head, commit
+
     def test_subagent_artifact_is_bound_to_one_immutable_commit_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "docs").mkdir()
             raw = CAPTURE.canonical(subagent_review())
-            artifact = root / "docs/floorp-notes-sync-todo20-subagent-review.json"
-            artifact.write_bytes(raw)
-            subprocess.run(["/usr/bin/git", "-C", str(root), "init", "--quiet"], check=True)
-            subprocess.run(["/usr/bin/git", "-C", str(root), "add", "docs/floorp-notes-sync-todo20-subagent-review.json"], check=True)
+            head, commit = self._build_head_and_review_commit(root)
+            CAPTURE.verify_immutable_subagent_commit(root, commit, raw, head)
+            with self.assertRaises(CAPTURE.ReviewReceiptError):
+                CAPTURE.verify_immutable_subagent_commit(root, commit, raw + b" ", head)
+
+    def test_shallow_fetched_review_commit_without_parent_still_passes(self) -> None:
+        """The protected runner fetches the review commit with --depth=1, so
+        its parent object is absent. The one-file scope must be verified
+        against the exact head tree and still succeed."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            origin = root / "origin"
+            origin.mkdir()
+            raw = CAPTURE.canonical(subagent_review())
+            head, commit = self._build_head_and_review_commit(origin)
+            runner = root / "runner"
+            runner.mkdir()
+            subprocess.run(["/usr/bin/git", "-C", str(runner), "init", "--quiet"], check=True)
             subprocess.run(
-                ["/usr/bin/git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "attestation"],
+                ["/usr/bin/git", "-C", str(runner), "remote", "add", "origin", str(origin)],
+                check=True,
+            )
+            subprocess.run(
+                ["/usr/bin/git", "-C", str(runner), "fetch", "--no-tags", "--depth=1",
+                 "origin", head, commit],
                 check=True,
                 stdout=subprocess.DEVNULL,
             )
-            commit = subprocess.check_output(["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
-            CAPTURE.verify_immutable_subagent_commit(root, commit, raw)
+            CAPTURE.verify_immutable_subagent_commit(runner, commit, raw, head)
             with self.assertRaises(CAPTURE.ReviewReceiptError):
-                CAPTURE.verify_immutable_subagent_commit(root, commit, raw + b" ")
+                CAPTURE.verify_immutable_subagent_commit(runner, commit, raw + b" ", head)
 
 
 if __name__ == "__main__":

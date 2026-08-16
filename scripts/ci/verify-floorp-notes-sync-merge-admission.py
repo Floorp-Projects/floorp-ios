@@ -83,8 +83,21 @@ def require_sha(value: Any, pattern: re.Pattern[str], label: str) -> None:
         raise MergeAdmissionError(f"{label} is invalid")
 
 
-def verify_immutable_subagent_commit(repository_root: Path, commit_sha: str, raw: bytes) -> None:
+def verify_immutable_subagent_commit(
+    repository_root: Path, commit_sha: str, raw: bytes, reference_sha: str,
+) -> None:
+    """Verify the review commit differs from the exact head tree only at the
+    review path.
+
+    The review tree is compared against the exact reviewed head tree instead
+    of the commit parent: the protected runner fetches the review commit with
+    ``--depth=1``, so the parent object is absent and ``diff-tree --root``
+    would incorrectly treat the commit as a root commit and list the entire
+    tree. Comparing trees keeps the one-file-scope check valid for shallow
+    fetches and additionally enforces the exact-head binding.
+    """
     require_sha(commit_sha, SHA1, "subagent review commit")
+    require_sha(reference_sha, SHA1, "subagent review reference head")
     exists = subprocess.run(
         ["/usr/bin/git", "-C", str(repository_root), "cat-file", "-e", f"{commit_sha}^{{commit}}"],
         check=False,
@@ -103,8 +116,8 @@ def verify_immutable_subagent_commit(repository_root: Path, commit_sha: str, raw
         raise MergeAdmissionError("subagent review is not bound to its immutable commit")
     changed = subprocess.run(
         [
-            "/usr/bin/git", "-C", str(repository_root), "diff-tree", "--root", "--no-commit-id",
-            "--name-only", "-r", commit_sha,
+            "/usr/bin/git", "-C", str(repository_root), "diff-tree", "--no-commit-id",
+            "--name-only", "-r", reference_sha, commit_sha,
         ],
         check=False,
         stdout=subprocess.PIPE,
@@ -396,7 +409,10 @@ def main(arguments: list[str] | None = None) -> int:
             or owner["combined_plan_hash"] != binding["combined_plan_hash"]
         ):
             raise MergeAdmissionError("owner review is not bound to the checked-in plan binding")
-        verify_immutable_subagent_commit(args.repository_root, args.subagent_review_commit, subagent_raw)
+        verify_immutable_subagent_commit(
+            args.repository_root, args.subagent_review_commit, subagent_raw,
+            args.expected_head_sha,
+        )
         receipt = {
             "admin_bypass_used": False,
             "base_oid": owner["base_oid"],
