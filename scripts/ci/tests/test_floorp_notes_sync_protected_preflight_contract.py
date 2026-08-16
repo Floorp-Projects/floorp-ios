@@ -170,6 +170,13 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             f"inputs.{WAIVED_ENABLEMENT_INPUT} != true)" + " }}",
         )
 
+    def test_waived_enablement_job_condition_is_satisfiable(self) -> None:
+        job = self.jobs["notes-sync-production-enablement-waived"]
+        condition = " ".join(job["if"].split())
+        self.assertIn(f"inputs.{WAIVED_ENABLEMENT_INPUT} == true", condition)
+        self.assertNotIn(f"inputs.{WAIVED_ENABLEMENT_INPUT} != true", condition)
+        self.assertIn("github.ref == 'refs/heads/main'", condition)
+
     def test_job_shape_steps_and_xcode_commands_are_allowlisted(self) -> None:
         job = self.jobs[JOB_ID]
         self.assertEqual(

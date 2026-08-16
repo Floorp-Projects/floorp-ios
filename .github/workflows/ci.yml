@@ -820,8 +820,7 @@ jobs:
       inputs.run_floorp_notes_sync_production_qa != true &&
       inputs.run_floorp_notes_sync_production_enablement != true &&
       inputs.run_floorp_notes_sync_guarded_merge != true &&
-      inputs.run_floorp_notes_sync_merge_audit_recovery != true &&
-      inputs.run_floorp_notes_sync_production_enablement_waived != true
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true
     environment: floorp-notes-sync-production-qa
     permissions:
       actions: read
