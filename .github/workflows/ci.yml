@@ -950,6 +950,7 @@ jobs:
           }
           base_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["sha"])' "$root/pr.json")"
           head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$root/pr.json")"
+          merged_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["merge_commit_sha"])' "$root/pr.json")"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
           git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
@@ -968,7 +969,7 @@ jobs:
             --expected-run-id "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" \
             --expected-pr-number "$FLOORP_TODO20_PR_NUMBER" \
             --expected-head-sha "$head_oid" \
-            --expected-merged-oid "$GITHUB_SHA"
+            --expected-merged-oid "$merged_oid"
           git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_MERGE_AUDIT_COMMIT:docs/floorp-notes-sync-todo20-merge-audit.json" > "$root/merge-audit-commit.json"
           cmp -s "$root/guarded-merge-artifact/merge-audit.json" "$root/merge-audit-commit.json" || {
             printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_artifact_commit_parity_mismatch resume=publish the exact protected merge-run artifact to the immutable merge-audit commit' >&2
@@ -982,7 +983,7 @@ jobs:
             --ruleset-json "$root/ruleset.json" \
             --repository-root "$GITHUB_WORKSPACE" \
             --pr-number "$FLOORP_TODO20_PR_NUMBER" \
-            --merged-oid "$GITHUB_SHA" \
+            --merged-oid "$merged_oid" \
             --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
             --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
             --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
