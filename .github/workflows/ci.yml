@@ -695,7 +695,8 @@ jobs:
               --source-run-id "$FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID" \
               --admission-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-admission.json" \
               --output "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
-              --recovery-evidence "$FLOORP_TODO20_MERGE_ROOT/merge-recovery-evidence.json"
+              --recovery-evidence "$FLOORP_TODO20_MERGE_ROOT/merge-recovery-evidence.json" \
+              --repository-root "$GITHUB_WORKSPACE"
           else
             /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge.py \
               --pr-number "$FLOORP_TODO20_PR_NUMBER" \
