@@ -939,7 +939,7 @@ def main(arguments: list[str] | None = None) -> int:
         )
         verify_immutable_merge_audit_commit(
             args.repository_root, args.merge_audit_commit, merge_raw,
-            args.merged_oid,
+            os.environ["GITHUB_SHA"],
         )
         if merge["schema_version"] == 2:
             validate_github_audit_log(audit, audit_raw, merge, pr, args.merged_oid)
