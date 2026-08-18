@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -283,7 +284,8 @@ class CaptureReceiptTests(unittest.TestCase):
 
     def test_owner_review_gate_waiver_is_source_bound_and_explicit(self) -> None:
         waiver = owner_review_waiver()
-        CAPTURE.validate_owner_review_waiver(waiver, plan_binding())
+        with patch.dict(CAPTURE.os.environ, {"GITHUB_ACTOR": "operator"}, clear=False):
+            CAPTURE.validate_owner_review_waiver(waiver, plan_binding())
         context = CAPTURE.owner_context_from_waiver(
             waiver,
             pr(),
@@ -307,8 +309,9 @@ class CaptureReceiptTests(unittest.TestCase):
     def test_owner_review_gate_waiver_rejects_plan_drift(self) -> None:
         waiver = owner_review_waiver()
         waiver["plan_hash"] = "f" * 64
-        with self.assertRaises(CAPTURE.ReviewReceiptError):
-            CAPTURE.validate_owner_review_waiver(waiver, plan_binding())
+        with patch.dict(CAPTURE.os.environ, {"GITHUB_ACTOR": "operator"}, clear=False):
+            with self.assertRaises(CAPTURE.ReviewReceiptError):
+                CAPTURE.validate_owner_review_waiver(waiver, plan_binding())
 
     def test_stale_server_merged_at_is_rejected(self) -> None:
         later_pr = pr()
