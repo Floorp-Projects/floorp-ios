@@ -93,6 +93,18 @@ def owner_review() -> dict[str, Any]:
     }
 
 
+def owner_review_waiver() -> dict[str, Any]:
+    return {
+        "approved_at_utc": "2026-08-19T00:00:00Z",
+        "operator_id": "operator",
+        "owner_review_performed": False,
+        "plan_hash": "c" * 64,
+        "schema_version": 1,
+        "statement": "The owner-review gate is explicitly waived and was not performed for this bounded enablement attempt.",
+        "waiver_scope": "todo20-owner-review-gate",
+    }
+
+
 def merge_audit() -> dict[str, Any]:
     merge_response = {"merged": True, "sha": "4" * 40}
     audit_projection = {
@@ -184,7 +196,13 @@ def pr() -> dict[str, Any]:
 
 
 class CaptureReceiptTests(unittest.TestCase):
-    def call_build_receipt(self, merge: dict[str, Any]) -> dict[str, Any]:
+    def call_build_receipt(
+        self,
+        merge: dict[str, Any],
+        owner: dict[str, Any] | None = None,
+        owner_review_status: str = "performed",
+        owner_review_waiver_sha256: str | None = None,
+    ) -> dict[str, Any]:
         return CAPTURE.build_receipt(
             pr(),
             [],
@@ -218,7 +236,7 @@ class CaptureReceiptTests(unittest.TestCase):
             },
             contract(),
             plan_binding(),
-            owner_review(),
+            owner or owner_review(),
             merge,
             subagent_review(),
             "2" * 40,
@@ -238,6 +256,8 @@ class CaptureReceiptTests(unittest.TestCase):
             CAPTURE.sha256_bytes(b"pr-projection"),
             CAPTURE.sha256_bytes(b"reviews-projection"),
             CAPTURE.sha256_bytes(b"ruleset-projection"),
+            owner_review_status,
+            owner_review_waiver_sha256,
         )
 
     def test_receipt_uses_api_git_and_artifact_bound_values(self) -> None:
@@ -260,6 +280,35 @@ class CaptureReceiptTests(unittest.TestCase):
             self.assertEqual(receipt["audit_source"], "github-org-audit-log-unavailable-owner-waived")
             self.assertEqual(receipt["audit_event_count"], 0)
             self.assertIsNone(receipt["audit_bypass_event_count"])
+
+    def test_owner_review_gate_waiver_is_source_bound_and_explicit(self) -> None:
+        waiver = owner_review_waiver()
+        CAPTURE.validate_owner_review_waiver(waiver, plan_binding())
+        context = CAPTURE.owner_context_from_waiver(
+            waiver,
+            pr(),
+            plan_binding(),
+            "d" * 64,
+            "5" * 40,
+        )
+        receipt = self.call_build_receipt(
+            waived_merge_audit(),
+            owner=context,
+            owner_review_status="waived-not-performed",
+            owner_review_waiver_sha256=CAPTURE.sha256_bytes(CAPTURE.canonical(waiver)),
+        )
+        self.assertEqual(receipt["owner_review_status"], "waived-not-performed")
+        self.assertIsNone(receipt["owner_review_receipt_sha256"])
+        self.assertEqual(
+            receipt["owner_review_waiver_sha256"],
+            CAPTURE.sha256_bytes(CAPTURE.canonical(waiver)),
+        )
+
+    def test_owner_review_gate_waiver_rejects_plan_drift(self) -> None:
+        waiver = owner_review_waiver()
+        waiver["plan_hash"] = "f" * 64
+        with self.assertRaises(CAPTURE.ReviewReceiptError):
+            CAPTURE.validate_owner_review_waiver(waiver, plan_binding())
 
     def test_stale_server_merged_at_is_rejected(self) -> None:
         later_pr = pr()

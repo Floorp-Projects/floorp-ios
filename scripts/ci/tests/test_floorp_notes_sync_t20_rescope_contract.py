@@ -180,6 +180,14 @@ class FloorpNotesSyncT20RescopeContractTests(unittest.TestCase):
                 f"{job_id} must authenticate its protected ruleset read",
             )
 
+    def test_waived_enablement_uses_explicit_owner_review_gate_waiver(self) -> None:
+        job = self.jobs["notes-sync-production-enablement-waived"]
+        serialized = json.dumps(job, sort_keys=True)
+        self.assertIn("FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON", serialized)
+        self.assertNotIn("FLOORP_TODO20_OWNER_REVIEW_JSON", serialized)
+        self.assertIn("owner-review-waiver", serialized)
+        self.assertIn("owner_review_gate_waiver_missing", serialized)
+
     def test_workflow_keeps_normal_ci_and_public_release_disabled(self) -> None:
         serialized = json.dumps(self.workflow, sort_keys=True).lower()
         self.assertNotIn("app store", serialized)

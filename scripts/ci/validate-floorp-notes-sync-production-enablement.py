@@ -230,6 +230,8 @@ WAIVED_ENABLEMENT_FIELDS = {
     "merge_audit_sha256",
     "no_data_loss_claim",
     "operator_id",
+    "owner_review_status",
+    "owner_review_waiver_sha256",
     "phase",
     "phase1_summary_sha256",
     "public_release",
@@ -278,6 +280,15 @@ def validate_waived_enablement(
     require(record["testflight_distribution"] is False, "TestFlight distribution is forbidden")
     require(record["live_qa"] == "owner-waived-not-performed", "live QA is not recorded as waived")
     require(record["no_data_loss_claim"] is False, "no-data-loss must not be claimed")
+    require(
+        record["owner_review_status"] == "waived-not-performed",
+        "owner review gate is not recorded as waived",
+    )
+    require(
+        isinstance(record["owner_review_waiver_sha256"], str)
+        and SHA256.fullmatch(record["owner_review_waiver_sha256"]) is not None,
+        "owner review waiver digest is invalid",
+    )
     require(record["phase1_summary_sha256"] is None, "waived enablement must not bind a Phase 1 summary")
     require(
         record["audit_source"] == "github-org-audit-log-unavailable-owner-waived",
@@ -339,6 +350,11 @@ def validate_waived_enablement(
         isinstance(review_receipt, dict)
         and review_receipt.get("merge_audit_sha256") == record["merge_audit_sha256"],
         "review receipt is not bound to the enablement merge audit",
+    )
+    require(
+        review_receipt.get("owner_review_status") == record["owner_review_status"]
+        and review_receipt.get("owner_review_waiver_sha256") == record["owner_review_waiver_sha256"],
+        "review receipt is not bound to the owner-review gate waiver",
     )
     require(
         review_receipt.get("source_workflow_run_id") == record["guarded_merge_run_id"],

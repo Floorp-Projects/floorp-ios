@@ -836,7 +836,7 @@ jobs:
       FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
       FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
       FLOORP_TODO20_GUARDED_MERGE_RUN_ID: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
-      FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
+      FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON }}
       FLOORP_TODO20_MERGE_AUDIT_COMMIT: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_COMMIT }}
       FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
       FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON: ${{ vars.FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON }}
@@ -870,7 +870,10 @@ jobs:
           }
           test -n "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
           test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
-          test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON"
+          test -n "$FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON" || {
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=owner_review_gate_waiver_missing resume=populate protected Environment variable FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON; owner review is explicitly waived and must not be recorded as successful' >&2
+            exit 78
+          }
           test -n "$FLOORP_TODO20_LIVE_QA_WAIVER_JSON" || {
             printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=live_qa_waiver_missing resume=populate protected Environment variable FLOORP_TODO20_LIVE_QA_WAIVER_JSON with the owner live-QA waiver receipt' >&2
             exit 78
@@ -958,7 +961,7 @@ jobs:
             "$base_oid" "$head_oid" "$merged_oid" "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
           git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_MERGE_AUDIT_COMMIT^{commit}"
-          printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$root/owner-review.json"
+          printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON" > "$root/owner-review-waiver.json"
           test -f "$root/guarded-merge-artifact/merge-audit.json"
           test -f "$root/guarded-merge-artifact/merge-operation-receipt.json"
           /usr/bin/python3 -I scripts/ci/verify-floorp-notes-sync-guarded-merge-artifact.py \
@@ -989,7 +992,7 @@ jobs:
             --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
             --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
             --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
-            --owner-review "$root/owner-review.json" \
+            --owner-review-waiver "$root/owner-review-waiver.json" \
             --merge-audit "$root/merge-audit.json" \
             --merge-audit-commit "$FLOORP_TODO20_MERGE_AUDIT_COMMIT" \
             --audit-json "$root/audit-log.json" \
