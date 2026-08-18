@@ -97,6 +97,7 @@ def owner_review() -> dict[str, Any]:
 def owner_review_waiver() -> dict[str, Any]:
     return {
         "approved_at_utc": "2026-08-19T00:00:00Z",
+        "historical_merge_audit_plan_hash": "d" * 64,
         "operator_id": "operator",
         "owner_review_performed": False,
         "plan_hash": "c" * 64,
@@ -293,8 +294,10 @@ class CaptureReceiptTests(unittest.TestCase):
             "d" * 64,
             "5" * 40,
         )
+        historical_merge = waived_merge_audit()
+        historical_merge["waiver_plan_hash"] = "d" * 64
         receipt = self.call_build_receipt(
-            waived_merge_audit(),
+            historical_merge,
             owner=context,
             owner_review_status="waived-not-performed",
             owner_review_waiver_sha256=CAPTURE.sha256_bytes(CAPTURE.canonical(waiver)),

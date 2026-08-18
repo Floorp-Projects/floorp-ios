@@ -459,6 +459,7 @@ def validate_owner_review(
 
 OWNER_REVIEW_WAIVER_FIELDS = {
     "approved_at_utc",
+    "historical_merge_audit_plan_hash",
     "operator_id",
     "owner_review_performed",
     "plan_hash",
@@ -475,6 +476,8 @@ def validate_owner_review_waiver(
     require_exact(waiver, OWNER_REVIEW_WAIVER_FIELDS, "owner review waiver")
     if (
         waiver["schema_version"] != 1
+        or not isinstance(waiver["historical_merge_audit_plan_hash"], str)
+        or waiver["historical_merge_audit_plan_hash"] == binding["combined_plan_hash"]
         or not isinstance(waiver["operator_id"], str)
         or not waiver["operator_id"]
         or (
@@ -491,6 +494,11 @@ def validate_owner_review_waiver(
     ):
         raise ReviewReceiptError("owner review gate waiver is stale or incomplete")
     require_sha(waiver["plan_hash"], SHA256, "owner review waiver plan hash")
+    require_sha(
+        waiver["historical_merge_audit_plan_hash"],
+        SHA256,
+        "historical merge-audit plan hash",
+    )
     reject_sensitive(waiver, "owner review waiver")
 
 
@@ -510,6 +518,7 @@ def owner_context_from_waiver(
         "combined_plan_hash": binding["combined_plan_hash"],
         "diff_sha256": diff_sha256,
         "head_sha": pr["head"]["sha"],
+        "historical_merge_audit_plan_hash": waiver["historical_merge_audit_plan_hash"],
         "independence": False,
         "desktop_sha": desktop_sha,
         "operator_id": waiver["operator_id"],
@@ -607,7 +616,11 @@ def validate_merge_audit(
             or merge["waiver_operator_id"] != owner["operator_id"]
             or not isinstance(merge["waiver_approved_at_utc"], str)
             or not merge["waiver_approved_at_utc"].endswith("Z")
-            or merge["waiver_plan_hash"] != binding["combined_plan_hash"]
+            or merge["waiver_plan_hash"]
+            not in {
+                binding["combined_plan_hash"],
+                owner.get("historical_merge_audit_plan_hash"),
+            }
         ):
             raise ReviewReceiptError("merge audit waiver is not bound to the owner waiver and plan binding")
 
