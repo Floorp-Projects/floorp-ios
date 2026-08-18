@@ -931,6 +931,7 @@ jobs:
           curl --fail --silent --show-error --location --retry 3 \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/rulesets/20229460" \
             -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $FLOORP_TODO20_GH_AUDIT_TOKEN" \
             -o "$root/ruleset.json"
           /opt/homebrew/bin/gh api --paginate --slurp \
             "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
@@ -1161,6 +1162,7 @@ jobs:
           curl --fail --silent --show-error --location --retry 3 \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/rulesets/20229460" \
             -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $FLOORP_TODO20_GH_AUDIT_TOKEN" \
             -o "$qa_root/ruleset.json"
           /opt/homebrew/bin/gh api --paginate --slurp \
             "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
