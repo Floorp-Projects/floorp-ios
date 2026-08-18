@@ -457,6 +457,82 @@ def validate_owner_review(
         raise ReviewReceiptError("owner review is stale or incomplete")
 
 
+OWNER_REVIEW_WAIVER_FIELDS = {
+    "approved_at_utc",
+    "historical_merge_audit_plan_hash",
+    "operator_id",
+    "owner_review_performed",
+    "plan_hash",
+    "schema_version",
+    "statement",
+    "waiver_scope",
+}
+
+
+def validate_owner_review_waiver(
+    waiver: dict[str, Any],
+    binding: dict[str, Any],
+) -> None:
+    require_exact(waiver, OWNER_REVIEW_WAIVER_FIELDS, "owner review waiver")
+    if (
+        waiver["schema_version"] != 1
+        or not isinstance(waiver["historical_merge_audit_plan_hash"], str)
+        or waiver["historical_merge_audit_plan_hash"] == binding["combined_plan_hash"]
+        or not isinstance(waiver["operator_id"], str)
+        or not waiver["operator_id"]
+        or (
+            os.environ.get("GITHUB_ACTOR")
+            and waiver["operator_id"] != os.environ["GITHUB_ACTOR"]
+        )
+        or waiver["owner_review_performed"] is not False
+        or waiver["plan_hash"] != binding["combined_plan_hash"]
+        or not isinstance(waiver["approved_at_utc"], str)
+        or not waiver["approved_at_utc"].endswith("Z")
+        or waiver["waiver_scope"] != "todo20-owner-review-gate"
+        or not isinstance(waiver["statement"], str)
+        or not waiver["statement"]
+    ):
+        raise ReviewReceiptError("owner review gate waiver is stale or incomplete")
+    require_sha(waiver["plan_hash"], SHA256, "owner review waiver plan hash")
+    require_sha(
+        waiver["historical_merge_audit_plan_hash"],
+        SHA256,
+        "historical merge-audit plan hash",
+    )
+    reject_sensitive(waiver, "owner review waiver")
+
+
+def owner_context_from_waiver(
+    waiver: dict[str, Any],
+    pr: dict[str, Any],
+    binding: dict[str, Any],
+    diff_sha256: str,
+    desktop_sha: str,
+) -> dict[str, Any]:
+    """Create source-bound context without claiming an owner review."""
+    return {
+        "amendment_sha256": binding["amendment_sha256"],
+        "attestation_statement": waiver["statement"],
+        "base_oid": pr["base"]["sha"],
+        "checklist": {"owner_review_gate_waived": True},
+        "combined_plan_hash": binding["combined_plan_hash"],
+        "diff_sha256": diff_sha256,
+        "head_sha": pr["head"]["sha"],
+        "historical_merge_audit_plan_hash": waiver["historical_merge_audit_plan_hash"],
+        "independence": False,
+        "desktop_sha": desktop_sha,
+        "operator_id": waiver["operator_id"],
+        "plan_sha256": binding["plan_sha256"],
+        "pr_number": pr["number"],
+        "public_release": False,
+        "repository": REPOSITORY,
+        "reviewed_at_utc": waiver["approved_at_utc"],
+        "schema_version": 1,
+        "self_review_exception": True,
+        "unresolved_blocking_findings": [],
+    }
+
+
 def validate_merge_audit(
     merge: dict[str, Any],
     pr: dict[str, Any],
@@ -540,7 +616,11 @@ def validate_merge_audit(
             or merge["waiver_operator_id"] != owner["operator_id"]
             or not isinstance(merge["waiver_approved_at_utc"], str)
             or not merge["waiver_approved_at_utc"].endswith("Z")
-            or merge["waiver_plan_hash"] != binding["combined_plan_hash"]
+            or merge["waiver_plan_hash"]
+            not in {
+                binding["combined_plan_hash"],
+                owner.get("historical_merge_audit_plan_hash"),
+            }
         ):
             raise ReviewReceiptError("merge audit waiver is not bound to the owner waiver and plan binding")
 
@@ -741,6 +821,8 @@ def build_receipt(
     pr_projection_sha256: str,
     reviews_projection_sha256: str,
     ruleset_projection_sha256: str,
+    owner_review_status: str = "performed",
+    owner_review_waiver_sha256: str | None = None,
 ) -> dict[str, Any]:
     validate_pr(pr, owner["pr_number"], merged_oid)
     if not isinstance(reviews, list):
@@ -750,7 +832,10 @@ def build_receipt(
         raise ReviewReceiptError("native GitHub reviews are not empty for the self-review exception")
     safety = contract_safety(contract)
     validate_plan_binding(binding)
-    validate_owner_review(owner, pr, binding, diff_sha256, desktop_sha)
+    if owner_review_status == "performed":
+        validate_owner_review(owner, pr, binding, diff_sha256, desktop_sha)
+    elif owner_review_status != "waived-not-performed":
+        raise ReviewReceiptError("owner review status is invalid")
     validate_merge_audit(merge, pr, merged_oid, guarded_run_head_sha, binding, owner)
     validate_subagent_review(subagent, pr, owner, desktop_sha)
     require_sha(desktop_sha, SHA1, "Desktop commit")
@@ -771,7 +856,7 @@ def build_receipt(
         (ruleset_projection_sha256, "ruleset metadata projection digest"),
     ):
         require_sha(value, SHA256, label)
-    return {
+    receipt = {
         "admin_bypass_used": merge["admin_bypass_used"],
         "audit_bypass_event_count": merge["audit_bypass_event_count"],
         "audit_event_count": merge["audit_event_count"],
@@ -830,6 +915,16 @@ def build_receipt(
         "two_disposable_accounts_only": safety["two_disposable_accounts_only"],
         "unresolved_blocking_findings": owner["unresolved_blocking_findings"],
     }
+    if owner_review_status == "waived-not-performed":
+        require_sha(
+            owner_review_waiver_sha256 or "",
+            SHA256,
+            "owner review waiver digest",
+        )
+        receipt["owner_review_receipt_sha256"] = None
+        receipt["owner_review_status"] = "waived-not-performed"
+        receipt["owner_review_waiver_sha256"] = owner_review_waiver_sha256
+    return receipt
 
 
 def git_diff_sha256(repository_root: Path, base_oid: str, head_oid: str) -> str:
@@ -886,7 +981,9 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--desktop-sha", required=True)
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--plan-binding", type=Path, required=True)
-    parser.add_argument("--owner-review", type=Path, required=True)
+    owner_review_group = parser.add_mutually_exclusive_group(required=True)
+    owner_review_group.add_argument("--owner-review", type=Path)
+    owner_review_group.add_argument("--owner-review-waiver", type=Path)
     parser.add_argument("--merge-audit", type=Path, required=True)
     parser.add_argument("--merge-audit-commit", required=True)
     parser.add_argument("--audit-json", type=Path, required=True)
@@ -908,12 +1005,25 @@ def main(arguments: list[str] | None = None) -> int:
         ruleset, ruleset_raw = load_json(args.ruleset_json)
         contract, contract_raw = load_canonical(args.contract, "operation contract")
         binding, binding_raw = load_canonical(args.plan_binding, "plan binding")
-        owner, owner_raw = load_canonical(args.owner_review, "owner review")
+        owner_review_status = "performed"
+        owner_review_waiver_sha256 = None
+        owner_waiver = None
+        if args.owner_review is not None:
+            owner, owner_raw = load_canonical(args.owner_review, "owner review")
+        else:
+            owner_waiver, owner_raw = load_canonical(
+                args.owner_review_waiver,
+                "owner review waiver",
+            )
+            validate_owner_review_waiver(owner_waiver, binding)
+            owner_review_status = "waived-not-performed"
+            owner_review_waiver_sha256 = sha256_bytes(owner_raw)
         merge, merge_raw = load_canonical(args.merge_audit, "merge audit")
         audit, audit_raw = load_json(args.audit_json)
         subagent, subagent_raw = load_canonical(args.subagent_review, "subagent review")
         guarded_run, _ = load_json(args.guarded_merge_run)
-        reject_sensitive(owner, "owner review")
+        if owner_waiver is not None:
+            reject_sensitive(owner_waiver, "owner review waiver")
         reject_sensitive(merge, "merge audit")
         reject_sensitive(subagent, "subagent review")
         if not isinstance(pr, dict) or not isinstance(ruleset, dict):
@@ -949,6 +1059,15 @@ def main(arguments: list[str] | None = None) -> int:
             canonical(project_ruleset_metadata(ruleset)),
         )
         diff_sha256 = git_diff_sha256(args.repository_root, pr["base"]["sha"], pr["head"]["sha"])
+        if owner_waiver is not None:
+            owner = owner_context_from_waiver(
+                owner_waiver,
+                pr,
+                binding,
+                diff_sha256,
+                args.desktop_sha,
+            )
+            reject_sensitive(owner, "owner review waiver context")
         verify_merged_parent(args.repository_root, pr["base"]["sha"], args.merged_oid)
         receipt = build_receipt(
             pr,
@@ -976,6 +1095,8 @@ def main(arguments: list[str] | None = None) -> int:
             sha256_bytes(projections[0]),
             sha256_bytes(projections[1]),
             sha256_bytes(projections[2]),
+            owner_review_status,
+            owner_review_waiver_sha256,
         )
         for path, raw in zip(
             (args.pr_projection, args.reviews_projection, args.ruleset_projection),

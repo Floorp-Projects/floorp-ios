@@ -220,6 +220,15 @@ def main(arguments: list[str] | None = None) -> int:
                 == int(os.environ["FLOORP_TODO20_GUARDED_MERGE_RUN_ID"]),
                 "[blocked] AUTHORIZATION_MISSING owner=Operations reason=waived_enablement_run_mismatch",
             )
+            require(
+                review_receipt.get("owner_review_status") == "waived-not-performed",
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=owner_review_gate_waiver_missing",
+            )
+            require(
+                isinstance(review_receipt.get("owner_review_waiver_sha256"), str)
+                and len(review_receipt["owner_review_waiver_sha256"]) == 64,
+                "[blocked] AUTHORIZATION_MISSING owner=Operations reason=owner_review_gate_waiver_invalid",
+            )
             record = {
                 "app_store_submission": False,
                 "approved": True,
@@ -237,6 +246,8 @@ def main(arguments: list[str] | None = None) -> int:
                 "merge_audit_sha256": sha256(merge_audit_raw),
                 "no_data_loss_claim": False,
                 "operator_id": context["actor"],
+                "owner_review_status": review_receipt["owner_review_status"],
+                "owner_review_waiver_sha256": review_receipt["owner_review_waiver_sha256"],
                 "phase": "production-sync-enablement",
                 "phase1_summary_sha256": None,
                 "public_release": False,

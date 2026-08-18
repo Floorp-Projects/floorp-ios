@@ -209,6 +209,20 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
             "merge_audit_sha256": hashlib.sha256(merge_audit_raw).hexdigest(),
             "no_data_loss_claim": False,
             "operator_id": "test-operator",
+            "owner_review_status": "waived-not-performed",
+            "owner_review_waiver_sha256": hashlib.sha256(
+                canonical(
+                    {
+                        "approved_at_utc": "2026-08-16T00:00:00Z",
+                        "operator_id": "test-operator",
+                        "owner_review_performed": False,
+                        "plan_hash": "c" * 64,
+                        "schema_version": 1,
+                        "statement": "The owner-review gate is explicitly waived and was not performed.",
+                        "waiver_scope": "todo20-owner-review-gate",
+                    }
+                )
+            ).hexdigest(),
             "phase": "production-sync-enablement",
             "phase1_summary_sha256": None,
             "public_release": False,
@@ -240,9 +254,24 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
         merge_audit_raw = json.dumps(
             merge_audit, separators=(",", ":"), sort_keys=True
         ).encode() + b"\n"
+        owner_review_waiver_raw = json.dumps(
+            {
+                "approved_at_utc": "2026-08-16T00:00:00Z",
+                "operator_id": "test-operator",
+                "owner_review_performed": False,
+                "plan_hash": "c" * 64,
+                "schema_version": 1,
+                "statement": "The owner-review gate is explicitly waived and was not performed.",
+                "waiver_scope": "todo20-owner-review-gate",
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode() + b"\n"
         review_receipt_raw = json.dumps(
             {
                 "merge_audit_sha256": hashlib.sha256(merge_audit_raw).hexdigest(),
+                "owner_review_status": "waived-not-performed",
+                "owner_review_waiver_sha256": hashlib.sha256(owner_review_waiver_raw).hexdigest(),
                 "source_workflow_run_id": 123,
                 "audit_source": "github-org-audit-log-unavailable-owner-waived",
             },
