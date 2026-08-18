@@ -163,6 +163,23 @@ class FloorpNotesSyncT20RescopeContractTests(unittest.TestCase):
         self.assertNotIn("testflight", enablement_text)
         self.assertNotIn("root-owned-broker", serialized)
 
+    def test_source_bound_receipts_authenticate_protected_ruleset_reads(self) -> None:
+        for job_id, step_name in (
+            (
+                "notes-sync-production-enablement-waived",
+                "Capture source-bound review evidence and create waived enablement record",
+            ),
+            ("notes-sync-production-qa", "Capture source-bound Todo 20 review receipt"),
+        ):
+            job = self.jobs[job_id]
+            step = next(item for item in job["steps"] if item.get("name") == step_name)
+            run = step["run"]
+            self.assertIn(
+                '-H "Authorization: Bearer $FLOORP_TODO20_GH_AUDIT_TOKEN"',
+                run,
+                f"{job_id} must authenticate its protected ruleset read",
+            )
+
     def test_workflow_keeps_normal_ci_and_public_release_disabled(self) -> None:
         serialized = json.dumps(self.workflow, sort_keys=True).lower()
         self.assertNotIn("app store", serialized)
