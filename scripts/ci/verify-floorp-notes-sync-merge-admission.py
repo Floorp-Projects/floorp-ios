@@ -27,7 +27,13 @@ SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 AGENT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 RUN_JOB_LINK = re.compile(r"/actions/runs/(?P<run_id>[0-9]+)/job/(?P<job_id>[0-9]+)(?:$|[?#])")
-EXPECTED_BRANCH = "agent/floorp-plan-t20-live-executor"
+# The protected merge executor is dispatched from this branch, but the
+# reviewed PR checks may legitimately run on a different source branch.  In
+# normal mode the source branch is derived from the exact PR association below
+# and then required to agree across every check and workflow run.  Recovery
+# mode retains the executor branch because it intentionally runs after the PR
+# association has been cleared by a merge.
+RECOVERY_HEAD_BRANCH = "agent/floorp-plan-t20-live-executor"
 EXPECTED_BASE_BRANCH = "main"
 EXPECTED_WORKFLOW_PATHS = {
     "Floorp iOS CI": ".github/workflows/ci.yml",
@@ -216,7 +222,7 @@ def require_pull_request(
     expected_head_sha: str,
     expected_base_sha: str,
     label: str,
-) -> None:
+) -> str:
     if not isinstance(rows, list):
         raise MergeAdmissionError(f"{label} is not bound to PR {pr_number}")
     expected_url = f"{REPOSITORY_API_URL}/pulls/{pr_number}"
@@ -233,14 +239,16 @@ def require_pull_request(
             row.get("url") == expected_url
             and base.get("ref") == EXPECTED_BASE_BRANCH
             and base.get("sha") == expected_base_sha
-            and head.get("ref") == EXPECTED_BRANCH
             and head.get("sha") == expected_head_sha
             and isinstance(base_repo, dict)
             and base_repo.get("url") == REPOSITORY_API_URL
             and isinstance(head_repo, dict)
             and head_repo.get("url") == REPOSITORY_API_URL
         ):
-            return
+            head_ref = head.get("ref")
+            if not isinstance(head_ref, str) or not head_ref:
+                break
+            return head_ref
     raise MergeAdmissionError(f"{label} is not exactly bound to PR {pr_number}")
 
 
@@ -252,7 +260,7 @@ def validate_checks(
     expected_head_sha: str,
     expected_base_sha: str,
     recovery: bool,
-) -> int:
+) -> tuple[int, str | None]:
     if not isinstance(checks, list) or not checks:
         raise MergeAdmissionError("GitHub check response is empty or malformed")
     check_runs = collection(check_runs_payload, "check_runs", "GitHub check-runs response")
@@ -283,6 +291,7 @@ def validate_checks(
 
     names: set[str] = set()
     referenced_workflow_run_ids: set[str] = set()
+    source_head_ref: str | None = None
     for check in checks:
         if not isinstance(check, dict) or not isinstance(check.get("name"), str):
             raise MergeAdmissionError("GitHub check response contains malformed rows")
@@ -308,8 +317,9 @@ def validate_checks(
             raise MergeAdmissionError(f"GitHub check-run head SHA is not exact: {name}")
         if check_run.get("status") != "completed":
             raise MergeAdmissionError(f"GitHub check-run is not completed: {name}")
+        check_head_ref: str | None = None
         if not recovery:
-            require_pull_request(
+            check_head_ref = require_pull_request(
                 check_run.get("pull_requests"),
                 pr_number,
                 expected_head_sha,
@@ -328,20 +338,28 @@ def validate_checks(
             or not isinstance(workflow_path, str)
             or workflow_path != expected_workflow_path
             or workflow_run.get("event") != "pull_request"
-            or workflow_run.get("head_branch") != EXPECTED_BRANCH
             or workflow_run.get("head_sha") != expected_head_sha
             or workflow_run.get("status") != "completed"
             or workflow_run.get("conclusion") != "success"
         ):
             raise MergeAdmissionError(f"GitHub workflow provenance is not exact: {name}")
+        workflow_head_ref = RECOVERY_HEAD_BRANCH
         if not recovery:
-            require_pull_request(
+            workflow_head_ref = require_pull_request(
                 workflow_run.get("pull_requests"),
                 pr_number,
                 expected_head_sha,
                 expected_base_sha,
                 f"GitHub workflow-run {name}",
             )
+            if check_head_ref != workflow_head_ref:
+                raise MergeAdmissionError(f"GitHub source branch binding differs: {name}")
+            if source_head_ref is None:
+                source_head_ref = check_head_ref
+            elif source_head_ref != check_head_ref:
+                raise MergeAdmissionError(f"GitHub source branch is inconsistent: {name}")
+        if workflow_run.get("head_branch") != workflow_head_ref:
+            raise MergeAdmissionError(f"GitHub workflow head branch is not PR-bound: {name}")
         state = str(check.get("state", "")).upper()
         bucket = check.get("bucket")
         check_conclusion = str(check_run.get("conclusion", "")).lower()
@@ -356,7 +374,7 @@ def validate_checks(
         raise MergeAdmissionError("required terminal CI checks are missing")
     if not referenced_workflow_run_ids:
         raise MergeAdmissionError("GitHub workflow provenance is empty")
-    return len(checks)
+    return len(checks), source_head_ref
 
 
 def validate_plan_binding(binding: dict[str, Any]) -> None:
@@ -406,7 +424,7 @@ def main(arguments: list[str] | None = None) -> int:
         binding, binding_raw = load_canonical(args.plan_binding, "plan binding")
         validate_owner(owner, args.pr_number, args.expected_head_sha)
         validate_subagent(subagent, args.pr_number, args.expected_head_sha)
-        check_count = validate_checks(
+        check_count, source_head_ref = validate_checks(
             checks,
             check_runs,
             workflow_runs,
@@ -435,7 +453,7 @@ def main(arguments: list[str] | None = None) -> int:
             # bundle, not only the gh-pr-checks projection.
             "checks_sha256": sha256(checks_raw + check_runs_raw + workflow_runs_raw),
             "head_sha": args.expected_head_sha,
-            "head_ref_name": EXPECTED_BRANCH,
+            "head_ref_name": source_head_ref or RECOVERY_HEAD_BRANCH,
             "native_github_approval": False,
             "operator_id": owner["operator_id"],
             "owner_review_sha256": sha256(owner_raw),

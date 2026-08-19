@@ -24,7 +24,6 @@ REPOSITORY = "Floorp-Projects/floorp-ios"
 GH = "/opt/homebrew/bin/gh"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 EXPECTED_BASE_REF = "main"
-EXPECTED_HEAD_REF = "agent/floorp-plan-t20-live-executor"
 
 
 class MergeExecutionError(RuntimeError):
@@ -125,7 +124,8 @@ def main(arguments: list[str] | None = None) -> int:
             or admission["repository"] != REPOSITORY
             or admission["pr_number"] != args.pr_number
             or admission["base_ref_name"] != EXPECTED_BASE_REF
-            or admission["head_ref_name"] != EXPECTED_HEAD_REF
+            or not isinstance(admission["head_ref_name"], str)
+            or not admission["head_ref_name"]
             or admission["head_sha"] != expected_head_sha
             or admission["admin_bypass_used"] is not False
             or admission["native_github_approval"] is not False
@@ -149,7 +149,7 @@ def main(arguments: list[str] | None = None) -> int:
         if (
             current_pr.get("baseRefName") != EXPECTED_BASE_REF
             or current_pr.get("baseRefOid") != admission["base_oid"]
-            or current_pr.get("headRefName") != EXPECTED_HEAD_REF
+            or current_pr.get("headRefName") != admission["head_ref_name"]
             or current_pr.get("headRefOid") != expected_head_sha
         ):
             raise MergeExecutionError("PR base/head refs drifted before the guarded merge")
@@ -189,7 +189,7 @@ def main(arguments: list[str] | None = None) -> int:
             or merged_pr.get("merged") is not True
             or merged_pr.get("merge_commit_sha") != merged_oid
             or base.get("ref") != EXPECTED_BASE_REF
-            or head.get("ref") != EXPECTED_HEAD_REF
+            or head.get("ref") != admission["head_ref_name"]
             or head.get("sha") != expected_head_sha
             or not isinstance(merged_pr.get("merged_at"), str)
             or not merged_pr["merged_at"]

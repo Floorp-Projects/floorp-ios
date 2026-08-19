@@ -1098,11 +1098,10 @@ def main(arguments: list[str] | None = None) -> int:
             owner_review_status,
             owner_review_waiver_sha256,
         )
-        for path, raw in zip(
-            (args.pr_projection, args.reviews_projection, args.ruleset_projection),
-            projections,
-            strict=True,
-        ):
+        projection_paths = (args.pr_projection, args.reviews_projection, args.ruleset_projection)
+        if len(projection_paths) != len(projections):
+            raise ReviewReceiptError("review metadata projection count mismatch")
+        for path, raw in zip(projection_paths, projections):
             write_exclusive(path, raw)
         write_exclusive(args.output, canonical(receipt))
     except (OSError, UnicodeError, json.JSONDecodeError, ReviewReceiptError, KeyError) as error:

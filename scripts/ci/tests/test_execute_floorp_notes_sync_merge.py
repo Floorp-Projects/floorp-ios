@@ -38,7 +38,7 @@ class MergeExecutorTests(unittest.TestCase):
             "checks_count": 4,
             "checks_sha256": "a" * 64,
             "head_sha": "2" * 40,
-            "head_ref_name": "agent/floorp-plan-t20-live-executor",
+            "head_ref_name": "agent/floorp-t20-enable-runtime-compat",
             "native_github_approval": False,
             "operator_id": "operator",
             "owner_review_sha256": "b" * 64,
@@ -63,7 +63,7 @@ class MergeExecutorTests(unittest.TestCase):
                         {
                             "baseRefName": "main",
                             "baseRefOid": "1" * 40,
-                            "headRefName": "agent/floorp-plan-t20-live-executor",
+                            "headRefName": "agent/floorp-t20-enable-runtime-compat",
                             "headRefOid": "2" * 40,
                         }
                     ).encode(),
@@ -71,7 +71,7 @@ class MergeExecutorTests(unittest.TestCase):
                     json.dumps(
                         {
                             "base": {"ref": "main", "sha": "1" * 40},
-                            "head": {"ref": "agent/floorp-plan-t20-live-executor", "sha": "2" * 40},
+                            "head": {"ref": "agent/floorp-t20-enable-runtime-compat", "sha": "2" * 40},
                             "merge_commit_sha": "4" * 40,
                             "merged": True,
                             "merged_at": "2026-08-15T00:00:00Z",
@@ -140,7 +140,7 @@ class MergeExecutorTests(unittest.TestCase):
                     {
                         "baseRefName": "release",
                         "baseRefOid": "1" * 40,
-                        "headRefName": "agent/floorp-plan-t20-live-executor",
+                        "headRefName": "agent/floorp-t20-enable-runtime-compat",
                         "headRefOid": "2" * 40,
                     }
                 ).encode(),
