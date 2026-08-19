@@ -23,7 +23,7 @@ MERGE_RESPONSE_SOURCE = "github-api-put-merge-executor"
 WORKFLOW_SOURCE = "protected-guarded-merge-workflow"
 WORKFLOW_PATH = ".github/workflows/ci.yml"
 BASE_BRANCH = "main"
-HEAD_BRANCH = "agent/floorp-plan-t20-live-executor"
+EXECUTOR_HEAD_BRANCH = "agent/floorp-plan-t20-live-executor"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -96,7 +96,7 @@ def validate_run_metadata(
         or metadata["artifact_name"] != f"floorp-notes-sync-guarded-merge-{expected_run_id}"
         or metadata["workflow_path"] != WORKFLOW_PATH
         or metadata["event"] != "workflow_dispatch"
-        or metadata["head_branch"] != HEAD_BRANCH
+        or metadata["head_branch"] != EXECUTOR_HEAD_BRANCH
         or metadata["status"] != "completed"
         or metadata["conclusion"] != "success"
     ):
@@ -107,7 +107,7 @@ def validate_run_metadata(
         run.get("id") != expected_run_id
         or run.get("path") != WORKFLOW_PATH
         or run.get("event") != "workflow_dispatch"
-        or run.get("head_branch") != HEAD_BRANCH
+        or run.get("head_branch") != EXECUTOR_HEAD_BRANCH
         or run.get("head_sha") != metadata["head_sha"]
         or run.get("status") != "completed"
         or run.get("conclusion") != "success"
@@ -218,7 +218,8 @@ def validate(
         or not isinstance(admission["pr_number"], int)
         or admission["pr_number"] <= 0
         or admission["base_ref_name"] != BASE_BRANCH
-        or admission["head_ref_name"] != HEAD_BRANCH
+        or not isinstance(admission["head_ref_name"], str)
+        or not admission["head_ref_name"]
         or admission["head_sha"] != expected_head_sha
         or admission["admin_bypass_used"] is not False
         or admission["native_github_approval"] is not False

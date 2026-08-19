@@ -27,13 +27,13 @@ SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 AGENT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 RUN_JOB_LINK = re.compile(r"/actions/runs/(?P<run_id>[0-9]+)/job/(?P<job_id>[0-9]+)(?:$|[?#])")
-# The protected merge executor is dispatched from this branch, but the
+# The protected merge executor is dispatched from its own branch, but the
 # reviewed PR checks may legitimately run on a different source branch.  In
 # normal mode the source branch is derived from the exact PR association below
 # and then required to agree across every check and workflow run.  Recovery
-# mode retains the executor branch because it intentionally runs after the PR
-# association has been cleared by a merge.
-RECOVERY_HEAD_BRANCH = "agent/floorp-plan-t20-live-executor"
+# mode derives the same source branch from the exact-head workflow-run
+# metadata because GitHub clears the PR associations after a merge.  The
+# recovery executor branch is never substituted for the reviewed source.
 EXPECTED_BASE_BRANCH = "main"
 EXPECTED_WORKFLOW_PATHS = {
     "Floorp iOS CI": ".github/workflows/ci.yml",
@@ -343,7 +343,6 @@ def validate_checks(
             or workflow_run.get("conclusion") != "success"
         ):
             raise MergeAdmissionError(f"GitHub workflow provenance is not exact: {name}")
-        workflow_head_ref = RECOVERY_HEAD_BRANCH
         if not recovery:
             workflow_head_ref = require_pull_request(
                 workflow_run.get("pull_requests"),
@@ -354,10 +353,14 @@ def validate_checks(
             )
             if check_head_ref != workflow_head_ref:
                 raise MergeAdmissionError(f"GitHub source branch binding differs: {name}")
-            if source_head_ref is None:
-                source_head_ref = check_head_ref
-            elif source_head_ref != check_head_ref:
-                raise MergeAdmissionError(f"GitHub source branch is inconsistent: {name}")
+        else:
+            workflow_head_ref = workflow_run.get("head_branch")
+            if not isinstance(workflow_head_ref, str) or not workflow_head_ref:
+                raise MergeAdmissionError(f"GitHub workflow source branch is missing: {name}")
+        if source_head_ref is None:
+            source_head_ref = workflow_head_ref
+        elif source_head_ref != workflow_head_ref:
+            raise MergeAdmissionError(f"GitHub source branch is inconsistent: {name}")
         if workflow_run.get("head_branch") != workflow_head_ref:
             raise MergeAdmissionError(f"GitHub workflow head branch is not PR-bound: {name}")
         state = str(check.get("state", "")).upper()
@@ -374,6 +377,8 @@ def validate_checks(
         raise MergeAdmissionError("required terminal CI checks are missing")
     if not referenced_workflow_run_ids:
         raise MergeAdmissionError("GitHub workflow provenance is empty")
+    if source_head_ref is None:
+        raise MergeAdmissionError("GitHub source branch provenance is empty")
     return len(checks), source_head_ref
 
 
@@ -453,7 +458,7 @@ def main(arguments: list[str] | None = None) -> int:
             # bundle, not only the gh-pr-checks projection.
             "checks_sha256": sha256(checks_raw + check_runs_raw + workflow_runs_raw),
             "head_sha": args.expected_head_sha,
-            "head_ref_name": source_head_ref or RECOVERY_HEAD_BRANCH,
+            "head_ref_name": source_head_ref,
             "native_github_approval": False,
             "operator_id": owner["operator_id"],
             "owner_review_sha256": sha256(owner_raw),

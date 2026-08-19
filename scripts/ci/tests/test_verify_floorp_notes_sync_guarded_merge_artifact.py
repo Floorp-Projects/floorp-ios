@@ -36,7 +36,7 @@ class GuardedMergeArtifactTests(unittest.TestCase):
             "checks_count": 4,
             "checks_sha256": "a" * 64,
             "head_sha": "2" * 40,
-            "head_ref_name": "agent/floorp-plan-t20-live-executor",
+            "head_ref_name": "agent/floorp-t20-enable-runtime-compat",
             "native_github_approval": False,
             "operator_id": "operator",
             "owner_review_sha256": "b" * 64,
