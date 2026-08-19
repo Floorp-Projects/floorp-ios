@@ -37,7 +37,7 @@ GH = "/opt/homebrew/bin/gh"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 EXPECTED_BASE_REF = "main"
-EXPECTED_HEAD_REF = "agent/floorp-plan-t20-live-executor"
+EXPECTED_EXECUTOR_HEAD_REF = "agent/floorp-plan-t20-live-executor"
 EXPECTED_WORKFLOW_PATH = ".github/workflows/ci.yml"
 EXPECTED_SOURCE_JOB = "Todo 20 protected OID-guarded merge and audit receipt"
 EXPECTED_SOURCE_STEP = "Execute repository-owned OID-guarded merge"
@@ -142,7 +142,8 @@ def validate_admission(
         or admission["repository"] != REPOSITORY
         or admission["pr_number"] != pr_number
         or admission["base_ref_name"] != EXPECTED_BASE_REF
-        or admission["head_ref_name"] != EXPECTED_HEAD_REF
+        or not isinstance(admission["head_ref_name"], str)
+        or not admission["head_ref_name"]
         or admission["head_sha"] != expected_head_sha
         or admission["admin_bypass_used"] is not False
         or admission["native_github_approval"] is not False
@@ -156,7 +157,13 @@ def validate_admission(
         raise MergeRecoveryError("merge admission receipt is not an exact-head terminal GO")
 
 
-def verify_merged_pr(pr: dict[str, Any], pr_number: int, expected_head_sha: str, expected_merged_oid: str) -> str:
+def verify_merged_pr(
+    pr: dict[str, Any],
+    pr_number: int,
+    expected_head_sha: str,
+    expected_merged_oid: str,
+    expected_source_head_ref: str,
+) -> str:
     base = pr.get("base") if isinstance(pr.get("base"), dict) else {}
     head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
     base_oid = require_sha(base.get("sha"), "merged PR base OID")
@@ -166,7 +173,7 @@ def verify_merged_pr(pr: dict[str, Any], pr_number: int, expected_head_sha: str,
         or pr.get("merged") is not True
         or merged_oid != expected_merged_oid
         or base.get("ref") != EXPECTED_BASE_REF
-        or head.get("ref") != EXPECTED_HEAD_REF
+        or head.get("ref") != expected_source_head_ref
         or head.get("sha") != expected_head_sha
         or not isinstance(pr.get("merged_at"), str)
         or not pr["merged_at"]
@@ -180,7 +187,7 @@ def verify_source_run(run: dict[str, Any], source_run_id: int, expected_head_sha
         run.get("id") != source_run_id
         or run.get("path") != EXPECTED_WORKFLOW_PATH
         or run.get("event") != "workflow_dispatch"
-        or run.get("head_branch") != EXPECTED_HEAD_REF
+        or run.get("head_branch") != EXPECTED_EXECUTOR_HEAD_REF
         or run.get("head_sha") != expected_head_sha
     ):
         raise MergeRecoveryError("original guarded-merge run provenance is not exact")
@@ -260,7 +267,11 @@ def main(arguments: list[str] | None = None) -> int:
             "merged PR response",
         )
         base_oid = verify_merged_pr(
-            merged_pr, args.pr_number, expected_head_sha, expected_merged_oid,
+            merged_pr,
+            args.pr_number,
+            expected_head_sha,
+            expected_merged_oid,
+            admission["head_ref_name"],
         )
         source_run = load_object(
             run_gh(["api", f"repos/{REPOSITORY}/actions/runs/{args.source_run_id}"]),
