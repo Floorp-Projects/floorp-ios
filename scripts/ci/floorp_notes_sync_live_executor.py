@@ -49,7 +49,13 @@ APPROVED_HOSTS = [
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 REPOSITORY = "Floorp-Projects/floorp-ios"
 WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
+PUBLIC_BETA_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-public-beta-qa.yml"
 JOB_NAME = "notes-sync-production-qa"
+PUBLIC_BETA_JOB_NAME = "notes-sync-public-beta-qa"
+JOB_BINDINGS = {
+    JOB_NAME: WORKFLOW_PATH,
+    PUBLIC_BETA_JOB_NAME: PUBLIC_BETA_WORKFLOW_PATH,
+}
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 INVARIANT_CASES = {
     "no-data-loss": frozenset(
@@ -129,7 +135,7 @@ def source_from_environment() -> dict[str, Any]:
             "head_sha": os.environ["GITHUB_SHA"],
             "job_name": os.environ["GITHUB_JOB"],
             "repository": os.environ["GITHUB_REPOSITORY"],
-            "workflow_path": WORKFLOW_PATH,
+            "workflow_path": JOB_BINDINGS.get(os.environ["GITHUB_JOB"], ""),
             "workflow_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
             "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
         }
@@ -142,11 +148,11 @@ def source_from_environment() -> dict[str, Any]:
     if (
         source["event"] != "workflow_dispatch"
         or os.environ["GITHUB_REF"] != "refs/heads/main"
-        or source["job_name"] != JOB_NAME
+        or source["job_name"] not in JOB_BINDINGS
         or source["repository"] != REPOSITORY
         or not SHA1.fullmatch(source["head_sha"])
         or not os.environ["GITHUB_WORKFLOW_REF"].startswith(
-            f"{REPOSITORY}/{WORKFLOW_PATH}@"
+            f"{REPOSITORY}/{JOB_BINDINGS[source['job_name']]}@"
         )
     ):
         raise LiveExecutorError(

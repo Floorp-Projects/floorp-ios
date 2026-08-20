@@ -20,6 +20,8 @@ from floorp_notes_sync_production_qa_capability import (  # noqa: E402
     ENVIRONMENT,
     INVARIANT_NAMES,
     JOB_NAME,
+    PUBLIC_BETA_JOB_NAME,
+    PUBLIC_BETA_WORKFLOW_PATH,
     REPOSITORY,
     WORKFLOW_PATH,
     canonical_bytes,
@@ -48,7 +50,15 @@ def required_environment() -> dict[str, str]:
         raise CapabilityCreationError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=execution_context_missing resume=run in the protected workflow")
     if values["GITHUB_EVENT_NAME"] != "workflow_dispatch" or values["GITHUB_REF"] != "refs/heads/main":
         raise CapabilityCreationError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=workflow_binding_invalid resume=dispatch the protected job from main")
-    if values["GITHUB_REPOSITORY"] != REPOSITORY or not values["GITHUB_WORKFLOW_REF"].startswith(f"{REPOSITORY}/{WORKFLOW_PATH}@"):
+    expected_workflow_path = {
+        JOB_NAME: WORKFLOW_PATH,
+        PUBLIC_BETA_JOB_NAME: PUBLIC_BETA_WORKFLOW_PATH,
+    }.get(values["GITHUB_JOB"])
+    if (
+        values["GITHUB_REPOSITORY"] != REPOSITORY
+        or expected_workflow_path is None
+        or not values["GITHUB_WORKFLOW_REF"].startswith(f"{REPOSITORY}/{expected_workflow_path}@")
+    ):
         raise CapabilityCreationError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=workflow_binding_invalid resume=bind the record to the canonical ci workflow")
     if SHA1.fullmatch(values["GITHUB_SHA"]) is None:
         raise CapabilityCreationError("[blocked] AUTHORIZATION_MISSING owner=Operations reason=head_sha_invalid resume=use the immutable workflow head")
@@ -119,7 +129,10 @@ def main(arguments: list[str] | None = None) -> int:
                 "head_sha": environment["GITHUB_SHA"],
                 "job_name": environment["GITHUB_JOB"] or JOB_NAME,
                 "repository": environment["GITHUB_REPOSITORY"],
-                "workflow_path": WORKFLOW_PATH,
+                "workflow_path": {
+                    JOB_NAME: WORKFLOW_PATH,
+                    PUBLIC_BETA_JOB_NAME: PUBLIC_BETA_WORKFLOW_PATH,
+                }[environment["GITHUB_JOB"]],
                 "workflow_run_attempt": int(environment["GITHUB_RUN_ATTEMPT"]),
                 "workflow_run_id": int(environment["GITHUB_RUN_ID"]),
             },

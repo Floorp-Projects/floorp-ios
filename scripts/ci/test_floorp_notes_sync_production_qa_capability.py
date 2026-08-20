@@ -19,6 +19,8 @@ from floorp_notes_sync_production_qa_capability import (  # noqa: E402
     ENVIRONMENT,
     INVARIANT_NAMES,
     JOB_NAME,
+    PUBLIC_BETA_JOB_NAME,
+    PUBLIC_BETA_WORKFLOW_PATH,
     REPOSITORY,
     WORKFLOW_PATH,
     canonical_bytes,
@@ -77,6 +79,12 @@ class ProductionQACapabilityTests(unittest.TestCase):
         record["public_release"] = True
         with self.assertRaises(CapabilityError):
             validate_capability(record)
+
+    def test_public_beta_job_and_workflow_binding_is_accepted(self) -> None:
+        record = valid_record()
+        record["source"]["job_name"] = PUBLIC_BETA_JOB_NAME
+        record["source"]["workflow_path"] = PUBLIC_BETA_WORKFLOW_PATH
+        self.assertEqual(validate_capability(record)["source"]["job_name"], PUBLIC_BETA_JOB_NAME)
 
     def test_contract_and_endpoint_digests_can_be_bound_to_checked_out_bytes(self) -> None:
         record = valid_record()

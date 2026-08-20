@@ -37,6 +37,10 @@ APPROVED_SYNC_HOSTS = (
     "token.services.mozilla.com",
 )
 APPROVED_HOSTS = tuple(sorted((*APPROVED_FXA_HOSTS, *APPROVED_SYNC_HOSTS)))
+ALLOWED_SOURCE_BINDINGS = {
+    ("notes-sync-production-qa", ".github/workflows/floorp-notes-sync-production-qa.yml"),
+    ("notes-sync-public-beta-qa", ".github/workflows/floorp-notes-sync-public-beta-qa.yml"),
+}
 REQUIRED_CASES = (
     "desktop-create-mobile-sync-desktop-recheck",
     "mobile-create-desktop-sync-mobile-recheck",
@@ -220,8 +224,10 @@ def validate_summary(summary: Any) -> dict[str, Any]:
     )
     require(source["repository"] == REPOSITORY, "QA source repository is not canonical")
     require(source["event"] == "workflow_dispatch", "QA source is not a manual dispatch")
-    require(source["job_name"] == "notes-sync-production-qa", "QA source job is not canonical")
-    require(source["workflow_path"] == ".github/workflows/floorp-notes-sync-production-qa.yml", "QA source workflow is not canonical")
+    require(
+        (source["job_name"], source["workflow_path"]) in ALLOWED_SOURCE_BINDINGS,
+        "QA source job/workflow is not canonical",
+    )
     safe_string(source["head_sha"], "QA source head SHA", SHA1)
     require(isinstance(source["workflow_run_id"], int) and source["workflow_run_id"] > 0, "QA run ID is invalid")
     require(

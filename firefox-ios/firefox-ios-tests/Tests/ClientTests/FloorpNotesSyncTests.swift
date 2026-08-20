@@ -2576,11 +2576,11 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
     func testPublicBetaEvidenceBindsProtectedQAAndExplicitApproval() throws {
         let sourceSHA = String(repeating: "d", count: 40)
         let endpointPolicySHA = "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca"
-        let workflowPath = ".github/workflows/floorp-notes-sync-production-qa.yml"
+        let workflowPath = ".github/workflows/floorp-notes-sync-public-beta-qa.yml"
         let source: [String: Any] = [
             "event": "workflow_dispatch",
             "head_sha": sourceSHA,
-            "job_name": "notes-sync-production-qa",
+            "job_name": "notes-sync-public-beta-qa",
             "repository": "Floorp-Projects/floorp-ios",
             "workflow_path": workflowPath,
             "workflow_run_attempt": 1,
