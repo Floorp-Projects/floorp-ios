@@ -102,7 +102,7 @@ Notes on the live contract:
 
 ## Release readiness
 
-Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented; every release candidate still requires a signed archive and Organizer validation before TestFlight distribution.
+Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented; every release candidate still requires a signed archive and Organizer validation before TestFlight distribution. A Notes Sync public-beta candidate uses `scripts/release/create-floorp-notes-sync-public-beta-evidence.py` followed by `scripts/release/build-floorp-notes-sync-public-beta.sh`; the checked-in `FloorpRelease` default remains Sync-disabled.
 
 ### Release build configuration
 

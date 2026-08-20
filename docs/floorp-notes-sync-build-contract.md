@@ -1,10 +1,11 @@
 # Floorp Notes Sync iOS build contract
 
-`scripts/staging/build-floorp-notes-sync-ios.sh` is the only supported wrapper
-for producing Notes Sync QA and release artifacts. It always builds the
-`Floorp` scheme from the existing `FloorpRelease` configuration. Mode-specific
-values come from a generated `-xcconfig` outside the source worktree; no source
-or Xcode project file is rewritten during a build.
+`scripts/staging/build-floorp-notes-sync-ios.sh` remains the supported wrapper
+for non-distributed QA and the legacy release-evidence path. The explicit
+public-beta path is `scripts/release/build-floorp-notes-sync-public-beta.sh`.
+Both build the `Floorp` scheme from the existing `FloorpRelease` configuration.
+Mode-specific values come from a generated `-xcconfig` outside the source
+worktree; no source or Xcode project file is rewritten during a build.
 
 ## Modes
 
@@ -13,15 +14,20 @@ or Xcode project file is rewritten during a build.
 | `production-qa` | G1-G4 and a repository/head-bound validation clock | `true / true` | rejected |
 | `release-disabled` | none; evidence inputs are rejected | `false / false` | unsigned build/archive only |
 | `release-enabled` | G1-G5 and a fresh repository/head-bound validation clock | `true / true` | device archive signing only with `--allow-signing` |
+| `public-beta` | one validated protected two-client QA capability plus explicit external-TestFlight approval | `true / true` | signed device archive via the public-beta wrapper |
 
-Production QA is a non-distributable build used to create G5. Both enabled
-modes are hard-bound to `FxAConfig.Server.release`, `sync15`, no custom FxA or
+Production QA is a non-distributable build used to validate the two-client
+production path. All enabled modes are hard-bound to `FxAConfig.Server.release`, `sync15`, no custom FxA or
 token-server override, and the eight Mozilla production FxA/Sync hosts in
 `docs/floorp-release-endpoints.json`.
 
 `release-enabled` does not become the repository default. A normal
 `FloorpRelease` remains fail-closed through `release-disabled`; Todo 20 may
 produce an enabled artifact from the same clean source SHA after G5 exists.
+`public-beta` is also not a repository default: its evidence record is created
+only from a successful protected QA summary and capability, with an explicit
+`external-testflight` approval. The public-beta wrapper then binds the signed
+archive to that record and its exact source SHA.
 
 ## Validator boundary
 
@@ -35,6 +41,11 @@ the repository-owned validator with the planned stable interface:
   --validation-clock-manifest CLOCK.json \
   --canonicalization rfc8785-jcs
 ```
+
+The `public-beta` path intentionally does not consume the legacy G1-G6
+validator. `create-floorp-notes-sync-public-beta-evidence.py` validates the
+protected QA summary and capability directly, then requires an explicit
+`--approve-public-beta` invocation before writing its canonical record.
 
 Before parsing or validation, the wrapper copies the evidence, validation
 clock, and schema bytes into the worktree-external `contract-inputs` directory.
@@ -79,11 +90,14 @@ the repository, release tag, source commit, source tree, and all five relevant
 asset digests: Mozilla and Focus xcframeworks, Swift components, release
 manifest, and `SHA256SUMS`. Missing and unexpected evidence fields both fail.
 
-The two embedded schema forms are mutually exclusive. `production-qa` contains
-exactly G1-G4 plus `g1_g4_digest_sha256`; `release-enabled` contains exactly
-G1-G5 plus `g1_g5_digest_sha256`. G6 approvals remain an out-of-process release
-authorization input and are never embedded into an app runtime capability
-record. Both forms retain the complete nested `release_inputs`,
+The legacy embedded schema forms are mutually exclusive. `production-qa`
+contains exactly G1-G4 plus `g1_g4_digest_sha256`; `release-enabled` contains
+exactly G1-G5 plus `g1_g5_digest_sha256`. `public-beta` uses a smaller,
+source-bound record containing the protected QA summary/capability digests,
+the approved production endpoint matrix, and the explicit TestFlight approval;
+it does not claim G1-G5 or embed G6 trust material. G6 approvals remain an
+out-of-process release authorization input and are never embedded into an app
+runtime capability record. The legacy forms retain the complete nested `release_inputs`,
 `same_release_key_sha256`, and nested validation-clock manifest used by the
 final validator.
 
@@ -340,7 +354,8 @@ mechanism. G6 remains outside the app capability record and build artifact.
 ## Signing boundary
 
 `--allow-signing` is accepted only for a `release-enabled` archive whose exact
-destination is `generic/platform=iOS`. The completed app must pass
+destination is `generic/platform=iOS`. The public-beta wrapper applies the
+same destination and signing requirements directly. The completed app must pass
 `/usr/bin/codesign --verify --deep --strict`. Ad-hoc and Apple Development
 signatures are rejected. The signing chain must be an Apple Distribution (or
 legacy iPhone Distribution) leaf for team `DV2U35YBHT`, followed by the Apple

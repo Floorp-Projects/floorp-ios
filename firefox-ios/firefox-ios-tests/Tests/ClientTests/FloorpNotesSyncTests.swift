@@ -2573,6 +2573,98 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
         }
     }
 
+    func testPublicBetaEvidenceBindsProtectedQAAndExplicitApproval() throws {
+        let sourceSHA = String(repeating: "d", count: 40)
+        let endpointPolicySHA = "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca"
+        let workflowPath = ".github/workflows/floorp-notes-sync-production-qa.yml"
+        let source: [String: Any] = [
+            "event": "workflow_dispatch",
+            "head_sha": sourceSHA,
+            "job_name": "notes-sync-production-qa",
+            "repository": "Floorp-Projects/floorp-ios",
+            "workflow_path": workflowPath,
+            "workflow_run_attempt": 1,
+            "workflow_run_id": 123,
+        ]
+        let root: [String: Any] = [
+            "approval": [
+                "approved": true,
+                "operator_id": "Ryosuke-Asano",
+                "purpose": "external-testflight",
+            ],
+            "build_contract_mode": "public-beta",
+            "endpoint": [
+                "endpoint_policy_sha256": endpointPolicySHA,
+                "fxa_configuration": "FxAConfig.Server.release",
+                "fxa_hosts": [
+                    "accounts.firefox.com",
+                    "api.accounts.firefox.com",
+                    "oauth.accounts.firefox.com",
+                    "profile.accounts.firefox.com",
+                    "static.accounts.firefox.com",
+                ],
+                "sync_hosts": [
+                    "event-sync.services.mozilla.com",
+                    "sync.services.mozilla.com",
+                    "token.services.mozilla.com",
+                ],
+                "wire_protocol": "sync15",
+            ],
+            "ios": [
+                "build_number": "4",
+                "configuration": "FloorpRelease",
+                "repository": "Floorp-Projects/floorp-ios",
+                "source_sha": sourceSHA,
+            ],
+            "public_release": true,
+            "qa": [
+                "capability_sha256": String(repeating: "a", count: 64),
+                "summary_sha256": String(repeating: "b", count: 64),
+                "workflow_path": workflowPath,
+                "workflow_run_attempt": 1,
+                "workflow_run_id": 123,
+            ],
+            "schema_version": 1,
+            "source": source,
+        ]
+        let evidence = try canonicalEvidenceData(root)
+        let configuration = FloorpNotesSyncCompiledConfiguration(
+            buildMode: "public-beta",
+            sourceSHA: sourceSHA,
+            buildNumber: "4",
+            requested: "YES",
+            effective: "YES",
+            registrationAllowed: "YES",
+            engineRequestsAllowed: "YES",
+            uiExposureAllowed: "YES",
+            endpointAuthority: "production",
+            wireProtocol: "sync15",
+            endpointMatrixSHA256: endpointPolicySHA,
+            evidenceDigest: sha256(evidence),
+            evidenceResourceSHA256: sha256(evidence)
+        )
+
+        XCTAssertTrue(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                configuration,
+                evidenceData: evidence
+            )
+        )
+
+        var unapproved = root
+        unapproved["approval"] = [
+            "approved": false,
+            "operator_id": "Ryosuke-Asano",
+            "purpose": "external-testflight",
+        ]
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                configuration,
+                evidenceData: try canonicalEvidenceData(unapproved)
+            )
+        )
+    }
+
     func testProductionQAEvidenceRequiresExactlyG1ThroughG4() throws {
         let (g1G4, root) = try compiledEvidenceFixture(
             named: "floorp-notes-sync-g1-g4-production-qa-valid"
