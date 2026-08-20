@@ -35,7 +35,6 @@ env:
   FLOORP_MARKETING_VERSION: "0.2.0"
   FLOORP_BUILD_NUMBER: "4"
   PROJECT_PATH: firefox-ios/Client.xcodeproj
-  SOURCE_PACKAGES: ${{ runner.temp }}/SourcePackages
 
 jobs:
   public-beta-release:
@@ -152,6 +151,7 @@ jobs:
       - name: Resolve Swift packages
         run: |
           set -euo pipefail
+          printf 'SOURCE_PACKAGES=%s\n' "$RUNNER_TEMP/SourcePackages" >> "$GITHUB_ENV"
           xcodebuild -resolvePackageDependencies \
             -project "$PROJECT_PATH" \
             -scheme Floorp \
