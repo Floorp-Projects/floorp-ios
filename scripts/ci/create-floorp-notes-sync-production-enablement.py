@@ -37,6 +37,10 @@ class EnablementPreparationError(RuntimeError):
     pass
 
 
+def sha256(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
 def load_module(path: Path, name: str) -> Any:
     specification = importlib.util.spec_from_file_location(name, path)
     if specification is None or specification.loader is None:

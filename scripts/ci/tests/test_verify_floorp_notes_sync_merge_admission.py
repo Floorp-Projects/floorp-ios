@@ -130,7 +130,7 @@ class MergeAdmissionTests(unittest.TestCase):
         pr_association = {
             "base": {"ref": "main", "sha": base, "repo": {"url": repository_url}},
             "head": {
-                "ref": "agent/floorp-plan-t20-live-executor",
+                "ref": "agent/floorp-t20-enable-runtime-compat",
                 "sha": head,
                 "repo": {"url": repository_url},
             },
@@ -187,7 +187,7 @@ class MergeAdmissionTests(unittest.TestCase):
                             "name": "Floorp iOS CI",
                             "path": ".github/workflows/ci.yml",
                             "event": "pull_request",
-                            "head_branch": "agent/floorp-plan-t20-live-executor",
+                            "head_branch": "agent/floorp-t20-enable-runtime-compat",
                             "head_sha": head,
                             "status": "completed",
                             "conclusion": "success",
@@ -300,6 +300,23 @@ class MergeAdmissionTests(unittest.TestCase):
             self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
             recovery_args = self.args(values) + ["--recovery"]
             self.assertEqual(ADMISSION.main(recovery_args), 0)
+            value = json.loads(Path(values["output"]).read_text(encoding="utf-8"))
+            self.assertEqual(value["head_ref_name"], "agent/floorp-t20-enable-runtime-compat")
+
+    def test_recovery_mode_rejects_missing_workflow_source_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            head, commit = self.build_repo(root)
+            values = self.write_inputs(root, head, commit)
+            check_runs = json.loads(Path(values["check_runs"]).read_text(encoding="utf-8"))
+            for check_run in check_runs["check_runs"]:
+                check_run["pull_requests"] = []
+            Path(values["check_runs"]).write_text(json.dumps(check_runs) + "\n", encoding="utf-8")
+            workflow_runs = json.loads(Path(values["workflow_runs"]).read_text(encoding="utf-8"))
+            workflow_runs["workflow_runs"][0]["pull_requests"] = []
+            workflow_runs["workflow_runs"][0]["head_branch"] = ""
+            Path(values["workflow_runs"]).write_text(json.dumps(workflow_runs) + "\n", encoding="utf-8")
+            self.assertNotEqual(ADMISSION.main(self.args(values) + ["--recovery"]), 0)
 
     def test_pending_ci_is_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -339,6 +356,18 @@ class MergeAdmissionTests(unittest.TestCase):
             workflow_runs_path = Path(values["workflow_runs"])
             workflow_runs = json.loads(workflow_runs_path.read_text(encoding="utf-8"))
             workflow_runs["workflow_runs"][0]["head_branch"] = "main"
+            workflow_runs_path.write_text(json.dumps(workflow_runs) + "\n", encoding="utf-8")
+            self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
+
+    def test_check_and_workflow_source_branch_mismatch_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            head, commit = self.build_repo(root)
+            values = self.write_inputs(root, head, commit)
+            workflow_runs_path = Path(values["workflow_runs"])
+            workflow_runs = json.loads(workflow_runs_path.read_text(encoding="utf-8"))
+            workflow_runs["workflow_runs"][0]["pull_requests"][0]["head"]["ref"] = "other-source"
+            workflow_runs["workflow_runs"][0]["head_branch"] = "other-source"
             workflow_runs_path.write_text(json.dumps(workflow_runs) + "\n", encoding="utf-8")
             self.assertNotEqual(ADMISSION.main(self.args(values)), 0)
 

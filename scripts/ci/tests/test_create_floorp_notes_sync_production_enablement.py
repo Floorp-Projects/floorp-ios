@@ -182,6 +182,10 @@ class CreateProductionEnablementTests(unittest.TestCase):
             "GITHUB_WORKFLOW_REF": f"{QA.REPOSITORY}/.github/workflows/floorp-notes-sync-production-qa.yml@0123456789abcdef0123456789abcdef01234567",
         }
 
+    def test_sha256_helper_matches_hashlib(self) -> None:
+        raw = b"production enablement regression"
+        self.assertEqual(CREATE.sha256(raw), hashlib.sha256(raw).hexdigest())
+
     def test_phase1_summary_produces_non_distributed_record(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
