@@ -928,7 +928,10 @@ enum FloorpNotesSyncReleaseGate {
               qa["workflow_run_attempt"] as? Int == source["workflow_run_attempt"] as? Int,
               qa["workflow_run_id"] as? Int == source["workflow_run_id"] as? Int,
               let endpoint = root["endpoint"] as? [String: Any],
-              hasExactKeys(endpoint, ["endpoint_policy_sha256", "fxa_configuration", "fxa_hosts", "sync_hosts", "wire_protocol"]),
+              hasExactKeys(
+                endpoint,
+                ["endpoint_policy_sha256", "fxa_configuration", "fxa_hosts", "sync_hosts", "wire_protocol"]
+              ),
               endpoint["endpoint_policy_sha256"] as? String == endpointMatrixSHA256,
               endpoint["fxa_configuration"] as? String == "FxAConfig.Server.release",
               endpoint["fxa_hosts"] as? [String] == fxaHosts,
