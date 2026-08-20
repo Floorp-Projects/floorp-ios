@@ -14,7 +14,7 @@ from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_VALIDATOR_PATH = REPOSITORY_ROOT / "scripts" / "ci" / "validate-floorp-notes-sync-release.py"
-CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
+CI_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 FORBIDDEN_FIELD_PARTS = frozenset(
     {
         "authorization",

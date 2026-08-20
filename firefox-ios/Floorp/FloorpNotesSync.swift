@@ -912,7 +912,8 @@ enum FloorpNotesSyncReleaseGate {
               source["head_sha"] as? String == sourceSHA,
               source["job_name"] as? String == "notes-sync-production-qa",
               source["repository"] as? String == "Floorp-Projects/floorp-ios",
-              source["workflow_path"] as? String == ".github/workflows/ci.yml",
+              source["workflow_path"] as? String
+                == ".github/workflows/floorp-notes-sync-production-qa.yml",
               isJSONInteger(source["workflow_run_attempt"], greaterThan: 0),
               isJSONInteger(source["workflow_run_id"], greaterThan: 0),
               let desktop = root["desktop"] as? [String: Any],

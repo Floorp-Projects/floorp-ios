@@ -1,0 +1,1439 @@
+name: Floorp Notes Sync Production QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_floorp_notes_sync_protected_preflight:
+        description: Compile the protected Notes Sync G5 selector without executing it.
+        required: false
+        default: false
+        type: boolean
+      prepare_floorp_notes_sync_g5_contract:
+        description: Validate the non-live G5 operation contract and compile its selector only.
+        required: false
+        default: false
+        type: boolean
+      run_floorp_notes_sync_production_qa:
+        description: Run the protected two-account production Sync data-integrity QA matrix.
+        required: false
+        default: false
+        type: boolean
+      run_floorp_notes_sync_production_enablement:
+        description: Record non-distributed production Sync enablement only after the QA matrix succeeds.
+        required: false
+        default: false
+        type: boolean
+      run_floorp_notes_sync_guarded_merge:
+        description: Execute the protected OID-guarded Todo 20 squash merge and emit metadata-only merge evidence.
+        required: false
+        default: false
+        type: boolean
+      run_floorp_notes_sync_merge_audit_recovery:
+        description: Reproduce the Todo 20 guarded-merge artifact chain for an already-merged PR whose original audit capture failed (no second mutation).
+        required: false
+        default: false
+        type: boolean
+      run_floorp_notes_sync_production_enablement_waived:
+        description: Record the non-distributed production Sync enablement from the owner-waived live QA and owner-waived org-audit evidence (no live matrix).
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    floorp-notes-sync-qa-${{ github.event_name }}-${{
+    (inputs.run_floorp_notes_sync_protected_preflight == true ||
+    inputs.prepare_floorp_notes_sync_g5_contract == true ||
+    inputs.run_floorp_notes_sync_production_qa == true ||
+    inputs.run_floorp_notes_sync_production_enablement == true ||
+    inputs.run_floorp_notes_sync_guarded_merge == true ||
+    inputs.run_floorp_notes_sync_merge_audit_recovery == true ||
+    inputs.run_floorp_notes_sync_production_enablement_waived == true) && github.run_id ||
+    github.event.pull_request.number || github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name != 'workflow_dispatch' ||
+    (inputs.run_floorp_notes_sync_protected_preflight != true &&
+    inputs.prepare_floorp_notes_sync_g5_contract != true &&
+    inputs.run_floorp_notes_sync_production_qa != true &&
+    inputs.run_floorp_notes_sync_production_enablement != true &&
+    inputs.run_floorp_notes_sync_guarded_merge != true &&
+    inputs.run_floorp_notes_sync_merge_audit_recovery != true &&
+    inputs.run_floorp_notes_sync_production_enablement_waived != true) }}
+
+env:
+  L10N_REVIEW_BASE: e58637e772e4456efcf7dbf3826f172c7da721ba
+  L10N_REVIEWED: 9e46feb476739c508bb6d23a8ec92508d72adae0
+  PROJECT_PATH: firefox-ios/Client.xcodeproj
+  SCHEME: Fennec
+  CONFIGURATION: Fennec_Testing
+  SIMULATOR_NAME: iPhone 17
+  SIMULATOR_OS: "26.2"
+  UPSTREAM_REPOSITORY: https://github.com/mozilla-mobile/firefox-ios.git
+
+jobs:
+  # This Environment-bound job is a manual scheduling preflight only. It
+  # compiles the guard XCTest without executing it and must not be treated as
+  # G5 evidence or execution authorization.
+  notes-sync-protected-preflight:
+    name: Protected Notes Sync compile-only preflight
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_floorp_notes_sync_protected_preflight == true &&
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true &&
+      inputs.run_floorp_notes_sync_production_enablement_waived != true
+    environment: floorp-notes-sync-production-qa
+    # Override the workflow-wide read permission. This job must not receive a
+    # usable GitHub token or invoke a token-defaulting source checkout action.
+    permissions: {}
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source anonymously
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          token: ""
+          package-manager-cache: false
+
+      - name: Select Xcode
+        run: |
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Prepare iOS Simulator
+        timeout-minutes: 10
+        run: |
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIMULATOR_OS//./-}"
+          simulator_id="$(
+            xcrun simctl list devices available --json \
+              | jq -er --arg runtime "$runtime" --arg name "$SIMULATOR_NAME" \
+                '.devices[$runtime] | map(select(.name == $name)) | first | .udid'
+          )"
+          simulator_arch="$(uname -m)"
+
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf 'DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+            "$simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
+
+      - name: Compile protected G5 XCTest route
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -quiet \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -configuration FloorpRelease \
+            -destination "$DESTINATION" \
+            -testPlan FloorpNotesSyncG5 \
+            -only-testing:XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix \
+            -derivedDataPath "$RUNNER_TEMP/ProtectedG5PreflightDerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -parallel-testing-enabled NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/protected-g5-preflight-compile.log"
+
+  # This Environment-bound job validates the checked-in Todo 20 contract and
+  # compiles the guard selector only. It is not Phase 1 QA and receives no
+  # account secrets.
+  notes-sync-g5-operation-contract-preflight:
+    name: Todo 20 operation-contract compile preflight
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.prepare_floorp_notes_sync_g5_contract == true &&
+      inputs.run_floorp_notes_sync_protected_preflight != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true &&
+      inputs.run_floorp_notes_sync_production_enablement_waived != true
+    environment: floorp-notes-sync-production-qa
+    permissions: {}
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source anonymously
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          token: ""
+          package-manager-cache: false
+
+      - name: Validate non-live G5 operation contract
+        run: |
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json
+
+      - name: Select Xcode
+        run: |
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Compile non-live G5 XCTest route
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -quiet \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -configuration FloorpRelease \
+            -destination 'generic/platform=iOS Simulator' \
+            -testPlan FloorpNotesSyncG5 \
+            -only-testing:XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix \
+            -derivedDataPath "$RUNNER_TEMP/OperationContractG5CompileDerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -parallel-testing-enabled NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/operation-contract-g5-compile.log"
+
+  todo20-guarded-merge:
+    name: Todo 20 protected OID-guarded merge and audit receipt
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/agent/floorp-plan-t20-live-executor' &&
+      (inputs.run_floorp_notes_sync_guarded_merge == true ||
+      inputs.run_floorp_notes_sync_merge_audit_recovery == true) &&
+      inputs.run_floorp_notes_sync_protected_preflight != true &&
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_production_enablement_waived != true
+    environment: floorp-notes-sync-production-qa
+    permissions: {}
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ${{ secrets.FLOORP_TODO20_GH_MERGE_TOKEN }}
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
+      FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
+      FLOORP_TODO20_EXPECTED_HEAD_SHA: ${{ vars.FLOORP_TODO20_EXPECTED_HEAD_SHA }}
+      FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
+      FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
+      FLOORP_TODO20_EXPECTED_MERGED_OID: ${{ vars.FLOORP_TODO20_EXPECTED_MERGED_OID }}
+      FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID }}
+      FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON: ${{ vars.FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON }}
+
+    steps:
+      - name: Check out source anonymously
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Check guarded merge prerequisites
+        run: |
+          set -euo pipefail
+          test -n "${GH_TOKEN:-}" || {
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=guarded_merge_token_missing resume=configure protected Environment secret FLOORP_TODO20_GH_MERGE_TOKEN with pull-request merge authority' >&2
+            exit 78
+          }
+          test -n "$FLOORP_TODO20_PR_NUMBER"
+          if [ "${{ inputs.run_floorp_notes_sync_merge_audit_recovery == true }}" = "true" ]; then
+            test "$GITHUB_SHA" != "$FLOORP_TODO20_EXPECTED_HEAD_SHA" || {
+              printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=merge_recovery_head_not_recovery_commit resume=dispatch recovery only from a commit that adds the reviewed recovery path on top of the expected head' >&2
+              exit 78
+            }
+            test -n "$FLOORP_TODO20_EXPECTED_MERGED_OID" || {
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=merge_recovery_merged_oid_missing resume=populate protected Environment variable FLOORP_TODO20_EXPECTED_MERGED_OID with the actual merged main OID' >&2
+              exit 78
+            }
+            test -n "$FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID" || {
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=merge_recovery_source_run_missing resume=populate protected Environment variable FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID with the original guarded-merge workflow run ID' >&2
+              exit 78
+            }
+          else
+            test "$GITHUB_SHA" = "$FLOORP_TODO20_EXPECTED_HEAD_SHA" || {
+              printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=guarded_merge_expected_head_mismatch resume=update protected expected head only after exact-head CI and subagent GO' >&2
+              exit 78
+            }
+          fi
+
+      - name: Verify exact-head merge admission
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-notes-sync-guarded-merge"
+          install -d -m 700 "$root"
+          test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON" || {
+            printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=owner_review_receipt_missing resume=populate protected Environment variable FLOORP_TODO20_OWNER_REVIEW_JSON after self-review of the exact head' >&2
+            exit 78
+          }
+          test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" || {
+            printf '%s\n' '[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=subagent_review_commit_missing resume=populate protected Environment variable FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT with the exact-head independent GO commit' >&2
+            exit 78
+          }
+          printf '%s\n' "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$root/owner-review.json"
+          /opt/homebrew/bin/gh pr checks "$FLOORP_TODO20_PR_NUMBER" \
+            --repo Floorp-Projects/floorp-ios \
+            --json name,bucket,state,completedAt,event,workflow,link > "$root/checks.json"
+          /opt/homebrew/bin/gh api \
+            "repos/Floorp-Projects/floorp-ios/commits/$FLOORP_TODO20_EXPECTED_HEAD_SHA/check-runs?per_page=100" \
+            > "$root/check-runs.json"
+          /opt/homebrew/bin/gh api \
+            "repos/Floorp-Projects/floorp-ios/actions/runs?head_sha=$FLOORP_TODO20_EXPECTED_HEAD_SHA&per_page=100" \
+            > "$root/workflow-runs.json"
+          # A single fetch keeps the shallow boundary consistent; the review
+          # commit tree is compared against the exact expected head tree.
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin \
+            "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" "$FLOORP_TODO20_EXPECTED_HEAD_SHA"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
+          git -C "$GITHUB_WORKSPACE" show \
+            "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" \
+            > "$root/subagent-review.json"
+          recovery_flag=""
+          if [ "${{ inputs.run_floorp_notes_sync_merge_audit_recovery == true }}" = "true" ]; then
+            recovery_flag="--recovery"
+          fi
+          /usr/bin/python3 -I scripts/ci/verify-floorp-notes-sync-merge-admission.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --owner-review "$root/owner-review.json" \
+            --subagent-review "$root/subagent-review.json" \
+            --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
+            --checks-json "$root/checks.json" \
+            --check-runs-json "$root/check-runs.json" \
+            --workflow-runs-json "$root/workflow-runs.json" \
+            --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
+            --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+            $recovery_flag \
+            --output "$root/merge-admission.json"
+          printf 'FLOORP_TODO20_MERGE_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+
+      - name: Execute repository-owned OID-guarded merge
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.run_floorp_notes_sync_merge_audit_recovery == true }}" = "true" ]; then
+            /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge-recovery.py \
+              --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+              --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+              --expected-merged-oid "$FLOORP_TODO20_EXPECTED_MERGED_OID" \
+              --source-run-id "$FLOORP_TODO20_GUARDED_MERGE_SOURCE_RUN_ID" \
+              --admission-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-admission.json" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
+              --recovery-evidence "$FLOORP_TODO20_MERGE_ROOT/merge-recovery-evidence.json"
+          else
+            /usr/bin/python3 -I scripts/ci/execute-floorp-notes-sync-merge.py \
+              --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+              --expected-head-sha "$FLOORP_TODO20_EXPECTED_HEAD_SHA" \
+              --admission-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-admission.json" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json"
+          fi
+
+      - name: Capture protected organization audit response
+        env:
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+          GH_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${FLOORP_TODO20_GH_AUDIT_TOKEN:-}" || {
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_secret_missing resume=configure protected Environment secret FLOORP_TODO20_GH_AUDIT_TOKEN with read-only organization audit-log authority' >&2
+            exit 78
+          }
+          /opt/homebrew/bin/gh api --paginate --slurp \
+            "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
+            -H "Accept: application/vnd.github+json" \
+            > "$FLOORP_TODO20_MERGE_ROOT/audit-log.json" || {
+            if [ -n "${FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON:-}" ] && [ "${FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON}" != "" ]; then
+              printf '%s\n' '{"status":404,"endpoint":"org-audit-log-unavailable","note":"github-free-plan; owner-waived audit record"}' \
+                > "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json"
+            else
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_unavailable resume=configure the owner audit waiver or upgrade the org plan' >&2
+              exit 78
+            fi
+          }
+
+      - name: Create same-run metadata-only merge audit
+        run: |
+          set -euo pipefail
+          if [ -f "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json" ]; then
+            waiver_path="$FLOORP_TODO20_MERGE_ROOT/owner-waiver.json"
+            printf '%s\n' "$FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON" > "$waiver_path"
+            /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-merge-audit.py \
+              --operation-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
+              --audit-json "$FLOORP_TODO20_MERGE_ROOT/audit-unavailable.json" \
+              --waive-audit \
+              --owner-waiver "$waiver_path" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-audit.json"
+          else
+            /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-merge-audit.py \
+              --operation-receipt "$FLOORP_TODO20_MERGE_ROOT/merge-operation-receipt.json" \
+              --audit-json "$FLOORP_TODO20_MERGE_ROOT/audit-log.json" \
+              --output "$FLOORP_TODO20_MERGE_ROOT/merge-audit.json"
+          fi
+
+      - name: Upload immutable guarded-merge metadata
+        if: success()
+        id: upload-guarded-merge
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-guarded-merge-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-admission.json
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-audit.json
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-operation-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-recovery-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record protected artifact identity
+        if: success()
+        env:
+          FLOORP_TODO20_GUARDED_ARTIFACT_ID: ${{ steps.upload-guarded-merge.outputs.artifact-id }}
+          FLOORP_TODO20_GUARDED_ARTIFACT_DIGEST: ${{ steps.upload-guarded-merge.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-merge-artifact-metadata.py \
+            --run-id "$GITHUB_RUN_ID" \
+            --artifact-id "$FLOORP_TODO20_GUARDED_ARTIFACT_ID" \
+            --artifact-digest "$FLOORP_TODO20_GUARDED_ARTIFACT_DIGEST" \
+            --head-sha "$GITHUB_SHA" \
+            --output "$FLOORP_TODO20_MERGE_ROOT/merge-artifact-metadata.json"
+
+      - name: Upload protected artifact identity
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-guarded-merge-metadata-${{ github.run_id }}
+          path: ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-artifact-metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove guarded-merge runner-local material
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-guarded-merge"
+
+  notes-sync-production-enablement-waived:
+    name: Todo 20 owner-waived production Sync enablement gate
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_floorp_notes_sync_production_enablement_waived == true &&
+      inputs.run_floorp_notes_sync_protected_preflight != true &&
+      inputs.prepare_floorp_notes_sync_g5_contract != true &&
+      inputs.run_floorp_notes_sync_production_qa != true &&
+      inputs.run_floorp_notes_sync_production_enablement != true &&
+      inputs.run_floorp_notes_sync_guarded_merge != true &&
+      inputs.run_floorp_notes_sync_merge_audit_recovery != true
+    environment: floorp-notes-sync-production-qa
+    permissions:
+      actions: read
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
+      FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
+      FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
+      FLOORP_TODO20_GUARDED_MERGE_RUN_ID: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+      FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON }}
+      FLOORP_TODO20_MERGE_AUDIT_COMMIT: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_COMMIT }}
+      FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
+      FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON: ${{ vars.FLOORP_TODO20_OWNER_AUDIT_WAIVER_JSON }}
+      FLOORP_TODO20_LIVE_QA_WAIVER_JSON: ${{ vars.FLOORP_TODO20_LIVE_QA_WAIVER_JSON }}
+      FLOORP_NOTES_SYNC_ENABLEMENT_APPROVED: "1"
+      ENABLEMENT_WAIVED_QA: "1"
+
+    steps:
+      - name: Check out source anonymously
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Check waived enablement inputs
+        run: |
+          set -euo pipefail
+          test -n "$FLOORP_TODO20_PR_NUMBER"
+          test -n "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_missing resume=populate protected Environment variable FLOORP_TODO20_GUARDED_MERGE_RUN_ID with the successful guarded-merge recovery run ID' >&2
+            exit 78
+          }
+          test -n "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
+          test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
+          test -n "$FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON" || {
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=owner_review_gate_waiver_missing resume=populate protected Environment variable FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON; owner review is explicitly waived and must not be recorded as successful' >&2
+            exit 78
+          }
+          test -n "$FLOORP_TODO20_LIVE_QA_WAIVER_JSON" || {
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=live_qa_waiver_missing resume=populate protected Environment variable FLOORP_TODO20_LIVE_QA_WAIVER_JSON with the owner live-QA waiver receipt' >&2
+            exit 78
+          }
+
+      - name: Download protected guarded-merge artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-guarded-merge-${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          path: ${{ runner.temp }}/floorp-notes-sync-waived-enablement/guarded-merge-artifact
+          run-id: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Download protected artifact identity
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-guarded-merge-metadata-${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          path: ${{ runner.temp }}/floorp-notes-sync-waived-enablement/guarded-merge-artifact
+          run-id: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Read back protected merge Actions metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-notes-sync-waived-enablement"
+          install -d -m 700 "$root"
+          /opt/homebrew/bin/gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" \
+            > "$root/guarded-merge-run.json"
+          /opt/homebrew/bin/gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$FLOORP_TODO20_GUARDED_MERGE_RUN_ID/artifacts?per_page=100" \
+            > "$root/guarded-merge-artifacts.json"
+
+      - name: Capture source-bound review evidence and create waived enablement record
+        env:
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+          GH_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-notes-sync-waived-enablement"
+          install -d -m 700 "$root"
+          if [ -z "${FLOORP_TODO20_GH_AUDIT_TOKEN:-}" ]; then
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_secret_missing resume=configure protected Environment secret FLOORP_TODO20_GH_AUDIT_TOKEN' >&2
+            exit 78
+          fi
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$FLOORP_TODO20_PR_NUMBER" \
+            -H "Accept: application/vnd.github+json" \
+            -o "$root/pr.json"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$FLOORP_TODO20_PR_NUMBER/reviews" \
+            -H "Accept: application/vnd.github+json" \
+            -o "$root/reviews.json"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/rulesets/20229460" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $FLOORP_TODO20_GH_AUDIT_TOKEN" \
+            -o "$root/ruleset.json"
+          /opt/homebrew/bin/gh api --paginate --slurp \
+            "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
+            -H "Accept: application/vnd.github+json" \
+            > "$root/audit-log.json" || {
+            merge_audit_schema="$(
+              /usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schema_version"])' \
+                "$root/guarded-merge-artifact/merge-audit.json"
+            )"
+            if [ "$merge_audit_schema" = "3" ]; then
+              printf '%s\n' '{"status":404,"endpoint":"org-audit-log-unavailable","note":"github-free-plan; owner-waived audit record"}' \
+                > "$root/audit-log.json"
+            else
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_unavailable resume=configure the owner audit waiver or upgrade the org plan' >&2
+              exit 78
+            fi
+          }
+          base_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["sha"])' "$root/pr.json")"
+          head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$root/pr.json")"
+          merged_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["merge_commit_sha"])' "$root/pr.json")"
+          # A single shallow fetch keeps the boundary file consistent; the
+          # immutable commits are compared against the exact head/merged trees.
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=2 origin \
+            "$base_oid" "$head_oid" "$merged_oid" "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_MERGE_AUDIT_COMMIT^{commit}"
+          printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_WAIVER_JSON" > "$root/owner-review-waiver.json"
+          test -f "$root/guarded-merge-artifact/merge-audit.json"
+          test -f "$root/guarded-merge-artifact/merge-operation-receipt.json"
+          /usr/bin/python3 -I scripts/ci/verify-floorp-notes-sync-guarded-merge-artifact.py \
+            --merge-audit "$root/guarded-merge-artifact/merge-audit.json" \
+            --operation-receipt "$root/guarded-merge-artifact/merge-operation-receipt.json" \
+            --admission-receipt "$root/guarded-merge-artifact/merge-admission.json" \
+            --run-json "$root/guarded-merge-run.json" \
+            --artifacts-json "$root/guarded-merge-artifacts.json" \
+            --artifact-metadata "$root/guarded-merge-artifact/merge-artifact-metadata.json" \
+            --expected-run-id "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" \
+            --expected-pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --expected-head-sha "$head_oid" \
+            --expected-merged-oid "$merged_oid"
+          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_MERGE_AUDIT_COMMIT:docs/floorp-notes-sync-todo20-merge-audit.json" > "$root/merge-audit-commit.json"
+          cmp -s "$root/guarded-merge-artifact/merge-audit.json" "$root/merge-audit-commit.json" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_artifact_commit_parity_mismatch resume=publish the exact protected merge-run artifact to the immutable merge-audit commit' >&2
+            exit 78
+          }
+          cp "$root/guarded-merge-artifact/merge-audit.json" "$root/merge-audit.json"
+          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" > "$root/subagent-review.json"
+          /usr/bin/python3 -I scripts/ci/capture-floorp-notes-sync-review-receipt.py \
+            --pr-json "$root/pr.json" \
+            --reviews-json "$root/reviews.json" \
+            --ruleset-json "$root/ruleset.json" \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --merged-oid "$merged_oid" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
+            --owner-review-waiver "$root/owner-review-waiver.json" \
+            --merge-audit "$root/merge-audit.json" \
+            --merge-audit-commit "$FLOORP_TODO20_MERGE_AUDIT_COMMIT" \
+            --audit-json "$root/audit-log.json" \
+            --subagent-review "$root/subagent-review.json" \
+            --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
+            --guarded-merge-run "$root/guarded-merge-run.json" \
+            --pr-projection "$root/pr-metadata.json" \
+            --reviews-projection "$root/reviews-metadata.json" \
+            --ruleset-projection "$root/ruleset-metadata.json" \
+            --output "$root/review-receipt.json"
+          printf '%s\n' "$FLOORP_TODO20_LIVE_QA_WAIVER_JSON" > "$root/live-qa-waiver.json"
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-enablement.py \
+            --waived-qa \
+            --review-receipt "$root/review-receipt.json" \
+            --merge-audit "$root/merge-audit.json" \
+            --live-qa-waiver "$root/live-qa-waiver.json" \
+            --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
+            --output "$root/enablement-record.json"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-enablement.py \
+            --waived-qa \
+            --review-receipt "$root/review-receipt.json" \
+            --merge-audit "$root/merge-audit.json" \
+            --live-qa-waiver "$root/live-qa-waiver.json" \
+            --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
+            --enablement-record "$root/enablement-record.json"
+
+      - name: Upload waived enablement metadata
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-production-enablement-waived-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-waived-enablement/enablement-record.json
+            ${{ runner.temp }}/floorp-notes-sync-waived-enablement/review-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-waived-enablement/merge-audit.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove waived-enablement runner-local material
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-waived-enablement"
+
+  notes-sync-production-qa:
+    name: Todo 20 protected two-client production QA
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_floorp_notes_sync_production_qa == true &&
+      inputs.run_floorp_notes_sync_production_enablement_waived != true
+    environment: floorp-notes-sync-production-qa
+    permissions:
+      actions: read
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      GITHUB_TOKEN: ""
+      GH_TOKEN: ""
+      NODE_AUTH_TOKEN: ""
+      NPM_TOKEN: ""
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: /usr/bin/false
+      # Updated only after the reviewed Desktop UI-hook PR is squash-merged.
+      FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
+      FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
+      FLOORP_TODO20_GUARDED_MERGE_RUN_ID: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+      # Metadata-only review inputs. Their source is verified against the
+      # read-only GitHub PR/ruleset API, checked-in contract/binding, and
+      # protected Environment review artifacts.
+      FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
+      FLOORP_TODO20_MERGE_AUDIT_COMMIT: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_COMMIT }}
+      FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT: ${{ vars.FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT }}
+
+    steps:
+      - name: Check out source anonymously
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Check guarded merge artifact selector
+        run: |
+          set -euo pipefail
+          test -n "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_missing resume=populate protected Environment variable FLOORP_TODO20_GUARDED_MERGE_RUN_ID with the successful guarded-merge workflow run ID' >&2
+            exit 78
+          }
+          test "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" -gt 0 || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_invalid resume=populate a positive guarded-merge workflow run ID' >&2
+            exit 78
+          }
+
+      - name: Download protected guarded-merge artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-guarded-merge-${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          path: ${{ runner.temp }}/floorp-notes-sync-production-qa/guarded-merge-artifact
+          run-id: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Download protected artifact identity
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-guarded-merge-metadata-${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          path: ${{ runner.temp }}/floorp-notes-sync-production-qa/guarded-merge-artifact
+          run-id: ${{ vars.FLOORP_TODO20_GUARDED_MERGE_RUN_ID }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Read back protected merge Actions metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          install -d -m 700 "$qa_root"
+          /opt/homebrew/bin/gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" \
+            > "$qa_root/guarded-merge-run.json"
+          /opt/homebrew/bin/gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$FLOORP_TODO20_GUARDED_MERGE_RUN_ID/artifacts?per_page=100" \
+            > "$qa_root/guarded-merge-artifacts.json"
+
+      - name: Capture source-bound Todo 20 review receipt
+        env:
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+          GH_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          install -d -m 700 "$qa_root"
+          if [ -z "${FLOORP_TODO20_GH_AUDIT_TOKEN:-}" ]; then
+            printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_secret_missing resume=configure protected Environment secret FLOORP_TODO20_GH_AUDIT_TOKEN with read-only organization audit-log authority' >&2
+            exit 78
+          fi
+          test -n "$FLOORP_TODO20_PR_NUMBER"
+          test -n "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_missing resume=populate protected Environment variable FLOORP_TODO20_GUARDED_MERGE_RUN_ID with the successful guarded-merge workflow run ID' >&2
+            exit 78
+          }
+          test "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" -gt 0 || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_run_id_invalid resume=populate a positive guarded-merge workflow run ID' >&2
+            exit 78
+          }
+          test -n "$FLOORP_TODO20_OWNER_REVIEW_JSON"
+          test -n "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
+          test -n "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$FLOORP_TODO20_PR_NUMBER" \
+            -H "Accept: application/vnd.github+json" \
+            -o "$qa_root/pr.json"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$FLOORP_TODO20_PR_NUMBER/reviews" \
+            -H "Accept: application/vnd.github+json" \
+            -o "$qa_root/reviews.json"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/rulesets/20229460" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $FLOORP_TODO20_GH_AUDIT_TOKEN" \
+            -o "$qa_root/ruleset.json"
+          /opt/homebrew/bin/gh api --paginate --slurp \
+            "orgs/Floorp-Projects/audit-log?phrase=repo%3AFloorp-Projects%2Ffloorp-ios&per_page=100" \
+            -H "Accept: application/vnd.github+json" \
+            > "$qa_root/audit-log.json" || {
+            merge_audit_schema="$(
+              /usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schema_version"])' \
+                "$qa_root/guarded-merge-artifact/merge-audit.json"
+            )"
+            if [ "$merge_audit_schema" = "3" ]; then
+              printf '%s\n' '{"status":404,"endpoint":"org-audit-log-unavailable","note":"github-free-plan; owner-waived audit record"}' \
+                > "$qa_root/audit-log.json"
+            else
+              printf '%s\n' '[blocked] AUTHORIZATION_MISSING owner=Operations reason=github_org_audit_log_unavailable resume=configure the owner audit waiver or upgrade the org plan' >&2
+              exit 78
+            fi
+          }
+          base_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"]["sha"])' "$qa_root/pr.json")"
+          head_oid="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$qa_root/pr.json")"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$base_oid" "$head_oid"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$FLOORP_TODO20_MERGE_AUDIT_COMMIT"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT^{commit}"
+          git -C "$GITHUB_WORKSPACE" cat-file -e "$FLOORP_TODO20_MERGE_AUDIT_COMMIT^{commit}"
+          printf "%s\n" "$FLOORP_TODO20_OWNER_REVIEW_JSON" > "$qa_root/owner-review.json"
+          test -f "$qa_root/guarded-merge-artifact/merge-audit.json"
+          test -f "$qa_root/guarded-merge-artifact/merge-operation-receipt.json"
+          /usr/bin/python3 -I scripts/ci/verify-floorp-notes-sync-guarded-merge-artifact.py \
+            --merge-audit "$qa_root/guarded-merge-artifact/merge-audit.json" \
+            --operation-receipt "$qa_root/guarded-merge-artifact/merge-operation-receipt.json" \
+            --admission-receipt "$qa_root/guarded-merge-artifact/merge-admission.json" \
+            --run-json "$qa_root/guarded-merge-run.json" \
+            --artifacts-json "$qa_root/guarded-merge-artifacts.json" \
+            --artifact-metadata "$qa_root/guarded-merge-artifact/merge-artifact-metadata.json" \
+            --expected-run-id "$FLOORP_TODO20_GUARDED_MERGE_RUN_ID" \
+            --expected-pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --expected-head-sha "$head_oid" \
+            --expected-merged-oid "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_MERGE_AUDIT_COMMIT:docs/floorp-notes-sync-todo20-merge-audit.json" > "$qa_root/merge-audit-commit.json"
+          cmp -s "$qa_root/guarded-merge-artifact/merge-audit.json" "$qa_root/merge-audit-commit.json" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=guarded_merge_artifact_commit_parity_mismatch resume=publish the exact protected merge-run artifact to the immutable merge-audit commit' >&2
+            exit 78
+          }
+          cp "$qa_root/guarded-merge-artifact/merge-audit.json" "$qa_root/merge-audit.json"
+          git -C "$GITHUB_WORKSPACE" show "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT:docs/floorp-notes-sync-todo20-subagent-review.json" > "$qa_root/subagent-review.json"
+          /usr/bin/python3 -I scripts/ci/capture-floorp-notes-sync-review-receipt.py \
+            --pr-json "$qa_root/pr.json" \
+            --reviews-json "$qa_root/reviews.json" \
+            --ruleset-json "$qa_root/ruleset.json" \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --pr-number "$FLOORP_TODO20_PR_NUMBER" \
+            --merged-oid "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --plan-binding docs/floorp-notes-sync-todo20-plan-binding.json \
+            --owner-review "$qa_root/owner-review.json" \
+            --merge-audit "$qa_root/merge-audit.json" \
+            --merge-audit-commit "$FLOORP_TODO20_MERGE_AUDIT_COMMIT" \
+            --audit-json "$qa_root/audit-log.json" \
+            --subagent-review "$qa_root/subagent-review.json" \
+            --subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT" \
+            --guarded-merge-run "$qa_root/guarded-merge-run.json" \
+            --pr-projection "$qa_root/pr-metadata.json" \
+            --reviews-projection "$qa_root/reviews-metadata.json" \
+            --ruleset-projection "$qa_root/ruleset-metadata.json" \
+            --output "$qa_root/review-receipt.json"
+          printf "FLOORP_NOTES_SYNC_REVIEW_RECEIPT=%s\n" "$qa_root/review-receipt.json" >> "$GITHUB_ENV"
+
+      - name: Check out reviewed Desktop source anonymously
+        run: |
+          set -euo pipefail
+          desktop_root="$RUNNER_TEMP/floorp-desktop"
+          git init --quiet "$desktop_root"
+          git -C "$desktop_root" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin https://github.com/Floorp-Projects/Floorp.git
+          git -C "$desktop_root" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$FLOORP_DESKTOP_COMMIT"
+          git -C "$desktop_root" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$desktop_root" rev-parse HEAD)" = "$FLOORP_DESKTOP_COMMIT"
+          printf 'FLOORP_NOTES_SYNC_DESKTOP_ROOT=%s\n' "$desktop_root" >> "$GITHUB_ENV"
+
+      - name: Validate Todo 20 contract semantics in protected QA path
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json
+
+      - name: Create protected Todo 20 production-QA capability
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          install -d -m 700 "$qa_root"
+          capability="$qa_root/production-qa-capability.json"
+          xcconfig="$qa_root/production-qa.xcconfig"
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-qa-capability.py \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --ios-build-number 4 \
+            --output "$capability"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-capability.py \
+            --capability "$capability" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json
+          /usr/bin/python3 -I scripts/ci/prepare-floorp-notes-sync-production-qa-build.py \
+            --capability "$capability" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json \
+            --output "$xcconfig"
+          {
+            printf 'FLOORP_NOTES_SYNC_QA_ROOT=%s\n' "$qa_root"
+            printf 'FLOORP_NOTES_SYNC_QA_CAPABILITY=%s\n' "$capability"
+            printf 'FLOORP_NOTES_SYNC_QA_XCCONFIG=%s\n' "$xcconfig"
+          } >> "$GITHUB_ENV"
+
+      - name: Select Xcode
+        run: |
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme FloorpNotesSyncG5 \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Prepare dedicated QA Simulator
+        run: |
+          set -euo pipefail
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIMULATOR_OS//./-}"
+          simulator_id="$(
+            xcrun simctl list devices available --json \
+              | jq -er --arg runtime "$runtime" --arg name "$SIMULATOR_NAME" \
+                '.devices[$runtime] | map(select(.name == $name)) | first | .udid'
+          )"
+          simulator_arch="$(uname -m)"
+          xcrun simctl boot "$simulator_id" 2>/dev/null || true
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf 'FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID=%s\n' "$simulator_id" >> "$GITHUB_ENV"
+          printf 'FLOORP_NOTES_SYNC_QA_DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+            "$simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
+
+      - name: Run protected two-client integrity QA
+        id: client-pair
+        env:
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/run-floorp-notes-sync-production-qa.py \
+            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json" \
+            --cleanup-receipt "$FLOORP_NOTES_SYNC_QA_ROOT/cleanup-receipt.json" \
+            --desktop-log "$FLOORP_NOTES_SYNC_QA_ROOT/desktop.log" \
+            --xcodebuild-log "$FLOORP_NOTES_SYNC_QA_ROOT/xcodebuild.log" \
+            --client-state "$FLOORP_NOTES_SYNC_QA_ROOT/client-state" \
+            --desktop-root "$FLOORP_NOTES_SYNC_DESKTOP_ROOT" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --simulator-udid "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID" \
+            --coordination-root "/tmp/floorp-notes-sync-production-qa-$GITHUB_RUN_ID" \
+            --ios-project "$GITHUB_WORKSPACE/$PROJECT_PATH" \
+            --destination "$FLOORP_NOTES_SYNC_QA_DESTINATION" \
+            --derived-data "$FLOORP_NOTES_SYNC_QA_ROOT/DerivedData" \
+            --source-packages "$RUNNER_TEMP/SourcePackages" \
+            --xcconfig "$FLOORP_NOTES_SYNC_QA_XCCONFIG" \
+            --result-bundle "$FLOORP_NOTES_SYNC_QA_ROOT/floorp-notes-sync-two-client.xcresult"
+
+      - name: Validate live production-QA summary and cleanup receipt
+        if: success()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa.py \
+            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json" \
+            --xcresult "$FLOORP_NOTES_SYNC_QA_ROOT/floorp-notes-sync-two-client.xcresult"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-cleanup.py \
+            --summary "$FLOORP_NOTES_SYNC_QA_ROOT/qa-summary.json" \
+            --receipt "$FLOORP_NOTES_SYNC_QA_ROOT/cleanup-receipt.json"
+
+      - name: Scan QA material for secrets
+        if: always()
+        env:
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          # The protected xcodebuild actor receives secrets through its
+          # Environment. Scan command lines only so variable names are not
+          # mistaken for leaked credential values.
+          /usr/bin/python3 -I scripts/ci/scan-floorp-notes-sync-process-argv.py
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-secret-scan.py \
+            --output "$qa_root/secret-scan-pre.json" \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig" \
+            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json" \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD \
+            --secret-env FLOORP_TODO20_GH_AUDIT_TOKEN
+
+      - name: Bind evidence manifest and single-operator self-attestation
+        if: success()
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          manifest="$qa_root/qa-manifest.json"
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-qa-manifest.py \
+            --output "$manifest" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --qa-summary "$qa_root/qa-summary.json" \
+            --cleanup-receipt "$qa_root/cleanup-receipt.json" \
+            --xcresult "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --xcodebuild-log "$qa_root/xcodebuild.log" \
+            --desktop-log "$qa_root/desktop.log" \
+            --production-qa-capability "$qa_root/production-qa-capability.json" \
+            --production-qa-xcconfig "$qa_root/production-qa.xcconfig" \
+            --secret-scan "$qa_root/secret-scan-pre.json" \
+            --review-receipt "$qa_root/review-receipt.json" \
+            --pr-metadata "$qa_root/pr-metadata.json" \
+            --reviews-metadata "$qa_root/reviews-metadata.json" \
+            --ruleset-metadata "$qa_root/ruleset-metadata.json"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
+            --receipt "$qa_root/secret-scan-pre.json" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$manifest" \
+            --pre-attestation \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig" \
+            --target "$qa_root/review-receipt.json" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json"
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-self-attestation.py \
+            --output "$qa_root/self-attestation.jsonl" \
+            --manifest "$manifest" \
+            --summary "$qa_root/qa-summary.json" \
+            --cleanup-receipt "$qa_root/cleanup-receipt.json" \
+            --secret-scan "$qa_root/secret-scan-pre.json" \
+            --review-receipt "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT"
+          reviewed_head_sha="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head_sha"])' "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT")"
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-self-attestation.py \
+            --ledger "$qa_root/self-attestation.jsonl" \
+            --head-sha "$reviewed_head_sha" \
+            --merged-oid "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$manifest" \
+            --summary "$qa_root/qa-summary.json" \
+            --cleanup-receipt "$qa_root/cleanup-receipt.json" \
+            --secret-scan "$qa_root/secret-scan-pre.json" \
+            --review-receipt "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT"
+          printf 'FLOORP_NOTES_SYNC_QA_MANIFEST=%s\n' "$manifest" >> "$GITHUB_ENV"
+
+      - name: Scan final QA artifacts including self-attestation
+        if: success()
+        env:
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
+          FLOORP_TODO20_GH_AUDIT_TOKEN: ${{ secrets.FLOORP_TODO20_GH_AUDIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-notes-sync-production-qa"
+          /usr/bin/python3 -I scripts/ci/record-floorp-notes-sync-secret-scan.py \
+            --output "$qa_root/secret-scan.json" \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig" \
+            --target "$qa_root/self-attestation.jsonl" \
+            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json" \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL \
+            --secret-env FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD \
+            --secret-env FLOORP_TODO20_GH_AUDIT_TOKEN
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
+            --receipt "$qa_root/secret-scan.json" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$qa_root/qa-manifest.json" \
+            --target "$qa_root/qa-summary.json" \
+            --target "$qa_root/cleanup-receipt.json" \
+            --target "$qa_root/floorp-notes-sync-two-client.xcresult" \
+            --target "$qa_root/xcodebuild.log" \
+            --target "$qa_root/desktop.log" \
+            --target "$qa_root/production-qa-capability.json" \
+            --target "$qa_root/production-qa.xcconfig" \
+            --target "$qa_root/self-attestation.jsonl" \
+            --target "$FLOORP_NOTES_SYNC_REVIEW_RECEIPT" \
+            --target "$qa_root/pr-metadata.json" \
+            --target "$qa_root/reviews-metadata.json" \
+            --target "$qa_root/ruleset-metadata.json"
+
+      - name: Clean up test accounts and client state
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-production-qa/client-state"
+
+      - name: Clean up Simulator Keychain and local cache
+        if: always()
+        run: |
+          set -euo pipefail
+          test -n "${FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID:-}"
+          xcrun simctl shutdown "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID" || true
+          xcrun simctl erase "$FLOORP_NOTES_SYNC_QA_SIMULATOR_UDID"
+
+      - name: Upload live QA xcresult
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-two-client-xcresult
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/floorp-notes-sync-two-client.xcresult
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload live QA evidence
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-two-client-qa-metadata-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-summary.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/cleanup-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/secret-scan-pre.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/secret-scan.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/qa-manifest.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/xcodebuild.log
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/desktop.log
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/production-qa-capability.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/production-qa.xcconfig
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/self-attestation.jsonl
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/review-receipt.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/pr-metadata.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/reviews-metadata.json
+            ${{ runner.temp }}/floorp-notes-sync-production-qa/ruleset-metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove runner-local QA material
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-production-qa"
+
+  notes-sync-production-enablement:
+    name: Todo 20 non-distributed production Sync enablement gate
+    needs: notes-sync-production-qa
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.run_floorp_notes_sync_production_qa == true &&
+      inputs.run_floorp_notes_sync_production_enablement == true &&
+      inputs.run_floorp_notes_sync_production_enablement_waived != true &&
+      needs['notes-sync-production-qa'].result == 'success'
+    environment: floorp-notes-sync-production-qa
+    permissions:
+      actions: read
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      # Re-bind Phase 2 to the exact reviewed Desktop source used in Phase 1.
+      FLOORP_DESKTOP_COMMIT: 8462074ce18ab63d9be4def199b33de1d6bb554a
+      FLOORP_TODO20_PR_NUMBER: ${{ vars.FLOORP_TODO20_PR_NUMBER }}
+      FLOORP_TODO20_OWNER_REVIEW_JSON: ${{ vars.FLOORP_TODO20_OWNER_REVIEW_JSON }}
+      FLOORP_TODO20_MERGE_AUDIT_JSON: ${{ vars.FLOORP_TODO20_MERGE_AUDIT_JSON }}
+
+    steps:
+      - name: Check out source anonymously
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_TERMINAL_PROMPT: "0"
+          GIT_ASKPASS: /usr/bin/false
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" init --quiet
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$GITHUB_WORKSPACE" \
+            -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Download Phase 1 metadata-only summary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-two-client-qa-metadata-${{ github.run_id }}
+          path: ${{ runner.temp }}/floorp-notes-sync-phase1
+
+      - name: Download Phase 1 XCResult
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-two-client-xcresult
+          path: ${{ runner.temp }}/floorp-notes-sync-phase1
+
+      - name: Re-validate Phase 1 production-QA capability binding
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-capability.py \
+            --capability "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_DESKTOP_COMMIT" \
+            --contract scripts/ci/floorp-notes-sync-g5-operation-contract.json \
+            --endpoint-policy docs/floorp-release-endpoints.json
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-self-attestation.py \
+            --ledger "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --head-sha "$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head_sha"])' "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json")" \
+            --merged-oid "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-manifest.json" \
+            --summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan-pre.json" \
+            --review-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json"
+
+      - name: Verify Phase 1 cleanup receipt
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-qa-cleanup.py \
+            --summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json"
+
+      - name: Verify Phase 1 secret-scan receipt
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-secret-scan.py \
+            --receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
+            --head-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-manifest.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/desktop.log" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/pr-metadata.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/reviews-metadata.json" \
+            --target "$RUNNER_TEMP/floorp-notes-sync-phase1/ruleset-metadata.json"
+
+      - name: Create non-distributed enablement record
+        env:
+          FLOORP_NOTES_SYNC_ENABLEMENT_APPROVED: "1"
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/create-floorp-notes-sync-production-enablement.py \
+            --phase1-summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/desktop.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/pr-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/reviews-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/ruleset-metadata.json" \
+            --output "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
+
+      - name: Validate non-distributed enablement record
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/validate-floorp-notes-sync-production-enablement.py \
+            --phase1-summary "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --cleanup-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-receipt "$RUNNER_TEMP/floorp-notes-sync-phase1/secret-scan.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/qa-summary.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/cleanup-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/floorp-notes-sync-two-client.xcresult" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/xcodebuild.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/desktop.log" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa-capability.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/production-qa.xcconfig" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/self-attestation.jsonl" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/review-receipt.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/pr-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/reviews-metadata.json" \
+            --secret-scan-target "$RUNNER_TEMP/floorp-notes-sync-phase1/ruleset-metadata.json" \
+            --enablement-record "$RUNNER_TEMP/floorp-notes-sync-phase2/enablement-record.json"
+
+      - name: Upload enablement metadata
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-notes-sync-production-enablement-${{ github.run_id }}
+          path: ${{ runner.temp }}/floorp-notes-sync-phase2/enablement-record.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove enablement runner-local material
+        if: always()
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-phase1"
+          /usr/bin/python3 -I scripts/ci/cleanup-floorp-notes-sync-production-qa.py \
+            --work-root "$RUNNER_TEMP/floorp-notes-sync-phase2"

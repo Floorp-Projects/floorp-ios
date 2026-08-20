@@ -369,7 +369,7 @@ class FloorpNotesSyncProductionQaRecipePreparerTests(unittest.TestCase):
             self.contract.ios_repository,
             400000003,
             self.merged_oid,
-            ".github/workflows/ci.yml",
+            ".github/workflows/floorp-notes-sync-production-qa.yml",
             "2026-08-10T00:00:00Z",
             event="push",
         )

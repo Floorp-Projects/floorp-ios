@@ -7,6 +7,7 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | Concern | System | Current state |
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
+| Notes Sync production QA | GitHub Actions | Manual, protected workflow in `.github/workflows/floorp-notes-sync-production-qa.yml` |
 | Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow with trusted automation restoration, reviewed localization conflict resolution, and explicit CI dispatch |
 | Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (2)` signed, uploaded, and verified by the internal group |
 | Repeatable signed delivery | Xcode Cloud | Scaffold implemented; workflow not yet configured |

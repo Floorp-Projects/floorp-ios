@@ -1530,7 +1530,7 @@ def prepare(
         repository=contract.ios_repository,
         run_id=None,
         head_sha=merged_oid,
-        workflow_path=".github/workflows/ci.yml",
+        workflow_path=".github/workflows/floorp-notes-sync-production-qa.yml",
         event="push",
         head_branch="main",
     )

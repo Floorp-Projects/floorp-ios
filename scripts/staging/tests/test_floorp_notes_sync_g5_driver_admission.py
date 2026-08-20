@@ -74,7 +74,7 @@ class FloorpNotesSyncG5DriverAdmissionTests(unittest.TestCase):
             "repository": "Floorp-Projects/floorp-ios",
             "run_attempt": 1,
             "run_id": 123456789,
-            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
         }
 
     @staticmethod

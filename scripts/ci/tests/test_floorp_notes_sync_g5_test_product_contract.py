@@ -12,7 +12,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / ".github/workflows/ci.yml"
+WORKFLOW = ROOT / ".github/workflows/floorp-notes-sync-production-qa.yml"
 BUILD_CONTRACT = ROOT / "docs/floorp-notes-sync-build-contract.md"
 PROJECT = ROOT / "firefox-ios/Client.xcodeproj/project.pbxproj"
 SCHEME = ROOT / "firefox-ios/Client.xcodeproj/xcshareddata/xcschemes/FloorpNotesSyncG5.xcscheme"

@@ -14,7 +14,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT = ROOT / "scripts/ci/floorp-notes-sync-g5-operation-contract.json"
 VALIDATOR = ROOT / "scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py"
-WORKFLOW = ROOT / ".github/workflows/ci.yml"
+WORKFLOW = ROOT / ".github/workflows/floorp-notes-sync-production-qa.yml"
 RUBY = "/usr/bin/ruby"
 
 DISPATCH_INPUT = "run_floorp_notes_sync_production_qa"

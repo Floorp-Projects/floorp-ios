@@ -13,7 +13,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / ".github/workflows/ci.yml"
+WORKFLOW = ROOT / ".github/workflows/floorp-notes-sync-production-qa.yml"
 CONTRACT = ROOT / "scripts/ci/floorp-notes-sync-g5-operation-contract.json"
 VALIDATOR = ROOT / "scripts/ci/validate-floorp-notes-sync-g5-operation-contract.py"
 RUBY = "/usr/bin/ruby"
@@ -71,7 +71,7 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
             text=True,
         )
         if result.returncode != 0:
-            raise AssertionError(f"failed to parse ci.yml: {result.stderr}")
+            raise AssertionError(f"failed to parse Notes Sync workflow: {result.stderr}")
         cls.workflow: dict[str, Any] = json.loads(result.stdout)
         cls.dispatch: dict[str, Any] = cls.workflow["true"]["workflow_dispatch"]
         cls.jobs: dict[str, Any] = cls.workflow["jobs"]
@@ -230,7 +230,8 @@ class FloorpNotesSyncG5OperationContractTests(unittest.TestCase):
         self.assertIn('--subagent-review-commit "$FLOORP_TODO20_SUBAGENT_REVIEW_COMMIT"', capture["run"])
         self.assertIn('--audit-json "$qa_root/audit-log.json"', capture["run"])
         self.assertNotIn("Validate Todo 20 operation contract", names)
-        self.assertNotIn(CANONICAL_ARTIFACT, json.dumps(self.jobs["build-and-test"], sort_keys=True))
+        normal_ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn(CANONICAL_ARTIFACT, normal_ci)
 
     def test_guarded_merge_job_uses_the_repository_owned_executor(self) -> None:
         job = self.jobs["todo20-guarded-merge"]

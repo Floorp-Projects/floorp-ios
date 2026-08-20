@@ -34,7 +34,7 @@ EXPECTED_WORKFLOW_PATHS = {
     "Floorp Notes UI smoke": ".github/workflows/notes-ui.yml",
     "Floorp adaptive sidebar UI": ".github/workflows/adaptive-sidebar-ui.yml",
 }
-REQUIRED_CHECKS = {"Validate workflows", "Build and unit test", "Release-disabled wrapper build"}
+REQUIRED_CHECKS = {"Validate workflows", "Build and unit test"}
 
 
 class MergeAdmissionError(ValueError):

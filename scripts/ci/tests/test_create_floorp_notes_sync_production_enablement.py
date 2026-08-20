@@ -64,7 +64,7 @@ def summary() -> dict[str, Any]:
             "head_sha": "0123456789abcdef0123456789abcdef01234567",
             "job_name": "notes-sync-production-qa",
             "repository": QA.REPOSITORY,
-            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
             "workflow_run_attempt": 1,
             "workflow_run_id": 123456,
         },
@@ -120,7 +120,7 @@ def secret_scan_receipt() -> dict[str, Any]:
         ],
         "source": {
             "head_sha": "0123456789abcdef0123456789abcdef01234567",
-            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
             "workflow_run_attempt": 1,
             "workflow_run_id": 123456,
         },
@@ -179,7 +179,7 @@ class CreateProductionEnablementTests(unittest.TestCase):
             "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_RUN_ID": "123456",
             "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
-            "GITHUB_WORKFLOW_REF": f"{QA.REPOSITORY}/.github/workflows/ci.yml@0123456789abcdef0123456789abcdef01234567",
+            "GITHUB_WORKFLOW_REF": f"{QA.REPOSITORY}/.github/workflows/floorp-notes-sync-production-qa.yml@0123456789abcdef0123456789abcdef01234567",
         }
 
     def test_phase1_summary_produces_non_distributed_record(self) -> None:

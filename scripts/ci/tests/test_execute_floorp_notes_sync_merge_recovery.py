@@ -67,7 +67,7 @@ class MergeRecoveryTests(unittest.TestCase):
     def source_run() -> dict[str, object]:
         return {
             "id": 1001,
-            "path": ".github/workflows/ci.yml",
+            "path": ".github/workflows/floorp-notes-sync-production-qa.yml",
             "event": "workflow_dispatch",
             "head_branch": "agent/floorp-plan-t20-live-executor",
             "head_sha": "2" * 40,

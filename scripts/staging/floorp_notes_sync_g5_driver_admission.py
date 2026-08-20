@@ -25,7 +25,7 @@ MAX_DOCUMENT_BYTES = 256 * 1024
 MAX_JSON_DEPTH = 16
 MAX_LEASE = timedelta(hours=1)
 EXPECTED_REPOSITORY = "Floorp-Projects/floorp-ios"
-EXPECTED_WORKFLOW_PATH = ".github/workflows/ci.yml"
+EXPECTED_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 EXPECTED_DRIVER_INTERFACE = "metadata-only-g5-receipt-v1"
 DRIVER_ROLE = "driver-admission"
 MAX_SIGNATURE_BYTES = 16 * 1024

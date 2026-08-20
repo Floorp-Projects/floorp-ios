@@ -66,7 +66,7 @@ def summary(receipt_sha: str) -> dict[str, Any]:
             "head_sha": "0123456789abcdef0123456789abcdef01234567",
             "job_name": "notes-sync-production-qa",
             "repository": QA.REPOSITORY,
-            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
             "workflow_run_attempt": 1,
             "workflow_run_id": 123456,
         },

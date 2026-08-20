@@ -15,7 +15,8 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / ".github/workflows/ci.yml"
+WORKFLOW = ROOT / ".github/workflows/floorp-notes-sync-production-qa.yml"
+NORMAL_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 UPSTREAM_SYNC_WORKFLOW = ROOT / ".github/workflows/upstream-sync.yml"
 BUILD_CONTRACT = ROOT / "docs/floorp-notes-sync-build-contract.md"
 RELEASE_CONFIG = ROOT / "firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
@@ -54,7 +55,7 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             text=True,
         )
         if result.returncode != 0:
-            raise AssertionError(f"failed to parse ci.yml: {result.stderr}")
+            raise AssertionError(f"failed to parse Notes Sync workflow: {result.stderr}")
         cls.workflow: dict[str, Any] = json.loads(result.stdout)
         # Ruby's YAML loader follows YAML 1.1 and parses the unquoted GitHub
         # key `on` as true. JSON object keys are strings, so it becomes
@@ -120,35 +121,15 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
         )
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
 
-    def test_manual_preflight_isolates_the_normal_build_jobs(self) -> None:
-        expected_skip = (
-            "github.event_name != 'workflow_dispatch' || ("
-            f"inputs.{DISPATCH_INPUT} != true && "
-            f"inputs.{OPERATION_CONTRACT_INPUT} != true && "
-            f"inputs.{PRODUCTION_QA_INPUT} != true && "
-            f"inputs.{ENABLEMENT_INPUT} != true && "
-            f"inputs.{GUARDED_MERGE_INPUT} != true && "
-            f"inputs.{RECOVERY_INPUT} != true && "
-            f"inputs.{WAIVED_ENABLEMENT_INPUT} != true)"
-        )
-        for job_id in (
-            "workflow-lint",
-            "build-and-test",
-            "release-disabled-wrapper",
+    def test_manual_preflight_is_separate_from_normal_ci(self) -> None:
+        normal_ci = NORMAL_WORKFLOW.read_text(encoding="utf-8")
+        for forbidden in (
+            "run_floorp_notes_sync_",
+            "notes-sync-production-qa:",
+            "FloorpNotesSyncG5",
+            "release-disabled-wrapper:",
         ):
-            self.assertEqual(
-                " ".join(self.jobs[job_id]["if"].split())
-                .replace("( ", "(")
-                .replace(" )", ")"),
-                expected_skip,
-                f"{job_id} must not run during the protected manual preflight",
-            )
-        self.assertEqual(
-            self.jobs["release-disabled-wrapper"].get("needs"),
-            "workflow-lint",
-            "normal release-disabled CI must retain its existing lint dependency",
-        )
-
+            self.assertNotIn(forbidden, normal_ci)
     def test_manual_preflight_has_a_unique_non_cancelling_workflow_slot(self) -> None:
         concurrency = self.workflow["concurrency"]
         self.assertIn("github.run_id", concurrency["group"])

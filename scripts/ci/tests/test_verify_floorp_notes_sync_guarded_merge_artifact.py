@@ -120,7 +120,7 @@ class GuardedMergeArtifactTests(unittest.TestCase):
                     "run_id": 123,
                     "schema_version": 1,
                     "status": "completed",
-                    "workflow_path": ".github/workflows/ci.yml",
+                    "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
                 }
             )
         )
@@ -129,7 +129,7 @@ class GuardedMergeArtifactTests(unittest.TestCase):
             json.dumps(
                 {
                     "id": 123,
-                    "path": ".github/workflows/ci.yml",
+                    "path": ".github/workflows/floorp-notes-sync-production-qa.yml",
                     "event": "workflow_dispatch",
                     "head_branch": "agent/floorp-plan-t20-live-executor",
                     "head_sha": "2" * 40,

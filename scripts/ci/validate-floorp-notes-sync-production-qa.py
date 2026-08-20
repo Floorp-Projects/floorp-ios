@@ -221,7 +221,7 @@ def validate_summary(summary: Any) -> dict[str, Any]:
     require(source["repository"] == REPOSITORY, "QA source repository is not canonical")
     require(source["event"] == "workflow_dispatch", "QA source is not a manual dispatch")
     require(source["job_name"] == "notes-sync-production-qa", "QA source job is not canonical")
-    require(source["workflow_path"] == ".github/workflows/ci.yml", "QA source workflow is not canonical")
+    require(source["workflow_path"] == ".github/workflows/floorp-notes-sync-production-qa.yml", "QA source workflow is not canonical")
     safe_string(source["head_sha"], "QA source head SHA", SHA1)
     require(isinstance(source["workflow_run_id"], int) and source["workflow_run_id"] > 0, "QA run ID is invalid")
     require(

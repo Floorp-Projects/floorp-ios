@@ -48,7 +48,7 @@ APPROVED_HOSTS = [
 ]
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 JOB_NAME = "notes-sync-production-qa"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 INVARIANT_CASES = {

@@ -13,7 +13,7 @@ from typing import Any, Mapping
 
 
 EXPECTED_REPOSITORY = "Floorp-Projects/floorp-ios"
-EXPECTED_WORKFLOW_PATH = ".github/workflows/ci.yml"
+EXPECTED_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 APPROVED_HOSTS = frozenset(
     {
         "accounts.firefox.com",

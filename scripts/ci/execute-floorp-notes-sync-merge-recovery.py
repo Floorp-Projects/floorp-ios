@@ -38,7 +38,7 @@ SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 EXPECTED_BASE_REF = "main"
 EXPECTED_HEAD_REF = "agent/floorp-plan-t20-live-executor"
-EXPECTED_WORKFLOW_PATH = ".github/workflows/ci.yml"
+EXPECTED_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 EXPECTED_SOURCE_JOB = "Todo 20 protected OID-guarded merge and audit receipt"
 EXPECTED_SOURCE_STEP = "Execute repository-owned OID-guarded merge"
 

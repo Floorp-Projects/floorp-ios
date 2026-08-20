@@ -131,7 +131,7 @@ The post-build clock dispatch passes the canonical workflow file name
 ## G5 two-client evidence boundary
 
 G5 is valid only when a successful, manually dispatched `main` run of
-`.github/workflows/ci.yml` publishes
+`.github/workflows/floorp-notes-sync-production-qa.yml` publishes
 `floorp-notes-sync-two-client-xcresult`. The archive must contain a passing
 `FloorpNotesSyncActualG5TwoClientTests/testActualG5TwoClientProductionMatrix()`
 node. This execution-only node is separate from the current static preflight

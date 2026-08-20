@@ -2520,7 +2520,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
                 "head_sha": String(repeating: "d", count: 40),
                 "job_name": "notes-sync-production-qa",
                 "repository": "Floorp-Projects/floorp-ios",
-                "workflow_path": ".github/workflows/ci.yml",
+                "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
                 "workflow_run_attempt": 1,
                 "workflow_run_id": 123,
             ],

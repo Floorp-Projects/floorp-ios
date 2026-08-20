@@ -744,7 +744,7 @@ def make_gate_sources(inputs: dict[str, object]) -> dict[str, list[dict[str, obj
             "ci-run",
             inputs["ios"]["repository"],
             400000005,
-            ".github/workflows/ci.yml",
+            ".github/workflows/floorp-notes-sync-production-qa.yml",
             inputs["ios"]["source_sha"],
         ),
         actions_artifact_source(

@@ -258,7 +258,7 @@ class FloorpNotesSyncG5ArtifactBindingTests(unittest.TestCase):
 
     def test_binds_receipt_digest_to_canonical_payload_and_rejects_legacy_workflow(self) -> None:
         self.assertEqual(EXPECTED_WORKFLOW_PATH, CI_WORKFLOW_PATH)
-        self.assertEqual(CI_WORKFLOW_PATH, ".github/workflows/ci.yml")
+        self.assertEqual(CI_WORKFLOW_PATH, ".github/workflows/floorp-notes-sync-production-qa.yml")
 
         altered_payload = canonical_receipt_payload(fixture_digest="e" * 64)
         with self.assertRaises(ArtifactBindingError):

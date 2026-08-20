@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 JOB = "notes-sync-production-qa"
 MARKERS = (
     "password=",
