@@ -201,6 +201,49 @@ jobs:
           set -euo pipefail
           /usr/bin/python3 -I scripts/ci/scan-floorp-notes-sync-process-argv.py
 
+      - name: Scan public-beta QA material for secrets
+        if: always()
+        env:
+          FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL }}
+          FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD: ${{ secrets.FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 - "$RUNNER_TEMP/floorp-notes-sync-public-beta-qa" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          secret_names = (
+              "FLOORP_NOTES_SYNC_ACCOUNT_A_EMAIL",
+              "FLOORP_NOTES_SYNC_ACCOUNT_A_PASSWORD",
+              "FLOORP_NOTES_SYNC_ACCOUNT_B_EMAIL",
+              "FLOORP_NOTES_SYNC_ACCOUNT_B_PASSWORD",
+          )
+          secrets = tuple(os.environ[name].encode("utf-8") for name in secret_names)
+          if any(not value for value in secrets):
+              raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=public_beta_secret_scan_scope_missing resume=populate all four protected Sync account secrets")
+          markers = (
+              "password=", "password:", "access_token=", "refresh_token=", "sync_key=",
+              "authorization: bearer ", "bearer ", "cookie=", "credential=",
+              "begin private key", "oauth_token=", "note_content:", "note_title:",
+              "request_body:", "response_body:",
+          )
+          if root.exists():
+              for path in root.rglob("*"):
+                  if not path.is_file() or path.is_symlink():
+                      continue
+                  raw = path.read_bytes()
+                  if any(secret and secret in raw for secret in secrets):
+                      raise SystemExit(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=secret_value_detected_in_{path.name} resume=remove the secret from public-beta QA material")
+                  text = raw.decode("utf-8", errors="ignore").lower()
+                  if any(marker in text for marker in markers):
+                      raise SystemExit(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=secret_marker_detected_in_{path.name} resume=remove the secret marker from public-beta QA material")
+          print('{"status":"public-beta-secret-scan-passed"}')
+          PY
+
       - name: Clean up test accounts and client state
         if: always()
         run: |
