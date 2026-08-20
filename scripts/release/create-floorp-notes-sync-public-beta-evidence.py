@@ -25,6 +25,8 @@ CONTRACT_PATH = ROOT / "scripts/ci/floorp-notes-sync-g5-operation-contract.json"
 ENDPOINT_POLICY_PATH = ROOT / "docs/floorp-release-endpoints.json"
 REPOSITORY = "Floorp-Projects/floorp-ios"
 WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
+PUBLIC_BETA_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-public-beta-qa.yml"
+PUBLIC_BETA_JOB_NAME = "notes-sync-public-beta-qa"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -110,7 +112,8 @@ def main(arguments: list[str] | None = None) -> int:
         source = summary["source"]
         require(source["repository"] == REPOSITORY, "QA repository is not canonical")
         require(source["head_sha"] == args.source_sha, "QA source SHA does not match the candidate")
-        require(source["workflow_path"] == WORKFLOW_PATH, "QA workflow path is not canonical")
+        require(source["job_name"] == PUBLIC_BETA_JOB_NAME, "QA source job is not the public-beta QA job")
+        require(source["workflow_path"] == PUBLIC_BETA_WORKFLOW_PATH, "QA workflow path is not the public-beta QA workflow")
         require(summary["public_release"] is False, "QA summary must remain non-distributable")
 
         capability = CAPABILITY.load_capability(

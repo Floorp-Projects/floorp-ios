@@ -15,7 +15,10 @@ CAPABILITY_VERSION = "todo20-production-sync-integrity-v1"
 REPOSITORY = "Floorp-Projects/floorp-ios"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
+PUBLIC_BETA_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-public-beta-qa.yml"
 JOB_NAME = "notes-sync-production-qa"
+PUBLIC_BETA_JOB_NAME = "notes-sync-public-beta-qa"
+JOB_NAMES = (JOB_NAME, PUBLIC_BETA_JOB_NAME)
 APPROVED_FXA_HOSTS = [
     "accounts.firefox.com",
     "api.accounts.firefox.com",
@@ -158,11 +161,15 @@ def validate_capability(
         {"event", "head_sha", "job_name", "repository", "workflow_path", "workflow_run_attempt", "workflow_run_id"},
         "capability source",
     )
+    expected_workflow_path = {
+        JOB_NAME: WORKFLOW_PATH,
+        PUBLIC_BETA_JOB_NAME: PUBLIC_BETA_WORKFLOW_PATH,
+    }.get(source["job_name"])
     if (
         source["event"] != "workflow_dispatch"
-        or source["job_name"] != JOB_NAME
+        or expected_workflow_path is None
         or source["repository"] != REPOSITORY
-        or source["workflow_path"] != WORKFLOW_PATH
+        or source["workflow_path"] != expected_workflow_path
     ):
         raise CapabilityError("capability source is not the protected workflow")
     source_sha = _sha(source["head_sha"], "source head", SHA1)
@@ -245,6 +252,9 @@ __all__ = [
     "ENVIRONMENT",
     "INVARIANT_NAMES",
     "JOB_NAME",
+    "JOB_NAMES",
+    "PUBLIC_BETA_JOB_NAME",
+    "PUBLIC_BETA_WORKFLOW_PATH",
     "REPOSITORY",
     "WORKFLOW_PATH",
     "canonical_bytes",

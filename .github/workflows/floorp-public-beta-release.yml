@@ -1,0 +1,551 @@
+name: Floorp Public Beta Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      qa_run_id:
+        description: Successful Floorp Notes Sync public-beta QA workflow run ID.
+        required: true
+        type: string
+      approve_public_beta:
+        description: Approve the exact source-bound Sync public-beta candidate.
+        required: true
+        default: false
+        type: boolean
+      submit_external_beta:
+        description: Upload the candidate and submit it to the selected external TestFlight group and Beta App Review.
+        required: true
+        default: false
+        type: boolean
+      external_group_id:
+        description: Optional App Store Connect external beta group ID; leave blank only when exactly one external group exists.
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: floorp-public-beta-release-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  FLOORP_APP_STORE_ID: "6796708699"
+  FLOORP_MARKETING_VERSION: "0.2.0"
+  FLOORP_BUILD_NUMBER: "4"
+  PROJECT_PATH: firefox-ios/Client.xcodeproj
+
+jobs:
+  public-beta-release:
+    name: Sign, upload, and submit Floorp public beta
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.approve_public_beta == true
+    environment: floorp-notes-sync-production-qa
+    runs-on: macos-26
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out exact main source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify clean source identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Validate QA run selector
+        env:
+          QA_RUN_ID: ${{ inputs.qa_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$QA_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=qa_run_id_invalid resume=provide a successful public-beta QA workflow run ID' >&2
+            exit 78
+          }
+
+      - name: Download source-bound public-beta QA evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-public-beta-qa-${{ inputs.qa_run_id }}
+          path: ${{ runner.temp }}/floorp-public-beta/qa
+          run-id: ${{ inputs.qa_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Verify QA evidence binding
+        env:
+          QA_RUN_ID: ${{ inputs.qa_run_id }}
+        run: |
+          set -euo pipefail
+          qa_root="$RUNNER_TEMP/floorp-public-beta/qa"
+          /usr/bin/python3 - "$qa_root" "$GITHUB_SHA" "$QA_RUN_ID" "$GITHUB_ENV" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          source_sha = sys.argv[2]
+          run_id = int(sys.argv[3])
+          env_path = Path(sys.argv[4])
+
+          def one(name: str) -> Path:
+              matches = [path for path in root.rglob(name) if path.is_file() and not path.is_symlink()]
+              if len(matches) != 1:
+                  raise SystemExit(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason={name}_ambiguous resume=download one canonical QA artifact")
+              return matches[0]
+
+          summary_path = one("qa-summary.json")
+          capability_path = one("production-qa-capability.json")
+          summary = json.loads(summary_path.read_text(encoding="utf-8"))
+          capability = json.loads(capability_path.read_text(encoding="utf-8"))
+          source = summary.get("source", {})
+          if source.get("head_sha") != source_sha or source.get("workflow_run_id") != run_id:
+              raise SystemExit("[blocked] OID_DRIFT owner=Operations reason=qa_source_mismatch resume=use QA evidence from this exact main source SHA and run")
+          if source.get("job_name") != "notes-sync-public-beta-qa" or source.get("workflow_path") != ".github/workflows/floorp-notes-sync-public-beta-qa.yml":
+              raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=qa_workflow_binding_invalid resume=use the public-beta QA workflow artifact")
+          if summary.get("public_release") is not False or capability.get("public_release") is not False:
+              raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=qa_artifact_is_distributable resume=regenerate the non-distributed public-beta QA artifact")
+          if capability.get("source") != source or capability.get("ios_build_number") != "4":
+              raise SystemExit("[blocked] OID_DRIFT owner=Operations reason=qa_capability_mismatch resume=use matching summary and capability artifacts")
+          desktop_sha = capability.get("desktop", {}).get("source_sha")
+          if not isinstance(desktop_sha, str) or len(desktop_sha) != 40:
+              raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=desktop_source_missing resume=use a source-bound Desktop capability")
+
+          def write_env(name: str, value: str) -> None:
+              env_path.open("a", encoding="utf-8").write(f"{name}={value}\n")
+
+          write_env("FLOORP_PUBLIC_BETA_QA_ROOT", str(root))
+          write_env("FLOORP_PUBLIC_BETA_QA_SUMMARY", str(summary_path))
+          write_env("FLOORP_PUBLIC_BETA_QA_CAPABILITY", str(capability_path))
+          write_env("FLOORP_PUBLIC_BETA_DESKTOP_SHA", desktop_sha)
+          print('{"status":"qa-evidence-bound"}')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode_version="$(<.xcode-version)"
+          sudo xcode-select --switch "/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          xcodebuild -version
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          set -euo pipefail
+          printf 'SOURCE_PACKAGES=%s\n' "$RUNNER_TEMP/SourcePackages" >> "$GITHUB_ENV"
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme Floorp \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES"
+
+      - name: Create explicit public-beta evidence
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/floorp-public-beta/public-beta-evidence.json"
+          /usr/bin/python3 -I scripts/release/create-floorp-notes-sync-public-beta-evidence.py \
+            --summary "$FLOORP_PUBLIC_BETA_QA_SUMMARY" \
+            --capability "$FLOORP_PUBLIC_BETA_QA_CAPABILITY" \
+            --source-sha "$GITHUB_SHA" \
+            --desktop-sha "$FLOORP_PUBLIC_BETA_DESKTOP_SHA" \
+            --build-number "$FLOORP_BUILD_NUMBER" \
+            --operator-id "$GITHUB_ACTOR" \
+            --approve-public-beta \
+            --output "$evidence"
+          printf 'FLOORP_PUBLIC_BETA_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+
+      - name: Install Apple signing and App Store Connect credentials
+        env:
+          APPLE_DEVELOPER_API_KEY_JSON: ${{ secrets.APPLE_DEVELOPER_API_KEY_JSON }}
+          APPLE_DEVELOPER_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_P12_BASE64 }}
+          APPLE_DEVELOPER_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_P12_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$RUNNER_TEMP/floorp-public-beta"
+          test -n "$APPLE_DEVELOPER_API_KEY_JSON"
+          test -n "$APPLE_DEVELOPER_P12_BASE64"
+          test -n "$APPLE_DEVELOPER_P12_PASSWORD"
+          test -n "$APPLE_PROVISIONING_PROFILE_BASE64"
+          api_json="$root/app-store-connect-api.json"
+          p8="$root/AuthKey.p8"
+          p12="$root/AppleDistribution.p12"
+          profile="$root/Floorp-App-Store.mobileprovision"
+          profile_plist="$root/Floorp-App-Store.plist"
+          printf '%s' "$APPLE_DEVELOPER_API_KEY_JSON" > "$api_json"
+          /usr/bin/python3 - "$api_json" "$p8" "$GITHUB_ENV" <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          source, key_path, env_path = map(Path, sys.argv[1:])
+          value = json.loads(source.read_text(encoding="utf-8"))
+          issuer = value.get("issuer_id") or value.get("issuerId") or value.get("issuer")
+          key_id = value.get("key_id") or value.get("keyId") or value.get("key")
+          private_key = value.get("private_key") or value.get("privateKey") or value.get("api_key")
+          if not all(isinstance(item, str) and item for item in (issuer, key_id, private_key)):
+              raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=app_store_connect_api_key_json_incomplete resume=store issuer_id, key_id, and private_key in APPLE_DEVELOPER_API_KEY_JSON")
+          if not re.fullmatch(r"[A-Za-z0-9._-]+", issuer) or not re.fullmatch(r"[A-Za-z0-9._-]+", key_id):
+              raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=app_store_connect_api_key_identity_invalid resume=use the canonical App Store Connect API key JSON")
+          if private_key.lstrip().startswith("-----BEGIN"):
+              raw = private_key.encode("utf-8")
+          else:
+              try:
+                  raw = base64.b64decode(private_key, validate=True)
+              except Exception as error:
+                  raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=app_store_connect_private_key_invalid resume=store a PEM or base64-encoded p8 private_key") from error
+          if b"BEGIN PRIVATE KEY" not in raw:
+              raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=app_store_connect_private_key_invalid resume=store the App Store Connect p8 private key")
+          key_path.write_bytes(raw)
+          os.chmod(key_path, 0o600)
+          with env_path.open("a", encoding="utf-8") as handle:
+              handle.write(f"APP_STORE_CONNECT_ISSUER_ID={issuer}\n")
+              handle.write(f"APP_STORE_CONNECT_KEY_ID={key_id}\n")
+              handle.write(f"APP_STORE_CONNECT_PRIVATE_KEY_PATH={key_path}\n")
+          PY
+          printf '%s' "$APPLE_DEVELOPER_P12_BASE64" | /usr/bin/base64 -D > "$p12"
+          keychain_password_file="$root/keychain-password"
+          /usr/bin/uuidgen > "$keychain_password_file"
+          keychain_password="$(<"$keychain_password_file")"
+          /usr/bin/security create-keychain -p "$keychain_password" "$root/floorp-build.keychain-db"
+          /usr/bin/security set-keychain-settings -lut 21600 "$root/floorp-build.keychain-db"
+          /usr/bin/security unlock-keychain -p "$keychain_password" "$root/floorp-build.keychain-db"
+          /usr/bin/security import "$p12" -k "$root/floorp-build.keychain-db" \
+            -P "$APPLE_DEVELOPER_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          /usr/bin/security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$keychain_password" "$root/floorp-build.keychain-db" >/dev/null
+          /usr/bin/security list-keychains -d user -s "$root/floorp-build.keychain-db" "$HOME/Library/Keychains/login.keychain-db"
+          printf '%s' "$APPLE_PROVISIONING_PROFILE_BASE64" | /usr/bin/base64 -D > "$profile"
+          /usr/bin/security cms -D -i "$profile" > "$profile_plist"
+          /usr/bin/python3 - "$profile_plist" <<'PY'
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          profile = plistlib.loads(Path(sys.argv[1]).read_bytes())
+          if profile.get("Name") != "Floorp App Store":
+              raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=provisioning_profile_name_invalid resume=use the Floorp App Store profile")
+          if profile.get("TeamIdentifier") != ["DV2U35YBHT"]:
+              raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=provisioning_profile_team_invalid resume=use a DV2U35YBHT distribution profile")
+          if profile.get("Entitlements", {}).get("application-identifier") != "DV2U35YBHT.app.floorp.Floorp":
+              raise SystemExit("[blocked] AUTHORIZATION_MISSING owner=Operations reason=provisioning_profile_bundle_invalid resume=use the app.floorp.Floorp profile")
+          print('{"status":"signing-material-validated"}')
+          PY
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist")"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$profile" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          printf 'FLOORP_PUBLIC_BETA_KEYCHAIN=%s\n' "$root/floorp-build.keychain-db" >> "$GITHUB_ENV"
+
+      - name: Build signed public-beta archive
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          archive="$root/Floorp.xcarchive"
+          mkdir -p "$root"
+          ./scripts/release/build-floorp-notes-sync-public-beta.sh \
+            --evidence "$FLOORP_PUBLIC_BETA_EVIDENCE" \
+            --source-sha "$GITHUB_SHA" \
+            --output-dir "$root/build" \
+            --archive "$archive"
+          printf 'FLOORP_PUBLIC_BETA_ARCHIVE=%s\n' "$archive" >> "$GITHUB_ENV"
+
+      - name: Export App Store distribution IPA
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          export_options="$root/ExportOptions.plist"
+          export_dir="$root/export"
+          /usr/bin/python3 - "$export_options" <<'PY'
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          value = {
+              "method": "app-store",
+              "signingStyle": "manual",
+              "stripSwiftSymbols": True,
+              "uploadSymbols": True,
+              "teamID": "DV2U35YBHT",
+              "provisioningProfiles": {"app.floorp.Floorp": "Floorp App Store"},
+          }
+          Path(sys.argv[1]).write_bytes(plistlib.dumps(value, fmt=plistlib.FMT_XML, sort_keys=True))
+          PY
+          rm -rf "$export_dir"
+          mkdir -p "$export_dir"
+          xcodebuild -exportArchive \
+            -archivePath "$FLOORP_PUBLIC_BETA_ARCHIVE" \
+            -exportPath "$export_dir" \
+            -exportOptionsPlist "$export_options" \
+            | tee "$root/export.log"
+          ipa="$(find "$export_dir" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          test -n "$ipa" && test -f "$ipa"
+          printf 'FLOORP_PUBLIC_BETA_IPA=%s\n' "$ipa" >> "$GITHUB_ENV"
+
+      - name: Validate signed release evidence before upload
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          /bin/bash scripts/release/collect-floorp-release-evidence.sh \
+            --archive "$FLOORP_PUBLIC_BETA_ARCHIVE" \
+            --ipa "$FLOORP_PUBLIC_BETA_IPA" \
+            --source-sha "$GITHUB_SHA" \
+            --export-status ready-for-upload \
+            --output "$root/release-evidence.json"
+          /usr/bin/python3 -I scripts/release/validate-floorp-release-evidence.py \
+            --evidence "$root/release-evidence.json" \
+            --schema scripts/release/floorp-release-evidence.schema.json
+
+      - name: Upload IPA to App Store Connect
+        run: |
+          set -euo pipefail
+          if xcrun altool --help >/dev/null 2>&1; then
+            xcrun altool --upload-app \
+              --file "$FLOORP_PUBLIC_BETA_IPA" \
+              --type ios \
+              --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+              --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          else
+            xcrun iTMSTransporter -m upload \
+              -assetFile "$FLOORP_PUBLIC_BETA_IPA" \
+              -apiKey "$APP_STORE_CONNECT_KEY_ID" \
+              -apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          fi
+
+      - name: Wait for the uploaded build to process
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          builds="$root/builds.json"
+          build_id_file="$root/build-id"
+          deadline=$((SECONDS + 3600))
+          while (( SECONDS < deadline )); do
+            /usr/bin/python3 scripts/release/app-store-connect-api.py get \
+              "/v1/builds?filter[app]=$FLOORP_APP_STORE_ID&filter[preReleaseVersion.version]=$FLOORP_MARKETING_VERSION&filter[version]=$FLOORP_BUILD_NUMBER&limit=200" \
+              --output "$builds"
+            state="$(/usr/bin/python3 - "$builds" "$build_id_file" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          rows = value.get("data", [])
+          if not rows:
+              print("pending")
+              raise SystemExit(0)
+          row = rows[0]
+          attributes = row.get("attributes", {})
+          processing = attributes.get("processingState")
+          if processing in {"FAILED", "INVALID"}:
+              print("failed")
+              raise SystemExit(0)
+          if processing != "VALID":
+              print("pending")
+              raise SystemExit(0)
+          Path(sys.argv[2]).write_text(row["id"] + "\n", encoding="utf-8")
+          print("ready")
+          PY
+            )"
+            if [ "$state" = "ready" ]; then
+              break
+            fi
+            if [ "$state" = "failed" ]; then
+              printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Apple reason=app_store_build_processing_failed resume=inspect the App Store Connect processing diagnostic for this exact build' >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          test -s "$build_id_file" || {
+            printf '%s\n' '[blocked] UPSTREAM_ARTIFACT_MISSING owner=Apple reason=app_store_build_processing_timeout resume=wait for App Store Connect processing or inspect the uploaded build' >&2
+            exit 1
+          }
+          build_id="$(<"$build_id_file")"
+          printf 'FLOORP_ASC_BUILD_ID=%s\n' "$build_id" >> "$GITHUB_ENV"
+
+      - name: Read external TestFlight group and review details
+        if: inputs.submit_external_beta == true
+        env:
+          FLOORP_EXTERNAL_GROUP_REQUESTED: ${{ inputs.external_group_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          /usr/bin/python3 scripts/release/app-store-connect-api.py get \
+            "/v1/betaGroups?filter[app]=$FLOORP_APP_STORE_ID&limit=200" \
+            --output "$root/beta-groups-before.json"
+          /usr/bin/python3 scripts/release/app-store-connect-api.py get \
+            "/v1/betaAppReviewDetails?filter[app]=$FLOORP_APP_STORE_ID" \
+            --output "$root/review-details-before.json"
+          /usr/bin/python3 - "$root/beta-groups-before.json" "$FLOORP_EXTERNAL_GROUP_REQUESTED" "$root/external-group-id" "$GITHUB_ENV" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          groups = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("data", [])
+          requested = sys.argv[2].strip()
+          if requested and not re.fullmatch(r"[A-Za-z0-9._-]+", requested):
+              raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=external_group_id_invalid resume=provide the App Store Connect external beta group ID")
+          external = [
+              row for row in groups
+              if isinstance(row, dict)
+              and row.get("attributes", {}).get("isInternalGroup") is False
+          ]
+          if requested:
+              matches = [row for row in external if row.get("id") == requested]
+              if len(matches) != 1:
+                  raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=external_group_id_not_found_or_internal resume=select an existing external TestFlight group")
+              chosen = requested
+          elif len(external) == 1:
+              chosen = external[0].get("id")
+          else:
+              raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=external_group_selection_required resume=provide external_group_id when zero or multiple external groups exist")
+          if not isinstance(chosen, str) or not chosen:
+              raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=external_group_id_missing resume=select an existing external TestFlight group")
+          Path(sys.argv[3]).write_text(chosen + "\n", encoding="utf-8")
+          with Path(sys.argv[4]).open("a", encoding="utf-8") as handle:
+              handle.write(f"FLOORP_EXTERNAL_GROUP_ID={chosen}\n")
+          print('{"status":"external-group-selected"}')
+          PY
+          /usr/bin/python3 - "$root/review-details-before.json" "$root/beta-review-details.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          rows = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("data", [])
+          if not rows:
+              raise SystemExit("[blocked] AGREEMENT_MISSING owner=Apple reason=beta_app_review_details_missing resume=create the App Store Connect Beta App Review details record")
+          attributes = rows[0].get("attributes", {})
+          required = (
+              "contactEmail", "contactFirstName", "contactLastName", "contactPhone",
+              "demoAccountName", "demoAccountPassword",
+          )
+          if any(not isinstance(attributes.get(name), str) or not attributes[name].strip() for name in required):
+              raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=beta_app_review_details_incomplete resume=complete the live App Store Connect reviewer contact and demo-account fields")
+          details = {name: attributes[name] for name in (*required, "notes") if name in attributes}
+          Path(sys.argv[2]).write_text(json.dumps(details, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+          print('{"status":"review-details-preflight-passed"}')
+          PY
+
+      - name: Submit processed build to external TestFlight and Beta App Review
+        if: inputs.submit_external_beta == true
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          /bin/bash scripts/release/submit-floorp-external-beta.sh \
+            --client scripts/release/app-store-connect-api.py \
+            --app-id "$FLOORP_APP_STORE_ID" \
+            --build-id "$FLOORP_ASC_BUILD_ID" \
+            --external-group-id "$FLOORP_EXTERNAL_GROUP_ID" \
+            --localization docs/app-store-connect-metadata.json \
+            --review-details "$root/beta-review-details.json" \
+            --before "$root/asc-before.json" \
+            --after "$root/asc-after.json" \
+            --what-to-test-en firefox-ios/TestFlight/WhatToTest.en-US.txt \
+            --what-to-test-ja firefox-ios/TestFlight/WhatToTest.ja-JP.txt \
+            --authorize-mutation \
+            --output "$root/public-beta-submission.json"
+
+      - name: Verify external TestFlight readback
+        if: inputs.submit_external_beta == true
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          /usr/bin/python3 scripts/release/app-store-connect-api.py get \
+            "/v1/betaGroups/$FLOORP_EXTERNAL_GROUP_ID/builds" \
+            --output "$root/external-group-builds-after.json"
+          /usr/bin/python3 scripts/release/app-store-connect-api.py get \
+            "/v1/betaAppReviewSubmissions?filter[build]=$FLOORP_ASC_BUILD_ID" \
+            --output "$root/beta-review-submissions-after.json"
+          /usr/bin/python3 - "$root" "$FLOORP_ASC_BUILD_ID" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          build_id = sys.argv[2]
+          group = json.loads((root / "external-group-builds-after.json").read_text(encoding="utf-8"))
+          submissions = json.loads((root / "beta-review-submissions-after.json").read_text(encoding="utf-8"))
+          if not any(row.get("id") == build_id for row in group.get("data", [])):
+              raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Apple reason=external_group_assignment_not_read_back resume=inspect App Store Connect group assignment")
+          submission_rows = submissions.get("data", [])
+          if not submission_rows:
+              raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Apple reason=beta_app_review_submission_not_read_back resume=inspect App Store Connect Beta App Review submission")
+          result = {
+              "build_id": build_id,
+              "external_group_assignment": True,
+              "beta_app_review_submission": True,
+              "submission_id": submission_rows[0].get("id"),
+              "status": "submitted",
+          }
+          (root / "testflight-readback.json").write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
+          print('{"status":"external-testflight-readback-verified"}')
+          PY
+
+      - name: Bind final release evidence to the processed build
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-public-beta"
+          /bin/bash scripts/release/collect-floorp-release-evidence.sh \
+            --archive "$FLOORP_PUBLIC_BETA_ARCHIVE" \
+            --ipa "$FLOORP_PUBLIC_BETA_IPA" \
+            --source-sha "$GITHUB_SHA" \
+            --app-store-connect-build-id "$FLOORP_ASC_BUILD_ID" \
+            --export-status uploaded-and-processed \
+            --output "$root/release-evidence.json"
+          /usr/bin/python3 -I scripts/release/validate-floorp-release-evidence.py \
+            --evidence "$root/release-evidence.json" \
+            --schema scripts/release/floorp-release-evidence.schema.json
+
+      - name: Upload public-beta release evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-public-beta-release-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-public-beta/public-beta-evidence.json
+            ${{ runner.temp }}/floorp-public-beta/public-beta-submission.json
+            ${{ runner.temp }}/floorp-public-beta/testflight-readback.json
+            ${{ runner.temp }}/floorp-public-beta/release-evidence.json
+            ${{ runner.temp }}/floorp-public-beta/build/public-beta-build.json
+            ${{ runner.temp }}/floorp-public-beta/builds.json
+            ${{ runner.temp }}/floorp-public-beta/asc-before.json
+            ${{ runner.temp }}/floorp-public-beta/asc-after.json
+            ${{ runner.temp }}/floorp-public-beta/beta-groups-before.json
+            ${{ runner.temp }}/floorp-public-beta/external-group-builds-after.json
+            ${{ runner.temp }}/floorp-public-beta/beta-review-submissions-after.json
+            ${{ runner.temp }}/floorp-public-beta/build/xcodebuild.log
+            ${{ runner.temp }}/floorp-public-beta/export.log
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Remove signing material and runner-local release material
+        if: always()
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/floorp-public-beta/floorp-build.keychain-db"
+          if [ -e "$keychain" ]; then
+            /usr/bin/security delete-keychain "$keychain" || true
+          fi
+          rm -rf "$RUNNER_TEMP/floorp-public-beta"

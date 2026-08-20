@@ -86,6 +86,23 @@ class LiveExecutorContractTests(unittest.TestCase):
             with self.assertRaises(EXECUTOR.LiveExecutorError):
                 EXECUTOR.source_from_environment()
 
+    def test_source_binding_accepts_the_separate_public_beta_workflow(self) -> None:
+        context = {
+            "GITHUB_ACTOR": "operator",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_JOB": EXECUTOR.PUBLIC_BETA_JOB_NAME,
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_REPOSITORY": EXECUTOR.REPOSITORY,
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_SHA": "a" * 40,
+            "GITHUB_WORKFLOW_REF": f"{EXECUTOR.REPOSITORY}/{EXECUTOR.PUBLIC_BETA_WORKFLOW_PATH}@{'a' * 40}",
+        }
+        with patch.dict(os.environ, context, clear=True):
+            source = EXECUTOR.source_from_environment()
+        self.assertEqual(source["job_name"], EXECUTOR.PUBLIC_BETA_JOB_NAME)
+        self.assertEqual(source["workflow_path"], EXECUTOR.PUBLIC_BETA_WORKFLOW_PATH)
+
     def test_xcodebuild_command_contains_no_account_values(self) -> None:
         args = Namespace(
             ios_project=Path("/tmp/project.xcodeproj"),

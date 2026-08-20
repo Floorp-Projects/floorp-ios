@@ -154,6 +154,14 @@ selector; a passed
 renaming an ordinary FloorpCI result, or reusing the canonical artifact name
 does not satisfy this requirement.
 
+The external public-beta route is intentionally separate from that legacy
+Todo20 admission job. A successful, manually dispatched `main` run of
+`.github/workflows/floorp-notes-sync-public-beta-qa.yml` publishes the same
+metadata-only two-client result under a run-specific artifact name and is
+accepted only as the source of a `public-beta` evidence record. It does not
+consume the stale guarded-merge receipts or owner-waiver variables used by
+the historical production-QA job.
+
 Ordinary PR/main CI compiles only the static preflight selector
 `XCUITests/FloorpNotesSyncTwoClientMatrixTests/testTwoClientProductionMatrix`
 without executing its protected selector. This compile-only output has no
@@ -470,9 +478,10 @@ OUT="$(mktemp -d "${TMPDIR:-/tmp}/floorp-notes-sync-real.XXXXXX")"
 An enabled real build additionally requires current validated evidence whose
 `release_inputs.ios.build_number` is exactly the `FloorpRelease` build number.
 
-The wrapper builds or archives only. It does not export or upload the app,
-publish a release, submit to App Store Connect, or create a TestFlight link.
-Enabled modes do make narrowly scoped GitHub API requests through the pinned
+The public-beta build wrapper builds and archives only. The protected
+`floorp-public-beta-release.yml` workflow performs export, signing, upload,
+and the allowlisted external TestFlight/Beta App Review submission after an
+explicit approval input. Enabled modes do make narrowly scoped GitHub API requests through the pinned
 `gh` copy to validate retrievable evidence and to dispatch and capture the
 validation-clock workflow.
 

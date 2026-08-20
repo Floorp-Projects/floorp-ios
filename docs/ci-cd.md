@@ -8,13 +8,15 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
 | Notes Sync production QA | GitHub Actions | Manual, protected workflow in `.github/workflows/floorp-notes-sync-production-qa.yml` |
+| Notes Sync public-beta QA | GitHub Actions | Separate manual, protected two-account workflow in `.github/workflows/floorp-notes-sync-public-beta-qa.yml` |
+| Signed public-beta delivery | GitHub Actions | Manual, source-bound workflow in `.github/workflows/floorp-public-beta-release.yml` |
 | Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow with trusted automation restoration, reviewed localization conflict resolution, and explicit CI dispatch |
 | Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (2)` signed, uploaded, and verified by the internal group |
 | Repeatable signed delivery | Xcode Cloud | Scaffold implemented; workflow not yet configured |
 | App Store release | App Store Connect | Manual approval initially |
 | Mozilla/Focus maintenance automation | Git history | Removed pending a Floorp-owned replacement |
 
-GitHub Actions does not receive an Apple certificate or private key. The first build was uploaded manually from a locally signed archive. Xcode Cloud remains the preferred repeatable CD system because it supports cloud-managed signing and direct TestFlight distribution.
+The public-beta release job receives signing and App Store Connect material only as protected GitHub secrets for the one approved run; no certificate, profile, p8 key, or password is committed. The first build was uploaded manually from a locally signed archive. Xcode Cloud remains the preferred repeatable CD system for routine delivery because it supports cloud-managed signing and direct TestFlight distribution.
 
 ### Validated Internal TestFlight baseline
 
@@ -102,7 +104,7 @@ Notes on the live contract:
 
 ## Release readiness
 
-Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented; every release candidate still requires a signed archive and Organizer validation before TestFlight distribution. A Notes Sync public-beta candidate uses `scripts/release/create-floorp-notes-sync-public-beta-evidence.py` followed by `scripts/release/build-floorp-notes-sync-public-beta.sh`; the checked-in `FloorpRelease` default remains Sync-disabled.
+Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented; every release candidate still requires a signed archive and Organizer validation before TestFlight distribution. A Notes Sync public-beta candidate uses the separate protected `floorp-notes-sync-public-beta-qa.yml` workflow, then `scripts/release/create-floorp-notes-sync-public-beta-evidence.py` and `scripts/release/build-floorp-notes-sync-public-beta.sh`; the checked-in `FloorpRelease` default remains Sync-disabled. The manual `floorp-public-beta-release.yml` workflow can consume that exact QA run, sign and upload the candidate, and submit it to an already-existing external TestFlight group after the live App Store Connect review details pass a read-only preflight.
 
 ### Release build configuration
 
@@ -199,7 +201,7 @@ After the shared `Floorp` scheme archives locally with `FloorpRelease` and passe
 7. After several successful builds, add a `main` or release-tag start condition.
 8. Download and retain each shipped archive and its dSYMs outside Xcode Cloud; Xcode Cloud build information and artifacts are available for only 30 days.
 
-External TestFlight groups, Beta App Review submission, and App Store submission remain manual until internal distribution is stable.
+The public-beta workflow does not create groups or invent reviewer credentials. It selects one existing external group (or requires its explicit ID), reuses complete live Beta App Review details, records before/after state, and stops with a blocker if Apple agreements, review details, or group setup are incomplete.
 
 ## Later hardening
 

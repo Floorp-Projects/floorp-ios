@@ -82,6 +82,12 @@ class ValidateFloorpNotesSyncProductionQATests(unittest.TestCase):
         summary = valid_summary()
         self.assertEqual(QA.validate_summary(summary), summary)
 
+    def test_public_beta_workflow_binding_is_accepted(self) -> None:
+        summary = valid_summary()
+        summary["source"]["job_name"] = "notes-sync-public-beta-qa"
+        summary["source"]["workflow_path"] = ".github/workflows/floorp-notes-sync-public-beta-qa.yml"
+        self.assertEqual(QA.validate_summary(summary), summary)
+
     def test_sensitive_fields_and_payload_are_rejected(self) -> None:
         for field in ("password", "notes_payload", "authorization", "email"):
             with self.subTest(field=field):
