@@ -19,7 +19,7 @@ from typing import Any
 
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 ARTIFACTS = (

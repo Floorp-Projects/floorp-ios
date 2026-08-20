@@ -166,7 +166,7 @@ def validate_enablement(
     require(record["operator_id"] == phase1["self_attestation"]["operator_id"], "enablement operator does not match Phase 1")
     require(record["workflow_event"] == "workflow_dispatch", "enablement event is not a manual dispatch")
     require(record["workflow_job"] == "notes-sync-production-enablement", "enablement job is invalid")
-    require(record["workflow_path"] == ".github/workflows/ci.yml", "enablement workflow is invalid")
+    require(record["workflow_path"] == ".github/workflows/floorp-notes-sync-production-qa.yml", "enablement workflow is invalid")
     require(record["workflow_run_id"] == phase1["source"]["workflow_run_id"], "enablement run does not match Phase 1")
     require(
         record["workflow_run_attempt"] == phase1["source"]["workflow_run_attempt"],
@@ -325,7 +325,7 @@ def validate_waived_enablement(
         record["workflow_job"] == "notes-sync-production-enablement-waived",
         "enablement job is invalid",
     )
-    require(record["workflow_path"] == ".github/workflows/ci.yml", "enablement workflow is invalid")
+    require(record["workflow_path"] == ".github/workflows/floorp-notes-sync-production-qa.yml", "enablement workflow is invalid")
     require(
         record["enablement_validator_sha256"]
         == hashlib.sha256(ENABLEMENT_VALIDATOR_SOURCE.read_bytes()).hexdigest(),

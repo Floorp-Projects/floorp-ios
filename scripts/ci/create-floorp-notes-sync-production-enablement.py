@@ -29,7 +29,7 @@ CLEANUP_VALIDATOR_PATH = Path(__file__).with_name(
     "validate-floorp-notes-sync-production-qa-cleanup.py"
 )
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 PHASE1_JOB = "notes-sync-production-qa"
 
 

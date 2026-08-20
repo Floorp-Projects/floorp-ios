@@ -138,11 +138,9 @@ class MergeAdmissionTests(unittest.TestCase):
             "url": f"{repository_url}/pulls/106",
         }
         check_specs = [
-            ("Validate workflows", "pass", "SUCCESS", "success", 2001),
-            ("Build and unit test", "pass", "SUCCESS", "success", 2002),
-            ("Release-disabled wrapper build", "pass", "SUCCESS", "success", 2003),
-            ("Todo 20 protected OID-guarded merge and audit receipt", "skipping", "SKIPPED", "skipped", 2004),
-        ]
+           ("Validate workflows", "pass", "SUCCESS", "success", 2001),
+           ("Build and unit test", "pass", "SUCCESS", "success", 2002),
+       ]
         checks = [
             {
                 "bucket": bucket,

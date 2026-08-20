@@ -13,7 +13,7 @@ from typing import Any
 
 
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 HEAD_BRANCH = "agent/floorp-plan-t20-live-executor"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")

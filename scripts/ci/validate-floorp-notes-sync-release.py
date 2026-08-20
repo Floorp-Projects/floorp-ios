@@ -190,7 +190,8 @@ G5_ACTUAL_TWO_CLIENT_XCRESULT_TEST = (
     "FloorpNotesSyncActualG5TwoClientTests/"
     "testActualG5TwoClientProductionMatrix()"
 )
-G5_CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
+G3_CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
+G5_CI_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 G5_CI_EVENT = "workflow_dispatch"
 G5_CI_HEAD_BRANCH = "main"
 G5_XCRESULT_ARTIFACT_NAME = "floorp-notes-sync-two-client-xcresult"
@@ -2116,7 +2117,7 @@ def validate_gate_source_semantics(
         )
         check(
             (ci_run["repository"], ci_run["head_sha"], ci_run["workflow_path"])
-            == (inputs["ios"]["repository"], inputs["ios"]["source_sha"], G5_CI_WORKFLOW_PATH),
+            == (inputs["ios"]["repository"], inputs["ios"]["source_sha"], G3_CI_WORKFLOW_PATH),
             f"{label}: iOS CI run is not bound to the candidate",
         )
         xcresult = require_source(

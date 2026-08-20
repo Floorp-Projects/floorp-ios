@@ -25,7 +25,7 @@ MAX_CONTRACT_BYTES = 64 * 1024
 
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 DISPATCH_INPUT = "run_floorp_notes_sync_production_qa"
-G5_WORKFLOW_PATH = ".github/workflows/ci.yml"
+G5_WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 G5_EVENT = "workflow_dispatch"
 G5_HEAD_BRANCH = "main"
 QA_ARTIFACT_NAME = "floorp-notes-sync-two-client-xcresult"

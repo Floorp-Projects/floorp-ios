@@ -63,7 +63,7 @@ def phase1_summary() -> dict[str, Any]:
             "head_sha": "0123456789abcdef0123456789abcdef01234567",
             "job_name": "notes-sync-production-qa",
             "repository": QA.REPOSITORY,
-            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
             "workflow_run_attempt": 1,
             "workflow_run_id": 123456,
         },
@@ -180,7 +180,7 @@ def enablement_record(
         "wire_protocol": "sync15",
         "workflow_event": "workflow_dispatch",
         "workflow_job": "notes-sync-production-enablement",
-        "workflow_path": ".github/workflows/ci.yml",
+        "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
         "workflow_run_attempt": summary["source"]["workflow_run_attempt"],
         "workflow_run_id": summary["source"]["workflow_run_id"],
     }
@@ -234,7 +234,7 @@ class ValidateFloorpNotesSyncProductionEnablementTests(unittest.TestCase):
             "wire_protocol": "sync15",
             "workflow_event": "workflow_dispatch",
             "workflow_job": "notes-sync-production-enablement-waived",
-            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_path": ".github/workflows/floorp-notes-sync-production-qa.yml",
             "workflow_run_attempt": 1,
             "workflow_run_id": 999,
         }

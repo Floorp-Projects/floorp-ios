@@ -14,7 +14,7 @@ from typing import Any
 
 
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 JOB = "notes-sync-production-qa"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")

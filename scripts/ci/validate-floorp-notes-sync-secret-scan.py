@@ -14,7 +14,7 @@ from typing import Any
 
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 SCOPE = [
     "qa-summary",
     "cleanup-receipt",

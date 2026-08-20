@@ -21,7 +21,7 @@ from typing import Any
 REPOSITORY = "Floorp-Projects/floorp-ios"
 MERGE_RESPONSE_SOURCE = "github-api-put-merge-executor"
 WORKFLOW_SOURCE = "protected-guarded-merge-workflow"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 BASE_BRANCH = "main"
 EXECUTOR_HEAD_BRANCH = "agent/floorp-plan-t20-live-executor"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")

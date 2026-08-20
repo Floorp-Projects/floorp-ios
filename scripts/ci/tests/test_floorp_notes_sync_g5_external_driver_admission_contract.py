@@ -13,7 +13,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / ".github/workflows/ci.yml"
+WORKFLOW = ROOT / ".github/workflows/floorp-notes-sync-production-qa.yml"
 CONTRACT = ROOT / "scripts/ci/floorp-notes-sync-g5-external-driver-admission-contract.json"
 VALIDATOR = ROOT / "scripts/ci/validate-floorp-notes-sync-g5-external-driver-admission-contract.py"
 BUILD_CONTRACT = ROOT / "docs/floorp-notes-sync-build-contract.md"

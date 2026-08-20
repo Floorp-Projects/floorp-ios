@@ -74,7 +74,7 @@ def valid_admission_contract() -> dict[str, object]:
         "workflow": {
             "event": "workflow_dispatch",
             "head_branch": "main",
-            "path": ".github/workflows/ci.yml",
+            "path": ".github/workflows/floorp-notes-sync-production-qa.yml",
         },
     }
 

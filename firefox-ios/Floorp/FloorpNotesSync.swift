@@ -643,6 +643,7 @@ struct FloorpNotesSyncCompiledConfiguration {
 enum FloorpNotesSyncReleaseGate {
     private enum BuildMode: String {
         case productionQA = "production-qa"
+        case publicBeta = "public-beta"
         case releaseEnabled = "release-enabled"
     }
 
@@ -784,6 +785,15 @@ enum FloorpNotesSyncReleaseGate {
             return false
         }
 
+        if mode == .publicBeta {
+            return allowsPublicBetaEvidence(
+                root,
+                sourceSHA: sourceSHA,
+                buildNumber: buildNumber,
+                endpointMatrixSHA256: endpointMatrixSHA256
+            )
+        }
+
         if mode == .productionQA,
            root["todo20_contract_version"] != nil {
             return allowsRescopedProductionQACapability(
@@ -812,6 +822,8 @@ enum FloorpNotesSyncReleaseGate {
         let digestKey: String
         let rootKeys: Set<String>
         switch mode {
+        case .publicBeta:
+            return false
         case .productionQA:
             requiredGateNames = ["g1", "g2", "g3", "g4"]
             allowedGateSets = [Set(requiredGateNames)]
@@ -875,6 +887,66 @@ enum FloorpNotesSyncReleaseGate {
         ) == sameReleaseKey
     }
 
+    private static func allowsPublicBetaEvidence(
+        _ root: [String: Any],
+        sourceSHA: String,
+        buildNumber: String,
+        endpointMatrixSHA256: String
+    ) -> Bool {
+        guard hasExactKeys(
+                root,
+                ["approval", "build_contract_mode", "endpoint", "ios", "public_release", "qa", "schema_version", "source"]
+              ),
+              root["public_release"] as? Bool == true,
+              let ios = root["ios"] as? [String: Any],
+              hasExactKeys(ios, ["build_number", "configuration", "repository", "source_sha"]),
+              ios["build_number"] as? String == buildNumber,
+              ios["configuration"] as? String == "FloorpRelease",
+              ios["repository"] as? String == "Floorp-Projects/floorp-ios",
+              ios["source_sha"] as? String == sourceSHA,
+              let source = root["source"] as? [String: Any],
+              hasExactKeys(
+                source,
+                ["event", "head_sha", "job_name", "repository", "workflow_path", "workflow_run_attempt", "workflow_run_id"]
+              ),
+              source["event"] as? String == "workflow_dispatch",
+              source["head_sha"] as? String == sourceSHA,
+              source["job_name"] as? String == "notes-sync-production-qa",
+              source["repository"] as? String == "Floorp-Projects/floorp-ios",
+              source["workflow_path"] as? String
+                == ".github/workflows/floorp-notes-sync-production-qa.yml",
+              isJSONInteger(source["workflow_run_attempt"], greaterThan: 0),
+              isJSONInteger(source["workflow_run_id"], greaterThan: 0),
+              let qa = root["qa"] as? [String: Any],
+              hasExactKeys(
+                qa,
+                ["capability_sha256", "summary_sha256", "workflow_path", "workflow_run_attempt", "workflow_run_id"]
+              ),
+              isLowercaseHex(qa["capability_sha256"] as? String ?? "", count: 64),
+              isLowercaseHex(qa["summary_sha256"] as? String ?? "", count: 64),
+              qa["workflow_path"] as? String == source["workflow_path"] as? String,
+              qa["workflow_run_attempt"] as? Int == source["workflow_run_attempt"] as? Int,
+              qa["workflow_run_id"] as? Int == source["workflow_run_id"] as? Int,
+              let endpoint = root["endpoint"] as? [String: Any],
+              hasExactKeys(
+                endpoint,
+                ["endpoint_policy_sha256", "fxa_configuration", "fxa_hosts", "sync_hosts", "wire_protocol"]
+              ),
+              endpoint["endpoint_policy_sha256"] as? String == endpointMatrixSHA256,
+              endpoint["fxa_configuration"] as? String == "FxAConfig.Server.release",
+              endpoint["fxa_hosts"] as? [String] == fxaHosts,
+              endpoint["sync_hosts"] as? [String] == syncHosts,
+              endpoint["wire_protocol"] as? String == "sync15",
+              let approval = root["approval"] as? [String: Any],
+              hasExactKeys(approval, ["approved", "operator_id", "purpose"]),
+              approval["approved"] as? Bool == true,
+              isNonempty(approval["operator_id"] as? String),
+              approval["purpose"] as? String == "external-testflight" else {
+            return false
+        }
+        return true
+    }
+
     private static func allowsRescopedProductionQACapability(
         _ root: [String: Any],
         sourceSHA: String,
@@ -912,7 +984,8 @@ enum FloorpNotesSyncReleaseGate {
               source["head_sha"] as? String == sourceSHA,
               source["job_name"] as? String == "notes-sync-production-qa",
               source["repository"] as? String == "Floorp-Projects/floorp-ios",
-              source["workflow_path"] as? String == ".github/workflows/ci.yml",
+              source["workflow_path"] as? String
+                == ".github/workflows/floorp-notes-sync-production-qa.yml",
               isJSONInteger(source["workflow_run_attempt"], greaterThan: 0),
               isJSONInteger(source["workflow_run_id"], greaterThan: 0),
               let desktop = root["desktop"] as? [String: Any],

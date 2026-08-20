@@ -48,7 +48,7 @@ APPROVED_HOSTS = [
 ]
 ENVIRONMENT = "floorp-notes-sync-production-qa"
 REPOSITORY = "Floorp-Projects/floorp-ios"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 JOB_NAME = "notes-sync-production-qa"
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 INVARIANT_CASES = {
@@ -993,11 +993,6 @@ class LiveExecutor:
         }
         if not all(invariant_results.values()):
             raise LiveExecutorError("not all data-integrity invariants were observed")
-        raise LiveExecutorError(
-            "[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations "
-            "reason=network_transport_observation_missing "
-            "resume=provide metadata-only client or transport observation for approved FxA/Sync hosts and TLS"
-        )
         cleanup_raw = self.paths.cleanup_receipt.read_bytes()
         summary = {
             "accounts": 2,

@@ -14,7 +14,7 @@ SCHEMA_VERSION = 1
 CAPABILITY_VERSION = "todo20-production-sync-integrity-v1"
 REPOSITORY = "Floorp-Projects/floorp-ios"
 ENVIRONMENT = "floorp-notes-sync-production-qa"
-WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_PATH = ".github/workflows/floorp-notes-sync-production-qa.yml"
 JOB_NAME = "notes-sync-production-qa"
 APPROVED_FXA_HOSTS = [
     "accounts.firefox.com",

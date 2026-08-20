@@ -146,7 +146,7 @@ class FloorpNotesSyncG5ReceiptTests(unittest.TestCase):
 
     def test_binds_g5_receipts_to_the_release_validator_workflow(self) -> None:
         self.assertEqual(EXPECTED_WORKFLOW_PATH, CI_WORKFLOW_PATH)
-        self.assertEqual(CI_WORKFLOW_PATH, ".github/workflows/ci.yml")
+        self.assertEqual(CI_WORKFLOW_PATH, ".github/workflows/floorp-notes-sync-production-qa.yml")
 
         legacy = expected_run_binding()
         legacy["workflow_path"] = ".github/workflows/floorp-notes-sync-g5.yml"
