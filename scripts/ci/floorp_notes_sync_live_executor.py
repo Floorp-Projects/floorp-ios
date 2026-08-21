@@ -88,6 +88,8 @@ CASE_BLOCKERS = {
 # tool paths so coordination does not depend on that cross-namespace PATH.
 SIMULATOR_MKDIR = "/bin/mkdir"
 SIMULATOR_CHMOD = "/bin/chmod"
+SIMULATOR_SPAWN_RETRY_ATTEMPTS = 3
+SIMULATOR_SPAWN_RETRY_DELAY_SECONDS = 5.0
 
 
 class LiveExecutorError(RuntimeError):
@@ -188,14 +190,32 @@ class SimulatorCoordination:
         input_bytes: bytes | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.run(
-            ["xcrun", "simctl", "spawn", self.udid, *command],
-            input=input_bytes,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=private_environment(),
-            check=check,
-        )
+        simctl_command = ["xcrun", "simctl", "spawn", self.udid, *command]
+        result: subprocess.CompletedProcess[bytes] | None = None
+        for attempt in range(SIMULATOR_SPAWN_RETRY_ATTEMPTS):
+            result = subprocess.run(
+                simctl_command,
+                input=input_bytes,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=private_environment(),
+                check=False,
+            )
+            if (
+                result.returncode != 134
+                or attempt == SIMULATOR_SPAWN_RETRY_ATTEMPTS - 1
+            ):
+                break
+            time.sleep(SIMULATOR_SPAWN_RETRY_DELAY_SECONDS)
+        assert result is not None
+        if check and result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                simctl_command,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        return result
 
     def prepare(self) -> None:
         script = (
