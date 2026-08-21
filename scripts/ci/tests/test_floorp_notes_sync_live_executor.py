@@ -66,6 +66,27 @@ class LiveExecutorContractTests(unittest.TestCase):
         self.assertEqual(private["SAFE_MARKER"], "retained")
         self.assertTrue(all(name not in private for name in EXECUTOR.SECRET_ENV_NAMES))
 
+    @patch.object(EXECUTOR.subprocess, "run")
+    def test_simulator_coordination_uses_absolute_tool_paths(self, run) -> None:
+        run.return_value = SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        coordination = EXECUTOR.SimulatorCoordination(
+            "simulator-udid", "/tmp/floorp-notes-sync-test"
+        )
+
+        coordination.prepare()
+        coordination.write(
+            actor="desktop",
+            case_name=EXECUTOR.CASE_NAMES[0],
+            phase="request",
+            outcome="ready",
+            sequence=1,
+        )
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn("/bin/mkdir", commands[0][-1])
+        self.assertIn("/bin/chmod", commands[0][-1])
+        self.assertIn("/bin/chmod", commands[1][-1])
+
     def test_source_binding_requires_manual_main_workflow(self) -> None:
         context = {
             "GITHUB_ACTOR": "operator",

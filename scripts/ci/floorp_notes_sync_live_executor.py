@@ -84,6 +84,10 @@ CASE_BLOCKERS = {
         "resume=provide metadata-only base/revision observation before failure and after authoritative commit"
     ),
 }
+# simctl can pass host runtime-root paths as PATH; use the Simulator's absolute
+# tool paths so coordination does not depend on that cross-namespace PATH.
+SIMULATOR_MKDIR = "/bin/mkdir"
+SIMULATOR_CHMOD = "/bin/chmod"
 
 
 class LiveExecutorError(RuntimeError):
@@ -195,8 +199,8 @@ class SimulatorCoordination:
 
     def prepare(self) -> None:
         script = (
-            f"umask 077; mkdir -p {shlex.quote(self.events)}; "
-            f"chmod 700 {shlex.quote(self.root)} {shlex.quote(self.events)}"
+            f"umask 077; {SIMULATOR_MKDIR} -p {shlex.quote(self.events)}; "
+            f"{SIMULATOR_CHMOD} 700 {shlex.quote(self.root)} {shlex.quote(self.events)}"
         )
         self._spawn(["/bin/sh", "-c", script])
 
@@ -229,7 +233,7 @@ class SimulatorCoordination:
         script = (
             f"umask 077; set -C; "
             f"printf %s {shlex.quote(payload)} > {shlex.quote(path)}; "
-            f"chmod 600 {shlex.quote(path)}"
+            f"{SIMULATOR_CHMOD} 600 {shlex.quote(path)}"
         )
         result = self._spawn(["/bin/sh", "-c", script], check=False)
         if result.returncode != 0:
