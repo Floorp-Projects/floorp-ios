@@ -87,6 +87,22 @@ class LiveExecutorContractTests(unittest.TestCase):
         self.assertIn("/bin/chmod", commands[0][-1])
         self.assertIn("/bin/chmod", commands[1][-1])
 
+    @patch.object(EXECUTOR.time, "sleep")
+    @patch.object(EXECUTOR.subprocess, "run")
+    def test_simulator_coordination_retries_transient_spawn_abort(self, run, sleep) -> None:
+        run.side_effect = [
+            SimpleNamespace(returncode=134, stdout=b"", stderr=b""),
+            SimpleNamespace(returncode=0, stdout=b"", stderr=b""),
+        ]
+        coordination = EXECUTOR.SimulatorCoordination(
+            "simulator-udid", "/tmp/floorp-notes-sync-test"
+        )
+
+        coordination.prepare()
+
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(EXECUTOR.SIMULATOR_SPAWN_RETRY_DELAY_SECONDS)
+
     def test_source_binding_requires_manual_main_workflow(self) -> None:
         context = {
             "GITHUB_ACTOR": "operator",
