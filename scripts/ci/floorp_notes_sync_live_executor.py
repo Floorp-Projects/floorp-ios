@@ -86,8 +86,13 @@ CASE_BLOCKERS = {
 }
 # simctl can pass host runtime-root paths as PATH; use the Simulator's absolute
 # tool paths so coordination does not depend on that cross-namespace PATH.
+# GitHub's macOS 26 runners can also abort the launchd-backed spawn path while
+# the booted iOS 26.2 Simulator is otherwise ready. Standalone spawn uses the
+# Simulator's direct posix_spawn path and keeps this metadata-only bridge
+# independent of launchd's transient state.
 SIMULATOR_MKDIR = "/bin/mkdir"
 SIMULATOR_CHMOD = "/bin/chmod"
+SIMULATOR_SPAWN_MODE = "--standalone"
 SIMULATOR_SPAWN_RETRY_ATTEMPTS = 3
 SIMULATOR_SPAWN_RETRY_DELAY_SECONDS = 5.0
 
@@ -190,7 +195,14 @@ class SimulatorCoordination:
         input_bytes: bytes | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[bytes]:
-        simctl_command = ["xcrun", "simctl", "spawn", self.udid, *command]
+        simctl_command = [
+            "xcrun",
+            "simctl",
+            "spawn",
+            SIMULATOR_SPAWN_MODE,
+            self.udid,
+            *command,
+        ]
         result: subprocess.CompletedProcess[bytes] | None = None
         for attempt in range(SIMULATOR_SPAWN_RETRY_ATTEMPTS):
             result = subprocess.run(

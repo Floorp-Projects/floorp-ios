@@ -102,6 +102,10 @@ class LiveExecutorContractTests(unittest.TestCase):
 
         self.assertEqual(run.call_count, 2)
         sleep.assert_called_once_with(EXECUTOR.SIMULATOR_SPAWN_RETRY_DELAY_SECONDS)
+        self.assertEqual(
+            run.call_args_list[0].args[0][:5],
+            ["xcrun", "simctl", "spawn", EXECUTOR.SIMULATOR_SPAWN_MODE, "simulator-udid"],
+        )
 
     def test_source_binding_requires_manual_main_workflow(self) -> None:
         context = {
