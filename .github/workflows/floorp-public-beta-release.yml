@@ -4,9 +4,22 @@ on:
   workflow_dispatch:
     inputs:
       qa_run_id:
-        description: Successful Floorp Notes Sync public-beta QA workflow run ID.
+        description: Floorp Notes Sync public-beta QA or explicit QA-waiver workflow run ID.
         required: true
         type: string
+      qa_mode:
+        description: Choose live for the two-account production QA or waived when FxA automation is externally blocked.
+        required: true
+        default: live
+        type: choice
+        options:
+          - live
+          - waived
+      acknowledge_live_fxa_qa_waiver:
+        description: Acknowledge that the selected waived candidate has no live FxA/Sync data-integrity claim and requires manual beta validation.
+        required: false
+        default: false
+        type: boolean
       approve_public_beta:
         description: Approve the exact source-bound Sync public-beta candidate.
         required: true
@@ -42,7 +55,9 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
-      inputs.approve_public_beta == true
+      inputs.approve_public_beta == true &&
+      (inputs.qa_mode == 'live' ||
+      (inputs.qa_mode == 'waived' && inputs.acknowledge_live_fxa_qa_waiver == true))
     environment: floorp-notes-sync-production-qa
     runs-on: macos-26
     timeout-minutes: 240
@@ -71,7 +86,8 @@ jobs:
             exit 78
           }
 
-      - name: Download source-bound public-beta QA evidence
+      - name: Download source-bound live public-beta QA evidence
+        if: inputs.qa_mode == 'live'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: floorp-notes-sync-public-beta-qa-${{ inputs.qa_run_id }}
@@ -80,14 +96,26 @@ jobs:
           repository: ${{ github.repository }}
           github-token: ${{ github.token }}
 
+      - name: Download source-bound waived public-beta QA evidence
+        if: inputs.qa_mode == 'waived'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: floorp-notes-sync-public-beta-qa-waived-${{ inputs.qa_run_id }}
+          path: ${{ runner.temp }}/floorp-public-beta/qa
+          run-id: ${{ inputs.qa_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
       - name: Verify QA evidence binding
         env:
           QA_RUN_ID: ${{ inputs.qa_run_id }}
+          QA_MODE: ${{ inputs.qa_mode }}
         run: |
           set -euo pipefail
           qa_root="$RUNNER_TEMP/floorp-public-beta/qa"
-          /usr/bin/python3 - "$qa_root" "$GITHUB_SHA" "$QA_RUN_ID" "$GITHUB_ENV" <<'PY'
+          /usr/bin/python3 - "$qa_root" "$GITHUB_SHA" "$QA_RUN_ID" "$QA_MODE" "$GITHUB_ENV" <<'PY'
           import json
+          import importlib.util
           import os
           import sys
           from pathlib import Path
@@ -95,7 +123,11 @@ jobs:
           root = Path(sys.argv[1])
           source_sha = sys.argv[2]
           run_id = int(sys.argv[3])
-          env_path = Path(sys.argv[4])
+          mode = sys.argv[4]
+          env_path = Path(sys.argv[5])
+
+          def fail(message: str) -> None:
+              raise SystemExit(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason={message}")
 
           def one(name: str) -> Path:
               matches = [path for path in root.rglob(name) if path.is_file() and not path.is_symlink()]
@@ -103,31 +135,56 @@ jobs:
                   raise SystemExit(f"[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason={name}_ambiguous resume=download one canonical QA artifact")
               return matches[0]
 
-          summary_path = one("qa-summary.json")
-          capability_path = one("production-qa-capability.json")
-          summary = json.loads(summary_path.read_text(encoding="utf-8"))
-          capability = json.loads(capability_path.read_text(encoding="utf-8"))
-          source = summary.get("source", {})
-          if source.get("head_sha") != source_sha or source.get("workflow_run_id") != run_id:
-              raise SystemExit("[blocked] OID_DRIFT owner=Operations reason=qa_source_mismatch resume=use QA evidence from this exact main source SHA and run")
-          if source.get("job_name") != "notes-sync-public-beta-qa" or source.get("workflow_path") != ".github/workflows/floorp-notes-sync-public-beta-qa.yml":
-              raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=qa_workflow_binding_invalid resume=use the public-beta QA workflow artifact")
-          if summary.get("public_release") is not False or capability.get("public_release") is not False:
-              raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=qa_artifact_is_distributable resume=regenerate the non-distributed public-beta QA artifact")
-          if capability.get("source") != source or capability.get("ios_build_number") != "4":
-              raise SystemExit("[blocked] OID_DRIFT owner=Operations reason=qa_capability_mismatch resume=use matching summary and capability artifacts")
-          desktop_sha = capability.get("desktop", {}).get("source_sha")
-          if not isinstance(desktop_sha, str) or len(desktop_sha) != 40:
-              raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=desktop_source_missing resume=use a source-bound Desktop capability")
+          if mode == "live":
+              summary_path = one("qa-summary.json")
+              capability_path = one("production-qa-capability.json")
+              summary = json.loads(summary_path.read_text(encoding="utf-8"))
+              capability = json.loads(capability_path.read_text(encoding="utf-8"))
+              source = summary.get("source", {})
+              if source.get("head_sha") != source_sha or source.get("workflow_run_id") != run_id:
+                  raise SystemExit("[blocked] OID_DRIFT owner=Operations reason=qa_source_mismatch resume=use QA evidence from this exact main source SHA and run")
+              if source.get("job_name") != "notes-sync-public-beta-qa" or source.get("workflow_path") != ".github/workflows/floorp-notes-sync-public-beta-qa.yml":
+                  raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=qa_workflow_binding_invalid resume=use the public-beta QA workflow artifact")
+              if summary.get("public_release") is not False or capability.get("public_release") is not False:
+                  raise SystemExit("[blocked] EXTERNAL_REVIEW_PENDING owner=Operations reason=qa_artifact_is_distributable resume=regenerate the non-distributed public-beta QA artifact")
+              if capability.get("source") != source or capability.get("ios_build_number") != "4":
+                  raise SystemExit("[blocked] OID_DRIFT owner=Operations reason=qa_capability_mismatch resume=use matching summary and capability artifacts")
+              desktop_sha = capability.get("desktop", {}).get("source_sha")
+              if not isinstance(desktop_sha, str) or len(desktop_sha) != 40:
+                  raise SystemExit("[blocked] UPSTREAM_ARTIFACT_MISSING owner=Operations reason=desktop_source_missing resume=use a source-bound Desktop capability")
+          elif mode == "waived":
+              waiver_path = one("public-beta-qa-waiver.json")
+              module_path = Path("scripts/release/floorp_notes_sync_public_beta_qa_waiver.py").resolve()
+              spec = importlib.util.spec_from_file_location("public_beta_qa_waiver", module_path)
+              if spec is None or spec.loader is None:
+                  fail("waiver_validator_unavailable")
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              waiver = module.parse_bytes(waiver_path.read_bytes())
+              module.validate_waiver(
+                  waiver,
+                  expected_source_sha=source_sha,
+                  expected_run_id=run_id,
+              )
+              source = waiver["source"]
+              desktop_sha = waiver["desktop"]["source_sha"]
+              if waiver["ios"]["build_number"] != "4":
+                  fail("waiver_build_number_mismatch")
+          else:
+              fail("qa_mode_invalid")
 
           def write_env(name: str, value: str) -> None:
               env_path.open("a", encoding="utf-8").write(f"{name}={value}\n")
 
           write_env("FLOORP_PUBLIC_BETA_QA_ROOT", str(root))
-          write_env("FLOORP_PUBLIC_BETA_QA_SUMMARY", str(summary_path))
-          write_env("FLOORP_PUBLIC_BETA_QA_CAPABILITY", str(capability_path))
+          write_env("FLOORP_PUBLIC_BETA_QA_MODE", mode)
+          if mode == "live":
+              write_env("FLOORP_PUBLIC_BETA_QA_SUMMARY", str(summary_path))
+              write_env("FLOORP_PUBLIC_BETA_QA_CAPABILITY", str(capability_path))
+          else:
+              write_env("FLOORP_PUBLIC_BETA_QA_WAIVER", str(waiver_path))
           write_env("FLOORP_PUBLIC_BETA_DESKTOP_SHA", desktop_sha)
-          print('{"status":"qa-evidence-bound"}')
+          print(json.dumps({"mode": mode, "status": "qa-evidence-bound"}, separators=(",", ":"), sort_keys=True))
           PY
 
       - name: Set up Node.js
@@ -162,15 +219,26 @@ jobs:
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/floorp-public-beta/public-beta-evidence.json"
-          /usr/bin/python3 -I scripts/release/create-floorp-notes-sync-public-beta-evidence.py \
-            --summary "$FLOORP_PUBLIC_BETA_QA_SUMMARY" \
-            --capability "$FLOORP_PUBLIC_BETA_QA_CAPABILITY" \
-            --source-sha "$GITHUB_SHA" \
-            --desktop-sha "$FLOORP_PUBLIC_BETA_DESKTOP_SHA" \
-            --build-number "$FLOORP_BUILD_NUMBER" \
-            --operator-id "$GITHUB_ACTOR" \
-            --approve-public-beta \
-            --output "$evidence"
+          if [ "$FLOORP_PUBLIC_BETA_QA_MODE" = "live" ]; then
+            /usr/bin/python3 -I scripts/release/create-floorp-notes-sync-public-beta-evidence.py \
+              --summary "$FLOORP_PUBLIC_BETA_QA_SUMMARY" \
+              --capability "$FLOORP_PUBLIC_BETA_QA_CAPABILITY" \
+              --source-sha "$GITHUB_SHA" \
+              --desktop-sha "$FLOORP_PUBLIC_BETA_DESKTOP_SHA" \
+              --build-number "$FLOORP_BUILD_NUMBER" \
+              --operator-id "$GITHUB_ACTOR" \
+              --approve-public-beta \
+              --output "$evidence"
+          else
+            /usr/bin/python3 -I scripts/release/create-floorp-notes-sync-public-beta-evidence.py \
+              --waiver "$FLOORP_PUBLIC_BETA_QA_WAIVER" \
+              --source-sha "$GITHUB_SHA" \
+              --desktop-sha "$FLOORP_PUBLIC_BETA_DESKTOP_SHA" \
+              --build-number "$FLOORP_BUILD_NUMBER" \
+              --operator-id "$GITHUB_ACTOR" \
+              --approve-public-beta \
+              --output "$evidence"
+          fi
           printf 'FLOORP_PUBLIC_BETA_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
 
       - name: Install Apple signing and App Store Connect credentials
@@ -525,6 +593,7 @@ jobs:
           name: floorp-public-beta-release-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/floorp-public-beta/public-beta-evidence.json
+            ${{ runner.temp }}/floorp-public-beta/qa/public-beta-qa-waiver.json
             ${{ runner.temp }}/floorp-public-beta/public-beta-submission.json
             ${{ runner.temp }}/floorp-public-beta/testflight-readback.json
             ${{ runner.temp }}/floorp-public-beta/release-evidence.json

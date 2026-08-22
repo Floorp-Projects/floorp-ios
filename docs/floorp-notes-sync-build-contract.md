@@ -14,7 +14,7 @@ worktree; no source or Xcode project file is rewritten during a build.
 | `production-qa` | G1-G4 and a repository/head-bound validation clock | `true / true` | rejected |
 | `release-disabled` | none; evidence inputs are rejected | `false / false` | unsigned build/archive only |
 | `release-enabled` | G1-G5 and a fresh repository/head-bound validation clock | `true / true` | device archive signing only with `--allow-signing` |
-| `public-beta` | one validated protected two-client QA capability plus explicit external-TestFlight approval | `true / true` | signed device archive via the public-beta wrapper |
+| `public-beta` | one validated protected two-client QA capability, or an explicit source-bound FxA QA waiver, plus external-TestFlight approval | `true / true` | signed device archive via the public-beta wrapper |
 
 Production QA is a non-distributable build used to validate the two-client
 production path. All enabled modes are hard-bound to `FxAConfig.Server.release`, `sync15`, no custom FxA or
@@ -25,9 +25,12 @@ token-server override, and the eight Mozilla production FxA/Sync hosts in
 `FloorpRelease` remains fail-closed through `release-disabled`; Todo 20 may
 produce an enabled artifact from the same clean source SHA after G5 exists.
 `public-beta` is also not a repository default: its evidence record is created
-only from a successful protected QA summary and capability, with an explicit
-`external-testflight` approval. The public-beta wrapper then binds the signed
-archive to that record and its exact source SHA.
+from either a successful protected QA summary/capability or a separately
+validated, source-bound FxA QA waiver, with an explicit `external-testflight`
+approval. The waiver records `data_integrity_claim: false` and
+`manual_validation_required: true`; it must never be treated as successful live
+Sync QA. The public-beta wrapper then binds the signed archive to that record
+and its exact source SHA.
 
 ## Validator boundary
 
