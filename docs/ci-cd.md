@@ -197,7 +197,7 @@ The shared `Floorp` scheme now archives with `FloorpRelease` in Xcode Cloud. The
 1. In Signing & Capabilities, explicitly confirm the main `app.floorp.Floorp` bundle ID once before initial setup because the project derives it from an `.xcconfig` file. Register extension IDs only when those targets return to the release.
 2. Connect `Floorp-Projects/Floorp-iOS` to Xcode Cloud from Xcode's Report navigator. A GitHub organization owner must authorize the first connection.
 3. Keep `Floorp TestFlight Manual` manually started and restricted to `main`; App Store Connect remains the direct fallback for starting a build.
-4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml` when the deployment should be visible as an explicit GitHub Actions run. It validates the pinned workflow and repository, starts the Xcode Cloud run through `POST /v1/ciBuildRuns`, and optionally waits for completion.
+4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml` when the deployment should be visible as an explicit GitHub Actions run. It validates the pinned workflow and repository, starts the Xcode Cloud run through `POST /v1/ciBuildRuns`, writes the App Store Connect build URL to the Actions log and summary immediately, and optionally waits for completion.
 5. Let Xcode Cloud manage signing; verify the Client-only app is signed by the Floorp team and inspect its production entitlements. Repeat this check for each extension if one is restored later.
 6. Confirm `firefox-ios/TestFlight/WhatToTest.en-US.txt` appears in the TestFlight build and invite the internal group.
 7. Add a separate ordinary App Store workflow later by reusing `scripts/release/trigger-xcode-cloud.py` with its own pinned Xcode Cloud workflow ID and distribution target.

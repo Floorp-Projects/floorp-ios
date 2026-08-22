@@ -86,7 +86,7 @@ jobs:
               handle.write(f"APP_STORE_CONNECT_PRIVATE_KEY_PATH={key_path}\n")
           PY
 
-      - name: Start Xcode Cloud and optionally wait for completion
+      - name: Start Xcode Cloud
         run: |
           set -euo pipefail
           output="$RUNNER_TEMP/floorp-xcode-cloud-run.json"
@@ -101,11 +101,67 @@ jobs:
             --output "$output"
             --authorize-mutation
           )
-          if [[ "${{ inputs.wait_for_completion }}" == "true" ]]; then
-            args+=(--wait)
-          fi
           python3 scripts/release/trigger-xcode-cloud.py "${args[@]}"
           printf 'FLOORP_XCODE_CLOUD_RUN=%s\n' "$output" >> "$GITHUB_ENV"
+
+          /usr/bin/python3 - "$output" "$GITHUB_ENV" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          run = report.get("run") or {}
+          run_id = run.get("id")
+          build_url = report.get("build_url")
+          if not isinstance(run_id, str) or not run_id:
+              raise SystemExit("Xcode Cloud response did not contain a run ID")
+          if not isinstance(build_url, str) or not build_url:
+              raise SystemExit("Xcode Cloud response did not contain a build URL")
+
+          with Path(sys.argv[2]).open("a", encoding="utf-8") as handle:
+              handle.write(f"FLOORP_XCODE_CLOUD_RUN_ID={run_id}\n")
+          with Path(sys.argv[3]).open("a", encoding="utf-8") as summary:
+              summary.write("### Xcode Cloud build started\n\n")
+              summary.write(f"- Xcode Cloud run: `{run_id}`\n")
+              summary.write(f"- [Open App Store Connect build]({build_url})\n")
+          print(f"Xcode Cloud build URL: {build_url}")
+          PY
+
+      - name: Wait for Xcode Cloud to finish
+        if: inputs.wait_for_completion == true
+        run: |
+          set -euo pipefail
+          terminal="$RUNNER_TEMP/floorp-xcode-cloud-terminal.json"
+          if /usr/bin/python3 scripts/release/app-store-connect-api.py wait-ci-run \
+            --run-id "$FLOORP_XCODE_CLOUD_RUN_ID" \
+            --expected-head "$GITHUB_SHA" \
+            --output "$terminal"; then
+            wait_status=0
+          else
+            wait_status=$?
+          fi
+
+          if [[ -f "$terminal" ]]; then
+            /usr/bin/python3 - "$FLOORP_XCODE_CLOUD_RUN" "$terminal" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report_path = Path(sys.argv[1])
+          terminal_path = Path(sys.argv[2])
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          terminal = json.loads(terminal_path.read_text(encoding="utf-8"))
+          run = terminal.get("data")
+          if not isinstance(run, dict):
+              raise SystemExit("Xcode Cloud completion response did not contain run data")
+          report["run"] = run
+          report_path.write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          fi
+          exit "$wait_status"
 
       - name: Publish deployment summary
         if: always()
