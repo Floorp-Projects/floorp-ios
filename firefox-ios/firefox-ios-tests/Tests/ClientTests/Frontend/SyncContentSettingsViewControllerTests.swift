@@ -60,7 +60,7 @@ class SyncContentSettingsViewControllerTests: XCTestCase {
         XCTAssertEqual(engineSectionChildren?.count, 6)
     }
 
-    func test_notesRuntimePolicySettingIsExposedOnlyForReleaseEnabledBuild() throws {
+    func test_notesRuntimePolicySettingIsExposedForAnEnabledReleaseBuild() throws {
         let viewController = SyncContentSettingsViewController(
             windowUUID: windowUUID,
             notesSyncAvailable: { true }

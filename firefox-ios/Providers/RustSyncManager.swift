@@ -233,6 +233,12 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     private var floorpNotesCompiledEvidenceAllows = false
 
     static let floorpNotesRuntimeEnabledPref = "floorp.notes.sync.runtime-enabled"
+    // The first enabled FloorpRelease build must not inherit the false value
+    // written by older builds whose compiled policy deliberately disabled
+    // Notes Sync. Once this version is recorded, the user's toggle is kept.
+    static let floorpNotesRuntimePolicyVersionPref =
+        "floorp.notes.sync.runtime-policy-version"
+    static let floorpNotesRuntimePolicyVersion: Int32 = 1
 
     let fifteenMinutesInterval = TimeInterval(60 * 15)
 
@@ -555,6 +561,18 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     func bootstrapFloorpNotesRuntimePolicy(compiledEvidenceAllows: Bool) {
         syncLifecycleLock.withLock {
             floorpNotesCompiledEvidenceAllows = compiledEvidenceAllows
+        }
+        if compiledEvidenceAllows,
+           prefs.intForKey(Self.floorpNotesRuntimePolicyVersionPref)
+                != Self.floorpNotesRuntimePolicyVersion {
+            prefs.setBool(
+                true,
+                forKey: Self.floorpNotesRuntimeEnabledPref
+            )
+            prefs.setInt(
+                Self.floorpNotesRuntimePolicyVersion,
+                forKey: Self.floorpNotesRuntimePolicyVersionPref
+            )
         }
         if prefs.boolForKey(Self.floorpNotesRuntimeEnabledPref) == nil {
             prefs.setBool(
