@@ -360,11 +360,13 @@ jobs:
       - name: Run repository contract tests
         run: |
           set -euo pipefail
-          /usr/bin/python3 -m unittest discover \
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            /usr/bin/python3 -m unittest discover \
             -s scripts/ci/tests \
             -p 'test_*.py' \
             | tee "$RUNNER_TEMP/public-beta-waiver-repository-tests.log"
-          /usr/bin/python3 -m unittest discover \
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            /usr/bin/python3 -m unittest discover \
             -s scripts/release/tests \
             -p 'test_*.py' \
             | tee -a "$RUNNER_TEMP/public-beta-waiver-repository-tests.log"
