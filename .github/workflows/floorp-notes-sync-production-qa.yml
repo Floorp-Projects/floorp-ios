@@ -793,6 +793,11 @@ jobs:
           git -C "$GITHUB_WORKSPACE" checkout --detach --force FETCH_HEAD
           test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
 
+      - name: Set up Deno
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2
+        with:
+          deno-version: v2.x
+
       - name: Check guarded merge artifact selector
         run: |
           set -euo pipefail
