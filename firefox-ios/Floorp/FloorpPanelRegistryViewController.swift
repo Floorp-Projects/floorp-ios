@@ -606,10 +606,17 @@ final class FloorpPanelRegistryViewController: UIViewController,
     }
 
     @objc private func editTapped() {
-        setEditing(!isEditing, animated: true)
+        setEditing(true, animated: true)
+    }
+
+    @objc private func doneEditingTapped() {
+        setEditing(false, animated: true)
     }
 
     @objc private func doneTapped() {
+        if isEditing {
+            setEditing(false, animated: false)
+        }
         if let onDone {
             onDone()
         } else {
@@ -653,7 +660,7 @@ final class FloorpPanelRegistryViewController: UIViewController,
         editButton = UIBarButtonItem(
             barButtonSystemItem: editing ? .done : .edit,
             target: self,
-            action: #selector(editTapped)
+            action: editing ? #selector(doneEditingTapped) : #selector(editTapped)
         )
         editButton.accessibilityLabel = editing
             ? FloorpStrings.PanelRegistry.doneEditing

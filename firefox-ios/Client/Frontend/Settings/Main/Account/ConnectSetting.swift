@@ -38,9 +38,14 @@ class ConnectSetting: WithoutAccountSetting {
 
     override func onConfigureCell(_ cell: UITableViewCell, theme: Theme) {
         super.onConfigureCell(cell, theme: theme)
-        cell.imageView?.image = UIImage.templateImageNamed(StandardImageIdentifiers.Large.logoFloorp)
-        cell.imageView?.tintColor = theme.colors.textDisabled
-        cell.imageView?.layer.cornerRadius = (cell.imageView?.frame.size.width)! / 2
-        cell.imageView?.layer.masksToBounds = true
+        guard let imageView = cell.imageView else { return }
+        imageView.subviews.forEach { $0.removeFromSuperview() }
+        imageView.frame = CGRect(width: 30, height: 30)
+        imageView.contentMode = .scaleAspectFit
+        imageView.image = UIImage.templateImageNamed(StandardImageIdentifiers.Large.logoFloorp)?
+            .createScaled(CGSize(width: 30, height: 30))
+        imageView.tintColor = theme.colors.textDisabled
+        imageView.layer.cornerRadius = 15
+        imageView.layer.masksToBounds = true
     }
 }
