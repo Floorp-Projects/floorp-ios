@@ -112,10 +112,9 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "## Floorp TestFlight deployment"
-            echo
-            echo "- Source: `main` (`$GITHUB_SHA`)"
-            echo "- Xcode Cloud workflow: `$FLOORP_XCODE_CLOUD_WORKFLOW_NAME`"
+            printf '%s\n\n' '## Floorp TestFlight deployment'
+            printf -- '- Source: `main` (`%s`)\n' "$GITHUB_SHA"
+            printf -- '- Xcode Cloud workflow: `%s`\n' "$FLOORP_XCODE_CLOUD_WORKFLOW_NAME"
             if [[ -n "${FLOORP_XCODE_CLOUD_RUN:-}" && -f "$FLOORP_XCODE_CLOUD_RUN" ]]; then
               /usr/bin/python3 - "$FLOORP_XCODE_CLOUD_RUN" <<'PY'
           import json
