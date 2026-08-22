@@ -298,7 +298,7 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, serialized)
         self.assertIsNone(re.search(r"\bxcodebuild\s+test(?:\s|$)", serialized))
 
-    def test_docs_and_release_defaults_preserve_the_fail_closed_boundary(self) -> None:
+    def test_docs_and_release_defaults_preserve_the_evidence_boundary(self) -> None:
         contract = BUILD_CONTRACT.read_text(encoding="utf-8")
         for expected in (
             "protected manual preflight",
@@ -313,8 +313,11 @@ class FloorpNotesSyncProtectedPreflightContractTests(unittest.TestCase):
             self.assertIn(expected, contract)
 
         release = RELEASE_CONFIG.read_text(encoding="utf-8")
-        self.assertIn("FLOORP_NOTES_SYNC_REQUESTED = NO", release)
-        self.assertIn("FLOORP_NOTES_SYNC_EFFECTIVE = NO", release)
+        self.assertIn("FLOORP_NOTES_SYNC_BUILD_MODE = release-default", release)
+        self.assertIn("FLOORP_NOTES_SYNC_REQUESTED = YES", release)
+        self.assertIn("FLOORP_NOTES_SYNC_EFFECTIVE = YES", release)
+        self.assertIn("FLOORP_NOTES_SYNC_ENDPOINT_AUTHORITY = production", release)
+        self.assertIn("FLOORP_NOTES_SYNC_PROTOCOL = sync15", release)
 
 
 if __name__ == "__main__":

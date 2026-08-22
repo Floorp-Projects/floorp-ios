@@ -13,8 +13,9 @@ release-blocking regression requires reprioritization.
 - Floorp Notes supports local create, edit, search, delete, persistence,
   corruption recovery, and safe read-only projection of unsupported desktop
   rich-text content.
-- Notes are local to one device. Push, hosted summarization, and all app
-  extensions remain disabled in `FloorpRelease`.
+- Notes support local persistence plus optional production FxA/Sync in
+  `FloorpRelease`; hosted summarization, Push, and all app extensions remain
+  disabled.
 
 ## Milestone 0.2.0 — Floorp Notes Local v1
 

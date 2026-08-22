@@ -6,6 +6,9 @@ public-beta path is `scripts/release/build-floorp-notes-sync-public-beta.sh`.
 Both build the `Floorp` scheme from the existing `FloorpRelease` configuration.
 Mode-specific values come from a generated `-xcconfig` outside the source
 worktree; no source or Xcode project file is rewritten during a build.
+The ordinary `release-default` row is the checked-in configuration consumed
+directly by Xcode Cloud; the staging wrapper remains focused on its explicit
+QA and release-evidence modes.
 
 ## Modes
 
@@ -13,6 +16,7 @@ worktree; no source or Xcode project file is rewritten during a build.
 | --- | --- | --- | --- |
 | `production-qa` | G1-G4 and a repository/head-bound validation clock | `true / true` | rejected |
 | `release-disabled` | none; evidence inputs are rejected | `false / false` | unsigned build/archive only |
+| `release-default` | none; the checked-in production endpoint policy is required | `true / true` | ordinary FloorpRelease archive; Xcode Cloud distribution |
 | `release-enabled` | G1-G5 and a fresh repository/head-bound validation clock | `true / true` | device archive signing only with `--allow-signing` |
 | `public-beta` | one validated protected two-client QA capability, or an explicit source-bound FxA QA waiver, plus external-TestFlight approval | `true / true` | signed device archive via the public-beta wrapper |
 
@@ -21,10 +25,13 @@ production path. All enabled modes are hard-bound to `FxAConfig.Server.release`,
 token-server override, and the eight Mozilla production FxA/Sync hosts in
 `docs/floorp-release-endpoints.json`.
 
-`release-enabled` does not become the repository default. A normal
-`FloorpRelease` remains fail-closed through `release-disabled`; Todo 20 may
-produce an enabled artifact from the same clean source SHA after G5 exists.
-`public-beta` is also not a repository default: its evidence record is created
+`release-enabled` remains the strict source-bound release-evidence path. A
+normal `FloorpRelease` uses `release-default`, which enables the optional Sync
+feature while keeping the production endpoint matrix, FxA server, and sync15
+protocol fixed in the checked-in configuration. `release-disabled` is an
+explicit local-only fallback, not the ordinary release default.
+`public-beta` evidence is also not required for the ordinary Xcode Cloud path:
+its evidence record is created
 from either a successful protected QA summary/capability or a separately
 validated, source-bound FxA QA waiver, with an explicit `external-testflight`
 approval. The waiver records `data_integrity_claim: false` and
@@ -332,8 +339,10 @@ The generated xcconfig provides these build settings:
 - `FLOORP_NOTES_SYNC_EVIDENCE_RESOURCE`
 - `FLOORP_NOTES_SYNC_EVIDENCE_RESOURCE_SHA256`
 
-The app integration must copy the evidence resource byte-for-byte when the
-effective gate is true and expose the corresponding build values as these
+The app integration must copy the evidence resource byte-for-byte when an
+evidence-backed mode has an effective gate, while `release-default` must not
+require or embed that resource. All modes expose the corresponding build
+values as these
 Info.plist keys:
 
 - `MozFloorpNotesSyncBuildMode`
@@ -478,8 +487,10 @@ OUT="$(mktemp -d "${TMPDIR:-/tmp}/floorp-notes-sync-real.XXXXXX")"
   --destination 'generic/platform=iOS Simulator'
 ```
 
-An enabled real build additionally requires current validated evidence whose
-`release_inputs.ios.build_number` is exactly the `FloorpRelease` build number.
+An evidence-backed real build additionally requires current validated evidence
+whose `release_inputs.ios.build_number` is exactly the `FloorpRelease` build
+number. The ordinary `release-default` build uses the checked-in endpoint
+matrix and does not require a generated evidence file.
 
 The public-beta build wrapper builds and archives only. The protected
 `floorp-public-beta-release.yml` workflow performs export, signing, upload,

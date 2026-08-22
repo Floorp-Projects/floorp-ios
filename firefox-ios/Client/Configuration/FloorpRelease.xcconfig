@@ -40,19 +40,21 @@ MOZ_TODAY_WIDGET_SEARCH_DISPLAY_NAME = Floorp - Search
 MOZ_ALLOW_HOSTED_SUMMARIZER = NO
 MOZ_ALLOW_QUICK_ANSWERS = NO
 MOZ_ALLOW_REMOTE_PUSH_NOTIFICATIONS = NO
-// Todo 19 ships the capability fail-closed. Todo 20 may override these only
-// from a validated, worktree-external G1-G5 build configuration.
-FLOORP_NOTES_SYNC_BUILD_MODE = release-disabled
+// Ordinary FloorpRelease builds exercise the same optional Notes Sync path
+// used by internal and public TestFlight builds. The explicit
+// release-disabled mode remains available to callers that need a local-only
+// archive for a focused regression.
+FLOORP_NOTES_SYNC_BUILD_MODE = release-default
 FLOORP_NOTES_SYNC_SOURCE_SHA =
-FLOORP_NOTES_SYNC_REQUESTED = NO
-FLOORP_NOTES_SYNC_EFFECTIVE = NO
+FLOORP_NOTES_SYNC_REQUESTED = YES
+FLOORP_NOTES_SYNC_EFFECTIVE = YES
 FLOORP_NOTES_SYNC_FXA_SERVER = release
 FLOORP_NOTES_SYNC_ENDPOINT_AUTHORITY = production
 FLOORP_NOTES_SYNC_PROTOCOL = sync15
 FLOORP_NOTES_SYNC_CUSTOM_FXA_OVERRIDE = NO
 FLOORP_NOTES_SYNC_CUSTOM_TOKEN_SERVER_OVERRIDE = NO
-FLOORP_NOTES_SYNC_ALLOWED_HOSTS =
-FLOORP_NOTES_SYNC_ENDPOINT_MATRIX_SHA256 =
+FLOORP_NOTES_SYNC_ALLOWED_HOSTS = accounts.firefox.com,api.accounts.firefox.com,event-sync.services.mozilla.com,oauth.accounts.firefox.com,profile.accounts.firefox.com,static.accounts.firefox.com,sync.services.mozilla.com,token.services.mozilla.com
+FLOORP_NOTES_SYNC_ENDPOINT_MATRIX_SHA256 = af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca
 FLOORP_NOTES_SYNC_EVIDENCE_DIGEST =
 FLOORP_NOTES_SYNC_EVIDENCE_RESOURCE =
 FLOORP_NOTES_SYNC_EVIDENCE_RESOURCE_SHA256 =

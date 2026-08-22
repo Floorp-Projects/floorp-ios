@@ -346,7 +346,7 @@ class SyncContentSettingsViewController: SettingsTableViewController {
         let notes = FloorpNotesRuntimeSetting(
             prefs: profile.prefs,
             prefKey: RustSyncManager.floorpNotesRuntimeEnabledPref,
-            defaultValue: false,
+            defaultValue: true,
             attributedTitleText: NSAttributedString(
                 string: FloorpStrings.Notes.syncSettingTitle
             ),

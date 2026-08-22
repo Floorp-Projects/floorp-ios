@@ -637,13 +637,15 @@ struct FloorpNotesSyncCompiledConfiguration {
 }
 
 /// Network Notes Sync is release-gated independently of build-time feature
-/// flags. Ordinary checked-in FloorpRelease settings are false. An enabled
-/// build must bind every runtime surface to one validated, byte-identical
-/// evidence resource produced outside the clean source worktree.
+/// flags. Ordinary FloorpRelease builds use the reviewed production endpoint
+/// policy directly; source-bound QA and release-enabled builds additionally
+/// bind every runtime surface to a validated, byte-identical evidence resource
+/// produced outside the clean source worktree.
 enum FloorpNotesSyncReleaseGate {
     private enum BuildMode: String {
         case productionQA = "production-qa"
         case publicBeta = "public-beta"
+        case releaseDefault = "release-default"
         case releaseEnabled = "release-enabled"
     }
 
@@ -721,13 +723,6 @@ enum FloorpNotesSyncReleaseGate {
         #if DEBUG || TESTING
         false
         #else
-        guard let evidenceURL = Bundle.main.url(
-            forResource: evidenceResourceName,
-            withExtension: "json"
-        ),
-              let evidenceData = try? Data(contentsOf: evidenceURL) else {
-            return false
-        }
         let configuration = FloorpNotesSyncCompiledConfiguration(
             buildMode: Bundle.main.object(forInfoDictionaryKey: buildModeKey),
             sourceSHA: Bundle.main.object(forInfoDictionaryKey: sourceSHAKey) as? String,
@@ -745,8 +740,41 @@ enum FloorpNotesSyncReleaseGate {
             evidenceResourceSHA256:
                 Bundle.main.object(forInfoDictionaryKey: evidenceResourceSHA256Key) as? String
         )
+
+        if allowsDefaultReleaseConfiguration(configuration) {
+            return true
+        }
+
+        guard let evidenceURL = Bundle.main.url(
+            forResource: evidenceResourceName,
+            withExtension: "json"
+        ),
+              let evidenceData = try? Data(contentsOf: evidenceURL) else {
+            return false
+        }
         return allowsCompiledEvidence(configuration, evidenceData: evidenceData)
         #endif
+    }
+
+    /// The ordinary FloorpRelease path intentionally has a small, auditable
+    /// contract. It does not require a generated QA evidence file, but it
+    /// still refuses an unknown build mode or any endpoint-policy drift.
+    static func allowsDefaultReleaseConfiguration(
+        _ configuration: FloorpNotesSyncCompiledConfiguration
+    ) -> Bool {
+        guard configuration.buildMode as? String == BuildMode.releaseDefault.rawValue,
+              isNonempty(configuration.buildNumber),
+              isEnabled(configuration.requested),
+              isEnabled(configuration.effective),
+              isEnabled(configuration.registrationAllowed),
+              isEnabled(configuration.engineRequestsAllowed),
+              isEnabled(configuration.uiExposureAllowed),
+              configuration.endpointAuthority == "production",
+              configuration.wireProtocol == "sync15",
+              configuration.endpointMatrixSHA256 == endpointPolicySHA256 else {
+            return false
+        }
+        return true
     }
 
     // The legacy G1-G5 path remains byte-for-byte fail-closed beside the
@@ -823,6 +851,8 @@ enum FloorpNotesSyncReleaseGate {
         let rootKeys: Set<String>
         switch mode {
         case .publicBeta:
+            return false
+        case .releaseDefault:
             return false
         case .productionQA:
             requiredGateNames = ["g1", "g2", "g3", "g4"]

@@ -1355,6 +1355,71 @@ final class FloorpNotesApplicationServicesAdapterTests: XCTestCase {
         )
     }
 
+    func testDefaultReleaseConfigurationEnablesSyncWithoutEvidenceResource() {
+        let configuration = FloorpNotesSyncCompiledConfiguration(
+            buildMode: "release-default",
+            sourceSHA: nil,
+            buildNumber: "4",
+            requested: "YES",
+            effective: "YES",
+            registrationAllowed: "YES",
+            engineRequestsAllowed: "YES",
+            uiExposureAllowed: "YES",
+            endpointAuthority: "production",
+            wireProtocol: "sync15",
+            endpointMatrixSHA256:
+                "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca",
+            evidenceDigest: nil,
+            evidenceResourceSHA256: nil
+        )
+
+        XCTAssertTrue(
+            FloorpNotesSyncReleaseGate.allowsDefaultReleaseConfiguration(
+                configuration
+            )
+        )
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsDefaultReleaseConfiguration(
+                FloorpNotesSyncCompiledConfiguration(
+                    buildMode: "release-disabled",
+                    sourceSHA: configuration.sourceSHA,
+                    buildNumber: configuration.buildNumber,
+                    requested: configuration.requested,
+                    effective: configuration.effective,
+                    registrationAllowed: configuration.registrationAllowed,
+                    engineRequestsAllowed: configuration.engineRequestsAllowed,
+                    uiExposureAllowed: configuration.uiExposureAllowed,
+                    endpointAuthority: configuration.endpointAuthority,
+                    wireProtocol: configuration.wireProtocol,
+                    endpointMatrixSHA256: configuration.endpointMatrixSHA256,
+                    evidenceDigest: configuration.evidenceDigest,
+                    evidenceResourceSHA256: configuration.evidenceResourceSHA256
+                )
+            )
+        )
+
+        let wrongEndpoint = FloorpNotesSyncCompiledConfiguration(
+            buildMode: configuration.buildMode,
+            sourceSHA: configuration.sourceSHA,
+            buildNumber: configuration.buildNumber,
+            requested: configuration.requested,
+            effective: configuration.effective,
+            registrationAllowed: configuration.registrationAllowed,
+            engineRequestsAllowed: configuration.engineRequestsAllowed,
+            uiExposureAllowed: configuration.uiExposureAllowed,
+            endpointAuthority: "stage",
+            wireProtocol: configuration.wireProtocol,
+            endpointMatrixSHA256: configuration.endpointMatrixSHA256,
+            evidenceDigest: configuration.evidenceDigest,
+            evidenceResourceSHA256: configuration.evidenceResourceSHA256
+        )
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsDefaultReleaseConfiguration(
+                wrongEndpoint
+            )
+        )
+    }
+
     func testReleaseGateAcceptsOnlyExactDesktopOrCoordinatedMigrationContract() {
         let baseEvidence = FloorpNotesSyncReleaseEvidence(
             fixtureContractVersion: FloorpNotesSyncReleaseGate.mergeContractVersion,

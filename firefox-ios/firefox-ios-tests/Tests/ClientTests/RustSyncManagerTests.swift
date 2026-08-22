@@ -428,12 +428,38 @@ class RustSyncManagerTests: XCTestCase {
         )
     }
 
+    func testRuntimePolicyMigratesLegacyDisabledDefaultWhenPolicyBecomesAvailable() {
+        profile.prefs.setBool(
+            false,
+            forKey: RustSyncManager.floorpNotesRuntimeEnabledPref
+        )
+
+        rustSyncManager.bootstrapFloorpNotesRuntimePolicy(
+            compiledEvidenceAllows: true
+        )
+
+        XCTAssertEqual(
+            profile.prefs.boolForKey(RustSyncManager.floorpNotesRuntimeEnabledPref),
+            true
+        )
+        XCTAssertEqual(
+            profile.prefs.intForKey(
+                RustSyncManager.floorpNotesRuntimePolicyVersionPref
+            ),
+            RustSyncManager.floorpNotesRuntimePolicyVersion
+        )
+    }
+
     func testRuntimePolicyPreservesPersistedDisableAcrossBootstrap() {
         let provider = TestFloorpNotesSyncEngineProvider()
         rustSyncManager.installFloorpNotesSyncEngineProvider(provider)
         profile.prefs.setBool(
             false,
             forKey: RustSyncManager.floorpNotesRuntimeEnabledPref
+        )
+        profile.prefs.setInt(
+            RustSyncManager.floorpNotesRuntimePolicyVersion,
+            forKey: RustSyncManager.floorpNotesRuntimePolicyVersionPref
         )
 
         rustSyncManager.bootstrapFloorpNotesRuntimePolicy(
