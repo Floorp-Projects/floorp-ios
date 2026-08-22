@@ -134,6 +134,98 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
     }
 
     @MainActor
+    func testWebViewDecidePolicyForNavigationAction_reconcilesWebExtensionPolicyBeforeAllowingMainFrameNavigation() async throws {
+        let profileIdentifier = profile.localName()
+        let extensionID = try XCTUnwrap(FloorpWebExtensionID(rawValue: "navigation-policy-fixture"))
+        let runtime = FloorpWebExtensionRuntime.runtime(
+            for: profileIdentifier,
+            isPrivateBrowsing: false
+        )
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: { _, source in
+                guard source.path == "content.js" else {
+                    throw FloorpWebExtensionError.unsupported("unexpected test resource")
+                }
+                return "window.navigationPolicyFixture = true;"
+            }
+        )
+        FloorpWebExtensionCoordinator.install(coordinator)
+        defer {
+            FloorpWebExtensionCoordinator.removeCoordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+            FloorpWebExtensionRuntime.removeRuntime(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+
+        let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: priorCoreFlag) }
+
+        let script = try FloorpWebExtensionRegisteredScript(
+            id: "content",
+            matches: [FloorpWebExtensionMatchPattern("https://allowed.example/*")],
+            javaScript: [FloorpWebExtensionScriptSource("content.js")],
+            runAt: .documentStart
+        )
+        let allowedHost = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        try await coordinator.registerScripts([script], for: extensionID)
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+
+        let subject = MockBrowserViewController(
+            profile: profile,
+            tabManager: tabManager,
+            userInitiatedQueue: MockDispatchQueue()
+        )
+        subject.mockIsMainFrameNavigation = true
+        let tab = createTab()
+        tabManager.tabs = [tab]
+        let allowedURL = try XCTUnwrap(URL(string: "https://allowed.example/page"))
+
+        for type in [WKNavigationType.linkActivated, .other, .formSubmitted, .backForward] {
+            subject.webView(
+                tab.webView!,
+                decidePolicyFor: MockNavigationAction(url: allowedURL, type: type)
+            ) { policy in
+                XCTAssertEqual(policy, .allow)
+            }
+            XCTAssertEqual(
+                tab.webView?.configuration.userContentController.userScripts.map(\.source),
+                ["window.navigationPolicyFixture = true;"]
+            )
+        }
+
+        let deniedURL = try XCTUnwrap(URL(string: "https://denied.example/page"))
+        subject.webView(
+            tab.webView!,
+            decidePolicyFor: MockNavigationAction(url: deniedURL, type: .other)
+        ) { policy in
+            XCTAssertEqual(policy, .allow)
+        }
+        XCTAssertTrue(tab.webView!.configuration.userContentController.userScripts.isEmpty)
+
+        let internalURL = try XCTUnwrap(URL(string: "internal://local/about/home"))
+        subject.webView(
+            tab.webView!,
+            decidePolicyFor: MockNavigationAction(url: internalURL, type: .backForward)
+        ) { policy in
+            XCTAssertEqual(policy, .allow)
+        }
+        XCTAssertTrue(tab.webView!.configuration.userContentController.userScripts.isEmpty)
+    }
+
+    @MainActor
     func testWebViewDecidePolicyForNavigationAction_allowsAnyWebsiteBlockingUniversalLink_whenOptionEnabled() {
         let subject = createSubject()
         let tab = createTab()

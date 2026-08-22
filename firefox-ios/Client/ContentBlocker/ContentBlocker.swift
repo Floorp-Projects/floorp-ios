@@ -205,41 +205,43 @@ class ContentBlocker: Notifiable {
         rules: [String],
         completion: (() -> Void)?
     ) {
-        removeTrackingProtection(forTab: tab)
-
         guard isEnabled else {
+            removeTrackingProtection(forTab: tab)
             completion?()
             return
         }
 
         let group = DispatchGroup()
+        var loadedRules = [WKContentRuleList]()
 
         for list in rules {
             group.enter()
             ruleStore?.lookUpContentRuleList(forIdentifier: list) { rule, error in
-                if let rule = rule {
-                    self.add(contentRuleList: rule, toTab: tab)
+                DispatchQueue.main.async {
+                    if let rule = rule {
+                        loadedRules.append(rule)
+                    }
+                    group.leave()
                 }
-                group.leave()
             }
         }
 
         group.notify(queue: .main) {
+            self.replace(contentRuleLists: loadedRules, ownedBy: "firefox.tracking-protection", forTab: tab)
             completion?()
         }
     }
 
     private func removeTrackingProtection(forTab tab: ContentBlockerTab) {
-        tab.currentWebView()?.configuration.userContentController.removeAllContentRuleLists()
-
-        // Add back the block images rule (if needed) after having removed all rules.
-        if let rule = blockImagesRule, tab.imageContentBlockingEnabled() {
-            add(contentRuleList: rule, toTab: tab)
-        }
+        replace(contentRuleLists: [], ownedBy: "firefox.tracking-protection", forTab: tab)
     }
 
-    private func add(contentRuleList: WKContentRuleList, toTab tab: ContentBlockerTab) {
-        tab.currentWebView()?.configuration.userContentController.add(contentRuleList)
+    private func replace(contentRuleLists: [WKContentRuleList], ownedBy owner: String, forTab tab: ContentBlockerTab) {
+        guard let controller = tab.currentWebView()?.configuration.userContentController else { return }
+        Task { @MainActor in
+            FloorpWebContentPolicyCoordinator.coordinator(for: controller)
+                .replaceContentRuleLists(contentRuleLists, ownedBy: owner)
+        }
     }
 
     private func compileNoImageModeScript() {
@@ -267,11 +269,7 @@ class ContentBlocker: Notifiable {
     func noImageMode(enabled: Bool, forTab tab: ContentBlockerTab) {
         guard let rule = blockImagesRule else { return }
 
-        if enabled {
-            add(contentRuleList: rule, toTab: tab)
-        } else {
-            tab.currentWebView()?.configuration.userContentController.remove(rule)
-        }
+        replace(contentRuleLists: enabled ? [rule] : [], ownedBy: "firefox.no-image", forTab: tab)
 
         tab.currentWebView()?
             .evaluateJavascriptInDefaultContentWorld("window.__firefox__.NoImageMode.setEnabled(\(enabled))")

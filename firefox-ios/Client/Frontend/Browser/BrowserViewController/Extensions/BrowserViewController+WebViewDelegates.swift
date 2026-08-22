@@ -560,6 +560,19 @@ extension BrowserViewController: WKNavigationDelegate {
             return
         }
 
+        // `WKUserScript` has no URL-match predicate. Reconcile the
+        // URL/grant-qualified snapshot while WebKit is still asking for a
+        // policy, before allowing a main-frame document to reach
+        // `document_start`. This deliberately does not cancel and reissue the
+        // request: doing so can duplicate form submissions and loop redirects.
+        if isMainFrameNavigation(navigationAction),
+           shouldPrepareFloorpWebExtensionPolicy(for: url) {
+            tab.prepareFloorpWebExtensionPolicyForNavigationAction(
+                for: webView,
+                navigationURL: url
+            )
+        }
+
         if tab == tabManager.selectedTab,
            navigationAction.navigationType == .linkActivated,
            !tab.adsTelemetryUrlList.isEmpty {
@@ -654,6 +667,17 @@ extension BrowserViewController: WKNavigationDelegate {
         }
 
         decisionHandler(.cancel)
+    }
+
+    /// These are the schemes WebKit may retain as a document navigation in
+    /// this delegate. External-app routes never create a WebKit document, so
+    /// they must not consume a tab's active-document grant.
+    private func shouldPrepareFloorpWebExtensionPolicy(for url: URL) -> Bool {
+        if InternalURL.isValid(url: url) {
+            return true
+        }
+        let documentSchemes = ["about", "blob", "data", "file", "http", "https"]
+        return url.scheme.map { documentSchemes.contains($0.lowercased()) } ?? false
     }
 
     private func handleAdsTelemetryForNavigation(url: URL, tab: Tab) {
