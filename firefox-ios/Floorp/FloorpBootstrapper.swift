@@ -4,6 +4,7 @@
 
 import Foundation
 import Common
+import WebKit
 
 /// Central entry point for all Floorp customizations.
 ///
@@ -16,6 +17,8 @@ import Common
 /// modifications to the upstream Firefox codebase and reduce
 /// merge conflict surface area.
 public final class FloorpBootstrapper {
+    @MainActor
+    private static var privateRuleStoreDirectories = [String: URL]()
     /// Apply all Floorp customizations.
     ///
     /// This method is called once during app startup, after
@@ -35,6 +38,9 @@ public final class FloorpBootstrapper {
 
         // Step 4: Configure overlay drawer
         configureOverlayDrawer(logger: logger)
+
+        // Step 5: Enable the locally bundled MV3 runtime and compatibility evidence.
+        configureWebExtensions(logger: logger)
 
         logger.log("Floorp: Bootstrapper configured successfully", level: .info, category: .setup)
     }
@@ -91,5 +97,120 @@ public final class FloorpBootstrapper {
         FloorpFlags.setOverlayDrawerEnabled(true)
 
         logger.log("Floorp: Overlay drawer enabled", level: .info, category: .setup)
+    }
+
+    @MainActor
+    private static func configureWebExtensions(logger: Logger) {
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        FloorpFlags.setWebExtensionFeature(.compatibilityHarness, enabled: true)
+        logger.log("Floorp: WebExtensions core and compatibility harness enabled", level: .info, category: .setup)
+    }
+
+    /// Creates and injects independent WebKit content-rule-list stores for a
+    /// profile's normal and private WebExtensions runtimes. This must run
+    /// before tab restoration so the first navigation observes the policy.
+    @MainActor
+    static func configureWebExtensionRuntime(for profile: Profile, logger: Logger = DefaultLogger.shared) {
+        guard FloorpFlags.isWebExtensionFeatureEnabled(.core) else { return }
+
+        let profileIdentifier = profile.localName()
+        do {
+            let normalDirectory = try profile.files.getAndEnsureDirectory(
+                "WebExtensions/ContentRuleLists/normal"
+            )
+            let normalEvidenceDirectory = try profile.files.getAndEnsureDirectory(
+                "WebExtensions/CompatibilityEvidence/normal"
+            )
+            let privateDirectory = try privateRuleStoreDirectory(for: profileIdentifier)
+            let privateEvidenceDirectory = privateDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("CompatibilityEvidence", isDirectory: true)
+            guard let normalStore = WKContentRuleListStore(url: URL(fileURLWithPath: normalDirectory)),
+                  let privateStore = WKContentRuleListStore(url: privateDirectory) else {
+                logger.log("Floorp: WebExtensions rule-list store could not be created", level: .warning, category: .setup)
+                return
+            }
+            FloorpWebExtensionRuntime.install(
+                .init(contentRuleListStore: normalStore),
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+            FloorpWebExtensionRuntime.install(
+                .init(contentRuleListStore: privateStore),
+                for: profileIdentifier,
+                isPrivateBrowsing: true
+            )
+            FloorpWebExtensionCompatibilityEvidenceRegistry.install(
+                try .init(directory: URL(fileURLWithPath: normalEvidenceDirectory)),
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+            FloorpWebExtensionCompatibilityEvidenceRegistry.install(
+                try .init(directory: privateEvidenceDirectory),
+                for: profileIdentifier,
+                isPrivateBrowsing: true
+            )
+            // Keep the state-owning coordinator paired with the same profile
+            // and browsing-mode split as its runtime. The default coordinator
+            // refuses unmaterialized package resources; package composition
+            // replaces it with one that has the installer-owned resolver.
+            _ = FloorpWebExtensionCoordinator.coordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+            _ = FloorpWebExtensionCoordinator.coordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: true
+            )
+        } catch {
+            logger.log("Floorp: WebExtensions rule-list store setup failed: \(error)", level: .warning, category: .setup)
+        }
+    }
+
+    /// Removes both runtime instances on process termination and deletes the
+    /// ephemeral private store. The normal store remains profile-owned.
+    @MainActor
+    static func tearDownWebExtensionRuntime(for profile: Profile) {
+        let profileIdentifier = profile.localName()
+        // Remove the coordinators before their runtimes so extension-owned
+        // policy can be detached from any live controllers during teardown.
+        FloorpWebExtensionCoordinator.removeCoordinator(
+            for: profileIdentifier,
+            isPrivateBrowsing: false
+        )
+        FloorpWebExtensionCoordinator.removeCoordinator(
+            for: profileIdentifier,
+            isPrivateBrowsing: true
+        )
+        FloorpWebExtensionCompatibilityEvidenceRegistry.removeStore(
+            for: profileIdentifier,
+            isPrivateBrowsing: false
+        )
+        FloorpWebExtensionCompatibilityEvidenceRegistry.removeStore(
+            for: profileIdentifier,
+            isPrivateBrowsing: true
+        )
+        FloorpWebExtensionRuntime.removeRuntime(for: profileIdentifier, isPrivateBrowsing: false)
+        FloorpWebExtensionRuntime.removeRuntime(for: profileIdentifier, isPrivateBrowsing: true)
+        if let privateDirectory = privateRuleStoreDirectories.removeValue(forKey: profileIdentifier) {
+            // The private compatibility evidence directory is a sibling of
+            // ContentRuleLists under this unique session root. Remove the
+            // whole root so private diagnostics never outlive the session.
+            try? FileManager.default.removeItem(at: privateDirectory.deletingLastPathComponent())
+        }
+    }
+
+    @MainActor
+    private static func privateRuleStoreDirectory(for profileIdentifier: String) throws -> URL {
+        if let directory = privateRuleStoreDirectories[profileIdentifier] {
+            return directory
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("floorp-webextensions-private", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("ContentRuleLists", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        privateRuleStoreDirectories[profileIdentifier] = directory
+        return directory
     }
 }

@@ -105,9 +105,8 @@ class UserScriptManager: LegacyFeatureFlaggable {
     }
 
     public func injectUserScriptsIntoWebView(_ webView: WKWebView?, nightMode: Bool, noImageMode: Bool) {
-        // Start off by ensuring that any previously-added user scripts are
-        // removed to prevent the same script from being injected twice.
-        webView?.configuration.userContentController.removeAllUserScripts()
+        guard let controller = webView?.configuration.userContentController else { return }
+        var browserScripts = [WKUserScript]()
 
         // Inject all pre-compiled user scripts.
         [(WKUserScriptInjectionTime.atDocumentStart, mainFrameOnly: false),
@@ -119,35 +118,38 @@ class UserScriptManager: LegacyFeatureFlaggable {
             let injectionString = injectionTime == .atDocumentStart ? "Start" : "End"
             let name = mainframeString + "AtDocument" + injectionString
             if let userScript = compiledUserScripts[name] {
-                webView?.configuration.userContentController.addUserScript(userScript)
+                browserScripts.append(userScript)
             }
 
             let autofillName = "Autofill\(name)"
             if let autofillScript = compiledUserScripts[autofillName] {
-                webView?.configuration.userContentController.addUserScript(autofillScript)
+                browserScripts.append(autofillScript)
             }
 
             let nightModeName = "NightMode\(name)"
             if let nightModeScript = compiledUserScripts[nightModeName] {
-                webView?.configuration.userContentController.addUserScript(nightModeScript)
+                browserScripts.append(nightModeScript)
             }
 
             let webcompatName = "Webcompat\(name)"
             if let webcompatUserScript = compiledUserScripts[webcompatName] {
-                webView?.configuration.userContentController.addUserScript(webcompatUserScript)
+                browserScripts.append(webcompatUserScript)
             }
         }
         // Inject the Print Helper. This needs to be in the `page` content world in order to hook `window.print()`.
-        webView?.configuration.userContentController.addUserScript(printHelperUserScript)
+        browserScripts.append(printHelperUserScript)
         // If Night Mode is enabled, inject a small user script to ensure
         // that it gets enabled immediately when the DOM loads.
         if nightMode {
-            webView?.configuration.userContentController.addUserScript(nightModeUserScript)
+            browserScripts.append(nightModeUserScript)
         }
         // If No Image Mode is enabled, inject a small user script to ensure
         // that it gets enabled immediately when the DOM loads.
         if noImageMode {
-            webView?.configuration.userContentController.addUserScript(noImageModeUserScript)
+            browserScripts.append(noImageModeUserScript)
         }
+
+        FloorpWebContentPolicyCoordinator.coordinator(for: controller)
+            .replaceUserScripts(browserScripts, ownedBy: "firefox.browser")
     }
 }

@@ -261,6 +261,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, LegacyFeatureFlaggable {
     func applicationWillTerminate(_ application: UIApplication) {
         // We have only five seconds here, so let's hope this doesn't take too long.
         logger.log("applicationWillTerminate", level: .info, category: .lifecycle)
+        Task { @MainActor in
+            FloorpBootstrapper.tearDownWebExtensionRuntime(for: profile)
+        }
         profile.shutdown()
         documentLogger.logPendingDownloads()
     }

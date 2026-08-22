@@ -59,6 +59,7 @@ class DependencyHelper {
 
         // Floorp hook: Apply all Floorp customizations via single entry point
         FloorpBootstrapper.configure()
+        FloorpBootstrapper.configureWebExtensionRuntime(for: profile)
 
         // Tell the container we are done registering
         AppContainer.shared.bootstrap()
