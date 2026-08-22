@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Start one approved Xcode Cloud workflow for a specific Git reference.
+
+This is the small control-plane used by GitHub Actions. Xcode Cloud remains
+responsible for the Apple build, signing, archive, and App Store Connect
+distribution. The script validates the workflow and repository before it
+performs the sole write: POST /v1/ciBuildRuns.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import sys
+import tempfile
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Callable
+
+
+CLIENT_PATH = Path(__file__).with_name("app-store-connect-api.py")
+
+
+def load_client():
+    spec = importlib.util.spec_from_file_location("floorp_app_store_connect_api", CLIENT_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load App Store Connect client: {CLIENT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def resource_data(response: dict[str, Any], expected_type: str, expected_id: str) -> dict[str, Any]:
+    value = response.get("data")
+    if not isinstance(value, dict):
+        raise ValueError("App Store Connect response has no resource data")
+    if value.get("type") != expected_type or value.get("id") != expected_id:
+        raise ValueError(
+            f"unexpected resource identity: type={value.get('type')!r} id={value.get('id')!r}"
+        )
+    return value
+
+
+def relationship_id(resource: dict[str, Any], *names: str) -> str | None:
+    relationships = resource.get("relationships")
+    if not isinstance(relationships, dict):
+        return None
+    for name in names:
+        relationship = relationships.get(name)
+        data = relationship.get("data") if isinstance(relationship, dict) else None
+        if isinstance(data, dict) and isinstance(data.get("id"), str) and data.get("id"):
+            return data["id"]
+    return None
+
+
+def included_resource(
+    response: dict[str, Any], resource_type: str, resource_id: str
+) -> dict[str, Any] | None:
+    included = response.get("included")
+    if not isinstance(included, list):
+        return None
+    return next(
+        (
+            item
+            for item in included
+            if isinstance(item, dict)
+            and item.get("type") == resource_type
+            and item.get("id") == resource_id
+        ),
+        None,
+    )
+
+
+def normalize_repository_url(value: str) -> str:
+    normalized = value.strip().lower().rstrip("/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return normalized
+
+
+def verify_workflow(
+    api: Callable[..., dict[str, Any]],
+    workflow_id: str,
+    expected_name: str,
+    expected_repository: str,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    response = api("GET", f"/v1/ciWorkflows/{workflow_id}?include=repository")
+    workflow = resource_data(response, "ciWorkflows", workflow_id)
+    attributes = workflow.get("attributes")
+    if not isinstance(attributes, dict):
+        raise ValueError("Xcode Cloud workflow has no attributes")
+    if attributes.get("name") != expected_name:
+        raise ValueError(
+            f"workflow name mismatch: expected {expected_name!r}, got {attributes.get('name')!r}"
+        )
+    if attributes.get("isEnabled") is False:
+        raise ValueError("Xcode Cloud workflow is disabled")
+
+    repository_id = relationship_id(workflow, "repository", "primaryRepository")
+    if repository_id is None:
+        raise ValueError("Xcode Cloud workflow has no repository relationship")
+    repository = included_resource(response, "scmRepositories", repository_id)
+    if repository is None:
+        repository_response = api("GET", f"/v1/scmRepositories/{repository_id}")
+        repository = resource_data(repository_response, "scmRepositories", repository_id)
+    repository_attributes = repository.get("attributes")
+    if not isinstance(repository_attributes, dict):
+        raise ValueError("Xcode Cloud repository has no attributes")
+    actual_url = repository_attributes.get("httpCloneUrl")
+    if not isinstance(actual_url, str) or normalize_repository_url(actual_url) != normalize_repository_url(expected_repository):
+        raise ValueError(
+            f"repository mismatch: expected {expected_repository!r}, got {actual_url!r}"
+        )
+    return workflow, repository_id, repository
+
+
+def resolve_branch(
+    api: Callable[..., dict[str, Any]], repository_id: str, branch: str
+) -> dict[str, Any]:
+    response = api(
+        "GET",
+        f"/v1/scmRepositories/{repository_id}/gitReferences"
+        f"?include=repository&limit=200",
+    )
+    rows = response.get("data")
+    if not isinstance(rows, list):
+        raise ValueError("App Store Connect returned no Git references")
+    canonical = f"refs/heads/{branch}"
+    matches = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("type") != "scmGitReferences":
+            continue
+        attributes = row.get("attributes")
+        if not isinstance(attributes, dict) or attributes.get("isDeleted") is True:
+            continue
+        if attributes.get("name") == branch or attributes.get("canonicalName") == canonical:
+            matches.append(row)
+    if len(matches) != 1:
+        raise ValueError(f"expected one live Git reference for {branch!r}, found {len(matches)}")
+    return matches[0]
+
+
+def build_request(workflow_id: str, reference_id: str) -> dict[str, Any]:
+    return {
+        "data": {
+            "type": "ciBuildRuns",
+            "attributes": {},
+            "relationships": {
+                "workflow": {
+                    "data": {"type": "ciWorkflows", "id": workflow_id}
+                },
+                "sourceBranchOrTag": {
+                    "data": {"type": "scmGitReferences", "id": reference_id}
+                },
+            },
+        }
+    }
+
+
+def credentials(client) -> tuple[str, str, Path]:
+    arguments = SimpleNamespace(issuer_id=None, key_id=None, private_key=None)
+    return client.load_credentials(arguments)
+
+
+def run(arguments: argparse.Namespace) -> dict[str, Any]:
+    if not arguments.authorize_mutation:
+        raise ValueError("refusing to start a build without --authorize-mutation")
+    if arguments.branch != "main":
+        raise ValueError("the release workflow only permits the main branch")
+
+    client = load_client()
+    issuer_id, key_id, private_key = credentials(client)
+
+    def api(method: str, path: str, body: bytes | None = None) -> dict[str, Any]:
+        token = client.make_jwt(issuer_id, key_id, private_key, int(time.time()))
+        return client.api_call(method, path, token, body=body)
+
+    _workflow, repository_id, repository = verify_workflow(
+        api,
+        arguments.workflow_id,
+        arguments.expected_workflow_name,
+        arguments.expected_repository,
+    )
+    reference = resolve_branch(api, repository_id, arguments.branch)
+    reference_id = reference.get("id")
+    if not isinstance(reference_id, str) or not reference_id:
+        raise ValueError("resolved Git reference has no ID")
+
+    body = json.dumps(
+        build_request(arguments.workflow_id, reference_id), separators=(",", ":")
+    ).encode()
+    start_response = api("POST", "/v1/ciBuildRuns", body=body)
+    start_data = start_response.get("data")
+    start_id = start_data.get("id") if isinstance(start_data, dict) else None
+    run_resource = resource_data(start_response, "ciBuildRuns", str(start_id or ""))
+    run_id = run_resource["id"]
+    terminal_response = None
+    if arguments.wait:
+        with tempfile.TemporaryDirectory(prefix="floorp-xcode-cloud-") as temporary:
+            terminal_path = Path(temporary) / "terminal.json"
+            polling_client = client.build_polling_client(
+                issuer_id, key_id, private_key, dry_run=False
+            )
+            client.wait_ci_run(
+                polling_client,
+                run_id,
+                arguments.expected_head,
+                terminal_path,
+                dry_run=False,
+            )
+            terminal_response = json.loads(terminal_path.read_text(encoding="utf-8"))
+
+    final_resource = (
+        terminal_response.get("data") if isinstance(terminal_response, dict) else run_resource
+    )
+    report = {
+        "workflow": {
+            "id": arguments.workflow_id,
+            "name": arguments.expected_workflow_name,
+        },
+        "repository": {
+            "id": repository_id,
+            "http_clone_url": repository.get("attributes", {}).get("httpCloneUrl"),
+        },
+        "source": {
+            "branch": arguments.branch,
+            "reference_id": reference_id,
+            "expected_head": arguments.expected_head,
+        },
+        "run": final_resource,
+        "build_url": (
+            f"https://appstoreconnect.apple.com/teams/{arguments.team_id}/apps/"
+            f"{arguments.app_id}/ci/builds/{run_id}/summary"
+        ),
+    }
+    return report
+
+
+def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workflow-id", required=True)
+    parser.add_argument("--expected-workflow-name", required=True)
+    parser.add_argument("--expected-repository", required=True)
+    parser.add_argument("--branch", required=True)
+    parser.add_argument("--expected-head", required=True)
+    parser.add_argument("--team-id", required=True)
+    parser.add_argument("--app-id", required=True)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--authorize-mutation", action="store_true")
+    parser.add_argument("--wait", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_arguments(argv)
+    try:
+        report = run(arguments)
+        arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        run_data = report.get("run") if isinstance(report.get("run"), dict) else {}
+        attributes = run_data.get("attributes") if isinstance(run_data, dict) else {}
+        status = attributes.get("completionStatus") if isinstance(attributes, dict) else None
+        progress = attributes.get("executionProgress") if isinstance(attributes, dict) else None
+        print(f"Xcode Cloud build run {run_data.get('id')} progress={progress} status={status}")
+        print(f"Build URL: {report['build_url']}")
+        return 0
+    except Exception as error:
+        print(f"BLOCKED: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
