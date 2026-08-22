@@ -95,6 +95,12 @@ jobs:
           test "$(git -C "$desktop_root" rev-parse HEAD)" = "$FLOORP_DESKTOP_COMMIT"
           printf 'FLOORP_NOTES_SYNC_DESKTOP_ROOT=%s\n' "$desktop_root" >> "$GITHUB_ENV"
 
+      - name: Install reviewed Desktop Deno dependencies
+        run: |
+          set -euo pipefail
+          cd "$FLOORP_NOTES_SYNC_DESKTOP_ROOT"
+          deno install --allow-scripts
+
       - name: Create public-beta QA capability
         run: |
           set -euo pipefail
