@@ -1,6 +1,6 @@
 # Floorp for iOS CI/CD
 
-This document defines the delivery foundation for Floorp for iOS. The repository has a reproducible pull-request gate, a dedicated release configuration, and a validated signed Internal TestFlight baseline. Repeatable cloud delivery, retained main-app capabilities, and service ownership still need to be finalized before public distribution.
+This document defines the delivery foundation for Floorp for iOS. The repository has a reproducible pull-request gate, a dedicated release configuration, a validated signed Internal TestFlight baseline, and an explicit cloud-delivery path for routine TestFlight builds.
 
 ## Architecture
 
@@ -10,13 +10,14 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | Notes Sync production QA | GitHub Actions | Manual, protected workflow in `.github/workflows/floorp-notes-sync-production-qa.yml` |
 | Notes Sync public-beta QA | GitHub Actions | Separate manual, protected two-account workflow in `.github/workflows/floorp-notes-sync-public-beta-qa.yml` |
 | Signed public-beta delivery | GitHub Actions | Manual, source-bound workflow in `.github/workflows/floorp-public-beta-release.yml` |
+| Xcode Cloud TestFlight trigger | GitHub Actions | Manual `workflow_dispatch` bridge in `.github/workflows/floorp-xcode-cloud-testflight.yml` |
 | Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow with trusted automation restoration, reviewed localization conflict resolution, and explicit CI dispatch |
 | Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (2)` signed, uploaded, and verified by the internal group |
-| Repeatable signed delivery | Xcode Cloud | Scaffold implemented; workflow not yet configured |
+| Repeatable signed delivery | Xcode Cloud | Configured as `Floorp TestFlight Manual`; archive, signing, and App Store Connect distribution run in Xcode Cloud |
 | App Store release | App Store Connect | Manual approval initially |
 | Mozilla/Focus maintenance automation | Git history | Removed pending a Floorp-owned replacement |
 
-The public-beta release job receives signing and App Store Connect material only as protected GitHub secrets for the one approved run; no certificate, profile, p8 key, or password is committed. The first build was uploaded manually from a locally signed archive. Xcode Cloud remains the preferred repeatable CD system for routine delivery because it supports cloud-managed signing and direct TestFlight distribution.
+The public-beta release job receives signing and App Store Connect material only as protected GitHub secrets for the one approved run; no certificate, profile, p8 key, or password is committed. The routine TestFlight path does not sign in GitHub Actions: the Actions bridge only starts and monitors the pinned Xcode Cloud workflow, while Xcode Cloud performs the archive, signing, and App Store Connect distribution.
 
 ### Validated Internal TestFlight baseline
 
@@ -160,7 +161,7 @@ The primary classic and Liquid Glass icon sources render the Floorp logo, and `F
 
 ## Apple account checklist
 
-Complete the remaining unchecked steps before enabling repeatable Xcode Cloud distribution or public beta delivery:
+Complete the remaining unchecked steps before broad public distribution:
 
 - [ ] Decide whether the Apple Developer account is permanently owned by a Floorp organization or an individual; avoid a later transfer if possible.
 - [x] Confirm the Apple Developer Team ID: `DV2U35YBHT`.
@@ -183,6 +184,7 @@ Complete the remaining unchecked steps before enabling repeatable Xcode Cloud di
 - [x] Create the `Floorp Internal` TestFlight group and add the initial tester.
 - [ ] Assign an owner and safe client-side value for each external service setting used by the release configuration.
 - [x] Produce a signed `Floorp` archive, upload it, and install the processed build through Internal TestFlight.
+- [ ] Add `APPLE_DEVELOPER_API_KEY_JSON` to the `floorp-testflight` GitHub Environment for the Actions-to-Xcode-Cloud trigger; keep signing certificates and profiles out of GitHub.
 
 Do not commit certificates, provisioning profiles, `.p8` API keys, `.p12` files, or passwords.
 
@@ -190,15 +192,15 @@ Do not commit certificates, provisioning profiles, `.p8` API keys, `.p12` files,
 
 The repository includes `firefox-ios/ci_scripts/ci_post_clone.sh`. Xcode Cloud discovers it next to `Client.xcodeproj`; it downloads the `.nvmrc` Node.js release with a pinned checksum and runs the root bootstrap in the clean clone. `.nvmrc` and `.xcode-version` are declarations for developers and GitHub Actions, not settings that Xcode Cloud applies automatically.
 
-After the shared `Floorp` scheme archives locally with `FloorpRelease` and passes Organizer validation:
+The shared `Floorp` scheme now archives with `FloorpRelease` in Xcode Cloud. The existing workflow is manually started in App Store Connect, and the repository also provides a GitHub Actions bridge for the same explicit operation:
 
 1. In Signing & Capabilities, explicitly confirm the main `app.floorp.Floorp` bundle ID once before initial setup because the project derives it from an `.xcconfig` file. Register extension IDs only when those targets return to the release.
 2. Connect `Floorp-Projects/Floorp-iOS` to Xcode Cloud from Xcode's Report navigator. A GitHub organization owner must authorize the first connection.
-3. Create a manually started development build workflow first. Select the repository's pinned Xcode version where Xcode Cloud offers it and verify the post-clone bootstrap.
-4. After the development build is stable, create a manually started archive workflow for the Floorp release scheme with internal TestFlight distribution as the post-action.
+3. Keep `Floorp TestFlight Manual` manually started and restricted to `main`; App Store Connect remains the direct fallback for starting a build.
+4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml` when the deployment should be visible as an explicit GitHub Actions run. It validates the pinned workflow and repository, starts the Xcode Cloud run through `POST /v1/ciBuildRuns`, and optionally waits for completion.
 5. Let Xcode Cloud manage signing; verify the Client-only app is signed by the Floorp team and inspect its production entitlements. Repeat this check for each extension if one is restored later.
 6. Confirm `firefox-ios/TestFlight/WhatToTest.en-US.txt` appears in the TestFlight build and invite the internal group.
-7. After several successful builds, add a `main` or release-tag start condition.
+7. Add a separate ordinary App Store workflow later by reusing `scripts/release/trigger-xcode-cloud.py` with its own pinned Xcode Cloud workflow ID and distribution target.
 8. Download and retain each shipped archive and its dSYMs outside Xcode Cloud; Xcode Cloud build information and artifacts are available for only 30 days.
 
 The public-beta workflow does not create groups or invent reviewer credentials. It selects one existing external group (or requires its explicit ID), reuses complete live Beta App Review details, records before/after state, and stops with a blocker if Apple agreements, review details, or group setup are incomplete.
@@ -208,7 +210,7 @@ The public-beta workflow does not create groups or invent reviewer credentials. 
 - Add a non-blocking manual or scheduled full `UnitTest` run with `.xcresult` retention while the remaining suites are repaired and promoted into `FloorpCI`.
 - Restore a legacy maintenance workflow from Git history only after assigning a Floorp owner, removing Mozilla secrets and destinations, and pinning every external action.
 - Split stable UI smoke tests into a nightly workflow after the simulator unit-test gate is reliable.
-- Add a protected GitHub `testflight` environment only if distribution later moves from Xcode Cloud to GitHub Actions.
+- Keep the `floorp-testflight` GitHub Environment limited to the App Store Connect API key needed to start and monitor Xcode Cloud; do not add signing certificates or profiles.
 - Keep the pinned Nimbus script revision aligned with Application Services updates during upstream synchronization.
 - Add CODEOWNERS for `.github/workflows/`, `scripts/ci/`, and `firefox-ios/ci_scripts/` after the Floorp GitHub maintainer team slug is known.
 
@@ -230,7 +232,8 @@ against `scripts/release/floorp-release-evidence.schema.json` and rejects mixed
 build IDs, forbidden entitlements, missing dSYMs, and digest mismatches.
 
 `scripts/release/app-store-connect-api.py` is the only App Store Connect
-surface. Its read allowlist covers the required GETs and its write allowlist is
+surface. Its read allowlist covers the required workflow, repository, and Git
+reference GETs and its write allowlist is
 exactly `POST /v1/ciBuildRuns`, `POST /v1/betaBuildLocalizations`,
 `PATCH /v1/betaBuildLocalizations/{id}`, `PATCH /v1/betaAppReviewDetails/{id}`,
 `POST /v1/betaAppReviewSubmissions`, and

@@ -12,7 +12,8 @@ Read allowlist (GET):
   /v1/ciProducts, /v1/ciWorkflows, /v1/ciBuildRuns, /v1/ciRuns,
   /v1/ciRuns/{id}/artifacts, /v1/betaGroups, /v1/betaGroups/{id}/builds,
   /v1/betaBuildLocalizations, /v1/betaAppReviewDetails,
-  /v1/betaAppReviewSubmissions
+  /v1/betaAppReviewSubmissions, /v1/scmRepositories/{id},
+  /v1/scmRepositories/{id}/gitReferences
 
 Write allowlist (exact):
   POST /v1/ciBuildRuns
@@ -31,6 +32,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -40,7 +42,16 @@ from typing import Optional
 
 
 API_BASE = "https://api.appstoreconnect.apple.com"
-OPENSSL3 = "/opt/homebrew/opt/openssl@3/bin/openssl"
+_OPENSSL_CANDIDATES = (
+    os.environ.get("FLOORP_OPENSSL3"),
+    "/opt/homebrew/opt/openssl@3/bin/openssl",
+    "/usr/local/opt/openssl@3/bin/openssl",
+    shutil.which("openssl"),
+)
+OPENSSL3 = next(
+    (candidate for candidate in _OPENSSL_CANDIDATES if candidate and Path(candidate).is_file()),
+    "openssl",
+)
 
 READ_ROUTES = [
     r"^/v1/apps$",
@@ -55,6 +66,8 @@ READ_ROUTES = [
     r"^/v1/ciBuildRuns/[^/]+/actions$",
     r"^/v1/ciBuildActions/[^/]+$",
     r"^/v1/ciBuildActions/[^/]+/artifacts$",
+    r"^/v1/scmRepositories/[^/]+$",
+    r"^/v1/scmRepositories/[^/]+/gitReferences$",
     r"^/v1/betaGroups$",
     r"^/v1/betaGroups/[^/]+/builds$",
     r"^/v1/betaBuildLocalizations$",

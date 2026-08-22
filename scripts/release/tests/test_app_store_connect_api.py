@@ -31,6 +31,8 @@ class AllowlistTests(unittest.TestCase):
             "/v1/ciBuildRuns/bfd267d8-696a-4394-94db-570f0aa9b376/actions",
             "/v1/ciBuildActions/4294e7e3-8adf-47fe-8f7c-02456baba2bb",
             "/v1/ciBuildActions/4294e7e3-8adf-47fe-8f7c-02456baba2bb/artifacts",
+            "/v1/scmRepositories/repo-1",
+            "/v1/scmRepositories/repo-1/gitReferences",
             "/v1/builds",
             "/v1/betaGroups",
             "/v1/betaAppReviewDetails",
