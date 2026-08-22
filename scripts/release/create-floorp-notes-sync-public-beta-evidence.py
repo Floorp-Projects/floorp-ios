@@ -1,9 +1,9 @@
 #!/usr/bin/python3 -I
-"""Create the explicit, source-bound evidence for a public TestFlight beta.
+"""Create explicit, source-bound evidence for a public TestFlight beta.
 
 The protected production-QA capability remains non-distributable. This command
-creates a separate public-beta record only after validating that capability and
-its metadata-only QA summary against the same source SHA and workflow run.
+creates a separate public-beta record from either a validated live QA pair or
+an explicit source-bound FxA QA waiver.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QA_VALIDATOR_PATH = ROOT / "scripts/ci/validate-floorp-notes-sync-production-qa.py"
 CAPABILITY_MODULE_PATH = ROOT / "scripts/ci/floorp_notes_sync_production_qa_capability.py"
+WAIVER_MODULE_PATH = ROOT / "scripts/release/floorp_notes_sync_public_beta_qa_waiver.py"
 CONTRACT_PATH = ROOT / "scripts/ci/floorp-notes-sync-g5-operation-contract.json"
 ENDPOINT_POLICY_PATH = ROOT / "docs/floorp-release-endpoints.json"
 REPOSITORY = "Floorp-Projects/floorp-ios"
@@ -49,6 +50,10 @@ QA = load_module(QA_VALIDATOR_PATH, "floorp_notes_sync_public_beta_qa_validator"
 CAPABILITY = load_module(
     CAPABILITY_MODULE_PATH,
     "floorp_notes_sync_public_beta_capability_validator",
+)
+WAIVER = load_module(
+    WAIVER_MODULE_PATH,
+    "floorp_notes_sync_public_beta_qa_waiver_validator",
 )
 
 
@@ -87,8 +92,9 @@ def read_canonical(path: Path, label: str) -> tuple[dict[str, Any], bytes]:
 
 def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--summary", type=Path, required=True)
-    parser.add_argument("--capability", type=Path, required=True)
+    parser.add_argument("--summary", type=Path, required=False)
+    parser.add_argument("--capability", type=Path, required=False)
+    parser.add_argument("--waiver", type=Path, required=False)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--desktop-sha", required=True)
     parser.add_argument("--build-number", required=True)
@@ -107,28 +113,63 @@ def main(arguments: list[str] | None = None) -> int:
         require(bool(args.operator_id.strip()), "operator ID is empty")
         require(args.approve_public_beta, "explicit public-beta approval is required")
 
-        summary_raw = args.summary.read_bytes()
-        summary = QA.validate_summary(QA.parse_bytes(summary_raw))
-        source = summary["source"]
-        require(source["repository"] == REPOSITORY, "QA repository is not canonical")
-        require(source["head_sha"] == args.source_sha, "QA source SHA does not match the candidate")
-        require(source["job_name"] == PUBLIC_BETA_JOB_NAME, "QA source job is not the public-beta QA job")
-        require(source["workflow_path"] == PUBLIC_BETA_WORKFLOW_PATH, "QA workflow path is not the public-beta QA workflow")
-        require(summary["public_release"] is False, "QA summary must remain non-distributable")
+        source: dict[str, Any]
+        build_number = args.build_number
+        qa_record: dict[str, Any]
+        endpoint: dict[str, Any]
+        if args.waiver is not None:
+            require(args.summary is None and args.capability is None, "waiver mode cannot include live-QA artifacts")
+            waiver_raw = args.waiver.read_bytes()
+            waiver = WAIVER.validate_waiver(
+                WAIVER.parse_bytes(waiver_raw),
+                expected_source_sha=args.source_sha,
+                expected_desktop_sha=args.desktop_sha,
+            )
+            source = waiver["source"]
+            require(waiver["ios"]["build_number"] == build_number, "waiver build number does not match the candidate")
+            endpoint = waiver["endpoint"]
+            qa_record = {
+                "data_integrity_claim": False,
+                "live_qa": "owner-waived-not-performed",
+                "mode": "owner-waived",
+                "waiver_sha256": sha256_bytes(waiver_raw),
+                "workflow_path": source["workflow_path"],
+                "workflow_run_attempt": source["workflow_run_attempt"],
+                "workflow_run_id": source["workflow_run_id"],
+            }
+        else:
+            require(args.summary is not None and args.capability is not None, "live-QA mode requires summary and capability")
+            summary_raw = args.summary.read_bytes()
+            summary = QA.validate_summary(QA.parse_bytes(summary_raw))
+            source = summary["source"]
+            require(source["repository"] == REPOSITORY, "QA repository is not canonical")
+            require(source["head_sha"] == args.source_sha, "QA source SHA does not match the candidate")
+            require(source["job_name"] == PUBLIC_BETA_JOB_NAME, "QA source job is not the public-beta QA job")
+            require(source["workflow_path"] == PUBLIC_BETA_WORKFLOW_PATH, "QA source workflow path is not the public-beta QA workflow")
+            require(summary["public_release"] is False, "QA summary must remain non-distributable")
 
-        capability = CAPABILITY.load_capability(
-            args.capability,
-            expected_source_sha=args.source_sha,
-            expected_desktop_sha=args.desktop_sha,
-            expected_contract_sha=CAPABILITY.sha256_file(CONTRACT_PATH),
-            expected_endpoint_policy_sha=CAPABILITY.sha256_file(ENDPOINT_POLICY_PATH),
-        )
-        capability_source = capability["source"]
-        require(capability_source == source, "QA capability and summary are from different runs")
-        require(capability["ios_build_number"] == args.build_number, "QA build number does not match the candidate")
-        require(capability["public_release"] is False, "QA capability must remain non-distributable")
+            capability = CAPABILITY.load_capability(
+                args.capability,
+                expected_source_sha=args.source_sha,
+                expected_desktop_sha=args.desktop_sha,
+                expected_contract_sha=CAPABILITY.sha256_file(CONTRACT_PATH),
+                expected_endpoint_policy_sha=CAPABILITY.sha256_file(ENDPOINT_POLICY_PATH),
+            )
+            capability_source = capability["source"]
+            require(capability_source == source, "QA capability and summary are from different runs")
+            require(capability["ios_build_number"] == build_number, "QA build number does not match the candidate")
+            require(capability["public_release"] is False, "QA capability must remain non-distributable")
+            endpoint = capability["endpoint"]
+            qa_record = {
+                "capability_sha256": sha256_bytes(args.capability.read_bytes()),
+                "data_integrity_claim": True,
+                "mode": "live",
+                "summary_sha256": sha256_bytes(summary_raw),
+                "workflow_path": source["workflow_path"],
+                "workflow_run_attempt": source["workflow_run_attempt"],
+                "workflow_run_id": source["workflow_run_id"],
+            }
 
-        endpoint = capability["endpoint"]
         record = {
             "approval": {
                 "approved": True,
@@ -145,11 +186,8 @@ def main(arguments: list[str] | None = None) -> int:
             },
             "public_release": True,
             "qa": {
-                "capability_sha256": sha256_bytes(args.capability.read_bytes()),
-                "summary_sha256": sha256_bytes(summary_raw),
+                **qa_record,
                 "workflow_path": WORKFLOW_PATH,
-                "workflow_run_attempt": source["workflow_run_attempt"],
-                "workflow_run_id": source["workflow_run_id"],
             },
             "schema_version": 1,
             "source": source,
