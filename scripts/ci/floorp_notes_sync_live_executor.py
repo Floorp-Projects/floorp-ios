@@ -443,12 +443,56 @@ class DesktopNotesClient:
             self.browser.execute(
                 """
                 const pattern = new RegExp(arguments[0], "i");
-                const nodes = [...document.querySelectorAll("button,a,input[type=submit]")];
-                const node = nodes.find((candidate) => pattern.test(
-                  String(candidate.textContent || "") + " " +
-                  String(candidate.getAttribute("aria-label") || "") + " " +
-                  String(candidate.getAttribute("data-l10n-id") || "")
-                ));
+                const selectors = [
+                  "button",
+                  "a",
+                  "input[type=submit]",
+                  "moz-box-link",
+                  "moz-box-button",
+                  "moz-button",
+                ];
+                const roots = [document];
+                for (let index = 0; index < roots.length; index += 1) {
+                  for (const element of roots[index].querySelectorAll("*")) {
+                    if (element.shadowRoot) roots.push(element.shadowRoot);
+                  }
+                }
+                const nodes = roots.flatMap((root) => [
+                  ...root.querySelectorAll(selectors.join(",")),
+                ]);
+                const isVisible = (candidate) => {
+                  for (
+                    let current = candidate;
+                    current;
+                    current = current.parentElement
+                  ) {
+                    if (current.hidden || current.getAttribute("aria-hidden") === "true") {
+                      return false;
+                    }
+                    const style = current.ownerDocument.defaultView?.getComputedStyle(current);
+                    if (style?.display === "none" || style?.visibility === "hidden") {
+                      return false;
+                    }
+                  }
+                  return true;
+                };
+                const node = nodes.find((candidate) => {
+                  if (candidate.disabled || !isVisible(candidate)) return false;
+                  return pattern.test(
+                    [
+                      candidate.textContent,
+                      candidate.getAttribute("aria-label"),
+                      candidate.getAttribute("data-l10n-id"),
+                      candidate.getAttribute("label"),
+                      candidate.getAttribute("title"),
+                      candidate.getAttribute("value"),
+                      candidate.id,
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
+                      .replace(/[-_]/g, " ")
+                  );
+                });
                 if (!node) return false;
                 node.click();
                 return true;

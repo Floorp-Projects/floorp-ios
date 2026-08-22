@@ -174,6 +174,14 @@ class LiveExecutorContractTests(unittest.TestCase):
         client._assert_page_scope()
         self.assertEqual(observed, {"accounts.firefox.com"})
 
+    def test_desktop_click_text_supports_settings_redesign_controls(self) -> None:
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        for selector in ("moz-box-link", "moz-box-button", "moz-button"):
+            self.assertIn(f'"{selector}"', source)
+        self.assertIn("element.shadowRoot", source)
+        self.assertIn("replace(/[-_]/g, \" \")", source)
+        self.assertIn("current.hidden", source)
+
     def test_unobserved_matrix_boundaries_fail_closed(self) -> None:
         self.assertIn("legacy_client_artifact_and_driver_missing", EXECUTOR.CASE_BLOCKERS[EXECUTOR.CASE_NAMES[7]])
         self.assertIn("upload_save_commit_failure_observation_missing", EXECUTOR.CASE_BLOCKERS[EXECUTOR.CASE_NAMES[5]])
