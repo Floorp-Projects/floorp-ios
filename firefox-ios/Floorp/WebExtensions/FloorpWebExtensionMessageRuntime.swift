@@ -717,6 +717,8 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
           const nativeHandler = globalThis.webkit?.messageHandlers?.[\(handlerLiteral)];
           if (!nativeHandler || typeof nativeHandler.postMessage !== "function") return;
           let nextRequest = 0;
+          const runtimeOnMessageListeners = [];
+          const serializeResponse = (value) => JSON.stringify(value === undefined ? null : value);
           const request = (operation, payload = {}) => {
             const requestId = `${Date.now()}:${++nextRequest}`;
             let serialized;
@@ -746,6 +748,16 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
               return reply.hasPayload ? reply.payload : undefined;
             });
           };
+          const deliverTabsMessage = async (message, sender) => {
+            for (const listener of runtimeOnMessageListeners) {
+              if (typeof listener !== "function") continue;
+              const value = await listener(message, sender);
+              if (typeof value !== "undefined") {
+                return serializeResponse(value);
+              }
+            }
+            return serializeResponse(null);
+          };
           const normalizeKeys = (keys) => {
             if (keys == null) return null;
             if (typeof keys === "string") return [keys];
@@ -768,7 +780,31 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             }
           });
           const runtime = Object.freeze({
-            sendMessage(message) { return request("runtime.sendMessage", message); }
+            sendMessage(message) { return request("runtime.sendMessage", message); },
+            onMessage: Object.freeze({
+              addListener(listener) {
+                if (typeof listener === "function" && !runtimeOnMessageListeners.includes(listener)) {
+                  runtimeOnMessageListeners.push(listener);
+                }
+              },
+              removeListener(listener) {
+                const index = runtimeOnMessageListeners.indexOf(listener);
+                if (index >= 0) runtimeOnMessageListeners.splice(index, 1);
+              },
+              hasListener(listener) {
+                return runtimeOnMessageListeners.includes(listener);
+              }
+            })
+          });
+          const tabs = Object.freeze({
+            query(queryInfo = {}) { return request("tabs.query", {queryInfo}); },
+            get(tabId) { return request("tabs.get", {tabId}); },
+            create(createProperties = {}) { return request("tabs.create", {createProperties}); },
+            update(tabId, updateProperties = {}) { return request("tabs.update", {tabId, updateProperties}); },
+            reload(tabId, reloadProperties = {}) { return request("tabs.reload", {tabId, reloadProperties}); },
+            sendMessage(tabId, message, options = {}) {
+              return request("tabs.sendMessage", {tabId, message, options});
+            }
           });
           const storage = Object.freeze({local: storageArea("local"), session: storageArea("session")});
           const i18n = Object.freeze({
@@ -806,7 +842,13 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
           const browserObject = globalThis.browser && typeof globalThis.browser === "object"
             ? globalThis.browser
             : {};
-          for (const [name, value] of Object.entries({runtime, storage, i18n, alarms, action})) {
+          Object.defineProperty(globalThis, "__floorpWebExtensionDeliverTabsMessage", {
+            value: deliverTabsMessage,
+            enumerable: false,
+            configurable: false,
+            writable: false
+          });
+          for (const [name, value] of Object.entries({runtime, storage, i18n, alarms, action, tabs})) {
             Object.defineProperty(browserObject, name, {
               value,
               enumerable: true,
