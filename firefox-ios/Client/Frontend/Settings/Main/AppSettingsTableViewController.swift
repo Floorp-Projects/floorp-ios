@@ -330,6 +330,7 @@ class AppSettingsTableViewController: SettingsTableViewController,
         settings += getAccountSetting()
         settings += getGeneralSettings()
         settings += getPrivacySettings()
+        settings += getFloorpWebExtensionSettings()
         settings += getSupportSettings()
         settings += getAboutSettings()
 
@@ -462,6 +463,24 @@ class AppSettingsTableViewController: SettingsTableViewController,
 
         return [SettingSection(title: NSAttributedString(string: .AppSettingsPrivacyTitle),
                                children: privacySettings)]
+    }
+
+    private func getFloorpWebExtensionSettings() -> [SettingSection] {
+        guard FloorpFlags.isWebExtensionFeatureEnabled(.core),
+              FloorpFlags.isWebExtensionFeatureEnabled(.bundledCatalog) else {
+            return []
+        }
+        return [
+            SettingSection(
+                title: NSAttributedString(string: "Extensions"),
+                children: [
+                    FloorpWebExtensionsSetting(
+                        settings: self,
+                        settingsDelegate: parentCoordinator as? any FloorpWebExtensionsSettingsDelegate
+                    )
+                ]
+            )
+        ]
     }
 
     private func getSupportSettings() -> [SettingSection] {

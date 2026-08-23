@@ -1476,12 +1476,20 @@
 		F10A3E000000000000000207 /* FloorpWebExtensionManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000107 /* FloorpWebExtensionManifest.swift */; };
 		F10A3E000000000000000208 /* FloorpWebExtensionRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000108 /* FloorpWebExtensionRuntime.swift */; };
 		F10A3E000000000000000209 /* FloorpWebExtensionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000109 /* FloorpWebExtensionCoordinator.swift */; };
+		F10A3E00000000000000020A /* FloorpWebExtensionPackageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010A /* FloorpWebExtensionPackageStore.swift */; };
+		F10A3E00000000000000020B /* FloorpWebExtensionMessageRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010B /* FloorpWebExtensionMessageRuntime.swift */; };
+		F10A3E00000000000000020C /* FloorpWebExtensionCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010C /* FloorpWebExtensionCatalog.swift */; };
+		F10A3E00000000000000020D /* FloorpWebExtensionSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010D /* FloorpWebExtensionSettingsViewController.swift */; };
+		F10A3E00000000000000020E /* FloorpWebExtensionsSetting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010E /* FloorpWebExtensionsSetting.swift */; };
+		F10A3E000000000000000210 /* demanding-mv3 in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000110 /* demanding-mv3 */; };
 		F10A3E000000000000000401 /* FloorpWebExtensionCompatibilityHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000301 /* FloorpWebExtensionCompatibilityHarnessTests.swift */; };
 		F10A3E000000000000000402 /* FloorpWebExtensionFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000302 /* FloorpWebExtensionFoundationTests.swift */; };
 		F10A3E000000000000000403 /* FloorpWebExtensionsStage3Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000303 /* FloorpWebExtensionsStage3Tests.swift */; };
 		F10A3E000000000000000404 /* FloorpWebExtensionDNRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000304 /* FloorpWebExtensionDNRTests.swift */; };
 		F10A3E000000000000000405 /* FloorpWebContentPolicyCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000305 /* FloorpWebContentPolicyCoordinatorTests.swift */; };
 		F10A3E000000000000000406 /* FloorpWebExtensionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000306 /* FloorpWebExtensionCoordinatorTests.swift */; };
+		F10A3E000000000000000407 /* FloorpWebExtensionPackageStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000307 /* FloorpWebExtensionPackageStoreTests.swift */; };
+		F10A3E000000000000000408 /* FloorpWebExtensionMessageRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000308 /* FloorpWebExtensionMessageRuntimeTests.swift */; };
 		96D95016270238500079D39D /* MainThreadThrottler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96D95015270238500079D39D /* MainThreadThrottler.swift */; };
 		96EB6C3827D821B800A9D159 /* HistoryPanelViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3727D821B800A9D159 /* HistoryPanelViewModel.swift */; };
 		96EB6C3E27D9266500A9D159 /* HistoryActionables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EB6C3D27D9266500A9D159 /* HistoryActionables.swift */; };
@@ -11180,12 +11188,20 @@
 		F10A3E000000000000000107 /* FloorpWebExtensionManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionManifest.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000108 /* FloorpWebExtensionRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionRuntime.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000109 /* FloorpWebExtensionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionCoordinator.swift; sourceTree = "<group>"; };
+		F10A3E00000000000000010A /* FloorpWebExtensionPackageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionPackageStore.swift; sourceTree = "<group>"; };
+		F10A3E00000000000000010B /* FloorpWebExtensionMessageRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionMessageRuntime.swift; sourceTree = "<group>"; };
+		F10A3E00000000000000010C /* FloorpWebExtensionCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionCatalog.swift; sourceTree = "<group>"; };
+		F10A3E00000000000000010D /* FloorpWebExtensionSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionSettingsViewController.swift; sourceTree = "<group>"; };
+		F10A3E00000000000000010E /* FloorpWebExtensionsSetting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionsSetting.swift; sourceTree = "<group>"; };
+		F10A3E000000000000000110 /* demanding-mv3 */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Fixtures/demanding-mv3"; sourceTree = "<group>"; };
 		F10A3E000000000000000301 /* FloorpWebExtensionCompatibilityHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionCompatibilityHarnessTests.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000302 /* FloorpWebExtensionFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionFoundationTests.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000303 /* FloorpWebExtensionsStage3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionsStage3Tests.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000304 /* FloorpWebExtensionDNRTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FloorpWebExtensionDNRTests.swift; path = ../../../Floorp/WebExtensions/Tests/FloorpWebExtensionDNRTests.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000305 /* FloorpWebContentPolicyCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebContentPolicyCoordinatorTests.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000306 /* FloorpWebExtensionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionCoordinatorTests.swift; sourceTree = "<group>"; };
+		F10A3E000000000000000307 /* FloorpWebExtensionPackageStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionPackageStoreTests.swift; sourceTree = "<group>"; };
+		F10A3E000000000000000308 /* FloorpWebExtensionMessageRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionMessageRuntimeTests.swift; sourceTree = "<group>"; };
 		CEEB4EC881354939F3402DAE /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Menu.strings; sourceTree = "<group>"; };
 		CEFA977D1FAA6B490016F365 /* SyncContentSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncContentSettingsViewController.swift; sourceTree = "<group>"; };
 		CF0B41FFA07D1B6CF873F714 /* ko */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ko; path = ko.lproj/Menu.strings; sourceTree = "<group>"; };
@@ -16508,6 +16524,12 @@
 				F10A3E000000000000000107 /* FloorpWebExtensionManifest.swift */,
 				F10A3E000000000000000108 /* FloorpWebExtensionRuntime.swift */,
 				F10A3E000000000000000109 /* FloorpWebExtensionCoordinator.swift */,
+				F10A3E00000000000000010A /* FloorpWebExtensionPackageStore.swift */,
+				F10A3E00000000000000010B /* FloorpWebExtensionMessageRuntime.swift */,
+				F10A3E00000000000000010C /* FloorpWebExtensionCatalog.swift */,
+				F10A3E00000000000000010D /* FloorpWebExtensionSettingsViewController.swift */,
+				F10A3E00000000000000010E /* FloorpWebExtensionsSetting.swift */,
+				F10A3E000000000000000110 /* demanding-mv3 */,
 			);
 			path = WebExtensions;
 			sourceTree = "<group>";
@@ -17698,6 +17720,8 @@
 				F10A3E000000000000000302 /* FloorpWebExtensionFoundationTests.swift */,
 				F10A3E000000000000000305 /* FloorpWebContentPolicyCoordinatorTests.swift */,
 				F10A3E000000000000000303 /* FloorpWebExtensionsStage3Tests.swift */,
+				F10A3E000000000000000307 /* FloorpWebExtensionPackageStoreTests.swift */,
+				F10A3E000000000000000308 /* FloorpWebExtensionMessageRuntimeTests.swift */,
 				C24A0D2E2F3A7E7200BF08B7 /* KeyChainAppAttestKeyIDStoreTests.swift */,
 				2151EF582F2AB962007B67A6 /* BrowserViewController */,
 				218457C42F22A3FA00B4FF23 /* Downloads */,
@@ -19066,6 +19090,7 @@
 				EEB971C62FC48C5100D6C232 /* NewYorkMedium-Regular.otf in Resources */,
 				EEB971C72FC48C5100D6C232 /* NewYorkMedium-RegularItalic.otf in Resources */,
 				EEB971C32FC48C4800D6C232 /* Reader.css in Resources */,
+				F10A3E000000000000000210 /* demanding-mv3 in Resources */,
 				C2F335372ECE339F0071588A /* TranslationsEngine.html in Resources */,
 				8A94DB962E0F16E80005FE69 /* homepageSearchBarOff.json in Resources */,
 				8A94DB972E0F16E80005FE69 /* homepageSearchBarOn.json in Resources */,
@@ -20242,6 +20267,11 @@
 				F10A3E000000000000000207 /* FloorpWebExtensionManifest.swift in Sources */,
 				F10A3E000000000000000208 /* FloorpWebExtensionRuntime.swift in Sources */,
 				F10A3E000000000000000209 /* FloorpWebExtensionCoordinator.swift in Sources */,
+				F10A3E00000000000000020A /* FloorpWebExtensionPackageStore.swift in Sources */,
+				F10A3E00000000000000020B /* FloorpWebExtensionMessageRuntime.swift in Sources */,
+				F10A3E00000000000000020C /* FloorpWebExtensionCatalog.swift in Sources */,
+				F10A3E00000000000000020D /* FloorpWebExtensionSettingsViewController.swift in Sources */,
+				F10A3E00000000000000020E /* FloorpWebExtensionsSetting.swift in Sources */,
 				8CE1E4382B8C76C80026530B /* LoginListViewModel.swift in Sources */,
 				0B8BF3722CA2DA4600E9812D /* EditBookmarkViewController.swift in Sources */,
 				8AED23042D40002D000FF624 /* MessageCardState.swift in Sources */,
@@ -21084,6 +21114,8 @@
 				F10A3E000000000000000402 /* FloorpWebExtensionFoundationTests.swift in Sources */,
 				F10A3E000000000000000405 /* FloorpWebContentPolicyCoordinatorTests.swift in Sources */,
 				F10A3E000000000000000403 /* FloorpWebExtensionsStage3Tests.swift in Sources */,
+				F10A3E000000000000000407 /* FloorpWebExtensionPackageStoreTests.swift in Sources */,
+				F10A3E000000000000000408 /* FloorpWebExtensionMessageRuntimeTests.swift in Sources */,
 				2151EF572F2AB94A007B67A6 /* BrowserViewControllerConstraintTests.swift in Sources */,
 				8C50DD752F56E1D00020E5C4 /* PreferredTranslationLanguagesManagerTests.swift in Sources */,
 				394615622FEC37FC003321D8 /* MockWebServer.swift in Sources */,
