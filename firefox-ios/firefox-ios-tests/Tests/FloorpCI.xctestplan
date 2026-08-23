@@ -224,6 +224,7 @@
 		"FloorpWebExtensionPageHostTests\/testSchemeHandlerDerivesMimeTypeAndEnforcesResourceQuota()",
 		"FloorpWebExtensionPageHostTests\/testNavigationPolicyKeepsPackageNavigationInternalAndHandsOffOnlyTopLevelHTTPLinks()",
 		"FloorpWebExtensionPageHostTests\/testPageControllerUsesDedicatedConfigurationAndRequiresInventoriedEntryPoint()",
+		"FloorpWebExtensionPageHostTests\/testCustomSchemePageExecutesESModuleInWebKit()",
 		"FloorpWebExtensionPageHostTests\/testActionPopupFactoryUsesDefaultAndDisabledStatesWithoutOpeningAPage()",
 		"FloorpWebExtensionPageHostTests\/testOptionsPageFactoryUsesOptionsSurfaceAndFailsClosedForInvalidResources()",
 		"MainMenuCoordinatorTests\/testHandleNavigation_webExtensionActions_callsDelegate()",

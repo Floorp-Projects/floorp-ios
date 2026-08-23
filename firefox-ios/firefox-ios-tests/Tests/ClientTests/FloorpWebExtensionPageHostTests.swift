@@ -178,6 +178,46 @@ final class FloorpWebExtensionPageHostTests: XCTestCase {
         }
     }
 
+    func testCustomSchemePageExecutesESModuleInWebKit() async throws {
+        let package = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "module-proof-generation",
+            resourcePaths: ["page/index.html", "page/main.js", "page/dependency.js"]
+        )
+        let resources = [
+            "page/index.html": Data("""
+            <!doctype html>
+            <html><body><script type="module" src="main.js"></script></body></html>
+            """.utf8),
+            "page/main.js": Data("""
+            import { value } from "./dependency.js";
+            globalThis.floorpExtensionModuleProof = value;
+            """.utf8),
+            "page/dependency.js": Data("export const value = 'module-ready';".utf8)
+        ]
+        let controller = try FloorpWebExtensionPageViewController(
+            surface: .options,
+            package: package,
+            entryPoint: .init("page/index.html"),
+            resolver: .init { request in resources[request.path] ?? Data() },
+            openExternal: { _ in }
+        )
+
+        controller.loadViewIfNeeded()
+        try await waitForLoad(controller.webView)
+        for _ in 0..<250 {
+            let result = try await controller.webView.callAsyncJavaScript(
+                "return globalThis.floorpExtensionModuleProof",
+                contentWorld: .page
+            ) as? String
+            if result == "module-ready" {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("The extension page ES module did not execute.")
+    }
+
     func testActionPopupFactoryUsesDefaultAndDisabledStatesWithoutOpeningAPage() throws {
         let package = try makeInstalledPackage(resourcePaths: ["popup/index.html"])
         let popup = try FloorpWebExtensionActionResource("popup/index.html")
@@ -289,6 +329,16 @@ final class FloorpWebExtensionPageHostTests: XCTestCase {
         )
         let policy = FloorpWebExtensionPageNavigationPolicy(originHost: "test-origin")
         return .init(package: package, navigationPolicy: policy, resolver: resolver)
+    }
+
+    private func waitForLoad(_ webView: WKWebView) async throws {
+        for _ in 0..<250 {
+            if !webView.isLoading, webView.url != nil {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for the extension page document.")
     }
 
     private func makeInstalledPackage(
