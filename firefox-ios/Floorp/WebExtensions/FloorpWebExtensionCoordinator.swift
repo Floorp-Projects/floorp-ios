@@ -437,6 +437,10 @@ final class FloorpWebExtensionCoordinator {
 
     /// Removes all profile-local extension state and its live WebKit policy.
     func removeExtension(_ extensionID: FloorpWebExtensionID) async {
+        await FloorpWebExtensionAPIHostRegistry.deactivate(
+            extensionID,
+            profileKey: profileKey
+        )
         let identifiers = await scriptRegistry.registeredScripts(for: extensionID).map(\.id)
         if !identifiers.isEmpty {
             try? await scriptRegistry.unregister(identifiers, for: extensionID)

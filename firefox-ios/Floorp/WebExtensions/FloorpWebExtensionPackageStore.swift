@@ -90,6 +90,23 @@ private final class FloorpWebExtensionPackageResourceState: @unchecked Sendable 
             from: entry.packageDirectory
         )
     }
+
+    func loadIfPresent(
+        extensionID: FloorpWebExtensionID,
+        source: FloorpWebExtensionScriptSource
+    ) throws -> String? {
+        lock.lock()
+        let entry = entries[extensionID]
+        lock.unlock()
+
+        guard let entry, entry.resourcePaths.contains(source.path) else {
+            return nil
+        }
+        return try FloorpWebExtensionPackageStore.loadUTF8Resource(
+            source.path,
+            from: entry.packageDirectory
+        )
+    }
 }
 
 /// A profile-owned installer and registry for curated bundled MV3 packages.
@@ -306,6 +323,16 @@ actor FloorpWebExtensionPackageStore {
         let state = resourceState
         return { extensionID, source in
             try state.load(extensionID: extensionID, source: source)
+        }
+    }
+
+    /// Returns an optional loader because a locale catalog may legitimately
+    /// be absent. An inventoried catalog still fails closed on read/UTF-8
+    /// errors instead of being misreported as an untranslated message.
+    nonisolated func makeI18nResourceLoader() -> FloorpWebExtensionI18n.ResourceLoader {
+        let state = resourceState
+        return { extensionID, source in
+            try state.loadIfPresent(extensionID: extensionID, source: source)
         }
     }
 

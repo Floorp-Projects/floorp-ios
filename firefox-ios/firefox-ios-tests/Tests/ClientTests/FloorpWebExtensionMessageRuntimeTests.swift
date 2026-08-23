@@ -146,9 +146,11 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         runtime.tearDown()
 
         XCTAssertFalse(host.snapshot(for: extensionID).isRegistered)
-        await XCTAssertThrowsErrorAsync {
-            _ = try await host.dispatch(payload, sender: self.testSender(extensionID: self.extensionID))
-        } verify: { error in
+        let senderAfterTearDown = testSender(extensionID: extensionID)
+        do {
+            _ = try await host.dispatch(payload, sender: senderAfterTearDown)
+            XCTFail("Expected dispatch after tearDown to throw")
+        } catch {
             XCTAssertEqual(error as? FloorpWebExtensionMessageError, .backgroundUnavailable)
         }
     }
@@ -169,9 +171,10 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         runtime.tearDown()
         await gate.release()
 
-        await XCTAssertThrowsErrorAsync {
+        do {
             try await inFlight.value
-        } verify: { error in
+            XCTFail("Expected in-flight dispatch to throw after tearDown")
+        } catch {
             XCTAssertEqual(error as? FloorpWebExtensionMessageError, .backgroundReplaced)
         }
     }
@@ -253,20 +256,6 @@ private final class AsyncReplyGate: FloorpWebExtensionBackgroundEventHandling {
             releaseContinuation = continuation
         }
         return try FloorpWebExtensionMessagePayload(Pong(accepted: true))
-    }
-}
-
-private func XCTAssertThrowsErrorAsync(
-    _ expression: () async throws -> Void,
-    verify: (Error) -> Void,
-    file: StaticString = #filePath,
-    line: UInt = #line
-) async {
-    do {
-        try await expression()
-        XCTFail("Expected async operation to throw", file: file, line: line)
-    } catch {
-        verify(error)
     }
 }
 

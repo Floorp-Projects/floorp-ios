@@ -52,6 +52,7 @@ enum FloorpWebExtensionMessageError: Error, Equatable, LocalizedError, Sendable 
     case tooManyPendingMessages
     case backgroundReplaced
     case handlerFailed
+    case permissionDenied
 
     var errorDescription: String? {
         switch self {
@@ -73,6 +74,8 @@ enum FloorpWebExtensionMessageError: Error, Equatable, LocalizedError, Sendable 
             return "The extension background was replaced while handling the message."
         case .handlerFailed:
             return "The extension background handler failed."
+        case .permissionDenied:
+            return "The extension is not allowed to use the requested API."
         }
     }
 
@@ -87,6 +90,7 @@ enum FloorpWebExtensionMessageError: Error, Equatable, LocalizedError, Sendable 
         case .tooManyPendingMessages: return "too_many_pending_messages"
         case .backgroundReplaced: return "background_replaced"
         case .handlerFailed: return "background_handler_failed"
+        case .permissionDenied: return "permission_denied"
         }
     }
 }
@@ -242,10 +246,24 @@ final class FloorpWebExtensionMessageRuntime {
     }
 
     let backgroundHost: FloorpWebExtensionLazyBackgroundHost
+    private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
     private var controllers = [ObjectIdentifier: ControllerEntry]()
 
-    init(backgroundHost: FloorpWebExtensionLazyBackgroundHost = .init()) {
+    init(
+        backgroundHost: FloorpWebExtensionLazyBackgroundHost,
+        nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)? = nil
+    ) {
         self.backgroundHost = backgroundHost
+        self.nativeAPIDispatcher = nativeAPIDispatcher
+    }
+
+    convenience init(
+        nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)? = nil
+    ) {
+        self.init(
+            backgroundHost: FloorpWebExtensionLazyBackgroundHost(),
+            nativeAPIDispatcher: nativeAPIDispatcher
+        )
     }
 
     static func isolatedContentWorldName(for extensionID: FloorpWebExtensionID) -> String {
@@ -271,6 +289,7 @@ final class FloorpWebExtensionMessageRuntime {
             extensionID: extensionID,
             trustedTab: tab,
             backgroundHost: backgroundHost,
+            nativeAPIDispatcher: nativeAPIDispatcher,
             authorizeDocument: authorizeDocument
         )
         session.attach(to: controller)
@@ -312,12 +331,12 @@ final class FloorpWebExtensionMessageRuntime {
 @MainActor
 private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMessageHandlerWithReply {
     private static let envelopeMaximumByteCount = 64 * 1024
-    private static let operation = "runtime.sendMessage"
     private static let version = 1
 
     private let extensionID: FloorpWebExtensionID
     private let trustedTab: FloorpWebExtensionTabContext
     private let backgroundHost: FloorpWebExtensionLazyBackgroundHost
+    private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
     private let authorizeDocument: FloorpWebExtensionMessageRuntime.DocumentAuthorization
     private let nonce: String
     private let handlerName: String
@@ -328,11 +347,13 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         extensionID: FloorpWebExtensionID,
         trustedTab: FloorpWebExtensionTabContext,
         backgroundHost: FloorpWebExtensionLazyBackgroundHost,
+        nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?,
         authorizeDocument: @escaping FloorpWebExtensionMessageRuntime.DocumentAuthorization
     ) {
         self.extensionID = extensionID
         self.trustedTab = trustedTab
         self.backgroundHost = backgroundHost
+        self.nativeAPIDispatcher = nativeAPIDispatcher
         self.authorizeDocument = authorizeDocument
         nonce = Self.makeNonce()
         handlerName = "floorpRuntime_\(nonce.prefix(24))"
@@ -416,17 +437,29 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
                 isMainFrame: isMainFrame,
                 isPrivate: trustedTab.isPrivate
             )
-            let response = try await backgroundHost.dispatch(envelope.payload, sender: sender)
+            let response: FloorpWebExtensionMessagePayload?
+            if envelope.operation == "runtime.sendMessage" {
+                response = try await backgroundHost.dispatch(envelope.payload, sender: sender)
+            } else if let nativeAPIDispatcher {
+                response = try await nativeAPIDispatcher.dispatch(
+                    operation: envelope.operation,
+                    payload: envelope.payload,
+                    sender: sender
+                )
+            } else {
+                throw FloorpWebExtensionMessageError.unsupportedOperation
+            }
             return try Self.successReply(response, requestID: envelope.requestID)
         } catch let error as FloorpWebExtensionMessageError {
             return Self.failureReply(error, requestID: requestID)
         } catch {
-            return Self.failureReply(.malformedEnvelope, requestID: requestID)
+            return Self.failureReply(.handlerFailed, requestID: requestID)
         }
     }
 
     private struct Envelope {
         let requestID: String
+        let operation: String
         let payload: FloorpWebExtensionMessagePayload
     }
 
@@ -444,7 +477,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
               let suppliedExtensionID = object["extensionId"] as? String,
               suppliedExtensionID == extensionID.rawValue,
               let operation = object["operation"] as? String,
-              operation == Self.operation,
+              Self.isValidOperation(operation),
               let requestID = object["requestId"] as? String,
               (1...128).contains(requestID.utf8.count),
               let payloadObject = object["payload"] else {
@@ -459,8 +492,18 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         }
         return Envelope(
             requestID: requestID,
+            operation: operation,
             payload: try FloorpWebExtensionMessagePayload(jsonData: payloadData)
         )
+    }
+
+    private static func isValidOperation(_ operation: String) -> Bool {
+        (1...128).contains(operation.utf8.count) && operation.utf8.allSatisfy {
+            ($0 >= UInt8(ascii: "a") && $0 <= UInt8(ascii: "z")) ||
+                ($0 >= UInt8(ascii: "A") && $0 <= UInt8(ascii: "Z")) ||
+                ($0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9")) ||
+                $0 == UInt8(ascii: ".") || $0 == UInt8(ascii: "_")
+        }
     }
 
     private static func successReply(
@@ -538,46 +581,103 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
           const nativeHandler = globalThis.webkit?.messageHandlers?.[\(handlerLiteral)];
           if (!nativeHandler || typeof nativeHandler.postMessage !== "function") return;
           let nextRequest = 0;
-          const runtime = Object.freeze({
-            sendMessage(message) {
-              const requestId = `${Date.now()}:${++nextRequest}`;
-              let serialized;
-              try {
-                serialized = JSON.stringify({
-                  version: 1,
-                  nonce: \(nonceLiteral),
-                  extensionId: \(extensionLiteral),
-                  operation: "runtime.sendMessage",
-                  requestId,
-                  payload: message
-                });
-              } catch (_) {
-                return Promise.reject(new Error("WebExtension message is not JSON serializable"));
-              }
-              if (typeof serialized !== "string") {
-                return Promise.reject(new Error("WebExtension message is not JSON serializable"));
-              }
-              return nativeHandler.postMessage(serialized).then((rawReply) => {
-                const reply = JSON.parse(rawReply);
-                if (!reply || reply.requestId !== requestId) {
-                  throw new Error("Invalid WebExtension bridge reply");
-                }
-                if (!reply.ok) {
-                  throw new Error(reply.error || "WebExtension bridge request failed");
-                }
-                return reply.hasPayload ? reply.payload : undefined;
+          const request = (operation, payload = {}) => {
+            const requestId = `${Date.now()}:${++nextRequest}`;
+            let serialized;
+            try {
+              serialized = JSON.stringify({
+                version: 1,
+                nonce: \(nonceLiteral),
+                extensionId: \(extensionLiteral),
+                operation,
+                requestId,
+                payload
               });
+            } catch (_) {
+              return Promise.reject(new Error("WebExtension message is not JSON serializable"));
             }
+            if (typeof serialized !== "string") {
+              return Promise.reject(new Error("WebExtension message is not JSON serializable"));
+            }
+            return nativeHandler.postMessage(serialized).then((rawReply) => {
+              const reply = JSON.parse(rawReply);
+              if (!reply || reply.requestId !== requestId) {
+                throw new Error("Invalid WebExtension bridge reply");
+              }
+              if (!reply.ok) {
+                throw new Error(reply.error || "WebExtension bridge request failed");
+              }
+              return reply.hasPayload ? reply.payload : undefined;
+            });
+          };
+          const normalizeKeys = (keys) => {
+            if (keys == null) return null;
+            if (typeof keys === "string") return [keys];
+            if (Array.isArray(keys) && keys.every((key) => typeof key === "string")) return keys;
+            throw new TypeError("Only string and string-array storage keys are supported");
+          };
+          const storageArea = (area) => Object.freeze({
+            get(keys = null) { return request(`storage.${area}.get`, {keys: normalizeKeys(keys)}); },
+            set(items) {
+              if (!items || typeof items !== "object" || Array.isArray(items)) {
+                return Promise.reject(new TypeError("storage.set requires an object"));
+              }
+              return request(`storage.${area}.set`, {items});
+            },
+            remove(keys) { return request(`storage.${area}.remove`, {keys: normalizeKeys(keys)}); },
+            clear() { return request(`storage.${area}.clear`); },
+            getBytesInUse(keys = null) {
+              return request(`storage.${area}.getBytesInUse`, {keys: normalizeKeys(keys)})
+                .then((result) => result.value);
+            }
+          });
+          const runtime = Object.freeze({
+            sendMessage(message) { return request("runtime.sendMessage", message); }
+          });
+          const storage = Object.freeze({local: storageArea("local"), session: storageArea("session")});
+          const i18n = Object.freeze({
+            getMessage(name, substitutions = []) {
+              const values = typeof substitutions === "string" ? [substitutions] : substitutions;
+              if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) return "";
+              return request("i18n.getMessage", {name, substitutions: values}).then((result) => result.value);
+            },
+            getUILanguage() { return request("i18n.getUILanguage").then((result) => result.value); },
+            getAcceptLanguages() {
+              return request("i18n.getAcceptLanguages").then((result) => result.values);
+            }
+          });
+          const alarms = Object.freeze({
+            create(name, info) { return request("alarms.create", Object.assign({name}, info || {})); },
+            get(name) { return request("alarms.get", {name}); },
+            getAll() { return request("alarms.getAll"); },
+            clear(name) { return request("alarms.clear", {name}).then((result) => result.value); },
+            clearAll() { return request("alarms.clearAll").then((result) => result.value); }
+          });
+          const action = Object.freeze({
+            getTitle() { return request("action.getTitle").then((result) => result.value); },
+            setTitle(details) { return request("action.setTitle", {value: details?.title ?? null}); },
+            getBadgeText() { return request("action.getBadgeText").then((result) => result.value); },
+            setBadgeText(details) { return request("action.setBadgeText", {value: details?.text ?? null}); },
+            getBadgeBackgroundColor() {
+              return request("action.getBadgeBackgroundColor").then((result) => result.value);
+            },
+            setBadgeBackgroundColor(details) {
+              return request("action.setBadgeBackgroundColor", {value: details?.color ?? null});
+            },
+            enable() { return request("action.enable"); },
+            disable() { return request("action.disable"); }
           });
           const browserObject = globalThis.browser && typeof globalThis.browser === "object"
             ? globalThis.browser
             : {};
-          Object.defineProperty(browserObject, "runtime", {
-            value: runtime,
-            enumerable: true,
-            configurable: false,
-            writable: false
-          });
+          for (const [name, value] of Object.entries({runtime, storage, i18n, alarms, action})) {
+            Object.defineProperty(browserObject, name, {
+              value,
+              enumerable: true,
+              configurable: false,
+              writable: false
+            });
+          }
           Object.defineProperty(globalThis, "browser", {
             value: browserObject,
             enumerable: true,
