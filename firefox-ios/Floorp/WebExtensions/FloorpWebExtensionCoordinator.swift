@@ -164,7 +164,10 @@ final class FloorpWebExtensionCoordinator {
     /// composition. Replacing a coordinator never combines normal and private
     /// state: the key includes the browsing mode.
     static func install(_ coordinator: FloorpWebExtensionCoordinator) {
-        coordinators[coordinator.profileKey] = coordinator
+        if let previous = coordinators.updateValue(coordinator, forKey: coordinator.profileKey),
+           previous !== coordinator {
+            previous.tearDown()
+        }
     }
 
     static func removeCoordinator(for profileIdentifier: String, isPrivateBrowsing: Bool) {

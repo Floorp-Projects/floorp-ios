@@ -57,10 +57,13 @@ class SceneDelegate: UIResponder,
         let sceneCoordinator = SceneCoordinator(scene: scene, introManager: introScreenManager)
         self.sceneCoordinator = sceneCoordinator
         self.window = sceneCoordinator.window
-        sceneCoordinator.start()
-        handle(connectionOptions: connectionOptions)
-        if !sessionManager.launchSessionProvider.openedFromExternalSource {
-            AppEventQueue.signal(event: .recordStartupTimeOpenDeeplinkCancelled)
+        AppEventQueue.wait(for: .floorpWebExtensionsReady) { [weak self, sceneCoordinator] in
+            guard let self, self.sceneCoordinator === sceneCoordinator else { return }
+            sceneCoordinator.start()
+            self.handle(connectionOptions: connectionOptions)
+            if !self.sessionManager.launchSessionProvider.openedFromExternalSource {
+                AppEventQueue.signal(event: .recordStartupTimeOpenDeeplinkCancelled)
+            }
         }
     }
 

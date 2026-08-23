@@ -32,6 +32,7 @@ final class SettingsCoordinator: BaseCoordinator,
                                  BrowsingSettingsDelegate,
                                  AppearanceSettingsDelegate,
                                  TranslationPickerSettingsDelegate,
+                                 FloorpWebExtensionsSettingsDelegate,
                                  LegacyFeatureFlaggable {
     var settingsViewController: AppSettingsScreen?
     private let wallpaperManager: WallpaperManagerInterface
@@ -354,6 +355,18 @@ final class SettingsCoordinator: BaseCoordinator,
         viewController.settingsDelegate = self
         viewController.profile = profile
         viewController.tabManager = tabManager
+        router.push(viewController)
+    }
+
+    func pressedWebExtensions() {
+        let packageManager = FloorpWebExtensionPackageStoreRegistry.manager(
+            for: profile.localName(),
+            isPrivateBrowsing: false
+        )
+        let viewController = FloorpWebExtensionSettingsViewController(
+            windowUUID: windowUUID,
+            packageManager: packageManager
+        )
         router.push(viewController)
     }
 

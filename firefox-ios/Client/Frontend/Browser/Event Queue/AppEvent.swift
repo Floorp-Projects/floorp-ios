@@ -20,6 +20,7 @@ public enum AppEvent: AppEventType {
     case postLaunchDependenciesComplete
     case accountManagerInitialized
     case browserIsReady
+    case floorpWebExtensionsReady
 
     // Events: Open Deeplink startup time record
     case recordStartupTimeOpenDeeplinkComplete
