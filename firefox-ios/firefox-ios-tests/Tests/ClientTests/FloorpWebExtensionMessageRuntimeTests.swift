@@ -136,7 +136,11 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         let runtime = FloorpWebExtensionMessageRuntime(backgroundHost: host)
         let payload = try FloorpWebExtensionMessagePayload(Ping(type: "ping"))
 
-        XCTAssertNoThrow(try await host.dispatch(payload, sender: testSender(extensionID: extensionID)))
+        do {
+            _ = try await host.dispatch(payload, sender: testSender(extensionID: extensionID))
+        } catch {
+            XCTFail("Expected the registered background to receive messages before tearDown: \(error)")
+        }
         XCTAssertTrue(host.snapshot(for: extensionID).isRegistered)
 
         runtime.tearDown()
