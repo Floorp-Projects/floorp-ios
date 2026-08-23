@@ -822,6 +822,29 @@ final class FloorpPanelRegistryAutoUnloadTests: XCTestCase {
         XCTAssertTrue(fixture.manager.config.autoUnload)
     }
 
+    func testDoneEditingButtonLeavesPanelEditingMode() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let controller = fixture.makeController()
+        let host = host(controller)
+        defer { host.cleanup() }
+
+        controller.setEditing(true, animated: false)
+        XCTAssertTrue(controller.isEditing)
+
+        let doneButton = try XCTUnwrap(controller.navigationItem.rightBarButtonItems?.last)
+        XCTAssertEqual(doneButton.accessibilityLabel, FloorpStrings.PanelRegistry.doneEditing)
+        let action = try XCTUnwrap(doneButton.action)
+        let target = try XCTUnwrap(doneButton.target as? NSObject)
+        _ = target.perform(action)
+
+        XCTAssertFalse(controller.isEditing)
+        XCTAssertEqual(
+            controller.navigationItem.rightBarButtonItems?.last?.accessibilityLabel,
+            FloorpStrings.PanelRegistry.edit
+        )
+    }
+
     private func assertInitialState(isOn: Bool) throws {
         let fixture = try makeFixture(initialAutoUnload: isOn)
         defer { fixture.cleanup() }
