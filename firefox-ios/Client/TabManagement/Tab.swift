@@ -821,7 +821,7 @@ class Tab: NSObject,
             hash ^= UInt64(byte)
             hash &*= 1_099_511_628_211
         }
-        return Int(truncatingIfNeeded: hash)
+        return Int(truncatingIfNeeded: hash & UInt64(Int.max))
     }
 
     var floorpWebExtensionTabID: Int {

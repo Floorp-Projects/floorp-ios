@@ -369,7 +369,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             hostAccess: .denied,
             to: extensionID
         )
-        XCTAssertTrue(try await coordinator.configureDNR(for: extensionID))
+        let configuredInitialDNR = try await coordinator.configureDNR(for: extensionID)
+        XCTAssertTrue(configuredInitialDNR)
 
         registryWriter.shouldFail = true
         await assertAsyncThrows {
@@ -386,27 +387,30 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             )
         }
 
-        let afterFailure = try XCTUnwrap(await coordinator.dnrSnapshot(for: extensionID))
+        let failedUpdateSnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        let afterFailure = try XCTUnwrap(failedUpdateSnapshot)
         XCTAssertTrue(afterFailure.dynamicRules.isEmpty)
-        XCTAssertEqual((await store.dnrConfiguration(for: extensionID))?.dynamicRules, [])
+        let failedUpdateConfiguration = await store.dnrConfiguration(for: extensionID)
+        XCTAssertEqual(failedUpdateConfiguration?.dynamicRules, [])
         XCTAssertEqual(runtime.policySnapshot(for: extensionID)?.contentRuleListCount, 0)
 
         registryWriter.shouldFail = false
-        XCTAssertTrue(
-            try await coordinator.updateDynamicRules(
-                addRules: [
-                    .init(
-                        id: 41,
-                        action: .init(type: .block),
-                        condition: .init(urlFilter: "tracker.example")
-                    )
-                ],
-                removeRuleIDs: [],
-                for: extensionID
-            )
+        let dynamicRulesUpdated = try await coordinator.updateDynamicRules(
+            addRules: [
+                .init(
+                    id: 41,
+                    action: .init(type: .block),
+                    condition: .init(urlFilter: "tracker.example")
+                )
+            ],
+            removeRuleIDs: [],
+            for: extensionID
         )
-        XCTAssertEqual((await coordinator.dnrSnapshot(for: extensionID))?.dynamicRules.map(\.id), [41])
-        XCTAssertEqual((await store.dnrConfiguration(for: extensionID))?.dynamicRules.map(\.id), [41])
+        XCTAssertTrue(dynamicRulesUpdated)
+        let updatedSnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        let updatedConfiguration = await store.dnrConfiguration(for: extensionID)
+        XCTAssertEqual(updatedSnapshot?.dynamicRules.map(\.id), [41])
+        XCTAssertEqual(updatedConfiguration?.dynamicRules.map(\.id), [41])
     }
 
     func testRegistryPersistenceFailureFailsClosedWhenRollbackCannotCompile() async throws {
@@ -446,13 +450,12 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             action: .init(type: .block),
             condition: .init(urlFilter: "static.example")
         )
-        XCTAssertTrue(
-            try await coordinator.configureDNR(
-                for: extensionID,
-                staticRuleSets: [.init(identifier: "large-static", rules: [staticRule])],
-                enabledStaticRuleSetIDs: ["large-static"]
-            )
+        let configuredStaticDNR = try await coordinator.configureDNR(
+            for: extensionID,
+            staticRuleSets: [.init(identifier: "large-static", rules: [staticRule])],
+            enabledStaticRuleSetIDs: ["large-static"]
         )
+        XCTAssertTrue(configuredStaticDNR)
 
         registryWriter.shouldFail = true
         compiler.failOnCompilationAttempt = 3
@@ -470,9 +473,11 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             )
         }
 
-        XCTAssertNil(await coordinator.dnrSnapshot(for: extensionID))
+        let rollbackFailureSnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        XCTAssertNil(rollbackFailureSnapshot)
         XCTAssertNil(runtime.policySnapshot(for: extensionID))
-        XCTAssertTrue((await store.dnrConfiguration(for: extensionID))?.dynamicRules.isEmpty ?? false)
+        let rollbackFailureConfiguration = await store.dnrConfiguration(for: extensionID)
+        XCTAssertTrue(rollbackFailureConfiguration?.dynamicRules.isEmpty ?? false)
     }
 
     func testRestoreFailurePreservesDynamicSnapshotAndDoesNotRestoreSessionRules() async throws {
@@ -506,34 +511,34 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             hostAccess: .denied,
             to: extensionID
         )
-        XCTAssertTrue(try await initialCoordinator.configureDNR(for: extensionID))
-        XCTAssertTrue(
-            try await initialCoordinator.updateDynamicRules(
-                addRules: [
-                    .init(
-                        id: 41,
-                        action: .init(type: .block),
-                        condition: .init(urlFilter: "dynamic.example")
-                    )
-                ],
-                removeRuleIDs: [],
-                for: extensionID
-            )
+        let configuredInitialDNR = try await initialCoordinator.configureDNR(for: extensionID)
+        XCTAssertTrue(configuredInitialDNR)
+        let updatedDynamicRules = try await initialCoordinator.updateDynamicRules(
+            addRules: [
+                .init(
+                    id: 41,
+                    action: .init(type: .block),
+                    condition: .init(urlFilter: "dynamic.example")
+                )
+            ],
+            removeRuleIDs: [],
+            for: extensionID
         )
-        XCTAssertTrue(
-            try await initialCoordinator.updateSessionRules(
-                addRules: [
-                    .init(
-                        id: 42,
-                        action: .init(type: .block),
-                        condition: .init(urlFilter: "session.example")
-                    )
-                ],
-                removeRuleIDs: [],
-                for: extensionID
-            )
+        XCTAssertTrue(updatedDynamicRules)
+        let updatedSessionRules = try await initialCoordinator.updateSessionRules(
+            addRules: [
+                .init(
+                    id: 42,
+                    action: .init(type: .block),
+                    condition: .init(urlFilter: "session.example")
+                )
+            ],
+            removeRuleIDs: [],
+            for: extensionID
         )
-        XCTAssertEqual((await store.dnrConfiguration(for: extensionID))?.dynamicRules.map(\.id), [41])
+        XCTAssertTrue(updatedSessionRules)
+        let persistedDynamicConfiguration = await store.dnrConfiguration(for: extensionID)
+        XCTAssertEqual(persistedDynamicConfiguration?.dynamicRules.map(\.id), [41])
 
         let restartedStore = try FloorpWebExtensionPackageStore(
             profileIdentifier: "package-store-dnr-restore-atomicity",
@@ -553,8 +558,10 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             from: restartedStore,
             into: failingCoordinator
         )
-        XCTAssertNil(await failingCoordinator.dnrSnapshot(for: extensionID))
-        XCTAssertEqual((await restartedStore.dnrConfiguration(for: extensionID))?.dynamicRules.map(\.id), [41])
+        let failedRestoreSnapshot = await failingCoordinator.dnrSnapshot(for: extensionID)
+        let failedRestoreConfiguration = await restartedStore.dnrConfiguration(for: extensionID)
+        XCTAssertNil(failedRestoreSnapshot)
+        XCTAssertEqual(failedRestoreConfiguration?.dynamicRules.map(\.id), [41])
 
         let restoredStore = try FloorpWebExtensionPackageStore(
             profileIdentifier: "package-store-dnr-restore-atomicity",
@@ -572,7 +579,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             from: restoredStore,
             into: restoredCoordinator
         )
-        let restored = try XCTUnwrap(await restoredCoordinator.dnrSnapshot(for: extensionID))
+        let restoredSnapshot = await restoredCoordinator.dnrSnapshot(for: extensionID)
+        let restored = try XCTUnwrap(restoredSnapshot)
         XCTAssertEqual(restored.dynamicRules.map(\.id), [41])
         XCTAssertTrue(restored.sessionRules.isEmpty)
     }
@@ -858,7 +866,7 @@ private final class PackageStoreRuleListCompiler: FloorpWebExtensionContentRuleL
         if compilationAttemptCount == failOnCompilationAttempt {
             throw Failure.expected
         }
-        try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<WKContentRuleList, Error>) in
             store.compileContentRuleList(
                 forIdentifier: identifier,
                 encodedContentRuleList: encodedContentRuleList
