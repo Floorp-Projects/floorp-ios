@@ -824,6 +824,14 @@ class Tab: NSObject,
         return Int(truncatingIfNeeded: hash)
     }
 
+    var floorpWebExtensionTabID: Int {
+        floorpWebExtensionTabIdentifier
+    }
+
+    var floorpWebExtensionActiveDocumentContext: FloorpWebExtensionTabContext? {
+        floorpWebExtensionActiveDocument
+    }
+
     // MARK: - Content script
 
     func addContentScript(_ helper: TabContentScript, name: String) {
