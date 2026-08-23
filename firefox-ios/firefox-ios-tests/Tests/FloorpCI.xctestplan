@@ -794,7 +794,11 @@
         "FloorpWebExtensionPackageStoreTests/testRegistryPersistenceFailureFailsClosedWhenRollbackCannotCompile()",
         "FloorpWebExtensionPackageStoreTests/testRestoreFailurePreservesDynamicSnapshotAndDoesNotRestoreSessionRules()",
         "FloorpWebExtensionTabsTests/testProfileTabsHostUsesLiveWindowManagersAndMessageBridge()",
-        "FloorpWebExtensionAPIHostTests/testTabsSendMessageForwardsAuthenticatedSourceSender()"
+        "FloorpWebExtensionAPIHostTests/testTabsSendMessageForwardsAuthenticatedSourceSender()",
+        "FloorpWebExtensionFoundationTests/testMV3ManifestDecodeRejectsUnknownTopLevelKeys()",
+        "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightValidatesEveryDeclaredPackageResource()",
+        "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightRejectsMissingInvalidAndMismatchedPackageResources()",
+        "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightRejectsUnrepresentableDNRConditions()"
       ],
       "target": {
         "containerPath": "container:Client.xcodeproj",
