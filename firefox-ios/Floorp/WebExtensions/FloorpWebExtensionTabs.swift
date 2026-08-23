@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import Foundation
+import WebKit
 
 /// A host-owned tab snapshot. The adapter is the sole authority for tab IDs,
 /// active selection, and navigation; this value deliberately has no WebKit or
@@ -28,7 +29,7 @@ struct FloorpWebExtensionHostTab: Equatable, Sendable {
 /// `url` and `title` are absent unless the extension has the `tabs` grant or
 /// currently has host access to the particular document. This makes callers
 /// unable to use `query` as a cross-site browsing-history API.
-struct FloorpWebExtensionTab: Equatable, Sendable {
+struct FloorpWebExtensionTab: Codable, Equatable, Sendable {
     let id: Int
     let active: Bool
     let isPrivate: Bool
@@ -43,17 +44,10 @@ enum FloorpWebExtensionTabsQuery: Sendable {
     case active
 }
 
-struct FloorpWebExtensionTabMessageSender: Equatable, Sendable {
-    let extensionID: FloorpWebExtensionID
-    let tabID: Int
-    let documentGeneration: UInt64
-    let url: URL
-    let isPrivate: Bool
-}
-
 enum FloorpWebExtensionTabsError: Error, Equatable, LocalizedError, Sendable {
     case invalidProfileIdentifier
     case hostProfileMismatch
+    case hostUnavailable
     case hostTabInvariantViolation
     case tabNotFound(Int)
     case privateBrowsingDenied
@@ -67,6 +61,8 @@ enum FloorpWebExtensionTabsError: Error, Equatable, LocalizedError, Sendable {
             return "The WebExtensions tabs profile identifier is invalid."
         case .hostProfileMismatch:
             return "The tabs host does not belong to this extension profile."
+        case .hostUnavailable:
+            return "No live browser tab host is available for the requested tabs operation."
         case .hostTabInvariantViolation:
             return "The tabs host returned a tab outside its profile boundary."
         case .tabNotFound(let id):
@@ -80,6 +76,244 @@ enum FloorpWebExtensionTabsError: Error, Equatable, LocalizedError, Sendable {
         case .messageDeliveryFailed:
             return "The tab could not receive the extension message."
         }
+    }
+}
+
+/// A production tabs host backed by the app's real `WindowManager` and tab
+/// manager instances.
+///
+/// The adapter stays profile-scoped and browsing-mode-scoped; every call is
+/// filtered through the active profile windows and the extension's permission
+/// snapshot. sendMessage uses the isolated extension content world attached by
+/// the message runtime, so it can only reach a document that already carries
+/// the authenticated WebExtensions bridge.
+@MainActor
+final class FloorpWebExtensionProfileTabsHost: FloorpWebExtensionTabsHostAdapting {
+    typealias JavaScriptEvaluator = @MainActor (
+        WKWebView,
+        String,
+        WKContentWorld
+    ) async throws -> Any?
+
+    let profileIdentifier: String
+    let isPrivateBrowsing: Bool
+
+    private weak var windowManager: WindowManager?
+    private let evaluateJavaScript: JavaScriptEvaluator
+
+    init(
+        profileIdentifier: String,
+        isPrivateBrowsing: Bool,
+        windowManager: WindowManager,
+        javaScriptEvaluator: JavaScriptEvaluator? = nil
+    ) {
+        self.profileIdentifier = profileIdentifier
+        self.isPrivateBrowsing = isPrivateBrowsing
+        self.windowManager = windowManager
+        evaluateJavaScript = javaScriptEvaluator ?? Self.defaultJavaScriptEvaluator
+    }
+
+    func tabsSnapshot() -> [FloorpWebExtensionHostTab] {
+        liveTabs().map { makeSnapshot(from: $0) }
+    }
+
+    func createTab(url: URL, makeActive: Bool) throws -> FloorpWebExtensionHostTab {
+        let tabManager = try activeTabManager()
+        let tab = tabManager.addTab(URLRequest(url: url), zombie: false, isPrivate: isPrivateBrowsing)
+        guard tab.profile.localName() == profileIdentifier else {
+            throw FloorpWebExtensionTabsError.hostProfileMismatch
+        }
+        if makeActive {
+            tabManager.selectTab(tab)
+        }
+        return makeSnapshot(from: tab)
+    }
+
+    func updateTab(id: Int, url: URL) throws -> FloorpWebExtensionHostTab {
+        let tab = try liveTab(for: id)
+        guard tab.isPrivate == isPrivateBrowsing else {
+            throw FloorpWebExtensionTabsError.hostTabInvariantViolation
+        }
+        tab.loadRequest(URLRequest(url: url))
+        return makeSnapshot(from: tab)
+    }
+
+    func reloadTab(id: Int) throws -> FloorpWebExtensionHostTab {
+        let tab = try liveTab(for: id)
+        guard tab.isPrivate == isPrivateBrowsing else {
+            throw FloorpWebExtensionTabsError.hostTabInvariantViolation
+        }
+        tab.reload()
+        return makeSnapshot(from: tab)
+    }
+
+    func deliverMessage(
+        _ message: FloorpWebExtensionJSONValue,
+        sender: any FloorpWebExtensionMessageSender,
+        to tab: FloorpWebExtensionTabContext
+    ) async throws -> FloorpWebExtensionJSONValue? {
+        let liveTab = try liveTab(for: tab.tabID)
+        guard let activeDocument = liveTab.floorpWebExtensionActiveDocumentContext,
+              activeDocument.documentGeneration == tab.documentGeneration,
+              activeDocument.url == tab.url,
+              activeDocument.isPrivate == tab.isPrivate else {
+            throw FloorpWebExtensionTabsError.hostTabInvariantViolation
+        }
+
+        guard let webView = liveTab.webView else {
+            throw FloorpWebExtensionTabsError.hostUnavailable
+        }
+
+        let messageJSON = try jsonLiteral(message)
+        let senderJSON = try jsonLiteral(FloorpWebExtensionTabMessageSenderPayload(sender: sender))
+        let script = "return await globalThis.__floorpWebExtensionDeliverTabsMessage(\(messageJSON), \(senderJSON))"
+        let contentWorld = WKContentWorld.world(
+            name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: sender.extensionID)
+        )
+
+        do {
+            let rawReply = try await evaluateJavaScript(webView, script, contentWorld)
+            if rawReply is NSNull {
+                return nil
+            }
+            let data: Data
+            if let string = rawReply as? String {
+                data = Data(string.utf8)
+            } else if let rawReply {
+                data = try JSONSerialization.data(withJSONObject: rawReply, options: .fragmentsAllowed)
+            } else {
+                return nil
+            }
+            return try JSONDecoder().decode(FloorpWebExtensionJSONValue.self, from: data)
+        } catch {
+            throw FloorpWebExtensionTabsError.messageDeliveryFailed
+        }
+    }
+
+    private func activeTabManager() throws -> TabManager {
+        guard let manager = windowManager?.allWindowTabManagers().first(where: { tabManager in
+            (
+                tabManager.selectedTab?.isPrivate == isPrivateBrowsing &&
+                tabManager.selectedTab?.profile.localName() == profileIdentifier
+            ) ||
+                tabManager.tabs.contains(where: {
+                    $0.isPrivate == isPrivateBrowsing && $0.profile.localName() == profileIdentifier
+                })
+        }) else {
+            throw FloorpWebExtensionTabsError.hostUnavailable
+        }
+        return manager
+    }
+
+    private func liveTabs() -> [Tab] {
+        windowManager?.allWindowTabManagers().flatMap { manager in
+            manager.tabs.filter {
+                $0.isPrivate == isPrivateBrowsing && $0.profile.localName() == profileIdentifier
+            }
+        } ?? []
+    }
+
+    private func liveTab(for tabID: Int) throws -> Tab {
+        guard let tab = liveTabs().first(where: { $0.floorpWebExtensionTabID == tabID }) else {
+            throw FloorpWebExtensionTabsError.tabNotFound(tabID)
+        }
+        return tab
+    }
+
+    private func makeSnapshot(from tab: Tab) -> FloorpWebExtensionHostTab {
+        guard tab.profile.localName() == profileIdentifier else {
+            preconditionFailure("Tabs host snapshot escaped its profile boundary")
+        }
+        return FloorpWebExtensionHostTab(
+            context: tab.floorpWebExtensionActiveDocumentContext ?? .init(
+                tabID: tab.floorpWebExtensionTabID,
+                documentGeneration: 0,
+                url: tab.webView?.url ?? tab.url ?? URL(string: "about:blank")!,
+                isPrivate: tab.isPrivate
+            ),
+            title: tab.title,
+            isActive: tabManagerSelectedTab(for: tab)
+        )
+    }
+
+    private func tabManagerSelectedTab(for tab: Tab) -> Bool {
+        windowManager?.allWindowTabManagers().contains(where: { manager in
+            manager.selectedTab === tab
+        }) ?? false
+    }
+
+    private static func defaultJavaScriptEvaluator(
+        webView: WKWebView,
+        script: String,
+        contentWorld: WKContentWorld
+    ) async throws -> Any? {
+        try await webView.callAsyncJavaScript(script, contentWorld: contentWorld)
+    }
+
+    private struct FloorpWebExtensionTabMessageSenderPayload: Encodable {
+        struct TabPayload: Encodable {
+            let id: Int
+            let url: String
+            let isPrivate: Bool
+        }
+
+        struct PagePayload: Encodable {
+            let originHost: String
+            let surface: String
+        }
+
+        let extensionId: String
+        let tabId: Int?
+        let documentGeneration: UInt64?
+        let url: String?
+        let isPrivate: Bool
+        let isMainFrame: Bool?
+        let tab: TabPayload?
+        let page: PagePayload?
+
+        init(sender: any FloorpWebExtensionMessageSender) {
+            extensionId = sender.extensionID.rawValue
+            isPrivate = sender.isPrivate
+            if let tabSender = sender as? FloorpWebExtensionRuntimeMessageSender {
+                tabId = tabSender.tabID
+                documentGeneration = tabSender.documentGeneration
+                url = tabSender.url.absoluteString
+                isMainFrame = tabSender.isMainFrame
+                tab = .init(
+                    id: tabSender.tabID,
+                    url: tabSender.url.absoluteString,
+                    isPrivate: tabSender.isPrivate
+                )
+                page = nil
+            } else if let pageSender = sender as? FloorpWebExtensionPageRuntimeMessageSender {
+                tabId = nil
+                documentGeneration = nil
+                url = "floorp-extension://\(pageSender.originHost)/"
+                isMainFrame = true
+                tab = nil
+                switch pageSender.surface {
+                case .actionPopup:
+                    page = .init(originHost: pageSender.originHost, surface: "actionPopup")
+                case .options:
+                    page = .init(originHost: pageSender.originHost, surface: "options")
+                }
+            } else {
+                tabId = nil
+                documentGeneration = nil
+                url = nil
+                isMainFrame = nil
+                tab = nil
+                page = nil
+            }
+        }
+    }
+
+    private func jsonLiteral<T: Encodable>(_ value: T) throws -> String {
+        let data = try JSONEncoder().encode(value)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw FloorpWebExtensionTabsError.messageDeliveryFailed
+        }
+        return json
     }
 }
 
@@ -99,7 +333,7 @@ protocol FloorpWebExtensionTabsHostAdapting: AnyObject {
     func reloadTab(id: Int) throws -> FloorpWebExtensionHostTab
     func deliverMessage(
         _ message: FloorpWebExtensionJSONValue,
-        sender: FloorpWebExtensionTabMessageSender,
+        sender: any FloorpWebExtensionMessageSender,
         to tab: FloorpWebExtensionTabContext
     ) async throws -> FloorpWebExtensionJSONValue?
 }
@@ -144,8 +378,11 @@ final class FloorpWebExtensionTabsService {
         let tabs = try snapshots()
         switch query {
         case .current, .active:
-            guard let active = tabs.first(where: \.isActive) else { return [] }
-            return [await publicTab(from: active, extensionID: extensionID)]
+            var result = [FloorpWebExtensionTab]()
+            for tab in tabs where tab.isActive {
+                result.append(await publicTab(from: tab, extensionID: extensionID))
+            }
+            return result.sorted { lhs, rhs in lhs.id < rhs.id }
         }
     }
 
@@ -214,17 +451,15 @@ final class FloorpWebExtensionTabsService {
     func sendMessage(
         _ message: FloorpWebExtensionJSONValue,
         to tabID: Int,
-        for extensionID: FloorpWebExtensionID
+        for extensionID: FloorpWebExtensionID,
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionJSONValue? {
+        guard sender.extensionID == extensionID,
+              sender.isPrivate == isPrivateBrowsing else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
         let tab = try tab(withID: tabID)
         try await requireContentAccess(to: tab.context, for: extensionID)
-        let sender = FloorpWebExtensionTabMessageSender(
-            extensionID: extensionID,
-            tabID: tab.context.tabID,
-            documentGeneration: tab.context.documentGeneration,
-            url: tab.context.url,
-            isPrivate: tab.context.isPrivate
-        )
         do {
             return try await host.deliverMessage(message, sender: sender, to: tab.context)
         } catch let error as FloorpWebExtensionTabsError {
@@ -236,8 +471,7 @@ final class FloorpWebExtensionTabsService {
 
     private func snapshots() throws -> [FloorpWebExtensionHostTab] {
         let tabs = try host.tabsSnapshot().map(validate)
-        guard Set(tabs.map(\.context.tabID)).count == tabs.count,
-              tabs.filter(\.isActive).count <= 1 else {
+        guard Set(tabs.map(\.context.tabID)).count == tabs.count else {
             throw FloorpWebExtensionTabsError.hostTabInvariantViolation
         }
         return tabs

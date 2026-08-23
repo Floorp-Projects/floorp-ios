@@ -6,6 +6,7 @@ import WebKit
 import Common
 import Shared
 import Storage
+import TestKit
 @testable import Client
 
 final class MockTabWebView: TabWebView {
@@ -126,9 +127,21 @@ class MockTab: Tab {
     var enqueueDocumentCalled = 0
     var overrideReaderModeState: ReaderModeState?
 
-    init(profile: Profile, isPrivate: Bool = false, windowUUID: WindowUUID, isHomePage: Bool = false) {
+    init(
+        profile: Profile,
+        isPrivate: Bool = false,
+        windowUUID: WindowUUID,
+        isHomePage: Bool = false,
+        documentLogger: DocumentLogger = DocumentLogger(logger: MockLogger())
+    ) {
         self.isHomePage = isHomePage
-        super.init(profile: profile, isPrivate: isPrivate, windowUUID: windowUUID)
+        super.init(
+            profile: profile,
+            isPrivate: isPrivate,
+            windowUUID: windowUUID,
+            documentLogger: documentLogger,
+            dispatchQueue: MockDispatchQueue()
+        )
     }
 
     override var readerModeState: ReaderModeState? {

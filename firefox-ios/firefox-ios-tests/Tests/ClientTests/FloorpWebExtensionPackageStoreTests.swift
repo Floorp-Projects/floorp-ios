@@ -308,6 +308,275 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         }
     }
 
+    func testRestartFailsClosedWhenRegistryDNRLimitsAreInvalid() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-dnr-limit-tamper",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var installed = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+        installed.dnrConfiguration = .init(
+            limits: .init(maxDynamicRules: -1),
+            enabledStaticRuleSetIDs: [],
+            dynamicRules: []
+        )
+        try writeRegistry(root: directory, packages: [installed])
+
+        XCTAssertThrowsError(
+            try FloorpWebExtensionPackageStore(
+                profileIdentifier: "package-store-dnr-limit-tamper",
+                isPrivateBrowsing: false,
+                directory: directory
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionPackageStoreError, .corruptedRegistry)
+        }
+    }
+
+    func testRegistryPersistenceFailureRestoresPriorLiveDNRPolicy() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registryWriter = RegistryWriteFailureInjector()
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-dnr-persistence-failure",
+            isPrivateBrowsing: false,
+            directory: directory,
+            registryPersister: { data, url in
+                try registryWriter.persist(data, to: url)
+            }
+        )
+        _ = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: PackageStoreRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "package-store-dnr-persistence-failure",
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        await coordinator.grantPermissions(
+            [.declarativeNetRequest],
+            requestedHosts: [],
+            hostAccess: .denied,
+            to: extensionID
+        )
+        XCTAssertTrue(try await coordinator.configureDNR(for: extensionID))
+
+        registryWriter.shouldFail = true
+        await assertAsyncThrows {
+            _ = try await coordinator.updateDynamicRules(
+                addRules: [
+                    .init(
+                        id: 41,
+                        action: .init(type: .block),
+                        condition: .init(urlFilter: "tracker.example")
+                    )
+                ],
+                removeRuleIDs: [],
+                for: self.extensionID
+            )
+        }
+
+        let afterFailure = try XCTUnwrap(await coordinator.dnrSnapshot(for: extensionID))
+        XCTAssertTrue(afterFailure.dynamicRules.isEmpty)
+        XCTAssertEqual((await store.dnrConfiguration(for: extensionID))?.dynamicRules, [])
+        XCTAssertEqual(runtime.policySnapshot(for: extensionID)?.contentRuleListCount, 0)
+
+        registryWriter.shouldFail = false
+        XCTAssertTrue(
+            try await coordinator.updateDynamicRules(
+                addRules: [
+                    .init(
+                        id: 41,
+                        action: .init(type: .block),
+                        condition: .init(urlFilter: "tracker.example")
+                    )
+                ],
+                removeRuleIDs: [],
+                for: extensionID
+            )
+        )
+        XCTAssertEqual((await coordinator.dnrSnapshot(for: extensionID))?.dynamicRules.map(\.id), [41])
+        XCTAssertEqual((await store.dnrConfiguration(for: extensionID))?.dynamicRules.map(\.id), [41])
+    }
+
+    func testRegistryPersistenceFailureFailsClosedWhenRollbackCannotCompile() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registryWriter = RegistryWriteFailureInjector()
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-dnr-rollback-failure",
+            isPrivateBrowsing: false,
+            directory: directory,
+            registryPersister: { data, url in
+                try registryWriter.persist(data, to: url)
+            }
+        )
+        _ = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+
+        let compiler = PackageStoreRuleListCompiler()
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: compiler)
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "package-store-dnr-rollback-failure",
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        await coordinator.grantPermissions(
+            [.declarativeNetRequest],
+            requestedHosts: [],
+            hostAccess: .denied,
+            to: extensionID
+        )
+        let staticRule = FloorpWebExtensionDNRRule(
+            id: 1,
+            action: .init(type: .block),
+            condition: .init(urlFilter: "static.example")
+        )
+        XCTAssertTrue(
+            try await coordinator.configureDNR(
+                for: extensionID,
+                staticRuleSets: [.init(identifier: "large-static", rules: [staticRule])],
+                enabledStaticRuleSetIDs: ["large-static"]
+            )
+        )
+
+        registryWriter.shouldFail = true
+        compiler.failOnCompilationAttempt = 3
+        await assertAsyncThrows {
+            _ = try await coordinator.updateDynamicRules(
+                addRules: [
+                    .init(
+                        id: 41,
+                        action: .init(type: .block),
+                        condition: .init(urlFilter: "dynamic.example")
+                    )
+                ],
+                removeRuleIDs: [],
+                for: self.extensionID
+            )
+        }
+
+        XCTAssertNil(await coordinator.dnrSnapshot(for: extensionID))
+        XCTAssertNil(runtime.policySnapshot(for: extensionID))
+        XCTAssertTrue((await store.dnrConfiguration(for: extensionID))?.dynamicRules.isEmpty ?? false)
+    }
+
+    func testRestoreFailurePreservesDynamicSnapshotAndDoesNotRestoreSessionRules() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grants = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: [.declarativeNetRequest],
+            requestedHosts: [],
+            normalHostAccess: .denied
+        )
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-dnr-restore-atomicity",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        _ = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID,
+            initialGrants: grants
+        )
+        let initialCoordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "package-store-dnr-restore-atomicity",
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        await initialCoordinator.grantPermissions(
+            [.declarativeNetRequest],
+            requestedHosts: [],
+            hostAccess: .denied,
+            to: extensionID
+        )
+        XCTAssertTrue(try await initialCoordinator.configureDNR(for: extensionID))
+        XCTAssertTrue(
+            try await initialCoordinator.updateDynamicRules(
+                addRules: [
+                    .init(
+                        id: 41,
+                        action: .init(type: .block),
+                        condition: .init(urlFilter: "dynamic.example")
+                    )
+                ],
+                removeRuleIDs: [],
+                for: extensionID
+            )
+        )
+        XCTAssertTrue(
+            try await initialCoordinator.updateSessionRules(
+                addRules: [
+                    .init(
+                        id: 42,
+                        action: .init(type: .block),
+                        condition: .init(urlFilter: "session.example")
+                    )
+                ],
+                removeRuleIDs: [],
+                for: extensionID
+            )
+        )
+        XCTAssertEqual((await store.dnrConfiguration(for: extensionID))?.dynamicRules.map(\.id), [41])
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-dnr-restore-atomicity",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let failingCompiler = PackageStoreRuleListCompiler()
+        failingCompiler.shouldFail = true
+        let failingCoordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "package-store-dnr-restore-atomicity",
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: failingCompiler),
+            scriptResourceLoader: restartedStore.makeResourceLoader(),
+            packageStore: restartedStore
+        )
+        await FloorpBootstrapper.restoreInstalledPackages(
+            from: restartedStore,
+            into: failingCoordinator
+        )
+        XCTAssertNil(await failingCoordinator.dnrSnapshot(for: extensionID))
+        XCTAssertEqual((await restartedStore.dnrConfiguration(for: extensionID))?.dynamicRules.map(\.id), [41])
+
+        let restoredStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-dnr-restore-atomicity",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restoredCoordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "package-store-dnr-restore-atomicity",
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: restoredStore.makeResourceLoader(),
+            packageStore: restoredStore
+        )
+        await FloorpBootstrapper.restoreInstalledPackages(
+            from: restoredStore,
+            into: restoredCoordinator
+        )
+        let restored = try XCTUnwrap(await restoredCoordinator.dnrSnapshot(for: extensionID))
+        XCTAssertEqual(restored.dynamicRules.map(\.id), [41])
+        XCTAssertTrue(restored.sessionRules.isEmpty)
+    }
+
     func testLiveManagerRevokesBeforeDisableAndUninstallAndRestoresOnEnable() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -379,7 +648,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             profileIdentifier: "package-bootstrap-restore",
             isPrivateBrowsing: false,
             runtime: runtime,
-            scriptResourceLoader: store.makeResourceLoader()
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
         )
         let apiHost = try FloorpWebExtensionAPIHost(
             profileIdentifier: "package-bootstrap-restore",
@@ -408,6 +678,48 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let dnr = try XCTUnwrap(dnrSnapshot)
         XCTAssertEqual(dnr.staticRuleSets.first?.rules.count, 40)
         XCTAssertEqual(dnr.enabledStaticRuleSetIDs, ["large-static"])
+
+        let dynamicApplied = try await coordinator.updateDynamicRules(
+            addRules: [
+                .init(
+                    id: 41,
+                    action: .init(type: .block),
+                    condition: .init(urlFilter: "tracker.example")
+                )
+            ],
+            removeRuleIDs: [],
+            for: extensionID
+        )
+        XCTAssertTrue(dynamicApplied)
+        let updatedSnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        XCTAssertNotNil(updatedSnapshot)
+        XCTAssertEqual(updatedSnapshot?.dynamicRules.map(\.id), [41])
+
+        let reloadedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-bootstrap-restore",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let reloadedRuntime = FloorpWebExtensionRuntime(
+            contentRuleListCompiler: FloorpWKContentRuleListStoreCompiler(
+                store: try XCTUnwrap(WKContentRuleListStore(url: ruleStoreDirectory))
+            )
+        )
+        let reloadedCoordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "package-bootstrap-restore",
+            isPrivateBrowsing: false,
+            runtime: reloadedRuntime,
+            scriptResourceLoader: reloadedStore.makeResourceLoader(),
+            packageStore: reloadedStore
+        )
+        await FloorpBootstrapper.restoreInstalledPackages(
+            from: reloadedStore,
+            into: reloadedCoordinator
+        )
+        let restoredSnapshot = await reloadedCoordinator.dnrSnapshot(for: extensionID)
+        XCTAssertNotNil(restoredSnapshot)
+        XCTAssertEqual(restoredSnapshot?.dynamicRules.map(\.id), [41])
+        XCTAssertEqual(restoredSnapshot?.enabledStaticRuleSetIDs, ["large-static"])
 
         let apiResponse = try await apiHost.dispatch(
             operation: "i18n.getUILanguage",
@@ -497,6 +809,76 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             XCTFail("Expected operation to throw", file: file, line: line)
         } catch {
             // Callers assert the transaction state after the expected failure.
+        }
+    }
+}
+
+private final class RegistryWriteFailureInjector: @unchecked Sendable {
+    enum Failure: Error {
+        case expected
+    }
+
+    var shouldFail = false
+
+    func persist(_ data: Data, to url: URL) throws {
+        if shouldFail {
+            throw Failure.expected
+        }
+        try data.write(to: url, options: [.atomic])
+    }
+}
+
+@MainActor
+private final class PackageStoreRuleListCompiler: FloorpWebExtensionContentRuleListCompiling {
+    enum Failure: Error {
+        case expected
+    }
+
+    var shouldFail = false
+    var failOnCompilationAttempt: Int?
+    private var compilationAttemptCount = 0
+    private let store: WKContentRuleListStore
+
+    init() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("floorp-webextension-package-store-dnr-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        store = WKContentRuleListStore(url: directory)!
+    }
+
+    func compileContentRuleList(
+        forIdentifier identifier: String,
+        encodedContentRuleList: String
+    ) async throws -> WKContentRuleList {
+        compilationAttemptCount += 1
+        if shouldFail {
+            throw Failure.expected
+        }
+        if compilationAttemptCount == failOnCompilationAttempt {
+            throw Failure.expected
+        }
+        try await withCheckedThrowingContinuation { continuation in
+            store.compileContentRuleList(
+                forIdentifier: identifier,
+                encodedContentRuleList: encodedContentRuleList
+            ) { ruleList, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let ruleList {
+                    continuation.resume(returning: ruleList)
+                } else {
+                    continuation.resume(throwing: RegistryWriteFailureInjector.Failure.expected)
+                }
+            }
+        }
+    }
+
+    func removeContentRuleList(forIdentifier identifier: String) async {
+        await withCheckedContinuation { continuation in
+            store.removeContentRuleList(forIdentifier: identifier) { _ in
+                continuation.resume()
+            }
         }
     }
 }

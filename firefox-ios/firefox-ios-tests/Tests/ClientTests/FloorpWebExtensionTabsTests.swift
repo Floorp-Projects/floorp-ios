@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import Common
+import TestKit
+import WebKit
 import XCTest
 @testable import Client
 
@@ -80,9 +83,22 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
             permissionBroker: broker
         )
         let message: FloorpWebExtensionJSONValue = .object(["type": .string("ping")])
+        let sourceSender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: 99,
+            documentGeneration: 7,
+            url: try XCTUnwrap(URL(string: "https://source.example/page")),
+            isMainFrame: true,
+            isPrivate: false
+        )
 
         do {
-            _ = try await service.sendMessage(message, to: 3, for: extensionID)
+            _ = try await service.sendMessage(
+                message,
+                to: 3,
+                for: extensionID,
+                sender: sourceSender
+            )
             XCTFail("Expected host access to be required")
         } catch {
             XCTAssertEqual(error as? FloorpWebExtensionError, .permissionDenied("host_access"))
@@ -90,12 +106,18 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
 
         let match = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
         await broker.grant([], requestedHosts: [match], hostAccess: .allRequestedSites, to: extensionID)
-        let reply = try await service.sendMessage(message, to: 3, for: extensionID)
+        let reply = try await service.sendMessage(
+            message,
+            to: 3,
+            for: extensionID,
+            sender: sourceSender
+        )
 
         XCTAssertEqual(reply, .object(["ok": .bool(true)]))
-        XCTAssertEqual(host.lastSender?.extensionID, extensionID)
-        XCTAssertEqual(host.lastSender?.tabID, 3)
-        XCTAssertEqual(host.lastSender?.documentGeneration, 30)
+        let deliveredSender = try XCTUnwrap(host.lastSender as? FloorpWebExtensionRuntimeMessageSender)
+        XCTAssertEqual(deliveredSender.extensionID, extensionID)
+        XCTAssertEqual(deliveredSender.tabID, sourceSender.tabID)
+        XCTAssertEqual(deliveredSender.documentGeneration, sourceSender.documentGeneration)
     }
 
     func testPrivateTabsRequireExplicitPrivateAccessAndHostInvariantsAreClosed() async throws {
@@ -151,6 +173,164 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testProfileTabsHostUsesLiveWindowManagersAndMessageBridge() async throws {
+        let extensionID = self.extensionID
+        // `MockProfile` deliberately has a stable local name.  The production
+        // host filters by exactly that name, so use it here rather than a
+        // synthetic profile identifier which could never own these test tabs.
+        let profileIdentifier = "mockaccount"
+        let profile = MockProfile(databasePrefix: "tabs-live-\(UUID().uuidString)")
+        // `MockProfile.shutdown()` force-closes these stores during
+        // deallocation. Open every store it touches while this test still owns
+        // its unique prefix so teardown does not lazily create and race their
+        // backing files after the tabs have been released.
+        _ = profile.database
+        _ = profile.logins
+        _ = profile.places
+        _ = profile.tabs
+        let manager = LiveTabsManagerStub(windowUUID: .XCTestDefaultUUID, profile: profile)
+        let windowManager = TabsWindowManagerStub(tabManagers: [manager])
+        let javaScriptEvaluator = TabsJavaScriptEvaluator()
+        let liveHost = FloorpWebExtensionProfileTabsHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            windowManager: windowManager,
+            javaScriptEvaluator: javaScriptEvaluator.evaluate
+        )
+        let broker = FloorpWebExtensionPermissionBroker()
+        let hostPattern = try FloorpWebExtensionMatchPattern("<all_urls>")
+        await broker.grant([.tabs], requestedHosts: [hostPattern], hostAccess: .allRequestedSites, to: extensionID)
+        let service = try FloorpWebExtensionTabsService(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            host: liveHost,
+            permissionBroker: broker
+        )
+
+        let originalURL = try XCTUnwrap(URL(string: "https://start.example/path"))
+        let originalTab = MockTab(
+            profile: profile,
+            windowUUID: manager.windowUUID
+        )
+        let originalWebView = MockTabWebView(
+            frame: .zero,
+            configuration: .init(),
+            windowUUID: manager.windowUUID,
+            certStore: profile.certStore
+        )
+        originalWebView.mockTitle = "Start"
+        originalTab.webView = originalWebView
+        originalTab.loadRequest(URLRequest(url: originalURL))
+        manager.tabs = [originalTab]
+        manager.selectedTab = originalTab
+        var createdTabForCleanup: Tab?
+        defer {
+            originalTab.close()
+            createdTabForCleanup?.close()
+            manager.tabs.removeAll()
+            manager.selectedTab = nil
+        }
+
+        let queried = try await service.query(.active, for: extensionID)
+        XCTAssertEqual(queried.first?.url?.host, "start.example")
+        XCTAssertEqual(queried.first?.title, "Start")
+
+        let createdURL = try XCTUnwrap(URL(string: "https://created.example/new"))
+        let created: FloorpWebExtensionTab
+        do {
+            created = try await service.create(url: createdURL, for: extensionID)
+        } catch {
+            return XCTFail("Creating a live tab failed: \(error)")
+        }
+        XCTAssertEqual(created.url?.host, "created.example")
+        XCTAssertEqual(manager.tabs.count, 2)
+
+        let sourceSender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: originalTab.floorpWebExtensionTabID,
+            documentGeneration: try XCTUnwrap(originalTab.floorpWebExtensionActiveDocumentContext?.documentGeneration),
+            url: originalURL,
+            isMainFrame: true,
+            isPrivate: false
+        )
+
+        let reply: FloorpWebExtensionJSONValue?
+        do {
+            reply = try await service.sendMessage(
+                .object(["type": .string("ping")]),
+                to: created.id,
+                for: extensionID,
+                sender: sourceSender
+            )
+        } catch {
+            return XCTFail("Delivering a live tab message failed: \(error)")
+        }
+        XCTAssertEqual(reply, .object(["reply": .string("ok")]))
+        XCTAssertTrue(javaScriptEvaluator.scripts.contains { $0.contains("__floorpWebExtensionDeliverTabsMessage") })
+
+        let updated: FloorpWebExtensionTab
+        do {
+            updated = try await service.update(
+                created.id,
+                url: try XCTUnwrap(URL(string: "https://updated.example/next")),
+                for: extensionID
+            )
+        } catch {
+            return XCTFail("Updating a live tab failed: \(error)")
+        }
+        XCTAssertEqual(updated.url?.host, "updated.example")
+
+        let reloaded: FloorpWebExtensionTab
+        do {
+            reloaded = try await service.reload(updated.id, for: extensionID)
+        } catch {
+            return XCTFail("Reloading a live tab failed: \(error)")
+        }
+        XCTAssertEqual(reloaded.id, updated.id)
+
+        guard let liveCreatedTab = manager.tabs.first(where: { $0.floorpWebExtensionTabID == created.id }) else {
+            return XCTFail("created tab not found")
+        }
+        createdTabForCleanup = liveCreatedTab
+        let liveCreatedWebView = MockTabWebView(
+            frame: .zero,
+            configuration: .init(),
+            windowUUID: manager.windowUUID,
+            certStore: profile.certStore
+        )
+        liveCreatedTab.webView = liveCreatedWebView
+        let updatedURL = try XCTUnwrap(updated.url)
+        liveCreatedTab.loadRequest(URLRequest(url: updatedURL))
+        liveCreatedTab.prepareFloorpWebExtensionPolicy(for: liveCreatedWebView, navigationURL: updatedURL)
+
+        // A tab may navigate after the API service snapshots it but before
+        // JavaScript is delivered.  The host must reject that stale generation
+        // instead of retargeting the message to the new document.
+        let staleContext = try XCTUnwrap(liveCreatedTab.floorpWebExtensionActiveDocumentContext)
+        let staleURL = try XCTUnwrap(URL(string: "https://stale.example/after-update"))
+        liveCreatedTab.loadRequest(URLRequest(url: staleURL))
+        liveCreatedTab.prepareFloorpWebExtensionPolicy(for: liveCreatedWebView, navigationURL: staleURL)
+        let staleSender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: staleContext.tabID,
+            documentGeneration: staleContext.documentGeneration,
+            url: staleContext.url,
+            isMainFrame: true,
+            isPrivate: staleContext.isPrivate
+        )
+        do {
+            _ = try await liveHost.deliverMessage(
+                .object(["type": .string("stale")]),
+                sender: staleSender,
+                to: staleContext
+            )
+            XCTFail("Expected stale tab document delivery to be rejected")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionTabsError, .hostTabInvariantViolation)
+        }
+    }
+
     private func tab(
         id: Int,
         url: String,
@@ -177,7 +357,7 @@ private final class TabsHost: FloorpWebExtensionTabsHostAdapting {
     let isPrivateBrowsing: Bool
     private var tabs: [FloorpWebExtensionHostTab]
     private var nextID = 100
-    private(set) var lastSender: FloorpWebExtensionTabMessageSender?
+    private(set) var lastSender: (any FloorpWebExtensionMessageSender)?
 
     init(profileIdentifier: String = "normal", isPrivateBrowsing: Bool = false, tabs: [FloorpWebExtensionHostTab]) {
         self.profileIdentifier = profileIdentifier
@@ -231,10 +411,90 @@ private final class TabsHost: FloorpWebExtensionTabsHostAdapting {
 
     func deliverMessage(
         _ message: FloorpWebExtensionJSONValue,
-        sender: FloorpWebExtensionTabMessageSender,
+        sender: any FloorpWebExtensionMessageSender,
         to tab: FloorpWebExtensionTabContext
     ) async throws -> FloorpWebExtensionJSONValue? {
         lastSender = sender
         return .object(["ok": .bool(true)])
+    }
+}
+
+@MainActor
+private final class LiveTabsManagerStub: MockTabManager {
+    private let profile: Profile
+    private let documentLogger = DocumentLogger(logger: MockLogger())
+
+    init(windowUUID: WindowUUID, profile: Profile) {
+        self.profile = profile
+        super.init(windowUUID: windowUUID)
+    }
+
+    override func addTab(_ request: URLRequest?, afterTab: Tab?, zombie: Bool, isPrivate: Bool) -> Tab {
+        let tab = MockTab(
+            profile: profile,
+            isPrivate: isPrivate,
+            windowUUID: windowUUID,
+            documentLogger: documentLogger
+        )
+        let webView = MockTabWebView(
+            frame: .zero,
+            configuration: .init(),
+            windowUUID: windowUUID,
+            certStore: profile.certStore
+        )
+        tab.webView = webView
+        if let request {
+            tab.loadRequest(request)
+            webView.loadedURL = request.url
+        }
+        tabs.append(tab)
+        selectedTab = tab
+        return tab
+    }
+
+    override func selectTab(_ tab: Tab?, previous: Tab?, immediatePreservation: Bool) {
+        selectedTab = tab
+        super.selectTab(tab, previous: previous, immediatePreservation: immediatePreservation)
+    }
+}
+
+private final class TabsWindowManagerStub: WindowManager {
+    private let tabManagers: [TabManager]
+
+    init(tabManagers: [TabManager]) {
+        self.tabManagers = tabManagers
+    }
+
+    var windows: [WindowUUID: AppWindowInfo] {
+        Dictionary(uniqueKeysWithValues: tabManagers.map { manager in
+            (manager.windowUUID, AppWindowInfo(tabManager: manager, sceneCoordinator: nil))
+        })
+    }
+
+    func newBrowserWindowConfigured(_ windowInfo: AppWindowInfo, uuid: WindowUUID) {}
+    func tabManager(for windowUUID: WindowUUID) -> TabManager { tabManagers.first! }
+    func allWindowTabManagers() -> [TabManager] { tabManagers }
+    func allWindowUUIDs(includingReserved: Bool) -> [WindowUUID] { Array(windows.keys) }
+    func windowWillClose(uuid: WindowUUID) {}
+    func reserveNextAvailableWindowUUID(isIpad: Bool) -> ReservedWindowUUID { .init(uuid: .XCTestDefaultUUID, isNew: false) }
+    func postWindowEvent(event: WindowEvent, windowUUID: WindowUUID) {}
+    func performMultiWindowAction(_ action: MultiWindowAction) {}
+    func window(for tab: TabUUID) -> WindowUUID? { nil }
+    func windowExists(uuid: WindowUUID) -> Bool { windows[uuid] != nil }
+}
+
+@MainActor
+private final class TabsJavaScriptEvaluator {
+    private(set) var scripts = [String]()
+
+    func evaluate(
+        _ webView: WKWebView,
+        script: String,
+        contentWorld: WKContentWorld
+    ) async throws -> Any? {
+        _ = webView
+        _ = contentWorld
+        scripts.append(script)
+        return "{\"reply\":\"ok\"}"
     }
 }

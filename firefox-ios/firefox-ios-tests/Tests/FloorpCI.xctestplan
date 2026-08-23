@@ -788,7 +788,13 @@
         "FloorpWebExtensionPageHostTests/testCustomSchemePageExecutesESModuleInWebKit()",
         "FloorpWebExtensionPageHostTests/testActionPopupFactoryUsesDefaultAndDisabledStatesWithoutOpeningAPage()",
         "FloorpWebExtensionPageHostTests/testOptionsPageFactoryUsesOptionsSurfaceAndFailsClosedForInvalidResources()",
-        "MainMenuCoordinatorTests/testHandleNavigation_webExtensionActions_callsDelegate()"
+        "MainMenuCoordinatorTests/testHandleNavigation_webExtensionActions_callsDelegate()",
+        "FloorpWebExtensionPackageStoreTests/testRestartFailsClosedWhenRegistryDNRLimitsAreInvalid()",
+        "FloorpWebExtensionPackageStoreTests/testRegistryPersistenceFailureRestoresPriorLiveDNRPolicy()",
+        "FloorpWebExtensionPackageStoreTests/testRegistryPersistenceFailureFailsClosedWhenRollbackCannotCompile()",
+        "FloorpWebExtensionPackageStoreTests/testRestoreFailurePreservesDynamicSnapshotAndDoesNotRestoreSessionRules()",
+        "FloorpWebExtensionTabsTests/testProfileTabsHostUsesLiveWindowManagersAndMessageBridge()",
+        "FloorpWebExtensionAPIHostTests/testTabsSendMessageForwardsAuthenticatedSourceSender()"
       ],
       "target": {
         "containerPath": "container:Client.xcodeproj",

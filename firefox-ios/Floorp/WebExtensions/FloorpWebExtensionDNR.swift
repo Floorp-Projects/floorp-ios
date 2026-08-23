@@ -270,6 +270,15 @@ struct FloorpWebExtensionDNRPolicySnapshot: Codable, Sendable {
     let compilation: FloorpWebExtensionDNRCompilation
 }
 
+/// Persisted profile DNR state.
+///
+/// Session rules remain memory-only and are intentionally omitted.
+struct FloorpWebExtensionStoredDNRConfiguration: Codable, Equatable, Sendable {
+    let limits: FloorpWebExtensionDNRLimits
+    let enabledStaticRuleSetIDs: Set<String>
+    let dynamicRules: [FloorpWebExtensionDNRRule]
+}
+
 /// A per-profile, per-extension DNR state owner.
 ///
 /// Every mutating API makes a complete candidate state, validates and compiles
@@ -292,7 +301,9 @@ actor FloorpWebExtensionDNRStore {
     init(
         staticRuleSets: [FloorpWebExtensionDNRStaticRuleSet] = [],
         enabledStaticRuleSetIDs: Set<String> = [],
-        limits: FloorpWebExtensionDNRLimits = .init()
+        dynamicRules: [FloorpWebExtensionDNRRule] = [],
+        limits: FloorpWebExtensionDNRLimits = .init(),
+        generation: UInt64 = 1
     ) throws {
         try Self.validateLimits(limits)
 
@@ -321,11 +332,15 @@ actor FloorpWebExtensionDNRStore {
         for identifier in enabledStaticRuleSetIDs where registeredRuleSets[identifier] == nil {
             throw FloorpWebExtensionDNRError.unknownStaticRuleSet(identifier)
         }
+        try Self.validateRules(dynamicRules, scope: .dynamic)
+        guard dynamicRules.count <= limits.maxDynamicRules else {
+            throw FloorpWebExtensionDNRError.quotaExceeded(.dynamic, limit: limits.maxDynamicRules)
+        }
 
         let initialState = State(
             staticRuleSets: registeredRuleSets,
             enabledStaticRuleSetIDs: enabledStaticRuleSetIDs,
-            dynamicRules: [:],
+            dynamicRules: Dictionary(uniqueKeysWithValues: dynamicRules.map { ($0.id, $0) }),
             sessionRules: [:]
         )
         // Static rules are only promised as enabled after their complete
@@ -333,7 +348,7 @@ actor FloorpWebExtensionDNRStore {
         // inspectable and are rejected if a later enable request selects them.
         let initialCompilation = FloorpWebExtensionDNRCompiler.compile(
             state: initialState,
-            generation: 1
+            generation: generation
         )
         guard !initialCompilation.report.hasRejections else {
             throw FloorpWebExtensionDNRError.incompatibleRules(initialCompilation.report)
@@ -341,7 +356,7 @@ actor FloorpWebExtensionDNRStore {
 
         self.limits = limits
         state = initialState
-        generation = 1
+        self.generation = generation
         compilation = initialCompilation
     }
 
@@ -355,7 +370,8 @@ actor FloorpWebExtensionDNRStore {
     /// previously committed rule collection.
     init(
         replaying snapshot: FloorpWebExtensionDNRPolicySnapshot,
-        limits: FloorpWebExtensionDNRLimits
+        limits: FloorpWebExtensionDNRLimits,
+        minimumGeneration: UInt64? = nil
     ) throws {
         try Self.validateLimits(limits)
 
@@ -400,7 +416,7 @@ actor FloorpWebExtensionDNRStore {
             dynamicRules: Dictionary(uniqueKeysWithValues: snapshot.dynamicRules.map { ($0.id, $0) }),
             sessionRules: Dictionary(uniqueKeysWithValues: snapshot.sessionRules.map { ($0.id, $0) })
         )
-        let restoredGeneration = snapshot.generation &+ 1
+        let restoredGeneration = max(snapshot.generation &+ 1, minimumGeneration ?? 0)
         let restoredCompilation = FloorpWebExtensionDNRCompiler.compile(
             state: restoredState,
             generation: restoredGeneration
@@ -515,6 +531,14 @@ actor FloorpWebExtensionDNRStore {
         var candidate = state
         candidate.sessionRules.removeAll()
         try commit(candidate: candidate)
+    }
+
+    func persistedConfiguration() -> FloorpWebExtensionStoredDNRConfiguration {
+        FloorpWebExtensionStoredDNRConfiguration(
+            limits: limits,
+            enabledStaticRuleSetIDs: state.enabledStaticRuleSetIDs,
+            dynamicRules: getDynamicRules()
+        )
     }
 
     func isRegexSupported(_ regex: String) -> FloorpWebExtensionDNRRegexSupport {
@@ -1177,5 +1201,38 @@ private enum FloorpWebExtensionDNRCompiler {
             regex.formIndex(after: &index)
         }
         return false
+    }
+}
+
+extension FloorpWebExtensionDNRStore {
+    static func validateStoredConfiguration(
+        _ configuration: FloorpWebExtensionStoredDNRConfiguration
+    ) throws {
+        try validateLimits(configuration.limits)
+        guard configuration.enabledStaticRuleSetIDs.count <= configuration.limits.maxEnabledStaticRuleSets else {
+            throw FloorpWebExtensionDNRError.quotaExceeded(
+                .staticRules,
+                limit: configuration.limits.maxEnabledStaticRuleSets
+            )
+        }
+
+        try validateRules(configuration.dynamicRules, scope: .dynamic)
+        guard configuration.dynamicRules.count <= configuration.limits.maxDynamicRules else {
+            throw FloorpWebExtensionDNRError.quotaExceeded(
+                .dynamic,
+                limit: configuration.limits.maxDynamicRules
+            )
+        }
+
+        let state = State(
+            staticRuleSets: [:],
+            enabledStaticRuleSetIDs: [],
+            dynamicRules: Dictionary(uniqueKeysWithValues: configuration.dynamicRules.map { ($0.id, $0) }),
+            sessionRules: [:]
+        )
+        let compilation = FloorpWebExtensionDNRCompiler.compile(state: state, generation: 1)
+        guard !compilation.report.hasRejections else {
+            throw FloorpWebExtensionDNRError.incompatibleRules(compilation.report)
+        }
     }
 }

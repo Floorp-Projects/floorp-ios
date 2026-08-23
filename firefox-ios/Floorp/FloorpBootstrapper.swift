@@ -314,7 +314,8 @@ public final class FloorpBootstrapper {
                 for: profileIdentifier,
                 isPrivateBrowsing: isPrivateBrowsing
             ),
-            scriptResourceLoader: store.makeResourceLoader()
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
         )
         let manager = FloorpWebExtensionLivePackageManager(store: store) { extensionID, package in
             guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
@@ -344,10 +345,9 @@ public final class FloorpBootstrapper {
     }
 
     /// Creates the native Stage 2 API surface and its authenticated WebKit
-    /// message runtime as one profile-mode-owned composition. No application
-    /// tab adapter currently satisfies `FloorpWebExtensionTabsHostAdapting`;
-    /// the `tabs` service therefore remains fail-closed until that typed host
-    /// boundary is installed rather than reaching into a window implicitly.
+    /// message runtime as one profile-mode-owned composition. The profile- and
+    /// mode-bound tab adapter is the sole live-browser dependency; API calls
+    /// remain fail-closed when no matching tab or document is available.
     @MainActor
     private static func installAPIHostComposition(
         store: FloorpWebExtensionPackageStore,
@@ -355,12 +355,21 @@ public final class FloorpBootstrapper {
         isPrivateBrowsing: Bool,
         directory: URL
     ) throws -> FloorpWebExtensionAPIHost {
+        let windowManager = AppContainer.shared.resolve() as WindowManager
+        let tabsHost = FloorpWebExtensionProfileTabsHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing,
+            windowManager: windowManager
+        )
         let host = try FloorpWebExtensionAPIHost(
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing,
             directory: directory,
             preferredLocales: Locale.preferredLanguages,
-            packageResourceLoader: store.makeI18nResourceLoader()
+            packageResourceLoader: store.makeI18nResourceLoader(),
+            alarmEvents: FloorpWebExtensionAlarmEventHost(),
+            permissionBroker: FloorpWebExtensionPermissionBroker(),
+            tabsHost: tabsHost
         )
         FloorpWebExtensionAPIHostRegistry.install(
             host,
@@ -467,6 +476,7 @@ public final class FloorpBootstrapper {
         let extensionID = package.extensionID
         let manifest = package.preflight.manifest
         let grants = package.grants
+        let storedDNRConfiguration = package.dnrConfiguration
 
         await coordinator.grantPermissions(
             grants.apiPermissions,
@@ -493,25 +503,27 @@ public final class FloorpBootstrapper {
             try await coordinator.registerScripts(scripts, for: extensionID)
         }
 
-        guard !manifest.dnrRuleResources.isEmpty else { return }
+        guard storedDNRConfiguration != nil || !manifest.dnrRuleResources.isEmpty else { return }
         var staticRuleSets = [FloorpWebExtensionDNRStaticRuleSet]()
-        var enabledRuleSetIDs = Set<String>()
-        for resource in manifest.dnrRuleResources {
-            try Task.checkCancellation()
-            let source = try resourceLoader(extensionID, resource.path)
-            let rules = try JSONDecoder().decode(
-                [RestoredDNRRule].self,
-                from: Data(source.utf8)
-            ).map(\.materialized)
-            staticRuleSets.append(.init(identifier: resource.identifier, rules: rules))
-            if resource.enabled {
-                enabledRuleSetIDs.insert(resource.identifier)
+        if !manifest.dnrRuleResources.isEmpty {
+            for resource in manifest.dnrRuleResources {
+                try Task.checkCancellation()
+                let source = try resourceLoader(extensionID, resource.path)
+                let rules = try JSONDecoder().decode(
+                    [RestoredDNRRule].self,
+                    from: Data(source.utf8)
+                ).map(\.materialized)
+                staticRuleSets.append(.init(identifier: resource.identifier, rules: rules))
             }
         }
-        let applied = try await coordinator.configureDNR(
+        let enabledRuleSetIDs = storedDNRConfiguration?.enabledStaticRuleSetIDs
+            ?? Set(manifest.dnrRuleResources.filter { $0.enabled }.map(\.identifier))
+        let applied = try await coordinator.restoreDNR(
             for: extensionID,
             staticRuleSets: staticRuleSets,
-            enabledStaticRuleSetIDs: enabledRuleSetIDs
+            enabledStaticRuleSetIDs: enabledRuleSetIDs,
+            dynamicRules: storedDNRConfiguration?.dynamicRules ?? [],
+            limits: storedDNRConfiguration?.limits ?? .init()
         )
         guard applied else {
             throw FloorpWebExtensionError.unsupported("restored DNR generation was superseded")

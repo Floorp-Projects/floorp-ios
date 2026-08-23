@@ -34,6 +34,53 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let items: [String: FloorpWebExtensionJSONValue]
     }
 
+    private struct TabsQueryInfoRequest: Decodable {
+        let active: Bool?
+        let currentWindow: Bool?
+        let current: Bool?
+    }
+
+    private struct TabsQueryRequest: Decodable {
+        let queryInfo: TabsQueryInfoRequest?
+    }
+
+    private struct TabsIDRequest: Decodable {
+        let tabId: Int
+    }
+
+    private struct TabsCreatePropertiesRequest: Decodable {
+        let url: String?
+        let active: Bool?
+    }
+
+    private struct TabsCreateRequest: Decodable {
+        let createProperties: TabsCreatePropertiesRequest?
+    }
+
+    private struct TabsUpdatePropertiesRequest: Decodable {
+        let url: String?
+    }
+
+    private struct TabsUpdateRequest: Decodable {
+        let tabId: Int
+        let updateProperties: TabsUpdatePropertiesRequest?
+    }
+
+    private struct TabsReloadPropertiesRequest: Decodable {
+        let bypassCache: Bool?
+    }
+
+    private struct TabsReloadRequest: Decodable {
+        let tabId: Int
+        let reloadProperties: TabsReloadPropertiesRequest?
+    }
+
+    private struct TabsSendMessageRequest: Decodable {
+        let tabId: Int
+        let message: FloorpWebExtensionJSONValue
+        let options: [String: FloorpWebExtensionJSONValue]?
+    }
+
     private struct AlarmNameRequest: Decodable {
         let name: String
     }
@@ -76,6 +123,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     let alarms: FloorpWebExtensionAlarmStore
     let alarmEvents: FloorpWebExtensionAlarmEventHost
     let actions: FloorpWebExtensionActionStore
+    private let tabs: FloorpWebExtensionTabsService?
 
     private let i18n: FloorpWebExtensionI18n
     private let permissionBroker: FloorpWebExtensionPermissionBroker
@@ -90,6 +138,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         packageResourceLoader: @escaping FloorpWebExtensionI18n.ResourceLoader,
         alarmEvents: FloorpWebExtensionAlarmEventHost,
         permissionBroker: FloorpWebExtensionPermissionBroker,
+        tabsHost: (any FloorpWebExtensionTabsHostAdapting)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) throws {
         profileKey = .init(
@@ -117,6 +166,16 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             preferredLocales: preferredLocales,
             resourceLoader: packageResourceLoader
         )
+        if let tabsHost {
+            tabs = try .init(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: isPrivateBrowsing,
+                host: tabsHost,
+                permissionBroker: permissionBroker
+            )
+        } else {
+            tabs = nil
+        }
         self.alarmEvents = alarmEvents
         self.permissionBroker = permissionBroker
         self.now = now
@@ -317,9 +376,116 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             return try await setActionEnabled(true, sender: sender)
         case "action.disable":
             return try await setActionEnabled(false, sender: sender)
+        case "tabs.query":
+            try require(.tabs, in: active)
+            return try await queryTabs(payload, sender: sender)
+        case "tabs.get":
+            try require(.tabs, in: active)
+            return try await getTab(payload, sender: sender)
+        case "tabs.create":
+            try require(.tabs, in: active)
+            return try await createTab(payload, sender: sender)
+        case "tabs.update":
+            try require(.tabs, in: active)
+            return try await updateTab(payload, sender: sender)
+        case "tabs.reload":
+            try require(.tabs, in: active)
+            return try await reloadTab(payload, sender: sender)
+        case "tabs.sendMessage":
+            try require(.tabs, in: active)
+            return try await sendTabMessage(payload, sender: sender)
         default:
             throw FloorpWebExtensionMessageError.unsupportedOperation
         }
+    }
+
+    private func queryTabs(
+        _ payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        _ = try? decode(TabsQueryRequest.self, from: payload)
+        guard let tabs else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        return try response(try await tabs.query(.active, for: sender.extensionID))
+    }
+
+    private func getTab(
+        _ payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        let request = try decode(TabsIDRequest.self, from: payload)
+        guard let tabs else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        return try response(try await tabs.get(request.tabId, for: sender.extensionID))
+    }
+
+    private func createTab(
+        _ payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        let request = try decode(TabsCreateRequest.self, from: payload)
+        guard let tabs else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        guard let urlString = request.createProperties?.url,
+              let url = URL(string: urlString) else {
+            throw FloorpWebExtensionTabsError.invalidNavigationURL
+        }
+        return try response(try await tabs.create(
+            url: url,
+            active: request.createProperties?.active ?? true,
+            for: sender.extensionID
+        ))
+    }
+
+    private func updateTab(
+        _ payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        let request = try decode(TabsUpdateRequest.self, from: payload)
+        guard let tabs else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        guard let urlString = request.updateProperties?.url,
+              let url = URL(string: urlString) else {
+            throw FloorpWebExtensionTabsError.invalidNavigationURL
+        }
+        return try response(try await tabs.update(
+            request.tabId,
+            url: url,
+            for: sender.extensionID
+        ))
+    }
+
+    private func reloadTab(
+        _ payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        let request = try decode(TabsReloadRequest.self, from: payload)
+        guard let tabs else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        _ = request.reloadProperties?.bypassCache
+        return try response(try await tabs.reload(request.tabId, for: sender.extensionID))
+    }
+
+    private func sendTabMessage(
+        _ payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        let request = try decode(TabsSendMessageRequest.self, from: payload)
+        guard let tabs else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        let reply = try await tabs.sendMessage(
+            request.message,
+            to: request.tabId,
+            for: sender.extensionID,
+            sender: sender
+        )
+        return try reply.map { try response($0) }
     }
 
     private func storageGet(
