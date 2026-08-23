@@ -391,7 +391,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let policies = try XCTUnwrap(coordinator.preNavigationPolicies(for: tab).first)
         XCTAssertEqual(policies.extensionID, extensionID)
         XCTAssertEqual(policies.scriptPolicies.count, 3)
-        let dnr = try XCTUnwrap(await coordinator.dnrSnapshot(for: extensionID))
+        let dnrSnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        let dnr = try XCTUnwrap(dnrSnapshot)
         XCTAssertEqual(dnr.staticRuleSets.first?.rules.count, 40)
         XCTAssertEqual(dnr.enabledStaticRuleSetIDs, ["large-static"])
     }
