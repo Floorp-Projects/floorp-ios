@@ -1,14 +1,15 @@
 # Floorp iOS MV3 compatibility limitations
 
-This matrix is the Stage 3 compatibility contract. It is derived from a pinned
-fixture's manifest and rule corpus, not from a package-opening smoke test.
-Every fixture run records its source commit, package SHA-256, licence, DNR
-translation diagnostics, functional results, performance measurements, and
-device/OS version in the profile-local compatibility evidence store.
+This matrix is the intended Stage 3 compatibility contract. It is derived from
+pinned, synthetic fixtures' manifests and rule corpora; it is not package-
+opening, real-device, or performance evidence. The runtime provides a
+profile-local evidence schema and optional store, but this tree does not yet
+contain recorded device/OS, benchmark, or UI evidence.
 
 | Area | Status | Floorp iOS behaviour |
 | --- | --- | --- |
-| Static, dynamic, and session DNR block rules | Supported subset | Rules that compile to WebKit content rules are attached without a resident event runtime. |
+| Static DNR block rules | Supported subset | Rules that compile to WebKit content rules are attached without a resident event runtime. |
+| Dynamic and session DNR block rules | Partial | Transactional dynamic updates now persist through the profile package store and survive restart; session rules remain in memory and are discarded when the runtime ends. |
 | DNR allow / allowAllRequests | Partial | Preserved only when the compiler proves that WebKit ordered actions keep the requested semantics; ambiguous priority is rejected. |
 | DNR upgradeScheme | Supported subset | Compiles to WebKit `make-https` where conditions translate exactly. |
 | DNR redirects | Unsupported | WebKit on the iOS 15 baseline has no general subresource redirect mapping. |
@@ -16,11 +17,12 @@ device/OS version in the profile-local compatibility evidence store.
 | DNR matched-rule feedback and automatic action badge counts | Unsupported | WebKit does not offer the necessary per-request callbacks. |
 | Registered scripts and package-file execution | Supported subset | Scripts are validated before registration, planned before navigation, and injected only for granted hosts. |
 | CSS insertion/removal | Supported subset | A native opaque handle binds every inserted stylesheet to its extension, tab, frame, and document generation. |
-| Tabs query/create/update/reload | Partial | The service is implemented and permission-checked, but it still depends on a concrete app-side tab host adapter; message delivery remains unsupported until that host is installed. |
+| Tabs query/create/update/reload/sendMessage | Supported subset | The profile- and private-mode-scoped host uses live app tabs, rejects stale document generations before delivery, and exposes only active/current query, URL navigation, reload, creation, and isolated-world content messaging. |
 | Cosmetic / procedural / scriptlet filters | Supported subset | Generated resources run in the declared isolated or MAIN world. MAIN-world scripts never receive the native WebExtensions bridge. |
 | Per-site access | Supported | Denied, selected-site, requested-site, private, and active-tab grants are checked for every privileged operation. |
 | Exact Chromium DNR priority parity | Unsupported | Conflicting combinations are rejected rather than reported as enabled. |
-| MV2 persistent backgrounds and webRequestBlocking | Unsupported | The MV3 event-runtime model has no persistent global/background page and WebKit has no blocking request API. |
+| Arbitrary MV3 service-worker/background JavaScript | Unsupported | A manifest may declare a service-worker resource, but Floorp does not evaluate arbitrary background JavaScript. Only an explicitly reviewed native-backed lazy event handler can be registered. |
+| MV2 persistent backgrounds and webRequestBlocking | Unsupported | There is no persistent global/background page, and WebKit has no blocking request API. |
 
 ## Release evidence required separately
 

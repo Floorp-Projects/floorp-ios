@@ -223,7 +223,8 @@ final class MockProfile: Client.Profile, @unchecked Sendable {
             fileURLWithPath: directory,
             isDirectory: true
         ).appendingPathComponent("\(databasePrefix)_loginsPerField.db").path
-        try? files.remove("\(databasePrefix)_loginsPerField.db")
+        let loginsPerFieldRelativePath = "\(databasePrefix)_loginsPerField.db"
+        removeIfExists(loginsPerFieldRelativePath)
 
         let logins = RustLogins(databasePath: newLoginsDatabasePath)
         _ = logins.reopenIfClosed()
@@ -244,7 +245,8 @@ final class MockProfile: Client.Profile, @unchecked Sendable {
             fileURLWithPath: directory,
             isDirectory: true
         ).appendingPathComponent("\(databasePrefix)_places.db").path
-        try? files.remove("\(databasePrefix)_places.db")
+        let relativePath = "\(databasePrefix)_places.db"
+        removeIfExists(relativePath)
 
         let places = RustPlaces(databasePath: placesDatabasePath, notificationCenter: mockNotificationCenter)
         _ = places.reopenIfClosed()
@@ -272,6 +274,13 @@ final class MockProfile: Client.Profile, @unchecked Sendable {
 
     public func hasSyncAccount(completion: @escaping (Bool) -> Void) {
         completion(hasSyncableAccountMock)
+    }
+
+    private func removeIfExists(_ relativePath: String) {
+        let path = URL(fileURLWithPath: directory, isDirectory: true).appendingPathComponent(relativePath).path
+        if FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.removeItem(atPath: path)
+        }
     }
 
     public func hasAccount() -> Bool {

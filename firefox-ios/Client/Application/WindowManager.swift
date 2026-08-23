@@ -20,7 +20,7 @@ enum MultiWindowAction {
 
 /// General window management class that provides some basic coordination and
 /// state management for multiple windows shared across a single running app.
-protocol WindowManager {
+protocol WindowManager: AnyObject {
     /// A collection of all open windows and their related metadata.
     var windows: [WindowUUID: AppWindowInfo] { get }
 

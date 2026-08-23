@@ -149,6 +149,63 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         }
     }
 
+    func testTabsSendMessageForwardsAuthenticatedSourceSender() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = FloorpWebExtensionTabContext(
+            tabID: 12,
+            documentGeneration: 3,
+            url: try XCTUnwrap(URL(string: "https://target.example/document")),
+            isPrivate: false
+        )
+        let tabsHost = APIHostTabsHost(
+            profileIdentifier: "api-host-tabs-profile",
+            tab: target
+        )
+        let permissionBroker = FloorpWebExtensionPermissionBroker()
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-host-tabs-profile",
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            alarmEvents: FloorpWebExtensionAlarmEventHost(),
+            permissionBroker: permissionBroker,
+            tabsHost: tabsHost
+        )
+        let hostPattern = try FloorpWebExtensionMatchPattern("https://target.example/*")
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(
+                apiPermissions: [.tabs],
+                requestedHosts: [hostPattern],
+                normalHostAccess: .allRequestedSites
+            ),
+            defaultLocale: "en"
+        )
+        let sourceSender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: 73,
+            documentGeneration: 8,
+            url: try XCTUnwrap(URL(string: "https://source.example/frame")),
+            isMainFrame: false,
+            isPrivate: false
+        )
+
+        _ = try await host.dispatch(
+            operation: "tabs.sendMessage",
+            payload: try payload([
+                "tabId": target.tabID,
+                "message": ["kind": "ping"],
+                "options": [:]
+            ]),
+            sender: sourceSender
+        )
+
+        let deliveredSender = try XCTUnwrap(tabsHost.lastSender as? FloorpWebExtensionRuntimeMessageSender)
+        XCTAssertEqual(deliveredSender, sourceSender)
+    }
+
     func testWebKitBootstrapUsesNativeStorageAndI18nThroughIsolatedWorld() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -297,4 +354,45 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
 
 private struct ValueResponse: Decodable {
     let value: String
+}
+
+@MainActor
+private final class APIHostTabsHost: FloorpWebExtensionTabsHostAdapting {
+    let profileIdentifier: String
+    let isPrivateBrowsing = false
+    private let tab: FloorpWebExtensionTabContext
+    private(set) var lastSender: (any FloorpWebExtensionMessageSender)?
+
+    init(profileIdentifier: String, tab: FloorpWebExtensionTabContext) {
+        self.profileIdentifier = profileIdentifier
+        self.tab = tab
+    }
+
+    func tabsSnapshot() -> [FloorpWebExtensionHostTab] {
+        [.init(context: tab, title: "Target", isActive: true)]
+    }
+
+    func createTab(url: URL, makeActive: Bool) throws -> FloorpWebExtensionHostTab {
+        throw FloorpWebExtensionTabsError.hostUnavailable
+    }
+
+    func updateTab(id: Int, url: URL) throws -> FloorpWebExtensionHostTab {
+        throw FloorpWebExtensionTabsError.hostUnavailable
+    }
+
+    func reloadTab(id: Int) throws -> FloorpWebExtensionHostTab {
+        throw FloorpWebExtensionTabsError.hostUnavailable
+    }
+
+    func deliverMessage(
+        _ message: FloorpWebExtensionJSONValue,
+        sender: any FloorpWebExtensionMessageSender,
+        to tab: FloorpWebExtensionTabContext
+    ) async throws -> FloorpWebExtensionJSONValue? {
+        guard tab == self.tab else {
+            throw FloorpWebExtensionTabsError.hostTabInvariantViolation
+        }
+        lastSender = sender
+        return .object(["delivered": .bool(true)])
+    }
 }

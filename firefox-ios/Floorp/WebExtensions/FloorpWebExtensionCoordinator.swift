@@ -89,6 +89,7 @@ final class FloorpWebExtensionCoordinator {
     let profileKey: FloorpWebExtensionCoordinatorProfileKey
     private let runtime: FloorpWebExtensionRuntime
     private let scriptResourceLoader: ScriptResourceLoader
+    private let packageStore: FloorpWebExtensionPackageStore?
     private let now: @Sendable () -> Date
 
     /// These actors are deliberately coordinator-owned; no caller receives a
@@ -112,6 +113,7 @@ final class FloorpWebExtensionCoordinator {
         isPrivateBrowsing: Bool,
         runtime: FloorpWebExtensionRuntime,
         scriptResourceLoader: @escaping ScriptResourceLoader,
+        packageStore: FloorpWebExtensionPackageStore? = nil,
         scriptRegistry: FloorpWebExtensionScriptRegistry = .init(),
         permissionBroker: FloorpWebExtensionPermissionBroker = .init(),
         cssRegistry: FloorpWebExtensionCSSRegistry = .init(),
@@ -123,6 +125,7 @@ final class FloorpWebExtensionCoordinator {
         )
         self.runtime = runtime
         self.scriptResourceLoader = scriptResourceLoader
+        self.packageStore = packageStore
         self.scriptRegistry = scriptRegistry
         self.permissionBroker = permissionBroker
         self.cssRegistry = cssRegistry
@@ -349,10 +352,49 @@ final class FloorpWebExtensionCoordinator {
         await gate.acquire()
         defer { Task { await gate.release() } }
         try requireDNRPermission(for: extensionID)
+        let previousStore = dnrStores[extensionID]
+        let previousSnapshot = await previousStore?.snapshot()
+        let previousLimits = dnrLimits[extensionID]
         let candidate = try FloorpWebExtensionDNRStore(
             staticRuleSets: staticRuleSets,
             enabledStaticRuleSetIDs: enabledStaticRuleSetIDs,
-            limits: limits
+            limits: limits,
+            generation: (previousSnapshot?.generation ?? 0) &+ 1
+        )
+        return try await installDNR(
+            candidate,
+            for: extensionID,
+            limits: limits,
+            previousSnapshot: previousSnapshot,
+            previousLimits: previousLimits,
+            persistConfiguration: true
+        )
+    }
+
+    /// Restores one package's complete persisted DNR state in a single WebKit
+    /// compilation. Registry state is deliberately not rewritten here: a
+    /// partially restored package must never erase its durable dynamic-rule
+    /// snapshot before all static and dynamic rules have been accepted.
+    @discardableResult
+    func restoreDNR(
+        for extensionID: FloorpWebExtensionID,
+        staticRuleSets: [FloorpWebExtensionDNRStaticRuleSet],
+        enabledStaticRuleSetIDs: Set<String>,
+        dynamicRules: [FloorpWebExtensionDNRRule],
+        limits: FloorpWebExtensionDNRLimits
+    ) async throws -> Bool {
+        let gate = dnrMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        try requireDNRPermission(for: extensionID)
+        let previousStore = dnrStores[extensionID]
+        let previousSnapshot = await previousStore?.snapshot()
+        let candidate = try FloorpWebExtensionDNRStore(
+            staticRuleSets: staticRuleSets,
+            enabledStaticRuleSetIDs: enabledStaticRuleSetIDs,
+            dynamicRules: dynamicRules,
+            limits: limits,
+            generation: (previousSnapshot?.generation ?? 0) &+ 1
         )
         let compilation = await candidate.currentCompilation()
         let applied = try await runtime.compileAndSetDNR(compilation, for: extensionID)
@@ -534,14 +576,97 @@ final class FloorpWebExtensionCoordinator {
         let snapshot = await activeStore.snapshot()
         let candidate = try FloorpWebExtensionDNRStore(replaying: snapshot, limits: limits)
         try await mutation(candidate)
+        return try await installDNR(
+            candidate,
+            for: extensionID,
+            limits: limits,
+            previousSnapshot: snapshot,
+            previousLimits: limits,
+            persistConfiguration: true
+        )
+    }
 
-        // The active dictionary is intentionally not changed until WebKit has
-        // asynchronously compiled and atomically installed this generation.
+    /// Atomically reconciles the three DNR authorities: the live WebKit
+    /// rule-list, this coordinator's validated store, and the package
+    /// registry. WebKit must be changed first because its compilation is
+    /// asynchronous; if the subsequent registry transaction fails, the
+    /// previous policy is compiled again at a newer generation. If that
+    /// compensation cannot be installed, remove all live DNR state instead
+    /// of retaining a policy that no durable registry state represents.
+    private func installDNR(
+        _ candidate: FloorpWebExtensionDNRStore,
+        for extensionID: FloorpWebExtensionID,
+        limits: FloorpWebExtensionDNRLimits,
+        previousSnapshot: FloorpWebExtensionDNRPolicySnapshot?,
+        previousLimits: FloorpWebExtensionDNRLimits?,
+        persistConfiguration: Bool
+    ) async throws -> Bool {
         let compilation = await candidate.currentCompilation()
         let applied = try await runtime.compileAndSetDNR(compilation, for: extensionID)
         guard applied else { return false }
+
+        guard persistConfiguration, let packageStore else {
+            dnrStores[extensionID] = candidate
+            dnrLimits[extensionID] = limits
+            return true
+        }
+
+        do {
+            try await packageStore.updateDNRConfiguration(
+                await candidate.persistedConfiguration(),
+                for: extensionID
+            )
+        } catch {
+            await restorePreviousDNRPolicyAfterPersistenceFailure(
+                for: extensionID,
+                previousSnapshot: previousSnapshot,
+                previousLimits: previousLimits,
+                afterGeneration: compilation.generation
+            )
+            throw error
+        }
+
         dnrStores[extensionID] = candidate
+        dnrLimits[extensionID] = limits
         return true
+    }
+
+    private func restorePreviousDNRPolicyAfterPersistenceFailure(
+        for extensionID: FloorpWebExtensionID,
+        previousSnapshot: FloorpWebExtensionDNRPolicySnapshot?,
+        previousLimits: FloorpWebExtensionDNRLimits?,
+        afterGeneration: UInt64
+    ) async {
+        guard let previousSnapshot, let previousLimits else {
+            failClosedDNR(for: extensionID)
+            return
+        }
+
+        do {
+            let restoredStore = try FloorpWebExtensionDNRStore(
+                replaying: previousSnapshot,
+                limits: previousLimits,
+                minimumGeneration: afterGeneration &+ 1
+            )
+            let restored = try await runtime.compileAndSetDNR(
+                await restoredStore.currentCompilation(),
+                for: extensionID
+            )
+            guard restored else {
+                failClosedDNR(for: extensionID)
+                return
+            }
+            dnrStores[extensionID] = restoredStore
+            dnrLimits[extensionID] = previousLimits
+        } catch {
+            failClosedDNR(for: extensionID)
+        }
+    }
+
+    private func failClosedDNR(for extensionID: FloorpWebExtensionID) {
+        runtime.removePolicies(for: extensionID)
+        dnrStores.removeValue(forKey: extensionID)
+        dnrLimits.removeValue(forKey: extensionID)
     }
 
     private func requireDNRPermission(for extensionID: FloorpWebExtensionID) throws {

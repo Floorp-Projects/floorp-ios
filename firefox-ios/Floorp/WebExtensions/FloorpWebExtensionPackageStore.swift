@@ -55,6 +55,7 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
     let resourcePaths: Set<String>
     var isEnabled: Bool
     var grants: FloorpWebExtensionPermissionSnapshot
+    var dnrConfiguration: FloorpWebExtensionStoredDNRConfiguration?
 }
 
 struct FloorpWebExtensionPackageProfileKey: Hashable, Sendable {
@@ -138,6 +139,7 @@ actor FloorpWebExtensionPackageStore {
         FloorpWebExtensionID,
         FloorpWebExtensionScriptSource
     ) throws -> String
+    typealias RegistryPersister = @Sendable (Data, URL) throws -> Void
 
     private struct Registry: Codable, Equatable, Sendable {
         static let currentSchemaVersion = 1
@@ -166,6 +168,7 @@ actor FloorpWebExtensionPackageStore {
     private let packagesDirectory: URL
     private let stagingDirectory: URL
     private let registryURL: URL
+    private let registryPersister: RegistryPersister
     private let resourceState = FloorpWebExtensionPackageResourceState()
     private var registry: Registry
 
@@ -175,7 +178,10 @@ actor FloorpWebExtensionPackageStore {
     init(
         profileIdentifier: String,
         isPrivateBrowsing: Bool,
-        directory: URL
+        directory: URL,
+        registryPersister: @escaping RegistryPersister = { data, url in
+            try data.write(to: url, options: [.atomic])
+        }
     ) throws {
         profileKey = .init(
             profileIdentifier: profileIdentifier,
@@ -185,6 +191,7 @@ actor FloorpWebExtensionPackageStore {
         packagesDirectory = self.directory.appendingPathComponent("packages", isDirectory: true)
         stagingDirectory = self.directory.appendingPathComponent("staging", isDirectory: true)
         registryURL = self.directory.appendingPathComponent("installed-packages.json", isDirectory: false)
+        self.registryPersister = registryPersister
 
         try Self.ensureStoreDirectory(self.directory)
         try Self.ensureStoreDirectory(packagesDirectory)
@@ -239,6 +246,16 @@ actor FloorpWebExtensionPackageStore {
                 extensionID: expectedExtensionID,
                 generation: generation
             )
+            let existingDNRConfiguration = registry.packages.first {
+                $0.extensionID == expectedExtensionID
+            }?.dnrConfiguration
+            if let existingDNRConfiguration {
+                let manifestRuleIDs = Set(preflight.manifest.dnrRuleResources.map(\.identifier))
+                guard existingDNRConfiguration.enabledStaticRuleSetIDs.isSubset(of: manifestRuleIDs) else {
+                    throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+                }
+                try Self.validateStoredDNRConfiguration(existingDNRConfiguration)
+            }
             try Self.ensureStoreDirectory(generationDirectory.deletingLastPathComponent())
             guard !FileManager.default.fileExists(atPath: generationDirectory.path) else {
                 throw FloorpWebExtensionPackageStoreError.corruptedRegistry
@@ -257,7 +274,8 @@ actor FloorpWebExtensionPackageStore {
                 preflight: preflight,
                 resourcePaths: Set(resources.dataByPath.keys),
                 isEnabled: true,
-                grants: grants
+                grants: grants,
+                dnrConfiguration: existingDNRConfiguration
             )
 
             var next = registry
@@ -265,7 +283,7 @@ actor FloorpWebExtensionPackageStore {
             next.packages.append(installed)
             next.packages.sort { $0.extensionID.rawValue < $1.extensionID.rawValue }
             do {
-                try Self.persist(next, to: registryURL)
+                try persist(next)
             } catch {
                 try? FileManager.default.removeItem(at: generationDirectory)
                 throw error
@@ -295,7 +313,7 @@ actor FloorpWebExtensionPackageStore {
             throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
         }
         next.packages[index].isEnabled = enabled
-        try Self.persist(next, to: registryURL)
+        try persist(next)
         registry = next
         refreshResourceState()
     }
@@ -312,7 +330,33 @@ actor FloorpWebExtensionPackageStore {
             grants,
             for: next.packages[index].preflight.manifest
         )
-        try Self.persist(next, to: registryURL)
+        try persist(next)
+        registry = next
+    }
+
+    func dnrConfiguration(
+        for extensionID: FloorpWebExtensionID
+    ) -> FloorpWebExtensionStoredDNRConfiguration? {
+        registry.packages.first { $0.extensionID == extensionID }?.dnrConfiguration
+    }
+
+    func updateDNRConfiguration(
+        _ configuration: FloorpWebExtensionStoredDNRConfiguration?,
+        for extensionID: FloorpWebExtensionID
+    ) throws {
+        var next = registry
+        guard let index = next.packages.firstIndex(where: { $0.extensionID == extensionID }) else {
+            throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
+        }
+        if let configuration {
+            let manifestRuleIDs = Set(next.packages[index].preflight.manifest.dnrRuleResources.map(\.identifier))
+            guard configuration.enabledStaticRuleSetIDs.isSubset(of: manifestRuleIDs) else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+            try Self.validateStoredDNRConfiguration(configuration)
+        }
+        next.packages[index].dnrConfiguration = configuration
+        try persist(next)
         registry = next
     }
 
@@ -325,7 +369,7 @@ actor FloorpWebExtensionPackageStore {
         }
         var next = registry
         next.packages.removeAll { $0.extensionID == extensionID }
-        try Self.persist(next, to: registryURL)
+        try persist(next)
         registry = next
         refreshResourceState()
         try? FileManager.default.removeItem(
@@ -641,6 +685,14 @@ actor FloorpWebExtensionPackageStore {
               try validatedGrants(package.grants, for: preflight.manifest) == package.grants else {
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
         }
+
+        if let dnrConfiguration = package.dnrConfiguration {
+            let manifestRuleIDs = Set(preflight.manifest.dnrRuleResources.map(\.identifier))
+            guard dnrConfiguration.enabledStaticRuleSetIDs.isSubset(of: manifestRuleIDs) else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+            try validateStoredDNRConfiguration(dnrConfiguration)
+        }
     }
 
     private static func validatedGenerationDirectory(
@@ -679,15 +731,21 @@ actor FloorpWebExtensionPackageStore {
         return generationDirectory
     }
 
-    private static func persist(_ registry: Registry, to url: URL) throws {
+    private static func validateStoredDNRConfiguration(
+        _ configuration: FloorpWebExtensionStoredDNRConfiguration
+    ) throws {
+        try FloorpWebExtensionDNRStore.validateStoredConfiguration(configuration)
+    }
+
+    private func persist(_ registry: Registry) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(registry)
-        guard data.count <= maximumRegistryByteSize else {
+        guard data.count <= Self.maximumRegistryByteSize else {
             throw FloorpWebExtensionPackageStoreError.packageQuotaExceeded("registry size")
         }
-        try data.write(to: url, options: [.atomic])
+        try registryPersister(data, registryURL)
     }
 
     private static func enabledResourceEntries(
