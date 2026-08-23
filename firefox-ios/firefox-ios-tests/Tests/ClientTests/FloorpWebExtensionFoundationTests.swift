@@ -223,7 +223,7 @@ final class FloorpWebExtensionFoundationTests: XCTestCase, @unchecked Sendable {
               "manifest_version": 3,
               "name": "Unexpected key",
               "version": "1.0",
-              "action": { "default_title": "not supported yet" }
+              "externally_connectable": { "matches": ["https://example.com/*"] }
             }
             """.utf8))
         )

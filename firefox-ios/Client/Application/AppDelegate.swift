@@ -182,6 +182,10 @@ class AppDelegate: UIResponder,
 
         profile.reopen()
 
+        Task { @MainActor [profile, logger] in
+            await FloorpBootstrapper.applicationDidBecomeActive(for: profile, logger: logger)
+        }
+
         if profile.prefs.boolForKey(PendingAccountDisconnectedKey) ?? false {
             profile.removeAccount()
         }
@@ -268,7 +272,7 @@ class AppDelegate: UIResponder,
         // We have only five seconds here, so let's hope this doesn't take too long.
         logger.log("applicationWillTerminate", level: .info, category: .lifecycle)
         Task { @MainActor in
-            FloorpBootstrapper.tearDownWebExtensionRuntime(for: profile)
+            await FloorpBootstrapper.tearDownWebExtensionRuntime(for: profile)
         }
         profile.shutdown()
         documentLogger.logPendingDownloads()

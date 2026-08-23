@@ -5,7 +5,7 @@
     "sourceCommit": "6f58b2578825f74394fe16bb1c15aa17a17ad91d",
     "version": "1.0.0",
     "buildFlavor": "local-stage3-fixture",
-    "packageSHA256": "cb1c8596f8298663578d60beb4382d9536b0acb6c91e0008376157771790936f",
+    "packageSHA256": "3fcd3274c3f0502a23f029b6e827351a854c2cb1f1aadc668877d7ace5206c24",
     "license": "MPL-2.0",
     "supportedOSFloor": "iOS 15"
   },

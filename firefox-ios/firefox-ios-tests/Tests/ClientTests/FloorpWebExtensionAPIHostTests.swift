@@ -209,6 +209,62 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         XCTAssertNil(pageWorldStorage)
     }
 
+    func testForegroundAlarmDrainIsProfileScopedAndRegistryRemovalTearsDownHost() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = Date(timeIntervalSinceReferenceDate: 50_000)
+        let profileIdentifier = "api-alarm-lifecycle-\(UUID().uuidString)"
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            now: { now }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(apiPermissions: [.alarms]),
+            defaultLocale: "en"
+        )
+        let runtime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: host)
+        FloorpWebExtensionAPIHostRegistry.install(host, messageRuntime: runtime)
+
+        var delivered = [FloorpWebExtensionAlarmEvent]()
+        host.alarmEvents.register(extensionID: extensionID) { event in
+            delivered.append(event)
+        }
+        _ = try await host.dispatch(
+            operation: "alarms.create",
+            payload: try payload(["name": "foreground", "delayInMinutes": 0]),
+            sender: testSender()
+        )
+
+        await FloorpBootstrapper.drainDueWebExtensionAlarms(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: true,
+            now: now
+        )
+        XCTAssertTrue(delivered.isEmpty)
+        let alarmBeforeNormalDrain = await host.alarms.alarm(named: "foreground", for: extensionID)
+        XCTAssertNotNil(alarmBeforeNormalDrain)
+
+        await FloorpBootstrapper.drainDueWebExtensionAlarms(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            now: now
+        )
+        XCTAssertEqual(delivered.map(\.alarm.name), ["foreground"])
+        let alarmAfterNormalDrain = await host.alarms.alarm(named: "foreground", for: extensionID)
+        XCTAssertNil(alarmAfterNormalDrain)
+
+        await FloorpWebExtensionAPIHostRegistry.removeHost(for: host.profileKey)
+        XCTAssertNil(FloorpWebExtensionAPIHostRegistry.host(
+            for: profileIdentifier,
+            isPrivateBrowsing: false
+        ))
+    }
+
     private func payload(_ object: Any) throws -> FloorpWebExtensionMessagePayload {
         try .init(jsonData: JSONSerialization.data(withJSONObject: object, options: .fragmentsAllowed))
     }

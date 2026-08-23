@@ -7,6 +7,11 @@ import UIKit
 
 /// The immutable state consumed by the Settings screen.  It deliberately has
 /// no package URL or resource data: only the installer receives package bytes.
+struct FloorpWebExtensionSettingsOptionsPage: Hashable, Sendable {
+    let packageGeneration: FloorpWebExtensionPagePackageGeneration
+    let entryPoint: FloorpWebExtensionActionResource
+}
+
 struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     let id: FloorpWebExtensionID
     let name: String
@@ -16,6 +21,10 @@ struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     let siteAccessDescription: String
     let privateAccessDescription: String
     let errorDescription: String?
+    /// Present only for an enabled, manifest-declared options page. The
+    /// immutable generation prevents an already-open page from seeing files
+    /// belonging to a later package update.
+    let optionsPage: FloorpWebExtensionSettingsOptionsPage?
 }
 
 /// A narrow UI boundary around the profile-owned package store.
@@ -59,14 +68,23 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     }
 
     private let packageManager: (any FloorpWebExtensionSettingsManaging)?
+    private let pageResourceResolver: FloorpWebExtensionPageResourceResolver?
+    private let pageMessageRuntime: FloorpWebExtensionMessageRuntime?
+    private let openExternalURL: FloorpWebExtensionPageViewController.ExternalNavigationHandler
     private var installedPackages = [FloorpWebExtensionSettingsInstalledPackage]()
     private var isLoading = false
 
     init(
         windowUUID: WindowUUID,
-        packageManager: (any FloorpWebExtensionSettingsManaging)?
+        packageManager: (any FloorpWebExtensionSettingsManaging)?,
+        pageResourceResolver: FloorpWebExtensionPageResourceResolver? = nil,
+        pageMessageRuntime: FloorpWebExtensionMessageRuntime? = nil,
+        openExternalURL: @escaping FloorpWebExtensionPageViewController.ExternalNavigationHandler = { _ in }
     ) {
         self.packageManager = packageManager
+        self.pageResourceResolver = pageResourceResolver
+        self.pageMessageRuntime = pageMessageRuntime
+        self.openExternalURL = openExternalURL
         super.init(style: .insetGrouped, windowUUID: windowUUID)
     }
 
@@ -221,6 +239,13 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         ) { [weak self] _ in
             self?.setEnabled(!package.isEnabled, for: package.id)
         })
+        if package.optionsPage != nil,
+           pageResourceResolver != nil,
+           pageMessageRuntime != nil {
+            alert.addAction(UIAlertAction(title: "Options", style: .default) { [weak self] _ in
+                self?.openOptionsPage(for: package)
+            })
+        }
         alert.addAction(UIAlertAction(title: "Uninstall", style: .destructive) { [weak self] _ in
             self?.confirmUninstall(package)
         })
@@ -230,6 +255,29 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             popover.sourceRect = view.bounds
         }
         present(alert, animated: true)
+    }
+
+    private func openOptionsPage(for package: FloorpWebExtensionSettingsInstalledPackage) {
+        guard let optionsPage = package.optionsPage,
+              let pageResourceResolver,
+              let pageMessageRuntime else {
+            return
+        }
+        do {
+            let controller = try FloorpWebExtensionPageHost.makeOptionsPage(
+                packageGeneration: optionsPage.packageGeneration,
+                entryPoint: optionsPage.entryPoint,
+                resolver: pageResourceResolver,
+                messageRuntime: pageMessageRuntime,
+                openExternal: { [weak self] url in
+                    self?.openExternalURL(url)
+                }
+            )
+            controller.title = package.name
+            navigationController?.pushViewController(controller, animated: true)
+        } catch {
+            presentError(error)
+        }
     }
 
     private func confirmUninstall(_ package: FloorpWebExtensionSettingsInstalledPackage) {
@@ -331,7 +379,8 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                     : "Not allowed",
                 errorDescription: package.preflight.isActivationAllowed
                     ? nil
-                    : "This extension is incompatible with the current Floorp build."
+                    : "This extension is incompatible with the current Floorp build.",
+                optionsPage: Self.optionsPage(for: package)
             )
         }
     }
@@ -411,6 +460,21 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             categories.append(.browserAutomation)
         }
         return categories
+    }
+
+    private static func optionsPage(
+        for package: FloorpWebExtensionInstalledPackage
+    ) -> FloorpWebExtensionSettingsOptionsPage? {
+        guard package.isEnabled,
+              package.preflight.isActivationAllowed,
+              let optionsUI = package.preflight.manifest.optionsUI,
+              let entryPoint = try? FloorpWebExtensionActionResource(optionsUI.page.path),
+              let packageGeneration = try? FloorpWebExtensionPagePackageGeneration(
+                installedPackage: package
+              ) else {
+            return nil
+        }
+        return .init(packageGeneration: packageGeneration, entryPoint: entryPoint)
     }
 
     private static func siteAccessDescription(

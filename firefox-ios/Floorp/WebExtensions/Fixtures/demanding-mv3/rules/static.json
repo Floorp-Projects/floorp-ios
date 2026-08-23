@@ -1,7 +1,7 @@
 [
   { "id": 1, "priority": 10, "action": { "type": "block" }, "condition": { "urlFilter": "ads.fixture.test", "resourceTypes": ["image", "script", "xmlhttprequest"] } },
   { "id": 2, "priority": 10, "action": { "type": "block" }, "condition": { "urlFilter": "tracker.fixture.test", "resourceTypes": ["image", "script", "xmlhttprequest"] } },
-  { "id": 3, "priority": 9, "action": { "type": "upgradeScheme" }, "condition": { "urlFilter": "http://secure.fixture.test/", "resourceTypes": ["main_frame"] } },
+  { "id": 3, "priority": 1, "action": { "type": "block" }, "condition": { "urlFilter": "http://secure.fixture.test/", "resourceTypes": ["main_frame"] } },
   { "id": 4, "priority": 8, "action": { "type": "block" }, "condition": { "urlFilter": "cdn1.fixture.test", "resourceTypes": ["script"] } },
   { "id": 5, "priority": 8, "action": { "type": "block" }, "condition": { "urlFilter": "cdn2.fixture.test", "resourceTypes": ["script"] } },
   { "id": 6, "priority": 8, "action": { "type": "block" }, "condition": { "urlFilter": "cdn3.fixture.test", "resourceTypes": ["script"] } },
@@ -37,6 +37,6 @@
   { "id": 36, "priority": 2, "action": { "type": "block" }, "condition": { "urlFilter": "telemetry3.fixture.test", "resourceTypes": ["image", "script"] } },
   { "id": 37, "priority": 2, "action": { "type": "block" }, "condition": { "urlFilter": "telemetry4.fixture.test", "resourceTypes": ["image", "script"] } },
   { "id": 38, "priority": 2, "action": { "type": "block" }, "condition": { "urlFilter": "telemetry5.fixture.test", "resourceTypes": ["image", "script"] } },
-  { "id": 39, "priority": 1, "action": { "type": "block" }, "condition": { "urlFilter": "metrics1.fixture.test", "resourceTypes": ["xmlhttprequest"] } },
-  { "id": 40, "priority": 1, "action": { "type": "block" }, "condition": { "urlFilter": "metrics2.fixture.test", "resourceTypes": ["xmlhttprequest"] } }
+  { "id": 39, "priority": 2, "action": { "type": "block" }, "condition": { "urlFilter": "metrics1.fixture.test", "resourceTypes": ["xmlhttprequest"] } },
+  { "id": 40, "priority": 2, "action": { "type": "block" }, "condition": { "urlFilter": "metrics2.fixture.test", "resourceTypes": ["xmlhttprequest"] } }
 ]

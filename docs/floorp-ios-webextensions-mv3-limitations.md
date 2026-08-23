@@ -16,6 +16,7 @@ device/OS version in the profile-local compatibility evidence store.
 | DNR matched-rule feedback and automatic action badge counts | Unsupported | WebKit does not offer the necessary per-request callbacks. |
 | Registered scripts and package-file execution | Supported subset | Scripts are validated before registration, planned before navigation, and injected only for granted hosts. |
 | CSS insertion/removal | Supported subset | A native opaque handle binds every inserted stylesheet to its extension, tab, frame, and document generation. |
+| Tabs query/create/update/reload | Partial | The service is implemented and permission-checked, but it still depends on a concrete app-side tab host adapter; message delivery remains unsupported until that host is installed. |
 | Cosmetic / procedural / scriptlet filters | Supported subset | Generated resources run in the declared isolated or MAIN world. MAIN-world scripts never receive the native WebExtensions bridge. |
 | Per-site access | Supported | Denied, selected-site, requested-site, private, and active-tab grants are checked for every privileged operation. |
 | Exact Chromium DNR priority parity | Unsupported | Conflicting combinations are rejected rather than reported as enabled. |

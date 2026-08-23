@@ -776,7 +776,18 @@
         "FloorpWebExtensionAPIHostTests/testAuthenticatedNativeSubsetIsPermissionAndProfileScoped()",
         "FloorpWebExtensionAPIHostTests/testDeactivateClearsStoresAndRevokesEveryOperation()",
         "FloorpWebExtensionAPIHostTests/testWebKitBootstrapUsesNativeStorageAndI18nThroughIsolatedWorld()",
-        "NimbusOnboardingFeatureLayerTests/testLayer_notificationCardIsExcludedWhenRemotePushIsDisallowed()"
+        "NimbusOnboardingFeatureLayerTests/testLayer_notificationCardIsExcludedWhenRemotePushIsDisallowed()",
+        "FloorpWebExtensionMessageRuntimeTests/testStage2EventRuntimeFixtureUsesReviewedLazyNativeHandler()",
+        "FloorpWebExtensionMessageRuntimeTests/testExtensionPageBridgeDispatchesNativeAPIWithPageSenderAndRevokesOnDisable()",
+        "FloorpWebExtensionAPIHostTests/testForegroundAlarmDrainIsProfileScopedAndRegistryRemovalTearsDownHost()",
+        "FloorpWebExtensionPageHostTests/testSchemeHandlerResolvesOnlyInventoriedResourceFromExactGeneration()",
+        "FloorpWebExtensionPageHostTests/testSchemeHandlerRejectsCrossOriginTraversalQueryAndUninventoriedResources()",
+        "FloorpWebExtensionPageHostTests/testSchemeHandlerDerivesMimeTypeAndEnforcesResourceQuota()",
+        "FloorpWebExtensionPageHostTests/testNavigationPolicyKeepsPackageNavigationInternalAndHandsOffOnlyTopLevelHTTPLinks()",
+        "FloorpWebExtensionPageHostTests/testPageControllerUsesDedicatedConfigurationAndRequiresInventoriedEntryPoint()",
+        "FloorpWebExtensionPageHostTests/testActionPopupFactoryUsesDefaultAndDisabledStatesWithoutOpeningAPage()",
+        "FloorpWebExtensionPageHostTests/testOptionsPageFactoryUsesOptionsSurfaceAndFailsClosedForInvalidResources()",
+        "MainMenuCoordinatorTests/testHandleNavigation_webExtensionActions_callsDelegate()"
       ],
       "target": {
         "containerPath": "container:Client.xcodeproj",

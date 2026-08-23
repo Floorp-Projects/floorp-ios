@@ -345,9 +345,11 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
     func testBootstrapRestoreMaterializesManifestScriptsGrantsAndStaticDNR() async throws {
         let directory = temporaryDirectory()
         let ruleStoreDirectory = temporaryDirectory()
+        let apiHostDirectory = temporaryDirectory()
         defer {
             try? FileManager.default.removeItem(at: directory)
             try? FileManager.default.removeItem(at: ruleStoreDirectory)
+            try? FileManager.default.removeItem(at: apiHostDirectory)
         }
         let store = try FloorpWebExtensionPackageStore(
             profileIdentifier: "package-bootstrap-restore",
@@ -379,8 +381,19 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             runtime: runtime,
             scriptResourceLoader: store.makeResourceLoader()
         )
+        let apiHost = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "package-bootstrap-restore",
+            isPrivateBrowsing: false,
+            directory: apiHostDirectory,
+            preferredLocales: ["en"],
+            packageResourceLoader: store.makeI18nResourceLoader()
+        )
 
-        await FloorpBootstrapper.restoreInstalledPackages(from: store, into: coordinator)
+        await FloorpBootstrapper.restoreInstalledPackages(
+            from: store,
+            into: coordinator,
+            apiHost: apiHost
+        )
 
         let tab = FloorpWebExtensionTabContext(
             tabID: 91,
@@ -395,6 +408,20 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let dnr = try XCTUnwrap(dnrSnapshot)
         XCTAssertEqual(dnr.staticRuleSets.first?.rules.count, 40)
         XCTAssertEqual(dnr.enabledStaticRuleSetIDs, ["large-static"])
+
+        let apiResponse = try await apiHost.dispatch(
+            operation: "i18n.getUILanguage",
+            payload: try .init(jsonData: Data("{}".utf8)),
+            sender: FloorpWebExtensionRuntimeMessageSender(
+                extensionID: extensionID,
+                tabID: tab.tabID,
+                documentGeneration: tab.documentGeneration,
+                url: tab.url,
+                isMainFrame: true,
+                isPrivate: false
+            )
+        )
+        XCTAssertNotNil(apiResponse, "restored packages must be activated in the native API host")
     }
 
     private func temporaryDirectory() -> URL {

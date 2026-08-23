@@ -375,13 +375,25 @@ final class SettingsCoordinator: BaseCoordinator,
     }
 
     func pressedWebExtensions() {
+        let store = FloorpWebExtensionPackageStoreRegistry.store(
+            for: profile.localName(),
+            isPrivateBrowsing: false
+        )
         let packageManager = FloorpWebExtensionPackageStoreRegistry.manager(
             for: profile.localName(),
             isPrivateBrowsing: false
         )
         let viewController = FloorpWebExtensionSettingsViewController(
             windowUUID: windowUUID,
-            packageManager: packageManager
+            packageManager: packageManager,
+            pageResourceResolver: store?.makePageResourceResolver(),
+            pageMessageRuntime: FloorpWebExtensionAPIHostRegistry.messageRuntime(
+                for: profile.localName(),
+                isPrivateBrowsing: false
+            ),
+            openExternalURL: { [weak self] url in
+                self?.parentCoordinator?.openURLinNewTab(url)
+            }
         )
         router.push(viewController)
     }

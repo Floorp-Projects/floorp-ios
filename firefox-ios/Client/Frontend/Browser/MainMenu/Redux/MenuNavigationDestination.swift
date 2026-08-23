@@ -24,6 +24,7 @@ enum MainMenuNavigationDestination: Equatable {
     case webpageSummary(config: SummarizerConfig?)
     case zoom
     case translatePage
+    case webExtensionActions
 
     /// NOTE: This is only used in tests. Right now, we have three entrypoints for the summarizer and 
     /// it's difficult to find a way to pass custom configs to the summarizers from all three. 
@@ -49,7 +50,8 @@ enum MainMenuNavigationDestination: Equatable {
             .saveAsPDF,
             .webpageSummary(config: SummarizerConfig(instructions: "", options: [:])),
             .zoom,
-            .translatePage
+            .translatePage,
+            .webExtensionActions
         ]
     }
 }

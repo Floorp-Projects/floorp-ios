@@ -178,14 +178,32 @@ public final class FloorpBootstrapper {
                 isPrivateBrowsing: true,
                 directory: privatePackageDirectory
             )
+            let normalAPIHost = try installAPIHostComposition(
+                store: normalPackageStore,
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: false,
+                directory: URL(fileURLWithPath: try profile.files.getAndEnsureDirectory(
+                    "WebExtensions/APIHost/normal"
+                ))
+            )
+            let privateAPIHost = try installAPIHostComposition(
+                store: privatePackageStore,
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: true,
+                directory: privateDirectory
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("APIHost", isDirectory: true)
+            )
             let normalCoordinator = installPackageComposition(
                 store: normalPackageStore,
+                apiHost: normalAPIHost,
                 profileIdentifier: profileIdentifier,
                 isPrivateBrowsing: false,
                 compositionGeneration: compositionGeneration
             )
             let privateCoordinator = installPackageComposition(
                 store: privatePackageStore,
+                apiHost: privateAPIHost,
                 profileIdentifier: profileIdentifier,
                 isPrivateBrowsing: true,
                 compositionGeneration: compositionGeneration
@@ -194,6 +212,7 @@ public final class FloorpBootstrapper {
                 await restoreInstalledPackages(
                     from: normalPackageStore,
                     into: normalCoordinator,
+                    apiHost: normalAPIHost,
                     logger: logger,
                     while: {
                         packageCompositionGenerations[profileIdentifier] == compositionGeneration
@@ -204,6 +223,7 @@ public final class FloorpBootstrapper {
                 await restoreInstalledPackages(
                     from: privatePackageStore,
                     into: privateCoordinator,
+                    apiHost: privateAPIHost,
                     logger: logger,
                     while: {
                         packageCompositionGenerations[profileIdentifier] == compositionGeneration
@@ -223,7 +243,7 @@ public final class FloorpBootstrapper {
     /// Removes both runtime instances on process termination and deletes the
     /// ephemeral private store. The normal store remains profile-owned.
     @MainActor
-    static func tearDownWebExtensionRuntime(for profile: Profile) {
+    static func tearDownWebExtensionRuntime(for profile: Profile) async {
         let profileIdentifier = profile.localName()
         packageRestoreTasks.removeValue(forKey: profileIdentifier)?.cancel()
         packageCompositionGenerations.removeValue(forKey: profileIdentifier)
@@ -246,6 +266,10 @@ public final class FloorpBootstrapper {
             isPrivateBrowsing: true
         )
         for isPrivateBrowsing in [false, true] {
+            await FloorpWebExtensionAPIHostRegistry.removeHost(for: .init(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: isPrivateBrowsing
+            ))
             FloorpWebExtensionPackageStoreRegistry.removeStore(
                 for: profileIdentifier,
                 isPrivateBrowsing: isPrivateBrowsing
@@ -278,6 +302,7 @@ public final class FloorpBootstrapper {
     @MainActor
     private static func installPackageComposition(
         store: FloorpWebExtensionPackageStore,
+        apiHost: FloorpWebExtensionAPIHost,
         profileIdentifier: String,
         isPrivateBrowsing: Bool,
         compositionGeneration: UUID
@@ -297,6 +322,7 @@ public final class FloorpBootstrapper {
             }
             await coordinator.removeExtension(extensionID)
             guard let package else { return }
+            guard !isPrivateBrowsing || package.grants.privateBrowsingEnabled else { return }
             guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
                 throw FloorpWebExtensionError.unsupported("stale package composition")
             }
@@ -306,6 +332,7 @@ public final class FloorpBootstrapper {
                     resourceLoader: store.makeResourceLoader(),
                     into: coordinator
                 )
+                await apiHost.activate(package)
             } catch {
                 await coordinator.removeExtension(extensionID)
                 throw error
@@ -316,6 +343,32 @@ public final class FloorpBootstrapper {
         return coordinator
     }
 
+    /// Creates the native Stage 2 API surface and its authenticated WebKit
+    /// message runtime as one profile-mode-owned composition. No application
+    /// tab adapter currently satisfies `FloorpWebExtensionTabsHostAdapting`;
+    /// the `tabs` service therefore remains fail-closed until that typed host
+    /// boundary is installed rather than reaching into a window implicitly.
+    @MainActor
+    private static func installAPIHostComposition(
+        store: FloorpWebExtensionPackageStore,
+        profileIdentifier: String,
+        isPrivateBrowsing: Bool,
+        directory: URL
+    ) throws -> FloorpWebExtensionAPIHost {
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing,
+            directory: directory,
+            preferredLocales: Locale.preferredLanguages,
+            packageResourceLoader: store.makeI18nResourceLoader()
+        )
+        FloorpWebExtensionAPIHostRegistry.install(
+            host,
+            messageRuntime: FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: host)
+        )
+        return host
+    }
+
     /// Rehydrates the execution policy stored with each immutable package
     /// generation. A package is activated as a unit: if any resource cannot be
     /// materialized or compiled, all of that extension's live policy is
@@ -324,10 +377,14 @@ public final class FloorpBootstrapper {
     static func restoreInstalledPackages(
         from store: FloorpWebExtensionPackageStore,
         into coordinator: FloorpWebExtensionCoordinator,
+        apiHost: FloorpWebExtensionAPIHost? = nil,
         logger: Logger = DefaultLogger.shared,
         while isCurrentComposition: @MainActor () -> Bool = { true }
     ) async {
-        let packages = await store.installedPackages().filter(\.isEnabled)
+        let packages = await store.installedPackages().filter { package in
+            package.isEnabled &&
+                (!coordinator.profileKey.isPrivateBrowsing || package.grants.privateBrowsingEnabled)
+        }
         let resourceLoader = store.makeResourceLoader()
 
         for package in packages {
@@ -338,6 +395,7 @@ public final class FloorpBootstrapper {
                     resourceLoader: resourceLoader,
                     into: coordinator
                 )
+                await apiHost?.activate(package)
             } catch is CancellationError {
                 await coordinator.removeExtension(package.extensionID)
                 return
@@ -349,6 +407,54 @@ public final class FloorpBootstrapper {
                     category: .setup
                 )
             }
+        }
+    }
+
+    /// Delivers the bounded set of alarms that became due while iOS had the
+    /// process suspended. Callers use this at a foreground execution
+    /// opportunity; the durable alarm actor prevents duplicate consumption if
+    /// multiple scenes activate together.
+    @MainActor
+    static func applicationDidBecomeActive(
+        for profile: Profile,
+        logger: Logger = DefaultLogger.shared
+    ) async {
+        guard FloorpFlags.isWebExtensionFeatureEnabled(.core) else { return }
+        let profileIdentifier = profile.localName()
+        if let restoreTask = packageRestoreTasks[profileIdentifier] {
+            await restoreTask.value
+        }
+        let now = Date()
+        for isPrivateBrowsing in [false, true] {
+            await drainDueWebExtensionAlarms(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: isPrivateBrowsing,
+                now: now,
+                logger: logger
+            )
+        }
+    }
+
+    @MainActor
+    static func drainDueWebExtensionAlarms(
+        profileIdentifier: String,
+        isPrivateBrowsing: Bool,
+        now: Date,
+        logger: Logger = DefaultLogger.shared
+    ) async {
+        guard let host = FloorpWebExtensionAPIHostRegistry.host(
+            for: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        ) else { return }
+        do {
+            let events = try await host.alarms.takeDueEvents(now: now)
+            await host.alarmEvents.dispatch(events)
+        } catch {
+            logger.log(
+                "Floorp: WebExtensions alarm delivery failed: \(error)",
+                level: .warning,
+                category: .storage
+            )
         }
     }
 
