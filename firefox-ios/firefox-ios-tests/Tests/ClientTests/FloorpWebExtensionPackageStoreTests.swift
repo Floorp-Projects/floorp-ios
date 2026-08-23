@@ -485,7 +485,10 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let grants = FloorpWebExtensionPermissionSnapshot(
             apiPermissions: [.declarativeNetRequest],
-            requestedHosts: [],
+            requestedHosts: [
+                try .init("http://*.fixture.test/*"),
+                try .init("https://*.fixture.test/*")
+            ],
             normalHostAccess: .denied
         )
         let store = try FloorpWebExtensionPackageStore(
