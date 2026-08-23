@@ -791,8 +791,41 @@ class Tab: NSObject,
         )
         let controller = webView.configuration.userContentController
         runtime.clearPreNavigationPolicies(from: controller)
-        coordinator.preNavigationPolicies(for: tab).forEach {
-            runtime.applyPreNavigationPolicy($0, to: controller)
+        let policies = coordinator.preNavigationPolicies(for: tab)
+        let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
+            for: profile.localName(),
+            isPrivateBrowsing: isPrivate
+        )
+        // A MAIN-world script deliberately never receives `browser`.  Do not
+        // leave an otherwise-unused isolated-world bridge behind for it: the
+        // bridge's presence is itself a capability and must exactly follow
+        // the isolated scripts in this navigation snapshot.
+        let bridgePolicies = policies.filter { policy in
+            policy.scriptPolicies.contains { $0.world == .isolated }
+        }
+        messageRuntime?.reconcileTabBridges(
+            on: controller,
+            retaining: Set(bridgePolicies.map(\.extensionID))
+        )
+        bridgePolicies.forEach { policy in
+            messageRuntime?.installBridge(
+                for: policy.extensionID,
+                tab: tab,
+                on: controller,
+                authorizeDocument: { currentURL, isMainFrame, trustedTab in
+                    coordinator.authorizesBridge(
+                        for: policy.extensionID,
+                        currentURL: currentURL,
+                        isMainFrame: isMainFrame,
+                        tab: trustedTab
+                    )
+                }
+            )
+        }
+        // MAIN-world policies are still legitimate content scripts; they just
+        // must not acquire an isolated-world WebExtension API bridge.
+        policies.forEach { policy in
+            runtime.applyPreNavigationPolicy(policy, to: controller)
         }
         floorpWebExtensionActiveDocument = tab
         floorpWebExtensionPreparedNavigationURL = navigationURL

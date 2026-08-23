@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import XCTest
+@preconcurrency import GCDWebServers
 import WebKit
 @testable import Client
 
@@ -493,6 +494,173 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(replacementRuntime.policySnapshot(for: extensionID))
     }
 
+    /// This is deliberately a first-navigation proof: policies must be added
+    /// before `load`, rather than being observed only after a reload.  It also
+    /// proves that a WebKit named content world does not leak its globals into
+    /// the page world.
+    @MainActor
+    func testWebKitFirstNavigationRunsDocumentStartBeforePageAndIsolatesContentWorld() async throws {
+        let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: priorCoreFlag) }
+
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: FailingContentRuleListCompiler())
+        let configuration = WKWebViewConfiguration()
+        runtime.setScriptPolicies([
+            .init(
+                source: "globalThis.floorpNavigationOrder = ['extension-document-start'];",
+                runAt: .documentStart,
+                world: .main
+            ),
+            .init(
+                source: "globalThis.floorpIsolatedStartProof = 'isolated-document-start';",
+                runAt: .documentStart,
+                world: .isolated
+            ),
+            .init(
+                source: "globalThis.floorpNavigationOrder.push('extension-document-end');",
+                runAt: .documentEnd,
+                world: .main
+            )
+        ], for: extensionID)
+        // The runtime's pre-navigation handoff is what production tab creation
+        // invokes.  Do it before WKWebView's very first `load` below.
+        runtime.apply(to: configuration.userContentController)
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: server.url(path: "/proof/first-navigation")))
+        try await waitForSuccessfulNavigation(navigation)
+
+        let order = try await webView.callAsyncJavaScript(
+            "return JSON.stringify(globalThis.floorpNavigationOrder)",
+            contentWorld: .page
+        ) as? String
+        XCTAssertEqual(
+            order,
+            "[\"extension-document-start\",\"page-inline\",\"extension-document-end\"]"
+        )
+        let pageWorldVisibility = try await webView.callAsyncJavaScript(
+            "return typeof globalThis.floorpIsolatedStartProof",
+            contentWorld: .page
+        ) as? String
+        XCTAssertEqual(pageWorldVisibility, "undefined")
+        let isolatedWorldValue = try await webView.callAsyncJavaScript(
+            "return globalThis.floorpIsolatedStartProof",
+            contentWorld: .world(name: FloorpWebExtensionRuntime.isolatedContentWorldName(for: extensionID))
+        ) as? String
+        XCTAssertEqual(isolatedWorldValue, "isolated-document-start")
+        XCTAssertEqual(server.requestCount(for: "/proof/first-navigation"), 1)
+    }
+
+    /// Exercises the actual `WKContentRuleList` data path, not just the JSON
+    /// compiler.  A blocked main frame must never reach the local server.
+    @MainActor
+    func testWebKitDNRBlocksMainFrameBeforeTheServerReceivesIt() async throws {
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let blockedURL = server.url(path: "/dnr/main-frame-blocked")
+        let rules = try FloorpWebExtensionDNRStore(
+            staticRuleSets: [.init(
+                identifier: "main-frame",
+                rules: [.init(
+                    id: 1,
+                    action: .init(type: .block),
+                    condition: .init(
+                        regexFilter: "^\(NSRegularExpression.escapedPattern(for: blockedURL.absoluteString))$",
+                        resourceTypes: [.mainFrame]
+                    )
+                )]
+            )],
+            enabledStaticRuleSetIDs: ["main-frame"]
+        )
+        let compilation = await rules.currentCompilation()
+        XCTAssertFalse(compilation.report.hasRejections)
+        let ruleStore = TestContentRuleListStore()
+        let ruleList = try await ruleStore.compile(
+            identifier: "stage3-main-block-\(UUID().uuidString)",
+            contentRuleListJSON: compilation.webKitContentRuleJSON
+        )
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(ruleList)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: blockedURL))
+        try await waitForFailedNavigation(navigation)
+
+        XCTAssertEqual(server.requestCount(for: "/dnr/main-frame-blocked"), 0)
+    }
+
+    /// WebKit's `ignore-previous-rules` is the supported implementation of a
+    /// higher-priority MV3 allow exception.  This proves both outcomes against
+    /// real subresource requests in one deterministic document.
+    @MainActor
+    func testWebKitDNRBlocksSubresourceAndAllowsHigherPriorityException() async throws {
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let basePattern = NSRegularExpression.escapedPattern(
+            for: server.url(path: "/dnr/subresource-").absoluteString
+        )
+        let rules = try FloorpWebExtensionDNRStore(
+            staticRuleSets: [.init(
+                identifier: "subresources",
+                rules: [
+                    .init(
+                        id: 10,
+                        priority: 1,
+                        action: .init(type: .block),
+                        condition: .init(
+                            regexFilter: "^\(basePattern).*$",
+                            resourceTypes: [.image]
+                        )
+                    ),
+                    .init(
+                        id: 11,
+                        priority: 2,
+                        action: .init(type: .allow),
+                        condition: .init(
+                            regexFilter: "^\(basePattern)allowed$",
+                            resourceTypes: [.image]
+                        )
+                    )
+                ]
+            )],
+            enabledStaticRuleSetIDs: ["subresources"]
+        )
+        let compilation = await rules.currentCompilation()
+        XCTAssertFalse(compilation.report.hasRejections)
+        let ruleStore = TestContentRuleListStore()
+        let ruleList = try await ruleStore.compile(
+            identifier: "stage3-subresource-rules-\(UUID().uuidString)",
+            contentRuleListJSON: compilation.webKitContentRuleJSON
+        )
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(ruleList)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: server.url(path: "/dnr/subresources")))
+        try await waitForSuccessfulNavigation(navigation)
+        let events = try await waitForJavaScriptString(
+            in: webView,
+            source: """
+            const events = globalThis.floorpSubresourceEvents || [];
+            return events.includes('blocked-error') && events.includes('allowed-load')
+              ? JSON.stringify([...events].sort())
+              : '';
+            """,
+            expected: "[\"allowed-load\",\"blocked-error\"]"
+        )
+
+        XCTAssertEqual(events, "[\"allowed-load\",\"blocked-error\"]")
+        XCTAssertEqual(server.requestCount(for: "/dnr/subresource-blocked"), 0)
+        XCTAssertEqual(server.requestCount(for: "/dnr/subresource-allowed"), 1)
+    }
+
     private func script(
         id: String,
         source: String,
@@ -535,6 +703,57 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
 
     private func validBlockRuleJSON(_ urlFilter: String) -> String {
         "[{\"trigger\":{\"url-filter\":\"\(urlFilter)\"},\"action\":{\"type\":\"block\"}}]"
+    }
+
+    @MainActor
+    private func waitForSuccessfulNavigation(
+        _ navigation: Stage3NavigationRecorder,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        for _ in 0..<250 {
+            if navigation.didFinishCount > 0 { return }
+            if let error = navigation.lastError {
+                XCTFail("Expected WebKit navigation to succeed: \(error)", file: file, line: line)
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for WebKit navigation to finish", file: file, line: line)
+    }
+
+    @MainActor
+    private func waitForFailedNavigation(
+        _ navigation: Stage3NavigationRecorder,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        for _ in 0..<250 {
+            if navigation.lastError != nil { return }
+            if navigation.didFinishCount > 0 {
+                XCTFail("Expected WebKit navigation to be blocked", file: file, line: line)
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for WebKit to reject the blocked navigation", file: file, line: line)
+    }
+
+    @MainActor
+    private func waitForJavaScriptString(
+        in webView: WKWebView,
+        source: String,
+        expected: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws -> String? {
+        for _ in 0..<250 {
+            let value = try await webView.callAsyncJavaScript(source, contentWorld: .page) as? String
+            if value == expected { return value }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for expected JavaScript value \(expected)", file: file, line: line)
+        return nil
     }
 
     @MainActor
@@ -755,5 +974,132 @@ private final class HandleSuffixes: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return values.removeFirst()
+    }
+}
+
+/// A dedicated local server gives the WebKit integration tests deterministic
+/// request accounting: assertions distinguish an actual network block from a
+/// document that merely failed after reaching the origin.
+private final class Stage3WebKitIntegrationServer {
+    private let server = GCDWebServer()
+    private let requests = Stage3RequestRecorder()
+
+    init() throws {
+        server.addHandler(
+            forMethod: "GET",
+            path: "/proof/first-navigation",
+            request: GCDWebServerRequest.self
+        ) { [requests] _ in
+            requests.record("/proof/first-navigation")
+            return GCDWebServerDataResponse(html: """
+            <!doctype html><html><body>
+            <script>globalThis.floorpNavigationOrder.push('page-inline');</script>
+            first navigation
+            </body></html>
+            """)!
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/dnr/main-frame-blocked",
+            request: GCDWebServerRequest.self
+        ) { [requests] _ in
+            requests.record("/dnr/main-frame-blocked")
+            return GCDWebServerDataResponse(html: "<!doctype html><title>unexpected main-frame response</title>")!
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/dnr/subresources",
+            request: GCDWebServerRequest.self
+        ) { [requests] _ in
+            requests.record("/dnr/subresources")
+            return GCDWebServerDataResponse(html: """
+            <!doctype html><html><body>
+            <script>globalThis.floorpSubresourceEvents = [];</script>
+            <img src="/dnr/subresource-blocked"
+                 onload="globalThis.floorpSubresourceEvents.push('blocked-load')"
+                 onerror="globalThis.floorpSubresourceEvents.push('blocked-error')">
+            <img src="/dnr/subresource-allowed"
+                 onload="globalThis.floorpSubresourceEvents.push('allowed-load')"
+                 onerror="globalThis.floorpSubresourceEvents.push('allowed-error')">
+            </body></html>
+            """)!
+        }
+        for path in ["/dnr/subresource-blocked", "/dnr/subresource-allowed"] {
+            server.addHandler(
+                forMethod: "GET",
+                path: path,
+                request: GCDWebServerRequest.self
+            ) { [requests] _ in
+                requests.record(path)
+                return GCDWebServerDataResponse(
+                    data: Stage3WebKitIntegrationServer.onePixelGIF,
+                    contentType: "image/gif"
+                )
+            }
+        }
+        guard server.start(withPort: 0, bonjourName: nil) else {
+            throw Stage3WebKitIntegrationServerError.couldNotStart
+        }
+    }
+
+    func stop() {
+        server.stop()
+    }
+
+    func url(path: String) -> URL {
+        URL(string: "http://localhost:\(server.port)\(path)")!
+    }
+
+    func requestCount(for path: String) -> Int {
+        requests.count(for: path)
+    }
+
+    private static let onePixelGIF = Data(base64Encoded: "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")!
+}
+
+private enum Stage3WebKitIntegrationServerError: Error {
+    case couldNotStart
+}
+
+private final class Stage3RequestRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var counts = [String: Int]()
+
+    func record(_ path: String) {
+        lock.lock()
+        counts[path, default: 0] += 1
+        lock.unlock()
+    }
+
+    func count(for path: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return counts[path, default: 0]
+    }
+}
+
+@MainActor
+private final class Stage3NavigationRecorder: NSObject, WKNavigationDelegate {
+    private(set) var didFinishCount = 0
+    private(set) var lastError: Error?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        didFinishCount += 1
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation?,
+        withError error: Error
+    ) {
+        lastError = error
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFail navigation: WKNavigation?,
+        withError error: Error
+    ) {
+        lastError = error
     }
 }

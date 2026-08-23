@@ -56,6 +56,10 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
     var isEnabled: Bool
     var grants: FloorpWebExtensionPermissionSnapshot
     var dnrConfiguration: FloorpWebExtensionStoredDNRConfiguration?
+    /// A product-owned explanation for a fail-closed activation disable. This
+    /// keeps a runtime activation failure distinct from a deliberate user
+    /// disable after process restart.
+    var activationError: String? = nil
 }
 
 struct FloorpWebExtensionPackageProfileKey: Hashable, Sendable {
@@ -313,6 +317,25 @@ actor FloorpWebExtensionPackageStore {
             throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
         }
         next.packages[index].isEnabled = enabled
+        // A user-initiated state change clears a prior failed attempt. A
+        // subsequent failed activation records a new failure atomically below.
+        next.packages[index].activationError = nil
+        try persist(next)
+        registry = next
+        refreshResourceState()
+    }
+
+    /// Fails closed after a WebKit policy activation or restoration error.
+    /// The disabled state and its Settings-visible explanation are written in
+    /// one registry transaction, so a future start cannot claim the package is
+    /// enabled while it has no usable runtime policy.
+    func recordActivationFailure(for extensionID: FloorpWebExtensionID) throws {
+        var next = registry
+        guard let index = next.packages.firstIndex(where: { $0.extensionID == extensionID }) else {
+            throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
+        }
+        next.packages[index].isEnabled = false
+        next.packages[index].activationError = "This extension could not be activated. Enable it to try again."
         try persist(next)
         registry = next
         refreshResourceState()

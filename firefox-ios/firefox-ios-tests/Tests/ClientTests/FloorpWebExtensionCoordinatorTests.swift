@@ -86,6 +86,60 @@ final class FloorpWebExtensionCoordinatorTests: XCTestCase {
         XCTAssertEqual(normal.preNavigationPolicies(for: testTab(isPrivate: false)).count, 1)
     }
 
+    func testBridgeAuthorizationRechecksFrameHostMatchAndFrameScope() async throws {
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: CoordinatorRuleListCompiler())
+        let coordinator = makeCoordinator(runtime: runtime)
+        let tab = testTab()
+        let script = try registeredScript(id: "bridge", source: "content.js")
+        let host = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+
+        try await coordinator.registerScripts([script], for: extensionID)
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [host],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+
+        XCTAssertTrue(coordinator.authorizesBridge(
+            for: extensionID,
+            currentURL: tab.url,
+            isMainFrame: true,
+            tab: tab
+        ))
+        XCTAssertFalse(coordinator.authorizesBridge(
+            for: extensionID,
+            currentURL: tab.url,
+            isMainFrame: false,
+            tab: tab
+        ))
+        XCTAssertFalse(coordinator.authorizesBridge(
+            for: extensionID,
+            currentURL: URL(string: "https://ungranted.example/frame")!,
+            isMainFrame: false,
+            tab: tab
+        ))
+
+        try await coordinator.updateScripts(
+            [.init(id: "bridge", allFrames: true)],
+            for: extensionID
+        )
+        XCTAssertTrue(coordinator.authorizesBridge(
+            for: extensionID,
+            currentURL: tab.url,
+            isMainFrame: false,
+            tab: tab
+        ))
+
+        await coordinator.revokeHostPermissions(for: extensionID)
+        XCTAssertFalse(coordinator.authorizesBridge(
+            for: extensionID,
+            currentURL: tab.url,
+            isMainFrame: true,
+            tab: tab
+        ))
+    }
+
     func testDNRStoreIsNotReplacedWhenRuntimeCompilationFails() async throws {
         let compiler = CoordinatorRuleListCompiler()
         let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: compiler)
@@ -120,6 +174,62 @@ final class FloorpWebExtensionCoordinatorTests: XCTestCase {
         let after = try XCTUnwrap(afterSnapshot)
         XCTAssertEqual(after.generation, before.generation)
         XCTAssertEqual(after.dynamicRules, [])
+    }
+
+    func testRemovingExtensionInvalidatesAnInFlightDNRMutation() async throws {
+        let compiler = CoordinatorRuleListCompiler()
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: compiler)
+        let coordinator = makeCoordinator(runtime: runtime)
+        await coordinator.grantPermissions(
+            [.declarativeNetRequest],
+            requestedHosts: [],
+            hostAccess: .denied,
+            to: extensionID
+        )
+        let initialDNRConfigured = try await coordinator.configureDNR(for: extensionID)
+        XCTAssertTrue(initialDNRConfigured)
+
+        compiler.pauseNextCompilation = true
+        let mutation = Task {
+            try await coordinator.updateDynamicRules(
+                addRules: [
+                    .init(
+                        id: 1,
+                        action: .init(type: .block),
+                        condition: .init(urlFilter: "stale.example")
+                    )
+                ],
+                removeRuleIDs: [],
+                for: self.extensionID
+            )
+        }
+        await compiler.waitUntilCompilationPaused()
+
+        let removal = Task {
+            await coordinator.removeExtension(self.extensionID)
+        }
+        await Task.yield()
+        compiler.resumePausedCompilation()
+
+        let mutationApplied = try await mutation.value
+        await removal.value
+        let snapshotAfterRemoval = await coordinator.dnrSnapshot(for: extensionID)
+        XCTAssertTrue(mutationApplied)
+        XCTAssertNil(snapshotAfterRemoval)
+        XCTAssertNil(runtime.policySnapshot(for: extensionID))
+        await assertAsyncThrows {
+            _ = try await coordinator.updateDynamicRules(
+                addRules: [
+                    .init(
+                        id: 2,
+                        action: .init(type: .block),
+                        condition: .init(urlFilter: "still-stale.example")
+                    )
+                ],
+                removeRuleIDs: [],
+                for: self.extensionID
+            )
+        }
     }
 
     func testCSSRefusesTheOtherProfileBeforeMutatingPagePolicy() async throws {
@@ -222,7 +332,11 @@ private final class CoordinatorRuleListCompiler: FloorpWebExtensionContentRuleLi
     }
 
     var shouldFail = false
+    var pauseNextCompilation = false
     private let store: WKContentRuleListStore
+    private var compilationStarted = false
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var pauseContinuation: CheckedContinuation<Void, Never>?
 
     init() {
         let directory = FileManager.default.temporaryDirectory
@@ -239,7 +353,8 @@ private final class CoordinatorRuleListCompiler: FloorpWebExtensionContentRuleLi
         if shouldFail {
             throw Failure.expected
         }
-        return try await withCheckedThrowingContinuation { continuation in
+        let ruleList: WKContentRuleList = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<WKContentRuleList, Error>) in
             store.compileContentRuleList(
                 forIdentifier: identifier,
                 encodedContentRuleList: encodedContentRuleList
@@ -253,6 +368,32 @@ private final class CoordinatorRuleListCompiler: FloorpWebExtensionContentRuleLi
                 }
             }
         }
+        if pauseNextCompilation {
+            pauseNextCompilation = false
+            compilationStarted = true
+            startedContinuation?.resume()
+            startedContinuation = nil
+            await withCheckedContinuation { continuation in
+                pauseContinuation = continuation
+            }
+        }
+        return ruleList
+    }
+
+    func waitUntilCompilationPaused() async {
+        guard !compilationStarted else { return }
+        await withCheckedContinuation { continuation in
+            startedContinuation = continuation
+        }
+    }
+
+    func resumePausedCompilation() {
+        guard let pauseContinuation else {
+            XCTFail("Expected a paused DNR compilation")
+            return
+        }
+        self.pauseContinuation = nil
+        pauseContinuation.resume()
     }
 
     func removeContentRuleList(forIdentifier identifier: String) async {

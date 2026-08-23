@@ -153,6 +153,21 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
             }
         )
         FloorpWebExtensionCoordinator.install(coordinator)
+        let bridgeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("floorp-webextension-navigation-bridge-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: bridgeDirectory, withIntermediateDirectories: true)
+        let bridgeHost = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: bridgeDirectory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil }
+        )
+        let messageRuntime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: .init(),
+            profileKey: .init(profileIdentifier: profileIdentifier, isPrivateBrowsing: false)
+        )
+        FloorpWebExtensionAPIHostRegistry.install(bridgeHost, messageRuntime: messageRuntime)
         defer {
             FloorpWebExtensionCoordinator.removeCoordinator(
                 for: profileIdentifier,
@@ -162,6 +177,7 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
                 for: profileIdentifier,
                 isPrivateBrowsing: false
             )
+            try? FileManager.default.removeItem(at: bridgeDirectory)
         }
 
         let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
@@ -201,8 +217,17 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
                 XCTAssertEqual(policy, .allow)
             }
             XCTAssertEqual(
-                tab.webView?.configuration.userContentController.userScripts.map(\.source),
-                ["window.navigationPolicyFixture = true;"]
+                tab.webView?.configuration.userContentController.userScripts.filter {
+                    $0.source == "window.navigationPolicyFixture = true;"
+                }.count,
+                1
+            )
+            XCTAssertEqual(
+                tab.webView?.configuration.userContentController.userScripts.filter {
+                    $0.source.contains("floorpRuntime_")
+                }.count,
+                1,
+                "The authorised isolated content script must receive exactly one authenticated bridge."
             )
         }
 
@@ -223,6 +248,10 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
             XCTAssertEqual(policy, .allow)
         }
         XCTAssertTrue(tab.webView!.configuration.userContentController.userScripts.isEmpty)
+
+        await FloorpWebExtensionAPIHostRegistry.removeHost(
+            for: .init(profileIdentifier: profileIdentifier, isPrivateBrowsing: false)
+        )
     }
 
     @MainActor

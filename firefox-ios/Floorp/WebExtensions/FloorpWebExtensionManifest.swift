@@ -322,31 +322,46 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         }
 
         if let background = manifest.background {
-            if background.serviceWorker == nil {
-                capabilities.append(.init(
-                    name: "background",
-                    status: .rejected,
-                    detail: "An MV3 background declaration requires service_worker."
-                ))
-            } else {
+            if let serviceWorker = background.serviceWorker, background.scripts.isEmpty {
                 capabilities.append(.init(
                     name: "background.service_worker",
                     status: .supported,
-                    detail: "The service worker can run in the lazy event runtime."
+                    detail: "The package service worker can run in the restricted lazy WebKit runtime."
                 ))
-            }
-            if let type = background.type, type.lowercased() != "module" {
+                _ = serviceWorker
+                if let type = background.type, type.lowercased() != "module" {
+                    capabilities.append(.init(
+                        name: "background.type",
+                        status: .rejected,
+                        detail: "Only the module service-worker type is supported when type is declared."
+                    ))
+                }
+            } else if background.serviceWorker == nil,
+                      !background.scripts.isEmpty,
+                      background.persistent == false,
+                      background.type == nil {
                 capabilities.append(.init(
-                    name: "background.type",
-                    status: .degraded,
-                    detail: "Only module workers receive the full lazy event-runtime path."
+                    name: "background.scripts",
+                    status: .supported,
+                    detail: "Non-persistent package background scripts can run in the restricted lazy WebKit runtime."
                 ))
-            }
-            if !background.scripts.isEmpty {
+            } else if background.serviceWorker != nil, !background.scripts.isEmpty {
+                capabilities.append(.init(
+                    name: "background",
+                    status: .rejected,
+                    detail: "A background declaration cannot combine service_worker and scripts."
+                ))
+            } else if !background.scripts.isEmpty {
                 capabilities.append(.init(
                     name: "background.scripts",
                     status: .rejected,
-                    detail: "Legacy background script arrays are not supported for MV3."
+                    detail: "Background script arrays must declare persistent: false and cannot declare type."
+                ))
+            } else {
+                capabilities.append(.init(
+                    name: "background",
+                    status: .rejected,
+                    detail: "A background declaration requires service_worker or non-persistent scripts."
                 ))
             }
             if background.persistent == true {

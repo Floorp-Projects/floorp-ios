@@ -334,6 +334,11 @@ public final class FloorpBootstrapper {
                     into: coordinator
                 )
                 await apiHost.activate(package)
+                try configurePackageBackground(
+                    package,
+                    packageStore: store,
+                    coordinator: coordinator
+                )
             } catch {
                 await coordinator.removeExtension(extensionID)
                 throw error
@@ -361,6 +366,7 @@ public final class FloorpBootstrapper {
             isPrivateBrowsing: isPrivateBrowsing,
             windowManager: windowManager
         )
+        let backgroundRuntimeReference = FloorpWebExtensionBackgroundRuntimeReference()
         let host = try FloorpWebExtensionAPIHost(
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing,
@@ -369,11 +375,25 @@ public final class FloorpBootstrapper {
             packageResourceLoader: store.makeI18nResourceLoader(),
             alarmEvents: FloorpWebExtensionAlarmEventHost(),
             permissionBroker: FloorpWebExtensionPermissionBroker(),
-            tabsHost: tabsHost
+            tabsHost: tabsHost,
+            alarmEventHandler: { event in
+                guard let runtime = backgroundRuntimeReference.runtime else { return }
+                do {
+                    try await runtime.dispatchAlarmEvent(event)
+                } catch {
+                    DefaultLogger.shared.log(
+                        "Floorp: WebExtension alarm delivery failed: \(error)",
+                        level: .warning,
+                        category: .storage
+                    )
+                }
+            }
         )
+        let messageRuntime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: host)
+        backgroundRuntimeReference.runtime = messageRuntime
         FloorpWebExtensionAPIHostRegistry.install(
             host,
-            messageRuntime: FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: host)
+            messageRuntime: messageRuntime
         )
         return host
     }
@@ -405,11 +425,25 @@ public final class FloorpBootstrapper {
                     into: coordinator
                 )
                 await apiHost?.activate(package)
+                try configurePackageBackground(
+                    package,
+                    packageStore: store,
+                    coordinator: coordinator
+                )
             } catch is CancellationError {
                 await coordinator.removeExtension(package.extensionID)
                 return
             } catch {
                 await coordinator.removeExtension(package.extensionID)
+                do {
+                    try await store.recordActivationFailure(for: package.extensionID)
+                } catch {
+                    logger.log(
+                        "Floorp: WebExtension \(package.extensionID.rawValue) could not persist its activation failure: \(error)",
+                        level: .warning,
+                        category: .setup
+                    )
+                }
                 logger.log(
                     "Floorp: WebExtension \(package.extensionID.rawValue) restore failed: \(error)",
                     level: .warning,
@@ -503,30 +537,59 @@ public final class FloorpBootstrapper {
             try await coordinator.registerScripts(scripts, for: extensionID)
         }
 
-        guard storedDNRConfiguration != nil || !manifest.dnrRuleResources.isEmpty else { return }
-        var staticRuleSets = [FloorpWebExtensionDNRStaticRuleSet]()
-        if !manifest.dnrRuleResources.isEmpty {
-            for resource in manifest.dnrRuleResources {
-                try Task.checkCancellation()
-                let source = try resourceLoader(extensionID, resource.path)
-                let rules = try JSONDecoder().decode(
-                    [RestoredDNRRule].self,
-                    from: Data(source.utf8)
-                ).map(\.materialized)
-                staticRuleSets.append(.init(identifier: resource.identifier, rules: rules))
+        if storedDNRConfiguration != nil || !manifest.dnrRuleResources.isEmpty {
+            var staticRuleSets = [FloorpWebExtensionDNRStaticRuleSet]()
+            if !manifest.dnrRuleResources.isEmpty {
+                for resource in manifest.dnrRuleResources {
+                    try Task.checkCancellation()
+                    let source = try resourceLoader(extensionID, resource.path)
+                    let rules = try JSONDecoder().decode(
+                        [RestoredDNRRule].self,
+                        from: Data(source.utf8)
+                    ).map(\.materialized)
+                    staticRuleSets.append(.init(identifier: resource.identifier, rules: rules))
+                }
+            }
+            let enabledRuleSetIDs = storedDNRConfiguration?.enabledStaticRuleSetIDs
+                ?? Set(manifest.dnrRuleResources.filter { $0.enabled }.map(\.identifier))
+            let applied = try await coordinator.restoreDNR(
+                for: extensionID,
+                staticRuleSets: staticRuleSets,
+                enabledStaticRuleSetIDs: enabledRuleSetIDs,
+                dynamicRules: storedDNRConfiguration?.dynamicRules ?? [],
+                limits: storedDNRConfiguration?.limits ?? .init()
+            )
+            guard applied else {
+                throw FloorpWebExtensionError.unsupported("restored DNR generation was superseded")
             }
         }
-        let enabledRuleSetIDs = storedDNRConfiguration?.enabledStaticRuleSetIDs
-            ?? Set(manifest.dnrRuleResources.filter { $0.enabled }.map(\.identifier))
-        let applied = try await coordinator.restoreDNR(
-            for: extensionID,
-            staticRuleSets: staticRuleSets,
-            enabledStaticRuleSetIDs: enabledRuleSetIDs,
-            dynamicRules: storedDNRConfiguration?.dynamicRules ?? [],
-            limits: storedDNRConfiguration?.limits ?? .init()
-        )
-        guard applied else {
-            throw FloorpWebExtensionError.unsupported("restored DNR generation was superseded")
+
+    }
+
+    /// Publishes a lazy package background only after the native API host has
+    /// committed the package's permission snapshot. This ordering prevents an
+    /// incoming first message from reaching a background document that has not
+    /// yet acquired its profile-scoped capabilities.
+    @MainActor
+    private static func configurePackageBackground(
+        _ package: FloorpWebExtensionInstalledPackage,
+        packageStore: FloorpWebExtensionPackageStore,
+        coordinator: FloorpWebExtensionCoordinator
+    ) throws {
+        guard let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
+            for: coordinator.profileKey.profileIdentifier,
+            isPrivateBrowsing: coordinator.profileKey.isPrivateBrowsing
+        ) else {
+            throw FloorpWebExtensionError.unsupported("message runtime is unavailable")
+        }
+        if package.preflight.manifest.background == nil {
+            messageRuntime.unregisterPackageBackground(for: package.extensionID)
+        } else {
+            try messageRuntime.registerPackageBackground(
+                package: package,
+                packageProfileKey: packageStore.profileKey,
+                resolver: packageStore.makePageResourceResolver()
+            )
         }
     }
 
@@ -535,6 +598,14 @@ public final class FloorpBootstrapper {
         guard !AppEventQueue.hasSignalled(.floorpWebExtensionsReady) else { return }
         AppEventQueue.signal(event: .floorpWebExtensionsReady)
     }
+}
+
+/// Breaks the API-host/background-runtime construction cycle without retaining
+/// an obsolete runtime after profile composition is replaced. The alarm
+/// callback owns this reference, while the profile registry owns the runtime.
+@MainActor
+private final class FloorpWebExtensionBackgroundRuntimeReference {
+    weak var runtime: FloorpWebExtensionMessageRuntime?
 }
 
 private struct RestoredDNRRule: Decodable {

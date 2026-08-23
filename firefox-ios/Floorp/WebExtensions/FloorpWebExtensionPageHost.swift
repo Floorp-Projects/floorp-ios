@@ -117,6 +117,158 @@ struct FloorpWebExtensionPagePackageGeneration: Hashable, Sendable {
     }
 }
 
+enum FloorpWebExtensionBackgroundRuntimeError: Error, Equatable, LocalizedError, Sendable {
+    case missingProfileAuthority
+    case profileAuthorityMismatch
+    case missingBackgroundDeclaration
+    case conflictingBackgroundDeclarations
+    case persistentBackgroundUnsupported
+    case unsupportedBackgroundType(String)
+    case bridgeInstallationFailed
+    case loadFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .missingProfileAuthority:
+            return "The background runtime has no profile authority."
+        case .profileAuthorityMismatch:
+            return "The background package does not belong to this runtime profile."
+        case .missingBackgroundDeclaration:
+            return "The extension has no executable background declaration."
+        case .conflictingBackgroundDeclarations:
+            return "The extension declares conflicting background entry points."
+        case .persistentBackgroundUnsupported:
+            return "Persistent background execution is not supported."
+        case .unsupportedBackgroundType(let type):
+            return "The background script type is not supported: \(type)"
+        case .bridgeInstallationFailed:
+            return "The authenticated background bridge could not be installed."
+        case .loadFailed:
+            return "The package background document failed to load."
+        }
+    }
+}
+
+/// Executable entry points for one immutable bundled package generation.
+/// MV3 service workers are hosted as either classic or module scripts. The
+/// Safari-compatible script-array form is admitted only when it explicitly
+/// opts out of persistence.
+struct FloorpWebExtensionBackgroundPackageGeneration: Sendable {
+    let package: FloorpWebExtensionPagePackageGeneration
+    let scripts: [FloorpWebExtensionScriptSource]
+    let loadsAsModule: Bool
+
+    init(installedPackage: FloorpWebExtensionInstalledPackage) throws {
+        let package = try FloorpWebExtensionPagePackageGeneration(installedPackage: installedPackage)
+        guard let background = installedPackage.preflight.manifest.background else {
+            throw FloorpWebExtensionBackgroundRuntimeError.missingBackgroundDeclaration
+        }
+        try self.init(package: package, background: background)
+    }
+
+    init(
+        package: FloorpWebExtensionPagePackageGeneration,
+        background: FloorpWebExtensionManifestBackground
+    ) throws {
+        guard background.persistent != true else {
+            throw FloorpWebExtensionBackgroundRuntimeError.persistentBackgroundUnsupported
+        }
+        if let serviceWorker = background.serviceWorker {
+            guard background.scripts.isEmpty else {
+                throw FloorpWebExtensionBackgroundRuntimeError.conflictingBackgroundDeclarations
+            }
+            if let type = background.type, type.lowercased() != "module" {
+                throw FloorpWebExtensionBackgroundRuntimeError.unsupportedBackgroundType(type)
+            }
+            scripts = [serviceWorker]
+            loadsAsModule = background.type?.lowercased() == "module"
+        } else {
+            guard !background.scripts.isEmpty else {
+                throw FloorpWebExtensionBackgroundRuntimeError.missingBackgroundDeclaration
+            }
+            guard background.persistent == false else {
+                throw FloorpWebExtensionBackgroundRuntimeError.persistentBackgroundUnsupported
+            }
+            guard background.type == nil else {
+                throw FloorpWebExtensionBackgroundRuntimeError.conflictingBackgroundDeclarations
+            }
+            scripts = background.scripts
+            loadsAsModule = false
+        }
+        guard scripts.allSatisfy({ package.resourcePaths.contains($0.path) }) else {
+            let missingPath = scripts.first(where: { !package.resourcePaths.contains($0.path) })?.path ?? ""
+            throw FloorpWebExtensionPageHostError.resourceNotInGeneration(missingPath)
+        }
+        self.package = package
+    }
+}
+
+/// Exact authority for the synthetic hidden background document. Its random
+/// host is unique per activation and its internal entry path is unique per
+/// WebView, while all imported scripts still resolve from the immutable
+/// package inventory.
+struct FloorpWebExtensionBackgroundBridgeIdentity: Hashable, Sendable {
+    let profileKey: FloorpWebExtensionCoordinatorProfileKey
+    let extensionID: FloorpWebExtensionID
+    let packageGeneration: String
+    let originHost: String
+    let entryPath: String
+
+    init(
+        profileKey: FloorpWebExtensionCoordinatorProfileKey,
+        package: FloorpWebExtensionPagePackageGeneration,
+        originHost: String,
+        entryPath: String
+    ) throws {
+        let originPrefix = "background-"
+        guard originHost.hasPrefix(originPrefix),
+              UUID(uuidString: String(originHost.dropFirst(originPrefix.count))) != nil,
+              entryPath.hasPrefix("__floorp_background_"),
+              entryPath.hasSuffix(".html"),
+              (try? FloorpWebExtensionScriptSource(entryPath)) != nil else {
+            throw FloorpWebExtensionPageHostError.invalidResourceURL
+        }
+        self.profileKey = profileKey
+        extensionID = package.extensionID
+        packageGeneration = package.generation
+        self.originHost = originHost.lowercased()
+        self.entryPath = entryPath
+    }
+
+    @MainActor
+    func authorizesDocument(_ url: URL, isMainFrame: Bool) -> Bool {
+        guard isMainFrame,
+              url.scheme?.lowercased() == FloorpWebExtensionPageNavigationPolicy.resourceScheme,
+              url.host?.lowercased() == originHost,
+              url.user == nil,
+              url.password == nil,
+              url.port == nil,
+              url.query == nil,
+              FloorpWebExtensionPageSchemeHandler.packagePath(from: url) == entryPath else {
+            return false
+        }
+        return true
+    }
+
+    func authorizesSender(_ sender: any FloorpWebExtensionMessageSender) -> Bool {
+        guard sender.extensionID == extensionID,
+              sender.isPrivate == profileKey.isPrivateBrowsing else {
+            return false
+        }
+        if let pageSender = sender as? FloorpWebExtensionPageRuntimeMessageSender {
+            return pageSender.profileKey == profileKey &&
+                pageSender.packageGeneration == packageGeneration
+        }
+        if let backgroundSender = sender as? FloorpWebExtensionBackgroundRuntimeMessageSender {
+            return backgroundSender.profileKey == profileKey &&
+                backgroundSender.packageGeneration == packageGeneration
+        }
+        // Ordinary tab senders are created only by this profile's authenticated
+        // tab bridge and carry the matching normal/private partition bit.
+        return sender is FloorpWebExtensionRuntimeMessageSender
+    }
+}
+
 struct FloorpWebExtensionPageResourceRequest: Equatable, Sendable {
     let extensionID: FloorpWebExtensionID
     let generation: String
@@ -315,6 +467,469 @@ final class FloorpWebExtensionPageSchemeHandler: NSObject, WKURLSchemeHandler {
         default:
             throw FloorpWebExtensionPageHostError.unsupportedResourceType(path)
         }
+    }
+}
+
+/// Adds one generated, non-package HTML entry point in front of the ordinary
+/// package scheme handler. It contains only external package script tags and a
+/// restrictive CSP; every JavaScript/module request is still checked against
+/// the immutable package resource inventory.
+final class FloorpWebExtensionBackgroundSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let contentSecurityPolicy = [
+        "default-src 'none'",
+        "script-src 'self'",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+        "frame-src 'none'",
+        "worker-src 'none'"
+    ].joined(separator: "; ")
+
+    private let identity: FloorpWebExtensionBackgroundBridgeIdentity
+    private let entryHTML: Data
+    private let readinessPath: String
+    private let packageHandler: FloorpWebExtensionPageSchemeHandler
+
+    init(
+        identity: FloorpWebExtensionBackgroundBridgeIdentity,
+        background: FloorpWebExtensionBackgroundPackageGeneration,
+        resolver: FloorpWebExtensionPageResourceResolver
+    ) throws {
+        self.identity = identity
+        packageHandler = .init(
+            package: background.package,
+            navigationPolicy: .init(originHost: identity.originHost),
+            resolver: resolver
+        )
+        readinessPath = identity.entryPath.replacingOccurrences(
+            of: ".html",
+            with: ".ready.js"
+        )
+        let scriptTags = try background.scripts.map { source -> String in
+            guard let url = Self.resourceURL(originHost: identity.originHost, path: source.path) else {
+                throw FloorpWebExtensionPageHostError.invalidResourceURL
+            }
+            let type = background.loadsAsModule ? " type=\"module\"" : ""
+            return "<script\(type) src=\"\(Self.escapeHTMLAttribute(url.absoluteString))\"></script>"
+        }.joined(separator: "\n")
+        guard let readinessURL = Self.resourceURL(
+            originHost: identity.originHost,
+            path: readinessPath
+        ) else {
+            throw FloorpWebExtensionPageHostError.invalidResourceURL
+        }
+        let readinessType = background.loadsAsModule ? " type=\"module\"" : ""
+        let readinessTag = "<script\(readinessType) src=\"\(Self.escapeHTMLAttribute(readinessURL.absoluteString))\"></script>"
+        entryHTML = Data("<!doctype html><meta charset=\"utf-8\">\n\(scriptTags)\n\(readinessTag)".utf8)
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        do {
+            let result = try response(for: urlSchemeTask.request)
+            urlSchemeTask.didReceive(result.response)
+            urlSchemeTask.didReceive(result.data)
+            urlSchemeTask.didFinish()
+        } catch {
+            urlSchemeTask.didFailWithError(error)
+        }
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+
+    func response(for request: URLRequest) throws -> FloorpWebExtensionPageResourceResponse {
+        guard request.httpMethod == nil || request.httpMethod == "GET",
+              let url = request.url,
+              url.query == nil else {
+            throw FloorpWebExtensionPageHostError.invalidResourceURL
+        }
+        if identity.authorizesDocument(url, isMainFrame: true) {
+            guard let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: [
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Content-Security-Policy": Self.contentSecurityPolicy,
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store"
+                ]
+            ) else {
+                throw FloorpWebExtensionPageHostError.invalidResourceURL
+            }
+            return .init(response: response, data: entryHTML)
+        }
+        if url.scheme?.lowercased() == FloorpWebExtensionPageNavigationPolicy.resourceScheme,
+           url.host?.lowercased() == identity.originHost,
+           url.user == nil,
+           url.password == nil,
+           url.port == nil,
+           FloorpWebExtensionPageSchemeHandler.packagePath(from: url) == readinessPath {
+            guard let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: [
+                    "Content-Type": "text/javascript; charset=utf-8",
+                    "Content-Security-Policy": Self.contentSecurityPolicy,
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store"
+                ]
+            ) else {
+                throw FloorpWebExtensionPageHostError.invalidResourceURL
+            }
+            return .init(
+                response: response,
+                data: Data("globalThis.__floorpWebExtensionBackgroundScriptsReady = true;".utf8)
+            )
+        }
+        return try packageHandler.response(for: request)
+    }
+
+    private static func resourceURL(originHost: String, path: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = FloorpWebExtensionPageNavigationPolicy.resourceScheme
+        components.host = originHost
+        components.path = "/" + path
+        return components.url
+    }
+
+    private static func escapeHTMLAttribute(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+}
+
+/// Restricted hidden-WebKit implementation of the generic lazy background
+/// handler. It is intentionally page-backed rather than a true ServiceWorker:
+/// the generated document is never attached to UI, has an ephemeral data
+/// store, cannot navigate or open windows, and can load only package resources
+/// from its random custom-scheme origin.
+@MainActor
+final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
+                                                        FloorpWebExtensionBackgroundEventHandling,
+                                                        WKNavigationDelegate,
+                                                        WKUIDelegate {
+    private enum LoadState {
+        case idle
+        case loading
+        case ready
+        case failed
+    }
+
+    private let identity: FloorpWebExtensionBackgroundBridgeIdentity
+    private weak var messageRuntime: FloorpWebExtensionMessageRuntime?
+    private let entryPointURL: URL
+    private var loadState = LoadState.idle
+    private var scriptsReady = false
+    private var loadWaiters = [CheckedContinuation<Void, Error>]()
+
+    let webView: WKWebView
+
+    init(
+        profileKey: FloorpWebExtensionCoordinatorProfileKey,
+        background: FloorpWebExtensionBackgroundPackageGeneration,
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime
+    ) throws {
+        let identifier = UUID().uuidString.lowercased()
+        let originHost = "background-" + identifier
+        let entryPath = "__floorp_background_\(identifier).html"
+        identity = try .init(
+            profileKey: profileKey,
+            package: background.package,
+            originHost: originHost,
+            entryPath: entryPath
+        )
+        guard let entryPointURL = Self.resourceURL(originHost: originHost, path: entryPath) else {
+            throw FloorpWebExtensionPageHostError.invalidResourceURL
+        }
+        self.entryPointURL = entryPointURL
+        self.messageRuntime = messageRuntime
+
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.allowsAirPlayForMediaPlayback = false
+        configuration.mediaTypesRequiringUserActionForPlayback = .all
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        let schemeHandler = try FloorpWebExtensionBackgroundSchemeHandler(
+            identity: identity,
+            background: background,
+            resolver: resolver
+        )
+        configuration.setURLSchemeHandler(
+            schemeHandler,
+            forURLScheme: FloorpWebExtensionPageNavigationPolicy.resourceScheme
+        )
+        guard messageRuntime.installBackgroundBridge(identity, on: configuration.userContentController) else {
+            throw FloorpWebExtensionBackgroundRuntimeError.bridgeInstallationFailed
+        }
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init()
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+    }
+
+    func handleRuntimeMessage(
+        _ message: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        guard identity.authorizesSender(sender),
+              messageRuntime?.isBackgroundBridgeActive(identity) == true else {
+            throw FloorpWebExtensionMessageError.authenticationFailed
+        }
+        try await ensureLoaded()
+        guard messageRuntime?.isBackgroundBridgeActive(identity) == true else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
+
+        let messageJSON = try Self.jsonString(from: message.jsonData)
+        let senderJSON = try Self.senderJSON(sender)
+        let rawResult: Any?
+        do {
+            rawResult = try await webView.callAsyncJavaScript(
+                """
+                const deliver = globalThis.__floorpWebExtensionDeliverRuntimeMessage;
+                if (typeof deliver !== "function") throw new Error("Background bridge unavailable");
+                return await deliver(JSON.parse(messageJSON), JSON.parse(senderJSON));
+                """,
+                arguments: ["messageJSON": messageJSON, "senderJSON": senderJSON],
+                in: nil,
+                contentWorld: .page
+            )
+        } catch {
+            throw FloorpWebExtensionMessageError.handlerFailed
+        }
+        guard messageRuntime?.isBackgroundBridgeActive(identity) == true else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
+        guard let serialized = rawResult as? String,
+              let data = serialized.data(using: .utf8) else {
+            throw FloorpWebExtensionMessageError.handlerFailed
+        }
+        return try FloorpWebExtensionMessagePayload(jsonData: data)
+    }
+
+    func handleAlarm(_ event: FloorpWebExtensionAlarmEvent) async throws {
+        guard event.extensionID == identity.extensionID,
+              messageRuntime?.isBackgroundBridgeActive(identity) == true else {
+            throw FloorpWebExtensionMessageError.authenticationFailed
+        }
+        try await ensureLoaded()
+        guard messageRuntime?.isBackgroundBridgeActive(identity) == true else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
+
+        var alarm: [String: Any] = [
+            "name": event.alarm.name,
+            "scheduledTime": event.alarm.scheduledTime.timeIntervalSince1970 * 1_000
+        ]
+        if let period = event.alarm.period {
+            alarm["periodInMinutes"] = period / 60
+        }
+        let data = try JSONSerialization.data(withJSONObject: alarm)
+        let alarmJSON = try Self.jsonString(from: data)
+        do {
+            _ = try await webView.callAsyncJavaScript(
+                """
+                const deliver = globalThis.__floorpWebExtensionDeliverAlarm;
+                if (typeof deliver !== "function") throw new Error("Alarm bridge unavailable");
+                await deliver(JSON.parse(alarmJSON));
+                """,
+                arguments: ["alarmJSON": alarmJSON],
+                in: nil,
+                contentWorld: .page
+            )
+        } catch {
+            throw FloorpWebExtensionMessageError.handlerFailed
+        }
+        guard messageRuntime?.isBackgroundBridgeActive(identity) == true else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finishLoading(with: nil)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFail navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        finishLoading(with: error)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        finishLoading(with: error)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+    ) {
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        if isMainFrame, identity.authorizesDocument(navigationAction.request.url ?? URL(fileURLWithPath: "/"), isMainFrame: true) {
+            decisionHandler(.allow)
+        } else {
+            decisionHandler(.cancel)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        nil
+    }
+
+    private func ensureLoaded() async throws {
+        switch loadState {
+        case .ready:
+            break
+        case .failed:
+            throw FloorpWebExtensionBackgroundRuntimeError.loadFailed
+        case .idle, .loading:
+            try await withCheckedThrowingContinuation { continuation in
+                loadWaiters.append(continuation)
+                if loadState == .idle {
+                    loadState = .loading
+                    guard webView.load(URLRequest(url: entryPointURL)) != nil else {
+                        finishLoading(with: FloorpWebExtensionBackgroundRuntimeError.loadFailed)
+                        return
+                    }
+                }
+            }
+        }
+        guard !scriptsReady else { return }
+        for _ in 0..<250 {
+            let ready = try await webView.callAsyncJavaScript(
+                "return globalThis.__floorpWebExtensionBackgroundScriptsReady === true",
+                contentWorld: .page
+            ) as? Bool
+            if ready == true {
+                scriptsReady = true
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        throw FloorpWebExtensionBackgroundRuntimeError.loadFailed
+    }
+
+    private func finishLoading(with error: Error?) {
+        guard loadState == .loading else { return }
+        let waiters = loadWaiters
+        loadWaiters.removeAll()
+        if let error {
+            loadState = .failed
+            waiters.forEach { $0.resume(throwing: error) }
+        } else {
+            loadState = .ready
+            waiters.forEach { $0.resume() }
+        }
+    }
+
+    private static func resourceURL(originHost: String, path: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = FloorpWebExtensionPageNavigationPolicy.resourceScheme
+        components.host = originHost
+        components.path = "/" + path
+        return components.url
+    }
+
+    private static func jsonString(from data: Data) throws -> String {
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw FloorpWebExtensionMessageError.malformedEnvelope
+        }
+        return value
+    }
+
+    private static func senderJSON(_ sender: any FloorpWebExtensionMessageSender) throws -> String {
+        var object: [String: Any] = [
+            "id": sender.extensionID.rawValue,
+            "isPrivate": sender.isPrivate
+        ]
+        if let tab = sender as? FloorpWebExtensionRuntimeMessageSender {
+            object["url"] = tab.url.absoluteString
+            object["tab"] = [
+                "id": tab.tabID,
+                "url": tab.url.absoluteString,
+                "isPrivate": tab.isPrivate
+            ]
+            object["frameId"] = tab.isMainFrame ? 0 : -1
+            object["documentGeneration"] = tab.documentGeneration
+        } else if let page = sender as? FloorpWebExtensionPageRuntimeMessageSender {
+            object["url"] = "floorp-extension://\(page.originHost)/"
+            object["page"] = [
+                "originHost": page.originHost,
+                "surface": page.surface == .actionPopup ? "actionPopup" : "options"
+            ]
+        } else if let background = sender as? FloorpWebExtensionBackgroundRuntimeMessageSender {
+            object["url"] = "floorp-extension://\(background.originHost)/"
+        }
+        let data = try JSONSerialization.data(withJSONObject: object)
+        guard data.count <= FloorpWebExtensionMessagePayload.maximumByteCount,
+              let serialized = String(data: data, encoding: .utf8) else {
+            throw FloorpWebExtensionMessageError.payloadTooLarge
+        }
+        return serialized
+    }
+}
+
+extension FloorpWebExtensionMessageRuntime {
+    /// Registers the generic package-backed runtime without creating WebKit
+    /// state. The hidden WebView is allocated only when the first event reaches
+    /// `backgroundHost.dispatch`.
+    func registerPackageBackground(
+        package: FloorpWebExtensionInstalledPackage,
+        packageProfileKey: FloorpWebExtensionPackageProfileKey,
+        resolver: FloorpWebExtensionPageResourceResolver
+    ) throws {
+        guard let profileKey else {
+            unregisterPackageBackground(for: package.extensionID)
+            throw FloorpWebExtensionBackgroundRuntimeError.missingProfileAuthority
+        }
+        guard packageProfileKey.profileIdentifier == profileKey.profileIdentifier,
+              packageProfileKey.isPrivateBrowsing == profileKey.isPrivateBrowsing else {
+            unregisterPackageBackground(for: package.extensionID)
+            throw FloorpWebExtensionBackgroundRuntimeError.profileAuthorityMismatch
+        }
+        let background: FloorpWebExtensionBackgroundPackageGeneration
+        do {
+            background = try .init(installedPackage: package)
+        } catch {
+            unregisterPackageBackground(for: package.extensionID)
+            throw error
+        }
+
+        invalidateBackgroundBridges(for: package.extensionID)
+        backgroundHost.register(extensionID: package.extensionID) { [weak self] in
+            guard let self else {
+                throw FloorpWebExtensionMessageError.backgroundUnavailable
+            }
+            return try FloorpWebExtensionWKBackgroundEventHandler(
+                profileKey: profileKey,
+                background: background,
+                resolver: resolver,
+                messageRuntime: self
+            )
+        }
+    }
+
+    func unregisterPackageBackground(for extensionID: FloorpWebExtensionID) {
+        invalidateBackgroundBridges(for: extensionID)
+        backgroundHost.unregister(extensionID: extensionID)
     }
 }
 
