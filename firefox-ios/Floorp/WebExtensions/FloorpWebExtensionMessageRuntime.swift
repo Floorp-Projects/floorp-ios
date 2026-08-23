@@ -33,13 +33,36 @@ struct FloorpWebExtensionMessagePayload: Equatable, Sendable {
     }
 }
 
-struct FloorpWebExtensionRuntimeMessageSender: Equatable, Sendable {
+protocol FloorpWebExtensionMessageSender: Sendable {
+    var extensionID: FloorpWebExtensionID { get }
+    var isPrivate: Bool { get }
+}
+
+/// Sender identity for a document associated with an ordinary browser tab.
+/// Extension-owned pages deliberately use `FloorpWebExtensionPageRuntimeMessageSender`
+/// instead of inventing a tab identifier or document generation.
+struct FloorpWebExtensionRuntimeMessageSender: Equatable, Sendable, FloorpWebExtensionMessageSender {
     let extensionID: FloorpWebExtensionID
     let tabID: Int
     let documentGeneration: UInt64
     let url: URL
     let isMainFrame: Bool
     let isPrivate: Bool
+}
+
+/// Sender identity for an action popup or options page.  Its opaque origin and
+/// immutable package generation are authenticated by the page bridge before
+/// it reaches either the native API host or a lazy background handler.
+struct FloorpWebExtensionPageRuntimeMessageSender: Equatable, Sendable, FloorpWebExtensionMessageSender {
+    let extensionID: FloorpWebExtensionID
+    let profileKey: FloorpWebExtensionCoordinatorProfileKey
+    let packageGeneration: String
+    let originHost: String
+    let surface: FloorpWebExtensionPageSurface
+
+    var isPrivate: Bool {
+        profileKey.isPrivateBrowsing
+    }
 }
 
 enum FloorpWebExtensionMessageError: Error, Equatable, LocalizedError, Sendable {
@@ -104,7 +127,7 @@ enum FloorpWebExtensionMessageError: Error, Equatable, LocalizedError, Sendable 
 protocol FloorpWebExtensionBackgroundEventHandling: AnyObject {
     func handleRuntimeMessage(
         _ message: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload?
 }
 
@@ -184,7 +207,7 @@ final class FloorpWebExtensionLazyBackgroundHost {
 
     func dispatch(
         _ message: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload? {
         guard let entry = entries[sender.extensionID] else {
             throw FloorpWebExtensionMessageError.backgroundUnavailable
@@ -238,23 +261,37 @@ final class FloorpWebExtensionMessageRuntime {
 
     private final class ControllerEntry {
         weak var controller: WKUserContentController?
-        var sessions = [FloorpWebExtensionID: FloorpWebExtensionMessageBridgeSession]()
+        var sessions = [BridgeSessionKey: FloorpWebExtensionMessageBridgeSession]()
 
         init(controller: WKUserContentController) {
             self.controller = controller
         }
     }
 
+    private enum BridgeSessionKind: Hashable {
+        case tab
+        case page
+    }
+
+    private struct BridgeSessionKey: Hashable {
+        let extensionID: FloorpWebExtensionID
+        let kind: BridgeSessionKind
+    }
+
     let backgroundHost: FloorpWebExtensionLazyBackgroundHost
+    let profileKey: FloorpWebExtensionCoordinatorProfileKey?
     private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
     private var controllers = [ObjectIdentifier: ControllerEntry]()
+    private var activePageGenerations = [FloorpWebExtensionID: String]()
 
     init(
         backgroundHost: FloorpWebExtensionLazyBackgroundHost,
-        nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)? = nil
+        nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)? = nil,
+        profileKey: FloorpWebExtensionCoordinatorProfileKey? = nil
     ) {
         self.backgroundHost = backgroundHost
         self.nativeAPIDispatcher = nativeAPIDispatcher
+        self.profileKey = profileKey
     }
 
     convenience init(
@@ -262,12 +299,20 @@ final class FloorpWebExtensionMessageRuntime {
     ) {
         self.init(
             backgroundHost: FloorpWebExtensionLazyBackgroundHost(),
-            nativeAPIDispatcher: nativeAPIDispatcher
+            nativeAPIDispatcher: nativeAPIDispatcher,
+            profileKey: (nativeAPIDispatcher as? FloorpWebExtensionAPIHost)?.profileKey
         )
     }
 
     static func isolatedContentWorldName(for extensionID: FloorpWebExtensionID) -> String {
         "floorp.webextension.content.\(extensionID.rawValue)"
+    }
+
+    static func pageIsolatedContentWorldName(
+        for extensionID: FloorpWebExtensionID,
+        originHost: String
+    ) -> String {
+        "floorp.webextension.page.\(extensionID.rawValue).\(originHost)"
     }
 
     /// Replaces the extension's bridge for this controller and trusted
@@ -283,17 +328,89 @@ final class FloorpWebExtensionMessageRuntime {
         let identifier = ObjectIdentifier(controller)
         let entry = controllers[identifier] ?? ControllerEntry(controller: controller)
         controllers[identifier] = entry
-        entry.sessions.removeValue(forKey: extensionID)?.detach()
+        let key = BridgeSessionKey(extensionID: extensionID, kind: .tab)
+        entry.sessions.removeValue(forKey: key)?.detach()
 
         let session = FloorpWebExtensionMessageBridgeSession(
             extensionID: extensionID,
-            trustedTab: tab,
             backgroundHost: backgroundHost,
             nativeAPIDispatcher: nativeAPIDispatcher,
-            authorizeDocument: authorizeDocument
+            contentWorld: .world(name: Self.isolatedContentWorldName(for: extensionID)),
+            owner: "floorp.webextension.bridge.tab.\(extensionID.rawValue)",
+            authorizeDocument: { url, isMainFrame in
+                authorizeDocument(url, isMainFrame, tab)
+            },
+            makeSender: { url, isMainFrame in
+                FloorpWebExtensionRuntimeMessageSender(
+                    extensionID: extensionID,
+                    tabID: tab.tabID,
+                    documentGeneration: tab.documentGeneration,
+                    url: url,
+                    isMainFrame: isMainFrame,
+                    isPrivate: tab.isPrivate
+                )
+            }
         )
         session.attach(to: controller)
-        entry.sessions[extensionID] = session
+        entry.sessions[key] = session
+    }
+
+    /// Installs an action/options-page bridge only when this runtime belongs to
+    /// the page's profile.  Unlike a browser-tab bridge this never creates a
+    /// synthetic tab context: the dispatched sender retains its page origin
+    /// and immutable package generation.
+    @discardableResult
+    func installPageBridge(
+        _ page: FloorpWebExtensionPageBridgeIdentity,
+        on controller: WKUserContentController
+    ) -> Bool {
+        guard profileKey == page.profileKey else {
+            return false
+        }
+        if let nativeHost = nativeAPIDispatcher as? FloorpWebExtensionAPIHost,
+           nativeHost.profileKey != page.profileKey {
+            return false
+        }
+
+        if let activeGeneration = activePageGenerations[page.extensionID],
+           activeGeneration != page.packageGeneration {
+            invalidatePageBridges(for: page.extensionID)
+        }
+        activePageGenerations[page.extensionID] = page.packageGeneration
+
+        removeReleasedControllers()
+        let identifier = ObjectIdentifier(controller)
+        let entry = controllers[identifier] ?? ControllerEntry(controller: controller)
+        controllers[identifier] = entry
+        let key = BridgeSessionKey(extensionID: page.extensionID, kind: .page)
+        entry.sessions.removeValue(forKey: key)?.detach()
+
+        let session = FloorpWebExtensionMessageBridgeSession(
+            extensionID: page.extensionID,
+            backgroundHost: backgroundHost,
+            nativeAPIDispatcher: nativeAPIDispatcher,
+            contentWorld: .world(name: Self.pageIsolatedContentWorldName(
+                for: page.extensionID,
+                originHost: page.originHost
+            )),
+            owner: "floorp.webextension.bridge.page.\(page.extensionID.rawValue).\(page.originHost)",
+            authorizeDocument: { [weak self] url, isMainFrame in
+                self?.activePageGenerations[page.extensionID] == page.packageGeneration &&
+                    page.authorizesDocument(url, isMainFrame: isMainFrame)
+            },
+            makeSender: { _, _ in
+                FloorpWebExtensionPageRuntimeMessageSender(
+                    extensionID: page.extensionID,
+                    profileKey: page.profileKey,
+                    packageGeneration: page.packageGeneration,
+                    originHost: page.originHost,
+                    surface: page.surface
+                )
+            }
+        )
+        session.attach(to: controller)
+        entry.sessions[key] = session
+        return true
     }
 
     func removeBridge(
@@ -301,16 +418,41 @@ final class FloorpWebExtensionMessageRuntime {
         from controller: WKUserContentController
     ) {
         let identifier = ObjectIdentifier(controller)
-        controllers[identifier]?.sessions.removeValue(forKey: extensionID)?.detach()
+        let key = BridgeSessionKey(extensionID: extensionID, kind: .tab)
+        controllers[identifier]?.sessions.removeValue(forKey: key)?.detach()
         if controllers[identifier]?.sessions.isEmpty == true {
             controllers.removeValue(forKey: identifier)
         }
     }
 
+    /// Revokes page capabilities on package disable/update.  Passing a
+    /// generation retains only page bridges bound to that exact generation.
+    func invalidatePageBridges(
+        for extensionID: FloorpWebExtensionID,
+        retainingGeneration: String? = nil
+    ) {
+        for entry in controllers.values {
+            let pageKeys = entry.sessions.keys.filter {
+                $0.extensionID == extensionID && $0.kind == .page
+            }
+            for key in pageKeys {
+                entry.sessions.removeValue(forKey: key)?.detach()
+            }
+        }
+        if activePageGenerations[extensionID] != retainingGeneration {
+            activePageGenerations.removeValue(forKey: extensionID)
+        }
+        removeReleasedControllers()
+    }
+
     func removeExtension(_ extensionID: FloorpWebExtensionID) {
         for entry in controllers.values {
-            entry.sessions.removeValue(forKey: extensionID)?.detach()
+            let keys = entry.sessions.keys.filter { $0.extensionID == extensionID }
+            keys.forEach { key in
+                entry.sessions.removeValue(forKey: key)?.detach()
+            }
         }
+        activePageGenerations.removeValue(forKey: extensionID)
         backgroundHost.unregister(extensionID: extensionID)
         removeReleasedControllers()
     }
@@ -320,6 +462,7 @@ final class FloorpWebExtensionMessageRuntime {
             entry.sessions.values.forEach { $0.detach() }
         }
         controllers.removeAll()
+        activePageGenerations.removeAll()
         backgroundHost.tearDown()
     }
 
@@ -334,10 +477,11 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private static let version = 1
 
     private let extensionID: FloorpWebExtensionID
-    private let trustedTab: FloorpWebExtensionTabContext
     private let backgroundHost: FloorpWebExtensionLazyBackgroundHost
     private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
-    private let authorizeDocument: FloorpWebExtensionMessageRuntime.DocumentAuthorization
+    private let contentPolicyOwner: String
+    private let authorizeDocument: @MainActor (URL, Bool) -> Bool
+    private let makeSender: @MainActor (URL, Bool) -> any FloorpWebExtensionMessageSender
     private let nonce: String
     private let handlerName: String
     private let contentWorld: WKContentWorld
@@ -345,19 +489,22 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
 
     init(
         extensionID: FloorpWebExtensionID,
-        trustedTab: FloorpWebExtensionTabContext,
         backgroundHost: FloorpWebExtensionLazyBackgroundHost,
         nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?,
-        authorizeDocument: @escaping FloorpWebExtensionMessageRuntime.DocumentAuthorization
+        contentWorld: WKContentWorld,
+        owner: String,
+        authorizeDocument: @escaping @MainActor (URL, Bool) -> Bool,
+        makeSender: @escaping @MainActor (URL, Bool) -> any FloorpWebExtensionMessageSender
     ) {
         self.extensionID = extensionID
-        self.trustedTab = trustedTab
         self.backgroundHost = backgroundHost
         self.nativeAPIDispatcher = nativeAPIDispatcher
+        contentPolicyOwner = owner
         self.authorizeDocument = authorizeDocument
+        self.makeSender = makeSender
         nonce = Self.makeNonce()
         handlerName = "floorpRuntime_\(nonce.prefix(24))"
-        contentWorld = .world(name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: extensionID))
+        self.contentWorld = contentWorld
     }
 
     func attach(to controller: WKUserContentController) {
@@ -376,14 +523,14 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         )
         FloorpWebContentPolicyCoordinator.coordinator(for: controller).replaceUserScripts(
             [script],
-            ownedBy: Self.owner(for: extensionID)
+            ownedBy: contentPolicyOwner
         )
     }
 
     func detach() {
         guard let controller else { return }
         FloorpWebContentPolicyCoordinator.coordinator(for: controller).removeUserScripts(
-            ownedBy: Self.owner(for: extensionID)
+            ownedBy: contentPolicyOwner
         )
         controller.removeScriptMessageHandler(forName: handlerName, contentWorld: contentWorld)
         self.controller = nil
@@ -426,17 +573,10 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         do {
             let envelope = try decodeEnvelope(body)
             requestID = envelope.requestID
-            guard authorizeDocument(currentURL, isMainFrame, trustedTab) else {
+            guard authorizeDocument(currentURL, isMainFrame) else {
                 throw FloorpWebExtensionMessageError.unauthorizedDocument
             }
-            let sender = FloorpWebExtensionRuntimeMessageSender(
-                extensionID: extensionID,
-                tabID: trustedTab.tabID,
-                documentGeneration: trustedTab.documentGeneration,
-                url: currentURL,
-                isMainFrame: isMainFrame,
-                isPrivate: trustedTab.isPrivate
-            )
+            let sender = makeSender(currentURL, isMainFrame)
             let response: FloorpWebExtensionMessagePayload?
             if envelope.operation == "runtime.sendMessage" {
                 response = try await backgroundHost.dispatch(envelope.payload, sender: sender)
@@ -545,10 +685,6 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             return #"{"ok":false,"error":"malformed_message"}"#
         }
         return serialized
-    }
-
-    private static func owner(for extensionID: FloorpWebExtensionID) -> String {
-        "floorp.webextension.bridge.\(extensionID.rawValue)"
     }
 
     private static func makeNonce() -> String {

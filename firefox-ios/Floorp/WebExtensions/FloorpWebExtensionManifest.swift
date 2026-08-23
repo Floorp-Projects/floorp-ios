@@ -118,6 +118,16 @@ struct FloorpWebExtensionManifestDNRRuleResource: Codable, Equatable, Sendable {
     let path: FloorpWebExtensionScriptSource
 }
 
+struct FloorpWebExtensionManifestAction: Codable, Equatable, Sendable {
+    let defaultTitle: String?
+    let defaultPopup: FloorpWebExtensionScriptSource?
+}
+
+struct FloorpWebExtensionManifestOptionsUI: Codable, Equatable, Sendable {
+    let page: FloorpWebExtensionScriptSource
+    let openInTab: Bool
+}
+
 /// The small MV3 manifest surface required before an extension package can be
 /// staged. This is intentionally not a general Chrome manifest model.
 struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
@@ -135,6 +145,8 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
     let contentScripts: [FloorpWebExtensionManifestContentScript]
     let background: FloorpWebExtensionManifestBackground?
     let dnrRuleResources: [FloorpWebExtensionManifestDNRRuleResource]
+    let action: FloorpWebExtensionManifestAction?
+    let optionsUI: FloorpWebExtensionManifestOptionsUI?
 
     static func decode(_ data: Data) throws -> Self {
         let rawManifest: RawManifest
@@ -167,6 +179,8 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         let dnrRuleResources = try rawManifest.declarativeNetRequest?.ruleResources.enumerated().map { index, resource in
             try makeDNRRuleResource(resource, index: index)
         } ?? []
+        let action = try rawManifest.action.map(makeAction)
+        let optionsUI = try rawManifest.optionsUI.map(makeOptionsUI)
 
         return Self(
             manifestVersion: rawManifest.manifestVersion,
@@ -177,7 +191,9 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
             hostPermissions: hostPermissions,
             contentScripts: contentScripts,
             background: background,
-            dnrRuleResources: dnrRuleResources
+            dnrRuleResources: dnrRuleResources,
+            action: action,
+            optionsUI: optionsUI
         )
     }
 
@@ -342,6 +358,21 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
             }
         }
 
+        if manifest.action != nil {
+            capabilities.append(.init(
+                name: "action",
+                status: .supported,
+                detail: "Action metadata and a package-local popup are supported."
+            ))
+        }
+        if manifest.optionsUI != nil {
+            capabilities.append(.init(
+                name: "options_ui",
+                status: .supported,
+                detail: "A package-local options page is supported."
+            ))
+        }
+
         if !manifest.dnrRuleResources.isEmpty,
            !manifest.apiPermissions.contains(.declarativeNetRequest) {
             capabilities.append(.init(
@@ -428,6 +459,24 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
             type: raw.type,
             scripts: try raw.scripts.map { try resourcePath($0, field: "background.scripts") },
             persistent: raw.persistent
+        )
+    }
+
+    private static func makeAction(_ raw: RawAction) throws -> FloorpWebExtensionManifestAction {
+        if let title = raw.defaultTitle,
+           !isSafeDisplayValue(title, maximumLength: 256) {
+            throw FloorpWebExtensionManifestError.malformed("invalid action.default_title")
+        }
+        return try .init(
+            defaultTitle: raw.defaultTitle,
+            defaultPopup: raw.defaultPopup.map { try resourcePath($0, field: "action.default_popup") }
+        )
+    }
+
+    private static func makeOptionsUI(_ raw: RawOptionsUI) throws -> FloorpWebExtensionManifestOptionsUI {
+        try .init(
+            page: resourcePath(raw.page, field: "options_ui.page"),
+            openInTab: raw.openInTab
         )
     }
 
@@ -546,6 +595,18 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
                     path: $0.element.path
                 )
             }
+        }
+        if let popup = manifest.action?.defaultPopup {
+            declared.append(.init(
+                capabilityName: "package_resource.action.default_popup",
+                path: popup.path
+            ))
+        }
+        if let optionsUI = manifest.optionsUI {
+            declared.append(.init(
+                capabilityName: "package_resource.options_ui.page",
+                path: optionsUI.page.path
+            ))
         }
         declared += manifest.dnrRuleResources.map {
             .init(
@@ -823,6 +884,8 @@ private extension FloorpWebExtensionManifest {
             case contentScripts = "content_scripts"
             case background
             case declarativeNetRequest = "declarative_net_request"
+            case action
+            case optionsUI = "options_ui"
         }
 
         let manifestVersion: Int
@@ -833,18 +896,12 @@ private extension FloorpWebExtensionManifest {
         let contentScripts: [RawContentScript]
         let background: RawBackground?
         let declarativeNetRequest: RawDeclarativeNetRequest?
+        let action: RawAction?
+        let optionsUI: RawOptionsUI?
 
         init(from decoder: Decoder) throws {
             let rawContainer = try decoder.container(keyedBy: AnyCodingKey.self)
-            let unsupportedKeys = rawContainer.allKeys.compactMap { key in
-                CodingKeys(stringValue: key.stringValue) == nil ? key.stringValue : nil
-            }
-            guard unsupportedKeys.isEmpty else {
-                throw DecodingError.dataCorrupted(.init(
-                    codingPath: rawContainer.codingPath + [rawContainer.allKeys[0]],
-                    debugDescription: "unknown top-level manifest key"
-                ))
-            }
+            try rejectUnknownKeys(rawContainer, allowed: CodingKeys.self, scope: "top-level manifest")
             let container = try decoder.container(keyedBy: CodingKeys.self)
             manifestVersion = try container.decode(Int.self, forKey: .manifestVersion)
             name = try container.decode(String.self, forKey: .name)
@@ -857,6 +914,8 @@ private extension FloorpWebExtensionManifest {
                 RawDeclarativeNetRequest.self,
                 forKey: .declarativeNetRequest
             )
+            action = try container.valueIfPresent(RawAction.self, forKey: .action)
+            optionsUI = try container.valueIfPresent(RawOptionsUI.self, forKey: .optionsUI)
         }
     }
 
@@ -916,6 +975,42 @@ private extension FloorpWebExtensionManifest {
             type = try container.valueIfPresent(String.self, forKey: .type)
             scripts = try container.valueIfPresent([String].self, forKey: .scripts) ?? []
             persistent = try container.valueIfPresent(Bool.self, forKey: .persistent)
+        }
+    }
+
+    struct RawAction: Decodable {
+        enum CodingKeys: String, CodingKey {
+            case defaultTitle = "default_title"
+            case defaultPopup = "default_popup"
+        }
+
+        let defaultTitle: String?
+        let defaultPopup: String?
+
+        init(from decoder: Decoder) throws {
+            let rawContainer = try decoder.container(keyedBy: AnyCodingKey.self)
+            try rejectUnknownKeys(rawContainer, allowed: CodingKeys.self, scope: "action")
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            defaultTitle = try container.valueIfPresent(String.self, forKey: .defaultTitle)
+            defaultPopup = try container.valueIfPresent(String.self, forKey: .defaultPopup)
+        }
+    }
+
+    struct RawOptionsUI: Decodable {
+        enum CodingKeys: String, CodingKey {
+            case page
+            case openInTab = "open_in_tab"
+        }
+
+        let page: String
+        let openInTab: Bool
+
+        init(from decoder: Decoder) throws {
+            let rawContainer = try decoder.container(keyedBy: AnyCodingKey.self)
+            try rejectUnknownKeys(rawContainer, allowed: CodingKeys.self, scope: "options_ui")
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            page = try container.decode(String.self, forKey: .page)
+            openInTab = try container.valueIfPresent(Bool.self, forKey: .openInTab) ?? false
         }
     }
 

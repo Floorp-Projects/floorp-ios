@@ -9,7 +9,7 @@ protocol FloorpWebExtensionNativeAPIDispatching: AnyObject {
     func dispatch(
         operation: String,
         payload: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload?
 }
 
@@ -217,7 +217,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     func dispatch(
         operation: String,
         payload: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload? {
         guard sender.isPrivate == profileKey.isPrivateBrowsing,
               let active = activeExtensions[sender.extensionID] else {
@@ -325,7 +325,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private func storageGet(
         _ payload: FloorpWebExtensionMessagePayload,
         area: FloorpWebExtensionStorageArea,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(KeysRequest.self, from: payload)
         return try response(try await storage.values(
@@ -338,7 +338,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private func storageSet(
         _ payload: FloorpWebExtensionMessagePayload,
         area: FloorpWebExtensionStorageArea,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(StorageSetRequest.self, from: payload)
         try await storage.set(request.items, for: sender.extensionID, in: area)
@@ -348,7 +348,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private func storageRemove(
         _ payload: FloorpWebExtensionMessagePayload,
         area: FloorpWebExtensionStorageArea,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(KeysRequest.self, from: payload)
         try await storage.remove(Set(request.keys ?? []), for: sender.extensionID, in: area)
@@ -358,7 +358,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private func storageBytesInUse(
         _ payload: FloorpWebExtensionMessagePayload,
         area: FloorpWebExtensionStorageArea,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(KeysRequest.self, from: payload)
         return try response(IntegerResponse(value: try await storage.bytesInUse(
@@ -370,7 +370,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
 
     private func createAlarm(
         _ payload: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(AlarmCreateRequest.self, from: payload)
         let hasWhen = request.when != nil
@@ -397,7 +397,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
 
     private func updateAction(
         _ payload: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender,
+        sender: any FloorpWebExtensionMessageSender,
         update: (inout FloorpWebExtensionActionState, ActionTextRequest) -> Void
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(ActionTextRequest.self, from: payload)
@@ -409,7 +409,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
 
     private func setActionEnabled(
         _ enabled: Bool,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
         var state = await actions.state(for: sender.extensionID)
         state.isEnabled = enabled
@@ -490,6 +490,31 @@ enum FloorpWebExtensionAPIHostRegistry {
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing
         )]?.host
+    }
+
+    /// Returns only the message runtime installed for this exact
+    /// profile/browsing-mode pair. Page factories must obtain their bridge
+    /// runtime through this lookup rather than retaining a runtime from a
+    /// different profile.
+    static func messageRuntime(
+        for profileIdentifier: String,
+        isPrivateBrowsing: Bool
+    ) -> FloorpWebExtensionMessageRuntime? {
+        entries[.init(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        )]?.messageRuntime
+    }
+
+    static func invalidatePageBridges(
+        for extensionID: FloorpWebExtensionID,
+        profileKey: FloorpWebExtensionCoordinatorProfileKey,
+        retainingGeneration: String? = nil
+    ) {
+        entries[profileKey]?.messageRuntime.invalidatePageBridges(
+            for: extensionID,
+            retainingGeneration: retainingGeneration
+        )
     }
 
     static func deactivate(

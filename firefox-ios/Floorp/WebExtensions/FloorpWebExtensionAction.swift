@@ -38,6 +38,11 @@ struct FloorpWebExtensionActionResource: Codable, Equatable, Hashable, Sendable 
         try self.init(try decoder.singleValueContainer().decode(String.self))
     }
 
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(path)
+    }
+
     private static func validate(_ path: String) throws {
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         guard !path.isEmpty,

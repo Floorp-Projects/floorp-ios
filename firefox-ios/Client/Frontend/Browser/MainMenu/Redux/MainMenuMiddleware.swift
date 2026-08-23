@@ -16,6 +16,7 @@ final class MainMenuMiddleware: LegacyFeatureFlaggable {
         static let defaultBrowserSettings = "default_browser_settings"
         static let downloads = "downloads"
         static let editBookmark = "edit_bookmark"
+        static let extensions = "extensions"
         static let findInPage = "find_in_page"
         static let history = "history"
         static let nightModeTurnOff = "night_mode_turn_off"
@@ -239,6 +240,9 @@ final class MainMenuMiddleware: LegacyFeatureFlaggable {
 
         case .translatePage:
             self.telemetry.mainMenuOptionTapped(with: isHomepage, and: TelemetryAction.translatePage)
+
+        case .webExtensionActions:
+            self.telemetry.mainMenuOptionTapped(with: isHomepage, and: TelemetryAction.extensions)
         }
     }
 }

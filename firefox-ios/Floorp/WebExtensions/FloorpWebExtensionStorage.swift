@@ -527,15 +527,12 @@ actor FloorpWebExtensionStorageService {
     ) throws -> [FloorpWebExtensionID: Values] {
         guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
         do {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true,
-                  let size = values.fileSize,
-                  size <= maximumPersistentFileByteCount else {
+            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey])
+            guard values.isSymbolicLink != true else {
                 throw FloorpWebExtensionStorageError.corruptedPersistentStorage
             }
             let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-            guard data.count == size else {
+            guard data.count <= maximumPersistentFileByteCount else {
                 throw FloorpWebExtensionStorageError.corruptedPersistentStorage
             }
             let state = try JSONDecoder().decode(PersistedState.self, from: data)

@@ -44,6 +44,9 @@ protocol MainMenuCoordinatorDelegate: AnyObject {
 
     @MainActor
     func showSummarizePanel(_ trigger: SummarizerTrigger, config: SummarizerConfig?)
+
+    @MainActor
+    func showWebExtensionActions()
 }
 
 class MainMenuCoordinator: BaseCoordinator, LegacyFeatureFlaggable {
@@ -196,6 +199,9 @@ class MainMenuCoordinator: BaseCoordinator, LegacyFeatureFlaggable {
                     ))
                 }
             }
+
+        case .webExtensionActions:
+            navigationHandler?.showWebExtensionActions()
         }
     }
 

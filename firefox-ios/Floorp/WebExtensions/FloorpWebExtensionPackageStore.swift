@@ -65,6 +65,7 @@ struct FloorpWebExtensionPackageProfileKey: Hashable, Sendable {
 private final class FloorpWebExtensionPackageResourceState: @unchecked Sendable {
     struct Entry: Sendable {
         let packageDirectory: URL
+        let generation: String
         let resourcePaths: Set<String>
     }
 
@@ -104,6 +105,22 @@ private final class FloorpWebExtensionPackageResourceState: @unchecked Sendable 
         }
         return try FloorpWebExtensionPackageStore.loadUTF8Resource(
             source.path,
+            from: entry.packageDirectory
+        )
+    }
+
+    func loadData(_ request: FloorpWebExtensionPageResourceRequest) throws -> Data {
+        lock.lock()
+        let entry = entries[request.extensionID]
+        lock.unlock()
+
+        guard let entry,
+              entry.generation == request.generation,
+              entry.resourcePaths.contains(request.path) else {
+            throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+        }
+        return try FloorpWebExtensionPackageStore.loadBinaryResource(
+            request.path,
             from: entry.packageDirectory
         )
     }
@@ -336,6 +353,16 @@ actor FloorpWebExtensionPackageStore {
         }
     }
 
+    /// Supplies bytes only for the generation that is still enabled in the
+    /// revocable resource-state snapshot. Extension pages must not see a
+    /// package update through an old document's opaque origin.
+    nonisolated func makePageResourceResolver() -> FloorpWebExtensionPageResourceResolver {
+        let state = resourceState
+        return .init { request in
+            try state.loadData(request)
+        }
+    }
+
     private func refreshResourceState() {
         resourceState.replace(with: Self.enabledResourceEntries(
             registry: registry,
@@ -484,6 +511,14 @@ actor FloorpWebExtensionPackageStore {
     }
 
     fileprivate static func loadUTF8Resource(_ path: String, from packageDirectory: URL) throws -> String {
+        let data = try loadBinaryResource(path, from: packageDirectory)
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw FloorpWebExtensionPackageStoreError.resourceUnavailable(path)
+        }
+        return string
+    }
+
+    fileprivate static func loadBinaryResource(_ path: String, from packageDirectory: URL) throws -> Data {
         guard let source = try? FloorpWebExtensionScriptSource(path) else {
             throw FloorpWebExtensionPackageStoreError.resourceUnavailable(path)
         }
@@ -504,10 +539,10 @@ actor FloorpWebExtensionPackageStore {
             throw FloorpWebExtensionPackageStoreError.resourceUnavailable(path)
         }
         let data = try Data(contentsOf: resource, options: [.mappedIfSafe])
-        guard data.count == size, let string = String(data: data, encoding: .utf8) else {
+        guard data.count == size else {
             throw FloorpWebExtensionPackageStoreError.resourceUnavailable(path)
         }
-        return string
+        return data
     }
 
     private static func ensureStoreDirectory(_ directory: URL) throws {
@@ -669,6 +704,7 @@ actor FloorpWebExtensionPackageStore {
                         extensionID: package.extensionID,
                         generation: package.generation
                     ),
+                    generation: package.generation,
                     resourcePaths: package.resourcePaths
                 )
             )

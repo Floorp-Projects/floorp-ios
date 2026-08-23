@@ -39,6 +39,28 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(host.snapshot(for: extensionID).activationCount, 2)
     }
 
+    func testStage2EventRuntimeFixtureUsesReviewedLazyNativeHandler() async throws {
+        let fixtureID = FloorpWebExtensionID(rawValue: "floorp.fixture.event-runtime-mv3")!
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        var factoryCalls = 0
+        let handler = EventRuntimeFixtureHandler()
+        host.register(extensionID: fixtureID) {
+            factoryCalls += 1
+            return handler
+        }
+        let sender = testSender(extensionID: fixtureID)
+        let payload = try FloorpWebExtensionMessagePayload(EventRuntimePing(type: "floorp-event-runtime-ping"))
+
+        let first = try await host.dispatch(payload, sender: sender)
+        host.suspend(extensionID: fixtureID)
+        let second = try await host.dispatch(payload, sender: sender)
+
+        XCTAssertEqual(factoryCalls, 2)
+        XCTAssertEqual(try first?.decode(EventRuntimeReply.self).activationCount, 1)
+        XCTAssertEqual(try second?.decode(EventRuntimeReply.self).activationCount, 2)
+        XCTAssertEqual(host.snapshot(for: fixtureID).activationCount, 2)
+    }
+
     func testBackgroundRegistrationIsStrictlyExtensionScoped() async throws {
         let host = FloorpWebExtensionLazyBackgroundHost()
         host.register(extensionID: extensionID) { EchoBackgroundHandler() }
@@ -130,6 +152,63 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         }
     }
 
+    func testExtensionPageBridgeDispatchesNativeAPIWithPageSenderAndRevokesOnDisable() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "page-bridge-profile",
+            isPrivateBrowsing: false
+        )
+        let nativeDispatcher = PageNativeDispatcher()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: .init(),
+            nativeAPIDispatcher: nativeDispatcher,
+            profileKey: profileKey
+        )
+        let package = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "page-bridge-generation",
+            resourcePaths: ["popup/index.html"]
+        )
+        let page = try FloorpWebExtensionPageViewController(
+            surface: .actionPopup,
+            package: package,
+            entryPoint: .init("popup/index.html"),
+            resolver: .init { _ in Data("<html><body>Extension page</body></html>".utf8) },
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+        page.loadViewIfNeeded()
+        try await waitForLoad(page.webView)
+        XCTAssertEqual(page.webView.url?.scheme, FloorpWebExtensionPageNavigationPolicy.resourceScheme)
+        let originHost = try XCTUnwrap(page.webView.url?.host)
+        let world = WKContentWorld.world(name: FloorpWebExtensionMessageRuntime.pageIsolatedContentWorldName(
+            for: extensionID,
+            originHost: originHost
+        ))
+
+        let language = try await page.webView.callAsyncJavaScript(
+            "return await browser.i18n.getUILanguage()",
+            contentWorld: world
+        ) as? String
+        XCTAssertEqual(language, "en-US")
+        let sender = try XCTUnwrap(nativeDispatcher.receivedSenders.first as? FloorpWebExtensionPageRuntimeMessageSender)
+        XCTAssertEqual(sender.extensionID, extensionID)
+        XCTAssertEqual(sender.profileKey, profileKey)
+        XCTAssertEqual(sender.packageGeneration, package.generation)
+        XCTAssertEqual(sender.originHost, originHost)
+        XCTAssertEqual(sender.surface, .actionPopup)
+
+        runtime.removeExtension(extensionID)
+        XCTAssertTrue(page.webView.configuration.userContentController.userScripts.isEmpty)
+        page.webView.reload()
+        try await waitForLoad(page.webView)
+        let bridgeType = try await page.webView.callAsyncJavaScript(
+            "return typeof globalThis.browser",
+            contentWorld: world
+        ) as? String
+        XCTAssertEqual(bridgeType, "undefined")
+        XCTAssertEqual(nativeDispatcher.receivedSenders.count, 1)
+    }
+
     func testRuntimeTearDownInvalidatesBackgroundRegistrations() async throws {
         let host = FloorpWebExtensionLazyBackgroundHost()
         host.register(extensionID: extensionID) { EchoBackgroundHandler() }
@@ -202,7 +281,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
     }
 
     private func waitForLoad(_ webView: WKWebView) async throws {
-        for _ in 0..<100 {
+        for _ in 0..<250 {
             if !webView.isLoading, webView.url != nil {
                 return
             }
@@ -218,11 +297,31 @@ private final class EchoBackgroundHandler: FloorpWebExtensionBackgroundEventHand
 
     func handleRuntimeMessage(
         _ message: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload? {
         _ = try message.decode(Ping.self)
-        receivedSenders.append(sender)
+        guard let tabSender = sender as? FloorpWebExtensionRuntimeMessageSender else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+        receivedSenders.append(tabSender)
         return try FloorpWebExtensionMessagePayload(Pong(accepted: true))
+    }
+}
+
+@MainActor
+private final class PageNativeDispatcher: FloorpWebExtensionNativeAPIDispatching {
+    private(set) var receivedSenders = [any FloorpWebExtensionMessageSender]()
+
+    func dispatch(
+        operation: String,
+        payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        guard operation == "i18n.getUILanguage" else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+        receivedSenders.append(sender)
+        return try .init(jsonData: Data(#"{"value":"en-US"}"#.utf8))
     }
 }
 
@@ -246,7 +345,7 @@ private final class AsyncReplyGate: FloorpWebExtensionBackgroundEventHandling {
 
     func handleRuntimeMessage(
         _ message: FloorpWebExtensionMessagePayload,
-        sender: FloorpWebExtensionRuntimeMessageSender
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload? {
         _ = try message.decode(Ping.self)
         didStart = true
@@ -265,4 +364,33 @@ private struct Ping: Codable, Equatable {
 
 private struct Pong: Codable, Equatable {
     let accepted: Bool
+}
+
+private struct EventRuntimePing: Codable, Equatable {
+    let type: String
+}
+
+private struct EventRuntimeReply: Codable, Equatable {
+    let accepted: Bool
+    let activationCount: Int
+}
+
+@MainActor
+private final class EventRuntimeFixtureHandler: FloorpWebExtensionBackgroundEventHandling {
+    private var activationCount = 0
+
+    func handleRuntimeMessage(
+        _ message: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        let ping = try message.decode(EventRuntimePing.self)
+        guard ping.type == "floorp-event-runtime-ping" else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+        activationCount += 1
+        return try FloorpWebExtensionMessagePayload(EventRuntimeReply(
+            accepted: true,
+            activationCount: activationCount
+        ))
+    }
 }

@@ -177,7 +177,7 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
 
     func testVerifiesCheckedInDemandingMV3FixturePackage() throws {
         let metadata = try FloorpWebExtensionCompatibilityHarness.verifyFixturePackage(
-            at: try checkedInDemandingMV3FixtureDirectory()
+            at: try checkedInFixtureDirectory(named: "demanding-mv3")
         )
 
         XCTAssertEqual(metadata.fixture.extensionID.rawValue, "floorp.fixture.demanding-mv3")
@@ -185,9 +185,45 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
         XCTAssertEqual(metadata.fixture.buildFlavor, "local-stage3-fixture")
         XCTAssertEqual(
             metadata.fixture.packageSHA256,
-            "cb1c8596f8298663578d60beb4382d9536b0acb6c91e0008376157771790936f"
+            "3fcd3274c3f0502a23f029b6e827351a854c2cb1f1aadc668877d7ace5206c24"
         )
         XCTAssertEqual(metadata.requiredOperatingSystems, ["iOS 15", "iOS 18"])
+
+        let contentMessaging = try FloorpWebExtensionCompatibilityHarness.verifyFixturePackage(
+            at: try checkedInFixtureDirectory(named: "content-messaging-mv3")
+        )
+        XCTAssertEqual(
+            contentMessaging.fixture.extensionID.rawValue,
+            "floorp.fixture.content-messaging-mv3"
+        )
+        XCTAssertEqual(
+            contentMessaging.fixture.packageSHA256,
+            "7261daacea04355044a1b8aba264e181baf8dcf3ff38457a220b8d35a24b51f5"
+        )
+        XCTAssertEqual(
+            contentMessaging.fixture.buildFlavor,
+            "local-stage2-content-messaging-fixture"
+        )
+
+        let eventRuntimeDirectory = try checkedInFixtureDirectory(named: "event-runtime-mv3")
+        let eventRuntime = try FloorpWebExtensionCompatibilityHarness.verifyFixturePackage(
+            at: eventRuntimeDirectory
+        )
+        XCTAssertEqual(eventRuntime.fixture.extensionID.rawValue, "floorp.fixture.event-runtime-mv3")
+        XCTAssertEqual(
+            eventRuntime.fixture.packageSHA256,
+            "25476f29098792b9a6aec64687d911651045768a433588d63a83e5eeaddebc32"
+        )
+        XCTAssertEqual(eventRuntime.fixture.buildFlavor, "local-stage2-event-runtime-fixture")
+        XCTAssertEqual(eventRuntime.requiredOperatingSystems, ["iOS 15", "iOS 18"])
+
+        let eventRuntimeManifest = try FloorpWebExtensionManifest.decode(
+            Data(contentsOf: eventRuntimeDirectory.appendingPathComponent("manifest.json"))
+        )
+        XCTAssertEqual(eventRuntimeManifest.background?.serviceWorker?.path, "background/service-worker.js")
+        XCTAssertEqual(eventRuntimeManifest.action?.defaultPopup?.path, "popup/index.html")
+        XCTAssertEqual(eventRuntimeManifest.optionsUI?.page.path, "options/index.html")
+        XCTAssertEqual(eventRuntimeManifest.apiPermissions, [.alarms, .storage])
     }
 
     @MainActor
@@ -309,7 +345,7 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 
-    private func checkedInDemandingMV3FixtureDirectory() throws -> URL {
+    private func checkedInFixtureDirectory(named fixtureName: String) throws -> URL {
         let fileManager = FileManager.default
         let sourceDirectory = URL(fileURLWithPath: #filePath, isDirectory: false)
             .deletingLastPathComponent()
@@ -317,7 +353,7 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
             fileURLWithPath: fileManager.currentDirectoryPath,
             isDirectory: true
         )
-        let fixturePath = "firefox-ios/Floorp/WebExtensions/Fixtures/demanding-mv3"
+        let fixturePath = "firefox-ios/Floorp/WebExtensions/Fixtures/\(fixtureName)"
 
         for startingDirectory in [workingDirectory, sourceDirectory] {
             var directory = startingDirectory.standardizedFileURL
@@ -336,7 +372,7 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
         throw NSError(
             domain: "FloorpWebExtensionCompatibilityHarnessTests",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "The checked-in demanding MV3 fixture was not found."]
+            userInfo: [NSLocalizedDescriptionKey: "The checked-in \(fixtureName) fixture was not found."]
         )
     }
 

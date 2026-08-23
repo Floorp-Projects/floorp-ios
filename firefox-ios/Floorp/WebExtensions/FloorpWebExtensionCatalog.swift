@@ -50,7 +50,12 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
     /// resource into the application bundle.  It intentionally only accepts
     /// the actual bundle resource location so missing resources fail closed.
     func packageURL(in bundle: Bundle = .main) -> URL? {
-        bundle.url(forResource: packageDirectoryName, withExtension: nil)
+        bundle.url(forResource: packageDirectoryName, withExtension: nil) ??
+            bundle.url(
+                forResource: packageDirectoryName,
+                withExtension: nil,
+                subdirectory: "WebExtensions/Fixtures"
+            )
     }
 }
 
@@ -66,7 +71,29 @@ enum FloorpWebExtensionBundledCatalog {
         requestedPermissions: [.siteData, .tabs, .storage, .networkBlocking, .browserAutomation]
     )
 
+    static let contentMessagingMV3Fixture = FloorpWebExtensionBundledCatalogItem(
+        id: FloorpWebExtensionID(rawValue: "floorp.fixture.content-messaging-mv3")!,
+        name: "Floorp Content Messaging Fixture",
+        version: "1.0.0",
+        summary: "Tests document-start content scripts and an authenticated runtime message round trip.",
+        source: "Floorp iOS compatibility fixture",
+        license: "MPL-2.0",
+        packageDirectoryName: "content-messaging-mv3",
+        requestedPermissions: [.siteData, .browserAutomation]
+    )
+
+    static let eventRuntimeMV3Fixture = FloorpWebExtensionBundledCatalogItem(
+        id: FloorpWebExtensionID(rawValue: "floorp.fixture.event-runtime-mv3")!,
+        name: "Floorp Event Runtime Fixture",
+        version: "1.0.0",
+        summary: "Tests the reviewed lazy event runtime, local storage, alarms, popup, and options resources.",
+        source: "Floorp iOS compatibility fixture",
+        license: "MPL-2.0",
+        packageDirectoryName: "event-runtime-mv3",
+        requestedPermissions: [.storage, .browserAutomation]
+    )
+
     /// The App Store MVP intentionally exposes only pinned bundled packages.
     /// Remote sources and arbitrary file import remain independently gated.
-    static let items = [demandingMV3Fixture]
+    static let items = [contentMessagingMV3Fixture, eventRuntimeMV3Fixture, demandingMV3Fixture]
 }

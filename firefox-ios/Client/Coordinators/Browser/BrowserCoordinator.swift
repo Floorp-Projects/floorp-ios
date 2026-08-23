@@ -559,10 +559,168 @@ final class BrowserCoordinator: BaseCoordinator,
         mainMenuCoordinator.startWithNavController()
     }
 
+    func showWebExtensionActions() {
+        guard FloorpFlags.isWebExtensionFeatureEnabled(.core) else { return }
+        let isPrivateBrowsing = tabManager.selectedTab?.isPrivate ?? false
+        let profileIdentifier = profile.localName()
+        guard let store = FloorpWebExtensionPackageStoreRegistry.store(
+            for: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        ), let apiHost = FloorpWebExtensionAPIHostRegistry.host(
+            for: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        ), let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
+            for: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        ) else {
+            presentWebExtensionActionsUnavailable()
+            return
+        }
+        let resolver = store.makePageResourceResolver()
+        Task { [weak self, store, apiHost, messageRuntime] in
+            let packages = await store.installedPackages()
+            var popups = [FloorpWebExtensionActionPopup]()
+            for package in packages where package.isEnabled {
+                let persistedState = await apiHost.actions.state(for: package.extensionID)
+                if let popup = Self.actionPopup(
+                    for: package,
+                    persistedState: persistedState
+                ) {
+                    popups.append(popup)
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.presentWebExtensionActions(
+                popups,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
+        }
+    }
+
     func openURLInNewTab(_ url: URL?) {
         if let url {
             browserViewController.openURLInNewTab(url, isPrivate: self.tabManager.selectedTab?.isPrivate ?? false)
         }
+    }
+
+    private struct FloorpWebExtensionActionPopup {
+        let package: FloorpWebExtensionInstalledPackage
+        let actionState: FloorpWebExtensionActionState
+        let title: String
+    }
+
+    private static func actionPopup(
+        for package: FloorpWebExtensionInstalledPackage,
+        persistedState: FloorpWebExtensionActionState
+    ) -> FloorpWebExtensionActionPopup? {
+        var actionState = persistedState
+        let manifestAction = package.preflight.manifest.action
+        if actionState.title == nil {
+            actionState.title = manifestAction?.defaultTitle
+        }
+        if actionState.popup == nil,
+           let defaultPopup = manifestAction?.defaultPopup {
+            actionState.popup = try? FloorpWebExtensionActionResource(defaultPopup.path)
+        }
+        guard actionState.isEnabled, actionState.popup != nil else { return nil }
+        return .init(
+            package: package,
+            actionState: actionState,
+            title: actionState.title ?? package.name
+        )
+    }
+
+    private func presentWebExtensionActionsUnavailable() {
+        presentWebExtensionActionsAlert(
+            title: "Extensions unavailable",
+            message: "Extension actions are not ready for this browsing profile."
+        )
+    }
+
+    private func presentWebExtensionActions(
+        _ popups: [FloorpWebExtensionActionPopup],
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime,
+        isPrivateBrowsing: Bool
+    ) {
+        guard !popups.isEmpty else {
+            presentWebExtensionActionsAlert(
+                title: "Extensions",
+                message: "No extension actions are available for this tab."
+            )
+            return
+        }
+        if let popup = popups.first, popups.count == 1 {
+            presentWebExtensionActionPopup(
+                popup,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
+            return
+        }
+        let alert = UIAlertController(
+            title: "Extensions",
+            message: "Choose an extension action.",
+            preferredStyle: .actionSheet
+        )
+        for popup in popups {
+            alert.addAction(UIAlertAction(title: popup.title, style: .default) { [weak self] _ in
+                self?.presentWebExtensionActionPopup(
+                    popup,
+                    resolver: resolver,
+                    messageRuntime: messageRuntime,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            })
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = browserViewController.view
+            popover.sourceRect = browserViewController.view.bounds
+        }
+        present(alert)
+    }
+
+    private func presentWebExtensionActionPopup(
+        _ popup: FloorpWebExtensionActionPopup,
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime,
+        isPrivateBrowsing: Bool
+    ) {
+        do {
+            guard let page = try FloorpWebExtensionPageHost.makeActionPopup(
+                package: popup.package,
+                actionState: popup.actionState,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                openExternal: { [weak self] url in
+                    self?.router.dismiss(animated: true, completion: { [weak self] in
+                        self?.browserViewController.openURLInNewTab(url, isPrivate: isPrivateBrowsing)
+                    })
+                }
+            ) else {
+                presentWebExtensionActionsUnavailable()
+                return
+            }
+            page.title = popup.title
+            let navigationController = UINavigationController(rootViewController: page)
+            navigationController.modalPresentationStyle = .formSheet
+            present(navigationController)
+        } catch {
+            presentWebExtensionActionsAlert(
+                title: "Extension action could not open",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func presentWebExtensionActionsAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert)
     }
 
     func openNewTab(inPrivateMode isPrivate: Bool) {

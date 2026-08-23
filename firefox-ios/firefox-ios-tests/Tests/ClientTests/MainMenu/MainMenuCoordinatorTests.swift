@@ -83,6 +83,18 @@ final class MainMenuCoordinatorTests: XCTestCase {
         XCTAssertEqual(mockRouter.dismissCalled, 1)
     }
 
+    func testHandleNavigation_webExtensionActions_callsDelegate() {
+        let subject = createSubject()
+        let mockDelegate = MockMainMenuCoordinatorDelegate()
+        subject.navigationHandler = mockDelegate
+
+        subject.navigateTo(MenuNavigationDestination(.webExtensionActions), animated: false)
+        mockRouter.savedCompletion?()
+
+        XCTAssertEqual(mockDelegate.showWebExtensionActionsCalled, 1)
+        XCTAssertEqual(mockRouter.dismissCalled, 1)
+    }
+
     private func createSubject(
         file: StaticString = #filePath,
         line: UInt = #line

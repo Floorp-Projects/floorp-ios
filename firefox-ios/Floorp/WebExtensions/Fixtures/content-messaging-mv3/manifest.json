@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Floorp Stage 2 Content Messaging Fixture",
+  "version": "1.0.0",
+  "host_permissions": [
+    "https://content-message.fixture.test/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://content-message.fixture.test/*"],
+      "js": ["content/document-start.js"],
+      "css": ["content/marker.css"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ]
+}

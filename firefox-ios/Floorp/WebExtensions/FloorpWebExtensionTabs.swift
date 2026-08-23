@@ -305,11 +305,11 @@ final class FloorpWebExtensionTabsService {
     }
 
     private func validateNavigationURL(_ url: URL) throws {
-        guard !url.absoluteString.isEmpty, url.host != nil else {
-            throw FloorpWebExtensionTabsError.invalidNavigationURL
-        }
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             throw FloorpWebExtensionTabsError.unsafeNavigationScheme
+        }
+        guard !url.absoluteString.isEmpty, url.host != nil else {
+            throw FloorpWebExtensionTabsError.invalidNavigationURL
         }
     }
 }
