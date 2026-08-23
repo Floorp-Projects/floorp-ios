@@ -565,12 +565,22 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let failedRestoreConfiguration = await restartedStore.dnrConfiguration(for: extensionID)
         XCTAssertNil(failedRestoreSnapshot)
         XCTAssertEqual(failedRestoreConfiguration?.dynamicRules.map(\.id), [41])
+        let failedPackageRecord = await restartedStore.installedPackage(for: extensionID)
+        let failedPackage = try XCTUnwrap(failedPackageRecord)
+        XCTAssertFalse(failedPackage.isEnabled)
+        XCTAssertEqual(
+            failedPackage.activationError,
+            "This extension could not be activated. Enable it to try again."
+        )
 
         let restoredStore = try FloorpWebExtensionPackageStore(
             profileIdentifier: "package-store-dnr-restore-atomicity",
             isPrivateBrowsing: false,
             directory: directory
         )
+        // A disabled activation failure is inert after restart until the user
+        // explicitly retries it.  Retrying clears the old diagnostic first.
+        try await restoredStore.setEnabled(true, for: extensionID)
         let restoredCoordinator = FloorpWebExtensionCoordinator(
             profileIdentifier: "package-store-dnr-restore-atomicity",
             isPrivateBrowsing: false,
@@ -586,6 +596,62 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let restored = try XCTUnwrap(restoredSnapshot)
         XCTAssertEqual(restored.dynamicRules.map(\.id), [41])
         XCTAssertTrue(restored.sessionRules.isEmpty)
+        let recoveredPackageRecord = await restoredStore.installedPackage(for: extensionID)
+        let recoveredPackage = try XCTUnwrap(recoveredPackageRecord)
+        XCTAssertTrue(recoveredPackage.isEnabled)
+        XCTAssertNil(recoveredPackage.activationError)
+    }
+
+    func testLiveManagerPersistsDisabledActivationFailureUntilExplicitRetry() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-activation-failure",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var shouldFailActivation = true
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, package in
+                if package != nil, shouldFailActivation {
+                    throw FloorpWebExtensionError.unsupported("simulated WebKit policy failure")
+                }
+            },
+            bundledPackageURL: { _ in
+                try? self.checkedInDemandingMV3FixtureDirectory()
+            }
+        )
+
+        await assertAsyncThrows {
+            try await manager.installBundledPackage(
+                FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+            )
+        }
+        let failedPackageRecord = await store.installedPackage(for: extensionID)
+        let failedPackage = try XCTUnwrap(failedPackageRecord)
+        XCTAssertFalse(failedPackage.isEnabled)
+        XCTAssertEqual(
+            failedPackage.activationError,
+            "This extension could not be activated. Enable it to try again."
+        )
+
+        let reloadedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-activation-failure",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let reloadedPackageRecord = await reloadedStore.installedPackage(for: extensionID)
+        let reloadedPackage = try XCTUnwrap(reloadedPackageRecord)
+        XCTAssertFalse(reloadedPackage.isEnabled)
+        XCTAssertEqual(reloadedPackage.activationError, failedPackage.activationError)
+
+        shouldFailActivation = false
+        try await manager.setEnabled(true, for: extensionID)
+        let recoveredPackageRecord = await store.installedPackage(for: extensionID)
+        let recoveredPackage = try XCTUnwrap(recoveredPackageRecord)
+        XCTAssertTrue(recoveredPackage.isEnabled)
+        XCTAssertNil(recoveredPackage.activationError)
     }
 
     func testLiveManagerRevokesBeforeDisableAndUninstallAndRestoresOnEnable() async throws {

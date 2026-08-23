@@ -163,6 +163,20 @@ final class FloorpWebExtensionCoordinator {
         return coordinator
     }
 
+    /// Looks up an already-composed profile runtime without manufacturing a
+    /// fallback coordinator. Native API dispatch must use this entry point so
+    /// a script cannot mutate an unattached registry when profile composition
+    /// is unavailable or still starting.
+    static func installedCoordinator(
+        for profileIdentifier: String,
+        isPrivateBrowsing: Bool
+    ) -> FloorpWebExtensionCoordinator? {
+        coordinators[.init(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        )]
+    }
+
     /// Registers the profile-owned coordinator created by package/profile
     /// composition. Replacing a coordinator never combines normal and private
     /// state: the key includes the browsing mode.
@@ -464,10 +478,46 @@ final class FloorpWebExtensionCoordinator {
         }
     }
 
+    /// Re-checks an already registered bridge message against the exact frame
+    /// URL that produced it.  A `WKUserScript` is installed for the imminent
+    /// top-level navigation, but it can run in a subframe whose host no longer
+    /// has a grant or whose content-script match pattern does not apply.  The
+    /// bridge must not turn that injection detail into authority.
+    func authorizesBridge(
+        for extensionID: FloorpWebExtensionID,
+        currentURL: URL,
+        isMainFrame: Bool,
+        tab: FloorpWebExtensionTabContext
+    ) -> Bool {
+        let frame = FloorpWebExtensionTabContext(
+            tabID: tab.tabID,
+            documentGeneration: tab.documentGeneration,
+            url: currentURL,
+            isPrivate: tab.isPrivate
+        )
+        guard frame.isPrivate == profileKey.isPrivateBrowsing,
+              allowsScripting(for: extensionID, in: frame) else {
+            return false
+        }
+
+        return (materializedScripts[extensionID] ?? []).contains { materialized in
+            let script = materialized.script
+            return (isMainFrame || script.allFrames) &&
+                script.matches.contains(where: { $0.matches(currentURL) }) &&
+                !script.excludeMatches.contains(where: { $0.matches(currentURL) })
+        }
+    }
+
     func permissionSnapshot(
         for extensionID: FloorpWebExtensionID
     ) -> FloorpWebExtensionPermissionSnapshot {
         permissionSnapshots[extensionID] ?? .init()
+    }
+
+    func registeredScripts(
+        for extensionID: FloorpWebExtensionID
+    ) async -> [FloorpWebExtensionRegisteredScript] {
+        await scriptRegistry.registeredScripts(for: extensionID)
     }
 
     func dnrSnapshot(
@@ -477,8 +527,32 @@ final class FloorpWebExtensionCoordinator {
         return await store.snapshot()
     }
 
+    func configuredDNRLimits(
+        for extensionID: FloorpWebExtensionID
+    ) -> FloorpWebExtensionDNRLimits? {
+        dnrLimits[extensionID]
+    }
+
+    func dnrRegexSupport(
+        _ regex: String,
+        for extensionID: FloorpWebExtensionID
+    ) async -> FloorpWebExtensionDNRRegexSupport? {
+        guard let store = dnrStores[extensionID] else { return nil }
+        return await store.isRegexSupported(regex)
+    }
+
     /// Removes all profile-local extension state and its live WebKit policy.
     func removeExtension(_ extensionID: FloorpWebExtensionID) async {
+        // Disable/uninstall participates in the same per-extension gate as
+        // every DNR compile-and-swap. If a mutation is already awaiting
+        // WebKit, removal waits and then wins; if a mutation is queued behind
+        // removal, its permission/store preconditions fail after the gate is
+        // released. This prevents stale async compilation from resurrecting a
+        // disabled extension's policy.
+        let gate = dnrMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+
         await FloorpWebExtensionAPIHostRegistry.deactivate(
             extensionID,
             profileKey: profileKey

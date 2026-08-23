@@ -83,6 +83,75 @@ final class FloorpWebExtensionPageHostTests: XCTestCase {
         }
     }
 
+    func testBackgroundSchemeGeneratesRestrictedEntryAndServesOnlyInventoriedPackageScripts() throws {
+        let package = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "background-generation",
+            resourcePaths: ["background/main.js", "background/dependency.js"]
+        )
+        let manifest = try FloorpWebExtensionManifest.decode(Data("""
+        {
+          "manifest_version": 3,
+          "name": "Background Scheme",
+          "version": "1.0",
+          "background": { "service_worker": "background/main.js", "type": "module" }
+        }
+        """.utf8))
+        let background = try FloorpWebExtensionBackgroundPackageGeneration(
+            package: package,
+            background: try XCTUnwrap(manifest.background)
+        )
+        let originHost = "background-" + UUID().uuidString.lowercased()
+        let identity = try FloorpWebExtensionBackgroundBridgeIdentity(
+            profileKey: .init(profileIdentifier: "background-profile", isPrivateBrowsing: false),
+            package: package,
+            originHost: originHost,
+            entryPath: "__floorp_background_test.html"
+        )
+        let resources = [
+            "background/main.js": Data("import './dependency.js';".utf8),
+            "background/dependency.js": Data("export const ready = true;".utf8)
+        ]
+        let handler = try FloorpWebExtensionBackgroundSchemeHandler(
+            identity: identity,
+            background: background,
+            resolver: .init { request in
+                guard let data = resources[request.path] else {
+                    throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+                }
+                return data
+            }
+        )
+        let entryURL = try XCTUnwrap(URL(
+            string: "floorp-extension://\(originHost)/__floorp_background_test.html"
+        ))
+        let entry = try handler.response(for: URLRequest(url: entryURL))
+        let html = try XCTUnwrap(String(data: entry.data, encoding: .utf8))
+        XCTAssertTrue(html.contains("type=\"module\""))
+        XCTAssertTrue(html.contains("floorp-extension://\(originHost)/background/main.js"))
+        XCTAssertFalse(html.contains("<script>"))
+        XCTAssertEqual(
+            entry.response.value(forHTTPHeaderField: "Content-Security-Policy"),
+            FloorpWebExtensionBackgroundSchemeHandler.contentSecurityPolicy
+        )
+
+        let scriptURL = try XCTUnwrap(URL(
+            string: "floorp-extension://\(originHost)/background/main.js"
+        ))
+        XCTAssertEqual(
+            try handler.response(for: URLRequest(url: scriptURL)).data,
+            resources["background/main.js"]
+        )
+        for rejectedValue in [
+            "floorp-extension://another-origin/background/main.js",
+            "floorp-extension://\(originHost)/background/missing.js",
+            "floorp-extension://\(originHost)/__floorp_background_test.html?generation=other"
+        ] {
+            let rejectedURL = try XCTUnwrap(URL(string: rejectedValue))
+            XCTAssertThrowsError(try handler.response(for: URLRequest(url: rejectedURL)))
+        }
+    }
+
     func testNavigationPolicyKeepsPackageNavigationInternalAndHandsOffOnlyTopLevelHTTPLinks() throws {
         let policy = FloorpWebExtensionPageNavigationPolicy(originHost: "test-origin")
         let packageURL = try XCTUnwrap(URL(string: "floorp-extension://test-origin/popup/next.html"))

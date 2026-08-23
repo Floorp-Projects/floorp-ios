@@ -266,17 +266,376 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         XCTAssertNil(pageWorldStorage)
     }
 
+    func testRuntimeMetadataURLAndReloadStayBoundToActivePackageGeneration() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = APIHostStage3Recorder()
+        let rawManifest = Data(#"{"manifest_version":3,"name":"Runtime Fixture","version":"1.0"}"#.utf8)
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-runtime-profile",
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            alarmEvents: .init(),
+            permissionBroker: .init(),
+            runtimeReloader: { extensionID in
+                recorder.reloadedExtensionIDs.append(extensionID)
+            }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(),
+            defaultLocale: "en",
+            rawManifest: rawManifest,
+            packageGeneration: "generation-1",
+            resourcePaths: ["manifest.json", "images/icon.png"]
+        )
+        let sender = FloorpWebExtensionPageRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: host.profileKey,
+            packageGeneration: "generation-1",
+            originHost: "page-runtime-fixture",
+            surface: .options
+        )
+
+        let optionalIDPayload = try await host.dispatch(
+            operation: "runtime.id",
+            payload: try payload([String: String]()),
+            sender: sender
+        )
+        let idPayload = try XCTUnwrap(optionalIDPayload)
+        XCTAssertEqual(try idPayload.decode(ValueResponse.self).value, extensionID.rawValue)
+
+        let optionalManifestPayload = try await host.dispatch(
+            operation: "runtime.getManifest",
+            payload: try payload([String: String]()),
+            sender: sender
+        )
+        let manifestPayload = try XCTUnwrap(optionalManifestPayload)
+        XCTAssertEqual(
+            try manifestPayload.decode(RuntimeManifestResponse.self),
+            .init(manifest_version: 3, name: "Runtime Fixture", version: "1.0")
+        )
+
+        let optionalURLPayload = try await host.dispatch(
+            operation: "runtime.getURL",
+            payload: try payload(["path": "images/icon.png"]),
+            sender: sender
+        )
+        let urlPayload = try XCTUnwrap(optionalURLPayload)
+        XCTAssertEqual(
+            try urlPayload.decode(ValueResponse.self).value,
+            "floorp-extension://page-runtime-fixture/images/icon.png"
+        )
+        _ = try await host.dispatch(
+            operation: "runtime.reload",
+            payload: try payload([String: String]()),
+            sender: sender
+        )
+        XCTAssertEqual(recorder.reloadedExtensionIDs, [extensionID])
+
+        do {
+            _ = try await host.dispatch(
+                operation: "runtime.getURL",
+                payload: try payload(["path": "images/icon.png"]),
+                sender: testSender()
+            )
+            XCTFail("A web tab has no package scheme authority")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unsupportedOperation)
+        }
+    }
+
+    func testPermissionsRequestNeedsTrustedConsentAndPersistsBeforeExposure() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = APIHostStage3Recorder()
+        let allowedHost = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        let broker = FloorpWebExtensionPermissionBroker()
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-permissions-profile",
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            alarmEvents: .init(),
+            permissionBroker: broker,
+            permissionRequestAuthorizer: { request in
+                recorder.permissionRequests.append(request)
+                return true
+            },
+            permissionMutationHandler: { snapshot, _ in
+                recorder.persistedPermissions.append(snapshot)
+            }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(
+                apiPermissions: [.storage],
+                requestedHosts: [allowedHost],
+                normalHostAccess: .denied
+            ),
+            defaultLocale: "en",
+            declaredPermissions: [.storage, .scripting],
+            declaredHosts: [allowedHost]
+        )
+
+        let requestPayload = try payload([
+            "permissions": ["scripting"],
+            "origins": ["https://allowed.example/*"]
+        ])
+        let optionalGranted = try await host.dispatch(
+            operation: "permissions.request",
+            payload: requestPayload,
+            sender: testSender()
+        )
+        let granted = try XCTUnwrap(optionalGranted)
+        XCTAssertTrue(try granted.decode(BoolValueResponse.self).value)
+        XCTAssertEqual(recorder.permissionRequests.count, 1)
+        XCTAssertEqual(recorder.persistedPermissions.count, 1)
+
+        let optionalContains = try await host.dispatch(
+            operation: "permissions.contains",
+            payload: requestPayload,
+            sender: testSender()
+        )
+        let contains = try XCTUnwrap(optionalContains)
+        XCTAssertTrue(try contains.decode(BoolValueResponse.self).value)
+
+        let optionalRemoved = try await host.dispatch(
+            operation: "permissions.remove",
+            payload: requestPayload,
+            sender: testSender()
+        )
+        let removed = try XCTUnwrap(optionalRemoved)
+        XCTAssertTrue(try removed.decode(BoolValueResponse.self).value)
+        XCTAssertEqual(recorder.persistedPermissions.count, 2)
+
+        let failClosedHost = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-permissions-fail-closed",
+            isPrivateBrowsing: false,
+            directory: directory.appendingPathComponent("fail-closed", isDirectory: true),
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil }
+        )
+        await failClosedHost.activate(
+            extensionID: extensionID,
+            grants: .init(
+                requestedHosts: [allowedHost],
+                normalHostAccess: .denied
+            ),
+            defaultLocale: "en",
+            declaredPermissions: [.scripting],
+            declaredHosts: [allowedHost]
+        )
+        do {
+            _ = try await failClosedHost.dispatch(
+                operation: "permissions.request",
+                payload: requestPayload,
+                sender: testSender()
+            )
+            XCTFail("Permission expansion without a trusted consent presenter must fail")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .permissionDenied)
+        }
+    }
+
+    func testStage3ScriptingAndDNRSurfaceUsesCoordinatorTransactions() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profileIdentifier = "api-stage3-\(UUID().uuidString)"
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: APIHostRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: { _, source in
+                guard source.path == "registered.js" else {
+                    throw FloorpWebExtensionError.unsupported("missing fixture resource")
+                }
+                return "globalThis.registeredFixture = true;"
+            }
+        )
+        FloorpWebExtensionCoordinator.install(coordinator)
+        defer {
+            FloorpWebExtensionCoordinator.removeCoordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+        let allowedHost = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        await coordinator.grantPermissions(
+            [.scripting, .declarativeNetRequest],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+        let configuredDNR = try await checkedStage("configure DNR") {
+            try await coordinator.configureDNR(for: self.extensionID)
+        }
+        XCTAssertTrue(configuredDNR)
+        let tab = FloorpWebExtensionTabContext(
+            tabID: 301,
+            documentGeneration: 8,
+            url: URL(string: "https://allowed.example/stage3")!,
+            isPrivate: false
+        )
+        let webView = WKWebView(frame: .zero, configuration: .init())
+        webView.loadHTMLString("<html><head></head><body>stage3</body></html>", baseURL: tab.url)
+        try await waitForLoad(webView)
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, source in
+                source.path == "fixture.css" ? ".fixture { display: none; }" : nil
+            },
+            alarmEvents: .init(),
+            permissionBroker: .init(),
+            liveScriptingTargetResolver: { tabID in
+                guard tabID == tab.tabID else { throw FloorpWebExtensionTabsError.tabNotFound(tabID) }
+                return .init(tab: tab, webView: webView)
+            }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(
+                apiPermissions: [.scripting, .declarativeNetRequest],
+                requestedHosts: [allowedHost],
+                normalHostAccess: .allRequestedSites
+            ),
+            defaultLocale: "en",
+            declaredPermissions: [.scripting, .declarativeNetRequest],
+            declaredHosts: [allowedHost],
+            resourcePaths: ["registered.js", "fixture.css"]
+        )
+
+        _ = try await checkedStage("register content script") {
+            try await host.dispatch(
+                operation: "scripting.registerContentScripts",
+                payload: try self.payload(["scripts": [[
+                    "id": "runtime-script",
+                    "matches": ["https://allowed.example/*"],
+                    "js": ["registered.js"],
+                    "persistAcrossSessions": false
+                ]]]),
+                sender: self.testSender()
+            )
+        }
+        let optionalRegisteredPayload = try await checkedStage("get registered content scripts") {
+            try await host.dispatch(
+                operation: "scripting.getRegisteredContentScripts",
+                payload: try self.payload(["filter": ["ids": ["runtime-script"]]]),
+                sender: self.testSender()
+            )
+        }
+        let registeredPayload = try XCTUnwrap(optionalRegisteredPayload)
+        let registered = try registeredPayload.decode([RegisteredScriptView].self)
+        XCTAssertEqual(registered.map(\.id), ["runtime-script"])
+        XCTAssertEqual(registered.first?.js, ["registered.js"])
+
+        let optionalInsertedPayload = try await checkedStage("insert CSS") {
+            try await host.dispatch(
+                operation: "scripting.insertCSS",
+                payload: try self.payload([
+                    "target": ["tabId": tab.tabID, "frameIds": [0]],
+                    "files": ["fixture.css"]
+                ]),
+                sender: self.testSender()
+            )
+        }
+        let insertedPayload = try XCTUnwrap(optionalInsertedPayload)
+        let handles = try insertedPayload.decode(CSSHandlesView.self).handles
+        XCTAssertEqual(handles.count, 1)
+        _ = try await checkedStage("remove CSS") {
+            try await host.dispatch(
+                operation: "scripting.removeCSS",
+                payload: try self.payload([
+                    "target": ["tabId": tab.tabID, "frameIds": [0]],
+                    "handles": handles
+                ]),
+                sender: self.testSender()
+            )
+        }
+
+        _ = try await checkedStage("update dynamic DNR") {
+            try await host.dispatch(
+                operation: "declarativeNetRequest.updateDynamicRules",
+                payload: try self.payload([
+                    "addRules": [[
+                        "id": 91,
+                        "priority": 1,
+                        "action": ["type": "block"],
+                        "condition": ["urlFilter": "tracker.example"]
+                    ]],
+                    "removeRuleIds": []
+                ]),
+                sender: self.testSender()
+            )
+        }
+        let optionalDynamicPayload = try await checkedStage("get dynamic DNR") {
+            try await host.dispatch(
+                operation: "declarativeNetRequest.getDynamicRules",
+                payload: try self.payload([String: String]()),
+                sender: self.testSender()
+            )
+        }
+        let dynamicPayload = try XCTUnwrap(optionalDynamicPayload)
+        XCTAssertEqual(try dynamicPayload.decode([DNRRuleView].self).map(\.id), [91])
+
+        let optionalRegexPayload = try await checkedStage("check DNR regex") {
+            try await host.dispatch(
+                operation: "declarativeNetRequest.isRegexSupported",
+                payload: try self.payload(["regex": "tracker\\.example"]),
+                sender: self.testSender()
+            )
+        }
+        let regexPayload = try XCTUnwrap(optionalRegexPayload)
+        XCTAssertTrue(try regexPayload.decode(RegexSupportView.self).isSupported)
+        let optionalLimitsPayload = try await checkedStage("get DNR limits") {
+            try await host.dispatch(
+                operation: "declarativeNetRequest.getLimits",
+                payload: try self.payload([String: String]()),
+                sender: self.testSender()
+            )
+        }
+        let limitsPayload = try XCTUnwrap(optionalLimitsPayload)
+        XCTAssertEqual(
+            try limitsPayload.decode(FloorpWebExtensionDNRLimits.self).maxDynamicRules,
+            FloorpWebExtensionDNRLimits().maxDynamicRules
+        )
+
+        do {
+            _ = try await host.dispatch(
+                operation: "scripting.executeScript",
+                payload: try payload(["func": "() => 1"]),
+                sender: testSender()
+            )
+            XCTFail("Arbitrary function/code execution must remain unavailable")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unsupportedCodeExecution)
+        }
+    }
+
     func testForegroundAlarmDrainIsProfileScopedAndRegistryRemovalTearsDownHost() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let now = Date(timeIntervalSinceReferenceDate: 50_000)
         let profileIdentifier = "api-alarm-lifecycle-\(UUID().uuidString)"
+        let recorder = AlarmEventRecorder()
         let host = try FloorpWebExtensionAPIHost(
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: false,
             directory: directory,
             preferredLocales: ["en"],
             packageResourceLoader: { _, _ in nil },
+            alarmEvents: FloorpWebExtensionAlarmEventHost(),
+            permissionBroker: FloorpWebExtensionPermissionBroker(),
+            alarmEventHandler: { event in
+                recorder.events.append(event)
+            },
             now: { now }
         )
         await host.activate(
@@ -287,10 +646,6 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         let runtime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: host)
         FloorpWebExtensionAPIHostRegistry.install(host, messageRuntime: runtime)
 
-        var delivered = [FloorpWebExtensionAlarmEvent]()
-        host.alarmEvents.register(extensionID: extensionID) { event in
-            delivered.append(event)
-        }
         _ = try await host.dispatch(
             operation: "alarms.create",
             payload: try payload(["name": "foreground", "delayInMinutes": 0]),
@@ -302,7 +657,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             isPrivateBrowsing: true,
             now: now
         )
-        XCTAssertTrue(delivered.isEmpty)
+        XCTAssertTrue(recorder.events.isEmpty)
         let alarmBeforeNormalDrain = await host.alarms.alarm(named: "foreground", for: extensionID)
         XCTAssertNotNil(alarmBeforeNormalDrain)
 
@@ -311,9 +666,21 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             isPrivateBrowsing: false,
             now: now
         )
-        XCTAssertEqual(delivered.map(\.alarm.name), ["foreground"])
+        XCTAssertEqual(recorder.events.map(\.alarm.name), ["foreground"])
         let alarmAfterNormalDrain = await host.alarms.alarm(named: "foreground", for: extensionID)
         XCTAssertNil(alarmAfterNormalDrain)
+
+        await host.deactivate(extensionID)
+        await host.alarmEvents.dispatch([.init(
+            extensionID: extensionID,
+            alarm: .init(name: "after-deactivate", scheduledTime: now),
+            deliveredAt: now
+        )])
+        XCTAssertEqual(
+            recorder.events.map(\.alarm.name),
+            ["foreground"],
+            "deactivation must remove the reviewed alarm-delivery hook"
+        )
 
         await FloorpWebExtensionAPIHostRegistry.removeHost(for: host.profileKey)
         XCTAssertNil(FloorpWebExtensionAPIHostRegistry.host(
@@ -350,10 +717,61 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         }
         XCTFail("Timed out waiting for the API bridge document")
     }
+
+    private func checkedStage<T>(
+        _ stage: String,
+        operation: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await operation()
+        } catch {
+            XCTFail("\(stage) failed: \(error)")
+            throw error
+        }
+    }
 }
 
 private struct ValueResponse: Decodable {
     let value: String
+}
+
+private struct BoolValueResponse: Decodable {
+    let value: Bool
+}
+
+private struct RuntimeManifestResponse: Decodable, Equatable {
+    let manifest_version: Int
+    let name: String
+    let version: String
+}
+
+private struct RegisteredScriptView: Decodable {
+    let id: String
+    let js: [String]
+}
+
+private struct CSSHandlesView: Decodable {
+    let handles: [String]
+}
+
+private struct RegexSupportView: Decodable {
+    let isSupported: Bool
+}
+
+private struct DNRRuleView: Decodable {
+    let id: Int
+}
+
+@MainActor
+private final class APIHostStage3Recorder {
+    var reloadedExtensionIDs = [FloorpWebExtensionID]()
+    var permissionRequests = [FloorpWebExtensionPermissionRequest]()
+    var persistedPermissions = [FloorpWebExtensionPermissionSnapshot]()
+}
+
+@MainActor
+private final class AlarmEventRecorder {
+    var events = [FloorpWebExtensionAlarmEvent]()
 }
 
 @MainActor
@@ -394,5 +812,48 @@ private final class APIHostTabsHost: FloorpWebExtensionTabsHostAdapting {
         }
         lastSender = sender
         return .object(["delivered": .bool(true)])
+    }
+}
+
+@MainActor
+private final class APIHostRuleListCompiler: FloorpWebExtensionContentRuleListCompiling {
+    enum Failure: Error { case compilation }
+
+    private let store: WKContentRuleListStore
+
+    init() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("floorp-api-host-rule-lists", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        store = WKContentRuleListStore(url: directory)!
+    }
+
+    func compileContentRuleList(
+        forIdentifier identifier: String,
+        encodedContentRuleList: String
+    ) async throws -> WKContentRuleList {
+        try await withCheckedThrowingContinuation { continuation in
+            store.compileContentRuleList(
+                forIdentifier: identifier,
+                encodedContentRuleList: encodedContentRuleList
+            ) { ruleList, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let ruleList {
+                    continuation.resume(returning: ruleList)
+                } else {
+                    continuation.resume(throwing: Failure.compilation)
+                }
+            }
+        }
+    }
+
+    func removeContentRuleList(forIdentifier identifier: String) async {
+        await withCheckedContinuation { continuation in
+            store.removeContentRuleList(forIdentifier: identifier) { _ in
+                continuation.resume()
+            }
+        }
     }
 }

@@ -798,7 +798,19 @@
         "FloorpWebExtensionFoundationTests/testMV3ManifestDecodeRejectsUnknownTopLevelKeys()",
         "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightValidatesEveryDeclaredPackageResource()",
         "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightRejectsMissingInvalidAndMismatchedPackageResources()",
-        "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightRejectsUnrepresentableDNRConditions()"
+        "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightRejectsUnrepresentableDNRConditions()",
+        "FloorpWebExtensionCoordinatorTests/testRemovingExtensionInvalidatesAnInFlightDNRMutation()",
+        "FloorpWebExtensionFoundationTests/testMV3ManifestPreflightSupportsOnlyNonPersistentBackgroundScriptArrays()",
+        "FloorpWebExtensionsStage3Tests/testWebKitFirstNavigationRunsDocumentStartBeforePageAndIsolatesContentWorld()",
+        "FloorpWebExtensionsStage3Tests/testWebKitDNRBlocksMainFrameBeforeTheServerReceivesIt()",
+        "FloorpWebExtensionsStage3Tests/testWebKitDNRBlocksSubresourceAndAllowsHigherPriorityException()",
+        "FloorpWebExtensionMessageRuntimeTests/testBundledMV3ModuleBackgroundExecutesLazilyAndFailsClosedAcrossGenerationReplacement()",
+        "FloorpWebExtensionMessageRuntimeTests/testBundledNonPersistentBackgroundScriptsExecuteInOrderAndReceiveAlarmWakeup()",
+        "FloorpWebExtensionMessageRuntimeTests/testReconcileTabBridgesRetractsBridgeWhenNextNavigationHasNoEligibleScript()",
+        "FloorpWebExtensionAPIHostTests/testRuntimeMetadataURLAndReloadStayBoundToActivePackageGeneration()",
+        "FloorpWebExtensionAPIHostTests/testPermissionsRequestNeedsTrustedConsentAndPersistsBeforeExposure()",
+        "FloorpWebExtensionAPIHostTests/testStage3ScriptingAndDNRSurfaceUsesCoordinatorTransactions()",
+        "FloorpWebExtensionPageHostTests/testBackgroundSchemeGeneratesRestrictedEntryAndServesOnlyInventoriedPackageScripts()"
       ],
       "target": {
         "containerPath": "container:Client.xcodeproj",

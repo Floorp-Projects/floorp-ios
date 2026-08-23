@@ -359,4 +359,49 @@ final class FloorpWebExtensionFoundationTests: XCTestCase, @unchecked Sendable {
             .rejected
         )
     }
+
+    func testMV3ManifestPreflightSupportsOnlyNonPersistentBackgroundScriptArrays() throws {
+        let inventory = FloorpWebExtensionManifestPackageInventory(resources: [
+            .init(path: "background/first.js", isRegularFile: true, byteSize: 12),
+            .init(path: "background/second.js", isRegularFile: true, byteSize: 12)
+        ])
+        let supported = try FloorpWebExtensionManifest.preflight(
+            manifestData: Data("""
+            {
+              "manifest_version": 3,
+              "name": "Nonpersistent background scripts",
+              "version": "1.0",
+              "background": {
+                "scripts": ["background/first.js", "background/second.js"],
+                "persistent": false
+              }
+            }
+            """.utf8),
+            packageInventory: inventory
+        )
+        XCTAssertEqual(supported.status, .supported)
+        XCTAssertEqual(
+            supported.capabilities.first(where: { $0.name == "background.scripts" })?.status,
+            .supported
+        )
+
+        for backgroundJSON in [
+            #"{"scripts":["background/first.js"]}"#,
+            #"{"scripts":["background/first.js"],"persistent":true}"#,
+            #"{"service_worker":"background/first.js","scripts":["background/second.js"]}"#
+        ] {
+            let rejected = try FloorpWebExtensionManifest.preflight(
+                manifestData: Data("""
+                {
+                  "manifest_version": 3,
+                  "name": "Rejected background",
+                  "version": "1.0",
+                  "background": \(backgroundJSON)
+                }
+                """.utf8),
+                packageInventory: inventory
+            )
+            XCTAssertEqual(rejected.status, .rejected, backgroundJSON)
+        }
+    }
 }

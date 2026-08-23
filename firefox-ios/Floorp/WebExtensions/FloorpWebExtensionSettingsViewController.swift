@@ -350,13 +350,20 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         FloorpWebExtensionID,
         FloorpWebExtensionInstalledPackage?
     ) async throws -> Void
+    typealias BundledPackageURLResolver = @MainActor (FloorpWebExtensionBundledCatalogItem) -> URL?
 
     let store: FloorpWebExtensionPackageStore
     private let reconcile: Reconciler
+    private let bundledPackageURL: BundledPackageURLResolver
 
-    init(store: FloorpWebExtensionPackageStore, reconcile: @escaping Reconciler) {
+    init(
+        store: FloorpWebExtensionPackageStore,
+        reconcile: @escaping Reconciler,
+        bundledPackageURL: @escaping BundledPackageURLResolver = { $0.packageURL() }
+    ) {
         self.store = store
         self.reconcile = reconcile
+        self.bundledPackageURL = bundledPackageURL
     }
 
     func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] {
@@ -377,16 +384,16 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                         requestedHosts: package.grants.requestedHosts
                     )
                     : "Not allowed",
-                errorDescription: package.preflight.isActivationAllowed
+                errorDescription: package.activationError ?? (package.preflight.isActivationAllowed
                     ? nil
-                    : "This extension is incompatible with the current Floorp build.",
+                    : "This extension is incompatible with the current Floorp build."),
                 optionsPage: Self.optionsPage(for: package)
             )
         }
     }
 
     func installBundledPackage(_ item: FloorpWebExtensionBundledCatalogItem) async throws {
-        guard let packageURL = item.packageURL() else {
+        guard let packageURL = bundledPackageURL(item) else {
             throw FloorpWebExtensionPackageStoreError.resourceUnavailable(item.packageDirectoryName)
         }
         let manifestURL = packageURL.appendingPathComponent("manifest.json", isDirectory: false)
@@ -404,7 +411,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             expectedExtensionID: item.id,
             initialGrants: initialGrants
         )
-        try await reconcile(installed.extensionID, installed)
+        do {
+            try await reconcile(installed.extensionID, installed)
+        } catch {
+            try? await store.recordActivationFailure(for: installed.extensionID)
+            throw error
+        }
     }
 
     func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) async throws {
@@ -418,7 +430,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             guard let package = await store.installedPackage(for: extensionID) else {
                 throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
             }
-            try await reconcile(extensionID, package)
+            do {
+                try await reconcile(extensionID, package)
+            } catch {
+                try? await store.recordActivationFailure(for: extensionID)
+                throw error
+            }
         }
     }
 
@@ -431,7 +448,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         try await reconcile(extensionID, nil)
         try await store.updateGrants(grants, for: extensionID)
         if let package = await store.installedPackage(for: extensionID), package.isEnabled {
-            try await reconcile(extensionID, package)
+            do {
+                try await reconcile(extensionID, package)
+            } catch {
+                try? await store.recordActivationFailure(for: extensionID)
+                throw error
+            }
         }
     }
 

@@ -61,6 +61,207 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(host.snapshot(for: fixtureID).activationCount, 2)
     }
 
+    func testBundledMV3ModuleBackgroundExecutesLazilyAndFailsClosedAcrossGenerationReplacement() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "generic-background-profile",
+            isPrivateBrowsing: false
+        )
+        let nativeDispatcher = PageNativeDispatcher()
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: host,
+            nativeAPIDispatcher: nativeDispatcher,
+            profileKey: profileKey
+        )
+        let worker = Data("""
+        import { packageGeneration } from "./dependency.js";
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+          chrome.i18n.getUILanguage((language) => sendResponse({
+            accepted: message.type === "ping",
+            generation: packageGeneration,
+            language,
+            senderId: sender.id,
+            tabId: sender.tab?.id ?? null,
+            runtimeId: chrome.runtime.id,
+            packageURL: chrome.runtime.getURL("dependency.js")
+          }));
+          return true;
+        });
+        """.utf8)
+        let firstResources = [
+            "background.js": worker,
+            "dependency.js": Data("export const packageGeneration = 'generation-1';".utf8)
+        ]
+        let firstPackage = try makeBackgroundInstalledPackage(
+            generation: "generation-1",
+            resources: firstResources
+        )
+        let firstResolver = FloorpWebExtensionPageResourceResolver { request in
+            guard let data = firstResources[request.path] else {
+                throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+            }
+            return data
+        }
+
+        XCTAssertThrowsError(
+            try runtime.registerPackageBackground(
+                package: firstPackage,
+                packageProfileKey: .init(
+                    profileIdentifier: "different-profile",
+                    isPrivateBrowsing: false
+                ),
+                resolver: firstResolver
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FloorpWebExtensionBackgroundRuntimeError,
+                .profileAuthorityMismatch
+            )
+        }
+        XCTAssertFalse(host.snapshot(for: extensionID).isRegistered)
+        try runtime.registerPackageBackground(
+            package: firstPackage,
+            packageProfileKey: .init(
+                profileIdentifier: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ),
+            resolver: firstResolver
+        )
+        XCTAssertEqual(
+            host.snapshot(for: extensionID),
+            .init(isRegistered: true, isActive: false, activationCount: 0, pendingMessageCount: 0)
+        )
+
+        let payload = try FloorpWebExtensionMessagePayload(Ping(type: "ping"))
+        let first = try await host.dispatch(payload, sender: testSender(extensionID: extensionID))
+        let firstReply = try XCTUnwrap(try first?.decode(GenericBackgroundReply.self))
+        XCTAssertTrue(firstReply.accepted)
+        XCTAssertEqual(firstReply.generation, "generation-1")
+        XCTAssertEqual(firstReply.language, "en-US")
+        XCTAssertEqual(firstReply.senderId, extensionID.rawValue)
+        XCTAssertEqual(firstReply.tabId, 41)
+        XCTAssertEqual(firstReply.runtimeId, extensionID.rawValue)
+        XCTAssertTrue(firstReply.packageURL.hasPrefix("floorp-extension://background-"))
+        XCTAssertTrue(firstReply.packageURL.hasSuffix("/dependency.js"))
+        XCTAssertEqual(host.snapshot(for: extensionID).activationCount, 1)
+        let firstNativeSender = try XCTUnwrap(
+            nativeDispatcher.receivedSenders.first as? FloorpWebExtensionBackgroundRuntimeMessageSender
+        )
+        XCTAssertEqual(firstNativeSender.profileKey, profileKey)
+        XCTAssertEqual(firstNativeSender.packageGeneration, "generation-1")
+        XCTAssertTrue(firstNativeSender.originHost.hasPrefix("background-"))
+
+        let secondResources = [
+            "background.js": worker,
+            "dependency.js": Data("export const packageGeneration = 'generation-2';".utf8)
+        ]
+        let secondPackage = try makeBackgroundInstalledPackage(
+            generation: "generation-2",
+            resources: secondResources
+        )
+        let secondResolver = FloorpWebExtensionPageResourceResolver { request in
+            guard let data = secondResources[request.path] else {
+                throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+            }
+            return data
+        }
+        try runtime.registerPackageBackground(
+            package: secondPackage,
+            packageProfileKey: .init(
+                profileIdentifier: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ),
+            resolver: secondResolver
+        )
+        XCTAssertFalse(host.snapshot(for: extensionID).isActive)
+
+        let second = try await host.dispatch(payload, sender: testSender(extensionID: extensionID))
+        XCTAssertEqual(try second?.decode(GenericBackgroundReply.self).generation, "generation-2")
+        let secondNativeSender = try XCTUnwrap(
+            nativeDispatcher.receivedSenders.last as? FloorpWebExtensionBackgroundRuntimeMessageSender
+        )
+        XCTAssertEqual(secondNativeSender.packageGeneration, "generation-2")
+
+        runtime.unregisterPackageBackground(for: extensionID)
+        XCTAssertFalse(host.snapshot(for: extensionID).isRegistered)
+        do {
+            _ = try await host.dispatch(payload, sender: testSender(extensionID: extensionID))
+            XCTFail("Expected a disabled package background to fail closed")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .backgroundUnavailable)
+        }
+    }
+
+    func testBundledNonPersistentBackgroundScriptsExecuteInOrderAndReceiveAlarmWakeup() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "script-array-background-profile",
+            isPrivateBrowsing: false
+        )
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: host,
+            profileKey: profileKey
+        )
+        let resources = [
+            "background/first.js": Data("""
+            globalThis.scriptOrder = ['first'];
+            globalThis.lastAlarm = null;
+            """.utf8),
+            "background/second.js": Data("""
+            globalThis.scriptOrder.push('second');
+            browser.alarms.onAlarm.addListener((alarm) => { globalThis.lastAlarm = alarm; });
+            browser.runtime.onMessage.addListener(() => ({
+              order: globalThis.scriptOrder,
+              alarmName: globalThis.lastAlarm?.name ?? null,
+              scheduledTime: globalThis.lastAlarm?.scheduledTime ?? null
+            }));
+            """.utf8)
+        ]
+        let package = try makeBackgroundInstalledPackage(
+            generation: "script-array-generation",
+            resources: resources,
+            backgroundDeclaration: """
+            {
+              "scripts": ["background/first.js", "background/second.js"],
+              "persistent": false
+            }
+            """
+        )
+        let resolver = FloorpWebExtensionPageResourceResolver { request in
+            guard let data = resources[request.path] else {
+                throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+            }
+            return data
+        }
+
+        try runtime.registerPackageBackground(
+            package: package,
+            packageProfileKey: .init(
+                profileIdentifier: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ),
+            resolver: resolver
+        )
+        XCTAssertFalse(host.snapshot(for: extensionID).isActive)
+
+        let scheduledTime = Date(timeIntervalSince1970: 1_750_000_000)
+        try await runtime.dispatchAlarmEvent(.init(
+            extensionID: extensionID,
+            alarm: .init(name: "stage3-wakeup", scheduledTime: scheduledTime, period: 120),
+            deliveredAt: scheduledTime
+        ))
+        XCTAssertEqual(host.snapshot(for: extensionID).activationCount, 1)
+        let afterAlarm = try await host.dispatch(
+            FloorpWebExtensionMessagePayload(Ping(type: "ping")),
+            sender: testSender(extensionID: extensionID)
+        )
+        let reply = try XCTUnwrap(try afterAlarm?.decode(ScriptArrayBackgroundReply.self))
+        XCTAssertEqual(reply.order, ["first", "second"])
+        XCTAssertEqual(reply.alarmName, "stage3-wakeup")
+        XCTAssertEqual(reply.scheduledTime, scheduledTime.timeIntervalSince1970 * 1_000)
+        XCTAssertEqual(host.snapshot(for: extensionID).activationCount, 1)
+    }
+
     func testBackgroundRegistrationIsStrictlyExtensionScoped() async throws {
         let host = FloorpWebExtensionLazyBackgroundHost()
         host.register(extensionID: extensionID) { EchoBackgroundHandler() }
@@ -125,6 +326,72 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(handler.receivedSenders.first?.isMainFrame, true)
     }
 
+    func testWebKitBootstrapExposesStage3PromiseAndChromeCallbackSurfaces() async throws {
+        let dispatcher = BootstrapSurfaceDispatcher()
+        let runtime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: dispatcher)
+        let configuration = WKWebViewConfiguration()
+        let tab = testTab()
+        runtime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: { _, isMainFrame, trustedTab in
+                isMainFrame && trustedTab == tab
+            }
+        )
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString("<html><body>stage3 bridge</body></html>", baseURL: tab.url)
+        try await waitForLoad(webView)
+
+        let result = try await webView.callAsyncJavaScript(
+            """
+            const permission = await browser.permissions.contains({permissions: ["tabs"]});
+            await browser.scripting.registerContentScripts([{
+              id: "registered-from-worker",
+              matches: ["https://allowed.example/*"],
+              js: ["content.js"]
+            }]);
+            const enabledRulesets = await browser.declarativeNetRequest.getEnabledRulesets();
+            const callbackError = await new Promise((resolve) => {
+              chrome.scripting.executeScript({target: {tabId: 41}, func: () => true}, () => {
+                resolve(chrome.runtime.lastError?.code || null);
+              });
+            });
+            return {
+              permission,
+              enabledRulesets,
+              callbackError,
+              leakedLastError: chrome.runtime.lastError !== null,
+              runtimeId: chrome.runtime.id,
+              dynamicLimit: browser.declarativeNetRequest.MAX_NUMBER_OF_DYNAMIC_RULES
+            };
+            """,
+            contentWorld: .world(name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: extensionID))
+        ) as? [String: Any]
+
+        XCTAssertEqual(result?["permission"] as? Bool, true)
+        XCTAssertEqual(result?["enabledRulesets"] as? [String], ["base"])
+        XCTAssertEqual(result?["callbackError"] as? String, "unsupported_code_execution")
+        XCTAssertEqual(result?["leakedLastError"] as? Bool, false)
+        XCTAssertEqual(result?["runtimeId"] as? String, extensionID.rawValue)
+        XCTAssertEqual(result?["dynamicLimit"] as? Int, 5_000)
+        XCTAssertEqual(
+            dispatcher.operations,
+            [
+                "permissions.contains",
+                "scripting.registerContentScripts",
+                "declarativeNetRequest.getEnabledRulesets",
+                "scripting.executeScript"
+            ]
+        )
+        let registeredPayload = try XCTUnwrap(dispatcher.payloads["scripting.registerContentScripts"])
+        let registeredObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: registeredPayload.jsonData) as? [String: Any]
+        )
+        XCTAssertEqual((registeredObject["scripts"] as? [[String: Any]])?.first?["id"] as? String,
+                       "registered-from-worker")
+    }
+
     func testDocumentAuthorizationRunsBeforeLazyBackgroundActivation() async throws {
         let host = FloorpWebExtensionLazyBackgroundHost()
         host.register(extensionID: extensionID) { EchoBackgroundHandler() }
@@ -150,6 +417,41 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         } catch {
             XCTAssertFalse(host.snapshot(for: extensionID).isActive)
         }
+    }
+
+    func testReconcileTabBridgesRetractsBridgeWhenNextNavigationHasNoEligibleScript() async throws {
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let runtime = FloorpWebExtensionMessageRuntime(backgroundHost: host)
+        let configuration = WKWebViewConfiguration()
+        let tab = testTab()
+        runtime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: { url, isMainFrame, trustedTab in
+                url.host == "allowed.example" && isMainFrame && trustedTab == tab
+            }
+        )
+        XCTAssertEqual(configuration.userContentController.userScripts.count, 1)
+
+        // This represents a subsequent navigation whose URL no longer has a
+        // grant-qualified isolated script.  The native handler and bootstrap
+        // must both disappear before WebKit begins that document.
+        runtime.reconcileTabBridges(
+            on: configuration.userContentController,
+            retaining: []
+        )
+        XCTAssertTrue(configuration.userContentController.userScripts.isEmpty)
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString("<html><body>unmatched</body></html>", baseURL: tab.url)
+        try await waitForLoad(webView)
+        let bridgeType = try await webView.callAsyncJavaScript(
+            "return typeof globalThis.browser",
+            contentWorld: .world(name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: extensionID))
+        ) as? String
+        XCTAssertEqual(bridgeType, "undefined")
+        XCTAssertFalse(host.snapshot(for: extensionID).isActive)
     }
 
     func testExtensionPageBridgeDispatchesNativeAPIWithPageSenderAndRevokesOnDisable() async throws {
@@ -180,14 +482,10 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         try await waitForLoad(page.webView)
         XCTAssertEqual(page.webView.url?.scheme, FloorpWebExtensionPageNavigationPolicy.resourceScheme)
         let originHost = try XCTUnwrap(page.webView.url?.host)
-        let world = WKContentWorld.world(name: FloorpWebExtensionMessageRuntime.pageIsolatedContentWorldName(
-            for: extensionID,
-            originHost: originHost
-        ))
 
         let language = try await page.webView.callAsyncJavaScript(
             "return await browser.i18n.getUILanguage()",
-            contentWorld: world
+            contentWorld: .page
         ) as? String
         XCTAssertEqual(language, "en-US")
         let sender = try XCTUnwrap(nativeDispatcher.receivedSenders.first as? FloorpWebExtensionPageRuntimeMessageSender)
@@ -203,7 +501,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         try await waitForLoad(page.webView)
         let bridgeType = try await page.webView.callAsyncJavaScript(
             "return typeof globalThis.browser",
-            contentWorld: world
+            contentWorld: .page
         ) as? String
         XCTAssertEqual(bridgeType, "undefined")
         XCTAssertEqual(nativeDispatcher.receivedSenders.count, 1)
@@ -289,6 +587,56 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         }
         XCTFail("Timed out waiting for the bridge test document")
     }
+
+    private func makeBackgroundInstalledPackage(
+        generation: String,
+        resources: [String: Data],
+        backgroundDeclaration: String = """
+        {
+          "service_worker": "background.js",
+          "type": "module"
+        }
+        """
+    ) throws -> FloorpWebExtensionInstalledPackage {
+        let rawManifest = Data("""
+        {
+          "manifest_version": 3,
+          "name": "Generic Background Fixture",
+          "version": "1.0.0",
+          "permissions": ["alarms"],
+          "background": \(backgroundDeclaration)
+        }
+        """.utf8)
+        let inventory = FloorpWebExtensionManifestPackageInventory(resources: resources.map {
+            .init(path: $0.key, isRegularFile: true, byteSize: $0.value.count)
+        })
+        let fixture = try FloorpWebExtensionFixture(
+            extensionID: extensionID,
+            sourceRepository: try XCTUnwrap(URL(string: "https://example.com/generic-background")),
+            sourceCommit: String(repeating: "b", count: 40),
+            version: "1.0.0",
+            packageSHA256: String(repeating: "1", count: 64),
+            license: "MPL-2.0",
+            supportedOSFloor: "iOS 15"
+        )
+        return .init(
+            extensionID: extensionID,
+            generation: generation,
+            name: "Generic Background Fixture",
+            version: "1.0.0",
+            fixture: fixture,
+            packageSHA256: String(repeating: "1", count: 64),
+            installedAt: .distantPast,
+            rawManifest: rawManifest,
+            preflight: try FloorpWebExtensionManifest.preflight(
+                manifestData: rawManifest,
+                packageInventory: inventory
+            ),
+            resourcePaths: Set(resources.keys),
+            isEnabled: true,
+            grants: .init(apiPermissions: [.alarms])
+        )
+    }
 }
 
 @MainActor
@@ -322,6 +670,33 @@ private final class PageNativeDispatcher: FloorpWebExtensionNativeAPIDispatching
         }
         receivedSenders.append(sender)
         return try .init(jsonData: Data(#"{"value":"en-US"}"#.utf8))
+    }
+}
+
+@MainActor
+private final class BootstrapSurfaceDispatcher: FloorpWebExtensionNativeAPIDispatching {
+    private(set) var operations = [String]()
+    private(set) var payloads = [String: FloorpWebExtensionMessagePayload]()
+
+    func dispatch(
+        operation: String,
+        payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        operations.append(operation)
+        payloads[operation] = payload
+        switch operation {
+        case "permissions.contains":
+            return try .init(jsonData: Data(#"{"value":true}"#.utf8))
+        case "scripting.registerContentScripts":
+            return try .init(jsonData: Data(#"{}"#.utf8))
+        case "declarativeNetRequest.getEnabledRulesets":
+            return try .init(jsonData: Data(#"{"values":["base"]}"#.utf8))
+        case "scripting.executeScript":
+            throw FloorpWebExtensionMessageError.unsupportedCodeExecution
+        default:
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
     }
 }
 
@@ -364,6 +739,22 @@ private struct Ping: Codable, Equatable {
 
 private struct Pong: Codable, Equatable {
     let accepted: Bool
+}
+
+private struct GenericBackgroundReply: Codable, Equatable {
+    let accepted: Bool
+    let generation: String
+    let language: String
+    let senderId: String
+    let tabId: Int
+    let runtimeId: String
+    let packageURL: String
+}
+
+private struct ScriptArrayBackgroundReply: Codable, Equatable {
+    let order: [String]
+    let alarmName: String?
+    let scheduledTime: Double?
 }
 
 private struct EventRuntimePing: Codable, Equatable {

@@ -21,7 +21,8 @@ contain recorded device/OS, benchmark, or UI evidence.
 | Cosmetic / procedural / scriptlet filters | Supported subset | Generated resources run in the declared isolated or MAIN world. MAIN-world scripts never receive the native WebExtensions bridge. |
 | Per-site access | Supported | Denied, selected-site, requested-site, private, and active-tab grants are checked for every privileged operation. |
 | Exact Chromium DNR priority parity | Unsupported | Conflicting combinations are rejected rather than reported as enabled. |
-| Arbitrary MV3 service-worker/background JavaScript | Unsupported | A manifest may declare a service-worker resource, but Floorp does not evaluate arbitrary background JavaScript. Only an explicitly reviewed native-backed lazy event handler can be registered. |
+| Bundled MV3 background JavaScript | Supported subset | A preflight-verified bundled package may run `background.service_worker` (module or classic) or `persistent: false` `background.scripts` in a hidden, nonpersistent package-origin WebKit document. The runtime is created lazily for runtime messages and alarms, and is revoked on disable or generation replacement. |
+| True ServiceWorker lifecycle and unrestricted background execution | Unsupported | The implementation is a restricted hidden page, not `ServiceWorkerGlobalScope`: `importScripts`, automatic idle eviction, arbitrary network fetch, remote/store-origin packages, and wake events beyond the supported runtime-message/alarm path are not available. |
 | MV2 persistent backgrounds and webRequestBlocking | Unsupported | There is no persistent global/background page, and WebKit has no blocking request API. |
 
 ## Release evidence required separately
