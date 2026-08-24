@@ -100,7 +100,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         }
     }
 
-    func testDeactivateClearsStoresAndRevokesEveryOperation() async throws {
+    func testSuspendPreservesStoresAndPurgeClearsEveryStore() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let host = try FloorpWebExtensionAPIHost(
@@ -117,8 +117,18 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         )
         let sender = testSender()
         _ = try await host.dispatch(
+            operation: "storage.local.set",
+            payload: try payload(["items": ["durable": "kept"]]),
+            sender: sender
+        )
+        _ = try await host.dispatch(
             operation: "storage.session.set",
             payload: try payload(["items": ["token": "ephemeral"]]),
+            sender: sender
+        )
+        _ = try await host.dispatch(
+            operation: "alarms.create",
+            payload: try payload(["name": "kept", "delayInMinutes": 5]),
             sender: sender
         )
         _ = try await host.dispatch(
@@ -127,16 +137,16 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             sender: sender
         )
 
-        await host.deactivate(extensionID)
+        await host.suspend(extensionID)
 
         let localValues = try await host.storage.values(for: extensionID, in: .local)
         let sessionValues = try await host.storage.values(for: extensionID, in: .session)
         let alarms = await host.alarms.alarms(for: extensionID)
         let action = await host.actions.state(for: extensionID)
-        XCTAssertTrue(localValues.isEmpty)
-        XCTAssertTrue(sessionValues.isEmpty)
-        XCTAssertTrue(alarms.isEmpty)
-        XCTAssertEqual(action, .init())
+        XCTAssertEqual(localValues["durable"], .string("kept"))
+        XCTAssertEqual(sessionValues["token"], .string("ephemeral"))
+        XCTAssertEqual(alarms.map(\.name), ["kept"])
+        XCTAssertEqual(action.badgeText, "4")
         do {
             _ = try await host.dispatch(
                 operation: "i18n.getUILanguage",
@@ -147,6 +157,89 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unauthorizedDocument)
         }
+
+        try await host.purge(extensionID)
+        let purgedLocal = try await host.storage.values(for: extensionID, in: .local)
+        let purgedSession = try await host.storage.values(for: extensionID, in: .session)
+        let purgedAlarms = await host.alarms.alarms(for: extensionID)
+        let purgedAction = await host.actions.state(for: extensionID)
+        XCTAssertTrue(purgedLocal.isEmpty)
+        XCTAssertTrue(purgedSession.isEmpty)
+        XCTAssertTrue(purgedAlarms.isEmpty)
+        XCTAssertEqual(purgedAction, .init())
+    }
+
+    func testPurgeSurfacesDurableStoreFailureAndCanBeRetried() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-cleanup-failure-profile",
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(apiPermissions: [.storage, .alarms]),
+            defaultLocale: "en"
+        )
+        let sender = testSender()
+        _ = try await host.dispatch(
+            operation: "storage.local.set",
+            payload: try payload(["items": ["durable": "value"]]),
+            sender: sender
+        )
+        _ = try await host.dispatch(
+            operation: "alarms.create",
+            payload: try payload(["name": "retry", "delayInMinutes": 5]),
+            sender: sender
+        )
+        _ = try await host.dispatch(
+            operation: "action.setBadgeText",
+            payload: try payload(["value": "1"]),
+            sender: sender
+        )
+
+        // Replace the alarm registry file with a directory so its atomic
+        // persistence fails deterministically after storage cleanup. The
+        // host must surface the error and keep the remaining stores retryable.
+        let alarmsRegistryURL = directory
+            .appendingPathComponent("alarms", isDirectory: true)
+            .appendingPathComponent("alarms-v1.json", isDirectory: false)
+        try FileManager.default.removeItem(at: alarmsRegistryURL)
+        try FileManager.default.createDirectory(at: alarmsRegistryURL, withIntermediateDirectories: false)
+
+        do {
+            try await host.purge(self.extensionID)
+            XCTFail("Expected alarm persistence failure")
+        } catch {
+            // The concrete Cocoa error is platform-owned; propagation is the
+            // contract under test.
+        }
+        let localAfterFailure = try await host.storage.values(for: extensionID, in: .local)
+        let alarmsAfterFailure = await host.alarms.alarms(for: extensionID)
+        let actionAfterFailure = await host.actions.state(for: extensionID)
+        XCTAssertTrue(localAfterFailure.isEmpty)
+        XCTAssertEqual(alarmsAfterFailure.map(\.name), ["retry"])
+        XCTAssertEqual(actionAfterFailure.badgeText, "1")
+        do {
+            _ = try await host.dispatch(
+                operation: "i18n.getUILanguage",
+                payload: try self.payload([String: String]()),
+                sender: sender
+            )
+            XCTFail("Expected purge failure to leave the API host suspended")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unauthorizedDocument)
+        }
+
+        try FileManager.default.removeItem(at: alarmsRegistryURL)
+        try await host.purge(extensionID)
+        let alarmsAfterRetry = await host.alarms.alarms(for: extensionID)
+        let actionAfterRetry = await host.actions.state(for: extensionID)
+        XCTAssertTrue(alarmsAfterRetry.isEmpty)
+        XCTAssertEqual(actionAfterRetry, .init())
     }
 
     func testTabsSendMessageForwardsAuthenticatedSourceSender() async throws {
@@ -328,6 +421,23 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             try urlPayload.decode(ValueResponse.self).value,
             "floorp-extension://page-runtime-fixture/images/icon.png"
         )
+        let staleSender = FloorpWebExtensionPageRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: host.profileKey,
+            packageGeneration: "generation-stale",
+            originHost: "page-runtime-fixture",
+            surface: .options
+        )
+        do {
+            _ = try await host.dispatch(
+                operation: "runtime.getManifest",
+                payload: try payload([String: String]()),
+                sender: staleSender
+            )
+            XCTFail("A stale package generation must lose every API operation")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unauthorizedDocument)
+        }
         _ = try await host.dispatch(
             operation: "runtime.reload",
             payload: try payload([String: String]()),
@@ -352,6 +462,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let recorder = APIHostStage3Recorder()
         let allowedHost = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        let declaredWildcardHost = try FloorpWebExtensionMatchPattern("https://*.example/*")
         let broker = FloorpWebExtensionPermissionBroker()
         let host = try FloorpWebExtensionAPIHost(
             profileIdentifier: "api-permissions-profile",
@@ -365,7 +476,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                 recorder.permissionRequests.append(request)
                 return true
             },
-            permissionMutationHandler: { snapshot, _ in
+            permissionMutationHandler: { snapshot, _, _ in
                 recorder.persistedPermissions.append(snapshot)
             }
         )
@@ -377,8 +488,9 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                 normalHostAccess: .denied
             ),
             defaultLocale: "en",
-            declaredPermissions: [.storage, .scripting],
-            declaredHosts: [allowedHost]
+            declaredPermissions: [.storage],
+            optionalPermissions: [.scripting],
+            optionalHosts: [declaredWildcardHost]
         )
 
         let requestPayload = try payload([
@@ -393,6 +505,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         let granted = try XCTUnwrap(optionalGranted)
         XCTAssertTrue(try granted.decode(BoolValueResponse.self).value)
         XCTAssertEqual(recorder.permissionRequests.count, 1)
+        XCTAssertEqual(recorder.permissionRequests.first?.origins, [allowedHost])
         XCTAssertEqual(recorder.persistedPermissions.count, 1)
 
         let optionalContains = try await host.dispatch(
@@ -439,6 +552,338 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? FloorpWebExtensionMessageError, .permissionDenied)
         }
+    }
+
+    func testPermissionConsentCannotCrossPackageGeneration() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let authorizationGate = APIHostPermissionAuthorizationGate()
+        let recorder = APIHostStage3Recorder()
+        let broker = FloorpWebExtensionPermissionBroker()
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-permissions-generation-profile",
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            alarmEvents: .init(),
+            permissionBroker: broker,
+            permissionRequestAuthorizer: { request in
+                await authorizationGate.authorize(request)
+            },
+            permissionMutationHandler: { snapshot, _, _ in
+                recorder.persistedPermissions.append(snapshot)
+            }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(apiPermissions: [.storage]),
+            defaultLocale: "en",
+            declaredPermissions: [.storage],
+            optionalPermissions: [.scripting],
+            packageGeneration: "permission-generation-one"
+        )
+        let staleSender = FloorpWebExtensionPageRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: host.profileKey,
+            packageGeneration: "permission-generation-one",
+            originHost: "permission-generation-origin",
+            surface: .options
+        )
+        let pendingRequest = Task { @MainActor in
+            do {
+                return try await host.dispatch(
+                    operation: "permissions.request",
+                    payload: try self.payload(["permissions": ["scripting"]]),
+                    sender: staleSender
+                )
+            } catch {
+                authorizationGate.recordDispatchFailure(error)
+                throw error
+            }
+        }
+
+        try await waitForPermissionAuthorization(
+            authorizationGate,
+            pendingRequest: pendingRequest
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(apiPermissions: [.storage]),
+            defaultLocale: "en",
+            declaredPermissions: [.storage],
+            optionalPermissions: [.scripting],
+            packageGeneration: "permission-generation-two"
+        )
+        authorizationGate.resolve(true)
+
+        do {
+            _ = try await pendingRequest.value
+            XCTFail("Consent from a stale package generation must not mutate the replacement package")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unauthorizedDocument)
+        }
+        XCTAssertTrue(recorder.persistedPermissions.isEmpty)
+        let current = await broker.snapshot(for: extensionID)
+        XCTAssertEqual(current.apiPermissions, [.storage])
+    }
+
+    func testPermissionConsentCannotCrossContentDocumentGeneration() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profileIdentifier = "api-permissions-document-\(UUID().uuidString)"
+        let authorizationGate = APIHostPermissionAuthorizationGate()
+        let recorder = APIHostStage3Recorder()
+        let allowedHost = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: APIHostRuleListCompiler()),
+            scriptResourceLoader: { _, source in
+                guard source.path == "content.js" else {
+                    throw FloorpWebExtensionError.unsupported("missing content script")
+                }
+                return "globalThis.floorpPermissionFixture = true;"
+            }
+        )
+        FloorpWebExtensionCoordinator.install(coordinator)
+        defer {
+            FloorpWebExtensionCoordinator.removeCoordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+        await coordinator.grantPermissions(
+            [.storage, .scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+        try await coordinator.registerScripts(
+            [
+                .init(
+                    id: "permission-document",
+                    matches: [allowedHost],
+                    javaScript: [try .init("content.js")],
+                    runAt: .documentStart
+                )
+            ],
+            for: extensionID
+        )
+        let initialTab = FloorpWebExtensionTabContext(
+            tabID: 407,
+            documentGeneration: 1,
+            url: URL(string: "https://allowed.example/first")!,
+            isPrivate: false
+        )
+        let targetBox = APIHostLiveTargetBox(tab: initialTab)
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            alarmEvents: .init(),
+            permissionBroker: .init(),
+            permissionRequestAuthorizer: { request in
+                await authorizationGate.authorize(request)
+            },
+            permissionMutationHandler: { snapshot, _, _ in
+                recorder.persistedPermissions.append(snapshot)
+            },
+            liveScriptingTargetResolver: { tabID in
+                guard tabID == targetBox.tab.tabID else {
+                    throw FloorpWebExtensionTabsError.tabNotFound(tabID)
+                }
+                return .init(tab: targetBox.tab, webView: targetBox.webView)
+            }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(
+                apiPermissions: [.storage],
+                requestedHosts: [allowedHost],
+                normalHostAccess: .allRequestedSites
+            ),
+            defaultLocale: "en",
+            declaredPermissions: [.storage],
+            declaredHosts: [allowedHost],
+            optionalPermissions: [.scripting],
+            packageGeneration: "permission-document-generation"
+        )
+        let sender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: initialTab.tabID,
+            documentGeneration: initialTab.documentGeneration,
+            url: initialTab.url,
+            isMainFrame: true,
+            isPrivate: false
+        )
+        let pendingRequest = Task { @MainActor in
+            do {
+                return try await host.dispatch(
+                    operation: "permissions.request",
+                    payload: try self.payload(["permissions": ["scripting"]]),
+                    sender: sender
+                )
+            } catch {
+                authorizationGate.recordDispatchFailure(error)
+                throw error
+            }
+        }
+
+        try await waitForPermissionAuthorization(
+            authorizationGate,
+            pendingRequest: pendingRequest
+        )
+        targetBox.tab = .init(
+            tabID: initialTab.tabID,
+            documentGeneration: initialTab.documentGeneration + 1,
+            url: URL(string: "https://allowed.example/replaced")!,
+            isPrivate: false
+        )
+        authorizationGate.resolve(true)
+
+        do {
+            _ = try await pendingRequest.value
+            XCTFail("Consent from a replaced content document must not be persisted")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unauthorizedDocument)
+        }
+        XCTAssertTrue(recorder.persistedPermissions.isEmpty)
+    }
+
+    func testCSSMutationRevalidatesDocumentGenerationBeforeCommittingHandleOrDOM() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profileIdentifier = "api-css-document-\(UUID().uuidString)"
+        let mutationGate = APIHostDynamicCSSMutationGate()
+        let cssRegistry = FloorpWebExtensionCSSRegistry(nextHandleSuffix: { "stale-document" })
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: APIHostRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: { _, _ in
+                throw FloorpWebExtensionError.unsupported("unused CSS fixture resource")
+            },
+            cssRegistry: cssRegistry,
+            beforeDynamicCSSMutation: {
+                await mutationGate.checkpoint()
+            }
+        )
+        FloorpWebExtensionCoordinator.install(coordinator)
+        defer {
+            FloorpWebExtensionCoordinator.removeCoordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+
+        let allowedHost = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+        let initialTab = FloorpWebExtensionTabContext(
+            tabID: 408,
+            documentGeneration: 17,
+            url: URL(string: "https://allowed.example/same-url")!,
+            isPrivate: false
+        )
+        let targetBox = APIHostLiveTargetBox(tab: initialTab)
+        targetBox.webView.loadHTMLString(
+            "<html><head></head><body>css generation</body></html>",
+            baseURL: initialTab.url
+        )
+        try await waitForLoad(targetBox.webView)
+
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            alarmEvents: .init(),
+            permissionBroker: .init(),
+            liveScriptingTargetResolver: { tabID in
+                guard tabID == targetBox.tab.tabID else {
+                    throw FloorpWebExtensionTabsError.tabNotFound(tabID)
+                }
+                return .init(tab: targetBox.tab, webView: targetBox.webView)
+            }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(
+                apiPermissions: [.scripting],
+                requestedHosts: [allowedHost],
+                normalHostAccess: .allRequestedSites
+            ),
+            defaultLocale: "en",
+            declaredPermissions: [.scripting],
+            declaredHosts: [allowedHost]
+        )
+        let sender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: initialTab.tabID,
+            documentGeneration: initialTab.documentGeneration,
+            url: initialTab.url,
+            isMainFrame: true,
+            isPrivate: false
+        )
+        let requestPayload = try payload([
+            "target": ["tabId": initialTab.tabID, "frameIds": [0]],
+            "css": ".must-not-cross-generation { display: none; }"
+        ])
+        let pendingInsertion = Task { @MainActor in
+            try await host.dispatch(
+                operation: "scripting.insertCSS",
+                payload: requestPayload,
+                sender: sender
+            )
+        }
+
+        await mutationGate.waitUntilReached()
+        targetBox.tab = .init(
+            tabID: initialTab.tabID,
+            documentGeneration: initialTab.documentGeneration + 1,
+            url: initialTab.url,
+            isPrivate: false
+        )
+        mutationGate.resume()
+
+        do {
+            _ = try await pendingInsertion.value
+            XCTFail("CSS authorized for an earlier document generation must fail closed")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unauthorizedDocument)
+        }
+        XCTAssertTrue(cssRegistry.activeInsertions(for: extensionID).isEmpty)
+        let styleCount = try await targetBox.webView.callAsyncJavaScript(
+            "return document.querySelectorAll('style[data-floorp-webextension-css]').length;",
+            contentWorld: .page
+        ) as? Int
+        XCTAssertEqual(styleCount, 0)
+
+        // A rejected insertion must leave neither coordinator quota nor API
+        // host tracking behind. Restoring the original generation permits a
+        // clean insert/remove round trip using the same deterministic handle.
+        targetBox.tab = initialTab
+        _ = try await host.dispatch(
+            operation: "scripting.insertCSS",
+            payload: requestPayload,
+            sender: sender
+        )
+        XCTAssertEqual(cssRegistry.activeInsertions(for: extensionID).count, 1)
+        _ = try await host.dispatch(
+            operation: "scripting.removeCSS",
+            payload: requestPayload,
+            sender: sender
+        )
+        XCTAssertTrue(cssRegistry.activeInsertions(for: extensionID).isEmpty)
     }
 
     func testStage3ScriptingAndDNRSurfaceUsesCoordinatorTransactions() async throws {
@@ -490,7 +935,14 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             directory: directory,
             preferredLocales: ["en"],
             packageResourceLoader: { _, source in
-                source.path == "fixture.css" ? ".fixture { display: none; }" : nil
+                switch source.path {
+                case "fixture.css":
+                    return ".fixture { display: none; }"
+                case "registered.js":
+                    return "globalThis.dynamicPackageFileExecuted = true; return true;"
+                default:
+                    return nil
+                }
             },
             alarmEvents: .init(),
             permissionBroker: .init(),
@@ -536,6 +988,27 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         XCTAssertEqual(registered.map(\.id), ["runtime-script"])
         XCTAssertEqual(registered.first?.js, ["registered.js"])
 
+        let optionalExecutionPayload = try await checkedStage("execute package file") {
+            try await host.dispatch(
+                operation: "scripting.executeScript",
+                payload: try self.payload([
+                    "target": ["tabId": tab.tabID, "frameIds": [0]],
+                    "files": ["registered.js"],
+                    "world": "ISOLATED"
+                ]),
+                sender: self.testSender()
+            )
+        }
+        let executionPayload = try XCTUnwrap(optionalExecutionPayload)
+        XCTAssertEqual(
+            try executionPayload.decode([ScriptInjectionResultView].self).map(\.frameId),
+            [0]
+        )
+        XCTAssertEqual(
+            try executionPayload.decode([ScriptInjectionResultView].self).first?.result,
+            true
+        )
+
         let optionalInsertedPayload = try await checkedStage("insert CSS") {
             try await host.dispatch(
                 operation: "scripting.insertCSS",
@@ -546,18 +1019,31 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                 sender: self.testSender()
             )
         }
-        let insertedPayload = try XCTUnwrap(optionalInsertedPayload)
-        let handles = try insertedPayload.decode(CSSHandlesView.self).handles
-        XCTAssertEqual(handles.count, 1)
+        XCTAssertNotNil(optionalInsertedPayload)
         _ = try await checkedStage("remove CSS") {
             try await host.dispatch(
                 operation: "scripting.removeCSS",
                 payload: try self.payload([
                     "target": ["tabId": tab.tabID, "frameIds": [0]],
-                    "handles": handles
+                    "files": ["fixture.css"]
                 ]),
                 sender: self.testSender()
             )
+        }
+
+        do {
+            _ = try await host.dispatch(
+                operation: "scripting.registerContentScripts",
+                payload: try payload(["scripts": [[
+                    "id": "implicit-persistence",
+                    "matches": ["https://allowed.example/*"],
+                    "js": ["registered.js"]
+                ]]]),
+                sender: testSender()
+            )
+            XCTFail("Omitted persistAcrossSessions must not silently become memory-only")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unsupportedOperation)
         }
 
         _ = try await checkedStage("update dynamic DNR") {
@@ -585,6 +1071,31 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         let dynamicPayload = try XCTUnwrap(optionalDynamicPayload)
         XCTAssertEqual(try dynamicPayload.decode([DNRRuleView].self).map(\.id), [91])
 
+        _ = try await checkedStage("ignore nonexistent DNR removal") {
+            try await host.dispatch(
+                operation: "declarativeNetRequest.updateDynamicRules",
+                payload: try self.payload(["removeRuleIds": [999_999]]),
+                sender: self.testSender()
+            )
+        }
+        do {
+            _ = try await host.dispatch(
+                operation: "declarativeNetRequest.updateDynamicRules",
+                payload: try payload(["addRules": [[
+                    "id": 92,
+                    "action": ["type": "block"],
+                    "condition": [
+                        "urlFilter": "over-block.example",
+                        "excludedRequestMethods": ["get"]
+                    ]
+                ]]]),
+                sender: testSender()
+            )
+            XCTFail("Unsupported DNR condition keys must fail closed")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .malformedEnvelope)
+        }
+
         let optionalRegexPayload = try await checkedStage("check DNR regex") {
             try await host.dispatch(
                 operation: "declarativeNetRequest.isRegexSupported",
@@ -594,6 +1105,18 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         }
         let regexPayload = try XCTUnwrap(optionalRegexPayload)
         XCTAssertTrue(try regexPayload.decode(RegexSupportView.self).isSupported)
+        let optionalCapturingPayload = try await checkedStage("reject unsupported DNR capturing") {
+            try await host.dispatch(
+                operation: "declarativeNetRequest.isRegexSupported",
+                payload: try self.payload([
+                    "regex": "(tracker)\\.example",
+                    "requireCapturing": true
+                ]),
+                sender: self.testSender()
+            )
+        }
+        let capturingPayload = try XCTUnwrap(optionalCapturingPayload)
+        XCTAssertFalse(try capturingPayload.decode(RegexSupportView.self).isSupported)
         let optionalLimitsPayload = try await checkedStage("get DNR limits") {
             try await host.dispatch(
                 operation: "declarativeNetRequest.getLimits",
@@ -693,6 +1216,23 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         try .init(jsonData: JSONSerialization.data(withJSONObject: object, options: .fragmentsAllowed))
     }
 
+    private func waitForPermissionAuthorization(
+        _ gate: APIHostPermissionAuthorizationGate,
+        pendingRequest: Task<FloorpWebExtensionMessagePayload?, Error>
+    ) async throws {
+        do {
+            try await gate.waitUntilRequested()
+        } catch {
+            // A failed pre-consent sender check or a timeout must not leave
+            // the unstructured request task able to enter a continuation
+            // after this test has already returned.
+            gate.abort()
+            pendingRequest.cancel()
+            _ = await pendingRequest.result
+            throw error
+        }
+    }
+
     private func testSender() -> FloorpWebExtensionRuntimeMessageSender {
         .init(
             extensionID: extensionID,
@@ -750,8 +1290,9 @@ private struct RegisteredScriptView: Decodable {
     let js: [String]
 }
 
-private struct CSSHandlesView: Decodable {
-    let handles: [String]
+private struct ScriptInjectionResultView: Decodable {
+    let frameId: Int
+    let result: Bool?
 }
 
 private struct RegexSupportView: Decodable {
@@ -767,6 +1308,94 @@ private final class APIHostStage3Recorder {
     var reloadedExtensionIDs = [FloorpWebExtensionID]()
     var permissionRequests = [FloorpWebExtensionPermissionRequest]()
     var persistedPermissions = [FloorpWebExtensionPermissionSnapshot]()
+}
+
+@MainActor
+private final class APIHostPermissionAuthorizationGate {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private var dispatchFailure: Error?
+    private var isAborted = false
+
+    func authorize(_ request: FloorpWebExtensionPermissionRequest) async -> Bool {
+        _ = request
+        guard !isAborted else { return false }
+        return await withCheckedContinuation { continuation in
+            guard !isAborted else {
+                continuation.resume(returning: false)
+                return
+            }
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilRequested(timeoutNanoseconds: UInt64 = 5_000_000_000) async throws {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while continuation == nil {
+            if let dispatchFailure {
+                throw dispatchFailure
+            }
+            guard DispatchTime.now().uptimeNanoseconds < deadline else {
+                throw APIHostPermissionAuthorizationGateError.timedOut
+            }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    func recordDispatchFailure(_ error: Error) {
+        dispatchFailure = error
+    }
+
+    func abort() {
+        isAborted = true
+        continuation?.resume(returning: false)
+        continuation = nil
+    }
+
+    func resolve(_ authorized: Bool) {
+        continuation?.resume(returning: authorized)
+        continuation = nil
+    }
+}
+
+private enum APIHostPermissionAuthorizationGateError: Error {
+    case timedOut
+}
+
+@MainActor
+private final class APIHostDynamicCSSMutationGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var hasReached = false
+    private var isOpen = false
+
+    func checkpoint() async {
+        guard !isOpen else { return }
+        hasReached = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilReached() async {
+        while !hasReached {
+            await Task.yield()
+        }
+    }
+
+    func resume() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@MainActor
+private final class APIHostLiveTargetBox {
+    var tab: FloorpWebExtensionTabContext
+    let webView = WKWebView(frame: .zero, configuration: .init())
+
+    init(tab: FloorpWebExtensionTabContext) {
+        self.tab = tab
+    }
 }
 
 @MainActor

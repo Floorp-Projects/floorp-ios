@@ -115,7 +115,7 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
 
     func testCSSHandlesAreOwnerScopedAndBatchRemovalIsAtomic() async throws {
         let suffixes = HandleSuffixes(["one", "two"])
-        let registry = FloorpWebExtensionCSSRegistry(nextHandleSuffix: { suffixes.next() })
+        let registry = await FloorpWebExtensionCSSRegistry(nextHandleSuffix: { suffixes.next() })
         let tab = FloorpWebExtensionTabContext(
             tabID: 2,
             documentGeneration: 4,
@@ -176,6 +176,50 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
         _ = try await registry.remove([second.handle], for: extensionID, target: second.target)
         let remainingInsertions = await registry.activeInsertions(for: extensionID)
         XCTAssertTrue(remainingInsertions.isEmpty)
+    }
+
+    func testCSSDiscardExtensionReleasesQuotaWithoutTouchingOtherOwners() async throws {
+        let registry = await FloorpWebExtensionCSSRegistry()
+        let target = FloorpWebExtensionCSSTarget(
+            tab: .init(
+                tabID: 22,
+                documentGeneration: 7,
+                url: try XCTUnwrap(URL(string: "https://allowed.example/quota"))
+            )
+        )
+        _ = try await registry.insert(
+            css: ".other { color: blue; }",
+            for: otherExtensionID,
+            target: target
+        )
+        for index in 0..<FloorpWebExtensionCSSRegistry.maximumInsertionsPerExtension {
+            _ = try await registry.insert(
+                css: ".fixture-\(index) { color: red; }",
+                for: extensionID,
+                target: target
+            )
+        }
+        await assertAsyncThrows {
+            try await registry.insert(
+                css: ".over-quota { color: black; }",
+                for: self.extensionID,
+                target: target
+            )
+        }
+
+        await registry.discardInsertions(for: extensionID)
+
+        let discardedOwnerInsertions = await registry.activeInsertions(for: extensionID)
+        let retainedOtherOwnerInsertions = await registry.activeInsertions(for: otherExtensionID)
+        XCTAssertTrue(discardedOwnerInsertions.isEmpty)
+        XCTAssertEqual(retainedOtherOwnerInsertions.count, 1)
+        _ = try await registry.insert(
+            css: ".after-reactivation { color: green; }",
+            for: extensionID,
+            target: target
+        )
+        let reactivatedOwnerInsertions = await registry.activeInsertions(for: extensionID)
+        XCTAssertEqual(reactivatedOwnerInsertions.count, 1)
     }
 
     func testCosmeticBuilderBoundsInputsAndDoesNotBridgeMainWorld() throws {
@@ -556,6 +600,399 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(server.requestCount(for: "/proof/first-navigation"), 1)
     }
 
+    /// A top-level grant is only enough to install an `all_frames` policy for
+    /// the imminent navigation. Every child frame must still independently
+    /// match the registered script and a host grant before package code runs.
+    @MainActor
+    func testWebKitAllFramesPackageBodyRunsOnlyInMatchingGrantedFrames() async throws {
+        let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: priorCoreFlag) }
+
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: FailingContentRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "stage3-all-frames-\(UUID().uuidString)",
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: { _, source in
+                guard source.path == "all-frames.js" else {
+                    throw FloorpWebExtensionError.unsupported("test resource \(source.path)")
+                }
+                return """
+                const markPackageExecution = () => {
+                  document.documentElement.dataset.floorpAllFramesPackage = 'executed';
+                };
+                if (document.documentElement) {
+                  markPackageExecution();
+                } else {
+                  addEventListener('DOMContentLoaded', markPackageExecution, { once: true });
+                }
+                """
+            }
+        )
+        let allowedHost = try FloorpWebExtensionMatchPattern("http://localhost/*")
+        let registeredScript = try FloorpWebExtensionRegisteredScript(
+            id: "all-frames",
+            matches: [allowedHost],
+            javaScript: [FloorpWebExtensionScriptSource("all-frames.js")],
+            runAt: .documentStart,
+            allFrames: true,
+            world: .isolated
+        )
+        try await coordinator.registerScripts([registeredScript], for: extensionID)
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+
+        let mainURL = server.url(path: "/proof/all-frames")
+        let tab = FloorpWebExtensionTabContext(
+            tabID: 31,
+            documentGeneration: 1,
+            url: mainURL
+        )
+        let snapshot = try XCTUnwrap(coordinator.preNavigationPolicies(for: tab).first)
+        XCTAssertEqual(snapshot.extensionID, extensionID)
+        let frameAuthorization = try XCTUnwrap(snapshot.scriptPolicies.first?.frameAuthorization)
+        XCTAssertEqual(frameAuthorization.scriptID, "all-frames")
+
+        let configuration = WKWebViewConfiguration()
+        let messageRuntime = FloorpWebExtensionMessageRuntime()
+        messageRuntime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: { currentURL, isMainFrame, trustedTab in
+                coordinator.authorizesBridge(
+                    for: self.extensionID,
+                    currentURL: currentURL,
+                    isMainFrame: isMainFrame,
+                    tab: trustedTab
+                )
+            },
+            authorizeFrameScript: { scriptID, revisionToken, currentURL, isMainFrame, trustedTab in
+                coordinator.authorizesFrameScript(
+                    for: self.extensionID,
+                    scriptID: scriptID,
+                    revisionToken: revisionToken,
+                    currentURL: currentURL,
+                    isMainFrame: isMainFrame,
+                    tab: trustedTab
+                )
+            }
+        )
+        runtime.applyPreNavigationPolicy(snapshot, to: configuration.userContentController)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: mainURL))
+        try await waitForSuccessfulNavigation(navigation)
+
+        let reports = try await waitForJavaScriptString(
+            in: webView,
+            source: """
+            const reports = globalThis.floorpAllFramesReports || {};
+            return reports.allowed && reports.denied
+              ? reports.allowed + ',' + reports.denied
+              : '';
+            """,
+            expected: "executed,absent"
+        )
+        XCTAssertEqual(reports, "executed,absent")
+        XCTAssertEqual(server.requestCount(for: "/proof/all-frames"), 1)
+        XCTAssertEqual(server.requestCount(for: "/proof/frame-allowed"), 1)
+        XCTAssertEqual(server.requestCount(for: "/proof/frame-denied"), 1)
+    }
+
+    /// The navigation snapshot is deliberately applied while host access is
+    /// live. Revocation then happens without navigating or rebuilding the
+    /// `WKWebView`; a child frame created afterward must still be denied by the
+    /// native, per-frame authorization check instead of executing stale body.
+    @MainActor
+    func testWebKitAllFramesHostRevocationBlocksDelayedChildFrame() async throws {
+        let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: priorCoreFlag) }
+
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: FailingContentRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "stage3-revoked-all-frames-\(UUID().uuidString)",
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: Self.delayedAllFramesResourceLoader
+        )
+        let allowedHost = try FloorpWebExtensionMatchPattern("http://localhost/*")
+        let registeredScript = try FloorpWebExtensionRegisteredScript(
+            id: "delayed-all-frames",
+            matches: [allowedHost],
+            javaScript: [FloorpWebExtensionScriptSource("delayed-all-frames.js")],
+            runAt: .documentStart,
+            allFrames: true,
+            world: .isolated
+        )
+        try await coordinator.registerScripts([registeredScript], for: extensionID)
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+
+        let mainURL = server.url(path: "/proof/delayed-all-frames")
+        let tab = FloorpWebExtensionTabContext(
+            tabID: 32,
+            documentGeneration: 1,
+            url: mainURL
+        )
+        let snapshot = try XCTUnwrap(coordinator.preNavigationPolicies(for: tab).first)
+        let frameAuthorization = try XCTUnwrap(snapshot.scriptPolicies.first?.frameAuthorization)
+        XCTAssertEqual(frameAuthorization.scriptID, "delayed-all-frames")
+
+        let configuration = WKWebViewConfiguration()
+        let messageRuntime = FloorpWebExtensionMessageRuntime()
+        messageRuntime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: { currentURL, isMainFrame, trustedTab in
+                coordinator.authorizesBridge(
+                    for: self.extensionID,
+                    currentURL: currentURL,
+                    isMainFrame: isMainFrame,
+                    tab: trustedTab
+                )
+            },
+            authorizeFrameScript: { scriptID, revisionToken, currentURL, isMainFrame, trustedTab in
+                coordinator.authorizesFrameScript(
+                    for: self.extensionID,
+                    scriptID: scriptID,
+                    revisionToken: revisionToken,
+                    currentURL: currentURL,
+                    isMainFrame: isMainFrame,
+                    tab: trustedTab
+                )
+            }
+        )
+        runtime.applyPreNavigationPolicy(snapshot, to: configuration.userContentController)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: mainURL))
+        try await waitForSuccessfulNavigation(navigation)
+        _ = try await waitForJavaScriptString(
+            in: webView,
+            source: "return document.documentElement.dataset.floorpDelayedAllFramesPackage || '';",
+            expected: "executed"
+        )
+
+        await coordinator.revokeHostPermissions(for: extensionID)
+        XCTAssertFalse(coordinator.authorizesFrameScript(
+            for: extensionID,
+            scriptID: "delayed-all-frames",
+            revisionToken: frameAuthorization.revisionToken,
+            currentURL: server.url(path: "/proof/frame-after-revoke"),
+            isMainFrame: false,
+            tab: tab
+        ))
+        _ = try await webView.callAsyncJavaScript(
+            "globalThis.floorpAppendDelayedFrame('/proof/frame-after-revoke'); return true;",
+            contentWorld: .page
+        )
+        let report = try await waitForJavaScriptString(
+            in: webView,
+            source: "return globalThis.floorpDelayedFrameReports?.revoked || '';",
+            expected: "absent"
+        )
+        XCTAssertEqual(report, "absent")
+        XCTAssertEqual(server.requestCount(for: "/proof/frame-after-revoke"), 1)
+    }
+
+    /// activeTab is document- and time-scoped. A pre-navigation all-frame
+    /// snapshot may outlive its grant, so a same-origin child created after
+    /// expiry must consult the live native clock and leave package body absent.
+    @MainActor
+    func testWebKitAllFramesActiveTabExpiryBlocksDelayedSameOriginChildFrame() async throws {
+        let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: priorCoreFlag) }
+
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let clock = Stage3MutableClock(Date(timeIntervalSince1970: 1_000))
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: FailingContentRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "stage3-expired-active-tab-\(UUID().uuidString)",
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: Self.delayedAllFramesResourceLoader,
+            now: { clock.now() }
+        )
+        let allowedHost = try FloorpWebExtensionMatchPattern("http://localhost/*")
+        let registeredScript = try FloorpWebExtensionRegisteredScript(
+            id: "delayed-all-frames",
+            matches: [allowedHost],
+            javaScript: [FloorpWebExtensionScriptSource("delayed-all-frames.js")],
+            runAt: .documentStart,
+            allFrames: true,
+            world: .isolated
+        )
+        try await coordinator.registerScripts([registeredScript], for: extensionID)
+        await coordinator.grantPermissions(
+            [.activeTab, .scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .denied,
+            to: extensionID
+        )
+
+        let mainURL = server.url(path: "/proof/delayed-all-frames")
+        let tab = FloorpWebExtensionTabContext(
+            tabID: 33,
+            documentGeneration: 1,
+            url: mainURL
+        )
+        try await coordinator.grantActiveTab(to: extensionID, for: tab, duration: 1)
+        let snapshot = try XCTUnwrap(coordinator.preNavigationPolicies(for: tab).first)
+        let frameAuthorization = try XCTUnwrap(snapshot.scriptPolicies.first?.frameAuthorization)
+        XCTAssertEqual(frameAuthorization.scriptID, "delayed-all-frames")
+
+        let configuration = WKWebViewConfiguration()
+        let messageRuntime = FloorpWebExtensionMessageRuntime()
+        messageRuntime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: { currentURL, isMainFrame, trustedTab in
+                coordinator.authorizesBridge(
+                    for: self.extensionID,
+                    currentURL: currentURL,
+                    isMainFrame: isMainFrame,
+                    tab: trustedTab
+                )
+            },
+            authorizeFrameScript: { scriptID, revisionToken, currentURL, isMainFrame, trustedTab in
+                coordinator.authorizesFrameScript(
+                    for: self.extensionID,
+                    scriptID: scriptID,
+                    revisionToken: revisionToken,
+                    currentURL: currentURL,
+                    isMainFrame: isMainFrame,
+                    tab: trustedTab
+                )
+            }
+        )
+        runtime.applyPreNavigationPolicy(snapshot, to: configuration.userContentController)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: mainURL))
+        try await waitForSuccessfulNavigation(navigation)
+        _ = try await waitForJavaScriptString(
+            in: webView,
+            source: "return document.documentElement.dataset.floorpDelayedAllFramesPackage || '';",
+            expected: "executed"
+        )
+
+        clock.advance(by: 2)
+        XCTAssertFalse(coordinator.authorizesFrameScript(
+            for: extensionID,
+            scriptID: "delayed-all-frames",
+            revisionToken: frameAuthorization.revisionToken,
+            currentURL: server.url(path: "/proof/frame-after-active-tab-expiry"),
+            isMainFrame: false,
+            tab: tab
+        ))
+        _ = try await webView.callAsyncJavaScript(
+            "globalThis.floorpAppendDelayedFrame('/proof/frame-after-active-tab-expiry'); return true;",
+            contentWorld: .page
+        )
+        let report = try await waitForJavaScriptString(
+            in: webView,
+            source: "return globalThis.floorpDelayedFrameReports?.expired || '';",
+            expected: "absent"
+        )
+        XCTAssertEqual(report, "absent")
+        XCTAssertEqual(server.requestCount(for: "/proof/frame-after-active-tab-expiry"), 1)
+    }
+
+    /// Page code can replace any JavaScript-only guard, while the authenticated
+    /// bridge intentionally exists only in the isolated world. MAIN-world
+    /// all-frame registration therefore fails closed in both the top document
+    /// and a child frame instead of exposing a forgeable authorization path.
+    @MainActor
+    func testWebKitMainWorldAllFramesFailsClosedWithoutRunningPackageBody() async throws {
+        let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: priorCoreFlag) }
+
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: FailingContentRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "stage3-main-all-frames-\(UUID().uuidString)",
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: Self.delayedAllFramesResourceLoader
+        )
+        let allowedHost = try FloorpWebExtensionMatchPattern("http://localhost/*")
+        let registeredScript = try FloorpWebExtensionRegisteredScript(
+            id: "main-world-all-frames",
+            matches: [allowedHost],
+            javaScript: [FloorpWebExtensionScriptSource("delayed-all-frames.js")],
+            runAt: .documentStart,
+            allFrames: true,
+            world: .main
+        )
+        try await coordinator.registerScripts([registeredScript], for: extensionID)
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+
+        let mainURL = server.url(path: "/proof/delayed-all-frames")
+        let tab = FloorpWebExtensionTabContext(
+            tabID: 34,
+            documentGeneration: 1,
+            url: mainURL
+        )
+        let snapshot = try XCTUnwrap(coordinator.preNavigationPolicies(for: tab).first)
+        XCTAssertEqual(snapshot.scriptPolicies.first?.world, .main)
+        let frameAuthorization = try XCTUnwrap(snapshot.scriptPolicies.first?.frameAuthorization)
+        XCTAssertEqual(frameAuthorization.scriptID, "main-world-all-frames")
+
+        let configuration = WKWebViewConfiguration()
+        runtime.applyPreNavigationPolicy(snapshot, to: configuration.userContentController)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: mainURL))
+        try await waitForSuccessfulNavigation(navigation)
+        let mainResult = try await webView.callAsyncJavaScript(
+            "return document.documentElement.dataset.floorpDelayedAllFramesPackage || 'absent';",
+            contentWorld: .page
+        ) as? String
+        XCTAssertEqual(mainResult, "absent")
+
+        _ = try await webView.callAsyncJavaScript(
+            "globalThis.floorpAppendDelayedFrame('/proof/frame-after-main-world'); return true;",
+            contentWorld: .page
+        )
+        let childResult = try await waitForJavaScriptString(
+            in: webView,
+            source: "return globalThis.floorpDelayedFrameReports?.mainWorld || '';",
+            expected: "absent"
+        )
+        XCTAssertEqual(childResult, "absent")
+        XCTAssertEqual(server.requestCount(for: "/proof/frame-after-main-world"), 1)
+    }
+
     /// Exercises the actual `WKContentRuleList` data path, not just the JSON
     /// compiler.  A blocked main frame must never reach the local server.
     @MainActor
@@ -703,6 +1140,25 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
 
     private func validBlockRuleJSON(_ urlFilter: String) -> String {
         "[{\"trigger\":{\"url-filter\":\"\(urlFilter)\"},\"action\":{\"type\":\"block\"}}]"
+    }
+
+    private static func delayedAllFramesResourceLoader(
+        _ extensionID: FloorpWebExtensionID,
+        _ source: FloorpWebExtensionScriptSource
+    ) throws -> String {
+        guard source.path == "delayed-all-frames.js" else {
+            throw FloorpWebExtensionError.unsupported("test resource \(source.path)")
+        }
+        return """
+        const markDelayedAllFramesExecution = () => {
+          document.documentElement.dataset.floorpDelayedAllFramesPackage = 'executed';
+        };
+        if (document.documentElement) {
+          markDelayedAllFramesExecution();
+        } else {
+          addEventListener('DOMContentLoaded', markDelayedAllFramesExecution, { once: true });
+        }
+        """
     }
 
     @MainActor
@@ -977,6 +1433,27 @@ private final class HandleSuffixes: @unchecked Sendable {
     }
 }
 
+private final class Stage3MutableClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ value: Date) {
+        self.value = value
+    }
+
+    func now() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func advance(by interval: TimeInterval) {
+        lock.lock()
+        value = value.addingTimeInterval(interval)
+        lock.unlock()
+    }
+}
+
 /// A dedicated local server gives the WebKit integration tests deterministic
 /// request accounting: assertions distinguish an actual network block from a
 /// document that merely failed after reaching the origin.
@@ -989,7 +1466,7 @@ private final class Stage3WebKitIntegrationServer {
             forMethod: "GET",
             path: "/proof/first-navigation",
             request: GCDWebServerRequest.self
-        ) { [requests] _ in
+        ) { [requests, server] _ in
             requests.record("/proof/first-navigation")
             return GCDWebServerDataResponse(html: """
             <!doctype html><html><body>
@@ -997,6 +1474,123 @@ private final class Stage3WebKitIntegrationServer {
             first navigation
             </body></html>
             """)!
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/proof/all-frames",
+            request: GCDWebServerRequest.self
+        ) { [requests] _ in
+            requests.record("/proof/all-frames")
+            return GCDWebServerDataResponse(html: """
+            <!doctype html><html><body>
+            <script>
+              globalThis.floorpAllFramesReports = {};
+              addEventListener('message', event => {
+                const report = event.data;
+                if (report && report.kind === 'floorp-all-frames-report') {
+                  globalThis.floorpAllFramesReports[report.frame] = report.result;
+                }
+              });
+            </script>
+            <iframe src="/proof/frame-allowed"></iframe>
+            <iframe src="http://127.0.0.1:\(self.server.port)/proof/frame-denied"></iframe>
+            </body></html>
+            """)!
+        }
+        for (path, frame) in [
+            ("/proof/frame-allowed", "allowed"),
+            ("/proof/frame-denied", "denied")
+        ] {
+            server.addHandler(
+                forMethod: "GET",
+                path: path,
+                request: GCDWebServerRequest.self
+            ) { [requests] _ in
+                requests.record(path)
+                return GCDWebServerDataResponse(html: """
+                <!doctype html><html><body>
+                <script>
+                  addEventListener('DOMContentLoaded', () => {
+                    const deadline = Date.now() + 1000;
+                    const report = () => {
+                      const result = document.documentElement.dataset.floorpAllFramesPackage;
+                      if (!result && Date.now() < deadline) {
+                        setTimeout(report, 20);
+                        return;
+                      }
+                      parent.postMessage({
+                        kind: 'floorp-all-frames-report',
+                        frame: '\(frame)',
+                        result: result || 'absent'
+                      }, '*');
+                    };
+                    report();
+                  });
+                </script>
+                </body></html>
+                """)!
+            }
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/proof/delayed-all-frames",
+            request: GCDWebServerRequest.self
+        ) { [requests] _ in
+            requests.record("/proof/delayed-all-frames")
+            return GCDWebServerDataResponse(html: """
+            <!doctype html><html><body>
+            <script>
+              globalThis.floorpDelayedFrameReports = {};
+              globalThis.floorpAppendDelayedFrame = path => {
+                const frame = document.createElement('iframe');
+                frame.src = path;
+                document.body.appendChild(frame);
+              };
+              addEventListener('message', event => {
+                const report = event.data;
+                if (report && report.kind === 'floorp-delayed-frame-report') {
+                  globalThis.floorpDelayedFrameReports[report.frame] = report.result;
+                }
+              });
+            </script>
+            delayed all-frames host
+            </body></html>
+            """)!
+        }
+        for (path, frame) in [
+            ("/proof/frame-after-revoke", "revoked"),
+            ("/proof/frame-after-active-tab-expiry", "expired"),
+            ("/proof/frame-after-main-world", "mainWorld")
+        ] {
+            server.addHandler(
+                forMethod: "GET",
+                path: path,
+                request: GCDWebServerRequest.self
+            ) { [requests] _ in
+                requests.record(path)
+                return GCDWebServerDataResponse(html: """
+                <!doctype html><html><body>
+                <script>
+                  addEventListener('DOMContentLoaded', () => {
+                    const deadline = Date.now() + 1000;
+                    const report = () => {
+                      const result = document.documentElement.dataset.floorpDelayedAllFramesPackage;
+                      if (!result && Date.now() < deadline) {
+                        setTimeout(report, 20);
+                        return;
+                      }
+                      parent.postMessage({
+                        kind: 'floorp-delayed-frame-report',
+                        frame: '\(frame)',
+                        result: result || 'absent'
+                      }, '*');
+                    };
+                    report();
+                  });
+                </script>
+                </body></html>
+                """)!
+            }
         }
         server.addHandler(
             forMethod: "GET",

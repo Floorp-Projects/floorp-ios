@@ -5,6 +5,33 @@
 import Foundation
 import WebKit
 
+private struct FloorpWebExtensionDynamicCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int? = nil
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+    }
+
+    init?(intValue: Int) {
+        return nil
+    }
+}
+
+private func rejectUnknownKeys(
+    in decoder: Decoder,
+    allowing allowedKeys: Set<String>
+) throws {
+    let container = try decoder.container(keyedBy: FloorpWebExtensionDynamicCodingKey.self)
+    guard let unknownKey = container.allKeys.first(where: { !allowedKeys.contains($0.stringValue) }) else {
+        return
+    }
+    throw DecodingError.dataCorrupted(.init(
+        codingPath: decoder.codingPath + [unknownKey],
+        debugDescription: "Unsupported key: \(unknownKey.stringValue)"
+    ))
+}
+
 @MainActor
 protocol FloorpWebExtensionNativeAPIDispatching: AnyObject {
     func dispatch(
@@ -28,6 +55,7 @@ struct FloorpWebExtensionLiveScriptingTarget {
 /// JavaScript boolean or synthetic event can never stand in for user action.
 struct FloorpWebExtensionPermissionRequest: Sendable {
     let extensionID: FloorpWebExtensionID
+    let packageGeneration: String?
     let apiPermissions: Set<FloorpWebExtensionAPIGrant>
     let origins: Set<FloorpWebExtensionMatchPattern>
 }
@@ -47,7 +75,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     ) async -> Bool
     typealias PermissionMutationHandler = @MainActor @Sendable (
         FloorpWebExtensionPermissionSnapshot,
-        FloorpWebExtensionID
+        FloorpWebExtensionID,
+        String?
     ) async throws -> Void
     typealias LiveScriptingTargetResolver = @MainActor @Sendable (
         Int
@@ -58,9 +87,19 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let defaultLocale: String
         let declaredPermissions: Set<FloorpWebExtensionAPIGrant>
         let declaredHosts: Set<FloorpWebExtensionMatchPattern>
+        let optionalPermissions: Set<FloorpWebExtensionAPIGrant>
+        let optionalHosts: Set<FloorpWebExtensionMatchPattern>
         let rawManifest: Data?
         let packageGeneration: String?
         let resourcePaths: Set<String>
+    }
+
+    private enum PermissionMutationAuthority {
+        case liveManager(
+            FloorpWebExtensionLivePackageManager,
+            FloorpWebExtensionLivePackageManager.PermissionMutationAuthorization
+        )
+        case injected(packageGeneration: String?)
     }
 
     private struct KeysRequest: Decodable {
@@ -173,9 +212,26 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     }
 
     private struct ScriptingTargetRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case tabId
+            case frameIds
+            case documentIds
+            case allFrames
+        }
+
         let tabId: Int
         let frameIds: [UInt64]?
         let documentIds: [String]?
+        let allFrames: Bool?
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            tabId = try container.decode(Int.self, forKey: .tabId)
+            frameIds = try container.decodeIfPresent([UInt64].self, forKey: .frameIds)
+            documentIds = try container.decodeIfPresent([String].self, forKey: .documentIds)
+            allFrames = try container.decodeIfPresent(Bool.self, forKey: .allFrames)
+        }
     }
 
     private struct InsertCSSRequest: Decodable {
@@ -185,16 +241,86 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let origin: String?
     }
 
-    private struct RemoveCSSRequest: Decodable {
+    private struct ExecuteScriptRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case target
+            case files
+            case functionSource = "func"
+            case args
+            case world
+            case injectImmediately
+        }
+
         let target: ScriptingTargetRequest
-        let handles: [String]
+        let files: [String]?
+        let functionSource: String?
+        let args: [FloorpWebExtensionJSONValue]?
+        let world: String?
+        let injectImmediately: Bool?
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            target = try container.decode(ScriptingTargetRequest.self, forKey: .target)
+            files = try container.decodeIfPresent([String].self, forKey: .files)
+            functionSource = try container.decodeIfPresent(String.self, forKey: .functionSource)
+            args = try container.decodeIfPresent(
+                [FloorpWebExtensionJSONValue].self,
+                forKey: .args
+            )
+            world = try container.decodeIfPresent(String.self, forKey: .world)
+            injectImmediately = try container.decodeIfPresent(Bool.self, forKey: .injectImmediately)
+        }
+    }
+
+    private enum CSSInjectionSource: Hashable {
+        case inline(String)
+        case files([String])
+    }
+
+    private struct CSSInjectionIdentity: Hashable {
+        let tabID: Int
+        let documentGeneration: UInt64
+        let frameIDs: [UInt64]?
+        let origin: String
+        let source: CSSInjectionSource
+    }
+
+    private struct TrackedCSSInsertion {
+        let identity: CSSInjectionIdentity
+        let handle: FloorpWebExtensionCSSHandle
     }
 
     private struct DNRActionRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable { case type }
         let type: String
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            type = try container.decode(String.self, forKey: .type)
+        }
     }
 
     private struct DNRConditionRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case urlFilter
+            case regexFilter
+            case isUrlFilterCaseSensitive
+            case requestDomains
+            case excludedRequestDomains
+            case initiatorDomains
+            case excludedInitiatorDomains
+            case resourceTypes
+            case excludedResourceTypes
+            case domainType
+            case tabIds
+            case excludedTabIds
+            case requestMethods
+            case responseHeaders
+            case excludedResponseHeaders
+        }
+
         let urlFilter: String?
         let regexFilter: String?
         let isUrlFilterCaseSensitive: Bool?
@@ -210,30 +336,121 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let requestMethods: [String]?
         let responseHeaders: [String]?
         let excludedResponseHeaders: [String]?
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            urlFilter = try container.decodeIfPresent(String.self, forKey: .urlFilter)
+            regexFilter = try container.decodeIfPresent(String.self, forKey: .regexFilter)
+            isUrlFilterCaseSensitive = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .isUrlFilterCaseSensitive
+            )
+            requestDomains = try container.decodeIfPresent([String].self, forKey: .requestDomains)
+            excludedRequestDomains = try container.decodeIfPresent(
+                [String].self,
+                forKey: .excludedRequestDomains
+            )
+            initiatorDomains = try container.decodeIfPresent([String].self, forKey: .initiatorDomains)
+            excludedInitiatorDomains = try container.decodeIfPresent(
+                [String].self,
+                forKey: .excludedInitiatorDomains
+            )
+            resourceTypes = try container.decodeIfPresent([String].self, forKey: .resourceTypes)
+            excludedResourceTypes = try container.decodeIfPresent(
+                [String].self,
+                forKey: .excludedResourceTypes
+            )
+            domainType = try container.decodeIfPresent(String.self, forKey: .domainType)
+            tabIds = try container.decodeIfPresent([Int].self, forKey: .tabIds)
+            excludedTabIds = try container.decodeIfPresent([Int].self, forKey: .excludedTabIds)
+            requestMethods = try container.decodeIfPresent([String].self, forKey: .requestMethods)
+            responseHeaders = try container.decodeIfPresent([String].self, forKey: .responseHeaders)
+            excludedResponseHeaders = try container.decodeIfPresent(
+                [String].self,
+                forKey: .excludedResponseHeaders
+            )
+        }
     }
 
     private struct DNRRuleRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case id
+            case priority
+            case action
+            case condition
+        }
+
         let id: Int
         let priority: Int?
         let action: DNRActionRequest
         let condition: DNRConditionRequest
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(Int.self, forKey: .id)
+            priority = try container.decodeIfPresent(Int.self, forKey: .priority)
+            action = try container.decode(DNRActionRequest.self, forKey: .action)
+            condition = try container.decode(DNRConditionRequest.self, forKey: .condition)
+        }
     }
 
     private struct DNRUpdateRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable { case addRules, removeRuleIds }
         let addRules: [DNRRuleRequest]?
         let removeRuleIds: [Int]?
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            addRules = try container.decodeIfPresent([DNRRuleRequest].self, forKey: .addRules)
+            removeRuleIds = try container.decodeIfPresent([Int].self, forKey: .removeRuleIds)
+        }
     }
 
     private struct DNRStaticUpdateRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case enableRulesetIds
+            case disableRulesetIds
+        }
+
         let enableRulesetIds: [String]?
         let disableRulesetIds: [String]?
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            enableRulesetIds = try container.decodeIfPresent([String].self, forKey: .enableRulesetIds)
+            disableRulesetIds = try container.decodeIfPresent([String].self, forKey: .disableRulesetIds)
+        }
     }
 
     private struct DNRRegexRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case regex
+            case isCaseSensitive
+            case requireCapturing
+        }
+
         let regex: String
+        let isCaseSensitive: Bool?
+        let requireCapturing: Bool?
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            regex = try container.decode(String.self, forKey: .regex)
+            isCaseSensitive = try container.decodeIfPresent(Bool.self, forKey: .isCaseSensitive)
+            requireCapturing = try container.decodeIfPresent(Bool.self, forKey: .requireCapturing)
+        }
     }
 
     private struct EmptyResponse: Encodable {}
+    private struct ScriptInjectionResultResponse: Encodable {
+        let frameId = 0
+        let result: FloorpWebExtensionJSONValue?
+    }
     private struct BooleanResponse: Encodable { let value: Bool }
     private struct IntegerResponse: Encodable { let value: Int }
     private struct StringResponse: Encodable { let value: String }
@@ -242,7 +459,6 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let permissions: [String]
         let origins: [String]
     }
-    private struct CSSHandlesResponse: Encodable { let handles: [String] }
     private struct DNRRegexResponse: Encodable {
         let isSupported: Bool
         let reason: String?
@@ -349,6 +565,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private let permissionMutationHandler: PermissionMutationHandler?
     private let liveScriptingTargetResolver: LiveScriptingTargetResolver?
     private var activeExtensions = [FloorpWebExtensionID: ActiveExtension]()
+    private var cssInsertions = [FloorpWebExtensionID: [TrackedCSSInsertion]]()
 
     init(
         profileIdentifier: String,
@@ -443,6 +660,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             defaultLocale: Self.defaultLocale(in: package.rawManifest) ?? i18n.uiLanguage,
             declaredPermissions: package.preflight.manifest.apiPermissions,
             declaredHosts: Set(package.preflight.manifest.hostPermissions),
+            optionalPermissions: package.preflight.manifest.optionalAPIPermissions,
+            optionalHosts: Set(package.preflight.manifest.optionalHostPermissions),
             rawManifest: package.rawManifest,
             packageGeneration: package.generation,
             resourcePaths: package.resourcePaths
@@ -455,6 +674,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         defaultLocale: String,
         declaredPermissions: Set<FloorpWebExtensionAPIGrant>? = nil,
         declaredHosts: Set<FloorpWebExtensionMatchPattern>? = nil,
+        optionalPermissions: Set<FloorpWebExtensionAPIGrant> = [],
+        optionalHosts: Set<FloorpWebExtensionMatchPattern> = [],
         rawManifest: Data? = nil,
         packageGeneration: String? = nil,
         resourcePaths: Set<String> = []
@@ -464,6 +685,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             defaultLocale: defaultLocale,
             declaredPermissions: declaredPermissions ?? grants.apiPermissions,
             declaredHosts: declaredHosts ?? grants.requestedHosts,
+            optionalPermissions: optionalPermissions,
+            optionalHosts: optionalHosts,
             rawManifest: rawManifest,
             packageGeneration: packageGeneration,
             resourcePaths: resourcePaths
@@ -484,11 +707,28 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         }
     }
 
-    /// Disable and uninstall both revoke every callable capability immediately.
-    /// Local/session data, alarm definitions, and action presentation state are
-    /// also cleared so package removal cannot leave profile-visible residue.
-    func deactivate(_ extensionID: FloorpWebExtensionID) async {
+    /// Native bridge sessions capture this immutable value at installation
+    /// and compare it again for every internal frame-authorization request.
+    /// A package update therefore invalidates an old session even when the
+    /// extension identifier and registered script identifier are reused.
+    func activePackageGeneration(for extensionID: FloorpWebExtensionID) -> String? {
+        activeExtensions[extensionID]?.packageGeneration
+    }
+
+    func isActivePackageGeneration(
+        _ generation: String,
+        for extensionID: FloorpWebExtensionID
+    ) -> Bool {
+        activeExtensions[extensionID]?.packageGeneration == generation
+    }
+
+    /// Revokes one extension's live API authority while retaining its
+    /// profile-owned data. Reload, grant replacement, disable, and failed
+    /// reactivation all pass through this path and must not masquerade as an
+    /// uninstall.
+    func suspend(_ extensionID: FloorpWebExtensionID) async {
         activeExtensions.removeValue(forKey: extensionID)
+        cssInsertions.removeValue(forKey: extensionID)
         alarmEvents.unregister(extensionID: extensionID)
         await permissionBroker.grant(
             [],
@@ -496,15 +736,26 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             hostAccess: .denied,
             to: extensionID
         )
-        try? await storage.removeAllData(for: extensionID)
-        _ = try? await alarms.clearAll(for: extensionID)
-        _ = try? await actions.clearState(for: extensionID)
+    }
+
+    /// Compatibility spelling for callers that only intend to revoke live
+    /// authority. Durable extension-owned data is removed exclusively by
+    /// `purge`, after an uninstall has been selected.
+    func deactivate(_ extensionID: FloorpWebExtensionID) async {
+        await suspend(extensionID)
+    }
+
+    func purge(_ extensionID: FloorpWebExtensionID) async throws {
+        await suspend(extensionID)
+        try await storage.removeAllData(for: extensionID)
+        _ = try await alarms.clearAll(for: extensionID)
+        _ = try await actions.clearState(for: extensionID)
     }
 
     func tearDown() async {
         let identifiers = Array(activeExtensions.keys)
         for extensionID in identifiers {
-            await deactivate(extensionID)
+            await suspend(extensionID)
         }
         alarmEvents.tearDown()
     }
@@ -514,6 +765,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     func suspend() async {
         let identifiers = Array(activeExtensions.keys)
         activeExtensions.removeAll()
+        cssInsertions.removeAll()
         alarmEvents.tearDown()
         for extensionID in identifiers {
             await permissionBroker.grant(
@@ -531,7 +783,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload? {
         guard sender.isPrivate == profileKey.isPrivateBrowsing,
-              let active = activeExtensions[sender.extensionID] else {
+              let active = activeExtensions[sender.extensionID],
+              senderMatchesActivePackage(sender, active: active) else {
             throw FloorpWebExtensionMessageError.unauthorizedDocument
         }
 
@@ -578,7 +831,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             try require(.scripting, in: active)
             return try await removeCSS(payload, extensionID: sender.extensionID)
         case "scripting.executeScript":
-            throw FloorpWebExtensionMessageError.unsupportedCodeExecution
+            try require(.scripting, in: active)
+            return try await executeScript(payload, extensionID: sender.extensionID)
         case "declarativeNetRequest.getEnabledRulesets":
             try require(.declarativeNetRequest, in: active)
             return try await getEnabledStaticRuleSets(extensionID: sender.extensionID)
@@ -718,6 +972,56 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         }
     }
 
+    private func senderMatchesActivePackage(
+        _ sender: any FloorpWebExtensionMessageSender,
+        active: ActiveExtension
+    ) -> Bool {
+        if let page = sender as? FloorpWebExtensionPageRuntimeMessageSender {
+            return page.profileKey == profileKey && page.packageGeneration == active.packageGeneration
+        }
+        if let background = sender as? FloorpWebExtensionBackgroundRuntimeMessageSender {
+            return background.profileKey == profileKey &&
+                background.packageGeneration == active.packageGeneration
+        }
+        return true
+    }
+
+    /// Re-authenticates a sender after any consent, actor, or lifecycle await.
+    /// Package pages and backgrounds carry their immutable generation. A tab
+    /// content script is instead rebound to the current tab generation and
+    /// the coordinator's exact frame URL/host/script authorization.
+    private func requireCurrentSender(
+        _ sender: any FloorpWebExtensionMessageSender,
+        expectedActive: ActiveExtension
+    ) throws {
+        guard let currentActive = activeExtensions[sender.extensionID],
+              currentActive.packageGeneration == expectedActive.packageGeneration,
+              senderMatchesActivePackage(sender, active: currentActive) else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+
+        guard let tabSender = sender as? FloorpWebExtensionRuntimeMessageSender,
+              let liveScriptingTargetResolver else {
+            return
+        }
+        guard let target = try? liveScriptingTargetResolver(tabSender.tabID),
+              target.tab.tabID == tabSender.tabID,
+              target.tab.documentGeneration == tabSender.documentGeneration,
+              target.tab.isPrivate == tabSender.isPrivate,
+              let coordinator = FloorpWebExtensionCoordinator.installedCoordinator(
+                  for: profileKey.profileIdentifier,
+                  isPrivateBrowsing: profileKey.isPrivateBrowsing
+              ),
+              coordinator.authorizesBridge(
+                  for: sender.extensionID,
+                  currentURL: tabSender.url,
+                  isMainFrame: tabSender.isMainFrame,
+                  tab: target.tab
+              ) else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+    }
+
     private func runtimeURL(
         _ payload: FloorpWebExtensionMessagePayload,
         active: ActiveExtension,
@@ -780,7 +1084,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let requested = try parsePermissionDetails(details)
         let snapshot = await permissionBroker.snapshot(for: extensionID)
         let contains = requested.apiPermissions.isSubset(of: snapshot.apiPermissions) &&
-            requested.origins.isSubset(of: grantedOrigins(in: snapshot))
+            origins(requested.origins, areCoveredBy: grantedOrigins(in: snapshot))
         return try response(BooleanResponse(value: contains))
     }
 
@@ -791,13 +1095,19 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     ) async throws -> FloorpWebExtensionMessagePayload {
         let details = try decode(PermissionDetailsRequest.self, from: payload)
         let requested = try parsePermissionDetails(details)
-        guard requested.apiPermissions.isSubset(of: active.declaredPermissions),
-              requested.origins.isSubset(of: active.declaredHosts),
+        guard requested.apiPermissions.isSubset(of: active.optionalPermissions),
+              origins(requested.origins, areCoveredBy: active.optionalHosts),
               let permissionRequestAuthorizer else {
             throw FloorpWebExtensionMessageError.permissionDenied
         }
+        let mutationAuthority = try await permissionMutationAuthority(
+            active: active,
+            sender: sender
+        )
+        try requireCurrentSender(sender, expectedActive: active)
         let consent = FloorpWebExtensionPermissionRequest(
             extensionID: sender.extensionID,
+            packageGeneration: active.packageGeneration,
             apiPermissions: requested.apiPermissions,
             origins: requested.origins
         )
@@ -805,13 +1115,27 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             return try response(BooleanResponse(value: false))
         }
 
+        // Consent is an asynchronous profile/UI boundary. The package may be
+        // disabled, uninstalled, or replaced while the prompt is visible, so
+        // the sender and immutable package generation authenticated at ingress
+        // cannot be trusted after the await. Never apply an old package's
+        // approval to a newly installed generation that happens to reuse the
+        // same extension identifier.
+        try requireCurrentSender(sender, expectedActive: active)
+
         let current = await permissionBroker.snapshot(for: sender.extensionID)
+        try requireCurrentSender(sender, expectedActive: active)
         let updated = replacingGrantedOrigins(
             grantedOrigins(in: current).union(requested.origins),
             apiPermissions: current.apiPermissions.union(requested.apiPermissions),
             in: current
         )
-        try await persistPermissions(updated, extensionID: sender.extensionID)
+        try await persistPermissions(
+            updated,
+            authority: mutationAuthority,
+            expectedActive: active,
+            sender: sender
+        )
         return try response(BooleanResponse(value: true))
     }
 
@@ -822,11 +1146,17 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     ) async throws -> FloorpWebExtensionMessagePayload {
         let details = try decode(PermissionDetailsRequest.self, from: payload)
         let requested = try parsePermissionDetails(details)
-        guard requested.apiPermissions.isSubset(of: active.declaredPermissions),
-              requested.origins.isSubset(of: active.declaredHosts) else {
+        guard requested.apiPermissions.isSubset(of: active.optionalPermissions),
+              origins(requested.origins, areCoveredBy: active.optionalHosts) else {
             throw FloorpWebExtensionMessageError.malformedEnvelope
         }
+        let mutationAuthority = try await permissionMutationAuthority(
+            active: active,
+            sender: sender
+        )
+        try requireCurrentSender(sender, expectedActive: active)
         let current = await permissionBroker.snapshot(for: sender.extensionID)
+        try requireCurrentSender(sender, expectedActive: active)
         guard requested.apiPermissions.isSubset(of: current.apiPermissions),
               requested.origins.isSubset(of: grantedOrigins(in: current)) else {
             return try response(BooleanResponse(value: false))
@@ -836,7 +1166,12 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             apiPermissions: current.apiPermissions.subtracting(requested.apiPermissions),
             in: current
         )
-        try await persistPermissions(updated, extensionID: sender.extensionID)
+        try await persistPermissions(
+            updated,
+            authority: mutationAuthority,
+            expectedActive: active,
+            sender: sender
+        )
         return try response(BooleanResponse(value: true))
     }
 
@@ -861,6 +1196,15 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             }
         }
         return (permissions, origins)
+    }
+
+    private func origins(
+        _ requested: Set<FloorpWebExtensionMatchPattern>,
+        areCoveredBy available: Set<FloorpWebExtensionMatchPattern>
+    ) -> Bool {
+        requested.allSatisfy { requestedOrigin in
+            available.contains { $0.covers(requestedOrigin) }
+        }
     }
 
     private func grantedOrigins(
@@ -894,33 +1238,83 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         )
     }
 
+    private func permissionMutationAuthority(
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> PermissionMutationAuthority {
+        if permissionMutationHandler != nil {
+            return .injected(packageGeneration: active.packageGeneration)
+        }
+        guard let packageGeneration = active.packageGeneration,
+              let manager = FloorpWebExtensionPackageStoreRegistry.manager(
+                  for: profileKey.profileIdentifier,
+                  isPrivateBrowsing: profileKey.isPrivateBrowsing
+              ) else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        do {
+            let authorization = try await manager.authorizePermissionMutation(
+                for: sender.extensionID,
+                expectedGeneration: packageGeneration
+            )
+            return .liveManager(manager, authorization)
+        } catch FloorpWebExtensionPackageStoreError.inactivePackageGeneration,
+                FloorpWebExtensionPackageStoreError.packageNotInstalled {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+    }
+
     private func persistPermissions(
         _ snapshot: FloorpWebExtensionPermissionSnapshot,
-        extensionID: FloorpWebExtensionID
+        authority: PermissionMutationAuthority,
+        expectedActive: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
     ) async throws {
-        if let permissionMutationHandler {
-            try await permissionMutationHandler(snapshot, extensionID)
-        } else {
-            guard let manager = FloorpWebExtensionPackageStoreRegistry.manager(
-                for: profileKey.profileIdentifier,
-                isPrivateBrowsing: profileKey.isPrivateBrowsing
-            ) else {
+        switch authority {
+        case .liveManager(let manager, let authorization):
+            do {
+                try await manager.updateGrants(snapshot, authorization: authorization) {
+                    do {
+                        try self.requireCurrentSender(sender, expectedActive: expectedActive)
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+            } catch FloorpWebExtensionPackageStoreError.inactivePackageGeneration,
+                    FloorpWebExtensionPackageStoreError.packageNotInstalled {
+                throw FloorpWebExtensionMessageError.unauthorizedDocument
+            }
+            // The production manager reconciles and reactivates this host
+            // inside its lifecycle transaction. A second grant here could run
+            // after a disable and resurrect stale broker authority.
+            return
+
+        case .injected(let packageGeneration):
+            guard let permissionMutationHandler else {
                 throw FloorpWebExtensionMessageError.permissionDenied
             }
-            try await manager.updateGrants(snapshot, for: extensionID)
+            try await permissionMutationHandler(
+                snapshot,
+                sender.extensionID,
+                packageGeneration
+            )
+            try requireCurrentSender(sender, expectedActive: expectedActive)
         }
-        // The production manager reactivates this host with the durable
-        // snapshot. The explicit refresh also supports an injected transactional
-        // test/backend and keeps `contains` linearizable with the mutation.
+
+        // Injected transactional test/backends do not own host activation, so
+        // refresh the broker only after their durable mutation and a second
+        // package/sender identity check.
         await permissionBroker.grant(
             snapshot.apiPermissions,
             requestedHosts: snapshot.requestedHosts,
             hostAccess: snapshot.normalHostAccess,
             privateHostAccess: snapshot.privateHostAccess,
             privateBrowsingEnabled: snapshot.privateBrowsingEnabled,
-            to: extensionID
+            to: sender.extensionID
         )
-        activeExtensions[extensionID]?.permissions = snapshot.apiPermissions
+        try requireCurrentSender(sender, expectedActive: expectedActive)
+        activeExtensions[sender.extensionID]?.permissions = snapshot.apiPermissions
     }
 
     private func getRegisteredScripts(
@@ -967,7 +1361,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private func makeRegisteredScript(
         _ details: RegisteredScriptDetails
     ) throws -> FloorpWebExtensionRegisteredScript {
-        guard details.persistAcrossSessions != true,
+        guard details.persistAcrossSessions == false,
               let matches = details.matches,
               !matches.isEmpty else {
             throw FloorpWebExtensionMessageError.unsupportedOperation
@@ -1038,81 +1432,236 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         return world
     }
 
+    private func executeScript(
+        _ payload: FloorpWebExtensionMessagePayload,
+        extensionID: FloorpWebExtensionID
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        guard let rawRequest = try? JSONSerialization.jsonObject(with: payload.jsonData) as? [String: Any]
+        else {
+            throw FloorpWebExtensionMessageError.malformedEnvelope
+        }
+        // Functions disappear during ordinary JSON serialization, while some
+        // adapters encode their source. In either representation, absence of
+        // a package-file list is an explicit code-execution request rather
+        // than a malformed file request.
+        guard rawRequest["func"] == nil,
+              rawRequest["code"] == nil,
+              rawRequest["files"] != nil else {
+            throw FloorpWebExtensionMessageError.unsupportedCodeExecution
+        }
+
+        let request = try decode(ExecuteScriptRequest.self, from: payload)
+        guard request.functionSource == nil,
+              request.args == nil,
+              let files = request.files,
+              !files.isEmpty else {
+            throw FloorpWebExtensionMessageError.unsupportedCodeExecution
+        }
+        let target = try liveScriptingTarget(for: request.target)
+        let coordinator = try tryCoordinator()
+        guard coordinator.authorizesDynamicScripting(for: extensionID, tab: target.tab),
+              let active = activeExtensions[extensionID] else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        let sources = try files.map { path -> String in
+            guard let source = try? FloorpWebExtensionScriptSource(path),
+                  active.resourcePaths.contains(source.path),
+                  let loaded = try packageResourceLoader(extensionID, source) else {
+                throw FloorpWebExtensionMessageError.malformedEnvelope
+            }
+            return loaded
+        }
+        let world = try makeWorld(request.world)
+        let contentWorld: WKContentWorld = switch world {
+        case .isolated:
+            .world(name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: extensionID))
+        case .main:
+            .page
+        }
+        let rawResult: Any?
+        do {
+            rawResult = try await target.webView.callAsyncJavaScript(
+                sources.joined(separator: "\n;\n"),
+                contentWorld: contentWorld
+            )
+        } catch {
+            throw FloorpWebExtensionMessageError.handlerFailed
+        }
+        let currentTarget = try liveScriptingTarget(for: request.target)
+        guard currentTarget.tab == target.tab,
+              currentTarget.webView === target.webView else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+        let result: FloorpWebExtensionJSONValue?
+        if let rawResult {
+            do {
+                let data = try JSONSerialization.data(
+                    withJSONObject: rawResult,
+                    options: .fragmentsAllowed
+                )
+                result = try JSONDecoder().decode(FloorpWebExtensionJSONValue.self, from: data)
+            } catch {
+                throw FloorpWebExtensionMessageError.handlerFailed
+            }
+        } else {
+            result = nil
+        }
+        return try response([ScriptInjectionResultResponse(result: result)])
+    }
+
     private func insertCSS(
         _ payload: FloorpWebExtensionMessagePayload,
         extensionID: FloorpWebExtensionID
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(InsertCSSRequest.self, from: payload)
-        guard request.origin == nil || request.origin == "AUTHOR",
-              (request.css == nil) != ((request.files ?? []).isEmpty),
-              request.target.documentIds?.isEmpty != false,
-              request.target.frameIds == nil || request.target.frameIds == [0],
-              let liveScriptingTargetResolver else {
-            throw FloorpWebExtensionMessageError.unsupportedOperation
-        }
-        let target = try liveScriptingTargetResolver(request.target.tabId)
-        guard target.tab.tabID == request.target.tabId,
-              target.tab.isPrivate == profileKey.isPrivateBrowsing,
-              target.webView.url == target.tab.url,
-              !target.webView.isLoading else {
-            throw FloorpWebExtensionMessageError.unauthorizedDocument
-        }
-        let css: String
-        if let inlineCSS = request.css {
-            css = inlineCSS
-        } else {
-            guard let active = activeExtensions[extensionID] else {
-                throw FloorpWebExtensionMessageError.unauthorizedDocument
-            }
-            css = try (request.files ?? []).map { path in
-                guard let source = try? FloorpWebExtensionScriptSource(path),
-                      active.resourcePaths.contains(source.path),
-                      let loaded = try packageResourceLoader(extensionID, source) else {
-                    throw FloorpWebExtensionMessageError.malformedEnvelope
-                }
-                return loaded
-            }.joined(separator: "\n")
+        let target = try liveScriptingTarget(for: request)
+        let (source, css) = try cssInjectionSource(
+            for: request,
+            extensionID: extensionID,
+            loadContent: true
+        )
+        guard let css else {
+            throw FloorpWebExtensionMessageError.malformedEnvelope
         }
         let insertion = try await tryCoordinator().insertCSS(
             css,
             for: extensionID,
             target: .init(tab: target.tab),
             tab: target.tab,
-            into: target.webView
+            into: target.webView,
+            validateLiveTarget: {
+                try self.validateLiveScriptingTarget(target, for: request.target)
+            }
         )
-        return try response(CSSHandlesResponse(handles: [insertion.handle.rawValue]))
+        let identity = CSSInjectionIdentity(
+            tabID: target.tab.tabID,
+            documentGeneration: target.tab.documentGeneration,
+            frameIDs: request.target.frameIds,
+            origin: request.origin ?? "AUTHOR",
+            source: source
+        )
+        cssInsertions[extensionID, default: []].append(.init(
+            identity: identity,
+            handle: insertion.handle
+        ))
+        return try response(EmptyResponse())
     }
 
     private func removeCSS(
         _ payload: FloorpWebExtensionMessagePayload,
         extensionID: FloorpWebExtensionID
     ) async throws -> FloorpWebExtensionMessagePayload {
-        let request = try decode(RemoveCSSRequest.self, from: payload)
-        guard request.target.documentIds?.isEmpty != false,
-              request.target.frameIds == nil || request.target.frameIds == [0],
+        let request = try decode(InsertCSSRequest.self, from: payload)
+        let target = try liveScriptingTarget(for: request)
+        let (source, _) = try cssInjectionSource(
+            for: request,
+            extensionID: extensionID,
+            loadContent: false
+        )
+        let identity = CSSInjectionIdentity(
+            tabID: target.tab.tabID,
+            documentGeneration: target.tab.documentGeneration,
+            frameIDs: request.target.frameIds,
+            origin: request.origin ?? "AUTHOR",
+            source: source
+        )
+        let tracked = cssInsertions[extensionID] ?? []
+        let handles = tracked.filter { $0.identity == identity }.map(\.handle)
+        if !handles.isEmpty {
+            try await tryCoordinator().removeCSS(
+                handles,
+                for: extensionID,
+                target: .init(tab: target.tab),
+                tab: target.tab,
+                from: target.webView,
+                validateLiveTarget: {
+                    try self.validateLiveScriptingTarget(target, for: request.target)
+                }
+            )
+            cssInsertions[extensionID] = tracked.filter { $0.identity != identity }
+        }
+        return try response(EmptyResponse())
+    }
+
+    private func liveScriptingTarget(
+        for request: InsertCSSRequest
+    ) throws -> FloorpWebExtensionLiveScriptingTarget {
+        guard request.origin == nil || request.origin == "AUTHOR",
+              (request.css == nil) != ((request.files ?? []).isEmpty) else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+        return try liveScriptingTarget(for: request.target)
+    }
+
+    private func liveScriptingTarget(
+        for request: ScriptingTargetRequest
+    ) throws -> FloorpWebExtensionLiveScriptingTarget {
+        guard request.documentIds?.isEmpty != false,
+              request.frameIds == nil || request.frameIds == [0],
+              request.allFrames != true,
               let liveScriptingTargetResolver else {
             throw FloorpWebExtensionMessageError.unsupportedOperation
         }
-        let target = try liveScriptingTargetResolver(request.target.tabId)
-        guard target.tab.tabID == request.target.tabId,
+        let target = try liveScriptingTargetResolver(request.tabId)
+        guard target.tab.tabID == request.tabId,
               target.tab.isPrivate == profileKey.isPrivateBrowsing,
               target.webView.url == target.tab.url,
               !target.webView.isLoading else {
             throw FloorpWebExtensionMessageError.unauthorizedDocument
         }
-        let handles = try request.handles.map { value -> FloorpWebExtensionCSSHandle in
-            guard let handle = FloorpWebExtensionCSSHandle(rawValue: value) else {
+        return target
+    }
+
+    /// Re-resolves the browser-owned document immediately before a dynamic
+    /// stylesheet mutates the DOM. Any resolver failure at this second
+    /// boundary is an authorization failure: the request was valid for an
+    /// earlier document, not authority to fall through to the replacement.
+    private func validateLiveScriptingTarget(
+        _ expected: FloorpWebExtensionLiveScriptingTarget,
+        for request: ScriptingTargetRequest
+    ) throws {
+        let current: FloorpWebExtensionLiveScriptingTarget
+        do {
+            current = try liveScriptingTarget(for: request)
+        } catch {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+        guard current.tab == expected.tab,
+              current.webView === expected.webView else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+    }
+
+    private func cssInjectionSource(
+        for request: InsertCSSRequest,
+        extensionID: FloorpWebExtensionID,
+        loadContent: Bool
+    ) throws -> (CSSInjectionSource, String?) {
+        if let inlineCSS = request.css {
+            return (.inline(inlineCSS), loadContent ? inlineCSS : nil)
+        }
+        guard let active = activeExtensions[extensionID] else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+        let sources = try (request.files ?? []).map { path -> FloorpWebExtensionScriptSource in
+            guard let source = try? FloorpWebExtensionScriptSource(path),
+                  active.resourcePaths.contains(source.path) else {
                 throw FloorpWebExtensionMessageError.malformedEnvelope
             }
-            return handle
+            return source
         }
-        try await tryCoordinator().removeCSS(
-            handles,
-            for: extensionID,
-            target: .init(tab: target.tab),
-            from: target.webView
-        )
-        return try response(EmptyResponse())
+        let css: String?
+        if loadContent {
+            css = try sources.map { source in
+                guard let loaded = try packageResourceLoader(extensionID, source) else {
+                    throw FloorpWebExtensionMessageError.malformedEnvelope
+                }
+                return loaded
+            }.joined(separator: "\n")
+        } else {
+            css = nil
+        }
+        return (.files(sources.map(\.path)), css)
     }
 
     private func getEnabledStaticRuleSets(
@@ -1237,6 +1786,12 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         extensionID: FloorpWebExtensionID
     ) async throws -> FloorpWebExtensionMessagePayload {
         let request = try decode(DNRRegexRequest.self, from: payload)
+        if request.requireCapturing == true {
+            return try response(DNRRegexResponse(
+                isSupported: false,
+                reason: "Capturing-group substitution is not supported"
+            ))
+        }
         guard let support = try await tryCoordinator().dnrRegexSupport(
             request.regex,
             for: extensionID
@@ -1561,13 +2116,24 @@ enum FloorpWebExtensionAPIHostRegistry {
         )
     }
 
-    static func deactivate(
+    static func suspend(
         _ extensionID: FloorpWebExtensionID,
         profileKey: FloorpWebExtensionCoordinatorProfileKey
     ) async {
         guard let entry = entries[profileKey] else { return }
         entry.messageRuntime.removeExtension(extensionID)
-        await entry.host.deactivate(extensionID)
+        await entry.host.suspend(extensionID)
+    }
+
+    static func purge(
+        _ extensionID: FloorpWebExtensionID,
+        profileKey: FloorpWebExtensionCoordinatorProfileKey
+    ) async throws {
+        guard let entry = entries[profileKey] else {
+            throw FloorpWebExtensionError.unsupported("WebExtension API host is unavailable")
+        }
+        entry.messageRuntime.removeExtension(extensionID)
+        try await entry.host.purge(extensionID)
     }
 
     static func removeHost(for profileKey: FloorpWebExtensionCoordinatorProfileKey) async {

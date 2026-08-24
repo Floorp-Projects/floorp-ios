@@ -319,6 +319,16 @@ final class FloorpWebExtensionMessageRuntime {
         _ isMainFrame: Bool,
         _ trustedTab: FloorpWebExtensionTabContext
     ) -> Bool
+    typealias FrameScriptAuthorization = @MainActor (
+        _ scriptID: String,
+        _ revisionToken: String,
+        _ currentURL: URL,
+        _ isMainFrame: Bool,
+        _ trustedTab: FloorpWebExtensionTabContext
+    ) -> Bool
+
+    static let frameAuthorizationFunctionName = "__floorpWebExtensionAuthorizeFrameScript"
+    fileprivate static let frameAuthorizationOperation = "internal.authorizeFrameScript"
 
     private final class ControllerEntry {
         weak var controller: WKUserContentController?
@@ -378,7 +388,8 @@ final class FloorpWebExtensionMessageRuntime {
         for extensionID: FloorpWebExtensionID,
         tab: FloorpWebExtensionTabContext,
         on controller: WKUserContentController,
-        authorizeDocument: @escaping DocumentAuthorization
+        authorizeDocument: @escaping DocumentAuthorization,
+        authorizeFrameScript: @escaping FrameScriptAuthorization = { _, _, _, _, _ in false }
     ) {
         removeReleasedControllers()
         let identifier = ObjectIdentifier(controller)
@@ -387,6 +398,8 @@ final class FloorpWebExtensionMessageRuntime {
         let key = BridgeSessionKey(extensionID: extensionID, kind: .tab)
         entry.sessions.removeValue(forKey: key)?.detach()
 
+        let nativeHost = nativeAPIDispatcher as? FloorpWebExtensionAPIHost
+        let expectedPackageGeneration = nativeHost?.activePackageGeneration(for: extensionID)
         let session = FloorpWebExtensionMessageBridgeSession(
             extensionID: extensionID,
             backgroundHost: backgroundHost,
@@ -395,6 +408,18 @@ final class FloorpWebExtensionMessageRuntime {
             owner: "floorp.webextension.bridge.tab.\(extensionID.rawValue)",
             authorizeDocument: { url, isMainFrame in
                 authorizeDocument(url, isMainFrame, tab)
+            },
+            authorizeFrameScript: { scriptID, revisionToken, url, isMainFrame in
+                if let nativeHost {
+                    guard let expectedPackageGeneration,
+                          nativeHost.isActivePackageGeneration(
+                              expectedPackageGeneration,
+                              for: extensionID
+                          ) else {
+                        return false
+                    }
+                }
+                return authorizeFrameScript(scriptID, revisionToken, url, isMainFrame, tab)
             },
             makeSender: { url, isMainFrame in
                 FloorpWebExtensionRuntimeMessageSender(
@@ -652,6 +677,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
     private let contentPolicyOwner: String
     private let authorizeDocument: @MainActor (URL, Bool) -> Bool
+    private let authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)?
     private let makeSender: @MainActor (URL, Bool) -> any FloorpWebExtensionMessageSender
     private let nonce: String
     private let handlerName: String
@@ -665,6 +691,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         contentWorld: WKContentWorld,
         owner: String,
         authorizeDocument: @escaping @MainActor (URL, Bool) -> Bool,
+        authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)? = nil,
         makeSender: @escaping @MainActor (URL, Bool) -> any FloorpWebExtensionMessageSender
     ) {
         self.extensionID = extensionID
@@ -672,6 +699,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         self.nativeAPIDispatcher = nativeAPIDispatcher
         contentPolicyOwner = owner
         self.authorizeDocument = authorizeDocument
+        self.authorizeFrameScript = authorizeFrameScript
         self.makeSender = makeSender
         nonce = Self.makeNonce()
         handlerName = "floorpRuntime_\(nonce.prefix(24))"
@@ -744,6 +772,27 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         do {
             let envelope = try decodeEnvelope(body)
             requestID = envelope.requestID
+            if envelope.operation == FloorpWebExtensionMessageRuntime.frameAuthorizationOperation {
+                guard controller != nil,
+                      let authorizeFrameScript else {
+                    throw FloorpWebExtensionMessageError.unauthorizedDocument
+                }
+                let request = try envelope.payload.decode(FrameAuthorizationRequest.self)
+                guard (1...128).contains(request.scriptID.utf8.count),
+                      (1...128).contains(request.revisionToken.utf8.count) else {
+                    throw FloorpWebExtensionMessageError.malformedEnvelope
+                }
+                let authorized = authorizeFrameScript(
+                    request.scriptID,
+                    request.revisionToken,
+                    currentURL,
+                    isMainFrame
+                )
+                return try Self.successReply(
+                    FloorpWebExtensionMessagePayload(FrameAuthorizationResponse(authorized: authorized)),
+                    requestID: envelope.requestID
+                )
+            }
             guard authorizeDocument(currentURL, isMainFrame) else {
                 throw FloorpWebExtensionMessageError.unauthorizedDocument
             }
@@ -772,6 +821,15 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         let requestID: String
         let operation: String
         let payload: FloorpWebExtensionMessagePayload
+    }
+
+    private struct FrameAuthorizationRequest: Decodable {
+        let scriptID: String
+        let revisionToken: String
+    }
+
+    private struct FrameAuthorizationResponse: Encodable {
+        let authorized: Bool
     }
 
     private func decodeEnvelope(_ body: Any) throws -> Envelope {
@@ -922,6 +980,23 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
               return reply.hasPayload ? reply.payload : undefined;
             });
           };
+          Object.defineProperty(globalThis, \(javaScriptLiteral(FloorpWebExtensionMessageRuntime.frameAuthorizationFunctionName)), {
+            value: async (scriptId, revisionToken) => {
+              if (typeof scriptId !== "string" || scriptId.length < 1 || scriptId.length > 128 ||
+                  typeof revisionToken !== "string" || revisionToken.length < 1 || revisionToken.length > 128) {
+                return false;
+              }
+              try {
+                const result = await request("internal.authorizeFrameScript", {scriptID: scriptId, revisionToken});
+                return result?.authorized === true;
+              } catch (_) {
+                return false;
+              }
+            },
+            enumerable: false,
+            configurable: false,
+            writable: false
+          });
           const invokeMessageListener = async (listener, message, sender) => {
             let didRespond = false;
             let resolveResponse;
@@ -1037,7 +1112,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
               return request("scripting.unregisterContentScripts", {ids: filter?.ids});
             },
             insertCSS(details) {
-              return request("scripting.insertCSS", details).then((result) => result.handles);
+              return request("scripting.insertCSS", details).then(() => undefined);
             },
             removeCSS(details) { return request("scripting.removeCSS", details); },
             executeScript(details) { return request("scripting.executeScript", details); }

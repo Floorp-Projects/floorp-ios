@@ -572,9 +572,6 @@ actor FloorpWebExtensionDNRStore {
         }
         try validateRules(addRules, scope: scope)
         try validateDistinctIdentifiers(removeRuleIDs, scope: scope)
-        for identifier in removeRuleIDs where existing[identifier] == nil {
-            throw FloorpWebExtensionDNRError.ruleNotFound(identifier, scope)
-        }
 
         var candidate = existing
         for identifier in removeRuleIDs {

@@ -344,25 +344,88 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 /// Settings-facing live package boundary. Persistent package mutations remain
 /// actor-isolated in the store, while this MainActor wrapper reconciles the
 /// corresponding Coordinator policy before reporting success to the UI.
+///
+/// A MainActor class is still re-entrant while it awaits package I/O or WebKit
+/// compilation.  The per-extension gate below therefore serializes an entire
+/// lifecycle transition, rather than merely making each individual store
+/// write serial.  In particular, a reload that captured an enabled package
+/// cannot reactivate it after a concurrent disable or uninstall has won.
+private actor FloorpWebExtensionLifecycleMutationGate {
+    private var isLocked = false
+    private var waiters = [CheckedContinuation<Void, Never>]()
+
+    func acquire() async {
+        guard isLocked else {
+            isLocked = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
 @MainActor
 final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsManaging {
+    /// Selects whether a reconciliation only revokes live execution or also
+    /// purges durable extension-owned data. Only explicit uninstall requests
+    /// may use `.uninstall`; reload, disable, and grant changes preserve the
+    /// package's durable state for a later reactivation.
+    enum ReconciliationOperation: Sendable, Equatable {
+        case suspend
+        case uninstall
+    }
+
+    /// Ephemeral authority to replace grants for one enabled immutable
+    /// package generation. The revision also invalidates consent across a
+    /// disable/re-enable or reload that retains the same package bytes.
+    struct PermissionMutationAuthorization: Sendable, Equatable {
+        let extensionID: FloorpWebExtensionID
+        let packageGeneration: String
+        fileprivate let lifecycleRevision: UInt64
+    }
+
     typealias Reconciler = @MainActor (
         FloorpWebExtensionID,
-        FloorpWebExtensionInstalledPackage?
+        FloorpWebExtensionInstalledPackage?,
+        ReconciliationOperation
+    ) async throws -> Void
+    typealias PreparedReconciler = @MainActor (
+        FloorpWebExtensionID,
+        FloorpWebExtensionInstalledPackage,
+        ReconciliationOperation,
+        FloorpWebExtensionPackageStore.PreparedPackageResources
     ) async throws -> Void
     typealias BundledPackageURLResolver = @MainActor (FloorpWebExtensionBundledCatalogItem) -> URL?
+    typealias CurrentCompositionCheck = @MainActor () -> Bool
 
     let store: FloorpWebExtensionPackageStore
+    private let isCurrentComposition: CurrentCompositionCheck
     private let reconcile: Reconciler
+    private let reconcilePrepared: PreparedReconciler?
     private let bundledPackageURL: BundledPackageURLResolver
+    private var lifecycleMutationGates = [FloorpWebExtensionID: FloorpWebExtensionLifecycleMutationGate]()
+    private var lifecycleRevisions = [FloorpWebExtensionID: UInt64]()
 
     init(
         store: FloorpWebExtensionPackageStore,
+        isCurrentComposition: @escaping CurrentCompositionCheck = { true },
         reconcile: @escaping Reconciler,
-        bundledPackageURL: @escaping BundledPackageURLResolver = { $0.packageURL() }
+        bundledPackageURL: @escaping BundledPackageURLResolver = { $0.packageURL() },
+        reconcilePrepared: PreparedReconciler? = nil
     ) {
         self.store = store
+        self.isCurrentComposition = isCurrentComposition
         self.reconcile = reconcile
+        self.reconcilePrepared = reconcilePrepared
         self.bundledPackageURL = bundledPackageURL
     }
 
@@ -393,6 +456,20 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     }
 
     func installBundledPackage(_ item: FloorpWebExtensionBundledCatalogItem) async throws {
+        let gate = lifecycleMutationGate(for: item.id)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        invalidatePermissionAuthorizations(for: item.id)
+
+        // A prior interrupted uninstall leaves a non-loadable tombstone. An
+        // explicit reinstall is also a safe opportunity to finish that purge;
+        // never overwrite the tombstone and strand profile-owned data.
+        if await store.hasPendingDataPurge(for: item.id) {
+            try await reconcile(item.id, nil, .suspend)
+            try await reconcile(item.id, nil, .uninstall)
+            try await store.completeUninstallCleanup(item.id)
+        }
+
         guard let packageURL = bundledPackageURL(item) else {
             throw FloorpWebExtensionPackageStoreError.resourceUnavailable(item.packageDirectoryName)
         }
@@ -406,24 +483,119 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             privateHostAccess: .denied,
             privateBrowsingEnabled: false
         )
-        let installed = try await store.installBundledPackage(
+        let transaction = try await store.installBundledPackageTransaction(
             at: packageURL,
             expectedExtensionID: item.id,
             initialGrants: initialGrants
         )
+        let installed = transaction.installedPackage
+        let previousPackage = transaction.previousPackage
+
+        guard let previousPackage else {
+            do {
+                try await reconcile(installed.extensionID, installed, .suspend)
+            } catch {
+                try? await store.recordActivationFailure(
+                    for: installed.extensionID,
+                    expectedGeneration: installed.generation
+                )
+                throw error
+            }
+            return
+        }
+
+        // The journal is durable but the active registry still points at the
+        // previous generation. Revoke that live generation (including its DNR
+        // mutation gate) before making replacement resources observable.
         do {
-            try await reconcile(installed.extensionID, installed)
+            if previousPackage.isEnabled {
+                try await reconcile(previousPackage.extensionID, nil, .suspend)
+            }
         } catch {
-            try? await store.recordActivationFailure(for: installed.extensionID)
+            try? await store.abortPreparedBundledPackageUpdate(
+                extensionID: item.id,
+                replacementGeneration: installed.generation
+            )
+            if previousPackage.isEnabled {
+                try? await reconcile(
+                    previousPackage.extensionID,
+                    previousPackage,
+                    .suspend
+                )
+            }
+            throw error
+        }
+
+        if installed.isEnabled {
+            do {
+                let resources = try await store.preparedPackageResources(
+                    extensionID: item.id,
+                    replacementGeneration: installed.generation
+                )
+                if let reconcilePrepared {
+                    try await reconcilePrepared(
+                        installed.extensionID,
+                        installed,
+                        .suspend,
+                        resources
+                    )
+                } else {
+                    // Unit reconcilers which do not load package bytes may use
+                    // the legacy boundary. Production always supplies the
+                    // transaction-scoped resource-aware reconciler.
+                    try await reconcile(installed.extensionID, installed, .suspend)
+                }
+            } catch {
+                try? await reconcile(installed.extensionID, nil, .suspend)
+                try? await store.abortPreparedBundledPackageUpdate(
+                    extensionID: item.id,
+                    replacementGeneration: installed.generation
+                )
+                if previousPackage.isEnabled {
+                    try? await reconcile(
+                        previousPackage.extensionID,
+                        previousPackage,
+                        .suspend
+                    )
+                }
+                throw error
+            }
+        }
+
+        do {
+            try await store.commitPreparedBundledPackageUpdate(
+                extensionID: item.id,
+                replacementGeneration: installed.generation
+            )
+        } catch {
+            if installed.isEnabled {
+                try? await reconcile(installed.extensionID, nil, .suspend)
+            }
+            try? await store.abortPreparedBundledPackageUpdate(
+                extensionID: item.id,
+                replacementGeneration: installed.generation
+            )
+            if previousPackage.isEnabled {
+                try? await reconcile(
+                    previousPackage.extensionID,
+                    previousPackage,
+                    .suspend
+                )
+            }
             throw error
         }
     }
 
     func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) async throws {
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        invalidatePermissionAuthorizations(for: extensionID)
+
         if !isEnabled {
             // Revoke live privileges before persisting the disable. If the
             // registry write fails, the extension remains safely inactive.
-            try await reconcile(extensionID, nil)
+            try await reconcile(extensionID, nil, .suspend)
         }
         try await store.setEnabled(isEnabled, for: extensionID)
         if isEnabled {
@@ -431,35 +603,226 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
             }
             do {
-                try await reconcile(extensionID, package)
+                try await reconcile(extensionID, package, .suspend)
             } catch {
-                try? await store.recordActivationFailure(for: extensionID)
+                try? await store.recordActivationFailure(
+                    for: extensionID,
+                    expectedGeneration: package.generation
+                )
                 throw error
             }
         }
+    }
+
+    /// Captures the currently enabled generation and lifecycle revision before
+    /// a trusted consent UI is presented. The returned value is meaningful
+    /// only to this manager instance and is consumed by `updateGrants`.
+    func authorizePermissionMutation(
+        for extensionID: FloorpWebExtensionID,
+        expectedGeneration: String
+    ) async throws -> PermissionMutationAuthorization {
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+
+        guard isCurrentComposition(),
+              let package = await store.installedPackage(for: extensionID),
+              package.isEnabled,
+              package.generation == expectedGeneration,
+              isCurrentComposition() else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        return .init(
+            extensionID: extensionID,
+            packageGeneration: expectedGeneration,
+            lifecycleRevision: lifecycleRevisions[extensionID, default: 0]
+        )
     }
 
     func updateGrants(
         _ grants: FloorpWebExtensionPermissionSnapshot,
-        for extensionID: FloorpWebExtensionID
+        authorization: PermissionMutationAuthorization,
+        validateSender: @MainActor () -> Bool = { true }
     ) async throws {
+        let extensionID = authorization.extensionID
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+
+        guard lifecycleRevisions[extensionID, default: 0] == authorization.lifecycleRevision,
+              isCurrentComposition(),
+              let previousPackage = await store.installedPackage(for: extensionID),
+              previousPackage.isEnabled,
+              previousPackage.generation == authorization.packageGeneration,
+              isCurrentComposition(),
+              validateSender() else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        // Consume the authorization before the first reconciliation await.
+        // A second request authorized from the same grant snapshot must not
+        // overwrite this transaction and lose permissions it did not observe.
+        invalidatePermissionAuthorizations(for: extensionID)
+
         // Treat every grant replacement as a possible revocation. This avoids
         // a window where an old host grant remains live after user consent.
-        try await reconcile(extensionID, nil)
-        try await store.updateGrants(grants, for: extensionID)
+        try await reconcile(extensionID, nil, .suspend)
+        guard isCurrentComposition(), validateSender() else {
+            throw FloorpWebExtensionPackageStoreError.stalePackageComposition
+        }
+        do {
+            try await store.updateGrants(
+                grants,
+                for: extensionID,
+                expectedGeneration: authorization.packageGeneration
+            )
+        } catch {
+            // The registry is unchanged, so restore the exact generation that
+            // was revoked before the failed durable update.
+            do {
+                try await reconcile(extensionID, previousPackage, .suspend)
+            } catch {
+                try? await store.recordActivationFailure(
+                    for: extensionID,
+                    expectedGeneration: previousPackage.generation
+                )
+            }
+            throw error
+        }
         if let package = await store.installedPackage(for: extensionID), package.isEnabled {
             do {
-                try await reconcile(extensionID, package)
+                try await reconcile(extensionID, package, .suspend)
             } catch {
-                try? await store.recordActivationFailure(for: extensionID)
+                try? await store.recordActivationFailure(
+                    for: extensionID,
+                    expectedGeneration: package.generation
+                )
                 throw error
             }
         }
     }
 
+    /// Serializes startup restoration with every Settings/API lifecycle
+    /// mutation. The full captured record is compared, not only its immutable
+    /// package generation, because grants and durable DNR state may change
+    /// without replacing the package directory.
+    @discardableResult
+    func restoreInstalledPackageIfCurrent(
+        _ expectedPackage: FloorpWebExtensionInstalledPackage
+    ) async throws -> Bool {
+        let extensionID = expectedPackage.extensionID
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+
+        guard isCurrentComposition(),
+              let currentPackage = await store.installedPackage(for: extensionID),
+              currentPackage == expectedPackage,
+              currentPackage.isEnabled,
+              isCurrentComposition() else {
+            return false
+        }
+        invalidatePermissionAuthorizations(for: extensionID)
+        do {
+            try await reconcile(extensionID, currentPackage, .suspend)
+            guard isCurrentComposition(),
+                  await store.installedPackage(for: extensionID) == currentPackage else {
+                throw FloorpWebExtensionPackageStoreError.stalePackageComposition
+            }
+            return true
+        } catch {
+            if isCurrentComposition() {
+                try? await store.recordActivationFailure(
+                    for: extensionID,
+                    expectedGeneration: currentPackage.generation
+                )
+            }
+            throw error
+        }
+    }
+
     func uninstall(_ extensionID: FloorpWebExtensionID) async throws {
-        try await reconcile(extensionID, nil)
-        try await store.uninstall(extensionID)
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        invalidatePermissionAuthorizations(for: extensionID)
+
+        let installedPackage = await store.installedPackage(for: extensionID)
+        let hasPendingPurge = await store.hasPendingDataPurge(for: extensionID)
+        guard installedPackage != nil || hasPendingPurge else {
+            throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
+        }
+
+        // Phase 1 is reversible and retains every durable byte. If the package
+        // registry commit fails, restore the captured immutable generation so
+        // package, data, and live state remain consistent.
+        try await reconcile(extensionID, nil, .suspend)
+        if let installedPackage {
+            do {
+                try await store.uninstall(extensionID)
+            } catch {
+                do {
+                    try await reconcile(extensionID, installedPackage, .suspend)
+                } catch {
+                    try? await store.recordActivationFailure(
+                        for: extensionID,
+                        expectedGeneration: installedPackage.generation
+                    )
+                }
+                throw error
+            }
+        }
+
+        // Phase 2 runs only while a durable tombstone makes the extension
+        // non-loadable. Any cleanup failure is surfaced and leaves that
+        // tombstone available for an idempotent retry.
+        try await reconcile(extensionID, nil, .uninstall)
+        try await store.completeUninstallCleanup(extensionID)
+    }
+
+    /// Rebuilds one already-enabled package from its immutable generation.
+    /// `runtime.reload()` never re-enables a disabled package and, if the
+    /// reactivation fails, preserves the same fail-closed state as an enable
+    /// or package update failure.
+    func reload(_ extensionID: FloorpWebExtensionID) async throws {
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        invalidatePermissionAuthorizations(for: extensionID)
+
+        guard let package = await store.installedPackage(for: extensionID) else {
+            throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
+        }
+        guard package.isEnabled else {
+            throw FloorpWebExtensionError.unsupported("Cannot reload a disabled extension")
+        }
+
+        try await reconcile(extensionID, nil, .suspend)
+        do {
+            try await reconcile(extensionID, package, .suspend)
+        } catch {
+            try? await store.recordActivationFailure(
+                for: extensionID,
+                expectedGeneration: package.generation
+            )
+            throw error
+        }
+    }
+
+    private func lifecycleMutationGate(
+        for extensionID: FloorpWebExtensionID
+    ) -> FloorpWebExtensionLifecycleMutationGate {
+        if let existing = lifecycleMutationGates[extensionID] {
+            return existing
+        }
+        let gate = FloorpWebExtensionLifecycleMutationGate()
+        lifecycleMutationGates[extensionID] = gate
+        return gate
+    }
+
+    private func invalidatePermissionAuthorizations(
+        for extensionID: FloorpWebExtensionID
+    ) {
+        lifecycleRevisions[extensionID, default: 0] &+= 1
     }
 
     private static func settingsPermissionCategories(

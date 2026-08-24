@@ -150,6 +150,130 @@ final class FloorpWebExtensionFoundationTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(manifest.dnrRuleResources.first?.path.path, "rules/base.json")
     }
 
+    func testMV3ManifestPreflightExposesOptionalPermissionDeclarations() throws {
+        let manifest = try FloorpWebExtensionManifest.decode(Data("""
+        {
+          "manifest_version": 3,
+          "name": "Optional permissions",
+          "version": "1.0",
+          "permissions": ["storage"],
+          "host_permissions": ["https://required.example/*"],
+          "optional_permissions": ["alarms", "tabs"],
+          "optional_host_permissions": [
+            "https://optional.example/*",
+            "*://*.example.net/content/*"
+          ]
+        }
+        """.utf8))
+
+        let report = FloorpWebExtensionManifest.preflight(manifest)
+
+        XCTAssertEqual(report.status, .supported)
+        XCTAssertEqual(manifest.optionalAPIPermissions, [.alarms, .tabs])
+        XCTAssertEqual(
+            Set(manifest.optionalHostPermissions.map(\.original)),
+            ["https://optional.example/*", "*://*.example.net/content/*"]
+        )
+        XCTAssertEqual(
+            report.capabilities.first(where: { $0.name == "optional_permission.alarms" })?.status,
+            .supported
+        )
+        XCTAssertEqual(
+            report.capabilities.first(where: { $0.name == "optional_host_permission.https://optional.example/*" })?.status,
+            .supported
+        )
+    }
+
+    func testMV3ManifestPreflightFailsClosedForInvalidOptionalPermissionDeclarations() throws {
+        let report = try FloorpWebExtensionManifest.preflight(
+            manifestData: Data("""
+            {
+              "manifest_version": 3,
+              "name": "Invalid optional permissions",
+              "version": "1.0",
+              "permissions": ["storage"],
+              "host_permissions": ["https://required.example/*"],
+              "optional_permissions": ["tabs", "tabs", "cookies", "storage"],
+              "optional_host_permissions": [
+                "https://required.example/*",
+                "https://optional.example/*",
+                "https://optional.example/*"
+              ]
+            }
+            """.utf8)
+        )
+
+        XCTAssertEqual(report.status, .rejected)
+        XCTAssertFalse(report.isActivationAllowed)
+        XCTAssertEqual(
+            report.capabilities.first(where: { $0.name == "optional_permission.tabs" })?.status,
+            .supported
+        )
+        XCTAssertTrue(
+            report.capabilities.filter { $0.name == "optional_permission.tabs" }
+                .contains(where: { $0.status == .rejected })
+        )
+        XCTAssertEqual(
+            report.capabilities.first(where: { $0.name == "optional_permission.cookies" })?.status,
+            .rejected
+        )
+        XCTAssertEqual(
+            report.capabilities.first(where: { $0.name == "optional_permission.storage" })?.status,
+            .rejected
+        )
+        XCTAssertEqual(
+            report.capabilities.first(where: {
+                $0.name == "optional_host_permission.https://required.example/*"
+            })?.status,
+            .rejected
+        )
+        XCTAssertTrue(
+            report.capabilities.filter {
+                $0.name == "optional_host_permission.https://optional.example/*"
+            }.contains(where: { $0.status == .rejected })
+        )
+        XCTAssertThrowsError(
+            try FloorpWebExtensionManifest.decode(Data("""
+            {
+              "manifest_version": 3,
+              "name": "Malformed optional host",
+              "version": "1.0",
+              "optional_host_permissions": ["https://not-a-pattern.example"]
+            }
+            """.utf8))
+        )
+    }
+
+    func testMV3ManifestDecodesPreOptionalPermissionStoredPreflight() throws {
+        let manifest = try FloorpWebExtensionManifest.decode(Data("""
+        {
+          "manifest_version": 3,
+          "name": "Stored preflight compatibility",
+          "version": "1.0",
+          "permissions": ["storage"],
+          "optional_permissions": ["tabs"],
+          "optional_host_permissions": ["https://optional.example/*"]
+        }
+        """.utf8))
+        var stored = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(manifest)) as? [String: Any]
+        )
+        stored.removeValue(forKey: "optionalPermissionNames")
+        stored.removeValue(forKey: "optionalAPIPermissions")
+        stored.removeValue(forKey: "optionalHostPermissions")
+
+        let restored = try JSONDecoder().decode(
+            FloorpWebExtensionManifest.self,
+            from: JSONSerialization.data(withJSONObject: stored, options: [.sortedKeys])
+        )
+
+        XCTAssertEqual(restored.permissionNames, ["storage"])
+        XCTAssertEqual(restored.apiPermissions, [.storage])
+        XCTAssertTrue(restored.optionalPermissionNames.isEmpty)
+        XCTAssertTrue(restored.optionalAPIPermissions.isEmpty)
+        XCTAssertTrue(restored.optionalHostPermissions.isEmpty)
+    }
+
     func testMV3ManifestPreflightFailsClosedForUnknownPermissionAndUnsupportedDNRAction() throws {
         let report = try FloorpWebExtensionManifest.preflight(
             manifestData: Data("""

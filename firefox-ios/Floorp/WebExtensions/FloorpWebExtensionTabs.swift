@@ -190,6 +190,20 @@ final class FloorpWebExtensionProfileTabsHost: FloorpWebExtensionTabsHostAdaptin
         }
     }
 
+    /// Resolves a live main-frame document for the native `scripting` API.
+    /// This stays behind the profile-owned tab adapter so extension JavaScript
+    /// can never supply a `WKWebView` or forge a document context.
+    func liveScriptingTarget(tabID: Int) throws -> FloorpWebExtensionLiveScriptingTarget {
+        let tab = try liveTab(for: tabID)
+        guard tab.isPrivate == isPrivateBrowsing,
+              tab.profile.localName() == profileIdentifier,
+              let document = tab.floorpWebExtensionActiveDocumentContext,
+              let webView = tab.webView else {
+            throw FloorpWebExtensionTabsError.hostTabInvariantViolation
+        }
+        return .init(tab: document, webView: webView)
+    }
+
     private func activeTabManager() throws -> TabManager {
         guard let manager = windowManager?.allWindowTabManagers().first(where: { tabManager in
             (

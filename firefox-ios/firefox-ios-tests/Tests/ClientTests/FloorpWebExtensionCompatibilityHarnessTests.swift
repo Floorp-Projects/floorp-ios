@@ -175,7 +175,7 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
         )
     }
 
-    func testVerifiesCheckedInDemandingMV3FixturePackage() throws {
+    func testVerifiesCheckedInDemandingMV3FixturePackage() async throws {
         let metadata = try FloorpWebExtensionCompatibilityHarness.verifyFixturePackage(
             at: try checkedInFixtureDirectory(named: "demanding-mv3")
         )
@@ -185,9 +185,36 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
         XCTAssertEqual(metadata.fixture.buildFlavor, "local-stage3-fixture")
         XCTAssertEqual(
             metadata.fixture.packageSHA256,
-            "3fcd3274c3f0502a23f029b6e827351a854c2cb1f1aadc668877d7ace5206c24"
+            "05c6dc2719aea1429f70cffc1c0fc1ad8dcb053a842eb0f3a3fa994424f33d37"
         )
         XCTAssertEqual(metadata.requiredOperatingSystems, ["iOS 15", "iOS 18"])
+        XCTAssertEqual(
+            metadata.generatedRulesetLog,
+            "static=5000; dynamic=runtime-managed; session=runtime-managed; unsupported=0"
+        )
+
+        let staticRuleData = try Data(contentsOf: try checkedInFixtureDirectory(named: "demanding-mv3")
+            .appendingPathComponent("rules/static.json"))
+        let staticRules = try materializeDemandingFixtureStaticRules(from: staticRuleData)
+        XCTAssertEqual(staticRules.count, 5_000)
+        XCTAssertEqual(staticRules.map(\.id), Array(1 ... 5_000))
+        XCTAssertEqual(staticRules[39].condition.urlFilter, "metrics2.fixture.test")
+        XCTAssertTrue(staticRules.dropFirst(40).allSatisfy {
+            $0.action.type == .block &&
+                $0.priority == 1 &&
+                $0.condition.resourceTypes == [.image] &&
+                $0.condition.urlFilter == "load\(String(format: "%04d", $0.id)).fixture.test"
+        })
+
+        let dnrStore = try FloorpWebExtensionDNRStore(
+            staticRuleSets: [.init(identifier: "large-static", rules: staticRules)],
+            enabledStaticRuleSetIDs: ["large-static"]
+        )
+        let compilation = await dnrStore.currentCompilation()
+        XCTAssertEqual(compilation.report.acceptedRuleCount, 0)
+        XCTAssertEqual(compilation.report.transformedRuleCount, 5_000)
+        XCTAssertEqual(compilation.report.rejectedRuleCount, 0)
+        XCTAssertEqual(compilation.compiledRules.count, 5_000)
 
         let contentMessaging = try FloorpWebExtensionCompatibilityHarness.verifyFixturePackage(
             at: try checkedInFixtureDirectory(named: "content-messaging-mv3")
@@ -383,5 +410,45 @@ final class FloorpWebExtensionCompatibilityHarnessTests: XCTestCase, @unchecked 
             package.append(resources[path]!)
         }
         return SHA256.hash(data: package).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func materializeDemandingFixtureStaticRules(
+        from data: Data
+    ) throws -> [FloorpWebExtensionDNRRule] {
+        let rawRules = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+            "The demanding fixture must contain a JSON rule array."
+        )
+        let supportedConditionKeys: Set<String> = ["urlFilter", "resourceTypes"]
+
+        return try rawRules.map { rawRule in
+            let id = try XCTUnwrap(rawRule["id"] as? Int)
+            let priority = rawRule["priority"] as? Int ?? 1
+            let actionObject = try XCTUnwrap(rawRule["action"] as? [String: Any])
+            let actionType = try XCTUnwrap(
+                FloorpWebExtensionDNRActionType(rawValue: try XCTUnwrap(actionObject["type"] as? String))
+            )
+            let conditionObject = try XCTUnwrap(rawRule["condition"] as? [String: Any])
+            guard Set(conditionObject.keys).isSubset(of: supportedConditionKeys) else {
+                throw NSError(
+                    domain: "FloorpWebExtensionCompatibilityHarnessTests",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "The demanding fixture has an unsupported condition key."]
+                )
+            }
+            let resourceTypes = try (conditionObject["resourceTypes"] as? [String] ?? []).map {
+                try XCTUnwrap(FloorpWebExtensionDNRResourceType(rawValue: $0))
+            }
+
+            return .init(
+                id: id,
+                priority: priority,
+                action: .init(type: actionType),
+                condition: .init(
+                    urlFilter: conditionObject["urlFilter"] as? String,
+                    resourceTypes: resourceTypes
+                )
+            )
+        }
     }
 }

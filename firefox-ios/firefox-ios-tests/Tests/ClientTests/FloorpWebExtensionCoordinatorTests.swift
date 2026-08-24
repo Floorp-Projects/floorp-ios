@@ -140,6 +140,86 @@ final class FloorpWebExtensionCoordinatorTests: XCTestCase {
         ))
     }
 
+    func testActiveTabGrantDoesNotAuthorizeCrossOriginChildFrame() async throws {
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: CoordinatorRuleListCompiler())
+        let coordinator = makeCoordinator(runtime: runtime)
+        let tab = testTab()
+        let allURLs = try FloorpWebExtensionMatchPattern("<all_urls>")
+        let script = try registeredScript(
+            id: "active-tab-frames",
+            matches: [allURLs],
+            source: "content.js",
+            allFrames: true
+        )
+
+        try await coordinator.registerScripts([script], for: extensionID)
+        await coordinator.grantPermissions(
+            [.activeTab, .scripting],
+            requestedHosts: [allURLs],
+            hostAccess: .denied,
+            to: extensionID
+        )
+        try await coordinator.grantActiveTab(to: extensionID, for: tab)
+
+        let snapshot = try XCTUnwrap(coordinator.preNavigationPolicies(for: tab).first)
+        let frameAuthorization = try XCTUnwrap(snapshot.scriptPolicies.first?.frameAuthorization)
+        XCTAssertEqual(frameAuthorization.scriptID, "active-tab-frames")
+        XCTAssertTrue(coordinator.authorizesBridge(
+            for: extensionID,
+            currentURL: URL(string: "https://allowed.example/same-origin-frame")!,
+            isMainFrame: false,
+            tab: tab
+        ))
+        XCTAssertFalse(coordinator.authorizesBridge(
+            for: extensionID,
+            currentURL: URL(string: "https://ungranted.example/cross-origin-frame")!,
+            isMainFrame: false,
+            tab: tab
+        ))
+        XCTAssertTrue(coordinator.authorizesFrameScript(
+            for: extensionID,
+            scriptID: "active-tab-frames",
+            revisionToken: frameAuthorization.revisionToken,
+            currentURL: URL(string: "https://allowed.example/same-origin-frame")!,
+            isMainFrame: false,
+            tab: tab
+        ))
+        XCTAssertFalse(coordinator.authorizesFrameScript(
+            for: extensionID,
+            scriptID: "unexpected-script-id",
+            revisionToken: frameAuthorization.revisionToken,
+            currentURL: URL(string: "https://allowed.example/same-origin-frame")!,
+            isMainFrame: false,
+            tab: tab
+        ))
+
+        try await coordinator.updateScripts(
+            [.init(id: "active-tab-frames", runAt: .documentStart)],
+            for: extensionID
+        )
+        let replacementSnapshot = try XCTUnwrap(coordinator.preNavigationPolicies(for: tab).first)
+        let replacementAuthorization = try XCTUnwrap(
+            replacementSnapshot.scriptPolicies.first?.frameAuthorization
+        )
+        XCTAssertNotEqual(replacementAuthorization.revisionToken, frameAuthorization.revisionToken)
+        XCTAssertFalse(coordinator.authorizesFrameScript(
+            for: extensionID,
+            scriptID: "active-tab-frames",
+            revisionToken: frameAuthorization.revisionToken,
+            currentURL: URL(string: "https://allowed.example/same-origin-frame")!,
+            isMainFrame: false,
+            tab: tab
+        ))
+        XCTAssertTrue(coordinator.authorizesFrameScript(
+            for: extensionID,
+            scriptID: "active-tab-frames",
+            revisionToken: replacementAuthorization.revisionToken,
+            currentURL: URL(string: "https://allowed.example/same-origin-frame")!,
+            isMainFrame: false,
+            tab: tab
+        ))
+    }
+
     func testDNRStoreIsNotReplacedWhenRuntimeCompilationFails() async throws {
         let compiler = CoordinatorRuleListCompiler()
         let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: compiler)
@@ -250,13 +330,16 @@ final class FloorpWebExtensionCoordinatorTests: XCTestCase {
             for: extensionID,
             target: target,
             tab: tab,
-            into: webView
+            into: webView,
+            validateLiveTarget: {}
         )
         try await coordinator.removeCSS(
             [insertion.handle],
             for: extensionID,
             target: target,
-            from: webView
+            tab: tab,
+            from: webView,
+            validateLiveTarget: {}
         )
 
         let privateTab = testTab(isPrivate: true)
@@ -266,7 +349,8 @@ final class FloorpWebExtensionCoordinatorTests: XCTestCase {
                 for: self.extensionID,
                 target: .init(tab: privateTab),
                 tab: privateTab,
-                into: webView
+                into: webView,
+                validateLiveTarget: {}
             )
         }
     }
@@ -293,12 +377,15 @@ final class FloorpWebExtensionCoordinatorTests: XCTestCase {
 
     private func registeredScript(
         id: String,
-        source: String
+        matches: [FloorpWebExtensionMatchPattern]? = nil,
+        source: String,
+        allFrames: Bool = false
     ) throws -> FloorpWebExtensionRegisteredScript {
-        .init(
+        try .init(
             id: id,
-            matches: [try FloorpWebExtensionMatchPattern("https://allowed.example/*")],
-            javaScript: [try FloorpWebExtensionScriptSource(source)]
+            matches: matches ?? [try FloorpWebExtensionMatchPattern("https://allowed.example/*")],
+            javaScript: [try FloorpWebExtensionScriptSource(source)],
+            allFrames: allFrames
         )
     }
 
