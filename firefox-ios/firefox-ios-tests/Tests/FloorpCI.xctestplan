@@ -9,8 +9,27 @@
     }
   ],
   "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "FLOORP_STAGE3_SOURCE_REVISION",
+        "value" : "$(FLOORP_STAGE3_SOURCE_REVISION)"
+      },
+      {
+        "key" : "FLOORP_STAGE3_CLEAN_WORKTREE_ATTESTED_REVISION",
+        "value" : "$(FLOORP_STAGE3_CLEAN_WORKTREE_ATTESTED_REVISION)"
+      },
+      {
+        "key" : "FLOORP_STAGE3_WORKTREE_STATE",
+        "value" : "$(FLOORP_STAGE3_WORKTREE_STATE)"
+      }
+    ],
     "language" : "en-US",
-    "region" : "US"
+    "region" : "US",
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Client.xcodeproj",
+      "identifier" : "F84B21BD1A090F8100AAB793",
+      "name" : "Client"
+    }
   },
   "testTargets" : [
     {
@@ -179,6 +198,10 @@
 		"FloorpWebExtensionsStage3Tests\/testCSSHandlesAreOwnerScopedAndBatchRemovalIsAtomic()",
 		"FloorpWebExtensionsStage3Tests\/testCSSDiscardExtensionReleasesQuotaWithoutTouchingOtherOwners()",
 		"FloorpWebExtensionsStage3Tests\/testCosmeticBuilderBoundsInputsAndDoesNotBridgeMainWorld()",
+		"FloorpWebExtensionsStage3Tests\/testDeclaredCosmeticResourceIsBoundedGrantCheckedAndMainFrameOnly()",
+		"FloorpWebExtensionsStage3Tests\/testDeclaredCosmeticResourceRejectsUnknownKeysAndNoopScriptlets()",
+		"FloorpWebExtensionsStage3Tests\/testManifestPreflightAdmitsOnlyInventoriedBoundedCosmeticResources()",
+		"FloorpWebExtensionsStage3Tests\/testDeclaredCosmeticResourcesRejectAggregateSelectorBudgetExhaustion()",
 		"FloorpWebExtensionsStage3Tests\/testRuntimeAppliesUpdatesAndRemovesPoliciesByExtensionOwnerBeforeNavigation()",
 		"FloorpWebExtensionsStage3Tests\/testRuntimeClearsOnlyExtensionPoliciesWhenCoreFeatureIsDisabled()",
 		"FloorpWebExtensionsStage3Tests\/testRuntimeRegistrySeparatesNormalAndPrivateBrowsingPolicies()",
@@ -204,15 +227,23 @@
 		"FloorpWebExtensionStage3PerformanceEvidenceTests\/testRejectsSparseArtifactBeforeSnapshotCopy()",
 		"FloorpWebExtensionStage3PerformanceEvidenceTests\/testFailedRunRequiresAndRetainsFailureDescriptions()",
 		"FloorpWebExtensionStage3NativeDNRPerformanceTests\/testRecordsRepeatedDemandingFixtureNativeTransformEvidence()",
+		"FloorpWebExtensionStage3SimulatorPerformanceTests\/testRecordsDemandingFixtureSimulatorPerformanceScopes()",
 		"FloorpWebExtensionPackageStoreTests\/testInstallsDemandingFixtureIntoProfileGenerationAndRestoresAfterRestart()",
 		"FloorpWebExtensionPackageStoreTests\/testBundledCatalogResolvesFolderResourceAtApplicationBundleRoot()",
         "FloorpWebExtensionPackageStoreTests\/testBundledCatalogResolvesNestedFixtureFolderResourceWithoutSourceCheckoutFallback()",
+		"FloorpWebExtensionPackageStoreTests\/testPersistentRegisteredScriptsRestoreWhileMemoryOnlyScriptsAreDiscarded()",
+		"FloorpWebExtensionPackageStoreTests\/testScriptingAPIDefaultsRegisteredScriptsToPersistentAndRestoresThem()",
+		"FloorpWebExtensionPackageStoreTests\/testPersistentRegisteredScriptWriteFailureLeavesLiveAndDurableStateUnchanged()",
+		"FloorpWebExtensionPackageStoreTests\/testConcurrentPersistentRegistrationsCommitOneCoherentLiveAndDurableSnapshot()",
 		"FloorpWebExtensionPackageStoreTests\/testDisableGrantUpdateAndUninstallAreDurableAndRevokeExistingLoader()",
 		"FloorpWebExtensionPackageStoreTests\/testRejectsSymlinkAndFailedReplacementPreservesActiveGeneration()",
 		"FloorpWebExtensionPackageStoreTests\/testRestartFailsClosedWhenCommittedGenerationIsTampered()",
 		"FloorpWebExtensionPackageStoreTests\/testRestartFailsClosedWhenGenerationPathEscapesPackageRoot()",
 		"FloorpWebExtensionPackageStoreTests\/testRestartFailsClosedWhenRegistryGrantsExceedManifest()",
 		"FloorpWebExtensionPackageStoreTests\/testRestartFailsClosedWhenRegistryDNRLimitsAreInvalid()",
+		"FloorpWebExtensionPackageStoreTests\/testRestartFailsClosedWhenPersistentScriptMatchPatternFieldsAreNotCanonical()",
+		"FloorpWebExtensionPackageStoreTests\/testRestartFailsClosedWhenPersistentScriptMatchPatternOriginalIsMalformed()",
+		"FloorpWebExtensionPackageStoreTests\/testRestartFailsClosedWhenPersistentScriptSourcePathIsUnsafe()",
 		"FloorpWebExtensionPackageStoreTests\/testRegistryPersistenceFailureRestoresPriorLiveDNRPolicy()",
 		"FloorpWebExtensionPackageStoreTests\/testRegistryPersistenceFailureFailsClosedWhenRollbackCannotCompile()",
 		"FloorpWebExtensionPackageStoreTests\/testRestoreFailurePreservesDynamicSnapshotAndDoesNotRestoreSessionRules()",
@@ -284,6 +315,8 @@
 		"FloorpWebExtensionAPIHostTests\/testStage3ScriptingAndDNRSurfaceUsesCoordinatorTransactions()",
 		"FloorpWebExtensionAPIHostTests\/testForegroundAlarmDrainIsProfileScopedAndRegistryRemovalTearsDownHost()",
 		"FloorpWebExtensionAPIHostTests\/testMemoryPressureReleasesBothBackgroundsAndPreservesAPIHostState()",
+		"FloorpWebExtensionAPIHostTests\/testScriptingAPICannotObserveOrMutateManifestContentScripts()",
+		"FloorpWebExtensionAPIHostTests\/testPersistentScriptFinalWriteWinsBeforePreconstructedReplacementIsPublished()",
 		"FloorpWebExtensionPageHostTests\/testSchemeHandlerResolvesOnlyInventoriedResourceFromExactGeneration()",
 		"FloorpWebExtensionPageHostTests\/testSchemeHandlerRejectsCrossOriginTraversalQueryAndUninventoriedResources()",
 		"FloorpWebExtensionPageHostTests\/testSchemeHandlerDerivesMimeTypeAndEnforcesResourceQuota()",

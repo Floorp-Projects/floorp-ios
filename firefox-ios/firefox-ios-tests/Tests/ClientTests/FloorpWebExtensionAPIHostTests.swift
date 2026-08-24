@@ -987,6 +987,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         let registered = try registeredPayload.decode([RegisteredScriptView].self)
         XCTAssertEqual(registered.map(\.id), ["runtime-script"])
         XCTAssertEqual(registered.first?.js, ["registered.js"])
+        XCTAssertFalse(registered.first?.persistAcrossSessions ?? true)
 
         let optionalExecutionPayload = try await checkedStage("execute package file") {
             try await host.dispatch(
@@ -1041,9 +1042,12 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                 ]]]),
                 sender: testSender()
             )
-            XCTFail("Omitted persistAcrossSessions must not silently become memory-only")
+            XCTFail("Default persistence must not silently become memory-only without a package store")
         } catch {
-            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unsupportedOperation)
+            XCTAssertEqual(
+                error as? FloorpWebExtensionError,
+                .unsupported("persistent registered content scripts require a package store")
+            )
         }
 
         _ = try await checkedStage("update dynamic DNR") {
@@ -1338,6 +1342,273 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         await FloorpWebExtensionAPIHostRegistry.removeHost(for: privateHost.profileKey)
     }
 
+    func testScriptingAPICannotObserveOrMutateManifestContentScripts() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profileIdentifier = "api-manifest-script-isolation-\(UUID().uuidString)"
+        let manifestSource = try FloorpWebExtensionScriptSource("manifest.js")
+        let dynamicSource = try FloorpWebExtensionScriptSource("dynamic.js")
+        let allowedHost = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: APIHostRuleListCompiler()),
+            scriptResourceLoader: { _, source in
+                switch source.path {
+                case manifestSource.path:
+                    return "globalThis.manifestScriptRan = true;"
+                case dynamicSource.path:
+                    return "globalThis.dynamicScriptRan = true;"
+                default:
+                    throw FloorpWebExtensionError.unsupported("missing test resource")
+                }
+            }
+        )
+        FloorpWebExtensionCoordinator.install(coordinator)
+        defer {
+            FloorpWebExtensionCoordinator.removeCoordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+        try await coordinator.restoreManifestScripts(
+            [.init(
+                id: "manifest.content-script.0",
+                matches: [allowedHost],
+                javaScript: [manifestSource]
+            )],
+            for: extensionID
+        )
+
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(
+                apiPermissions: [.scripting],
+                requestedHosts: [allowedHost],
+                normalHostAccess: .allRequestedSites
+            ),
+            defaultLocale: "en",
+            declaredPermissions: [.scripting],
+            declaredHosts: [allowedHost],
+            resourcePaths: [manifestSource.path, dynamicSource.path]
+        )
+
+        let sender = testSender()
+        _ = try await host.dispatch(
+            operation: "scripting.registerContentScripts",
+            payload: try payload(["scripts": [[
+                // Deliberately reuse the package-owned generated ID. The API
+                // namespace must remain independent from manifest ownership.
+                "id": "manifest.content-script.0",
+                "matches": [allowedHost.original],
+                "js": [dynamicSource.path],
+                "persistAcrossSessions": false
+            ]]]),
+            sender: sender
+        )
+
+        let optionalDynamicPayload = try await host.dispatch(
+            operation: "scripting.getRegisteredContentScripts",
+            payload: try payload([:]),
+            sender: sender
+        )
+        let dynamicPayload = try XCTUnwrap(optionalDynamicPayload)
+        let dynamicScripts = try dynamicPayload.decode([RegisteredScriptView].self)
+        XCTAssertEqual(dynamicScripts.map(\.id), ["manifest.content-script.0"])
+        XCTAssertEqual(dynamicScripts.first?.js, [dynamicSource.path])
+
+        _ = try await host.dispatch(
+            operation: "scripting.unregisterContentScripts",
+            payload: try payload([:]),
+            sender: sender
+        )
+        let optionalAfterUnregisterPayload = try await host.dispatch(
+            operation: "scripting.getRegisteredContentScripts",
+            payload: try payload([:]),
+            sender: sender
+        )
+        let afterUnregisterPayload = try XCTUnwrap(optionalAfterUnregisterPayload)
+        XCTAssertTrue(try afterUnregisterPayload.decode([RegisteredScriptView].self).isEmpty)
+
+        do {
+            _ = try await host.dispatch(
+                operation: "scripting.updateContentScripts",
+                payload: try payload(["scripts": [[
+                    "id": "manifest.content-script.0",
+                    "allFrames": true
+                ]]]),
+                sender: sender
+            )
+            XCTFail("Manifest-owned scripts must not be mutable through scripting.*")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionError,
+                .invalidScriptID("manifest.content-script.0")
+            )
+        }
+
+        let tab = FloorpWebExtensionTabContext(
+            tabID: sender.tabID,
+            documentGeneration: sender.documentGeneration,
+            url: sender.url,
+            isPrivate: sender.isPrivate
+        )
+        let policies = coordinator.preNavigationPolicies(for: tab)
+        XCTAssertEqual(policies.count, 1)
+        XCTAssertEqual(policies.first?.scriptPolicies.map { $0.source }, [
+            "globalThis.manifestScriptRan = true;"
+        ])
+    }
+
+    func testPersistentScriptFinalWriteWinsBeforePreconstructedReplacementIsPublished() async throws {
+        let storeDirectory = temporaryDirectory()
+        let apiDirectory = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: storeDirectory)
+            try? FileManager.default.removeItem(at: apiDirectory)
+        }
+        let extensionID = FloorpWebExtensionID(rawValue: "floorp.fixture.demanding-mv3")!
+        let profileIdentifier = "api-script-generation-race-\(UUID().uuidString)"
+        let persister = APIHostPausedRegistryPersister()
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: storeDirectory,
+            registryPersister: { data, url in
+                try persister.persist(data, to: url)
+            }
+        )
+        let hosts: Set<FloorpWebExtensionMatchPattern> = [
+            try .init("http://*.fixture.test/*"),
+            try .init("https://*.fixture.test/*")
+        ]
+        let installed = try await store.installBundledPackage(
+            at: try checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID,
+            initialGrants: .init(
+                apiPermissions: [.scripting],
+                requestedHosts: hosts,
+                normalHostAccess: .allRequestedSites
+            )
+        )
+        let firstManager = FloorpWebExtensionLivePackageManager(store: store) { _, _, _ in }
+        try FloorpWebExtensionPackageStoreRegistry.install(store, manager: firstManager)
+        defer {
+            FloorpWebExtensionPackageStoreRegistry.removeStore(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+        // Snapshot the durable file before the old request starts writing.
+        // Publishing this preconstructed store must still serialize with and
+        // stabilize the later tentative write.
+        let replacementStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: storeDirectory
+        )
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: APIHostRuleListCompiler()),
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        FloorpWebExtensionCoordinator.install(coordinator)
+        defer {
+            FloorpWebExtensionCoordinator.removeCoordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: apiDirectory,
+            preferredLocales: ["en"],
+            packageResourceLoader: store.makeI18nResourceLoader()
+        )
+        await host.activate(installed)
+        let sender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: 404,
+            documentGeneration: 1,
+            url: URL(string: "https://www.fixture.test/page")!,
+            isMainFrame: true,
+            isPrivate: false
+        )
+
+        persister.pauseNextWrite()
+        let pending = Task { @MainActor in
+            try await host.dispatch(
+                operation: "scripting.registerContentScripts",
+                payload: try self.payload(["scripts": [[
+                    "id": "stale-persistent",
+                    "matches": ["https://*.fixture.test/*"],
+                    "js": ["content/document-start.js"]
+                ]]]),
+                sender: sender
+            )
+        }
+        await persister.waitUntilWriteIsPaused()
+
+        let replacementManager = FloorpWebExtensionLivePackageManager(
+            store: replacementStore
+        ) { _, _, _ in }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+            persister.resumeWrite()
+        }
+        XCTAssertThrowsError(try FloorpWebExtensionPackageStoreRegistry.install(
+            replacementStore,
+            manager: replacementManager
+        )) { error in
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .stalePackageComposition
+            )
+        }
+
+        _ = try await pending.value
+        let liveScripts = await coordinator.registeredScripts(for: extensionID)
+        XCTAssertEqual(liveScripts.map(\.id), ["stale-persistent"])
+        XCTAssertTrue(FloorpWebExtensionPackageStoreRegistry.store(
+            for: profileIdentifier,
+            isPrivateBrowsing: false
+        ) === store)
+        let activePackageRecord = await store.installedPackage(for: extensionID)
+        let activePackage = try XCTUnwrap(activePackageRecord)
+        try await store.updatePersistentRegisteredScripts(
+            activePackage.registeredPersistentScripts,
+            for: extensionID,
+            expectedGeneration: activePackage.generation,
+            expectedCurrentScripts: activePackage.registeredPersistentScripts
+        )
+        let replacementPackageRecord = await replacementStore.installedPackage(for: extensionID)
+        let replacementPackage = try XCTUnwrap(replacementPackageRecord)
+        XCTAssertTrue(replacementPackage.registeredPersistentScripts.isEmpty)
+        let reopenedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: storeDirectory
+        )
+        let reopenedPackageRecord = await reopenedStore.installedPackage(for: extensionID)
+        let reopenedPackage = try XCTUnwrap(reopenedPackageRecord)
+        XCTAssertEqual(reopenedPackage.registeredPersistentScripts.map(\.id), ["stale-persistent"])
+    }
+
     private func payload(_ object: Any) throws -> FloorpWebExtensionMessagePayload {
         try .init(jsonData: JSONSerialization.data(withJSONObject: object, options: .fragmentsAllowed))
     }
@@ -1374,6 +1645,34 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("floorp-api-host-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    private func checkedInDemandingMV3FixtureDirectory() throws -> URL {
+        let fileManager = FileManager.default
+        let sourceDirectory = URL(fileURLWithPath: #filePath, isDirectory: false)
+            .deletingLastPathComponent()
+        let workingDirectory = URL(
+            fileURLWithPath: fileManager.currentDirectoryPath,
+            isDirectory: true
+        )
+        let fixturePath = "firefox-ios/Floorp/WebExtensions/Fixtures/demanding-mv3"
+        for startingDirectory in [workingDirectory, sourceDirectory] {
+            var searchDirectory = startingDirectory.standardizedFileURL
+            while true {
+                let candidate = searchDirectory.appendingPathComponent(fixturePath, isDirectory: true)
+                if fileManager.fileExists(atPath: candidate.appendingPathComponent("manifest.json").path) {
+                    return candidate
+                }
+                let parent = searchDirectory.deletingLastPathComponent()
+                guard parent.path != searchDirectory.path else { break }
+                searchDirectory = parent
+            }
+        }
+        throw NSError(
+            domain: "FloorpWebExtensionAPIHostTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "The demanding MV3 fixture was not found."]
+        )
     }
 
     private func waitForLoad(_ webView: WKWebView) async throws {
@@ -1414,6 +1713,7 @@ private struct RuntimeManifestResponse: Decodable, Equatable {
 private struct RegisteredScriptView: Decodable {
     let id: String
     let js: [String]
+    let persistAcrossSessions: Bool
 }
 
 private struct ScriptInjectionResultView: Decodable {
@@ -1427,6 +1727,57 @@ private struct RegexSupportView: Decodable {
 
 private struct DNRRuleView: Decodable {
     let id: Int
+}
+
+private final class APIHostPausedRegistryPersister: @unchecked Sendable {
+    private let lock = NSLock()
+    private let resumeSemaphore = DispatchSemaphore(value: 0)
+    private var pausesNextWrite = false
+    private var writeIsPaused = false
+    private var pauseWaiter: CheckedContinuation<Void, Never>?
+
+    func pauseNextWrite() {
+        lock.lock()
+        pausesNextWrite = true
+        lock.unlock()
+    }
+
+    func waitUntilWriteIsPaused() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if writeIsPaused {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                pauseWaiter = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    func resumeWrite() {
+        resumeSemaphore.signal()
+    }
+
+    func persist(_ data: Data, to url: URL) throws {
+        lock.lock()
+        let shouldPause = pausesNextWrite
+        pausesNextWrite = false
+        if shouldPause {
+            writeIsPaused = true
+        }
+        let waiter = shouldPause ? pauseWaiter : nil
+        if shouldPause {
+            pauseWaiter = nil
+        }
+        lock.unlock()
+
+        if shouldPause {
+            waiter?.resume()
+            resumeSemaphore.wait()
+        }
+        try data.write(to: url, options: [.atomic])
+    }
 }
 
 @MainActor

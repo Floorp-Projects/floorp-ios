@@ -10,6 +10,10 @@ import Foundation
 /// dynamically-created source. The package installer validates and owns the
 /// resource before this descriptor can be registered.
 struct FloorpWebExtensionScriptSource: Hashable, Codable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case path
+    }
+
     let path: String
 
     init(_ path: String) throws {
@@ -24,6 +28,27 @@ struct FloorpWebExtensionScriptSource: Hashable, Codable, Sendable {
             throw FloorpWebExtensionError.unsupported("invalid registered script resource")
         }
         self.path = path
+    }
+
+    /// Keep the synthesized `{ "path": ... }` representation, while ensuring
+    /// durable data cannot bypass the package-relative path validator.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let path = try container.decode(String.self, forKey: .path)
+        do {
+            try self.init(path)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .path,
+                in: container,
+                debugDescription: "Invalid persisted registered script resource."
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(path, forKey: .path)
     }
 }
 
@@ -40,6 +65,9 @@ struct FloorpWebExtensionRegisteredScript: Hashable, Codable, Sendable {
     let runAt: FloorpWebExtensionRunAt
     let allFrames: Bool
     let world: FloorpWebExtensionExecutionWorld
+    /// Only registrations explicitly opted into persistence are written to
+    /// the profile package registry and restored on the next launch.
+    let persistAcrossSessions: Bool
 
     init(
         id: String,
@@ -49,7 +77,8 @@ struct FloorpWebExtensionRegisteredScript: Hashable, Codable, Sendable {
         styleSheets: [FloorpWebExtensionScriptSource] = [],
         runAt: FloorpWebExtensionRunAt = .documentIdle,
         allFrames: Bool = false,
-        world: FloorpWebExtensionExecutionWorld = .isolated
+        world: FloorpWebExtensionExecutionWorld = .isolated,
+        persistAcrossSessions: Bool = false
     ) {
         self.id = id
         self.matches = matches
@@ -59,6 +88,7 @@ struct FloorpWebExtensionRegisteredScript: Hashable, Codable, Sendable {
         self.runAt = runAt
         self.allFrames = allFrames
         self.world = world
+        self.persistAcrossSessions = persistAcrossSessions
     }
 
     /// Builds the complete replacement used by both the transactional registry
@@ -72,7 +102,8 @@ struct FloorpWebExtensionRegisteredScript: Hashable, Codable, Sendable {
             styleSheets: update.styleSheets ?? styleSheets,
             runAt: update.runAt ?? runAt,
             allFrames: update.allFrames ?? allFrames,
-            world: update.world ?? world
+            world: update.world ?? world,
+            persistAcrossSessions: update.persistAcrossSessions ?? persistAcrossSessions
         )
     }
 }
@@ -90,6 +121,7 @@ struct FloorpWebExtensionRegisteredScriptUpdate: Hashable, Codable, Sendable {
     let runAt: FloorpWebExtensionRunAt?
     let allFrames: Bool?
     let world: FloorpWebExtensionExecutionWorld?
+    let persistAcrossSessions: Bool?
 
     init(
         id: String,
@@ -99,7 +131,8 @@ struct FloorpWebExtensionRegisteredScriptUpdate: Hashable, Codable, Sendable {
         styleSheets: [FloorpWebExtensionScriptSource]? = nil,
         runAt: FloorpWebExtensionRunAt? = nil,
         allFrames: Bool? = nil,
-        world: FloorpWebExtensionExecutionWorld? = nil
+        world: FloorpWebExtensionExecutionWorld? = nil,
+        persistAcrossSessions: Bool? = nil
     ) {
         self.id = id
         self.matches = matches
@@ -109,6 +142,7 @@ struct FloorpWebExtensionRegisteredScriptUpdate: Hashable, Codable, Sendable {
         self.runAt = runAt
         self.allFrames = allFrames
         self.world = world
+        self.persistAcrossSessions = persistAcrossSessions
     }
 }
 
@@ -145,13 +179,43 @@ actor FloorpWebExtensionScriptRegistry {
     static let maximumMatchPatternsPerScript = 100
     static let maximumResourceBytesPerExtension = 512 * 1_024
 
-    private struct StoredScript: Sendable {
+    fileprivate struct StoredScript: Sendable {
         let script: FloorpWebExtensionRegisteredScript
         let registrationOrder: UInt64
     }
 
+    struct DynamicSnapshot: Sendable {
+        fileprivate let scripts: [String: StoredScript]
+    }
+
     private var scriptsByExtension = [FloorpWebExtensionID: [String: StoredScript]]()
+    /// Manifest-declared scripts are package-owned immutable policy. They use
+    /// a separate namespace so `scripting.*` can neither observe nor mutate
+    /// them, even when a dynamic script reuses the generated manifest ID.
+    private var manifestScriptsByExtension = [FloorpWebExtensionID: [String: StoredScript]]()
     private var nextRegistrationOrder: UInt64 = 0
+
+    func registerManifestScripts(
+        _ scripts: [FloorpWebExtensionRegisteredScript],
+        for extensionID: FloorpWebExtensionID
+    ) throws {
+        guard !scripts.isEmpty else { return }
+
+        var draft = manifestScriptsByExtension[extensionID] ?? [:]
+        var identifiers = Set<String>()
+        var order = nextRegistrationOrder
+        for script in scripts {
+            try Self.validateIdentifier(script.id)
+            guard identifiers.insert(script.id).inserted, draft[script.id] == nil else {
+                throw FloorpWebExtensionError.duplicateIdentifier(script.id)
+            }
+            order &+= 1
+            draft[script.id] = StoredScript(script: script, registrationOrder: order)
+        }
+        try Self.validate(draft)
+        manifestScriptsByExtension[extensionID] = draft
+        nextRegistrationOrder = order
+    }
 
     func register(
         _ scripts: [FloorpWebExtensionRegisteredScript],
@@ -237,13 +301,134 @@ actor FloorpWebExtensionScriptRegistry {
         orderedScripts(for: extensionID).map(\.script)
     }
 
+    func allRegisteredScripts(for extensionID: FloorpWebExtensionID) -> [FloorpWebExtensionRegisteredScript] {
+        allOrderedScripts(for: extensionID).map(\.script)
+    }
+
+    func removeAllScripts(for extensionID: FloorpWebExtensionID) {
+        scriptsByExtension.removeValue(forKey: extensionID)
+        manifestScriptsByExtension.removeValue(forKey: extensionID)
+    }
+
+    func dynamicSnapshot(for extensionID: FloorpWebExtensionID) -> DynamicSnapshot {
+        .init(scripts: scriptsByExtension[extensionID] ?? [:])
+    }
+
+    func restoreDynamicSnapshot(_ snapshot: DynamicSnapshot, for extensionID: FloorpWebExtensionID) {
+        if snapshot.scripts.isEmpty {
+            scriptsByExtension.removeValue(forKey: extensionID)
+        } else {
+            scriptsByExtension[extensionID] = snapshot.scripts
+        }
+    }
+
+    /// Validates a prospective registration without modifying the registry.
+    /// Coordinators use this before committing the durable subset, ensuring a
+    /// registry write cannot be followed by a rejected live mutation.
+    func scriptsAfterRegistering(
+        _ scripts: [FloorpWebExtensionRegisteredScript],
+        for extensionID: FloorpWebExtensionID
+    ) throws -> [FloorpWebExtensionRegisteredScript] {
+        let current = scriptsByExtension[extensionID] ?? [:]
+        var draft = current
+        var identifiers = Set<String>()
+        var order = nextRegistrationOrder
+
+        for script in scripts {
+            try Self.validateIdentifier(script.id)
+            guard identifiers.insert(script.id).inserted, draft[script.id] == nil else {
+                throw FloorpWebExtensionError.duplicateIdentifier(script.id)
+            }
+            order &+= 1
+            draft[script.id] = StoredScript(script: script, registrationOrder: order)
+        }
+
+        try Self.validate(draft)
+        return allOrderedScripts(for: extensionID, replacingDynamicScripts: draft).map(\.script)
+    }
+
+    /// Validates a prospective update without modifying the registry.
+    func scriptsAfterUpdating(
+        _ updates: [FloorpWebExtensionRegisteredScriptUpdate],
+        for extensionID: FloorpWebExtensionID
+    ) throws -> [FloorpWebExtensionRegisteredScript] {
+        let current = scriptsByExtension[extensionID] ?? [:]
+        var draft = current
+        var identifiers = Set<String>()
+
+        for update in updates {
+            try Self.validateIdentifier(update.id)
+            guard identifiers.insert(update.id).inserted else {
+                throw FloorpWebExtensionError.duplicateIdentifier(update.id)
+            }
+            guard let existing = draft[update.id] else {
+                throw FloorpWebExtensionError.invalidScriptID(update.id)
+            }
+            draft[update.id] = StoredScript(
+                script: existing.script.applying(update),
+                registrationOrder: existing.registrationOrder
+            )
+        }
+
+        try Self.validate(draft)
+        return allOrderedScripts(for: extensionID, replacingDynamicScripts: draft).map(\.script)
+    }
+
+    /// Validates a prospective removal without modifying the registry.
+    func scriptsAfterUnregistering(
+        _ identifiers: [String],
+        for extensionID: FloorpWebExtensionID
+    ) throws -> [FloorpWebExtensionRegisteredScript] {
+        let current = scriptsByExtension[extensionID] ?? [:]
+        let requestedIdentifiers = identifiers.isEmpty ? Array(current.keys) : identifiers
+        var seen = Set<String>()
+
+        for identifier in requestedIdentifiers {
+            try Self.validateIdentifier(identifier)
+            guard seen.insert(identifier).inserted else {
+                throw FloorpWebExtensionError.duplicateIdentifier(identifier)
+            }
+            guard current[identifier] != nil else {
+                throw FloorpWebExtensionError.invalidScriptID(identifier)
+            }
+        }
+
+        var draft = current
+        for identifier in requestedIdentifiers {
+            draft.removeValue(forKey: identifier)
+        }
+        try Self.validate(draft)
+        return allOrderedScripts(for: extensionID, replacingDynamicScripts: draft).map(\.script)
+    }
+
+    /// Package-store recovery validates the durable registry independently of
+    /// live coordinator state. Registration order is irrelevant to this
+    /// structural validation, so a stable local order is sufficient.
+    nonisolated static func validatePersistedScripts(
+        _ scripts: [FloorpWebExtensionRegisteredScript]
+    ) throws {
+        var draft = [String: StoredScript]()
+        for (index, script) in scripts.enumerated() {
+            try validateIdentifier(script.id)
+            guard draft[script.id] == nil else {
+                throw FloorpWebExtensionError.duplicateIdentifier(script.id)
+            }
+            draft[script.id] = StoredScript(
+                script: script,
+                registrationOrder: UInt64(index)
+            )
+        }
+        try validate(draft)
+    }
+
     /// Plans scripts after the coordinator has already resolved eligible hosts.
     func plan(
         for tab: FloorpWebExtensionTabContext,
         allowedExtensionIDs: Set<FloorpWebExtensionID>
     ) -> [FloorpWebExtensionScriptPlan] {
-        let candidates = scriptsByExtension.flatMap { extensionID, scripts in
-            scripts.values.compactMap { stored -> FloorpWebExtensionScriptPlan? in
+        let allExtensionIDs = Set(scriptsByExtension.keys).union(manifestScriptsByExtension.keys)
+        let candidates = allExtensionIDs.flatMap { extensionID in
+            allOrderedScripts(for: extensionID).compactMap { stored -> FloorpWebExtensionScriptPlan? in
                 guard allowedExtensionIDs.contains(extensionID),
                       stored.script.matches.contains(where: { $0.matches(tab.url) }),
                       !stored.script.excludeMatches.contains(where: { $0.matches(tab.url) }) else {
@@ -274,7 +459,7 @@ actor FloorpWebExtensionScriptRegistry {
         permissionBroker: FloorpWebExtensionPermissionBroker
     ) async -> [FloorpWebExtensionScriptPlan] {
         var allowedExtensionIDs = Set<FloorpWebExtensionID>()
-        for extensionID in scriptsByExtension.keys {
+        for extensionID in Set(scriptsByExtension.keys).union(manifestScriptsByExtension.keys) {
             guard await permissionBroker.allows(.scripting, extensionID: extensionID),
                   await permissionBroker.allowsHostAccess(for: extensionID, in: tab) else {
                 continue
@@ -285,7 +470,31 @@ actor FloorpWebExtensionScriptRegistry {
     }
 
     private func orderedScripts(for extensionID: FloorpWebExtensionID) -> [StoredScript] {
-        (scriptsByExtension[extensionID] ?? [:]).values.sorted {
+        Self.orderedScripts(in: scriptsByExtension[extensionID] ?? [:])
+    }
+
+    private func allOrderedScripts(for extensionID: FloorpWebExtensionID) -> [StoredScript] {
+        allOrderedScripts(
+            for: extensionID,
+            replacingDynamicScripts: scriptsByExtension[extensionID] ?? [:]
+        )
+    }
+
+    private func allOrderedScripts(
+        for extensionID: FloorpWebExtensionID,
+        replacingDynamicScripts dynamicScripts: [String: StoredScript]
+    ) -> [StoredScript] {
+        let manifestScripts = manifestScriptsByExtension[extensionID] ?? [:]
+        return (Array(manifestScripts.values) + Array(dynamicScripts.values)).sorted {
+            if $0.registrationOrder != $1.registrationOrder {
+                return $0.registrationOrder < $1.registrationOrder
+            }
+            return $0.script.id < $1.script.id
+        }
+    }
+
+    private static func orderedScripts(in scripts: [String: StoredScript]) -> [StoredScript] {
+        scripts.values.sorted {
             if $0.registrationOrder != $1.registrationOrder {
                 return $0.registrationOrder < $1.registrationOrder
             }
@@ -577,6 +786,377 @@ struct FloorpWebExtensionCosmeticResource: Hashable, Sendable {
     }
 }
 
+/// One generated cosmetic policy read from a declared, package-local JSON
+/// resource.  Cosmetic resources are deliberately main-frame only; an
+/// arbitrary subframe cannot be authenticated safely without adding the
+/// registered-content-script frame bridge protocol to this separate format.
+struct FloorpWebExtensionCosmeticPackageResource: Hashable, Sendable {
+    let resource: FloorpWebExtensionCosmeticResource
+    let runAt: FloorpWebExtensionRunAt
+    let selectorCount: Int
+    let proceduralFilterCount: Int
+    let scriptletCount: Int
+    let generatedByteCount: Int
+
+    /// Keep the quota metadata bound to decoder-produced sources. The
+    /// coordinator accepts this value across files, so a memberwise initializer
+    /// would let another internal caller under-report a source's cost.
+    fileprivate init(
+        resource: FloorpWebExtensionCosmeticResource,
+        runAt: FloorpWebExtensionRunAt,
+        selectorCount: Int,
+        proceduralFilterCount: Int,
+        scriptletCount: Int
+    ) throws {
+        guard selectorCount >= 0,
+              proceduralFilterCount >= 0,
+              scriptletCount >= 0 else {
+            throw FloorpWebExtensionError.quotaExceeded("cosmetic filter package")
+        }
+        self.resource = resource
+        self.runAt = runAt
+        self.selectorCount = selectorCount
+        self.proceduralFilterCount = proceduralFilterCount
+        self.scriptletCount = scriptletCount
+        generatedByteCount = try Self.generatedPolicyByteCount(for: resource)
+    }
+
+    fileprivate func actualGeneratedPolicyByteCount() throws -> Int {
+        try Self.generatedPolicyByteCount(for: resource)
+    }
+
+    private static func generatedPolicyByteCount(
+        for resource: FloorpWebExtensionCosmeticResource
+    ) throws -> Int {
+        let cssByteCount: Int
+        if let css = resource.css {
+            cssByteCount = try FloorpWebExtensionCoordinator.styleInjectionSource(css)
+                .lengthOfBytes(using: .utf8)
+        } else {
+            cssByteCount = 0
+        }
+        let javaScriptByteCount = resource.javaScript?.lengthOfBytes(using: .utf8) ?? 0
+        let (total, overflow) = cssByteCount.addingReportingOverflow(javaScriptByteCount)
+        guard !overflow else {
+            throw FloorpWebExtensionError.quotaExceeded("cosmetic filter generated source")
+        }
+        return total
+    }
+}
+
+/// Decodes the small, Floorp-specific declarative cosmetic resource format.
+///
+/// This is purposefully not an ad-block-list or JavaScript importer.  The
+/// package must have named this resource in `floorp_cosmetic_filter_resources`
+/// and every object has a fixed, closed schema.  The resulting sources are
+/// generated only by ``FloorpWebExtensionCosmeticFilterBuilder``.
+enum FloorpWebExtensionCosmeticFilterPackageDecoder {
+    static let maximumResourcesPerPackage = 32
+    static let maximumFiltersPerResource = 64
+    static let maximumResourceBytes = 512 * 1_024
+    /// Package-wide limits deliberately sit below the sum of the per-resource
+    /// limits. A curated package must not turn many individually valid files
+    /// into an unbounded number of DOM scans or WebKit user scripts.
+    static let maximumFiltersPerPackage = 128
+    static let maximumSelectorsPerPackage = 2_000
+    static let maximumProceduralFiltersPerPackage = 500
+    static let maximumScriptletsPerPackage = 256
+    static let maximumGeneratedBytesPerPackage = 2 * 1_024 * 1_024
+
+    private struct DynamicKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+            intValue = nil
+        }
+
+        init?(intValue: Int) {
+            stringValue = String(intValue)
+            self.intValue = intValue
+        }
+    }
+
+    private struct RawDocument: Decodable {
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case schemaVersion = "schema_version"
+            case filters
+        }
+
+        let schemaVersion: Int
+        let filters: [RawFilter]
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.container(keyedBy: DynamicKey.self)
+            try rejectUnknownKeys(raw, allowing: CodingKeys.self)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+            filters = try container.decode([RawFilter].self, forKey: .filters)
+        }
+    }
+
+    private struct RawFilter: Decodable {
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case matches
+            case excludeMatches = "exclude_matches"
+            case selectors
+            case procedural
+            case scriptlets
+            case runAt = "run_at"
+            case world
+        }
+
+        let matches: [String]
+        let excludeMatches: [String]
+        let selectors: [String]
+        let procedural: [RawProceduralFilter]
+        let scriptlets: [RawScriptlet]
+        let runAt: String?
+        let world: String?
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.container(keyedBy: DynamicKey.self)
+            try rejectUnknownKeys(raw, allowing: CodingKeys.self)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            matches = try container.decode([String].self, forKey: .matches)
+            excludeMatches = try container.decodeIfPresent([String].self, forKey: .excludeMatches) ?? []
+            selectors = try container.decodeIfPresent([String].self, forKey: .selectors) ?? []
+            procedural = try container.decodeIfPresent([RawProceduralFilter].self, forKey: .procedural) ?? []
+            scriptlets = try container.decodeIfPresent([RawScriptlet].self, forKey: .scriptlets) ?? []
+            runAt = try container.decodeIfPresent(String.self, forKey: .runAt)
+            world = try container.decodeIfPresent(String.self, forKey: .world)
+        }
+    }
+
+    private struct RawProceduralFilter: Decodable {
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case selector
+            case operations
+            case action
+        }
+
+        let selector: String
+        let operations: [RawProceduralOperation]
+        let action: String?
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.container(keyedBy: DynamicKey.self)
+            try rejectUnknownKeys(raw, allowing: CodingKeys.self)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            selector = try container.decode(String.self, forKey: .selector)
+            operations = try container.decode([RawProceduralOperation].self, forKey: .operations)
+            action = try container.decodeIfPresent(String.self, forKey: .action)
+        }
+    }
+
+    private struct RawProceduralOperation: Decodable {
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case kind
+            case value
+            case name
+        }
+
+        let kind: String
+        let value: String?
+        let name: String?
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.container(keyedBy: DynamicKey.self)
+            try rejectUnknownKeys(raw, allowing: CodingKeys.self)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try container.decode(String.self, forKey: .kind)
+            value = try container.decodeIfPresent(String.self, forKey: .value)
+            name = try container.decodeIfPresent(String.self, forKey: .name)
+        }
+    }
+
+    private struct RawScriptlet: Decodable {
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case name
+            case arguments
+        }
+
+        let name: String
+        let arguments: [String]
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.container(keyedBy: DynamicKey.self)
+            try rejectUnknownKeys(raw, allowing: CodingKeys.self)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            arguments = try container.decodeIfPresent([String].self, forKey: .arguments) ?? []
+        }
+    }
+
+    static func decode(_ data: Data) throws -> [FloorpWebExtensionCosmeticPackageResource] {
+        guard !data.isEmpty, data.count <= maximumResourceBytes else {
+            throw FloorpWebExtensionError.quotaExceeded("cosmetic filter resource")
+        }
+        let document: RawDocument
+        do {
+            document = try JSONDecoder().decode(RawDocument.self, from: data)
+        } catch {
+            throw FloorpWebExtensionError.unsupported("invalid cosmetic filter resource")
+        }
+        guard document.schemaVersion == 1,
+              !document.filters.isEmpty,
+              document.filters.count <= maximumFiltersPerResource else {
+            throw FloorpWebExtensionError.unsupported("unsupported cosmetic filter resource")
+        }
+        return try document.filters.map(materialize)
+    }
+
+    /// Decodes every declaration in one package and verifies aggregate bounds
+    /// before any generated source reaches the coordinator.
+    static func decodePackage(_ resources: [Data]) throws -> [FloorpWebExtensionCosmeticPackageResource] {
+        guard resources.count <= maximumResourcesPerPackage else {
+            throw FloorpWebExtensionError.quotaExceeded("cosmetic filter package resources")
+        }
+        let decoded = try resources.flatMap(decode)
+        try validatePackage(decoded)
+        return decoded
+    }
+
+    /// Re-checks aggregate limits at the coordinator boundary. This prevents
+    /// an internal caller from bypassing package decoding with individually
+    /// valid, but collectively abusive, generated resources.
+    static func validatePackage(_ resources: [FloorpWebExtensionCosmeticPackageResource]) throws {
+        guard resources.count <= maximumResourcesPerPackage,
+              resources.count <= maximumFiltersPerPackage else {
+            throw FloorpWebExtensionError.quotaExceeded("cosmetic filter package filters")
+        }
+        var selectorCount = 0
+        var proceduralFilterCount = 0
+        var scriptletCount = 0
+        var generatedByteCount = 0
+        for resource in resources {
+            let actualGeneratedByteCount = try resource.actualGeneratedPolicyByteCount()
+            guard resource.selectorCount >= 0,
+                  resource.proceduralFilterCount >= 0,
+                  resource.scriptletCount >= 0,
+                  resource.generatedByteCount >= 0,
+                  resource.generatedByteCount == actualGeneratedByteCount else {
+                throw FloorpWebExtensionError.quotaExceeded("cosmetic filter package")
+            }
+            let (nextSelectors, selectorsOverflow) = selectorCount.addingReportingOverflow(resource.selectorCount)
+            let (nextProcedural, proceduralOverflow) = proceduralFilterCount.addingReportingOverflow(resource.proceduralFilterCount)
+            let (nextScriptlets, scriptletsOverflow) = scriptletCount.addingReportingOverflow(resource.scriptletCount)
+            let (nextBytes, bytesOverflow) = generatedByteCount.addingReportingOverflow(resource.generatedByteCount)
+            guard !selectorsOverflow,
+                  !proceduralOverflow,
+                  !scriptletsOverflow,
+                  !bytesOverflow,
+                  nextSelectors <= maximumSelectorsPerPackage,
+                  nextProcedural <= maximumProceduralFiltersPerPackage,
+                  nextScriptlets <= maximumScriptletsPerPackage,
+                  nextBytes <= maximumGeneratedBytesPerPackage else {
+                throw FloorpWebExtensionError.quotaExceeded("cosmetic filter package")
+            }
+            selectorCount = nextSelectors
+            proceduralFilterCount = nextProcedural
+            scriptletCount = nextScriptlets
+            generatedByteCount = nextBytes
+        }
+    }
+
+    private static func materialize(_ raw: RawFilter) throws -> FloorpWebExtensionCosmeticPackageResource {
+        let runAt: FloorpWebExtensionRunAt
+        if let declaredRunAt = raw.runAt {
+            guard let parsedRunAt = FloorpWebExtensionRunAt(rawValue: declaredRunAt) else {
+                throw FloorpWebExtensionError.unsupported("invalid cosmetic filter execution options")
+            }
+            runAt = parsedRunAt
+        } else {
+            runAt = .documentIdle
+        }
+        guard let world = raw.world.map({ FloorpWebExtensionExecutionWorld(rawValue: $0.lowercased()) }) ?? .isolated else {
+            throw FloorpWebExtensionError.unsupported("invalid cosmetic filter execution options")
+        }
+        let procedural = try raw.procedural.map { filter in
+            let action = try cosmeticAction(filter.action)
+            return FloorpWebExtensionProceduralFilter(
+                selector: filter.selector,
+                operations: try filter.operations.map(proceduralOperation),
+                action: action
+            )
+        }
+        let scriptlets = try raw.scriptlets.map { scriptlet in
+            guard let name = FloorpWebExtensionScriptletName(rawValue: scriptlet.name) else {
+                throw FloorpWebExtensionError.unsupported("unsupported cosmetic scriptlet")
+            }
+            let expectedArgumentCount: Int
+            switch name {
+            case .abortOnPropertyRead, .preventSetTimeout:
+                expectedArgumentCount = 1
+            case .setConstant:
+                expectedArgumentCount = 2
+            }
+            guard scriptlet.arguments.count == expectedArgumentCount else {
+                throw FloorpWebExtensionError.unsupported("invalid cosmetic scriptlet arguments")
+            }
+            return FloorpWebExtensionScriptletInvocation(name: name, arguments: scriptlet.arguments)
+        }
+        let filter = FloorpWebExtensionCosmeticFilter(
+            matches: try raw.matches.map(FloorpWebExtensionMatchPattern.init),
+            excludeMatches: try raw.excludeMatches.map(FloorpWebExtensionMatchPattern.init),
+            selectors: raw.selectors,
+            proceduralFilters: procedural,
+            scriptlets: scriptlets,
+            world: world
+        )
+        let resource = try FloorpWebExtensionCosmeticFilterBuilder.build(filter)
+        return try .init(
+            resource: resource,
+            runAt: runAt,
+            selectorCount: raw.selectors.count,
+            proceduralFilterCount: raw.procedural.count,
+            scriptletCount: raw.scriptlets.count
+        )
+    }
+
+    private static func cosmeticAction(_ value: String?) throws -> FloorpWebExtensionCosmeticAction {
+        guard let action = FloorpWebExtensionCosmeticAction(rawValue: value ?? "hide") else {
+            throw FloorpWebExtensionError.unsupported("unsupported cosmetic action")
+        }
+        return action
+    }
+
+    private static func proceduralOperation(
+        _ raw: RawProceduralOperation
+    ) throws -> FloorpWebExtensionProceduralOperation {
+        switch raw.kind {
+        case "has-text":
+            guard let value = raw.value, raw.name == nil else {
+                throw FloorpWebExtensionError.unsupported("invalid cosmetic has-text operation")
+            }
+            return .hasText(value)
+        case "has-selector":
+            guard let value = raw.value, raw.name == nil else {
+                throw FloorpWebExtensionError.unsupported("invalid cosmetic has-selector operation")
+            }
+            return .hasSelector(value)
+        case "attribute-equals":
+            guard let name = raw.name, let value = raw.value else {
+                throw FloorpWebExtensionError.unsupported("invalid cosmetic attribute operation")
+            }
+            return .attributeEquals(name: name, value: value)
+        default:
+            throw FloorpWebExtensionError.unsupported("unsupported cosmetic procedural operation")
+        }
+    }
+
+    private static func rejectUnknownKeys<Key: CodingKey & CaseIterable>(
+        _ container: KeyedDecodingContainer<DynamicKey>,
+        allowing keys: Key.Type
+    ) throws where Key.AllCases: Collection, Key.AllCases.Element == Key {
+        let allowed = Set(keys.allCases.map(\.stringValue))
+        guard container.allKeys.allSatisfy({ allowed.contains($0.stringValue) }) else {
+            throw FloorpWebExtensionError.unsupported("unknown cosmetic filter resource key")
+        }
+    }
+}
+
 /// Safely compiles cosmetic, procedural, and scriptlet descriptors into fixed
 /// CSS/JavaScript resources. Input data is size-bounded and embedded as base64
 /// JSON, so selectors and scriptlet arguments cannot alter generated code.
@@ -703,7 +1283,7 @@ enum FloorpWebExtensionCosmeticFilterBuilder {
     }
 
     private static func validateSelector(_ selector: String) throws {
-        let forbidden = CharacterSet(charactersIn: "{};@\\u{0000}")
+        let forbidden = CharacterSet(charactersIn: "{};@\\").union(.controlCharacters)
         guard !selector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               selector.lengthOfBytes(using: .utf8) <= maximumSelectorBytes,
               selector.rangeOfCharacter(from: forbidden) == nil else {

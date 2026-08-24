@@ -242,6 +242,220 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testDeclaredCosmeticResourceIsBoundedGrantCheckedAndMainFrameOnly() async throws {
+        let resourceData = Data("""
+        {
+          "schema_version": 1,
+          "filters": [{
+            "matches": ["https://allowed.example/*"],
+            "exclude_matches": ["https://allowed.example/excluded/*"],
+            "selectors": [".advertisement"],
+            "procedural": [{
+              "selector": "article",
+              "operations": [{ "kind": "has-text", "value": "sponsored" }],
+              "action": "remove"
+            }],
+            "scriptlets": [{ "name": "set-constant", "arguments": ["adEnabled", "false"] }],
+            "run_at": "document_start",
+            "world": "MAIN"
+          }]
+        }
+        """.utf8)
+        let resources = try FloorpWebExtensionCosmeticFilterPackageDecoder.decode(resourceData)
+        let cosmeticResource = try XCTUnwrap(resources.first)
+        XCTAssertEqual(resources.count, 1)
+        XCTAssertEqual(cosmeticResource.runAt, .documentStart)
+        XCTAssertEqual(cosmeticResource.resource.world, .main)
+        XCTAssertFalse(cosmeticResource.resource.requiresNativeBridge)
+        XCTAssertTrue(cosmeticResource.resource.javaScript?.contains("sponsored") == false)
+        let cssPolicySource = try FloorpWebExtensionCoordinator.styleInjectionSource(
+            try XCTUnwrap(cosmeticResource.resource.css)
+        )
+        let expectedGeneratedBytes = cssPolicySource.lengthOfBytes(using: .utf8) +
+            (cosmeticResource.resource.javaScript?.lengthOfBytes(using: .utf8) ?? 0)
+        XCTAssertEqual(cosmeticResource.generatedByteCount, expectedGeneratedBytes)
+
+        let match = try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "cosmetic-package-resource",
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: FailingContentRuleListCompiler()),
+            scriptResourceLoader: { _, _ in
+                throw FloorpWebExtensionError.unsupported("not used by generated cosmetic resource")
+            }
+        )
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [match],
+            hostAccess: .selectedSites([match]),
+            to: extensionID
+        )
+        try coordinator.restoreCosmeticResources(resources, for: extensionID)
+
+        let allowedTab = FloorpWebExtensionTabContext(
+            tabID: 1,
+            documentGeneration: 1,
+            url: try XCTUnwrap(URL(string: "https://allowed.example/path"))
+        )
+        let allowedPolicies = try XCTUnwrap(
+            coordinator.preNavigationPolicies(for: allowedTab).first?.scriptPolicies
+        )
+        XCTAssertEqual(allowedPolicies.count, 2)
+        XCTAssertTrue(allowedPolicies.allSatisfy { $0.world == .main })
+        XCTAssertTrue(allowedPolicies.allSatisfy { policy in
+            guard !policy.allFrames else { return false }
+            if case nil = policy.frameAuthorization { return true }
+            return false
+        })
+
+        let excludedTab = FloorpWebExtensionTabContext(
+            tabID: 1,
+            documentGeneration: 2,
+            url: try XCTUnwrap(URL(string: "https://allowed.example/excluded/page"))
+        )
+        XCTAssertTrue(coordinator.preNavigationPolicies(for: excludedTab).isEmpty)
+
+        await coordinator.setHostAccess(.denied, privateAccess: false, for: extensionID)
+        XCTAssertTrue(coordinator.preNavigationPolicies(for: allowedTab).isEmpty)
+        try coordinator.restoreCosmeticResources([], for: extensionID)
+    }
+
+    func testDeclaredCosmeticResourceRejectsUnknownKeysAndNoopScriptlets() throws {
+        let unknownKey = Data("""
+        { "schema_version": 1, "filters": [], "unexpected": true }
+        """.utf8)
+        XCTAssertThrowsError(try FloorpWebExtensionCosmeticFilterPackageDecoder.decode(unknownKey))
+
+        let noOpScriptlet = Data("""
+        {
+          "schema_version": 1,
+          "filters": [{
+            "matches": ["https://allowed.example/*"],
+            "scriptlets": [{ "name": "set-constant", "arguments": ["onlyProperty"] }]
+          }]
+        }
+        """.utf8)
+        XCTAssertThrowsError(try FloorpWebExtensionCosmeticFilterPackageDecoder.decode(noOpScriptlet))
+    }
+
+    func testManifestPreflightAdmitsOnlyInventoriedBoundedCosmeticResources() throws {
+        let manifestData = Data("""
+        {
+          "manifest_version": 3,
+          "name": "Cosmetic Package Fixture",
+          "version": "1.0.0",
+          "permissions": ["scripting"],
+          "host_permissions": ["https://allowed.example/*"],
+          "floorp_cosmetic_filter_resources": ["filters/cosmetic.json"]
+        }
+        """.utf8)
+        let cosmeticData = Data("""
+        {
+          "schema_version": 1,
+          "filters": [{
+            "matches": ["https://allowed.example/*"],
+            "selectors": [".advertisement"]
+          }]
+        }
+        """.utf8)
+        let inventory = FloorpWebExtensionManifestPackageInventory(resources: [
+            .init(path: "manifest.json", isRegularFile: true, byteSize: manifestData.count),
+            .init(path: "filters/cosmetic.json", isRegularFile: true, byteSize: cosmeticData.count)
+        ])
+        let report = try FloorpWebExtensionManifest.preflight(
+            manifestData: manifestData,
+            packageInventory: inventory,
+            ruleResourceData: ["filters/cosmetic.json": cosmeticData]
+        )
+        XCTAssertTrue(report.isActivationAllowed)
+        XCTAssertEqual(report.manifest.cosmeticFilterResources.map(\.path.path), ["filters/cosmetic.json"])
+
+        let missingResourceReport = try FloorpWebExtensionManifest.preflight(
+            manifestData: manifestData,
+            packageInventory: .init(resources: [
+                .init(path: "manifest.json", isRegularFile: true, byteSize: manifestData.count)
+            ]),
+            ruleResourceData: ["filters/cosmetic.json": cosmeticData]
+        )
+        XCTAssertFalse(missingResourceReport.isActivationAllowed)
+    }
+
+    func testDeclaredCosmeticResourcesRejectAggregateSelectorBudgetExhaustion() throws {
+        let selectors = (0 ..< 1_000).map { ".ad-\($0)" }
+        let withinBudgetFilters: [[String: Any]] = [
+            ["matches": ["https://allowed.example/*"], "selectors": selectors],
+            ["matches": ["https://allowed.example/*"], "selectors": selectors]
+        ]
+        let withinBudgetData = try JSONSerialization.data(
+            withJSONObject: ["schema_version": 1, "filters": withinBudgetFilters],
+            options: [.sortedKeys]
+        )
+        XCTAssertEqual(
+            try FloorpWebExtensionCosmeticFilterPackageDecoder.decodePackage([withinBudgetData]).count,
+            2
+        )
+        let filters: [[String: Any]] = [
+            withinBudgetFilters[0],
+            withinBudgetFilters[1],
+            ["matches": ["https://allowed.example/*"], "selectors": [".one-too-many"]]
+        ]
+        let data = try JSONSerialization.data(
+            withJSONObject: ["schema_version": 1, "filters": filters],
+            options: [.sortedKeys]
+        )
+
+        // Each filter and its resource are within their individual bounds.
+        let individuallyDecoded = try FloorpWebExtensionCosmeticFilterPackageDecoder.decode(data)
+        XCTAssertEqual(individuallyDecoded.count, 3)
+        // A package must nevertheless have one aggregate budget; otherwise
+        // multiple valid filters can schedule an unbounded number of DOM scans.
+        XCTAssertThrowsError(
+            try FloorpWebExtensionCosmeticFilterPackageDecoder.decodePackage([data])
+        )
+
+        let manifestData = Data("""
+        {
+          "manifest_version": 3,
+          "name": "Aggregate Cosmetic Quota Fixture",
+          "version": "1.0.0",
+          "permissions": ["scripting"],
+          "host_permissions": ["https://allowed.example/*"],
+          "floorp_cosmetic_filter_resources": ["filters/cosmetic.json"]
+        }
+        """.utf8)
+        let report = try FloorpWebExtensionManifest.preflight(
+            manifestData: manifestData,
+            packageInventory: .init(resources: [
+                .init(path: "manifest.json", isRegularFile: true, byteSize: manifestData.count),
+                .init(path: "filters/cosmetic.json", isRegularFile: true, byteSize: data.count)
+            ]),
+            ruleResourceData: ["filters/cosmetic.json": data]
+        )
+        XCTAssertFalse(report.isActivationAllowed)
+
+        let singleResourceData = Data("""
+        {
+          "schema_version": 1,
+          "filters": [{
+            "matches": ["https://allowed.example/*"],
+            "selectors": [".ad"]
+          }]
+        }
+        """.utf8)
+        XCTAssertEqual(
+            try FloorpWebExtensionCosmeticFilterPackageDecoder.decodePackage(
+                Array(repeating: singleResourceData, count: 32)
+            ).count,
+            32
+        )
+        XCTAssertThrowsError(
+            try FloorpWebExtensionCosmeticFilterPackageDecoder.decodePackage(
+                Array(repeating: singleResourceData, count: 33)
+            )
+        )
+    }
+
+    @MainActor
     func testRuntimeAppliesUpdatesAndRemovesPoliciesByExtensionOwnerBeforeNavigation() {
         let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
         FloorpFlags.setWebExtensionFeature(.core, enabled: true)

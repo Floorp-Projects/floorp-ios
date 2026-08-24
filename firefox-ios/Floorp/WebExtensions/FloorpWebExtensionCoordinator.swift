@@ -54,6 +54,34 @@ private actor FloorpWebExtensionDNRMutationGate {
     }
 }
 
+/// A FIFO gate for a single extension's registered-content-script mutation
+/// transaction. Main-actor methods still yield while the package registry is
+/// persisted, so this separate actor prevents another mutation from planning
+/// against the same stale registry and replacing the first transaction's
+/// materialized cache or durable snapshot.
+private actor FloorpWebExtensionScriptMutationGate {
+    private var isLocked = false
+    private var waiters = [CheckedContinuation<Void, Never>]()
+
+    func acquire() async {
+        guard isLocked else {
+            isLocked = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
 /// Coordinates the Stage 3 MV3 registries with one profile's live WebKit
 /// runtime.
 ///
@@ -76,11 +104,20 @@ final class FloorpWebExtensionCoordinator {
     /// performed after every asynchronous preparation step. Production uses
     /// the no-op default; the live-target validator still remains mandatory.
     typealias DynamicCSSMutationCheckpoint = @MainActor @Sendable () async -> Void
+    typealias ScriptMutationValidator = @MainActor () throws -> Void
 
     private struct MaterializedScript: Sendable {
         let script: FloorpWebExtensionRegisteredScript
         let policies: [FloorpWebExtensionUserScriptPolicy]
         let frameAuthorizationRevision: String
+    }
+
+    /// Generated package cosmetic resources intentionally have no dynamic
+    /// registration API. Keeping them separate prevents a registered-content
+    /// script update from addressing generated source.
+    private struct MaterializedCosmeticResource: Sendable {
+        let resource: FloorpWebExtensionCosmeticResource
+        let policies: [FloorpWebExtensionUserScriptPolicy]
     }
 
     private struct ActiveTabGrant: Sendable {
@@ -112,11 +149,13 @@ final class FloorpWebExtensionCoordinator {
     private var dnrStores = [FloorpWebExtensionID: FloorpWebExtensionDNRStore]()
     private var dnrLimits = [FloorpWebExtensionID: FloorpWebExtensionDNRLimits]()
     private var dnrMutationGates = [FloorpWebExtensionID: FloorpWebExtensionDNRMutationGate]()
+    private var scriptMutationGates = [FloorpWebExtensionID: FloorpWebExtensionScriptMutationGate]()
 
     /// MainActor cache used by `preNavigationPolicies(for:)`.
     /// Arrays retain `FloorpWebExtensionScriptRegistry`'s registration order.
     /// A dictionary would accidentally change cross-script execution order.
     private var materializedScripts = [FloorpWebExtensionID: [MaterializedScript]]()
+    private var materializedCosmeticResources = [FloorpWebExtensionID: [MaterializedCosmeticResource]]()
     private var permissionSnapshots = [FloorpWebExtensionID: FloorpWebExtensionPermissionSnapshot]()
     private var activeTabGrants = [FloorpWebExtensionID: ActiveTabGrant]()
 
@@ -200,6 +239,10 @@ final class FloorpWebExtensionCoordinator {
         )]
     }
 
+    static func isInstalled(_ coordinator: FloorpWebExtensionCoordinator) -> Bool {
+        coordinators[coordinator.profileKey] === coordinator
+    }
+
     /// Registers the profile-owned coordinator created by package/profile
     /// composition. Replacing a coordinator never combines normal and private
     /// state: the key includes the browsing mode.
@@ -223,38 +266,186 @@ final class FloorpWebExtensionCoordinator {
     /// a tab and receive the new policy on its first navigation.
     func registerScripts(
         _ scripts: [FloorpWebExtensionRegisteredScript],
-        for extensionID: FloorpWebExtensionID
+        for extensionID: FloorpWebExtensionID,
+        expectedPackageGeneration: String? = nil,
+        validateAuthority: ScriptMutationValidator = {}
     ) async throws {
-        // Resource materialization must succeed before the registry commits.
-        // Otherwise a package-resource failure could leave a persistent script
-        // registration that has no corresponding pre-navigation policy.
-        try scripts.forEach { _ = try materialize($0, for: extensionID) }
-        try await scriptRegistry.register(scripts, for: extensionID)
-        try await refreshScripts(for: extensionID)
+        try validateAuthority()
+        let gate = scriptMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        try validateAuthority()
+        let previous = await scriptRegistry.dynamicSnapshot(for: extensionID)
+        let previousDynamic = await scriptRegistry.registeredScripts(for: extensionID)
+        let prospective = try await scriptRegistry.scriptsAfterRegistering(
+            scripts,
+            for: extensionID
+        )
+        try validateAuthority()
+        let materialized = try materializedScripts(for: prospective, extensionID: extensionID)
+        do {
+            try validateAuthority()
+            try await scriptRegistry.register(scripts, for: extensionID)
+            try validateAuthority()
+            let committedDurably = try await persistRegisteredScripts(
+                prospective,
+                replacing: previousDynamic,
+                for: extensionID,
+                expectedPackageGeneration: expectedPackageGeneration
+            )
+            if !committedDurably { try validateAuthority() }
+        } catch {
+            await scriptRegistry.restoreDynamicSnapshot(previous, for: extensionID)
+            throw error
+        }
+        installMaterializedScripts(materialized, for: extensionID)
     }
 
     func updateScripts(
         _ updates: [FloorpWebExtensionRegisteredScriptUpdate],
-        for extensionID: FloorpWebExtensionID
+        for extensionID: FloorpWebExtensionID,
+        expectedPackageGeneration: String? = nil,
+        validateAuthority: ScriptMutationValidator = {}
     ) async throws {
-        let existing = await scriptRegistry.registeredScripts(for: extensionID)
-        var prospective = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
-        for update in updates {
-            if let script = prospective[update.id] {
-                prospective[update.id] = script.applying(update)
-            }
+        try validateAuthority()
+        let gate = scriptMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        try validateAuthority()
+        let previous = await scriptRegistry.dynamicSnapshot(for: extensionID)
+        let previousDynamic = await scriptRegistry.registeredScripts(for: extensionID)
+        let prospective = try await scriptRegistry.scriptsAfterUpdating(
+            updates,
+            for: extensionID
+        )
+        try validateAuthority()
+        let materialized = try materializedScripts(for: prospective, extensionID: extensionID)
+        do {
+            try validateAuthority()
+            try await scriptRegistry.update(updates, for: extensionID)
+            try validateAuthority()
+            let committedDurably = try await persistRegisteredScripts(
+                prospective,
+                replacing: previousDynamic,
+                for: extensionID,
+                expectedPackageGeneration: expectedPackageGeneration
+            )
+            if !committedDurably { try validateAuthority() }
+        } catch {
+            await scriptRegistry.restoreDynamicSnapshot(previous, for: extensionID)
+            throw error
         }
-        try prospective.values.forEach { _ = try materialize($0, for: extensionID) }
-        try await scriptRegistry.update(updates, for: extensionID)
-        try await refreshScripts(for: extensionID)
+        installMaterializedScripts(materialized, for: extensionID)
     }
 
     func unregisterScripts(
         _ identifiers: [String],
+        for extensionID: FloorpWebExtensionID,
+        expectedPackageGeneration: String? = nil,
+        validateAuthority: ScriptMutationValidator = {}
+    ) async throws {
+        try validateAuthority()
+        let gate = scriptMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        try validateAuthority()
+        let previous = await scriptRegistry.dynamicSnapshot(for: extensionID)
+        let previousDynamic = await scriptRegistry.registeredScripts(for: extensionID)
+        let prospective = try await scriptRegistry.scriptsAfterUnregistering(
+            identifiers,
+            for: extensionID
+        )
+        try validateAuthority()
+        let materialized = try materializedScripts(for: prospective, extensionID: extensionID)
+        do {
+            try validateAuthority()
+            try await scriptRegistry.unregister(identifiers, for: extensionID)
+            try validateAuthority()
+            let committedDurably = try await persistRegisteredScripts(
+                prospective,
+                replacing: previousDynamic,
+                for: extensionID,
+                expectedPackageGeneration: expectedPackageGeneration
+            )
+            if !committedDurably { try validateAuthority() }
+        } catch {
+            await scriptRegistry.restoreDynamicSnapshot(previous, for: extensionID)
+            throw error
+        }
+        installMaterializedScripts(materialized, for: extensionID)
+    }
+
+    /// Restores package-owned script state that has already passed durable
+    /// package validation. Startup must not call the public mutation path:
+    /// registering manifest scripts first would otherwise replace the saved
+    /// dynamic persistent subset with an empty list.
+    func restoreScripts(
+        _ scripts: [FloorpWebExtensionRegisteredScript],
         for extensionID: FloorpWebExtensionID
     ) async throws {
-        try await scriptRegistry.unregister(identifiers, for: extensionID)
-        try await refreshScripts(for: extensionID)
+        let gate = scriptMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        let prospective = try await scriptRegistry.scriptsAfterRegistering(
+            scripts,
+            for: extensionID
+        )
+        let materialized = try materializedScripts(for: prospective, extensionID: extensionID)
+        try await scriptRegistry.register(scripts, for: extensionID)
+        installMaterializedScripts(materialized, for: extensionID)
+    }
+
+    func restoreManifestScripts(
+        _ scripts: [FloorpWebExtensionRegisteredScript],
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        let gate = scriptMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        try await scriptRegistry.registerManifestScripts(scripts, for: extensionID)
+        let registered = await scriptRegistry.allRegisteredScripts(for: extensionID)
+        let materialized = try materializedScripts(for: registered, extensionID: extensionID)
+        installMaterializedScripts(materialized, for: extensionID)
+    }
+
+    /// Replaces the static cosmetic policies decoded from the active immutable
+    /// package generation. This is deliberately not exposed through the
+    /// scripting API: callers can only reach it after the installer has
+    /// checked a declared package resource and generated its bounded source.
+    /// Cosmetic resources are main-frame-only, so this path cannot create an
+    /// unauthenticated subframe execution policy.
+    func restoreCosmeticResources(
+        _ resources: [FloorpWebExtensionCosmeticPackageResource],
+        for extensionID: FloorpWebExtensionID
+    ) throws {
+        try FloorpWebExtensionCosmeticFilterPackageDecoder.validatePackage(resources)
+        let materialized = try resources.map { packageResource -> MaterializedCosmeticResource in
+            let resource = packageResource.resource
+            var policies = [FloorpWebExtensionUserScriptPolicy]()
+            if let css = resource.css {
+                policies.append(.init(
+                    source: try Self.styleInjectionSource(css),
+                    runAt: packageResource.runAt,
+                    world: resource.world
+                ))
+            }
+            if let javaScript = resource.javaScript {
+                policies.append(.init(
+                    source: javaScript,
+                    runAt: packageResource.runAt,
+                    world: resource.world
+                ))
+            }
+            guard !policies.isEmpty else {
+                throw FloorpWebExtensionError.unsupported("empty cosmetic filter resource")
+            }
+            return .init(resource: resource, policies: policies)
+        }
+        if materialized.isEmpty {
+            materializedCosmeticResources.removeValue(forKey: extensionID)
+        } else {
+            materializedCosmeticResources[extensionID] = materialized
+        }
     }
 
     /// Replaces the extension's permission and host-grant snapshot. This is
@@ -514,7 +705,10 @@ final class FloorpWebExtensionCoordinator {
     ) -> [FloorpWebExtensionNavigationPolicySnapshot] {
         guard tab.isPrivate == profileKey.isPrivateBrowsing else { return [] }
 
-        return materializedScripts.keys.sorted { $0.rawValue < $1.rawValue }.compactMap { extensionID in
+        let activeExtensionIDs = Set(materializedScripts.keys)
+            .union(materializedCosmeticResources.keys)
+            .sorted { $0.rawValue < $1.rawValue }
+        return activeExtensionIDs.compactMap { extensionID in
             let snapshot = permissionSnapshot(for: extensionID)
             guard snapshot.apiPermissions.contains(.scripting),
                   !tab.isPrivate || snapshot.privateBrowsingEnabled else {
@@ -536,7 +730,7 @@ final class FloorpWebExtensionCoordinator {
             // URL is outside the extension's host grant. Every frame asks the
             // native coordinator again immediately before package code runs.
             guard hasDurableHostAccess || hasActiveTab else { return nil }
-            let policies = (materializedScripts[extensionID] ?? [])
+            let registeredScriptPolicies = (materializedScripts[extensionID] ?? [])
                 .flatMap { materialized -> [FloorpWebExtensionUserScriptPolicy] in
                     let script = materialized.script
                     if !script.allFrames {
@@ -560,6 +754,15 @@ final class FloorpWebExtensionCoordinator {
                         )
                     }
                 }
+            let cosmeticPolicies = (materializedCosmeticResources[extensionID] ?? [])
+                .flatMap { materialized -> [FloorpWebExtensionUserScriptPolicy] in
+                    guard materialized.resource.applies(to: tab),
+                          allowsScripting(for: extensionID, in: tab) else {
+                        return []
+                    }
+                    return materialized.policies
+                }
+            let policies = registeredScriptPolicies + cosmeticPolicies
             guard !policies.isEmpty else { return nil }
             return .init(extensionID: extensionID, scriptPolicies: policies)
         }
@@ -699,6 +902,9 @@ final class FloorpWebExtensionCoordinator {
         _ extensionID: FloorpWebExtensionID,
         purgingAPIData: Bool
     ) async throws {
+        let scriptGate = scriptMutationGate(for: extensionID)
+        await scriptGate.acquire()
+        defer { Task { await scriptGate.release() } }
         // Revocation participates in the same per-extension gate as
         // every DNR compile-and-swap. If a mutation is already awaiting
         // WebKit, removal waits and then wins; if a mutation is queued behind
@@ -713,11 +919,9 @@ final class FloorpWebExtensionCoordinator {
         // A purge failure therefore leaves an inactive extension plus a
         // package-store tombstone, never a partially deleted live extension.
         await suspendAPIHost(extensionID)
-        let identifiers = await scriptRegistry.registeredScripts(for: extensionID).map(\.id)
-        if !identifiers.isEmpty {
-            try? await scriptRegistry.unregister(identifiers, for: extensionID)
-        }
+        await scriptRegistry.removeAllScripts(for: extensionID)
         materializedScripts.removeValue(forKey: extensionID)
+        materializedCosmeticResources.removeValue(forKey: extensionID)
         permissionSnapshots.removeValue(forKey: extensionID)
         activeTabGrants.removeValue(forKey: extensionID)
         dnrStores.removeValue(forKey: extensionID)
@@ -736,7 +940,18 @@ final class FloorpWebExtensionCoordinator {
     }
 
     private func refreshScripts(for extensionID: FloorpWebExtensionID) async throws {
-        let registered = await scriptRegistry.registeredScripts(for: extensionID)
+        let registered = await scriptRegistry.allRegisteredScripts(for: extensionID)
+        let refreshed = try materializedScripts(for: registered, extensionID: extensionID)
+        installMaterializedScripts(refreshed, for: extensionID)
+    }
+
+    /// Materializes all prospective entries before either durable or live
+    /// state changes. This prevents a package-resource failure from leaving a
+    /// restored registration with no equivalent pre-navigation policy.
+    private func materializedScripts(
+        for registered: [FloorpWebExtensionRegisteredScript],
+        extensionID: FloorpWebExtensionID
+    ) throws -> [MaterializedScript] {
         var refreshed = [MaterializedScript]()
         for script in registered {
             let policies = try materialize(script, for: extensionID)
@@ -746,11 +961,61 @@ final class FloorpWebExtensionCoordinator {
                 frameAuthorizationRevision: UUID().uuidString.lowercased()
             ))
         }
+        return refreshed
+    }
+
+    private func installMaterializedScripts(
+        _ refreshed: [MaterializedScript],
+        for extensionID: FloorpWebExtensionID
+    ) {
         if refreshed.isEmpty {
             materializedScripts.removeValue(forKey: extensionID)
         } else {
             materializedScripts[extensionID] = refreshed
         }
+    }
+
+    /// Writes only the explicitly persistent dynamic registrations. The
+    /// package store verifies the exact active generation and package resource
+    /// inventory before committing. A coordinator without a package store may
+    /// still host memory-only registrations, but must reject persistence
+    /// rather than silently downgrading it.
+    private func persistRegisteredScripts(
+        _ scripts: [FloorpWebExtensionRegisteredScript],
+        replacing previousScripts: [FloorpWebExtensionRegisteredScript],
+        for extensionID: FloorpWebExtensionID,
+        expectedPackageGeneration: String?
+    ) async throws -> Bool {
+        let persistent = scripts.filter(\.persistAcrossSessions)
+        let previousPersistent = previousScripts.filter(\.persistAcrossSessions)
+        guard let packageStore else {
+            guard persistent.isEmpty else {
+                throw FloorpWebExtensionError.unsupported(
+                    "persistent registered content scripts require a package store"
+                )
+            }
+            return false
+        }
+        guard let package = await packageStore.installedPackage(for: extensionID) else {
+            guard persistent.isEmpty else {
+                throw FloorpWebExtensionError.unsupported(
+                    "persistent registered content scripts require an installed package"
+                )
+            }
+            return false
+        }
+        let generation = expectedPackageGeneration ?? package.generation
+        guard package.generation == generation else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        guard persistent != previousPersistent else { return false }
+        try await packageStore.updatePersistentRegisteredScripts(
+            persistent,
+            for: extensionID,
+            expectedGeneration: generation,
+            expectedCurrentScripts: previousPersistent
+        )
+        return true
     }
 
     private func materialize(
@@ -944,13 +1209,24 @@ final class FloorpWebExtensionCoordinator {
         return gate
     }
 
+    private func scriptMutationGate(
+        for extensionID: FloorpWebExtensionID
+    ) -> FloorpWebExtensionScriptMutationGate {
+        if let existing = scriptMutationGates[extensionID] {
+            return existing
+        }
+        let gate = FloorpWebExtensionScriptMutationGate()
+        scriptMutationGates[extensionID] = gate
+        return gate
+    }
+
     private func validateProfile(_ tab: FloorpWebExtensionTabContext) throws {
         guard tab.isPrivate == profileKey.isPrivateBrowsing else {
             throw FloorpWebExtensionError.permissionDenied("profile mode")
         }
     }
 
-    private static func styleInjectionSource(_ css: String) throws -> String {
+    nonisolated static func styleInjectionSource(_ css: String) throws -> String {
         let encoded = try JSONEncoder().encode(css)
         guard let literal = String(data: encoded, encoding: .utf8) else {
             throw FloorpWebExtensionError.unsupported("stylesheet serialization")
@@ -966,14 +1242,17 @@ final class FloorpWebExtensionCoordinator {
 
     private func tearDown() {
         let extensionIDs = Set(materializedScripts.keys)
+            .union(materializedCosmeticResources.keys)
             .union(dnrStores.keys)
             .union(permissionSnapshots.keys)
         extensionIDs.forEach(runtime.removePolicies(for:))
         materializedScripts.removeAll()
+        materializedCosmeticResources.removeAll()
         permissionSnapshots.removeAll()
         activeTabGrants.removeAll()
         dnrStores.removeAll()
         dnrLimits.removeAll()
         dnrMutationGates.removeAll()
+        scriptMutationGates.removeAll()
     }
 }

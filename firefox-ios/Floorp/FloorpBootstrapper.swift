@@ -200,14 +200,14 @@ public final class FloorpBootstrapper {
                     .deletingLastPathComponent()
                     .appendingPathComponent("APIHost", isDirectory: true)
             )
-            let normalCoordinator = installPackageComposition(
+            let normalCoordinator = try installPackageComposition(
                 store: normalPackageStore,
                 apiHost: normalAPIHost,
                 profileIdentifier: profileIdentifier,
                 isPrivateBrowsing: false,
                 compositionGeneration: compositionGeneration
             )
-            let privateCoordinator = installPackageComposition(
+            let privateCoordinator = try installPackageComposition(
                 store: privatePackageStore,
                 apiHost: privateAPIHost,
                 profileIdentifier: profileIdentifier,
@@ -328,7 +328,7 @@ public final class FloorpBootstrapper {
         profileIdentifier: String,
         isPrivateBrowsing: Bool,
         compositionGeneration: UUID
-    ) -> FloorpWebExtensionCoordinator {
+    ) throws -> FloorpWebExtensionCoordinator {
         let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
             for: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing
@@ -414,7 +414,7 @@ public final class FloorpBootstrapper {
                 try await reconcileComposition(extensionID, package, operation, resources)
             }
         )
-        FloorpWebExtensionPackageStoreRegistry.install(store, manager: manager)
+        try FloorpWebExtensionPackageStoreRegistry.install(store, manager: manager)
         FloorpWebExtensionCoordinator.install(coordinator)
         return coordinator
     }
@@ -636,7 +636,7 @@ public final class FloorpBootstrapper {
             to: extensionID
         )
 
-        let scripts = manifest.contentScripts.enumerated().map { index, script in
+        let manifestScripts = manifest.contentScripts.enumerated().map { index, script in
             FloorpWebExtensionRegisteredScript(
                 id: "manifest.content-script.\(index)",
                 matches: script.matches,
@@ -648,9 +648,22 @@ public final class FloorpBootstrapper {
                 world: script.world
             )
         }
-        if !scripts.isEmpty {
-            try await coordinator.registerScripts(scripts, for: extensionID)
+        if !manifestScripts.isEmpty {
+            try await coordinator.restoreManifestScripts(manifestScripts, for: extensionID)
         }
+        if !package.registeredPersistentScripts.isEmpty {
+            try await coordinator.restoreScripts(package.registeredPersistentScripts, for: extensionID)
+        }
+
+        let cosmeticResourceData = try manifest.cosmeticFilterResources.map { declaredResource in
+            let source = try resourceLoader(extensionID, declaredResource.path)
+            return Data(source.utf8)
+        }
+        let cosmeticResources = try FloorpWebExtensionCosmeticFilterPackageDecoder
+            .decodePackage(cosmeticResourceData)
+        // Call even for an empty manifest declaration so a package replacement
+        // cannot retain generated policies from its prior immutable generation.
+        try coordinator.restoreCosmeticResources(cosmeticResources, for: extensionID)
 
         if storedDNRConfiguration != nil || !manifest.dnrRuleResources.isEmpty {
             var staticRuleSets = [FloorpWebExtensionDNRStaticRuleSet]()

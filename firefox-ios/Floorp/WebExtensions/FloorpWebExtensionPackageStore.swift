@@ -49,9 +49,18 @@ private final class FloorpWebExtensionPackageCompositionState: @unchecked Sendab
     private let lock = NSLock()
     private var isCurrent = true
 
-    func invalidate() {
+    @discardableResult
+    func invalidate() -> Bool {
         lock.lock()
+        let wasCurrent = isCurrent
         isCurrent = false
+        lock.unlock()
+        return wasCurrent
+    }
+
+    func reactivate() {
+        lock.lock()
+        isCurrent = true
         lock.unlock()
     }
 
@@ -62,6 +71,23 @@ private final class FloorpWebExtensionPackageCompositionState: @unchecked Sendab
             throw FloorpWebExtensionPackageStoreError.stalePackageComposition
         }
         return try operation()
+    }
+}
+
+private final class FloorpWebExtensionPackageRegistrySnapshotState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data: Data?
+
+    func replace(with data: Data?) {
+        lock.lock()
+        self.data = data
+        lock.unlock()
+    }
+
+    func matches(_ candidate: Data?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return data == candidate
     }
 }
 
@@ -85,10 +111,18 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
     var isEnabled: Bool
     var grants: FloorpWebExtensionPermissionSnapshot
     var dnrConfiguration: FloorpWebExtensionStoredDNRConfiguration?
+    /// Dynamic `scripting.registerContentScripts` entries that explicitly
+    /// opted into persistence. An optional backing value keeps previously
+    /// written package registries decodable; missing means no registrations.
+    var persistentRegisteredScripts: [FloorpWebExtensionRegisteredScript]? = nil
     /// A product-owned explanation for a fail-closed activation disable. This
     /// keeps a runtime activation failure distinct from a deliberate user
     /// disable after process restart.
     var activationError: String? = nil
+
+    var registeredPersistentScripts: [FloorpWebExtensionRegisteredScript] {
+        persistentRegisteredScripts ?? []
+    }
 }
 
 struct FloorpWebExtensionPackageProfileKey: Hashable, Sendable {
@@ -319,10 +353,11 @@ actor FloorpWebExtensionPackageStore {
     private let directory: URL
     private let packagesDirectory: URL
     private let stagingDirectory: URL
-    private let registryURL: URL
+    nonisolated private let registryURL: URL
     private let registryPersister: RegistryPersister
     private let resourceState = FloorpWebExtensionPackageResourceState()
     private let compositionState = FloorpWebExtensionPackageCompositionState()
+    nonisolated private let durableSnapshotState = FloorpWebExtensionPackageRegistrySnapshotState()
     private var registry: Registry
     private var preparedResourceStates = [
         FloorpWebExtensionID: FloorpWebExtensionPreparedPackageResourceState
@@ -352,7 +387,12 @@ actor FloorpWebExtensionPackageStore {
         try Self.ensureStoreDirectory(self.directory)
         try Self.ensureStoreDirectory(packagesDirectory)
         try Self.ensureStoreDirectory(stagingDirectory)
-        registry = try Self.loadRegistry(from: registryURL, packagesDirectory: packagesDirectory)
+        let loadedRegistry = try Self.loadRegistry(
+            from: registryURL,
+            packagesDirectory: packagesDirectory
+        )
+        registry = loadedRegistry.registry
+        var durableSnapshotData = loadedRegistry.data
         if !registry.pendingPackageUpdates.isEmpty {
             let interruptedUpdates = registry.pendingPackageUpdates
             var recovered = registry
@@ -369,6 +409,7 @@ actor FloorpWebExtensionPackageStore {
             let data = try Self.encodedRegistryData(recovered)
             try registryPersister(data, registryURL)
             registry = recovered
+            durableSnapshotData = data
 
             for update in interruptedUpdates.values {
                 let rejectedDirectory = Self.generationDirectory(
@@ -383,6 +424,7 @@ actor FloorpWebExtensionPackageStore {
             registry: registry,
             packagesDirectory: packagesDirectory
         ))
+        durableSnapshotState.replace(with: durableSnapshotData)
     }
 
     /// Installs a digest-pinned bundled fixture into a fresh immutable
@@ -500,6 +542,14 @@ actor FloorpWebExtensionPackageStore {
                 }
                 try Self.validateStoredDNRConfiguration(existingDNRConfiguration)
             }
+            let existingPersistentScripts = registry.packages.first {
+                $0.extensionID == expectedExtensionID
+            }?.registeredPersistentScripts ?? []
+            try Self.validatePersistentRegisteredScripts(
+                existingPersistentScripts,
+                for: preflight.manifest,
+                resourcePaths: Set(resources.dataByPath.keys)
+            )
             try Self.ensureStoreDirectory(generationDirectory.deletingLastPathComponent())
             guard !FileManager.default.fileExists(atPath: generationDirectory.path) else {
                 throw FloorpWebExtensionPackageStoreError.corruptedRegistry
@@ -520,6 +570,7 @@ actor FloorpWebExtensionPackageStore {
                 isEnabled: previousPackage?.isEnabled ?? true,
                 grants: grants,
                 dnrConfiguration: existingDNRConfiguration,
+                persistentRegisteredScripts: existingPersistentScripts,
                 activationError: previousPackage?.activationError
             )
 
@@ -565,8 +616,13 @@ actor FloorpWebExtensionPackageStore {
         registry.packages
     }
 
-    nonisolated func invalidateComposition() {
+    @discardableResult
+    nonisolated func invalidateComposition() -> Bool {
         compositionState.invalidate()
+    }
+
+    nonisolated func reactivateComposition() {
+        compositionState.reactivate()
     }
 
     func installedPackage(
@@ -756,6 +812,47 @@ actor FloorpWebExtensionPackageStore {
         next.packages[index].dnrConfiguration = configuration
         try persist(next)
         registry = next
+    }
+
+    /// Replaces the durable subset of dynamically registered content scripts.
+    /// The caller supplies the complete live registry snapshot; only entries
+    /// explicitly marked `persistAcrossSessions` reach this API. A package
+    /// generation comparison prevents an old coordinator from committing a
+    /// registration after update, disable, or uninstall has superseded it.
+    func updatePersistentRegisteredScripts(
+        _ scripts: [FloorpWebExtensionRegisteredScript],
+        for extensionID: FloorpWebExtensionID,
+        expectedGeneration: String,
+        expectedCurrentScripts: [FloorpWebExtensionRegisteredScript]? = nil
+    ) throws {
+        guard registry.pendingPackageUpdates[extensionID] == nil else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        var next = registry
+        guard let index = next.packages.firstIndex(where: { $0.extensionID == extensionID }),
+              next.packages[index].isEnabled,
+              next.packages[index].generation == expectedGeneration else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        if let expectedCurrentScripts,
+           next.packages[index].registeredPersistentScripts != expectedCurrentScripts {
+            throw FloorpWebExtensionPackageStoreError.stalePackageComposition
+        }
+        try Self.validatePersistentRegisteredScripts(
+            scripts,
+            for: next.packages[index].preflight.manifest,
+            resourcePaths: next.packages[index].resourcePaths
+        )
+        next.packages[index].persistentRegisteredScripts = scripts
+        try persist(next)
+        registry = next
+    }
+
+    nonisolated func validateDurableSnapshotForCompositionInstall() throws {
+        let currentData = try Self.registrySnapshotData(at: registryURL)
+        guard durableSnapshotState.matches(currentData) else {
+            throw FloorpWebExtensionPackageStoreError.stalePackageComposition
+        }
     }
 
     /// Atomically removes the active package and records a durable cleanup
@@ -1162,8 +1259,13 @@ actor FloorpWebExtensionPackageStore {
         }
     }
 
-    private static func loadRegistry(from url: URL, packagesDirectory: URL) throws -> Registry {
-        guard FileManager.default.fileExists(atPath: url.path) else { return Registry() }
+    private static func loadRegistry(
+        from url: URL,
+        packagesDirectory: URL
+    ) throws -> (registry: Registry, data: Data?) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return (Registry(), nil)
+        }
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isRegularFile == true,
               values.isSymbolicLink != true,
@@ -1222,7 +1324,7 @@ actor FloorpWebExtensionPackageStore {
         } catch {
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
         }
-        return decoded
+        return (decoded, registryData)
     }
 
     /// A registry is an index, not an authority. Rebuild every security-
@@ -1286,6 +1388,37 @@ actor FloorpWebExtensionPackageStore {
             }
             try validateStoredDNRConfiguration(dnrConfiguration)
         }
+        try validatePersistentRegisteredScripts(
+            package.registeredPersistentScripts,
+            for: preflight.manifest,
+            resourcePaths: package.resourcePaths
+        )
+    }
+
+    private static func validatePersistentRegisteredScripts(
+        _ scripts: [FloorpWebExtensionRegisteredScript],
+        for manifest: FloorpWebExtensionManifest,
+        resourcePaths: Set<String>
+    ) throws {
+        guard scripts.allSatisfy(\.persistAcrossSessions) else {
+            throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+        }
+
+        do {
+            // Manifest content scripts occupy a separate immutable namespace
+            // and do not count against or collide with the dynamic API store.
+            try FloorpWebExtensionScriptRegistry.validatePersistedScripts(scripts)
+        } catch {
+            throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+        }
+
+        for script in scripts {
+            for source in script.javaScript + script.styleSheets {
+                guard resourcePaths.contains(source.path) else {
+                    throw FloorpWebExtensionPackageStoreError.resourceUnavailable(source.path)
+                }
+            }
+        }
     }
 
     private static func validatedGenerationDirectory(
@@ -1341,10 +1474,16 @@ actor FloorpWebExtensionPackageStore {
         return data
     }
 
+    private static func registrySnapshotData(at registryURL: URL) throws -> Data? {
+        guard FileManager.default.fileExists(atPath: registryURL.path) else { return nil }
+        return try Data(contentsOf: registryURL, options: [.mappedIfSafe])
+    }
+
     private func persist(_ registry: Registry) throws {
         let data = try Self.encodedRegistryData(registry)
         try compositionState.performIfCurrent {
             try registryPersister(data, registryURL)
+            durableSnapshotState.replace(with: data)
         }
     }
 
@@ -1397,9 +1536,22 @@ enum FloorpWebExtensionPackageStoreRegistry {
     static func install(
         _ store: FloorpWebExtensionPackageStore,
         manager: FloorpWebExtensionLivePackageManager
-    ) {
+    ) throws {
+        var previousToReactivate: FloorpWebExtensionPackageStore?
         if let previous = stores[store.profileKey], previous !== store {
-            previous.invalidateComposition()
+            if previous.invalidateComposition() {
+                previousToReactivate = previous
+            }
+        }
+        do {
+            try store.validateDurableSnapshotForCompositionInstall()
+        } catch {
+            // Publication has not happened. If this install performed the
+            // invalidation itself, restore the still-registered store whose
+            // in-memory snapshot matches the durable file. A composition that
+            // was already invalidated by its owner stays fail-closed.
+            previousToReactivate?.reactivateComposition()
+            throw error
         }
         stores[store.profileKey] = store
         managers[store.profileKey] = manager

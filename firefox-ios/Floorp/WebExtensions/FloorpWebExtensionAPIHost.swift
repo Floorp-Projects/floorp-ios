@@ -83,6 +83,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     ) throws -> FloorpWebExtensionLiveScriptingTarget
 
     private struct ActiveExtension {
+        let authorityRevision: UUID
         var permissions: Set<FloorpWebExtensionAPIGrant>
         let defaultLocale: String
         let declaredPermissions: Set<FloorpWebExtensionAPIGrant>
@@ -523,7 +524,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let runAt: String
         let allFrames: Bool
         let world: String
-        let persistAcrossSessions = false
+        let persistAcrossSessions: Bool
 
         init(_ script: FloorpWebExtensionRegisteredScript) {
             id = script.id
@@ -534,6 +535,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             runAt = script.runAt.rawValue
             allFrames = script.allFrames
             world = script.world.rawValue.uppercased()
+            persistAcrossSessions = script.persistAcrossSessions
         }
     }
     private struct AlarmResponse: Encodable {
@@ -565,6 +567,12 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private let permissionMutationHandler: PermissionMutationHandler?
     private let liveScriptingTargetResolver: LiveScriptingTargetResolver?
     private var activeExtensions = [FloorpWebExtensionID: ActiveExtension]()
+    private enum RegistryBinding {
+        case unmanaged
+        case installed
+        case invalidated
+    }
+    private var registryBinding: RegistryBinding = .unmanaged
     private var cssInsertions = [FloorpWebExtensionID: [TrackedCSSInsertion]]()
 
     init(
@@ -681,6 +689,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         resourcePaths: Set<String> = []
     ) async {
         activeExtensions[extensionID] = .init(
+            authorityRevision: UUID(),
             permissions: grants.apiPermissions,
             defaultLocale: defaultLocale,
             declaredPermissions: declaredPermissions ?? grants.apiPermissions,
@@ -814,16 +823,16 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             return try await removePermissions(payload, active: active, sender: sender)
         case "scripting.getRegisteredContentScripts":
             try require(.scripting, in: active)
-            return try await getRegisteredScripts(payload, extensionID: sender.extensionID)
+            return try await getRegisteredScripts(payload, active: active, sender: sender)
         case "scripting.registerContentScripts":
             try require(.scripting, in: active)
-            return try await registerScripts(payload, extensionID: sender.extensionID)
+            return try await registerScripts(payload, active: active, sender: sender)
         case "scripting.updateContentScripts":
             try require(.scripting, in: active)
-            return try await updateScripts(payload, extensionID: sender.extensionID)
+            return try await updateScripts(payload, active: active, sender: sender)
         case "scripting.unregisterContentScripts":
             try require(.scripting, in: active)
-            return try await unregisterScripts(payload, extensionID: sender.extensionID)
+            return try await unregisterScripts(payload, active: active, sender: sender)
         case "scripting.insertCSS":
             try require(.scripting, in: active)
             return try await insertCSS(payload, extensionID: sender.extensionID)
@@ -995,6 +1004,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         expectedActive: ActiveExtension
     ) throws {
         guard let currentActive = activeExtensions[sender.extensionID],
+              currentActive.authorityRevision == expectedActive.authorityRevision,
               currentActive.packageGeneration == expectedActive.packageGeneration,
               senderMatchesActivePackage(sender, active: currentActive) else {
             throw FloorpWebExtensionMessageError.unauthorizedDocument
@@ -1019,6 +1029,31 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
                   tab: target.tab
               ) else {
             throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+    }
+
+    fileprivate func markInstalledInRegistry() {
+        registryBinding = .installed
+    }
+
+    fileprivate func invalidateRegistryBinding() {
+        registryBinding = .invalidated
+        activeExtensions.removeAll()
+    }
+
+    private var hasCurrentRegistryBinding: Bool {
+        switch registryBinding {
+        case .unmanaged:
+            // Unit-composed hosts are deliberately usable without installing
+            // global production state.
+            return true
+        case .installed:
+            return FloorpWebExtensionAPIHostRegistry.host(
+                for: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ) === self
+        case .invalidated:
+            return false
         }
     }
 
@@ -1319,50 +1354,115 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
 
     private func getRegisteredScripts(
         _ payload: FloorpWebExtensionMessagePayload,
-        extensionID: FloorpWebExtensionID
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
+        let coordinator = try authorizedScriptingCoordinator(active: active, sender: sender)
         let request = try decode(RegisteredScriptFilterRequest.self, from: payload)
         let ids = request.filter?.ids.map(Set.init)
-        let scripts = try await tryCoordinator().registeredScripts(for: extensionID)
+        let scripts = await coordinator.registeredScripts(for: sender.extensionID)
             .filter { ids?.contains($0.id) ?? true }
             .map(RegisteredScriptResponse.init)
+        try validateScriptingAuthority(coordinator, active: active, sender: sender)
         return try response(scripts)
     }
 
     private func registerScripts(
         _ payload: FloorpWebExtensionMessagePayload,
-        extensionID: FloorpWebExtensionID
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
+        let coordinator = try authorizedScriptingCoordinator(active: active, sender: sender)
         let request = try decode(RegisterScriptsRequest.self, from: payload)
         let scripts = try request.scripts.map(makeRegisteredScript)
-        try await tryCoordinator().registerScripts(scripts, for: extensionID)
+        do {
+            try await coordinator.registerScripts(
+                scripts,
+                for: sender.extensionID,
+                expectedPackageGeneration: active.packageGeneration
+            ) {
+                try self.validateScriptingAuthority(coordinator, active: active, sender: sender)
+            }
+        } catch FloorpWebExtensionPackageStoreError.inactivePackageGeneration,
+                FloorpWebExtensionPackageStoreError.packageNotInstalled,
+                FloorpWebExtensionPackageStoreError.stalePackageComposition {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
         return try response(EmptyResponse())
     }
 
     private func updateScripts(
         _ payload: FloorpWebExtensionMessagePayload,
-        extensionID: FloorpWebExtensionID
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
+        let coordinator = try authorizedScriptingCoordinator(active: active, sender: sender)
         let request = try decode(RegisterScriptsRequest.self, from: payload)
         let updates = try request.scripts.map(makeRegisteredScriptUpdate)
-        try await tryCoordinator().updateScripts(updates, for: extensionID)
+        do {
+            try await coordinator.updateScripts(
+                updates,
+                for: sender.extensionID,
+                expectedPackageGeneration: active.packageGeneration
+            ) {
+                try self.validateScriptingAuthority(coordinator, active: active, sender: sender)
+            }
+        } catch FloorpWebExtensionPackageStoreError.inactivePackageGeneration,
+                FloorpWebExtensionPackageStoreError.packageNotInstalled,
+                FloorpWebExtensionPackageStoreError.stalePackageComposition {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
         return try response(EmptyResponse())
     }
 
     private func unregisterScripts(
         _ payload: FloorpWebExtensionMessagePayload,
-        extensionID: FloorpWebExtensionID
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
+        let coordinator = try authorizedScriptingCoordinator(active: active, sender: sender)
         let request = try decode(UnregisterScriptsRequest.self, from: payload)
-        try await tryCoordinator().unregisterScripts(request.ids ?? [], for: extensionID)
+        do {
+            try await coordinator.unregisterScripts(
+                request.ids ?? [],
+                for: sender.extensionID,
+                expectedPackageGeneration: active.packageGeneration
+            ) {
+                try self.validateScriptingAuthority(coordinator, active: active, sender: sender)
+            }
+        } catch FloorpWebExtensionPackageStoreError.inactivePackageGeneration,
+                FloorpWebExtensionPackageStoreError.packageNotInstalled,
+                FloorpWebExtensionPackageStoreError.stalePackageComposition {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
         return try response(EmptyResponse())
+    }
+
+    private func authorizedScriptingCoordinator(
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
+    ) throws -> FloorpWebExtensionCoordinator {
+        let coordinator = try tryCoordinator()
+        try validateScriptingAuthority(coordinator, active: active, sender: sender)
+        return coordinator
+    }
+
+    private func validateScriptingAuthority(
+        _ coordinator: FloorpWebExtensionCoordinator,
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
+    ) throws {
+        try requireCurrentSender(sender, expectedActive: active)
+        guard hasCurrentRegistryBinding,
+              FloorpWebExtensionCoordinator.isInstalled(coordinator) else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
     }
 
     private func makeRegisteredScript(
         _ details: RegisteredScriptDetails
     ) throws -> FloorpWebExtensionRegisteredScript {
-        guard details.persistAcrossSessions == false,
-              let matches = details.matches,
+        guard let matches = details.matches,
               !matches.isEmpty else {
             throw FloorpWebExtensionMessageError.unsupportedOperation
         }
@@ -1374,16 +1474,18 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             styleSheets: try makeSources(details.css ?? []),
             runAt: try makeRunAt(details.runAt),
             allFrames: details.allFrames ?? false,
-            world: try makeWorld(details.world)
+            world: try makeWorld(details.world),
+            // Chrome and Firefox default this option to persistent.  Before
+            // durable registration existed, Floorp rejected omission to avoid
+            // silently weakening that contract; now omission is faithful and
+            // still fails closed if no package store can commit it.
+            persistAcrossSessions: details.persistAcrossSessions ?? true
         )
     }
 
     private func makeRegisteredScriptUpdate(
         _ details: RegisteredScriptDetails
     ) throws -> FloorpWebExtensionRegisteredScriptUpdate {
-        guard details.persistAcrossSessions != true else {
-            throw FloorpWebExtensionMessageError.unsupportedOperation
-        }
         return .init(
             id: details.id,
             matches: try details.matches.map(makeMatchPatterns),
@@ -1392,7 +1494,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             styleSheets: try details.css.map(makeSources),
             runAt: try details.runAt.map(makeRunAt),
             allFrames: details.allFrames,
-            world: try details.world.map(makeWorld)
+            world: try details.world.map(makeWorld),
+            persistAcrossSessions: details.persistAcrossSessions
         )
     }
 
@@ -2072,10 +2175,12 @@ enum FloorpWebExtensionAPIHostRegistry {
         _ host: FloorpWebExtensionAPIHost,
         messageRuntime: FloorpWebExtensionMessageRuntime
     ) {
+        host.markInstalledInRegistry()
         if let previous = entries.updateValue(
             .init(host: host, messageRuntime: messageRuntime),
             forKey: host.profileKey
         ) {
+            previous.host.invalidateRegistryBinding()
             previous.messageRuntime.tearDown()
             Task { await previous.host.suspend() }
         }
@@ -2148,6 +2253,7 @@ enum FloorpWebExtensionAPIHostRegistry {
 
     static func removeHost(for profileKey: FloorpWebExtensionCoordinatorProfileKey) async {
         guard let entry = entries.removeValue(forKey: profileKey) else { return }
+        entry.host.invalidateRegistryBinding()
         entry.messageRuntime.tearDown()
         await entry.host.tearDown()
     }

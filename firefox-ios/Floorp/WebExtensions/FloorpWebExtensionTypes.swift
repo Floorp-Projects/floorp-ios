@@ -56,6 +56,13 @@ enum FloorpWebExtensionError: Error, Equatable, LocalizedError, Sendable {
 }
 
 struct FloorpWebExtensionMatchPattern: Hashable, Codable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case original
+        case scheme
+        case host
+        case path
+    }
+
     enum Scheme: String, Codable, Sendable {
         case any
         case http
@@ -165,6 +172,47 @@ struct FloorpWebExtensionMatchPattern: Hashable, Codable, Sendable {
         scheme = parsedScheme
         host = parsedHost
         path = pathPart
+    }
+
+    /// Durable registries are not an authority. Preserve the synthesized
+    /// representation for compatibility, but rebuild the executable fields
+    /// from `original` and reject any stored representation that disagrees
+    /// with that canonical parse.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let original = try container.decode(String.self, forKey: .original)
+        let decodedScheme = try container.decode(Scheme.self, forKey: .scheme)
+        let decodedHost = try container.decode(Host.self, forKey: .host)
+        let decodedPath = try container.decode(String.self, forKey: .path)
+
+        let canonical: Self
+        do {
+            canonical = try Self(original)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .original,
+                in: container,
+                debugDescription: "Invalid persisted WebExtension match pattern."
+            )
+        }
+        guard canonical.scheme == decodedScheme,
+              canonical.host == decodedHost,
+              canonical.path == decodedPath else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .original,
+                in: container,
+                debugDescription: "Persisted WebExtension match pattern is not canonical."
+            )
+        }
+        self = canonical
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(original, forKey: .original)
+        try container.encode(scheme, forKey: .scheme)
+        try container.encode(host, forKey: .host)
+        try container.encode(path, forKey: .path)
     }
 
     func matches(_ url: URL) -> Bool {

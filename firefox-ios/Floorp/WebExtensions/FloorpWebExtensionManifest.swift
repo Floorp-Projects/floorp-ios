@@ -118,6 +118,14 @@ struct FloorpWebExtensionManifestDNRRuleResource: Codable, Equatable, Sendable {
     let path: FloorpWebExtensionScriptSource
 }
 
+/// A package-local, Floorp-specific cosmetic-filter descriptor.  This is not
+/// a Chromium manifest key: it deliberately names an immutable package JSON
+/// resource instead of accepting cosmetic JavaScript or selector data in a
+/// runtime API request.
+struct FloorpWebExtensionManifestCosmeticFilterResource: Codable, Equatable, Sendable {
+    let path: FloorpWebExtensionScriptSource
+}
+
 struct FloorpWebExtensionManifestAction: Codable, Equatable, Sendable {
     let defaultTitle: String?
     let defaultPopup: FloorpWebExtensionScriptSource?
@@ -154,6 +162,7 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
     let contentScripts: [FloorpWebExtensionManifestContentScript]
     let background: FloorpWebExtensionManifestBackground?
     let dnrRuleResources: [FloorpWebExtensionManifestDNRRuleResource]
+    let cosmeticFilterResources: [FloorpWebExtensionManifestCosmeticFilterResource]
     let action: FloorpWebExtensionManifestAction?
     let optionsUI: FloorpWebExtensionManifestOptionsUI?
 
@@ -170,6 +179,7 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         case contentScripts
         case background
         case dnrRuleResources
+        case cosmeticFilterResources
         case action
         case optionsUI
     }
@@ -187,6 +197,7 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         contentScripts: [FloorpWebExtensionManifestContentScript],
         background: FloorpWebExtensionManifestBackground?,
         dnrRuleResources: [FloorpWebExtensionManifestDNRRuleResource],
+        cosmeticFilterResources: [FloorpWebExtensionManifestCosmeticFilterResource],
         action: FloorpWebExtensionManifestAction?,
         optionsUI: FloorpWebExtensionManifestOptionsUI?
     ) {
@@ -202,6 +213,7 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         self.contentScripts = contentScripts
         self.background = background
         self.dnrRuleResources = dnrRuleResources
+        self.cosmeticFilterResources = cosmeticFilterResources
         self.action = action
         self.optionsUI = optionsUI
     }
@@ -242,6 +254,10 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
             [FloorpWebExtensionManifestDNRRuleResource].self,
             forKey: .dnrRuleResources
         )
+        cosmeticFilterResources = try container.decodeIfPresent(
+            [FloorpWebExtensionManifestCosmeticFilterResource].self,
+            forKey: .cosmeticFilterResources
+        ) ?? []
         action = try container.decodeIfPresent(FloorpWebExtensionManifestAction.self, forKey: .action)
         optionsUI = try container.decodeIfPresent(FloorpWebExtensionManifestOptionsUI.self, forKey: .optionsUI)
     }
@@ -284,6 +300,16 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         let dnrRuleResources = try rawManifest.declarativeNetRequest?.ruleResources.enumerated().map { index, resource in
             try makeDNRRuleResource(resource, index: index)
         } ?? []
+        let cosmeticFilterResources = try rawManifest.cosmeticFilterResources.enumerated().map { index, path in
+            try FloorpWebExtensionManifestCosmeticFilterResource(
+                path: resourcePath(path, field: "floorp_cosmetic_filter_resources[\(index)]")
+            )
+        }
+        guard cosmeticFilterResources.count <= FloorpWebExtensionCosmeticFilterPackageDecoder.maximumResourcesPerPackage else {
+            throw FloorpWebExtensionManifestError.malformed(
+                "too many floorp_cosmetic_filter_resources"
+            )
+        }
         let action = try rawManifest.action.map(makeAction)
         let optionsUI = try rawManifest.optionsUI.map(makeOptionsUI)
 
@@ -302,6 +328,7 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
             contentScripts: contentScripts,
             background: background,
             dnrRuleResources: dnrRuleResources,
+            cosmeticFilterResources: cosmeticFilterResources,
             action: action,
             optionsUI: optionsUI
         )
@@ -483,6 +510,74 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
                     name: "content_scripts[\(index)].match_origin_as_fallback",
                     status: .rejected,
                     detail: "Origin-fallback content-script matching is not available."
+                ))
+            }
+        }
+
+        var seenCosmeticResources = Set<FloorpWebExtensionScriptSource>()
+        var cosmeticResourceData = [Data]()
+        var cosmeticResourcesAreIndividuallyValid = true
+        for (index, resource) in manifest.cosmeticFilterResources.enumerated() {
+            let name = "floorp_cosmetic_filter_resources[\(index)]"
+            guard seenCosmeticResources.insert(resource.path).inserted else {
+                cosmeticResourcesAreIndividuallyValid = false
+                capabilities.append(.init(
+                    name: name,
+                    status: .rejected,
+                    detail: "A cosmetic filter resource is declared more than once."
+                ))
+                continue
+            }
+            guard manifest.apiPermissions.contains(.scripting) else {
+                cosmeticResourcesAreIndividuallyValid = false
+                capabilities.append(.init(
+                    name: name,
+                    status: .rejected,
+                    detail: "Cosmetic filter resources require the scripting permission."
+                ))
+                continue
+            }
+            guard let data = ruleResourceData[resource.path.path] else {
+                cosmeticResourcesAreIndividuallyValid = false
+                capabilities.append(.init(
+                    name: name,
+                    status: .rejected,
+                    detail: "The cosmetic filter resource could not be read during package staging."
+                ))
+                continue
+            }
+            do {
+                _ = try FloorpWebExtensionCosmeticFilterPackageDecoder.decode(data)
+                cosmeticResourceData.append(data)
+                capabilities.append(.init(
+                    name: name,
+                    status: .supported,
+                    detail: "The cosmetic filter resource uses the supported bounded schema."
+                ))
+            } catch {
+                cosmeticResourcesAreIndividuallyValid = false
+                capabilities.append(.init(
+                    name: name,
+                    status: .rejected,
+                    detail: "The cosmetic filter resource does not use the supported bounded schema."
+                ))
+            }
+        }
+        if !manifest.cosmeticFilterResources.isEmpty,
+           cosmeticResourcesAreIndividuallyValid,
+           cosmeticResourceData.count == manifest.cosmeticFilterResources.count {
+            do {
+                _ = try FloorpWebExtensionCosmeticFilterPackageDecoder.decodePackage(cosmeticResourceData)
+                capabilities.append(.init(
+                    name: "floorp_cosmetic_filter_resources",
+                    status: .supported,
+                    detail: "The complete cosmetic filter package is within aggregate resource, selector, procedure, scriptlet, and generated-source limits."
+                ))
+            } catch {
+                capabilities.append(.init(
+                    name: "floorp_cosmetic_filter_resources",
+                    status: .rejected,
+                    detail: "The complete cosmetic filter package exceeds aggregate resource, selector, procedure, scriptlet, or generated-source limits."
                 ))
             }
         }
@@ -795,6 +890,12 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
                 path: $0.path.path
             )
         }
+        declared += manifest.cosmeticFilterResources.enumerated().map {
+            .init(
+                capabilityName: "package_resource.floorp_cosmetic_filter_resources[\($0.offset)]",
+                path: $0.element.path.path
+            )
+        }
 
         return declared.map { resource in
             guard inventory.resource(at: resource.path) != nil else {
@@ -1067,6 +1168,7 @@ private extension FloorpWebExtensionManifest {
             case contentScripts = "content_scripts"
             case background
             case declarativeNetRequest = "declarative_net_request"
+            case cosmeticFilterResources = "floorp_cosmetic_filter_resources"
             case action
             case optionsUI = "options_ui"
         }
@@ -1081,6 +1183,7 @@ private extension FloorpWebExtensionManifest {
         let contentScripts: [RawContentScript]
         let background: RawBackground?
         let declarativeNetRequest: RawDeclarativeNetRequest?
+        let cosmeticFilterResources: [String]
         let action: RawAction?
         let optionsUI: RawOptionsUI?
 
@@ -1104,6 +1207,10 @@ private extension FloorpWebExtensionManifest {
                 RawDeclarativeNetRequest.self,
                 forKey: .declarativeNetRequest
             )
+            cosmeticFilterResources = try container.valueIfPresent(
+                [String].self,
+                forKey: .cosmeticFilterResources
+            ) ?? []
             action = try container.valueIfPresent(RawAction.self, forKey: .action)
             optionsUI = try container.valueIfPresent(RawOptionsUI.self, forKey: .optionsUI)
         }
