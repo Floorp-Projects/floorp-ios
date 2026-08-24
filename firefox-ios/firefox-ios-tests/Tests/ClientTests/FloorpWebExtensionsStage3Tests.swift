@@ -875,9 +875,7 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
         let configuration = WKWebViewConfiguration()
         runtime.applyPreNavigationPolicy(initialSnapshot, to: configuration.userContentController)
 
-        let reconcileAllowedResponse: Stage3NavigationRecorder.NavigationResponseHandler = {
-            webView,
-            navigationResponse in
+        let reconcileAllowedResponse: Stage3NavigationRecorder.NavigationResponseHandler = { webView, navigationResponse in
             guard navigationResponse.isForMainFrame,
                   let responseURL = navigationResponse.response.url
             else { return .allow }
@@ -1726,6 +1724,7 @@ private final class TestContentRuleListStore {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("floorp-webextension-runtime-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // swiftlint:disable:next force_try
         try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         store = WKContentRuleListStore(url: directory)!
     }
@@ -1803,6 +1802,7 @@ private final class Stage3WebKitIntegrationServer {
     private let server = GCDWebServer()
     private let requests = Stage3RequestRecorder()
 
+    // swiftlint:disable:next function_body_length
     init() throws {
         server.addHandler(
             forMethod: "GET",
@@ -2089,6 +2089,7 @@ private final class Stage3NavigationRecorder: NSObject, WKNavigationDelegate {
         return onNavigationResponse?(webView, navigationResponse) ?? .allow
     }
 
+    // swiftlint:disable:next implicitly_unwrapped_optional
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         didFinishCount += 1
     }

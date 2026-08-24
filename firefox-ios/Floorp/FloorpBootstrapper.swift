@@ -108,13 +108,18 @@ public final class FloorpBootstrapper {
         FloorpFlags.setWebExtensionFeature(.core, enabled: true)
         FloorpFlags.setWebExtensionFeature(.bundledCatalog, enabled: true)
         FloorpFlags.setWebExtensionFeature(.compatibilityHarness, enabled: true)
-        logger.log("Floorp: WebExtensions core, bundled catalog, and compatibility harness enabled", level: .info, category: .setup)
+        logger.log(
+            "Floorp: WebExtensions core, bundled catalog, and compatibility harness enabled",
+            level: .info,
+            category: .setup
+        )
     }
 
     /// Creates and injects independent WebKit content-rule-list stores for a
     /// profile's normal and private WebExtensions runtimes. This must run
     /// before tab restoration so the first navigation observes the policy.
     @MainActor
+    // swiftlint:disable:next function_body_length
     static func configureWebExtensionRuntime(for profile: Profile, logger: Logger = DefaultLogger.shared) {
         guard FloorpFlags.isWebExtensionFeatureEnabled(.core) else {
             signalWebExtensionReadiness()
@@ -354,6 +359,7 @@ public final class FloorpBootstrapper {
             FloorpWebExtensionInstalledPackage?,
             FloorpWebExtensionLivePackageManager.ReconciliationOperation,
             FloorpWebExtensionPackageStore.PreparedPackageResources?
+        // swiftlint:disable:next closure_body_length
         ) async throws -> Void = { extensionID, package, operation, preparedResources in
             guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
                 throw FloorpWebExtensionError.unsupported("stale package composition")
@@ -691,7 +697,6 @@ public final class FloorpBootstrapper {
                 throw FloorpWebExtensionError.unsupported("restored DNR generation was superseded")
             }
         }
-
     }
 
     /// Publishes a lazy package background only after the native API host has

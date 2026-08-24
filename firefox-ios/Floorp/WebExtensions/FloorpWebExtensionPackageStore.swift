@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
 
@@ -114,11 +114,11 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
     /// Dynamic `scripting.registerContentScripts` entries that explicitly
     /// opted into persistence. An optional backing value keeps previously
     /// written package registries decodable; missing means no registrations.
-    var persistentRegisteredScripts: [FloorpWebExtensionRegisteredScript]? = nil
+    var persistentRegisteredScripts: [FloorpWebExtensionRegisteredScript]?
     /// A product-owned explanation for a fail-closed activation disable. This
     /// keeps a runtime activation failure distinct from a deliberate user
     /// disable after process restart.
-    var activationError: String? = nil
+    var activationError: String?
 
     var registeredPersistentScripts: [FloorpWebExtensionRegisteredScript] {
         persistentRegisteredScripts ?? []
@@ -460,6 +460,7 @@ actor FloorpWebExtensionPackageStore {
         return transaction.installedPackage
     }
 
+    // swiftlint:disable function_body_length
     /// Returns the replacement and its exact predecessor from one actor-
     /// isolated registry transaction. Lifecycle code must use this result for
     /// rollback instead of taking a separate, racy pre-install snapshot.
@@ -611,6 +612,7 @@ actor FloorpWebExtensionPackageStore {
             throw error
         }
     }
+    // swiftlint:enable function_body_length
 
     func installedPackages() -> [FloorpWebExtensionInstalledPackage] {
         registry.packages

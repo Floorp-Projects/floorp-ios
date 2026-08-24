@@ -935,37 +935,11 @@ extension BrowserViewController: WKNavigationDelegate {
             // We don't have a temporary document, fallthrough
         }
 
-        // FIXME(FXIOS-11543): Before FXIOS-11256 all calendar type requests were forwarded to SFSafariViewController.
-        // This, however, led to the app crashing sometimes since SFSafariViewController only expects http(s) urls.
-        // In order to handle blob urls as well we need to use EventKitUI and parse the calendars ourselves.
-        if let url = responseURL,
-           ["http", "https"].contains(url.scheme),
-           tabManager[webView]?.mimeType == MIMEType.Calendar {
-            let alertMessage: String
-            if let baseDomain = url.baseDomain {
-                alertMessage = String(format: .Alerts.AddToCalendar.Body, baseDomain)
-            } else {
-                alertMessage = .Alerts.AddToCalendar.BodyDefault
-            }
-
-            let alert = UIAlertController(title: .Alerts.AddToCalendar.Title,
-                                          message: alertMessage,
-                                          preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: .Alerts.AddToCalendar.CancelButton, style: .default))
-            alert.addAction(UIAlertAction(title: .Alerts.AddToCalendar.AddButton,
-                                          style: .default,
-                                          handler: { _ in
-                let safariVC = SFSafariViewController(url: url)
-                safariVC.modalPresentationStyle = .fullScreen
-                self.present(safariVC, animated: true, completion: nil)
-            }))
-            present(alert, animated: true)
-            completeFloorpWebExtensionNavigationResponse(
-                for: webView,
-                responseURL: responseURL,
-                isForMainFrame: navigationResponse.isForMainFrame,
-                disposition: .cancel
-            )
+        if handleCalendarNavigationResponse(
+            navigationResponse,
+            responseURL: responseURL,
+            webView: webView
+        ) {
             return .cancel
         }
 
@@ -1029,6 +1003,52 @@ extension BrowserViewController: WKNavigationDelegate {
             disposition: .allow
         )
         return .allow
+    }
+
+    /// Handles calendar responses outside the web view and reports whether
+    /// the navigation should be cancelled.
+    @MainActor
+    private func handleCalendarNavigationResponse(
+        _ navigationResponse: WKNavigationResponse,
+        responseURL: URL?,
+        webView: WKWebView
+    ) -> Bool {
+        // FIXME(FXIOS-11543): Before FXIOS-11256 all calendar type requests were forwarded to SFSafariViewController.
+        // This, however, led to the app crashing sometimes since SFSafariViewController only expects http(s) urls.
+        // In order to handle blob urls as well we need to use EventKitUI and parse the calendars ourselves.
+        guard let url = responseURL,
+              ["http", "https"].contains(url.scheme),
+              tabManager[webView]?.mimeType == MIMEType.Calendar
+        else {
+            return false
+        }
+
+        let alertMessage: String
+        if let baseDomain = url.baseDomain {
+            alertMessage = String(format: .Alerts.AddToCalendar.Body, baseDomain)
+        } else {
+            alertMessage = .Alerts.AddToCalendar.BodyDefault
+        }
+
+        let alert = UIAlertController(title: .Alerts.AddToCalendar.Title,
+                                      message: alertMessage,
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: .Alerts.AddToCalendar.CancelButton, style: .default))
+        alert.addAction(UIAlertAction(title: .Alerts.AddToCalendar.AddButton,
+                                      style: .default,
+                                      handler: { _ in
+            let safariVC = SFSafariViewController(url: url)
+            safariVC.modalPresentationStyle = .fullScreen
+            self.present(safariVC, animated: true, completion: nil)
+        }))
+        present(alert, animated: true)
+        completeFloorpWebExtensionNavigationResponse(
+            for: webView,
+            responseURL: responseURL,
+            isForMainFrame: navigationResponse.isForMainFrame,
+            disposition: .cancel
+        )
+        return true
     }
 
     /// Completes policy handling only after the response's final disposition

@@ -8,6 +8,12 @@ import XCTest
 @testable import Client
 
 final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
+    private struct ArtifactFixtureFile {
+        let relativePath: String
+        let kind: FloorpWebExtensionPerformanceArtifactKind
+        let data: Data
+    }
+
     private final class SemanticValidator: FloorpWebExtensionPerformanceArtifactSemanticValidating {
         static let xcresultPayload = Data("validated-xcresult-fixture-v1".utf8)
         static let profilePayload = Data("validated-performance-profile-fixture-v1".utf8)
@@ -145,7 +151,8 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
         XCTAssertEqual(decoded.fixture.totalRuleCount, 5_000)
         XCTAssertEqual(decoded.compileSpans.webKitCold.statistics.sampleCount, 3)
         XCTAssertEqual(decoded.memory.signedResidentDeltaBytes, 4_096)
-        XCTAssertEqual(Set(decoded.artifacts.map(\.kind)), FloorpWebExtensionStage3PerformanceEvidenceVerifier.requiredAcceptanceArtifactKinds)
+        let requiredArtifactKinds = FloorpWebExtensionStage3PerformanceEvidenceVerifier.requiredAcceptanceArtifactKinds
+        XCTAssertEqual(Set(decoded.artifacts.map(\.kind)), requiredArtifactKinds)
         XCTAssertNoThrow(
             try FloorpWebExtensionStage3PerformanceEvidenceVerifier.verifyAcceptance(
                 decoded,
@@ -191,7 +198,8 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
                 evidenceDirectory: swappedPathFixture.directory,
                 semanticValidator: swappingValidator
             ),
-            "Semantic validation must inspect the immutable profile snapshot even if its original path is atomically replaced after manifest validation."
+            "Semantic validation must inspect the immutable profile snapshot even if its original path is " +
+                "atomically replaced after manifest validation."
         )
         XCTAssertTrue(swappingValidator.didSwapOriginalPath)
         XCTAssertEqual(try Data(contentsOf: profileURL), alternateProfilePayload)
@@ -339,6 +347,7 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
         )
     }
 
+    // swiftlint:disable:next function_body_length
     func testArtifactManifestBindsContentAndAcceptanceRequiresExactKinds() throws {
         let original = try FloorpWebExtensionStage3PerformanceEvidenceVerifier.encode(makeEvidence())
         let artifactFixture = try makeArtifactFixture()
@@ -467,7 +476,11 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
             files: [
                 ("artifacts/stage3-ios26.5-simulator-001.xcresult.zip", .testResultBundle, Data("xcresult-archive".utf8)),
                 ("artifacts/stage3-ios26.5-simulator-001.trace.zip", .performanceProfile, Data("performance-profile".utf8)),
-                ("artifacts/stage3-ios26.5-simulator-001-samples.json", .measurementRecord, Data("{\"samples\":[1,2,3]}".utf8))
+                (
+                    "artifacts/stage3-ios26.5-simulator-001-samples.json",
+                    .measurementRecord,
+                    Data("{\"samples\":[1,2,3]}".utf8)
+                )
             ]
         )
         defer { try? FileManager.default.removeItem(at: arbitraryFixture.directory) }
@@ -889,28 +902,28 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
         artifacts: [FloorpWebExtensionPerformanceArtifact]
     ) {
         let evidence = try makeEvidence()
-        let files: [(String, FloorpWebExtensionPerformanceArtifactKind, Data)] = [
-            (
-                "artifacts/stage3-ios26.5-simulator-001.xcresult.zip",
-                .testResultBundle,
-                SemanticValidator.xcresultPayload
+        let files: [ArtifactFixtureFile] = [
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001.xcresult.zip",
+                kind: .testResultBundle,
+                data: SemanticValidator.xcresultPayload
             ),
-            (
-                "artifacts/stage3-ios26.5-simulator-001.trace.zip",
-                .performanceProfile,
-                SemanticValidator.profilePayload
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001.trace.zip",
+                kind: .performanceProfile,
+                data: SemanticValidator.profilePayload
             ),
-            (
-                "artifacts/stage3-ios26.5-simulator-001-samples.json",
-                .measurementRecord,
-                try FloorpWebExtensionStage3PerformanceEvidenceVerifier.measurementRecordData(for: evidence)
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001-samples.json",
+                kind: .measurementRecord,
+                data: try FloorpWebExtensionStage3PerformanceEvidenceVerifier.measurementRecordData(for: evidence)
             )
         ]
         return try writeArtifactFixture(files: files)
     }
 
     private func writeArtifactFixture(
-        files: [(String, FloorpWebExtensionPerformanceArtifactKind, Data)]
+        files: [ArtifactFixtureFile]
     ) throws -> (
         directory: URL,
         artifacts: [FloorpWebExtensionPerformanceArtifact]
@@ -919,9 +932,9 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
             .appendingPathComponent("FloorpWebExtensionStage3Evidence-\(UUID().uuidString)", isDirectory: true)
         let artifactsDirectory = directory.appendingPathComponent("artifacts", isDirectory: true)
         try FileManager.default.createDirectory(at: artifactsDirectory, withIntermediateDirectories: true)
-        let artifacts = try files.map { relativePath, kind, data in
-            try data.write(to: directory.appendingPathComponent(relativePath), options: .atomic)
-            return try makeArtifact(relativePath: relativePath, kind: kind, data: data)
+        let artifacts = try files.map { file in
+            try file.data.write(to: directory.appendingPathComponent(file.relativePath), options: .atomic)
+            return try makeArtifact(relativePath: file.relativePath, kind: file.kind, data: file.data)
         }
         return (directory, artifacts)
     }

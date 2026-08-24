@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import CryptoKit
 import Dispatch
@@ -1347,6 +1347,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertTrue(rollbackFailureConfiguration?.dynamicRules.isEmpty ?? false)
     }
 
+    // swiftlint:disable:next function_body_length
     func testRestoreFailurePreservesDynamicSnapshotAndDoesNotRestoreSessionRules() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2060,6 +2061,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertFalse(restarted?.grants.apiPermissions.contains(.tabs) ?? true)
     }
 
+    // swiftlint:disable:next function_body_length
     func testBootstrapRestoreMaterializesManifestScriptsGrantsAndStaticDNR() async throws {
         let directory = temporaryDirectory()
         let ruleStoreDirectory = temporaryDirectory()
@@ -2616,6 +2618,7 @@ private final class PackageStoreRuleListCompiler: FloorpWebExtensionContentRuleL
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("floorp-webextension-package-store-dnr-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // swiftlint:disable:next force_try
         try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         store = WKContentRuleListStore(url: directory)!
     }

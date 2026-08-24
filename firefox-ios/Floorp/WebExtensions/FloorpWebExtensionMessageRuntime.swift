@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import CryptoKit
 import Foundation
@@ -1077,6 +1077,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         return zip(left, right).reduce(UInt8.zero) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
+    // swiftlint:disable:next function_body_length
     private static func bootstrapSource(
         extensionID: FloorpWebExtensionID,
         nonce: String,

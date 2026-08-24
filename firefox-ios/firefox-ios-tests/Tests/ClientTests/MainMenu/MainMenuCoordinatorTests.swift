@@ -9,6 +9,7 @@ import XCTest
 
 @MainActor
 final class MainMenuCoordinatorTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockRouter: MockRouter!
 
     override func setUp() async throws {

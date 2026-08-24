@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
 import UIKit
@@ -764,13 +764,13 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         }
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
         finishLoading(with: nil)
     }
 
     func webView(
         _ webView: WKWebView,
-        didFail navigation: WKNavigation!,
+        didFail navigation: WKNavigation?,
         withError error: Error
     ) {
         finishLoading(with: error)
@@ -778,7 +778,7 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
 
     func webView(
         _ webView: WKWebView,
-        didFailProvisionalNavigation navigation: WKNavigation!,
+        didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: Error
     ) {
         finishLoading(with: error)
@@ -790,7 +790,11 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
         let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
-        if isMainFrame, identity.authorizesDocument(navigationAction.request.url ?? URL(fileURLWithPath: "/"), isMainFrame: true) {
+        if isMainFrame,
+           identity.authorizesDocument(
+               navigationAction.request.url ?? URL(fileURLWithPath: "/"),
+               isMainFrame: true
+           ) {
             decisionHandler(.allow)
         } else {
             decisionHandler(.cancel)
@@ -878,8 +882,7 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         }
         nextJavaScriptCallID &+= 1
         let callID = nextJavaScriptCallID
-        let result: JavaScriptResult = try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<JavaScriptResult, Error>) in
+        let result: JavaScriptResult = try await withCheckedThrowingContinuation { continuation in
             guard !isInvalidated, let webView = self.webView else {
                 continuation.resume(throwing: FloorpWebExtensionMessageError.backgroundReplaced)
                 return

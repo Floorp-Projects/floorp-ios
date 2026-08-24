@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
 import WebKit
@@ -11,11 +11,6 @@ import WebKit
 struct FloorpWebExtensionCoordinatorProfileKey: Hashable, Sendable {
     let profileIdentifier: String
     let isPrivateBrowsing: Bool
-
-    init(profileIdentifier: String, isPrivateBrowsing: Bool) {
-        self.profileIdentifier = profileIdentifier
-        self.isPrivateBrowsing = isPrivateBrowsing
-    }
 }
 
 /// The complete script policy for one extension and one imminent navigation.
@@ -708,6 +703,7 @@ final class FloorpWebExtensionCoordinator {
         let activeExtensionIDs = Set(materializedScripts.keys)
             .union(materializedCosmeticResources.keys)
             .sorted { $0.rawValue < $1.rawValue }
+        // swiftlint:disable:next closure_body_length
         return activeExtensionIDs.compactMap { extensionID in
             let snapshot = permissionSnapshot(for: extensionID)
             guard snapshot.apiPermissions.contains(.scripting),

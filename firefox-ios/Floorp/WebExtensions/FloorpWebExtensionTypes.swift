@@ -286,7 +286,6 @@ struct FloorpWebExtensionMatchPattern: Hashable, Codable, Sendable {
     }
 }
 
-
 enum FloorpWebExtensionExecutionWorld: String, Codable, Sendable {
     case isolated
     case main

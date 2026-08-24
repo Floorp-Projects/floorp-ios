@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
 
@@ -72,12 +72,6 @@ struct FloorpWebExtensionManifestPackageResource: Codable, Equatable, Sendable {
     let path: String
     let isRegularFile: Bool
     let byteSize: Int
-
-    init(path: String, isRegularFile: Bool, byteSize: Int) {
-        self.path = path
-        self.isRegularFile = isRegularFile
-        self.byteSize = byteSize
-    }
 }
 
 /// The trusted file inventory produced by package extraction.
@@ -87,10 +81,6 @@ struct FloorpWebExtensionManifestPackageResource: Codable, Equatable, Sendable {
 /// controlled path while reporting compatibility.
 struct FloorpWebExtensionManifestPackageInventory: Codable, Equatable, Sendable {
     let resources: [FloorpWebExtensionManifestPackageResource]
-
-    init(resources: [FloorpWebExtensionManifestPackageResource]) {
-        self.resources = resources
-    }
 }
 
 struct FloorpWebExtensionManifestContentScript: Codable, Equatable, Sendable {
@@ -305,7 +295,8 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
                 path: resourcePath(path, field: "floorp_cosmetic_filter_resources[\(index)]")
             )
         }
-        guard cosmeticFilterResources.count <= FloorpWebExtensionCosmeticFilterPackageDecoder.maximumResourcesPerPackage else {
+        guard cosmeticFilterResources.count
+                <= FloorpWebExtensionCosmeticFilterPackageDecoder.maximumResourcesPerPackage else {
             throw FloorpWebExtensionManifestError.malformed(
                 "too many floorp_cosmetic_filter_resources"
             )
@@ -375,6 +366,7 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         preflight(manifest, packageInventory: Optional(packageInventory), ruleResourceData: ruleResourceData)
     }
 
+    // swiftlint:disable:next function_body_length
     private static func preflight(
         _ manifest: Self,
         packageInventory: FloorpWebExtensionManifestPackageInventory?,
@@ -571,13 +563,15 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
                 capabilities.append(.init(
                     name: "floorp_cosmetic_filter_resources",
                     status: .supported,
-                    detail: "The complete cosmetic filter package is within aggregate resource, selector, procedure, scriptlet, and generated-source limits."
+                    detail: "The complete cosmetic filter package is within aggregate resource, selector, procedure, "
+                        + "scriptlet, and generated-source limits."
                 ))
             } catch {
                 capabilities.append(.init(
                     name: "floorp_cosmetic_filter_resources",
                     status: .rejected,
-                    detail: "The complete cosmetic filter package exceeds aggregate resource, selector, procedure, scriptlet, or generated-source limits."
+                    detail: "The complete cosmetic filter package exceeds aggregate resource, selector, procedure, "
+                        + "scriptlet, or generated-source limits."
                 ))
             }
         }

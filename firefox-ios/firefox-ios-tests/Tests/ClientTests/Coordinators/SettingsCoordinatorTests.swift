@@ -9,9 +9,13 @@ import SwiftUI
 
 @MainActor
 final class SettingsCoordinatorTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockRouter: MockRouter!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var wallpaperManager: WallpaperManagerMock!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var delegate: MockSettingsCoordinatorDelegate!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockSettingsVC: MockAppSettingsScreen!
 
     override func setUp() async throws {

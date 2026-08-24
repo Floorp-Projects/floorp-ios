@@ -25,6 +25,7 @@ final class FloorpWebExtensionStage3SimulatorPerformanceTests: XCTestCase, @unch
     private let memorySamplingIntervalMilliseconds = 50
 
     @MainActor
+    // swiftlint:disable:next function_body_length
     func testRecordsDemandingFixtureSimulatorPerformanceScopes() async throws {
         #if !targetEnvironment(simulator)
         throw XCTSkip("This record is deliberately limited to an iOS Simulator host.")
@@ -134,6 +135,7 @@ final class FloorpWebExtensionStage3SimulatorPerformanceTests: XCTestCase, @unch
                 try .init(
                     identifier: "package-background-release-recovery",
                     passed: memory.priorBackgroundReleased && memory.postRecoveryReplyPassed,
+                    // swiftlint:disable:next line_length
                     detail: "The package-backed hidden WebView was released and a second activation answered the fixture ping."
                 )
             ]
@@ -256,6 +258,7 @@ final class FloorpWebExtensionStage3SimulatorPerformanceTests: XCTestCase, @unch
         evidence: FloorpWebExtensionStage3SimulatorPerformanceRecord.PageLoadEvidence,
         dnrFunctionalCheckPassed: Bool
     ) {
+        // swiftlint:disable:next closure_body_length
         try await withVerifiedTemporaryDirectory(prefix: "floorp-stage3-page-rule-store") { directory in
             let retainedRuleStore = try XCTUnwrap(WKContentRuleListStore(url: directory))
             let retainedRuleListResult = try await compileRuleList(
@@ -455,6 +458,7 @@ final class FloorpWebExtensionStage3SimulatorPerformanceTests: XCTestCase, @unch
     }
 
     @MainActor
+    // swiftlint:disable:next function_body_length
     private func measureMemoryReleaseAndRecovery(
         fixtureDirectory: URL,
         clock: ContinuousMachClock
@@ -905,6 +909,7 @@ private final class TimedNavigationDelegate: NSObject, WKNavigationDelegate {
         }
     }
 
+    // swiftlint:disable:next implicitly_unwrapped_optional
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         finish(.success(clock.now()))
     }
@@ -917,6 +922,7 @@ private final class TimedNavigationDelegate: NSObject, WKNavigationDelegate {
         finish(.failure(error))
     }
 
+    // swiftlint:disable:next implicitly_unwrapped_optional
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         finish(.failure(error))
     }

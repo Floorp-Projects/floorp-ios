@@ -81,10 +81,12 @@ struct FloorpWebExtensionStage3PerformanceEvidence: Codable, Equatable, Sendable
             build: container.decode(FloorpWebExtensionPerformanceBuildEvidence.self, forKey: .build),
             device: container.decode(FloorpWebExtensionPerformanceDeviceEvidence.self, forKey: .device),
             fixture: container.decode(FloorpWebExtensionPerformanceFixtureEvidence.self, forKey: .fixture),
+            // swiftlint:disable:next line_length
             measurementProtocol: container.decode(FloorpWebExtensionPerformanceProtocolEvidence.self, forKey: .measurementProtocol),
             compileSpans: container.decode(FloorpWebExtensionPerformanceCompileSpans.self, forKey: .compileSpans),
             pageLoad: container.decode(FloorpWebExtensionPerformancePageLoadEvidence.self, forKey: .pageLoad),
             memory: container.decode(FloorpWebExtensionPerformanceMemoryEvidence.self, forKey: .memory),
+            // swiftlint:disable:next line_length
             functionalChecks: container.decode([FloorpWebExtensionPerformanceFunctionalCheck].self, forKey: .functionalChecks),
             artifacts: container.decode([FloorpWebExtensionPerformanceArtifact].self, forKey: .artifacts),
             failures: container.decode([String].self, forKey: .failures)
@@ -112,6 +114,7 @@ struct FloorpWebExtensionStage3PerformanceEvidence: Codable, Equatable, Sendable
               Set(artifacts.map(\.kind)).count == artifacts.count,
               failures.count <= 128,
               Set(failures).count == failures.count,
+              // swiftlint:disable:next line_length
               failures.allSatisfy({ FloorpWebExtensionPerformanceEvidenceValidation.isSafeLogText($0, maximumLength: 4_096) }),
               memory.recoverySucceeded || !memory.postRecoveryFunctionalCheckPassed,
               !unsuccessfulRun || !failures.isEmpty else {
@@ -360,10 +363,12 @@ private struct FloorpWebExtensionPerformanceMeasurementRecord: Codable {
         build = try container.decode(FloorpWebExtensionPerformanceBuildEvidence.self, forKey: .build)
         device = try container.decode(FloorpWebExtensionPerformanceDeviceEvidence.self, forKey: .device)
         fixture = try container.decode(FloorpWebExtensionPerformanceFixtureEvidence.self, forKey: .fixture)
+        // swiftlint:disable:next line_length
         measurementProtocol = try container.decode(FloorpWebExtensionPerformanceProtocolEvidence.self, forKey: .measurementProtocol)
         compileSpans = try container.decode(FloorpWebExtensionPerformanceCompileSpans.self, forKey: .compileSpans)
         pageLoad = try container.decode(FloorpWebExtensionPerformancePageLoadEvidence.self, forKey: .pageLoad)
         memory = try container.decode(FloorpWebExtensionPerformanceMemoryEvidence.self, forKey: .memory)
+        // swiftlint:disable:next line_length
         functionalChecks = try container.decode([FloorpWebExtensionPerformanceFunctionalCheck].self, forKey: .functionalChecks)
         failures = try container.decode([String].self, forKey: .failures)
         try validate()
@@ -408,7 +413,9 @@ struct FloorpWebExtensionPerformanceBuildEvidence: Codable, Equatable, Sendable 
         sdkName: String,
         sdkBuild: String
     ) throws {
+        // swiftlint:disable:next line_length
         let values = [buildIdentifier, configuration, appVersion, appBuildNumber, xcodeVersion, swiftVersion, sdkName, sdkBuild]
+        // swiftlint:disable:next line_length
         guard values.allSatisfy({ FloorpWebExtensionPerformanceEvidenceValidation.isSafeText($0, maximumLength: 256) }) else {
             throw FloorpWebExtensionError.unsupported("invalid performance build evidence")
         }
@@ -423,6 +430,7 @@ struct FloorpWebExtensionPerformanceBuildEvidence: Codable, Equatable, Sendable 
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "build evidence")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -474,6 +482,7 @@ struct FloorpWebExtensionPerformanceDeviceEvidence: Codable, Equatable, Sendable
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "device evidence")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -552,6 +561,7 @@ struct FloorpWebExtensionPerformanceFixtureEvidence: Codable, Equatable, Sendabl
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "fixture evidence")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -626,6 +636,7 @@ struct FloorpWebExtensionPerformanceProtocolEvidence: Codable, Equatable, Sendab
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "measurement protocol")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -702,6 +713,7 @@ struct FloorpWebExtensionPerformanceStatistics: Codable, Equatable, Sendable {
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "performance statistics")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
@@ -746,6 +758,7 @@ struct FloorpWebExtensionPerformanceSampleSeries: Codable, Equatable, Sendable {
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "sample series")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let samples = try container.decode([Double].self, forKey: .samplesMilliseconds)
@@ -786,6 +799,7 @@ struct FloorpWebExtensionPerformanceCompileSpans: Codable, Equatable, Sendable {
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "compile spans")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -835,6 +849,7 @@ struct FloorpWebExtensionPerformancePageLoadEvidence: Codable, Equatable, Sendab
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "page-load evidence")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -944,6 +959,7 @@ struct FloorpWebExtensionPerformanceMemoryEvidence: Codable, Equatable, Sendable
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "memory evidence")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -983,6 +999,7 @@ struct FloorpWebExtensionPerformanceFunctionalCheck: Codable, Equatable, Sendabl
     }
 
     init(from decoder: Decoder) throws {
+        // swiftlint:disable:next line_length
         try FloorpWebExtensionPerformanceEvidenceValidation.requireExactKeys(decoder, CodingKeys.self, scope: "functional check")
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -1150,6 +1167,7 @@ enum FloorpWebExtensionStage3PerformanceEvidenceVerifier {
                   attestation.associatedSourceRevision == evidence.associatedSourceRevision,
                   attestation.sha256 == snapshot.sha256,
                   attestation.byteCount == snapshot.byteCount else {
+                // swiftlint:disable:next line_length
                 throw FloorpWebExtensionError.unsupported("Stage 3 binary artifact semantic attestation did not match its evidence run")
             }
             try verifySnapshotDigest(snapshot)
@@ -1612,5 +1630,4 @@ private enum FloorpWebExtensionPerformanceEvidenceValidation {
             !$0.isEmpty && $0 != "." && $0 != ".."
         }
     }
-
 }

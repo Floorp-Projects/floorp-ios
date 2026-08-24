@@ -11,8 +11,11 @@ import Shared
 @testable import Client
 
 class BrowserViewControllerWebViewDelegateTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var profile: MockProfile!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var tabManager: MockTabManager!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var fileManager: MockFileManager!
     private var allowPolicyRawValue: Int {
         return WKNavigationActionPolicy.allow.rawValue
@@ -134,6 +137,7 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
     }
 
     @MainActor
+    // swiftlint:disable:next function_body_length line_length
     func testWebViewDecidePolicyForNavigationAction_reconcilesWebExtensionPolicyBeforeAllowingMainFrameNavigation() async throws {
         let profileIdentifier = profile.localName()
         let extensionID = try XCTUnwrap(FloorpWebExtensionID(rawValue: "navigation-policy-fixture"))

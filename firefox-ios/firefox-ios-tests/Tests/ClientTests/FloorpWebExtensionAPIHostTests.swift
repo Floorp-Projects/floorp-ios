@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
 import WebKit
@@ -628,6 +628,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         XCTAssertEqual(current.apiPermissions, [.storage])
     }
 
+    // swiftlint:disable:next function_body_length
     func testPermissionConsentCannotCrossContentDocumentGeneration() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -753,6 +754,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         XCTAssertTrue(recorder.persistedPermissions.isEmpty)
     }
 
+    // swiftlint:disable:next function_body_length
     func testCSSMutationRevalidatesDocumentGenerationBeforeCommittingHandleOrDOM() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -886,6 +888,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         XCTAssertTrue(cssRegistry.activeInsertions(for: extensionID).isEmpty)
     }
 
+    // swiftlint:disable:next function_body_length
     func testStage3ScriptingAndDNRSurfaceUsesCoordinatorTransactions() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1236,6 +1239,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         ))
     }
 
+    // swiftlint:disable:next function_body_length
     func testMemoryPressureReleasesBothBackgroundsAndPreservesAPIHostState() async throws {
         let normalDirectory = temporaryDirectory()
         let privateDirectory = temporaryDirectory()
@@ -1362,6 +1366,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         await FloorpWebExtensionAPIHostRegistry.removeHost(for: privateHost.profileKey)
     }
 
+    // swiftlint:disable:next function_body_length
     func testScriptingAPICannotObserveOrMutateManifestContentScripts() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1493,6 +1498,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         ])
     }
 
+    // swiftlint:disable:next function_body_length
     func testPersistentScriptFinalWriteWinsBeforePreconstructedReplacementIsPublished() async throws {
         let storeDirectory = temporaryDirectory()
         let apiDirectory = temporaryDirectory()
@@ -1971,6 +1977,7 @@ private final class APIHostRuleListCompiler: FloorpWebExtensionContentRuleListCo
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("floorp-api-host-rule-lists", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // swiftlint:disable:next force_try
         try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         store = WKContentRuleListStore(url: directory)!
     }

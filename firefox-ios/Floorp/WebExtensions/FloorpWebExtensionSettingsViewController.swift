@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
 import UIKit
@@ -120,7 +120,9 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         Task { [weak self, packageManager] in
             let packages = await packageManager.settingsPackages()
             guard let self, !Task.isCancelled else { return }
-            self.installedPackages = packages.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            self.installedPackages = packages.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
             self.isLoading = false
             self.navigationItem.rightBarButtonItem?.isEnabled = true
             self.tableView.reloadData()
@@ -455,6 +457,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         }
     }
 
+    // swiftlint:disable:next function_body_length
     func installBundledPackage(_ item: FloorpWebExtensionBundledCatalogItem) async throws {
         let gate = lifecycleMutationGate(for: item.id)
         await gate.acquire()

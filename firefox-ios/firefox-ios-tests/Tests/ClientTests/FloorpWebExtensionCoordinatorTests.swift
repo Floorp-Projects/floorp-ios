@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import WebKit
 import XCTest
@@ -429,6 +429,7 @@ private final class CoordinatorRuleListCompiler: FloorpWebExtensionContentRuleLi
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("floorp-webextension-coordinator-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // swiftlint:disable:next force_try
         try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         store = WKContentRuleListStore(url: directory)!
     }
@@ -440,8 +441,7 @@ private final class CoordinatorRuleListCompiler: FloorpWebExtensionContentRuleLi
         if shouldFail {
             throw Failure.expected
         }
-        let ruleList: WKContentRuleList = try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<WKContentRuleList, Error>) in
+        let ruleList: WKContentRuleList = try await withCheckedThrowingContinuation { continuation in
             store.compileContentRuleList(
                 forIdentifier: identifier,
                 encodedContentRuleList: encodedContentRuleList

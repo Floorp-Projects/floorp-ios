@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import WebKit
 import XCTest
@@ -61,6 +61,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(host.snapshot(for: fixtureID).activationCount, 2)
     }
 
+    // swiftlint:disable:next function_body_length
     func testBundledMV3ModuleBackgroundExecutesLazilyAndFailsClosedAcrossGenerationReplacement() async throws {
         let profileKey = FloorpWebExtensionCoordinatorProfileKey(
             profileIdentifier: "generic-background-profile",
@@ -640,8 +641,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         )
         let configuration = WKWebViewConfiguration()
         let tab = testTab()
-        let authorizeDocument: FloorpWebExtensionMessageRuntime.DocumentAuthorization = {
-            _, isMainFrame, trustedTab in
+        let authorizeDocument: FloorpWebExtensionMessageRuntime.DocumentAuthorization = { _, isMainFrame, trustedTab in
             isMainFrame && trustedTab == tab
         }
         runtime.installBridge(
@@ -1025,6 +1025,7 @@ private final class AsyncNativeAPIDispatchGate: FloorpWebExtensionNativeAPIDispa
     }
 
     func succeed() {
+        // swiftlint:disable:next force_try
         let payload = try! FloorpWebExtensionMessagePayload(
             jsonData: Data(#"{"value":"en-US"}"#.utf8)
         )

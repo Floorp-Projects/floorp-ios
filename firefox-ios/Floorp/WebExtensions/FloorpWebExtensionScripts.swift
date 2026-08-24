@@ -1040,7 +1040,8 @@ enum FloorpWebExtensionCosmeticFilterPackageDecoder {
                 throw FloorpWebExtensionError.quotaExceeded("cosmetic filter package")
             }
             let (nextSelectors, selectorsOverflow) = selectorCount.addingReportingOverflow(resource.selectorCount)
-            let (nextProcedural, proceduralOverflow) = proceduralFilterCount.addingReportingOverflow(resource.proceduralFilterCount)
+            let (nextProcedural, proceduralOverflow) = proceduralFilterCount
+                .addingReportingOverflow(resource.proceduralFilterCount)
             let (nextScriptlets, scriptletsOverflow) = scriptletCount.addingReportingOverflow(resource.scriptletCount)
             let (nextBytes, bytesOverflow) = generatedByteCount.addingReportingOverflow(resource.generatedByteCount)
             guard !selectorsOverflow,
