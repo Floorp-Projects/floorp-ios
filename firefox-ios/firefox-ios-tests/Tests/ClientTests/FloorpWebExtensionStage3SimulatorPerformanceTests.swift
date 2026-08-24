@@ -160,6 +160,61 @@ final class FloorpWebExtensionStage3SimulatorPerformanceTests: XCTestCase, @unch
         print("FLOORP_STAGE3_SIMULATOR_PERFORMANCE_RECORD=\(recordURL.path)")
     }
 
+    func testRepositoryHeadResolverHandlesDetachedAndSymbolicHeadsButRejectsLinkedWorktrees() throws {
+        let root = temporaryDirectory(prefix: "stage3-repository-head-")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let detachedRepository = root.appendingPathComponent("detached")
+        let detachedGitDirectory = detachedRepository.appendingPathComponent(".git")
+        let detachedSourceDirectory = detachedRepository.appendingPathComponent("Sources/Nested")
+        try FileManager.default.createDirectory(at: detachedGitDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: detachedSourceDirectory, withIntermediateDirectories: true)
+        try Data("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n".utf8).write(
+            to: detachedGitDirectory.appendingPathComponent("HEAD")
+        )
+        XCTAssertEqual(
+            try repositoryHeadRevision(startingAt: detachedSourceDirectory),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+
+        let symbolicRepository = root.appendingPathComponent("symbolic")
+        let symbolicGitDirectory = symbolicRepository.appendingPathComponent(".git")
+        let symbolicSourceDirectory = symbolicRepository.appendingPathComponent("Sources")
+        let reference = "refs/heads/stage3"
+        try FileManager.default.createDirectory(
+            at: symbolicGitDirectory.appendingPathComponent("refs/heads"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: symbolicSourceDirectory, withIntermediateDirectories: true)
+        try Data("ref: \(reference)\n".utf8).write(to: symbolicGitDirectory.appendingPathComponent("HEAD"))
+        try Data("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n".utf8).write(
+            to: symbolicGitDirectory.appendingPathComponent(reference)
+        )
+        XCTAssertEqual(
+            try repositoryHeadRevision(startingAt: symbolicSourceDirectory),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        )
+
+        let linkedRepository = root.appendingPathComponent("linked")
+        let linkedSourceDirectory = linkedRepository.appendingPathComponent("Sources")
+        try FileManager.default.createDirectory(at: linkedSourceDirectory, withIntermediateDirectories: true)
+        try Data("gitdir: /tmp/linked-worktree-metadata\n".utf8).write(
+            to: linkedRepository.appendingPathComponent(".git")
+        )
+        XCTAssertThrowsError(try repositoryHeadRevision(startingAt: linkedSourceDirectory))
+
+        let invalidRepository = root.appendingPathComponent("invalid")
+        let invalidGitDirectory = invalidRepository.appendingPathComponent(".git")
+        try FileManager.default.createDirectory(at: invalidGitDirectory, withIntermediateDirectories: true)
+        try Data("ccccccccccccccccccccccccccccccccccccccc\n".utf8).write(
+            to: invalidGitDirectory.appendingPathComponent("HEAD")
+        )
+        XCTAssertThrowsError(try repositoryHeadRevision(startingAt: invalidRepository))
+    }
+
     private func measureNativeCompilation(
         rules: [FloorpWebExtensionDNRRule],
         clock: ContinuousMachClock
@@ -737,12 +792,25 @@ final class FloorpWebExtensionStage3SimulatorPerformanceTests: XCTestCase, @unch
     }
 
     private func repositoryHeadRevision() throws -> String {
-        var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        try repositoryHeadRevision(
+            startingAt: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        )
+    }
+
+    private func repositoryHeadRevision(startingAt sourceDirectory: URL) throws -> String {
+        var directory = sourceDirectory.standardizedFileURL
         let fileManager = FileManager.default
         while true {
             let gitDirectory = directory.appendingPathComponent(".git", isDirectory: true)
-            let headURL = gitDirectory.appendingPathComponent("HEAD")
-            if fileManager.fileExists(atPath: headURL.path) {
+            var isDirectory = ObjCBool(false)
+            if fileManager.fileExists(atPath: gitDirectory.path, isDirectory: &isDirectory) {
+                guard isDirectory.boolValue else {
+                    throw performanceError("Linked Git worktrees are not valid measurement sources.")
+                }
+                let headURL = gitDirectory.appendingPathComponent("HEAD")
+                guard fileManager.fileExists(atPath: headURL.path) else {
+                    throw performanceError("The repository HEAD could not be located.")
+                }
                 let head = try String(contentsOf: headURL, encoding: .utf8)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if head.hasPrefix("ref: ") {

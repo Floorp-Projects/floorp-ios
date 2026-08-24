@@ -878,6 +878,7 @@
         "FloorpWebExtensionsStage3Tests/testDeclaredCosmeticResourceRejectsUnknownKeysAndNoopScriptlets()",
         "FloorpWebExtensionsStage3Tests/testManifestPreflightAdmitsOnlyInventoriedBoundedCosmeticResources()",
         "FloorpWebExtensionsStage3Tests/testDeclaredCosmeticResourcesRejectAggregateSelectorBudgetExhaustion()",
+        "FloorpWebExtensionStage3SimulatorPerformanceTests/testRepositoryHeadResolverHandlesDetachedAndSymbolicHeadsButRejectsLinkedWorktrees()",
         "FloorpWebExtensionStage3SimulatorPerformanceTests/testRecordsDemandingFixtureSimulatorPerformanceScopes()",
         "FloorpWebExtensionPackageStoreTests/testPersistentRegisteredScriptsRestoreWhileMemoryOnlyScriptsAreDiscarded()",
         "FloorpWebExtensionPackageStoreTests/testScriptingAPIDefaultsRegisteredScriptsToPersistentAndRestoresThem()",
