@@ -11,11 +11,14 @@ or an App Store release.
 ## Scope of the current package class
 
 - Package source: bundled, immutable fixture directories only.
-- Package identity and integrity: manifest extension ID and canonical SHA-256
-  are checked by `FloorpWebExtensionPackageStore` and the compatibility
-  harness before activation.
+- Package identity and integrity: catalog/fixture extension ID and canonical
+  SHA-256 are checked by `FloorpWebExtensionPackageStore` and the
+  compatibility harness before activation.
 - Included fixtures: `content-messaging-mv3`, `event-runtime-mv3`, and
   `demanding-mv3` under `firefox-ios/Floorp/WebExtensions/Fixtures/`.
+- High-load DNR fixture: `demanding-mv3` pins 5,000 static block rules;
+  4,960 deterministic image rules extend the original 40 fixture rules
+  without changing their semantics.
 - Licence metadata: every included fixture carries `LICENSE` and
   `fixture-metadata.json`; the current fixtures declare MPL-2.0.
 - Remote catalog, document import, and store-origin sources remain disabled

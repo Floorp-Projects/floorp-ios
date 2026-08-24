@@ -115,18 +115,29 @@ struct FloorpWebExtensionUserScriptPolicy: Sendable {
     let runAt: FloorpWebExtensionRunAt
     let allFrames: Bool
     let world: FloorpWebExtensionExecutionWorld
+    let frameAuthorization: FloorpWebExtensionFrameScriptAuthorization?
 
     init(
         source: String,
         runAt: FloorpWebExtensionRunAt = .documentIdle,
         allFrames: Bool = false,
-        world: FloorpWebExtensionExecutionWorld = .isolated
+        world: FloorpWebExtensionExecutionWorld = .isolated,
+        frameAuthorization: FloorpWebExtensionFrameScriptAuthorization? = nil
     ) {
         self.source = source
         self.runAt = runAt
         self.allFrames = allFrames
         self.world = world
+        self.frameAuthorization = frameAuthorization
     }
+}
+
+/// Native-created identity for one materialized registered-script revision.
+/// The random token prevents an old controller-local policy from borrowing a
+/// newer registration that reused the same manifest script identifier.
+struct FloorpWebExtensionFrameScriptAuthorization: Sendable {
+    let scriptID: String
+    let revisionToken: String
 }
 
 /// The MainActor bridge from extension policy output to a tab's WebKit policy.
@@ -543,12 +554,59 @@ final class FloorpWebExtensionRuntime {
         case .isolated:
             contentWorld = .world(name: isolatedContentWorldName(for: extensionID))
         }
+        let source: String
+        if policy.allFrames {
+            switch (policy.world, policy.frameAuthorization) {
+            case (.isolated, .some(let authorization)):
+                source = authenticatedAllFramesSource(policy.source, authorization: authorization)
+            case (.main, _), (_, .none):
+                // MAIN-world page code can replace every JavaScript guard and
+                // must never receive the authenticated native bridge. Until
+                // WebKit exposes URL-scoped frame injection, fail closed rather
+                // than execute package code under stale or page-forged policy.
+                source = "void 0;"
+            }
+        } else {
+            source = policy.source
+        }
         return WKUserScript(
-            source: policy.source,
+            source: source,
             injectionTime: injectionTime,
             forMainFrameOnly: !policy.allFrames,
             in: contentWorld
         )
+    }
+
+    /// Defers an isolated all-frame package body until the nonce-authenticated
+    /// native bridge re-checks this exact frame and registered script against
+    /// live profile grants. Host revocation, activeTab expiry, navigation, and
+    /// native Unicode match semantics are therefore observed at execution
+    /// time rather than frozen into a pre-navigation JavaScript snapshot.
+    private static func authenticatedAllFramesSource(
+        _ packageSource: String,
+        authorization: FloorpWebExtensionFrameScriptAuthorization
+    ) -> String {
+        let functionLiteral = javaScriptStringLiteral(
+            FloorpWebExtensionMessageRuntime.frameAuthorizationFunctionName
+        )
+        let scriptLiteral = javaScriptStringLiteral(authorization.scriptID)
+        let revisionLiteral = javaScriptStringLiteral(authorization.revisionToken)
+        return """
+        (async () => {
+          const authorizeFrame = globalThis[\(functionLiteral)];
+          if (typeof authorizeFrame !== "function") return;
+          let authorized = false;
+          try {
+            authorized = await authorizeFrame(\(scriptLiteral), \(revisionLiteral));
+          } catch (_) {
+            return;
+          }
+          if (!authorized) return;
+          (function() {
+        \(packageSource)
+          }).call(globalThis);
+        })();
+        """
     }
 
     private static func dnrPayloadDigest(_ contentRuleJSON: String) -> [UInt8] {

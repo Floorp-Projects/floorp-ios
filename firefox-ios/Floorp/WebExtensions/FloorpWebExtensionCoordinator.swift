@@ -57,21 +57,30 @@ private actor FloorpWebExtensionDNRMutationGate {
 /// Coordinates the Stage 3 MV3 registries with one profile's live WebKit
 /// runtime.
 ///
-/// Registries remain actors because they validate transactional API requests.
-/// The coordinator keeps a MainActor cache of the validated, materialized
-/// state.  That cache is refreshed before every public mutation returns, which
-/// gives `Tab` a synchronous pre-navigation snapshot and avoids a first-load
-/// race after a script or host-grant update.
+/// Transactional registries remain actors where their state is independent of
+/// WebKit. Dynamic CSS state instead shares `MainActor` with the live DOM
+/// commit so a navigation cannot interleave between authorization and
+/// mutation. The coordinator keeps a cache of validated, materialized state;
+/// that cache is refreshed before every public mutation returns, which gives
+/// `Tab` a synchronous pre-navigation snapshot and avoids a first-load race
+/// after a script or host-grant update.
 @MainActor
 final class FloorpWebExtensionCoordinator {
     typealias ScriptResourceLoader = @Sendable (
         FloorpWebExtensionID,
         FloorpWebExtensionScriptSource
     ) throws -> String
+    typealias APIHostSuspender = @MainActor (FloorpWebExtensionID) async -> Void
+    typealias APIHostPurger = @MainActor (FloorpWebExtensionID) async throws -> Void
+    /// Test synchronization point for proving that the final authorization is
+    /// performed after every asynchronous preparation step. Production uses
+    /// the no-op default; the live-target validator still remains mandatory.
+    typealias DynamicCSSMutationCheckpoint = @MainActor @Sendable () async -> Void
 
     private struct MaterializedScript: Sendable {
         let script: FloorpWebExtensionRegisteredScript
         let policies: [FloorpWebExtensionUserScriptPolicy]
+        let frameAuthorizationRevision: String
     }
 
     private struct ActiveTabGrant: Sendable {
@@ -90,10 +99,13 @@ final class FloorpWebExtensionCoordinator {
     private let runtime: FloorpWebExtensionRuntime
     private let scriptResourceLoader: ScriptResourceLoader
     private let packageStore: FloorpWebExtensionPackageStore?
+    private let suspendAPIHost: APIHostSuspender
+    private let purgeAPIHost: APIHostPurger
+    private let beforeDynamicCSSMutation: DynamicCSSMutationCheckpoint
     private let now: @Sendable () -> Date
 
-    /// These actors are deliberately coordinator-owned; no caller receives a
-    /// mutable registry that could bypass runtime reconciliation.
+    /// These registries are deliberately coordinator-owned; no caller receives
+    /// mutable production state that could bypass runtime reconciliation.
     private let scriptRegistry: FloorpWebExtensionScriptRegistry
     private let permissionBroker: FloorpWebExtensionPermissionBroker
     private let cssRegistry: FloorpWebExtensionCSSRegistry
@@ -114,21 +126,32 @@ final class FloorpWebExtensionCoordinator {
         runtime: FloorpWebExtensionRuntime,
         scriptResourceLoader: @escaping ScriptResourceLoader,
         packageStore: FloorpWebExtensionPackageStore? = nil,
+        suspendAPIHost: APIHostSuspender? = nil,
+        purgeAPIHost: APIHostPurger? = nil,
         scriptRegistry: FloorpWebExtensionScriptRegistry = .init(),
         permissionBroker: FloorpWebExtensionPermissionBroker = .init(),
         cssRegistry: FloorpWebExtensionCSSRegistry = .init(),
+        beforeDynamicCSSMutation: DynamicCSSMutationCheckpoint? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
-        profileKey = .init(
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing
         )
+        self.profileKey = profileKey
         self.runtime = runtime
         self.scriptResourceLoader = scriptResourceLoader
         self.packageStore = packageStore
+        self.suspendAPIHost = suspendAPIHost ?? { extensionID in
+            await FloorpWebExtensionAPIHostRegistry.suspend(extensionID, profileKey: profileKey)
+        }
+        self.purgeAPIHost = purgeAPIHost ?? { extensionID in
+            try await FloorpWebExtensionAPIHostRegistry.purge(extensionID, profileKey: profileKey)
+        }
         self.scriptRegistry = scriptRegistry
         self.permissionBroker = permissionBroker
         self.cssRegistry = cssRegistry
+        self.beforeDynamicCSSMutation = beforeDynamicCSSMutation ?? {}
         self.now = now
     }
 
@@ -306,7 +329,7 @@ final class FloorpWebExtensionCoordinator {
         activeTabGrants = activeTabGrants.filter { _, grant in
             !(grant.tabID == tab.tabID && grant.documentGeneration == tab.documentGeneration)
         }
-        await cssRegistry.discardInsertions(for: tab)
+        cssRegistry.discardInsertions(for: tab)
     }
 
     /// Inserts CSS only after the scripting permission, profile mode, host
@@ -317,7 +340,8 @@ final class FloorpWebExtensionCoordinator {
         for extensionID: FloorpWebExtensionID,
         target: FloorpWebExtensionCSSTarget,
         tab: FloorpWebExtensionTabContext,
-        into webView: WKWebView
+        into webView: WKWebView,
+        validateLiveTarget: @MainActor () throws -> Void
     ) async throws -> FloorpWebExtensionCSSInsertion {
         try validateProfile(tab)
         // The current WebKit runtime can address the main document only. A
@@ -327,12 +351,25 @@ final class FloorpWebExtensionCoordinator {
         guard target.frameID == nil else {
             throw FloorpWebExtensionError.unsupported("subframe CSS insertion")
         }
-        let insertion = try await cssRegistry.insert(
+        guard target == FloorpWebExtensionCSSTarget(tab: tab),
+              authorizesDynamicScripting(for: extensionID, tab: tab) else {
+            throw FloorpWebExtensionError.permissionDenied(FloorpWebExtensionAPIGrant.scripting.rawValue)
+        }
+
+        // Resource loading and permission actors may have yielded since the
+        // API host first resolved this document. Revalidate after that last
+        // asynchronous boundary, then commit the handle and DOM mutation
+        // without another actor hop. A rotated document therefore receives
+        // neither a stylesheet nor a quota-consuming stale handle.
+        await beforeDynamicCSSMutation()
+        try validateLiveTarget()
+        guard authorizesDynamicScripting(for: extensionID, tab: tab) else {
+            throw FloorpWebExtensionError.permissionDenied(FloorpWebExtensionAPIGrant.scripting.rawValue)
+        }
+        let insertion = try cssRegistry.insert(
             css: css,
             for: extensionID,
-            target: target,
-            tab: tab,
-            permissionBroker: permissionBroker
+            target: target
         )
         runtime.applyCSSInsertion(insertion, to: webView)
         return insertion
@@ -342,9 +379,21 @@ final class FloorpWebExtensionCoordinator {
         _ handles: [FloorpWebExtensionCSSHandle],
         for extensionID: FloorpWebExtensionID,
         target: FloorpWebExtensionCSSTarget,
-        from webView: WKWebView
+        tab: FloorpWebExtensionTabContext,
+        from webView: WKWebView,
+        validateLiveTarget: @MainActor () throws -> Void
     ) async throws {
-        let removed = try await cssRegistry.remove(
+        try validateProfile(tab)
+        guard target == FloorpWebExtensionCSSTarget(tab: tab),
+              authorizesDynamicScripting(for: extensionID, tab: tab) else {
+            throw FloorpWebExtensionError.permissionDenied(FloorpWebExtensionAPIGrant.scripting.rawValue)
+        }
+        await beforeDynamicCSSMutation()
+        try validateLiveTarget()
+        guard authorizesDynamicScripting(for: extensionID, tab: tab) else {
+            throw FloorpWebExtensionError.permissionDenied(FloorpWebExtensionAPIGrant.scripting.rawValue)
+        }
+        let removed = try cssRegistry.remove(
             handles,
             for: extensionID,
             target: target
@@ -466,13 +515,51 @@ final class FloorpWebExtensionCoordinator {
         guard tab.isPrivate == profileKey.isPrivateBrowsing else { return [] }
 
         return materializedScripts.keys.sorted { $0.rawValue < $1.rawValue }.compactMap { extensionID in
-            guard allowsScripting(for: extensionID, in: tab) else { return nil }
+            let snapshot = permissionSnapshot(for: extensionID)
+            guard snapshot.apiPermissions.contains(.scripting),
+                  !tab.isPrivate || snapshot.privateBrowsingEnabled else {
+                return nil
+            }
+            let hasActiveTab = activeTabGrants[extensionID]?.allows(tab, now: now()) == true
+            let hostAccess = tab.isPrivate ? snapshot.privateHostAccess : snapshot.normalHostAccess
+            let hasDurableHostAccess: Bool
+            switch hostAccess {
+            case .denied:
+                hasDurableHostAccess = false
+            case .selectedSites(let patterns):
+                hasDurableHostAccess = !patterns.isEmpty
+            case .allRequestedSites:
+                hasDurableHostAccess = !snapshot.requestedHosts.isEmpty
+            }
+            // An all-frame registration may legitimately match only a child
+            // frame. Install its authenticated policy even when the top-level
+            // URL is outside the extension's host grant. Every frame asks the
+            // native coordinator again immediately before package code runs.
+            guard hasDurableHostAccess || hasActiveTab else { return nil }
             let policies = (materializedScripts[extensionID] ?? [])
-                .filter { materialized in
-                    materialized.script.matches.contains(where: { $0.matches(tab.url) }) &&
-                        !materialized.script.excludeMatches.contains(where: { $0.matches(tab.url) })
+                .flatMap { materialized -> [FloorpWebExtensionUserScriptPolicy] in
+                    let script = materialized.script
+                    if !script.allFrames {
+                        guard script.matches.contains(where: { $0.matches(tab.url) }),
+                              !script.excludeMatches.contains(where: { $0.matches(tab.url) }),
+                              allowsScripting(for: extensionID, in: tab) else {
+                            return []
+                        }
+                        return materialized.policies
+                    }
+                    return materialized.policies.map { policy in
+                        FloorpWebExtensionUserScriptPolicy(
+                            source: policy.source,
+                            runAt: policy.runAt,
+                            allFrames: policy.allFrames,
+                            world: policy.world,
+                            frameAuthorization: .init(
+                                scriptID: script.id,
+                                revisionToken: materialized.frameAuthorizationRevision
+                            )
+                        )
+                    }
                 }
-                .flatMap(\.policies)
             guard !policies.isEmpty else { return nil }
             return .init(extensionID: extensionID, scriptPolicies: policies)
         }
@@ -496,16 +583,69 @@ final class FloorpWebExtensionCoordinator {
             isPrivate: tab.isPrivate
         )
         guard frame.isPrivate == profileKey.isPrivateBrowsing,
-              allowsScripting(for: extensionID, in: frame) else {
+              allowsScripting(
+                  for: extensionID,
+                  in: frame,
+                  activeTabTopLevelURL: tab.url
+              ) else {
             return false
         }
 
         return (materializedScripts[extensionID] ?? []).contains { materialized in
             let script = materialized.script
-            return (isMainFrame || script.allFrames) &&
+            return script.world == .isolated &&
+                !script.javaScript.isEmpty &&
+                (isMainFrame || script.allFrames) &&
                 script.matches.contains(where: { $0.matches(currentURL) }) &&
                 !script.excludeMatches.contains(where: { $0.matches(currentURL) })
         }
+    }
+
+    /// Authenticates one concrete registered all-frame script immediately
+    /// before its package body executes. The caller supplies only the script
+    /// identifier; extension/profile/document identity and frame URL come from
+    /// the nonce-bound native bridge session rather than JavaScript payload.
+    func authorizesFrameScript(
+        for extensionID: FloorpWebExtensionID,
+        scriptID: String,
+        revisionToken: String,
+        currentURL: URL,
+        isMainFrame: Bool,
+        tab: FloorpWebExtensionTabContext
+    ) -> Bool {
+        let frame = FloorpWebExtensionTabContext(
+            tabID: tab.tabID,
+            documentGeneration: tab.documentGeneration,
+            url: currentURL,
+            isPrivate: tab.isPrivate
+        )
+        guard frame.isPrivate == profileKey.isPrivateBrowsing,
+              allowsScripting(
+                  for: extensionID,
+                  in: frame,
+                  activeTabTopLevelURL: tab.url
+              ),
+              let materialized = (materializedScripts[extensionID] ?? []).first(where: {
+                  $0.script.id == scriptID && $0.frameAuthorizationRevision == revisionToken
+              }) else {
+            return false
+        }
+        let script = materialized.script
+        return script.allFrames && script.world == .isolated && !materialized.policies.isEmpty &&
+            (isMainFrame || script.allFrames) &&
+            script.matches.contains(where: { $0.matches(currentURL) }) &&
+            !script.excludeMatches.contains(where: { $0.matches(currentURL) })
+    }
+
+    /// Authorizes a dynamic package-file execution against the live main
+    /// document. Unlike a content-script bridge, dynamic scripting is not
+    /// coupled to an already registered match entry; it still requires the
+    /// scripting API grant, current profile, and host access for this tab.
+    func authorizesDynamicScripting(
+        for extensionID: FloorpWebExtensionID,
+        tab: FloorpWebExtensionTabContext
+    ) -> Bool {
+        tab.isPrivate == profileKey.isPrivateBrowsing && allowsScripting(for: extensionID, in: tab)
     }
 
     func permissionSnapshot(
@@ -541,9 +681,25 @@ final class FloorpWebExtensionCoordinator {
         return await store.isRegexSupported(regex)
     }
 
-    /// Removes all profile-local extension state and its live WebKit policy.
+    /// Removes live extension state and WebKit policy without deleting
+    /// profile-owned API data. Disable, reload, grant replacement, and
+    /// activation rollback all use this reversible path.
     func removeExtension(_ extensionID: FloorpWebExtensionID) async {
-        // Disable/uninstall participates in the same per-extension gate as
+        try? await removeExtension(extensionID, purgingAPIData: false)
+    }
+
+    /// Final uninstall path. The caller must select this operation explicitly;
+    /// a nil reconciliation alone is not evidence that the package was
+    /// uninstalled.
+    func uninstallExtension(_ extensionID: FloorpWebExtensionID) async throws {
+        try await removeExtension(extensionID, purgingAPIData: true)
+    }
+
+    private func removeExtension(
+        _ extensionID: FloorpWebExtensionID,
+        purgingAPIData: Bool
+    ) async throws {
+        // Revocation participates in the same per-extension gate as
         // every DNR compile-and-swap. If a mutation is already awaiting
         // WebKit, removal waits and then wins; if a mutation is queued behind
         // removal, its permission/store preconditions fail after the gate is
@@ -553,10 +709,10 @@ final class FloorpWebExtensionCoordinator {
         await gate.acquire()
         defer { Task { await gate.release() } }
 
-        await FloorpWebExtensionAPIHostRegistry.deactivate(
-            extensionID,
-            profileKey: profileKey
-        )
+        // Always revoke callable authority before any fallible durable cleanup.
+        // A purge failure therefore leaves an inactive extension plus a
+        // package-store tombstone, never a partially deleted live extension.
+        await suspendAPIHost(extensionID)
         let identifiers = await scriptRegistry.registeredScripts(for: extensionID).map(\.id)
         if !identifiers.isEmpty {
             try? await scriptRegistry.unregister(identifiers, for: extensionID)
@@ -572,7 +728,11 @@ final class FloorpWebExtensionCoordinator {
             hostAccess: .denied,
             to: extensionID
         )
+        cssRegistry.discardInsertions(for: extensionID)
         runtime.removePolicies(for: extensionID)
+        if purgingAPIData {
+            try await purgeAPIHost(extensionID)
+        }
     }
 
     private func refreshScripts(for extensionID: FloorpWebExtensionID) async throws {
@@ -580,7 +740,11 @@ final class FloorpWebExtensionCoordinator {
         var refreshed = [MaterializedScript]()
         for script in registered {
             let policies = try materialize(script, for: extensionID)
-            refreshed.append(.init(script: script, policies: policies))
+            refreshed.append(.init(
+                script: script,
+                policies: policies,
+                frameAuthorizationRevision: UUID().uuidString.lowercased()
+            ))
         }
         if refreshed.isEmpty {
             materializedScripts.removeValue(forKey: extensionID)
@@ -615,7 +779,8 @@ final class FloorpWebExtensionCoordinator {
 
     private func allowsScripting(
         for extensionID: FloorpWebExtensionID,
-        in tab: FloorpWebExtensionTabContext
+        in tab: FloorpWebExtensionTabContext,
+        activeTabTopLevelURL: URL? = nil
     ) -> Bool {
         let snapshot = permissionSnapshot(for: extensionID)
         guard snapshot.apiPermissions.contains(.scripting) else { return false }
@@ -623,16 +788,33 @@ final class FloorpWebExtensionCoordinator {
             return false
         }
         let access = tab.isPrivate ? snapshot.privateHostAccess : snapshot.normalHostAccess
+        let activeTabAllowsFrame =
+            activeTabGrants[extensionID]?.allows(tab, now: now()) == true &&
+            (activeTabTopLevelURL.map { Self.hasSameSecurityOrigin(tab.url, $0) } ?? true)
         switch access {
         case .denied:
-            return activeTabGrants[extensionID]?.allows(tab, now: now()) ?? false
+            return activeTabAllowsFrame
         case .selectedSites(let patterns):
             return patterns.contains(where: { $0.matches(tab.url) }) ||
-                (activeTabGrants[extensionID]?.allows(tab, now: now()) ?? false)
+                activeTabAllowsFrame
         case .allRequestedSites:
             return snapshot.requestedHosts.contains(where: { $0.matches(tab.url) }) ||
-                (activeTabGrants[extensionID]?.allows(tab, now: now()) ?? false)
+                activeTabAllowsFrame
         }
+    }
+
+    private static func hasSameSecurityOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let lhsScheme = lhs.scheme?.lowercased(),
+              let rhsScheme = rhs.scheme?.lowercased(),
+              let lhsHost = lhs.host?.lowercased(),
+              let rhsHost = rhs.host?.lowercased() else {
+            return false
+        }
+        func effectivePort(_ url: URL, scheme: String) -> Int? {
+            url.port ?? (scheme == "https" ? 443 : (scheme == "http" ? 80 : nil))
+        }
+        return lhsScheme == rhsScheme && lhsHost == rhsHost &&
+            effectivePort(lhs, scheme: lhsScheme) == effectivePort(rhs, scheme: rhsScheme)
     }
 
     private func stageDNRMutation(

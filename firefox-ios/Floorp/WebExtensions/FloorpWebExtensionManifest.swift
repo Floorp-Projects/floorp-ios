@@ -142,11 +142,109 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
     let permissionNames: [String]
     let apiPermissions: Set<FloorpWebExtensionAPIGrant>
     let hostPermissions: [FloorpWebExtensionMatchPattern]
+    /// API grants which may be requested after installation. These are kept
+    /// separate from required `permissions` so a runtime request can never
+    /// silently widen the package's declared authority.
+    let optionalPermissionNames: [String]
+    let optionalAPIPermissions: Set<FloorpWebExtensionAPIGrant>
+    /// Host patterns which may be requested after installation. Required host
+    /// access remains in `hostPermissions`; callers must not treat either set
+    /// as an already-granted site permission.
+    let optionalHostPermissions: [FloorpWebExtensionMatchPattern]
     let contentScripts: [FloorpWebExtensionManifestContentScript]
     let background: FloorpWebExtensionManifestBackground?
     let dnrRuleResources: [FloorpWebExtensionManifestDNRRuleResource]
     let action: FloorpWebExtensionManifestAction?
     let optionsUI: FloorpWebExtensionManifestOptionsUI?
+
+    private enum CodingKeys: String, CodingKey {
+        case manifestVersion
+        case name
+        case version
+        case permissionNames
+        case apiPermissions
+        case hostPermissions
+        case optionalPermissionNames
+        case optionalAPIPermissions
+        case optionalHostPermissions
+        case contentScripts
+        case background
+        case dnrRuleResources
+        case action
+        case optionsUI
+    }
+
+    private init(
+        manifestVersion: Int,
+        name: String,
+        version: String,
+        permissionNames: [String],
+        apiPermissions: Set<FloorpWebExtensionAPIGrant>,
+        hostPermissions: [FloorpWebExtensionMatchPattern],
+        optionalPermissionNames: [String],
+        optionalAPIPermissions: Set<FloorpWebExtensionAPIGrant>,
+        optionalHostPermissions: [FloorpWebExtensionMatchPattern],
+        contentScripts: [FloorpWebExtensionManifestContentScript],
+        background: FloorpWebExtensionManifestBackground?,
+        dnrRuleResources: [FloorpWebExtensionManifestDNRRuleResource],
+        action: FloorpWebExtensionManifestAction?,
+        optionsUI: FloorpWebExtensionManifestOptionsUI?
+    ) {
+        self.manifestVersion = manifestVersion
+        self.name = name
+        self.version = version
+        self.permissionNames = permissionNames
+        self.apiPermissions = apiPermissions
+        self.hostPermissions = hostPermissions
+        self.optionalPermissionNames = optionalPermissionNames
+        self.optionalAPIPermissions = optionalAPIPermissions
+        self.optionalHostPermissions = optionalHostPermissions
+        self.contentScripts = contentScripts
+        self.background = background
+        self.dnrRuleResources = dnrRuleResources
+        self.action = action
+        self.optionsUI = optionsUI
+    }
+
+    /// Package registries persist the preflight report. Decode records created
+    /// before optional permissions were introduced as an empty optional
+    /// declaration, then let the package store re-preflight the raw manifest
+    /// before restoring any authority.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        manifestVersion = try container.decode(Int.self, forKey: .manifestVersion)
+        name = try container.decode(String.self, forKey: .name)
+        version = try container.decode(String.self, forKey: .version)
+        permissionNames = try container.decode([String].self, forKey: .permissionNames)
+        apiPermissions = try container.decode(Set<FloorpWebExtensionAPIGrant>.self, forKey: .apiPermissions)
+        hostPermissions = try container.decode([FloorpWebExtensionMatchPattern].self, forKey: .hostPermissions)
+        optionalPermissionNames = try container.decodeIfPresent(
+            [String].self,
+            forKey: .optionalPermissionNames
+        ) ?? []
+        optionalAPIPermissions = try container.decodeIfPresent(
+            Set<FloorpWebExtensionAPIGrant>.self,
+            forKey: .optionalAPIPermissions
+        ) ?? Set(optionalPermissionNames.compactMap(FloorpWebExtensionAPIGrant.init(rawValue:)))
+        optionalHostPermissions = try container.decodeIfPresent(
+            [FloorpWebExtensionMatchPattern].self,
+            forKey: .optionalHostPermissions
+        ) ?? []
+        contentScripts = try container.decode(
+            [FloorpWebExtensionManifestContentScript].self,
+            forKey: .contentScripts
+        )
+        background = try container.decodeIfPresent(
+            FloorpWebExtensionManifestBackground.self,
+            forKey: .background
+        )
+        dnrRuleResources = try container.decode(
+            [FloorpWebExtensionManifestDNRRuleResource].self,
+            forKey: .dnrRuleResources
+        )
+        action = try container.decodeIfPresent(FloorpWebExtensionManifestAction.self, forKey: .action)
+        optionsUI = try container.decodeIfPresent(FloorpWebExtensionManifestOptionsUI.self, forKey: .optionsUI)
+    }
 
     static func decode(_ data: Data) throws -> Self {
         let rawManifest: RawManifest
@@ -170,6 +268,13 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
                 throw FloorpWebExtensionManifestError.malformed("invalid host permission \($0)")
             }
         }
+        let optionalHostPermissions = try rawManifest.optionalHostPermissions.map {
+            do {
+                return try FloorpWebExtensionMatchPattern($0)
+            } catch {
+                throw FloorpWebExtensionManifestError.malformed("invalid optional host permission \($0)")
+            }
+        }
 
         let contentScripts = try rawManifest.contentScripts.enumerated().map { index, script in
             try contentScript(script, index: index)
@@ -189,6 +294,11 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
             permissionNames: rawManifest.permissions,
             apiPermissions: Set(rawManifest.permissions.compactMap(FloorpWebExtensionAPIGrant.init(rawValue:))),
             hostPermissions: hostPermissions,
+            optionalPermissionNames: rawManifest.optionalPermissions,
+            optionalAPIPermissions: Set(
+                rawManifest.optionalPermissions.compactMap(FloorpWebExtensionAPIGrant.init(rawValue:))
+            ),
+            optionalHostPermissions: optionalHostPermissions,
             contentScripts: contentScripts,
             background: background,
             dnrRuleResources: dnrRuleResources,
@@ -288,6 +398,40 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
             ))
         }
 
+        var seenOptionalPermissionNames = Set<String>()
+        for permission in manifest.optionalPermissionNames {
+            let name = "optional_permission.\(permission)"
+            guard seenOptionalPermissionNames.insert(permission).inserted else {
+                capabilities.append(.init(
+                    name: name,
+                    status: .rejected,
+                    detail: "An optional permission is declared more than once."
+                ))
+                continue
+            }
+            guard let grant = FloorpWebExtensionAPIGrant(rawValue: permission) else {
+                capabilities.append(.init(
+                    name: name,
+                    status: .rejected,
+                    detail: "This optional permission is not supported."
+                ))
+                continue
+            }
+            guard !manifest.apiPermissions.contains(grant) else {
+                capabilities.append(.init(
+                    name: name,
+                    status: .rejected,
+                    detail: "A permission cannot be both required and optional."
+                ))
+                continue
+            }
+            capabilities.append(.init(
+                name: name,
+                status: .supported,
+                detail: "This optional permission may be requested with trusted user consent."
+            ))
+        }
+
         var seenHostPermissions = Set<FloorpWebExtensionMatchPattern>()
         for pattern in manifest.hostPermissions {
             let status: FloorpWebExtensionManifestCapabilityStatus = seenHostPermissions.insert(pattern).inserted
@@ -297,6 +441,28 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
                 ? "This host permission can be presented for per-site consent."
                 : "A host permission is declared more than once."
             capabilities.append(.init(name: "host_permission.\(pattern.original)", status: status, detail: detail))
+        }
+
+        var seenOptionalHostPermissions = Set<FloorpWebExtensionMatchPattern>()
+        let requiredHosts = Set(manifest.hostPermissions)
+        for pattern in manifest.optionalHostPermissions {
+            let status: FloorpWebExtensionManifestCapabilityStatus
+            let detail: String
+            if !seenOptionalHostPermissions.insert(pattern).inserted {
+                status = .rejected
+                detail = "An optional host permission is declared more than once."
+            } else if requiredHosts.contains(pattern) {
+                status = .rejected
+                detail = "A host permission cannot be both required and optional."
+            } else {
+                status = .supported
+                detail = "This optional host permission may be requested with trusted user consent."
+            }
+            capabilities.append(.init(
+                name: "optional_host_permission.\(pattern.original)",
+                status: status,
+                detail: detail
+            ))
         }
 
         for (index, script) in manifest.contentScripts.enumerated() {
@@ -896,6 +1062,8 @@ private extension FloorpWebExtensionManifest {
             case version
             case permissions
             case hostPermissions = "host_permissions"
+            case optionalPermissions = "optional_permissions"
+            case optionalHostPermissions = "optional_host_permissions"
             case contentScripts = "content_scripts"
             case background
             case declarativeNetRequest = "declarative_net_request"
@@ -908,6 +1076,8 @@ private extension FloorpWebExtensionManifest {
         let version: String
         let permissions: [String]
         let hostPermissions: [String]
+        let optionalPermissions: [String]
+        let optionalHostPermissions: [String]
         let contentScripts: [RawContentScript]
         let background: RawBackground?
         let declarativeNetRequest: RawDeclarativeNetRequest?
@@ -923,6 +1093,11 @@ private extension FloorpWebExtensionManifest {
             version = try container.decode(String.self, forKey: .version)
             permissions = try container.valueIfPresent([String].self, forKey: .permissions) ?? []
             hostPermissions = try container.valueIfPresent([String].self, forKey: .hostPermissions) ?? []
+            optionalPermissions = try container.valueIfPresent([String].self, forKey: .optionalPermissions) ?? []
+            optionalHostPermissions = try container.valueIfPresent(
+                [String].self,
+                forKey: .optionalHostPermissions
+            ) ?? []
             contentScripts = try container.valueIfPresent([RawContentScript].self, forKey: .contentScripts) ?? []
             background = try container.valueIfPresent(RawBackground.self, forKey: .background)
             declarativeNetRequest = try container.valueIfPresent(

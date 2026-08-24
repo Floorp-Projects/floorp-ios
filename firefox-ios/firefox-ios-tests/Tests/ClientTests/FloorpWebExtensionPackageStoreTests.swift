@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import CryptoKit
 import WebKit
 import XCTest
 @testable import Client
@@ -124,7 +125,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             isPrivateBrowsing: false,
             directory: directory
         )
-        _ = try await store.installBundledPackage(
+        let installed = try await store.installBundledPackage(
             at: checkedInDemandingMV3FixtureDirectory(),
             expectedExtensionID: extensionID
         )
@@ -144,8 +145,19 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             requestedHosts: hosts,
             normalHostAccess: .allRequestedSites
         )
-        try await store.updateGrants(updatedGrants, for: extensionID)
+        await assertAsyncThrows {
+            try await store.updateGrants(
+                updatedGrants,
+                for: self.extensionID,
+                expectedGeneration: installed.generation
+            )
+        }
         try await store.setEnabled(true, for: extensionID)
+        try await store.updateGrants(
+            updatedGrants,
+            for: extensionID,
+            expectedGeneration: installed.generation
+        )
         XCTAssertNoThrow(try loader(extensionID, source))
 
         let restartedStore = try FloorpWebExtensionPackageStore(
@@ -162,6 +174,481 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertThrowsError(try loader(extensionID, source))
         let remainingPackages = await store.installedPackages()
         XCTAssertTrue(remainingPackages.isEmpty)
+    }
+
+    func testInitialGrantsCannotPregrantOptionalPermissionsAndApprovedOptionalGrantsPersist() async throws {
+        let directory = temporaryDirectory()
+        let fixture = try optionalPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-optional-permissions",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let requiredHosts: Set<FloorpWebExtensionMatchPattern> = [
+            try .init("http://*.fixture.test/*"),
+            try .init("https://*.fixture.test/*")
+        ]
+        let optionalHost = try FloorpWebExtensionMatchPattern("https://one.optional.fixture.test/*")
+
+        let pregrantedOptional = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: [.scripting, .tabs],
+            requestedHosts: requiredHosts,
+            normalHostAccess: .selectedSites([optionalHost])
+        )
+        await assertAsyncThrows {
+            _ = try await store.installBundledPackage(
+                at: fixture,
+                expectedExtensionID: self.extensionID,
+                initialGrants: pregrantedOptional
+            )
+        }
+
+        let requiredOnly = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: [.scripting],
+            requestedHosts: requiredHosts,
+            normalHostAccess: .selectedSites([try .init("https://www.fixture.test/*")])
+        )
+        let installed = try await store.installBundledPackage(
+            at: fixture,
+            expectedExtensionID: extensionID,
+            initialGrants: requiredOnly
+        )
+
+        let approvedOptional = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: [.scripting, .tabs],
+            requestedHosts: requiredHosts,
+            normalHostAccess: .selectedSites([optionalHost])
+        )
+        try await store.updateGrants(
+            approvedOptional,
+            for: extensionID,
+            expectedGeneration: installed.generation
+        )
+        let livePackage = await store.installedPackage(for: extensionID)
+        let live = try XCTUnwrap(livePackage)
+        XCTAssertEqual(live.grants, approvedOptional)
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-optional-permissions",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedPackage = await restartedStore.installedPackage(for: extensionID)
+        let restarted = try XCTUnwrap(restartedPackage)
+        XCTAssertEqual(restarted.grants, approvedOptional)
+
+        let undeclaredOptional = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: [.activeTab, .scripting, .tabs],
+            requestedHosts: requiredHosts,
+            normalHostAccess: .selectedSites([optionalHost])
+        )
+        await assertAsyncThrows {
+            try await restartedStore.updateGrants(
+                undeclaredOptional,
+                for: self.extensionID,
+                expectedGeneration: restarted.generation
+            )
+        }
+    }
+
+    func testBundledPackageUpdateMigratesExistingAuthorityWithoutGrantingNewRequirements() async throws {
+        let directory = temporaryDirectory()
+        let initialFixture = try optionalPermissionFixture()
+        let replacementFixture = try permissionExpansionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: initialFixture)
+            try? FileManager.default.removeItem(at: replacementFixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-update-permission-migration",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let initialManifest = try FloorpWebExtensionManifest.decode(
+            Data(contentsOf: initialFixture.appendingPathComponent("manifest.json"))
+        )
+        let initialRequiredHosts = Set(initialManifest.hostPermissions)
+        let optionalSite = try FloorpWebExtensionMatchPattern(
+            "https://one.optional.fixture.test/*"
+        )
+        let initial = try await store.installBundledPackage(
+            at: initialFixture,
+            expectedExtensionID: extensionID,
+            initialGrants: .init(
+                apiPermissions: initialManifest.apiPermissions,
+                requestedHosts: initialRequiredHosts,
+                normalHostAccess: .allRequestedSites
+            )
+        )
+        let approvedOptional = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: initialManifest.apiPermissions.union([.tabs]),
+            requestedHosts: initialRequiredHosts,
+            normalHostAccess: .selectedSites(initialRequiredHosts.union([optionalSite])),
+            privateHostAccess: .selectedSites([optionalSite]),
+            privateBrowsingEnabled: true
+        )
+        try await store.updateGrants(
+            approvedOptional,
+            for: extensionID,
+            expectedGeneration: initial.generation
+        )
+
+        let replacement = try await store.installBundledPackage(
+            at: initialFixture,
+            expectedExtensionID: extensionID,
+            initialGrants: approvedOptional
+        )
+
+        XCTAssertNotEqual(replacement.generation, initial.generation)
+        XCTAssertTrue(replacement.grants.apiPermissions.contains(.tabs))
+        XCTAssertFalse(replacement.grants.apiPermissions.contains(.activeTab))
+        XCTAssertEqual(replacement.grants.requestedHosts, initialRequiredHosts)
+        XCTAssertTrue(replacement.grants.privateBrowsingEnabled)
+        guard case .selectedSites(let normalSites) = replacement.grants.normalHostAccess,
+              case .selectedSites(let privateSites) = replacement.grants.privateHostAccess else {
+            return XCTFail("An update must represent retained host authority without widening it")
+        }
+        // The replacement's optional declaration is a strict subset of the
+        // already-approved `https://*.fixture.test/*` required host. Retaining
+        // that narrower current declaration preserves existing authority if a
+        // later update removes the broader declaration; it must not create any
+        // URL authority outside the prior selection.
+        let optionalDeclaration = try FloorpWebExtensionMatchPattern(
+            "https://*.optional.fixture.test/*"
+        )
+        let previouslyApprovedNormalSites = initialRequiredHosts.union([optionalSite])
+        XCTAssertEqual(
+            normalSites,
+            previouslyApprovedNormalSites.union([optionalDeclaration])
+        )
+        XCTAssertTrue(normalSites.allSatisfy { retained in
+            previouslyApprovedNormalSites.contains { approved in
+                approved.covers(retained)
+            }
+        })
+        XCTAssertEqual(privateSites, [optionalSite])
+
+        let replacementManifest = try FloorpWebExtensionManifest.decode(
+            Data(contentsOf: replacementFixture.appendingPathComponent("manifest.json"))
+        )
+        do {
+            _ = try await store.installBundledPackage(
+                at: replacementFixture,
+                expectedExtensionID: extensionID,
+                initialGrants: .init(
+                    apiPermissions: replacementManifest.apiPermissions,
+                    requestedHosts: Set(replacementManifest.hostPermissions),
+                    normalHostAccess: .allRequestedSites
+                )
+            )
+            XCTFail("New required authority must require explicit update consent")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .packageUpdateRequiresPermissionConsent(extensionID)
+            )
+        }
+        let retainedRecord = await store.installedPackage(for: extensionID)
+        let retained = try XCTUnwrap(retainedRecord)
+        XCTAssertEqual(retained.generation, replacement.generation)
+        XCTAssertEqual(retained.grants, replacement.grants)
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-update-permission-migration",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedRecord = await restartedStore.installedPackage(for: extensionID)
+        let restarted = try XCTUnwrap(restartedRecord)
+        XCTAssertEqual(restarted.generation, replacement.generation)
+        XCTAssertEqual(restarted.grants, replacement.grants)
+    }
+
+    func testStalePreparedUpdateCannotCommitOverNewerTransaction() async throws {
+        let directory = temporaryDirectory()
+        let fixture = try optionalPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-stale-update-rollback",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let first = try await store.installBundledPackage(
+            at: fixture,
+            expectedExtensionID: extensionID
+        )
+        let second = try await store.installBundledPackageTransaction(
+            at: fixture,
+            expectedExtensionID: extensionID
+        )
+        try await store.abortPreparedBundledPackageUpdate(
+            extensionID: extensionID,
+            replacementGeneration: second.installedPackage.generation
+        )
+        let third = try await store.installBundledPackageTransaction(
+            at: fixture,
+            expectedExtensionID: extensionID
+        )
+
+        do {
+            try await store.commitPreparedBundledPackageUpdate(
+                extensionID: extensionID,
+                replacementGeneration: second.installedPackage.generation
+            )
+            XCTFail("A stale transaction must not commit over its replacement")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .inactivePackageGeneration(extensionID)
+            )
+        }
+        let currentRecord = await store.installedPackage(for: extensionID)
+        let current = try XCTUnwrap(currentRecord)
+        XCTAssertEqual(current.generation, first.generation)
+        try await store.commitPreparedBundledPackageUpdate(
+            extensionID: extensionID,
+            replacementGeneration: third.installedPackage.generation
+        )
+        let committedRecord = await store.installedPackage(for: extensionID)
+        XCTAssertEqual(committedRecord?.generation, third.installedPackage.generation)
+    }
+
+    func testPreparedUpdateKeepsCommittedLoadersOldAndRestartAbortsJournal() async throws {
+        let directory = temporaryDirectory()
+        let initialFixture = try optionalPermissionFixture()
+        let candidateFixture = try contentUpdatedPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: initialFixture)
+            try? FileManager.default.removeItem(at: candidateFixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-prepared-update-recovery",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let original = try await store.installBundledPackage(
+            at: initialFixture,
+            expectedExtensionID: extensionID
+        )
+        let source = try FloorpWebExtensionScriptSource("content/document-start.js")
+        let normalLoader = store.makeResourceLoader()
+        XCTAssertFalse(try normalLoader(extensionID, source).contains("prepared-update-v2"))
+
+        let transaction = try await store.installBundledPackageTransaction(
+            at: candidateFixture,
+            expectedExtensionID: extensionID
+        )
+        let candidate = transaction.installedPackage
+        let stillCommittedRecord = await store.installedPackage(for: extensionID)
+        XCTAssertEqual(stillCommittedRecord?.generation, original.generation)
+        XCTAssertFalse(try normalLoader(extensionID, source).contains("prepared-update-v2"))
+        let preparedResources = try await store.preparedPackageResources(
+            extensionID: extensionID,
+            replacementGeneration: candidate.generation
+        )
+        XCTAssertTrue(
+            try preparedResources.scriptResourceLoader(extensionID, source)
+                .contains("prepared-update-v2")
+        )
+
+        // Reopening the store models a process death anywhere after journal
+        // persistence and before the final atomic commit.
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-store-prepared-update-recovery",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let recoveredRecord = await restartedStore.installedPackage(for: extensionID)
+        let recovered = try XCTUnwrap(recoveredRecord)
+        XCTAssertEqual(recovered.generation, original.generation)
+        XCTAssertFalse(
+            try restartedStore.makeResourceLoader()(extensionID, source)
+                .contains("prepared-update-v2")
+        )
+        let candidateDirectory = committedGenerationDirectory(root: directory, installed: candidate)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: candidateDirectory.path))
+    }
+
+    func testInterruptedUpdateRecoversPreviousWhenCandidateIsMissingOrCorrupt() async throws {
+        enum CandidateFailure: String, CaseIterable {
+            case missing
+            case corrupt
+        }
+
+        let initialFixture = try optionalPermissionFixture()
+        let candidateFixture = try contentUpdatedPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: initialFixture)
+            try? FileManager.default.removeItem(at: candidateFixture)
+        }
+        let source = try FloorpWebExtensionScriptSource("content/document-start.js")
+
+        for failure in CandidateFailure.allCases {
+            let directory = temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let profileIdentifier = "package-store-candidate-\(failure.rawValue)-recovery"
+            let store = try FloorpWebExtensionPackageStore(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: false,
+                directory: directory
+            )
+            let original = try await store.installBundledPackage(
+                at: initialFixture,
+                expectedExtensionID: extensionID
+            )
+            let transaction = try await store.installBundledPackageTransaction(
+                at: candidateFixture,
+                expectedExtensionID: extensionID
+            )
+            let candidateDirectory = committedGenerationDirectory(
+                root: directory,
+                installed: transaction.installedPackage
+            )
+
+            switch failure {
+            case .missing:
+                try FileManager.default.removeItem(at: candidateDirectory)
+            case .corrupt:
+                try Data("not a manifest".utf8).write(
+                    to: candidateDirectory.appendingPathComponent("manifest.json"),
+                    options: [.atomic]
+                )
+            }
+
+            let restartedStore = try FloorpWebExtensionPackageStore(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: false,
+                directory: directory
+            )
+            let recoveredRecord = await restartedStore.installedPackage(for: extensionID)
+            let recovered = try XCTUnwrap(recoveredRecord)
+            XCTAssertEqual(recovered.generation, original.generation, failure.rawValue)
+            XCTAssertFalse(
+                try restartedStore.makeResourceLoader()(extensionID, source)
+                    .contains("prepared-update-v2"),
+                failure.rawValue
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: candidateDirectory.path),
+                failure.rawValue
+            )
+        }
+    }
+
+    func testLiveManagerActivatesCandidateBeforeAtomicRegistryCommit() async throws {
+        let directory = temporaryDirectory()
+        let initialFixture = try optionalPermissionFixture()
+        let candidateFixture = try contentUpdatedPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: initialFixture)
+            try? FileManager.default.removeItem(at: candidateFixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-prepared-activation",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var packageURL = initialFixture
+        var originalGeneration: String?
+        var preparedActivationCount = 0
+        let source = try FloorpWebExtensionScriptSource("content/document-start.js")
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, package, _ in
+                if let package, originalGeneration == nil {
+                    originalGeneration = package.generation
+                }
+            },
+            bundledPackageURL: { _ in packageURL },
+            reconcilePrepared: { _, candidate, _, resources in
+                preparedActivationCount += 1
+                let committed = await store.installedPackage(for: self.extensionID)
+                XCTAssertEqual(committed?.generation, originalGeneration)
+                XCTAssertNotEqual(candidate.generation, originalGeneration)
+                XCTAssertFalse(
+                    try store.makeResourceLoader()(self.extensionID, source)
+                        .contains("prepared-update-v2")
+                )
+                XCTAssertTrue(
+                    try resources.scriptResourceLoader(self.extensionID, source)
+                        .contains("prepared-update-v2")
+                )
+            }
+        )
+
+        try await manager.installBundledPackage(
+            FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+        )
+        packageURL = candidateFixture
+        try await manager.installBundledPackage(
+            FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+        )
+
+        XCTAssertEqual(preparedActivationCount, 1)
+        let committedRecord = await store.installedPackage(for: extensionID)
+        let committed = try XCTUnwrap(committedRecord)
+        XCTAssertNotEqual(committed.generation, originalGeneration)
+        XCTAssertTrue(
+            try store.makeResourceLoader()(extensionID, source)
+                .contains("prepared-update-v2")
+        )
+    }
+
+    func testLiveManagerUpdatePreservesDisabledStateWithoutActivation() async throws {
+        let directory = temporaryDirectory()
+        let fixture = try optionalPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-disabled-update",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let original = try await store.installBundledPackage(
+            at: fixture,
+            expectedExtensionID: extensionID
+        )
+        try await store.setEnabled(false, for: extensionID)
+        var reconciliationCount = 0
+        var preparedActivationCount = 0
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, _, _ in reconciliationCount += 1 },
+            bundledPackageURL: { _ in fixture },
+            reconcilePrepared: { _, _, _, _ in preparedActivationCount += 1 }
+        )
+
+        try await manager.installBundledPackage(
+            FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+        )
+
+        let updatedRecord = await store.installedPackage(for: extensionID)
+        let updated = try XCTUnwrap(updatedRecord)
+        XCTAssertNotEqual(updated.generation, original.generation)
+        XCTAssertFalse(updated.isEnabled)
+        XCTAssertEqual(reconciliationCount, 0)
+        XCTAssertEqual(preparedActivationCount, 0)
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-disabled-update",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedRecord = await restartedStore.installedPackage(for: extensionID)
+        XCTAssertEqual(restartedRecord?.generation, updated.generation)
+        XCTAssertEqual(restartedRecord?.isEnabled, false)
     }
 
     func testRejectsSymlinkAndFailedReplacementPreservesActiveGeneration() async throws {
@@ -613,7 +1100,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         var shouldFailActivation = true
         let manager = FloorpWebExtensionLivePackageManager(
             store: store,
-            reconcile: { _, package in
+            reconcile: { _, package, _ in
                 if package != nil, shouldFailActivation {
                     throw FloorpWebExtensionError.unsupported("simulated WebKit policy failure")
                 }
@@ -654,6 +1141,96 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertNil(recoveredPackage.activationError)
     }
 
+    func testLiveManagerFailedUpdateRestoresPriorActiveGenerationAndGrants() async throws {
+        let directory = temporaryDirectory()
+        let fixture = try optionalPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-update-rollback",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var failNextActivation = false
+        var activatedGenerations = [String]()
+        var rejectedGeneration: String?
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, package, _ in
+                guard let package else { return }
+                activatedGenerations.append(package.generation)
+                if failNextActivation {
+                    failNextActivation = false
+                    rejectedGeneration = package.generation
+                    throw FloorpWebExtensionError.unsupported(
+                        "simulated replacement activation failure"
+                    )
+                }
+            },
+            bundledPackageURL: { _ in fixture }
+        )
+
+        try await manager.installBundledPackage(
+            FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+        )
+        let originalRecord = await store.installedPackage(for: extensionID)
+        let original = try XCTUnwrap(originalRecord)
+        let optionalSite = try FloorpWebExtensionMatchPattern(
+            "https://one.optional.fixture.test/*"
+        )
+        let approvedOptional = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: original.grants.apiPermissions.union([.tabs]),
+            requestedHosts: original.grants.requestedHosts,
+            normalHostAccess: .selectedSites(
+                original.grants.requestedHosts.union([optionalSite])
+            )
+        )
+        try await store.updateGrants(
+            approvedOptional,
+            for: extensionID,
+            expectedGeneration: original.generation
+        )
+        let previousRecord = await store.installedPackage(for: extensionID)
+        let previous = try XCTUnwrap(previousRecord)
+
+        failNextActivation = true
+        await assertAsyncThrows {
+            try await manager.installBundledPackage(
+                FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+            )
+        }
+
+        let rejected = try XCTUnwrap(rejectedGeneration)
+        let retainedRecord = await store.installedPackage(for: extensionID)
+        let retained = try XCTUnwrap(retainedRecord)
+        XCTAssertEqual(retained.generation, previous.generation)
+        XCTAssertEqual(retained.grants, approvedOptional)
+        XCTAssertTrue(retained.isEnabled)
+        XCTAssertNil(retained.activationError)
+        XCTAssertEqual(
+            activatedGenerations,
+            [previous.generation, rejected, previous.generation]
+        )
+        let rejectedDirectory = directory
+            .appendingPathComponent("packages", isDirectory: true)
+            .appendingPathComponent(extensionID.rawValue, isDirectory: true)
+            .appendingPathComponent(rejected, isDirectory: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rejectedDirectory.path))
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-update-rollback",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedRecord = await restartedStore.installedPackage(for: extensionID)
+        let restarted = try XCTUnwrap(restartedRecord)
+        XCTAssertEqual(restarted.generation, previous.generation)
+        XCTAssertEqual(restarted.grants, approvedOptional)
+        XCTAssertTrue(restarted.isEnabled)
+    }
+
     func testLiveManagerRevokesBeforeDisableAndUninstallAndRestoresOnEnable() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -667,9 +1244,11 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             expectedExtensionID: extensionID
         )
         var reconciledStates = [Bool]()
-        let manager = FloorpWebExtensionLivePackageManager(store: store) { id, package in
+        var reconciliationOperations = [FloorpWebExtensionLivePackageManager.ReconciliationOperation]()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { id, package, operation in
             XCTAssertEqual(id, self.extensionID)
             reconciledStates.append(package != nil)
+            reconciliationOperations.append(operation)
         }
 
         try await manager.setEnabled(false, for: extensionID)
@@ -683,9 +1262,422 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertEqual(enabled?.isEnabled, true)
 
         try await manager.uninstall(extensionID)
-        XCTAssertEqual(reconciledStates, [false, true, false])
+        XCTAssertEqual(reconciledStates, [false, true, false, false])
+        XCTAssertEqual(reconciliationOperations, [.suspend, .suspend, .suspend, .uninstall])
         let uninstalled = await store.installedPackage(for: extensionID)
         XCTAssertNil(uninstalled)
+        let hasPendingPurge = await store.hasPendingDataPurge(for: extensionID)
+        XCTAssertFalse(hasPendingPurge)
+    }
+
+    func testLiveManagerRestoresPackageAndPreservesDataWhenUninstallRegistryCommitFails() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registryWriter = RegistryWriteFailureInjector()
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-uninstall-rollback",
+            isPrivateBrowsing: false,
+            directory: directory,
+            registryPersister: { data, url in
+                try registryWriter.persist(data, to: url)
+            }
+        )
+        _ = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+        let loader = store.makeResourceLoader()
+        let source = try FloorpWebExtensionScriptSource("content/document-start.js")
+        var reconciledStates = [Bool]()
+        var operations = [FloorpWebExtensionLivePackageManager.ReconciliationOperation]()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
+            reconciledStates.append(package != nil)
+            operations.append(operation)
+        }
+
+        registryWriter.shouldFail = true
+        await assertAsyncThrows {
+            try await manager.uninstall(self.extensionID)
+        }
+
+        XCTAssertEqual(reconciledStates, [false, true])
+        XCTAssertEqual(operations, [.suspend, .suspend])
+        let retainedPackage = await store.installedPackage(for: extensionID)
+        let hasPendingPurge = await store.hasPendingDataPurge(for: extensionID)
+        XCTAssertNotNil(retainedPackage)
+        XCTAssertFalse(hasPendingPurge)
+        XCTAssertNoThrow(try loader(extensionID, source))
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-uninstall-rollback",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedPackage = await restartedStore.installedPackage(for: extensionID)
+        XCTAssertNotNil(restartedPackage)
+    }
+
+    func testLiveManagerLeavesDurableTombstoneWhenCleanupFailsAndRetriesIt() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-uninstall-tombstone",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let installed = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+        var shouldFailCleanup = true
+        var operations = [FloorpWebExtensionLivePackageManager.ReconciliationOperation]()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, _, operation in
+            operations.append(operation)
+            if operation == .uninstall, shouldFailCleanup {
+                throw FloorpWebExtensionError.unsupported("simulated API cleanup failure")
+            }
+        }
+
+        await assertAsyncThrows {
+            try await manager.uninstall(self.extensionID)
+        }
+        let removedPackage = await store.installedPackage(for: extensionID)
+        let pendingAfterFailure = await store.hasPendingDataPurge(for: extensionID)
+        XCTAssertNil(removedPackage)
+        XCTAssertTrue(pendingAfterFailure)
+        let generationDirectory = directory
+            .appendingPathComponent("packages", isDirectory: true)
+            .appendingPathComponent(extensionID.rawValue, isDirectory: true)
+            .appendingPathComponent(installed.generation, isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: generationDirectory.path))
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-uninstall-tombstone",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedPendingPurge = await restartedStore.hasPendingDataPurge(for: extensionID)
+        XCTAssertTrue(restartedPendingPurge)
+
+        shouldFailCleanup = false
+        try await manager.uninstall(extensionID)
+        let pendingAfterRetry = await store.hasPendingDataPurge(for: extensionID)
+        XCTAssertFalse(pendingAfterRetry)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: generationDirectory.path))
+        XCTAssertEqual(operations, [.suspend, .uninstall, .suspend, .uninstall])
+    }
+
+    func testLiveManagerSerializesReloadBeforeConcurrentDisable() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-live-manager-lifecycle-gate",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        _ = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+
+        let reconciliation = PausedLifecycleReconciliation()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { id, package, operation in
+            XCTAssertEqual(id, self.extensionID)
+            XCTAssertEqual(operation, .suspend)
+            try await reconciliation.reconcile(package)
+        }
+
+        let reloadTask = Task { @MainActor in
+            try await manager.reload(self.extensionID)
+        }
+        await reconciliation.waitUntilInitialRevocation()
+
+        let disableTask = Task { @MainActor in
+            try await manager.setEnabled(false, for: self.extensionID)
+        }
+        // The disable task is allowed to reach the manager, but the gate must
+        // prevent it from beginning its own reconciliation while reload is
+        // paused between revocation and reactivation.
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(reconciliation.states, [false])
+
+        await reconciliation.resumeInitialRevocation()
+        try await reloadTask.value
+        try await disableTask.value
+
+        XCTAssertEqual(reconciliation.states, [false, true, false])
+        let package = await store.installedPackage(for: extensionID)
+        XCTAssertEqual(package?.isEnabled, false)
+    }
+
+    func testPermissionMutationAuthorizationCannotCrossDisableReenableOrReload() async throws {
+        let directory = temporaryDirectory()
+        let fixture = try optionalPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-permission-authorization-lifecycle",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let installed = try await store.installBundledPackage(
+            at: fixture,
+            expectedExtensionID: extensionID
+        )
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, _, _ in }
+        let proposed = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: installed.grants.apiPermissions.union([.tabs]),
+            requestedHosts: installed.grants.requestedHosts,
+            normalHostAccess: installed.grants.normalHostAccess
+        )
+
+        let beforeDisable = try await manager.authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: installed.generation
+        )
+        try await manager.setEnabled(false, for: extensionID)
+        try await manager.setEnabled(true, for: extensionID)
+        do {
+            try await manager.updateGrants(proposed, authorization: beforeDisable)
+            XCTFail("Consent captured before disable must not survive re-enable")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .inactivePackageGeneration(extensionID)
+            )
+        }
+
+        let beforeReload = try await manager.authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: installed.generation
+        )
+        try await manager.reload(extensionID)
+        do {
+            try await manager.updateGrants(proposed, authorization: beforeReload)
+            XCTFail("Consent captured before reload must not survive runtime replacement")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .inactivePackageGeneration(extensionID)
+            )
+        }
+
+        let retainedRecord = await store.installedPackage(for: extensionID)
+        let retained = try XCTUnwrap(retainedRecord)
+        XCTAssertFalse(retained.grants.apiPermissions.contains(.tabs))
+
+        let currentAuthorization = try await manager.authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: retained.generation
+        )
+        try await manager.updateGrants(proposed, authorization: currentAuthorization)
+        let committedRecord = await store.installedPackage(for: extensionID)
+        let committed = try XCTUnwrap(committedRecord)
+        XCTAssertTrue(committed.grants.apiPermissions.contains(.tabs))
+        await assertAsyncThrows {
+            try await manager.updateGrants(proposed, authorization: currentAuthorization)
+        }
+    }
+
+    func testPermissionMutationAuthorizationCannotCrossUpdateOrUninstall() async throws {
+        let directory = temporaryDirectory()
+        let fixture = try optionalPermissionFixture()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "package-permission-authorization-generation",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, _, _ in },
+            bundledPackageURL: { _ in fixture }
+        )
+        try await manager.installBundledPackage(
+            FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+        )
+        let firstRecord = await store.installedPackage(for: extensionID)
+        let first = try XCTUnwrap(firstRecord)
+        let beforeUpdate = try await manager.authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: first.generation
+        )
+        let proposed = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: first.grants.apiPermissions.union([.tabs]),
+            requestedHosts: first.grants.requestedHosts,
+            normalHostAccess: first.grants.normalHostAccess
+        )
+
+        try await manager.installBundledPackage(
+            FloorpWebExtensionBundledCatalog.demandingMV3Fixture
+        )
+        let replacementRecord = await store.installedPackage(for: extensionID)
+        let replacement = try XCTUnwrap(replacementRecord)
+        XCTAssertNotEqual(replacement.generation, first.generation)
+        do {
+            try await manager.updateGrants(proposed, authorization: beforeUpdate)
+            XCTFail("Consent for a replaced generation must not mutate its replacement")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .inactivePackageGeneration(extensionID)
+            )
+        }
+        XCTAssertFalse(replacement.grants.apiPermissions.contains(.tabs))
+
+        let beforeUninstall = try await manager.authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: replacement.generation
+        )
+        try await manager.uninstall(extensionID)
+        do {
+            try await manager.updateGrants(proposed, authorization: beforeUninstall)
+            XCTFail("Consent for an uninstalled generation must not be persisted")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .inactivePackageGeneration(extensionID)
+            )
+        }
+        let removed = await store.installedPackage(for: extensionID)
+        XCTAssertNil(removed)
+    }
+
+    func testBootstrapRestoreSerializesWithConcurrentDisableThroughRegisteredManager() async throws {
+        let directory = temporaryDirectory()
+        let profileIdentifier = "package-startup-restore-\(UUID().uuidString)"
+        defer {
+            FloorpWebExtensionPackageStoreRegistry.removeStore(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let installed = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+        let reconciliation = PausedPackageRestoreReconciliation()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
+            XCTAssertEqual(operation, .suspend)
+            await reconciliation.reconcile(package)
+        }
+        FloorpWebExtensionPackageStoreRegistry.install(store, manager: manager)
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+
+        let restoreTask = Task { @MainActor in
+            await FloorpBootstrapper.restoreInstalledPackages(
+                from: store,
+                into: coordinator
+            )
+        }
+        await reconciliation.waitUntilRestoreStarted()
+        let disableTask = Task { @MainActor in
+            try await manager.setEnabled(false, for: self.extensionID)
+        }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(reconciliation.states, [true])
+        let enabledWhileRestoreIsPaused = await store.installedPackage(for: extensionID)
+        XCTAssertEqual(enabledWhileRestoreIsPaused?.isEnabled, true)
+
+        reconciliation.resumeRestore()
+        await restoreTask.value
+        try await disableTask.value
+        XCTAssertEqual(reconciliation.states, [true, false])
+        let disabled = await store.installedPackage(for: extensionID)
+        XCTAssertEqual(disabled?.isEnabled, false)
+
+        let staleRestore = try await manager.restoreInstalledPackageIfCurrent(installed)
+        XCTAssertFalse(staleRestore)
+        XCTAssertEqual(reconciliation.states, [true, false])
+    }
+
+    func testReplacingRegisteredPackageStoreRejectsStalePermissionCommit() async throws {
+        let directory = temporaryDirectory()
+        let fixture = try optionalPermissionFixture()
+        let profileIdentifier = "package-composition-cas-\(UUID().uuidString)"
+        defer {
+            FloorpWebExtensionPackageStoreRegistry.removeStore(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        let firstStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let installed = try await firstStore.installBundledPackage(
+            at: fixture,
+            expectedExtensionID: extensionID
+        )
+        let firstManager = FloorpWebExtensionLivePackageManager(store: firstStore) { _, _, _ in }
+        FloorpWebExtensionPackageStoreRegistry.install(firstStore, manager: firstManager)
+
+        let replacementStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let replacementManager = FloorpWebExtensionLivePackageManager(
+            store: replacementStore
+        ) { _, _, _ in }
+        FloorpWebExtensionPackageStoreRegistry.install(
+            replacementStore,
+            manager: replacementManager
+        )
+        let proposed = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: installed.grants.apiPermissions.union([.tabs]),
+            requestedHosts: installed.grants.requestedHosts,
+            normalHostAccess: installed.grants.normalHostAccess
+        )
+
+        do {
+            try await firstStore.updateGrants(
+                proposed,
+                for: extensionID,
+                expectedGeneration: installed.generation
+            )
+            XCTFail("A replaced package-store actor must not write the shared registry")
+        } catch {
+            XCTAssertEqual(
+                error as? FloorpWebExtensionPackageStoreError,
+                .stalePackageComposition
+            )
+        }
+        let current = await replacementStore.installedPackage(for: extensionID)
+        XCTAssertEqual(current?.isEnabled, true)
+        XCTAssertFalse(current?.grants.apiPermissions.contains(.tabs) ?? true)
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restarted = await restartedStore.installedPackage(for: extensionID)
+        XCTAssertEqual(restarted?.isEnabled, true)
+        XCTAssertFalse(restarted?.grants.apiPermissions.contains(.tabs) ?? true)
     }
 
     func testBootstrapRestoreMaterializesManifestScriptsGrantsAndStaticDNR() async throws {
@@ -735,6 +1727,11 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             preferredLocales: ["en"],
             packageResourceLoader: store.makeI18nResourceLoader()
         )
+        let messageRuntime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: apiHost)
+        FloorpWebExtensionAPIHostRegistry.install(
+            apiHost,
+            messageRuntime: messageRuntime
+        )
 
         await FloorpBootstrapper.restoreInstalledPackages(
             from: store,
@@ -753,7 +1750,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertEqual(policies.scriptPolicies.count, 3)
         let dnrSnapshot = await coordinator.dnrSnapshot(for: extensionID)
         let dnr = try XCTUnwrap(dnrSnapshot)
-        XCTAssertEqual(dnr.staticRuleSets.first?.rules.count, 40)
+        XCTAssertEqual(dnr.staticRuleSets.first?.rules.count, 5_000)
         XCTAssertEqual(dnr.enabledStaticRuleSetIDs, ["large-static"])
 
         let dynamicApplied = try await coordinator.updateDynamicRules(
@@ -811,6 +1808,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             )
         )
         XCTAssertNotNil(apiResponse, "restored packages must be activated in the native API host")
+        await FloorpWebExtensionAPIHostRegistry.removeHost(for: apiHost.profileKey)
     }
 
     private func temporaryDirectory() -> URL {
@@ -846,6 +1844,143 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "The demanding MV3 fixture was not found."]
         )
+    }
+
+    /// Builds a package-local, digest-pinned fixture with one optional API
+    /// permission and one optional host. The source fixture remains immutable;
+    /// this test-only copy proves package-store validation independently of
+    /// catalog fixtures and their checked-in digest.
+    private func optionalPermissionFixture() throws -> URL {
+        let fixture = temporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: fixture.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.copyItem(at: checkedInDemandingMV3FixtureDirectory(), to: fixture)
+
+        let manifestURL = fixture.appendingPathComponent("manifest.json", isDirectory: false)
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        let requiredPermissions = try XCTUnwrap(manifest["permissions"] as? [String])
+            .filter { $0 != "activeTab" && $0 != "tabs" }
+        manifest["permissions"] = requiredPermissions
+        manifest["optional_permissions"] = ["tabs"]
+        manifest["optional_host_permissions"] = ["https://*.optional.fixture.test/*"]
+        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys]).write(
+            to: manifestURL,
+            options: [.atomic]
+        )
+
+        let metadataURL = fixture.appendingPathComponent("fixture-metadata.json", isDirectory: false)
+        var metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: metadataURL)) as? [String: Any]
+        )
+        var fixtureMetadata = try XCTUnwrap(metadata["fixture"] as? [String: Any])
+        fixtureMetadata["packageSHA256"] = try fixtureDigest(in: fixture)
+        metadata["fixture"] = fixtureMetadata
+        try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]).write(
+            to: metadataURL,
+            options: [.atomic]
+        )
+        return fixture
+    }
+
+    /// Produces a replacement whose manifest adds one required API and host.
+    /// These declarations intentionally have no prior grant and therefore must
+    /// not gain authority merely because package bytes were refreshed.
+    private func permissionExpansionFixture() throws -> URL {
+        let fixture = try optionalPermissionFixture()
+        let manifestURL = fixture.appendingPathComponent("manifest.json", isDirectory: false)
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        var permissions = try XCTUnwrap(manifest["permissions"] as? [String])
+        permissions.append("activeTab")
+        manifest["permissions"] = permissions
+        var hosts = try XCTUnwrap(manifest["host_permissions"] as? [String])
+        hosts.append("https://new-required.fixture.test/*")
+        manifest["host_permissions"] = hosts
+        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys]).write(
+            to: manifestURL,
+            options: [.atomic]
+        )
+
+        let metadataURL = fixture.appendingPathComponent("fixture-metadata.json", isDirectory: false)
+        var metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: metadataURL)) as? [String: Any]
+        )
+        var fixtureMetadata = try XCTUnwrap(metadata["fixture"] as? [String: Any])
+        fixtureMetadata["packageSHA256"] = try fixtureDigest(in: fixture)
+        metadata["fixture"] = fixtureMetadata
+        try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]).write(
+            to: metadataURL,
+            options: [.atomic]
+        )
+        return fixture
+    }
+
+    private func contentUpdatedPermissionFixture() throws -> URL {
+        let fixture = try optionalPermissionFixture()
+        let scriptURL = fixture.appendingPathComponent(
+            "content/document-start.js",
+            isDirectory: false
+        )
+        var script = try String(contentsOf: scriptURL, encoding: .utf8)
+        script.append("\n// prepared-update-v2\n")
+        try Data(script.utf8).write(to: scriptURL, options: [.atomic])
+
+        let metadataURL = fixture.appendingPathComponent("fixture-metadata.json", isDirectory: false)
+        var metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: metadataURL)) as? [String: Any]
+        )
+        var fixtureMetadata = try XCTUnwrap(metadata["fixture"] as? [String: Any])
+        fixtureMetadata["packageSHA256"] = try fixtureDigest(in: fixture)
+        metadata["fixture"] = fixtureMetadata
+        try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]).write(
+            to: metadataURL,
+            options: [.atomic]
+        )
+        return fixture
+    }
+
+    private func fixtureDigest(in directory: URL) throws -> String {
+        let fileManager = FileManager.default
+        let rootPath = directory.standardizedFileURL.path + "/"
+        let enumerator = try fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: []
+        )
+        var resources = [String: Data]()
+        var pendingDirectories = enumerator
+        while let url = pendingDirectories.popLast() {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+            if values.isRegularFile == true {
+                let standardizedURL = url.standardizedFileURL
+                guard standardizedURL.path.hasPrefix(rootPath) else {
+                    throw NSError(domain: "FloorpWebExtensionPackageStoreTests", code: 2)
+                }
+                let path = String(standardizedURL.path.dropFirst(rootPath.count))
+                resources[path] = try Data(contentsOf: standardizedURL)
+            } else {
+                let children = try fileManager.contentsOfDirectory(
+                    at: url,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: []
+                )
+                pendingDirectories.append(contentsOf: children)
+            }
+        }
+        let packageData = resources.keys
+            .filter { $0 != "fixture-metadata.json" }
+            .sorted()
+            .reduce(into: Data()) { data, path in
+                data.append(path.data(using: .utf8)!)
+                data.append(0)
+                data.append(resources[path]!)
+            }
+        return SHA256.hash(data: packageData).map { String(format: "%02x", $0) }.joined()
     }
 
     private func committedGenerationDirectory(
@@ -887,6 +2022,77 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         } catch {
             // Callers assert the transaction state after the expected failure.
         }
+    }
+}
+
+/// Holds the first live-state revocation in a reload so a competing lifecycle
+/// mutation can prove it queues behind the manager's per-extension gate.
+@MainActor
+private final class PausedLifecycleReconciliation {
+    private var didPauseInitialRevocation = false
+    private var initialRevocationStarted = false
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var resumeContinuation: CheckedContinuation<Void, Never>?
+
+    private(set) var states = [Bool]()
+
+    func reconcile(_ package: FloorpWebExtensionInstalledPackage?) async {
+        states.append(package != nil)
+        guard !didPauseInitialRevocation, package == nil else { return }
+
+        didPauseInitialRevocation = true
+        initialRevocationStarted = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        await withCheckedContinuation { continuation in
+            resumeContinuation = continuation
+        }
+    }
+
+    func waitUntilInitialRevocation() async {
+        if initialRevocationStarted { return }
+        await withCheckedContinuation { continuation in
+            startedContinuation = continuation
+        }
+    }
+
+    func resumeInitialRevocation() {
+        resumeContinuation?.resume()
+        resumeContinuation = nil
+    }
+}
+
+/// Pauses the package-bearing startup reconciliation so a concurrent disable
+/// can prove it queues behind the same per-extension lifecycle gate.
+@MainActor
+private final class PausedPackageRestoreReconciliation {
+    private var restoreStarted = false
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var resumeContinuation: CheckedContinuation<Void, Never>?
+
+    private(set) var states = [Bool]()
+
+    func reconcile(_ package: FloorpWebExtensionInstalledPackage?) async {
+        states.append(package != nil)
+        guard package != nil, !restoreStarted else { return }
+        restoreStarted = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        await withCheckedContinuation { continuation in
+            resumeContinuation = continuation
+        }
+    }
+
+    func waitUntilRestoreStarted() async {
+        if restoreStarted { return }
+        await withCheckedContinuation { continuation in
+            startedContinuation = continuation
+        }
+    }
+
+    func resumeRestore() {
+        resumeContinuation?.resume()
+        resumeContinuation = nil
     }
 }
 

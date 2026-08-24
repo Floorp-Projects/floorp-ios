@@ -856,6 +856,16 @@ class Tab: NSObject,
                         isMainFrame: isMainFrame,
                         tab: trustedTab
                     )
+                },
+                authorizeFrameScript: { scriptID, revisionToken, currentURL, isMainFrame, trustedTab in
+                    coordinator.authorizesFrameScript(
+                        for: policy.extensionID,
+                        scriptID: scriptID,
+                        revisionToken: revisionToken,
+                        currentURL: currentURL,
+                        isMainFrame: isMainFrame,
+                        tab: trustedTab
+                    )
                 }
             )
         }

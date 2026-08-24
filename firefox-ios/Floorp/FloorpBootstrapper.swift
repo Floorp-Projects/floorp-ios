@@ -126,6 +126,12 @@ public final class FloorpBootstrapper {
             packageRestoreTasks.removeValue(forKey: profileIdentifier)?.cancel()
             let compositionGeneration = UUID()
             packageCompositionGenerations[profileIdentifier] = compositionGeneration
+            for isPrivateBrowsing in [false, true] {
+                FloorpWebExtensionPackageStoreRegistry.invalidateStore(
+                    for: profileIdentifier,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            }
             let normalDirectory = try profile.files.getAndEnsureDirectory(
                 "WebExtensions/ContentRuleLists/normal"
             )
@@ -307,6 +313,10 @@ public final class FloorpBootstrapper {
         isPrivateBrowsing: Bool,
         compositionGeneration: UUID
     ) -> FloorpWebExtensionCoordinator {
+        let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
+            for: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        )
         let coordinator = FloorpWebExtensionCoordinator(
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing,
@@ -315,13 +325,35 @@ public final class FloorpBootstrapper {
                 isPrivateBrowsing: isPrivateBrowsing
             ),
             scriptResourceLoader: store.makeResourceLoader(),
-            packageStore: store
+            packageStore: store,
+            suspendAPIHost: { extensionID in
+                await apiHost.suspend(extensionID)
+            },
+            purgeAPIHost: { extensionID in
+                try await apiHost.purge(extensionID)
+            }
         )
-        let manager = FloorpWebExtensionLivePackageManager(store: store) { extensionID, package in
+        let reconcileComposition: @MainActor (
+            FloorpWebExtensionID,
+            FloorpWebExtensionInstalledPackage?,
+            FloorpWebExtensionLivePackageManager.ReconciliationOperation,
+            FloorpWebExtensionPackageStore.PreparedPackageResources?
+        ) async throws -> Void = { extensionID, package, operation, preparedResources in
             guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
                 throw FloorpWebExtensionError.unsupported("stale package composition")
             }
-            await coordinator.removeExtension(extensionID)
+            switch operation {
+            case .suspend:
+                await coordinator.removeExtension(extensionID)
+                await apiHost.suspend(extensionID)
+            case .uninstall:
+                try await coordinator.uninstallExtension(extensionID)
+                try await apiHost.purge(extensionID)
+            }
+            guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
+                throw FloorpWebExtensionError.unsupported("stale package composition")
+            }
+            messageRuntime?.removeExtension(extensionID)
             guard let package else { return }
             guard !isPrivateBrowsing || package.grants.privateBrowsingEnabled else { return }
             guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
@@ -330,20 +362,42 @@ public final class FloorpBootstrapper {
             do {
                 try await restoreInstalledPackage(
                     package,
-                    resourceLoader: store.makeResourceLoader(),
+                    resourceLoader: preparedResources?.scriptResourceLoader
+                        ?? store.makeResourceLoader(),
                     into: coordinator
                 )
+                guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
+                    throw FloorpWebExtensionError.unsupported("stale package composition")
+                }
                 await apiHost.activate(package)
+                guard packageCompositionGenerations[profileIdentifier] == compositionGeneration else {
+                    throw FloorpWebExtensionError.unsupported("stale package composition")
+                }
                 try configurePackageBackground(
                     package,
                     packageStore: store,
-                    coordinator: coordinator
+                    coordinator: coordinator,
+                    pageResourceResolver: preparedResources?.pageResourceResolver
                 )
             } catch {
                 await coordinator.removeExtension(extensionID)
+                await apiHost.suspend(extensionID)
+                messageRuntime?.removeExtension(extensionID)
                 throw error
             }
         }
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            isCurrentComposition: {
+                packageCompositionGenerations[profileIdentifier] == compositionGeneration
+            },
+            reconcile: { extensionID, package, operation in
+                try await reconcileComposition(extensionID, package, operation, nil)
+            },
+            reconcilePrepared: { extensionID, package, operation, resources in
+                try await reconcileComposition(extensionID, package, operation, resources)
+            }
+        )
         FloorpWebExtensionPackageStoreRegistry.install(store, manager: manager)
         FloorpWebExtensionCoordinator.install(coordinator)
         return coordinator
@@ -387,6 +441,18 @@ public final class FloorpBootstrapper {
                         category: .storage
                     )
                 }
+            },
+            runtimeReloader: { extensionID in
+                guard let manager = FloorpWebExtensionPackageStoreRegistry.manager(
+                    for: profileIdentifier,
+                    isPrivateBrowsing: isPrivateBrowsing
+                ) else {
+                    throw FloorpWebExtensionError.unsupported("WebExtension package manager is unavailable")
+                }
+                try await manager.reload(extensionID)
+            },
+            liveScriptingTargetResolver: { tabID in
+                try tabsHost.liveScriptingTarget(tabID: tabID)
             }
         )
         let messageRuntime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: host)
@@ -415,28 +481,61 @@ public final class FloorpBootstrapper {
                 (!coordinator.profileKey.isPrivateBrowsing || package.grants.privateBrowsingEnabled)
         }
         let resourceLoader = store.makeResourceLoader()
+        let registeredManager = FloorpWebExtensionPackageStoreRegistry.manager(
+            for: coordinator.profileKey.profileIdentifier,
+            isPrivateBrowsing: coordinator.profileKey.isPrivateBrowsing
+        )
+        let lifecycleManager = registeredManager?.store === store ? registeredManager : nil
 
         for package in packages {
             guard !Task.isCancelled, isCurrentComposition() else { return }
+            if let lifecycleManager {
+                do {
+                    _ = try await lifecycleManager.restoreInstalledPackageIfCurrent(package)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    logger.log(
+                        "Floorp: WebExtension \(package.extensionID.rawValue) restore failed: \(error)",
+                        level: .warning,
+                        category: .setup
+                    )
+                }
+                continue
+            }
+
             do {
+                guard await store.installedPackage(for: package.extensionID) == package else {
+                    continue
+                }
                 try await restoreInstalledPackage(
                     package,
                     resourceLoader: resourceLoader,
                     into: coordinator
                 )
-                await apiHost?.activate(package)
-                try configurePackageBackground(
-                    package,
-                    packageStore: store,
-                    coordinator: coordinator
-                )
+                guard await store.installedPackage(for: package.extensionID) == package,
+                      isCurrentComposition() else {
+                    await coordinator.removeExtension(package.extensionID)
+                    continue
+                }
+                if let apiHost {
+                    await apiHost.activate(package)
+                    try configurePackageBackground(
+                        package,
+                        packageStore: store,
+                        coordinator: coordinator
+                    )
+                }
             } catch is CancellationError {
                 await coordinator.removeExtension(package.extensionID)
                 return
             } catch {
                 await coordinator.removeExtension(package.extensionID)
                 do {
-                    try await store.recordActivationFailure(for: package.extensionID)
+                    try await store.recordActivationFailure(
+                        for: package.extensionID,
+                        expectedGeneration: package.generation
+                    )
                 } catch {
                     logger.log(
                         "Floorp: WebExtension \(package.extensionID.rawValue) could not persist its activation failure: \(error)",
@@ -574,23 +673,29 @@ public final class FloorpBootstrapper {
     private static func configurePackageBackground(
         _ package: FloorpWebExtensionInstalledPackage,
         packageStore: FloorpWebExtensionPackageStore,
-        coordinator: FloorpWebExtensionCoordinator
+        coordinator: FloorpWebExtensionCoordinator,
+        pageResourceResolver: FloorpWebExtensionPageResourceResolver? = nil
     ) throws {
-        guard let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
+        let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
             for: coordinator.profileKey.profileIdentifier,
             isPrivateBrowsing: coordinator.profileKey.isPrivateBrowsing
-        ) else {
+        )
+        guard package.preflight.manifest.background != nil else {
+            // Unit-level policy restoration can intentionally omit the API
+            // composition. A package without a background remains valid in
+            // that mode; when the composition exists, revoke any handler
+            // retained from an older package generation.
+            messageRuntime?.unregisterPackageBackground(for: package.extensionID)
+            return
+        }
+        guard let messageRuntime else {
             throw FloorpWebExtensionError.unsupported("message runtime is unavailable")
         }
-        if package.preflight.manifest.background == nil {
-            messageRuntime.unregisterPackageBackground(for: package.extensionID)
-        } else {
-            try messageRuntime.registerPackageBackground(
-                package: package,
-                packageProfileKey: packageStore.profileKey,
-                resolver: packageStore.makePageResourceResolver()
-            )
-        }
+        try messageRuntime.registerPackageBackground(
+            package: package,
+            packageProfileKey: packageStore.profileKey,
+            resolver: pageResourceResolver ?? packageStore.makePageResourceResolver()
+        )
     }
 
     @MainActor

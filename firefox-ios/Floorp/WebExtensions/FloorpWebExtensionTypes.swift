@@ -86,6 +86,21 @@ struct FloorpWebExtensionMatchPattern: Hashable, Codable, Sendable {
                 return host == base || host.hasSuffix("." + base)
             }
         }
+
+        func covers(_ other: Host) -> Bool {
+            switch (self, other) {
+            case (.any, _):
+                return true
+            case (.exact(let allowed), .exact(let requested)):
+                return allowed == requested
+            case (.subdomains(let allowed), .exact(let requested)):
+                return requested == allowed || requested.hasSuffix("." + allowed)
+            case (.subdomains(let allowed), .subdomains(let requested)):
+                return requested == allowed || requested.hasSuffix("." + allowed)
+            case (.exact, .any), (.exact, .subdomains), (.subdomains, .any):
+                return false
+            }
+        }
     }
 
     let original: String
@@ -161,6 +176,28 @@ struct FloorpWebExtensionMatchPattern: Hashable, Codable, Sendable {
         return Self.wildcardMatches(path, value: url.path.isEmpty ? "/" : url.path)
     }
 
+    /// Returns whether every URL represented by `other` is also represented
+    /// by this pattern. Permission APIs need semantic containment here: a
+    /// declaration such as `<all_urls>` or `https://*.example.com/*` may grant
+    /// a narrower per-site origin without storing an identical pattern.
+    ///
+    /// Arbitrary wildcard-path containment is deliberately conservative. The
+    /// universal `/*` path covers any narrower path; otherwise the two path
+    /// expressions must be identical.
+    func covers(_ other: FloorpWebExtensionMatchPattern) -> Bool {
+        let schemeCovers: Bool
+        switch (scheme, other.scheme) {
+        case (.any, _):
+            schemeCovers = true
+        case (.http, .http), (.https, .https):
+            schemeCovers = true
+        default:
+            schemeCovers = false
+        }
+        guard schemeCovers, host.covers(other.host) else { return false }
+        return path == "/*" || path == other.path
+    }
+
     private static func isValidHost(_ host: String) -> Bool {
         guard host.count <= 253, !host.hasPrefix("."), !host.hasSuffix(".") else { return false }
         return host.split(separator: ".").allSatisfy { label in
@@ -200,6 +237,7 @@ struct FloorpWebExtensionMatchPattern: Hashable, Codable, Sendable {
         return patternIndex == pattern.endIndex
     }
 }
+
 
 enum FloorpWebExtensionExecutionWorld: String, Codable, Sendable {
     case isolated

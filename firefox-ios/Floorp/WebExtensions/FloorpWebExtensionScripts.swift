@@ -364,9 +364,15 @@ struct FloorpWebExtensionCSSInsertion: Hashable, Sendable {
 /// Tracks dynamically inserted CSS. A handle is capability-like: only the
 /// extension that inserted it can remove it, and it is tied to one document and
 /// frame so a handle cannot affect a later navigation.
-actor FloorpWebExtensionCSSRegistry {
-    static let maximumInsertionsPerExtension = 500
-    static let maximumStylesheetBytes = 128 * 1_024
+/// Dynamic stylesheet handles are committed on the same actor as their
+/// WebKit DOM mutation. Keeping this registry on `MainActor` lets the
+/// coordinator perform its final live-document authorization, allocate (or
+/// consume) handles, and enqueue the JavaScript mutation without an actor hop
+/// that could admit a replacement navigation between those steps.
+@MainActor
+final class FloorpWebExtensionCSSRegistry {
+    nonisolated static let maximumInsertionsPerExtension = 500
+    nonisolated static let maximumStylesheetBytes = 128 * 1_024
 
     private var insertions = [FloorpWebExtensionCSSHandle: FloorpWebExtensionCSSInsertion]()
     private var handlesByExtension = [FloorpWebExtensionID: Set<FloorpWebExtensionCSSHandle>]()
@@ -458,6 +464,15 @@ actor FloorpWebExtensionCSSRegistry {
             }
             return $0.handle.rawValue < $1.handle.rawValue
         }
+    }
+
+    /// Drops every handle owned by one extension when its live composition is
+    /// suspended or removed. The WebKit runtime independently removes the
+    /// corresponding DOM nodes; this registry cleanup releases quota and
+    /// prevents handles from an old activation from becoming valid again.
+    func discardInsertions(for extensionID: FloorpWebExtensionID) {
+        let handles = handlesByExtension.removeValue(forKey: extensionID) ?? []
+        handles.forEach { insertions.removeValue(forKey: $0) }
     }
 
     func discardInsertions(for tab: FloorpWebExtensionTabContext) {
