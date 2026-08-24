@@ -226,10 +226,13 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         manager.selectedTab = originalTab
         var createdTabForCleanup: Tab?
         defer {
-            originalTab.close()
-            createdTabForCleanup?.close()
-            manager.tabs.removeAll()
-            manager.selectedTab = nil
+            let createdTab = createdTabForCleanup
+            Task { @MainActor in
+                await originalTab.close()
+                await createdTab?.close()
+                manager.tabs.removeAll()
+                manager.selectedTab = nil
+            }
         }
 
         let queried = try await service.query(.active, for: extensionID)
@@ -269,40 +272,36 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         XCTAssertEqual(reply, .object(["reply": .string("ok")]))
         XCTAssertTrue(javaScriptEvaluator.scripts.contains { $0.contains("__floorpWebExtensionDeliverTabsMessage") })
 
-        let updated: FloorpWebExtensionTab
+        let requestedUpdateURL = try XCTUnwrap(URL(string: "https://updated.example/next"))
+        let updateStarted: FloorpWebExtensionTab
         do {
-            updated = try await service.update(
+            updateStarted = try await service.update(
                 created.id,
-                url: try XCTUnwrap(URL(string: "https://updated.example/next")),
+                url: requestedUpdateURL,
                 for: extensionID
             )
         } catch {
             return XCTFail("Updating a live tab failed: \(error)")
         }
-        XCTAssertEqual(updated.url?.host, "updated.example")
-
-        let reloaded: FloorpWebExtensionTab
-        do {
-            reloaded = try await service.reload(updated.id, for: extensionID)
-        } catch {
-            return XCTFail("Reloading a live tab failed: \(error)")
-        }
-        XCTAssertEqual(reloaded.id, updated.id)
+        // HTTP(S) policy replacement is committed by the allowed-response
+        // delegate, so the host still snapshots the currently visible document
+        // while `tabs.update` starts that navigation.
+        XCTAssertEqual(updateStarted.url?.host, "created.example")
 
         guard let liveCreatedTab = manager.tabs.first(where: { $0.floorpWebExtensionTabID == created.id }) else {
             return XCTFail("created tab not found")
         }
         createdTabForCleanup = liveCreatedTab
-        let liveCreatedWebView = MockTabWebView(
-            frame: .zero,
-            configuration: .init(),
-            windowUUID: manager.windowUUID,
-            certStore: profile.certStore
+        let liveCreatedWebView = try XCTUnwrap(liveCreatedTab.webView)
+        liveCreatedTab.reconcileFloorpWebExtensionPolicyForAllowedNavigationResponse(
+            for: liveCreatedWebView,
+            responseURL: requestedUpdateURL
         )
-        liveCreatedTab.webView = liveCreatedWebView
-        let updatedURL = try XCTUnwrap(updated.url)
-        liveCreatedTab.loadRequest(URLRequest(url: updatedURL))
-        liveCreatedTab.prepareFloorpWebExtensionPolicy(for: liveCreatedWebView, navigationURL: updatedURL)
+        let updated = try await service.get(created.id, for: extensionID)
+        XCTAssertEqual(updated.url?.host, "updated.example")
+
+        let reloaded = try await service.reload(updated.id, for: extensionID)
+        XCTAssertEqual(reloaded.id, updated.id)
 
         // A tab may navigate after the API service snapshots it but before
         // JavaScript is delivered.  The host must reject that stale generation
@@ -472,7 +471,9 @@ private final class TabsWindowManagerStub: WindowManager {
     }
 
     func newBrowserWindowConfigured(_ windowInfo: AppWindowInfo, uuid: WindowUUID) {}
-    func tabManager(for windowUUID: WindowUUID) -> TabManager { tabManagers.first! }
+    func tabManager(for windowUUID: WindowUUID) -> TabManager? {
+        tabManagers.first { $0.windowUUID == windowUUID }
+    }
     func allWindowTabManagers() -> [TabManager] { tabManagers }
     func allWindowUUIDs(includingReserved: Bool) -> [WindowUUID] { Array(windows.keys) }
     func windowWillClose(uuid: WindowUUID) {}
@@ -480,6 +481,12 @@ private final class TabsWindowManagerStub: WindowManager {
     func postWindowEvent(event: WindowEvent, windowUUID: WindowUUID) {}
     func performMultiWindowAction(_ action: MultiWindowAction) {}
     func window(for tab: TabUUID) -> WindowUUID? { nil }
+    @MainActor
+    func windowUUID(forTab tab: TabUUID) -> WindowUUID? {
+        tabManagers.first { manager in
+            manager.tabs.contains { $0.tabUUID == tab }
+        }?.windowUUID
+    }
     func windowExists(uuid: WindowUUID) -> Bool { windows[uuid] != nil }
 }
 

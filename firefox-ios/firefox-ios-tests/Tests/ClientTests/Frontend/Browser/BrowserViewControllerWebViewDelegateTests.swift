@@ -206,6 +206,7 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         )
         subject.mockIsMainFrameNavigation = true
         let tab = createTab()
+        let webView = try XCTUnwrap(tab.webView as? MockTabWebView)
         tabManager.tabs = [tab]
         let allowedURL = try XCTUnwrap(URL(string: "https://allowed.example/page"))
 
@@ -231,10 +232,108 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
             )
         }
 
-        let deniedURL = try XCTUnwrap(URL(string: "https://denied.example/page"))
+        webView.loadedURL = allowedURL
+        let activeDocument = try XCTUnwrap(tab.floorpWebExtensionActiveDocumentContext)
+        let activeScripts = webView.configuration.userContentController.userScripts.map(\.source)
+        XCTAssertFalse(activeScripts.isEmpty)
+
+        // Regression: A visible authorised document A must survive an initial
+        // authorised action B, a denied redirect C, and a final download. The
+        // action and redirect callbacks are provisional and cannot replace A.
+        let initialDownloadURL = try XCTUnwrap(URL(string: "https://allowed.example/download"))
+        let deniedDownloadURL = try XCTUnwrap(URL(string: "https://denied.example/download"))
+        subject.webView(
+            webView,
+            decidePolicyFor: MockNavigationAction(url: initialDownloadURL, type: .other)
+        ) { policy in
+            XCTAssertEqual(policy, .allow)
+        }
+        XCTAssertEqual(tab.floorpWebExtensionActiveDocumentContext, activeDocument)
+        XCTAssertEqual(webView.configuration.userContentController.userScripts.map(\.source), activeScripts)
+
+        webView.loadedURL = deniedDownloadURL
+        subject.webView(webView, didReceiveServerRedirectForProvisionalNavigation: nil)
+        XCTAssertEqual(tab.floorpWebExtensionActiveDocumentContext, activeDocument)
+        XCTAssertEqual(webView.configuration.userContentController.userScripts.map(\.source), activeScripts)
+
+        // WKNavigationResponse is a WebKit-owned object and cannot safely be
+        // synthesized in a unit test. Exercise the same BrowserViewController
+        // completion boundary that the response delegate calls before it
+        // returns `.download`. The real-WebKit redirect test proves callback
+        // timing separately.
+        subject.completeFloorpWebExtensionNavigationResponse(
+            for: webView,
+            responseURL: deniedDownloadURL,
+            isForMainFrame: true,
+            disposition: .download
+        )
+        XCTAssertEqual(
+            tab.floorpWebExtensionActiveDocumentContext,
+            activeDocument,
+            "A download response must not replace the active WebExtension document."
+        )
+        XCTAssertEqual(
+            webView.configuration.userContentController.userScripts.map(\.source),
+            activeScripts,
+            "A download response must preserve the visible page's scripts and authenticated bridge."
+        )
+        XCTAssertEqual(
+            activeScripts.filter { $0 == "window.navigationPolicyFixture = true;" }.count,
+            1
+        )
+        XCTAssertEqual(
+            activeScripts.filter { $0.contains("floorpRuntime_") }.count,
+            1
+        )
+
+        // Regression: the same A -> B -> redirect C lifecycle must preserve A
+        // when a response helper returns `.cancel`.
+        let initialCancelURL = try XCTUnwrap(URL(string: "https://allowed.example/calendar"))
+        let deniedCancelURL = try XCTUnwrap(URL(string: "https://denied.example/calendar"))
+        subject.webView(
+            webView,
+            decidePolicyFor: MockNavigationAction(url: initialCancelURL, type: .other)
+        ) { policy in
+            XCTAssertEqual(policy, .allow)
+        }
+        webView.loadedURL = deniedCancelURL
+        subject.webView(webView, didReceiveServerRedirectForProvisionalNavigation: nil)
+        subject.completeFloorpWebExtensionNavigationResponse(
+            for: webView,
+            responseURL: deniedCancelURL,
+            isForMainFrame: true,
+            disposition: .cancel
+        )
+        XCTAssertEqual(tab.floorpWebExtensionActiveDocumentContext, activeDocument)
+        XCTAssertEqual(webView.configuration.userContentController.userScripts.map(\.source), activeScripts)
+
+        // Conversely, once the final denied response is allowed, replacement
+        // must happen synchronously before WebKit creates its document.
+        let initialAllowedResponseURL = try XCTUnwrap(URL(string: "https://allowed.example/final"))
+        let deniedAllowedResponseURL = try XCTUnwrap(URL(string: "https://denied.example/final"))
+        subject.webView(
+            webView,
+            decidePolicyFor: MockNavigationAction(url: initialAllowedResponseURL, type: .other)
+        ) { policy in
+            XCTAssertEqual(policy, .allow)
+        }
+        webView.loadedURL = deniedAllowedResponseURL
+        subject.webView(webView, didReceiveServerRedirectForProvisionalNavigation: nil)
+        subject.completeFloorpWebExtensionNavigationResponse(
+            for: webView,
+            responseURL: deniedAllowedResponseURL,
+            isForMainFrame: true,
+            disposition: .allow
+        )
+        XCTAssertTrue(
+            webView.configuration.userContentController.userScripts.isEmpty,
+            "Only an allowed final response may replace the visible document's policy."
+        )
+        XCTAssertEqual(tab.floorpWebExtensionActiveDocumentContext?.url, deniedAllowedResponseURL)
+
         subject.webView(
             tab.webView!,
-            decidePolicyFor: MockNavigationAction(url: deniedURL, type: .other)
+            decidePolicyFor: MockNavigationAction(url: deniedAllowedResponseURL, type: .other)
         ) { policy in
             XCTAssertEqual(policy, .allow)
         }

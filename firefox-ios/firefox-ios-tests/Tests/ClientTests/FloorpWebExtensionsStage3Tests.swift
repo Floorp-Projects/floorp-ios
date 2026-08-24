@@ -814,6 +814,134 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(server.requestCount(for: "/proof/first-navigation"), 1)
     }
 
+    /// A server redirect stays within one provisional navigation. The browser
+    /// preserves the visible document through provisional callbacks, then
+    /// replaces the URL-qualified snapshot only when the final response is
+    /// allowed. This real-WebKit proof ensures that response-policy timing is
+    /// still early enough to prevent an initial authorised document-start
+    /// script from executing in the final ungranted document.
+    @MainActor
+    func testWebKitServerRedirectReconcilesPolicyBeforeDocumentStart() async throws {
+        let priorCoreFlag = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: priorCoreFlag) }
+
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: FailingContentRuleListCompiler())
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: "stage3-server-redirect-\(UUID().uuidString)",
+            isPrivateBrowsing: false,
+            runtime: runtime,
+            scriptResourceLoader: { _, source in
+                guard source.path == "redirect.js" else {
+                    throw FloorpWebExtensionError.unsupported("test resource \(source.path)")
+                }
+                return """
+                const markRedirectPackageExecution = () => {
+                  document.documentElement.dataset.floorpRedirectPackage = 'executed';
+                };
+                if (document.documentElement) {
+                  markRedirectPackageExecution();
+                } else {
+                  addEventListener('DOMContentLoaded', markRedirectPackageExecution, { once: true });
+                }
+                """
+            }
+        )
+        let allowedHost = try FloorpWebExtensionMatchPattern("http://localhost/*")
+        let script = try FloorpWebExtensionRegisteredScript(
+            id: "redirect-main-frame",
+            matches: [allowedHost],
+            javaScript: [FloorpWebExtensionScriptSource("redirect.js")],
+            runAt: .documentStart,
+            world: .isolated
+        )
+        try await coordinator.registerScripts([script], for: extensionID)
+        await coordinator.grantPermissions(
+            [.scripting],
+            requestedHosts: [allowedHost],
+            hostAccess: .allRequestedSites,
+            to: extensionID
+        )
+
+        let initialURL = server.url(path: "/proof/redirect-authorized")
+        let initialTab = FloorpWebExtensionTabContext(
+            tabID: 34,
+            documentGeneration: 1,
+            url: initialURL
+        )
+        let initialSnapshot = try XCTUnwrap(coordinator.preNavigationPolicies(for: initialTab).first)
+        let configuration = WKWebViewConfiguration()
+        runtime.applyPreNavigationPolicy(initialSnapshot, to: configuration.userContentController)
+
+        let reconcileAllowedResponse: Stage3NavigationRecorder.NavigationResponseHandler = {
+            webView,
+            navigationResponse in
+            guard navigationResponse.isForMainFrame,
+                  let responseURL = navigationResponse.response.url
+            else { return .allow }
+            runtime.clearPreNavigationPolicies(from: webView.configuration.userContentController)
+            let redirectedTab = FloorpWebExtensionTabContext(
+                tabID: initialTab.tabID,
+                documentGeneration: initialTab.documentGeneration &+ 1,
+                url: responseURL
+            )
+            coordinator.preNavigationPolicies(for: redirectedTab).forEach {
+                runtime.applyPreNavigationPolicy($0, to: webView.configuration.userContentController)
+            }
+            return .allow
+        }
+
+        // Removal proof: the initial localhost policy must be gone before the
+        // redirected 127.0.0.1 document reaches document-start.
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        navigation.onNavigationResponse = reconcileAllowedResponse
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: initialURL))
+        try await waitForSuccessfulNavigation(navigation)
+
+        XCTAssertGreaterThan(navigation.serverRedirectCount, 0)
+        XCTAssertGreaterThan(navigation.navigationResponseCount, 0)
+        XCTAssertEqual(webView.url?.host, "127.0.0.1")
+        let marker = try await webView.callAsyncJavaScript(
+            "return document.documentElement.dataset.floorpRedirectPackage || '';",
+            contentWorld: .page
+        ) as? String
+        XCTAssertEqual(marker, "")
+        XCTAssertEqual(server.requestCount(for: "/proof/redirect-authorized"), 1)
+        XCTAssertEqual(server.requestCount(for: "/proof/redirect-denied"), 1)
+
+        // Installation timing proof: this focused raw-WebKit leg starts with
+        // no matching policy and installs the final localhost policy from the
+        // response callback. The final page's inline script observes whether
+        // document-start ran before page code. The deterministic delegate test
+        // above covers preservation of an existing visible document.
+        let initiallyDeniedURL = server.url(
+            host: "127.0.0.1",
+            path: "/proof/redirect-initially-denied"
+        )
+        let finalAllowedConfiguration = WKWebViewConfiguration()
+        let finalAllowedWebView = WKWebView(frame: .zero, configuration: finalAllowedConfiguration)
+        let finalAllowedNavigation = Stage3NavigationRecorder()
+        finalAllowedNavigation.onNavigationResponse = reconcileAllowedResponse
+        finalAllowedWebView.navigationDelegate = finalAllowedNavigation
+        finalAllowedWebView.load(URLRequest(url: initiallyDeniedURL))
+        try await waitForSuccessfulNavigation(finalAllowedNavigation)
+
+        XCTAssertGreaterThan(finalAllowedNavigation.serverRedirectCount, 0)
+        XCTAssertGreaterThan(finalAllowedNavigation.navigationResponseCount, 0)
+        XCTAssertEqual(finalAllowedWebView.url?.host, "localhost")
+        let pageObservedMarker = try await finalAllowedWebView.callAsyncJavaScript(
+            "return document.documentElement.dataset.floorpPageSawRedirectPackage || '';",
+            contentWorld: .page
+        ) as? String
+        XCTAssertEqual(pageObservedMarker, "executed")
+        XCTAssertEqual(server.requestCount(for: "/proof/redirect-initially-denied"), 1)
+        XCTAssertEqual(server.requestCount(for: "/proof/redirect-final-authorized"), 1)
+    }
+
     /// A top-level grant is only enough to install an `all_frames` policy for
     /// the imminent navigation. Every child frame must still independently
     /// match the registered script and a host grant before package code runs.
@@ -1691,6 +1819,53 @@ private final class Stage3WebKitIntegrationServer {
         }
         server.addHandler(
             forMethod: "GET",
+            path: "/proof/redirect-authorized",
+            request: GCDWebServerRequest.self
+        ) { [requests, server] _ in
+            requests.record("/proof/redirect-authorized")
+            let response = GCDWebServerResponse(statusCode: 302)
+            response.setValue(
+                "http://127.0.0.1:\(server.port)/proof/redirect-denied",
+                forAdditionalHeader: "Location"
+            )
+            return response
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/proof/redirect-denied",
+            request: GCDWebServerRequest.self
+        ) { [requests] _ in
+            requests.record("/proof/redirect-denied")
+            return GCDWebServerDataResponse(html: "<!doctype html><html><body>redirected</body></html>")!
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/proof/redirect-initially-denied",
+            request: GCDWebServerRequest.self
+        ) { [requests, server] _ in
+            requests.record("/proof/redirect-initially-denied")
+            let response = GCDWebServerResponse(statusCode: 302)
+            response.setValue(
+                "http://localhost:\(server.port)/proof/redirect-final-authorized",
+                forAdditionalHeader: "Location"
+            )
+            return response
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/proof/redirect-final-authorized",
+            request: GCDWebServerRequest.self
+        ) { [requests] _ in
+            requests.record("/proof/redirect-final-authorized")
+            return GCDWebServerDataResponse(html: """
+            <!doctype html><html><head><script>
+            document.documentElement.dataset.floorpPageSawRedirectPackage =
+              document.documentElement.dataset.floorpRedirectPackage || 'missing';
+            </script></head><body>redirected and authorised</body></html>
+            """)!
+        }
+        server.addHandler(
+            forMethod: "GET",
             path: "/proof/all-frames",
             request: GCDWebServerRequest.self
         ) { [requests] _ in
@@ -1854,8 +2029,8 @@ private final class Stage3WebKitIntegrationServer {
         server.stop()
     }
 
-    func url(path: String) -> URL {
-        URL(string: "http://localhost:\(server.port)\(path)")!
+    func url(host: String = "localhost", path: String) -> URL {
+        URL(string: "http://\(host):\(server.port)\(path)")!
     }
 
     func requestCount(for path: String) -> Int {
@@ -1888,8 +2063,31 @@ private final class Stage3RequestRecorder: @unchecked Sendable {
 
 @MainActor
 private final class Stage3NavigationRecorder: NSObject, WKNavigationDelegate {
+    fileprivate typealias NavigationResponseHandler = @MainActor (
+        WKWebView,
+        WKNavigationResponse
+    ) -> WKNavigationResponsePolicy
+
     private(set) var didFinishCount = 0
     private(set) var lastError: Error?
+    private(set) var serverRedirectCount = 0
+    private(set) var navigationResponseCount = 0
+    var onNavigationResponse: NavigationResponseHandler?
+
+    func webView(
+        _ webView: WKWebView,
+        didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation?
+    ) {
+        serverRedirectCount += 1
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse
+    ) async -> WKNavigationResponsePolicy {
+        navigationResponseCount += 1
+        return onNavigationResponse?(webView, navigationResponse) ?? .allow
+    }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         didFinishCount += 1

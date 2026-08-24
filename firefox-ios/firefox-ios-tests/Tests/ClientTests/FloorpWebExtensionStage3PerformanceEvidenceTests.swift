@@ -240,6 +240,29 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
         )
     }
 
+    func testSourceRevisionRequiresASCIIHexGitObjectID() throws {
+        for revision in [
+            String(repeating: "a", count: 40),
+            String(repeating: "F", count: 64),
+        ] {
+            let evidence = try makeEvidence(associatedSourceRevision: revision)
+            let decoded = try FloorpWebExtensionStage3PerformanceEvidenceVerifier.decode(
+                FloorpWebExtensionStage3PerformanceEvidenceVerifier.encode(evidence)
+            )
+            XCTAssertEqual(decoded.associatedSourceRevision, revision.lowercased())
+        }
+
+        for revision in [
+            String(repeating: "ａ", count: 40),
+            String(repeating: "０", count: 64),
+        ] {
+            XCTAssertThrowsError(
+                try makeEvidence(associatedSourceRevision: revision),
+                "Unicode hexadecimal characters are not Git object IDs."
+            )
+        }
+    }
+
     func testRejectsTamperedDerivedStatisticsPageAndMemoryDeltas() throws {
         let original = try FloorpWebExtensionStage3PerformanceEvidenceVerifier.encode(makeEvidence())
 
@@ -746,6 +769,7 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
 
     private func makeEvidence(
         runIdentifier: String = "stage3-ios26.5-simulator-001",
+        associatedSourceRevision: String = String(repeating: "a", count: 40),
         recoverySucceeded: Bool = true,
         postRecoveryFunctionalCheckPassed: Bool = true,
         artifacts: [FloorpWebExtensionPerformanceArtifact]? = nil,
@@ -759,7 +783,7 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
 
         return try FloorpWebExtensionStage3PerformanceEvidence(
             runIdentifier: runIdentifier,
-            associatedSourceRevision: String(repeating: "a", count: 40),
+            associatedSourceRevision: associatedSourceRevision,
             recordedAt: Date(timeIntervalSince1970: 1_700_000_000),
             build: try .init(
                 buildIdentifier: "Client-Debug-001",

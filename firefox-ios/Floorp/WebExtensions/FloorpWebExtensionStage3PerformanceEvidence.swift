@@ -1553,7 +1553,12 @@ private enum FloorpWebExtensionPerformanceEvidenceValidation {
     }
 
     static func isRevision(_ value: String) -> Bool {
-        (value.count == 40 || value.count == 64) && value.allSatisfy(\.isHexDigit)
+        let byteCount = value.utf8.count
+        return (byteCount == 40 || byteCount == 64) && value.utf8.allSatisfy { byte in
+            (0x30...0x39).contains(byte) ||
+                (0x41...0x46).contains(byte) ||
+                (0x61...0x66).contains(byte)
+        }
     }
 
     static func isOperatingSystem(_ value: String) -> Bool {
