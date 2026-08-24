@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import CryptoKit
+import Dispatch
 import WebKit
 import XCTest
 @testable import Client
@@ -115,6 +116,310 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertEqual(restored.packageSHA256, installed.packageSHA256)
         XCTAssertEqual(restored.grants, grants)
         XCTAssertTrue(try restartedStore.makeResourceLoader()(extensionID, source).contains("floorp-fixture-ping"))
+    }
+
+    func testPersistentRegisteredScriptsRestoreWhileMemoryOnlyScriptsAreDiscarded() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let hosts: Set<FloorpWebExtensionMatchPattern> = [
+            try .init("http://*.fixture.test/*"),
+            try .init("https://*.fixture.test/*")
+        ]
+        let grants = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: [.scripting, .declarativeNetRequest],
+            requestedHosts: hosts,
+            normalHostAccess: .allRequestedSites
+        )
+        let profileIdentifier = "package-persistent-scripts-\(UUID().uuidString)"
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let installed = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID,
+            initialGrants: grants
+        )
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        await FloorpBootstrapper.restoreInstalledPackages(from: store, into: coordinator)
+
+        let source = try FloorpWebExtensionScriptSource("content/document-start.js")
+        let durable = FloorpWebExtensionRegisteredScript(
+            id: "survives-restart",
+            matches: [try .init("https://*.fixture.test/*")],
+            javaScript: [source],
+            runAt: .documentStart,
+            persistAcrossSessions: true
+        )
+        let memoryOnly = FloorpWebExtensionRegisteredScript(
+            id: "memory-only",
+            matches: [try .init("https://*.fixture.test/*")],
+            javaScript: [source],
+            persistAcrossSessions: false
+        )
+        try await coordinator.registerScripts([durable, memoryOnly], for: extensionID)
+
+        let storedPackageRecord = await store.installedPackage(for: extensionID)
+        let storedPackage = try XCTUnwrap(storedPackageRecord)
+        XCTAssertEqual(storedPackage.generation, installed.generation)
+        XCTAssertEqual(storedPackage.registeredPersistentScripts, [durable])
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedCoordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: restartedStore.makeResourceLoader(),
+            packageStore: restartedStore
+        )
+        await FloorpBootstrapper.restoreInstalledPackages(
+            from: restartedStore,
+            into: restartedCoordinator
+        )
+
+        let restored = await restartedCoordinator.registeredScripts(for: extensionID)
+        XCTAssertEqual(restored.map(\.id), ["survives-restart"])
+        XCTAssertEqual(restored.first, durable)
+        XCTAssertFalse(restored.contains(where: { $0.id == memoryOnly.id }))
+
+        try await restartedCoordinator.updateScripts(
+            [.init(id: durable.id, allFrames: true)],
+            for: extensionID
+        )
+        let updatedPackageRecord = await restartedStore.installedPackage(for: extensionID)
+        let updatedPackage = try XCTUnwrap(updatedPackageRecord)
+        XCTAssertEqual(updatedPackage.registeredPersistentScripts.count, 1)
+        XCTAssertTrue(updatedPackage.registeredPersistentScripts[0].allFrames)
+
+        try await restartedCoordinator.unregisterScripts([durable.id], for: extensionID)
+        let afterUnregisterRecord = await restartedStore.installedPackage(for: extensionID)
+        let afterUnregister = try XCTUnwrap(afterUnregisterRecord)
+        XCTAssertTrue(afterUnregister.registeredPersistentScripts.isEmpty)
+    }
+
+    func testScriptingAPIDefaultsRegisteredScriptsToPersistentAndRestoresThem() async throws {
+        let directory = temporaryDirectory()
+        let apiDirectory = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: apiDirectory)
+        }
+        let profileIdentifier = "package-persistent-scripts-api-\(UUID().uuidString)"
+        let hosts: Set<FloorpWebExtensionMatchPattern> = [
+            try .init("http://*.fixture.test/*"),
+            try .init("https://*.fixture.test/*")
+        ]
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let installed = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID,
+            initialGrants: .init(
+                apiPermissions: [.scripting, .declarativeNetRequest],
+                requestedHosts: hosts,
+                normalHostAccess: .allRequestedSites
+            )
+        )
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        FloorpWebExtensionCoordinator.install(coordinator)
+        defer {
+            FloorpWebExtensionCoordinator.removeCoordinator(
+                for: profileIdentifier,
+                isPrivateBrowsing: false
+            )
+        }
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: apiDirectory,
+            preferredLocales: ["en"],
+            packageResourceLoader: store.makeI18nResourceLoader()
+        )
+        await host.activate(installed)
+        let sender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: 1,
+            documentGeneration: 1,
+            url: try XCTUnwrap(URL(string: "https://www.fixture.test/page")),
+            isMainFrame: true,
+            isPrivate: false
+        )
+        let request = try FloorpWebExtensionMessagePayload(jsonData: JSONSerialization.data(
+            withJSONObject: [
+                "scripts": [[
+                    "id": "api-default-persistent",
+                    "matches": ["https://*.fixture.test/*"],
+                    "js": ["content/document-start.js"]
+                ]]
+            ]
+        ))
+        _ = try await host.dispatch(
+            operation: "scripting.registerContentScripts",
+            payload: request,
+            sender: sender
+        )
+
+        let optionalRegisteredPayload = try await host.dispatch(
+            operation: "scripting.getRegisteredContentScripts",
+            payload: .init(jsonData: Data("{}".utf8)),
+            sender: sender
+        )
+        let registeredPayload = try XCTUnwrap(optionalRegisteredPayload)
+        let registered = try registeredPayload.decode([PersistentScriptAPIView].self)
+        XCTAssertEqual(registered.map(\.id), ["api-default-persistent"])
+        XCTAssertEqual(registered.first?.persistAcrossSessions, true)
+        let storedPackageRecord = await store.installedPackage(for: extensionID)
+        let storedPackage = try XCTUnwrap(storedPackageRecord)
+        XCTAssertEqual(storedPackage.registeredPersistentScripts.map(\.id), ["api-default-persistent"])
+
+        let restartedStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedCoordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: restartedStore.makeResourceLoader(),
+            packageStore: restartedStore
+        )
+        await FloorpBootstrapper.restoreInstalledPackages(
+            from: restartedStore,
+            into: restartedCoordinator
+        )
+        let restored = await restartedCoordinator.registeredScripts(for: extensionID)
+        XCTAssertTrue(restored.contains { $0.id == "api-default-persistent" && $0.persistAcrossSessions })
+    }
+
+    func testPersistentRegisteredScriptWriteFailureLeavesLiveAndDurableStateUnchanged() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registryWriter = RegistryWriteFailureInjector()
+        let profileIdentifier = "package-persistent-scripts-failure-\(UUID().uuidString)"
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory,
+            registryPersister: { data, url in
+                try registryWriter.persist(data, to: url)
+            }
+        )
+        _ = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        let durable = FloorpWebExtensionRegisteredScript(
+            id: "must-not-partially-register",
+            matches: [try .init("https://*.fixture.test/*")],
+            javaScript: [try .init("content/document-start.js")],
+            persistAcrossSessions: true
+        )
+
+        registryWriter.shouldFail = true
+        await assertAsyncThrows {
+            try await coordinator.registerScripts([durable], for: self.extensionID)
+        }
+
+        let liveScripts = await coordinator.registeredScripts(for: extensionID)
+        XCTAssertTrue(liveScripts.isEmpty)
+        let packageRecord = await store.installedPackage(for: extensionID)
+        let package = try XCTUnwrap(packageRecord)
+        XCTAssertTrue(package.registeredPersistentScripts.isEmpty)
+    }
+
+    func testConcurrentPersistentRegistrationsCommitOneCoherentLiveAndDurableSnapshot() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registryWriter = PausedRegistryPersister()
+        let profileIdentifier = "package-persistent-scripts-concurrent-\(UUID().uuidString)"
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: directory,
+            registryPersister: { data, url in
+                try registryWriter.persist(data, to: url)
+            }
+        )
+        _ = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+        let coordinator = FloorpWebExtensionCoordinator(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: PackageStoreRuleListCompiler()),
+            scriptResourceLoader: store.makeResourceLoader(),
+            packageStore: store
+        )
+        let source = try FloorpWebExtensionScriptSource("content/document-start.js")
+        let first = FloorpWebExtensionRegisteredScript(
+            id: "first-persistent",
+            matches: [try .init("https://*.fixture.test/*")],
+            javaScript: [source],
+            persistAcrossSessions: true
+        )
+        let second = FloorpWebExtensionRegisteredScript(
+            id: "second-persistent",
+            matches: [try .init("https://*.fixture.test/*")],
+            javaScript: [source],
+            persistAcrossSessions: true
+        )
+
+        registryWriter.pauseNextWrite()
+        let firstRegistration = Task { @MainActor in
+            try await coordinator.registerScripts([first], for: self.extensionID)
+        }
+        await registryWriter.waitUntilWriteIsPaused()
+        let secondRegistration = Task { @MainActor in
+            try await coordinator.registerScripts([second], for: self.extensionID)
+        }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+
+        let scriptsBeforeRelease = await coordinator.registeredScripts(for: extensionID)
+        // Live state is staged first, then the package-store write is the
+        // transaction's final linearization point. The per-extension gate
+        // keeps the second registration queued while that write is paused.
+        XCTAssertEqual(scriptsBeforeRelease.map(\.id), [first.id])
+
+        registryWriter.resumeWrite()
+        try await firstRegistration.value
+        try await secondRegistration.value
+
+        let live = await coordinator.registeredScripts(for: extensionID)
+        XCTAssertEqual(live.map(\.id), [first.id, second.id])
+        let packageRecord = await store.installedPackage(for: extensionID)
+        let package = try XCTUnwrap(packageRecord)
+        XCTAssertEqual(package.registeredPersistentScripts, [first, second])
     }
 
     func testDisableGrantUpdateAndUninstallAreDurableAndRevokeExistingLoader() async throws {
@@ -817,6 +1122,81 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertThrowsError(
             try FloorpWebExtensionPackageStore(
                 profileIdentifier: "package-store-dnr-limit-tamper",
+                isPrivateBrowsing: false,
+                directory: directory
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionPackageStoreError, .corruptedRegistry)
+        }
+    }
+
+    func testRestartFailsClosedWhenPersistentScriptMatchPatternFieldsAreNotCanonical() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profileIdentifier = "package-store-script-pattern-fields-tamper"
+        try await writePersistentRegisteredScript(
+            root: directory,
+            profileIdentifier: profileIdentifier
+        )
+        try mutateFirstPersistentRegisteredScript(root: directory) { script in
+            var matches = try XCTUnwrap(script["matches"] as? [[String: Any]])
+            matches[0]["path"] = "/tampered/*"
+            script["matches"] = matches
+        }
+
+        XCTAssertThrowsError(
+            try FloorpWebExtensionPackageStore(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: false,
+                directory: directory
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionPackageStoreError, .corruptedRegistry)
+        }
+    }
+
+    func testRestartFailsClosedWhenPersistentScriptMatchPatternOriginalIsMalformed() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profileIdentifier = "package-store-script-pattern-original-tamper"
+        try await writePersistentRegisteredScript(
+            root: directory,
+            profileIdentifier: profileIdentifier
+        )
+        try mutateFirstPersistentRegisteredScript(root: directory) { script in
+            var matches = try XCTUnwrap(script["matches"] as? [[String: Any]])
+            matches[0]["original"] = "not-a-match-pattern"
+            script["matches"] = matches
+        }
+
+        XCTAssertThrowsError(
+            try FloorpWebExtensionPackageStore(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: false,
+                directory: directory
+            )
+        ) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionPackageStoreError, .corruptedRegistry)
+        }
+    }
+
+    func testRestartFailsClosedWhenPersistentScriptSourcePathIsUnsafe() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profileIdentifier = "package-store-script-source-tamper"
+        try await writePersistentRegisteredScript(
+            root: directory,
+            profileIdentifier: profileIdentifier
+        )
+        try mutateFirstPersistentRegisteredScript(root: directory) { script in
+            var javaScript = try XCTUnwrap(script["javaScript"] as? [[String: Any]])
+            javaScript[0]["path"] = "../manifest.json"
+            script["javaScript"] = javaScript
+        }
+
+        XCTAssertThrowsError(
+            try FloorpWebExtensionPackageStore(
+                profileIdentifier: profileIdentifier,
                 isPrivateBrowsing: false,
                 directory: directory
             )
@@ -1574,7 +1954,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             XCTAssertEqual(operation, .suspend)
             await reconciliation.reconcile(package)
         }
-        FloorpWebExtensionPackageStoreRegistry.install(store, manager: manager)
+        try FloorpWebExtensionPackageStoreRegistry.install(store, manager: manager)
         let coordinator = FloorpWebExtensionCoordinator(
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: false,
@@ -1634,7 +2014,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             expectedExtensionID: extensionID
         )
         let firstManager = FloorpWebExtensionLivePackageManager(store: firstStore) { _, _, _ in }
-        FloorpWebExtensionPackageStoreRegistry.install(firstStore, manager: firstManager)
+        try FloorpWebExtensionPackageStoreRegistry.install(firstStore, manager: firstManager)
 
         let replacementStore = try FloorpWebExtensionPackageStore(
             profileIdentifier: profileIdentifier,
@@ -1644,7 +2024,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let replacementManager = FloorpWebExtensionLivePackageManager(
             store: replacementStore
         ) { _, _, _ in }
-        FloorpWebExtensionPackageStoreRegistry.install(
+        try FloorpWebExtensionPackageStoreRegistry.install(
             replacementStore,
             manager: replacementManager
         )
@@ -1992,6 +2372,57 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             .appendingPathComponent(installed.generation, isDirectory: true)
     }
 
+    private func writePersistentRegisteredScript(
+        root: URL,
+        profileIdentifier: String
+    ) async throws {
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: root
+        )
+        let installed = try await store.installBundledPackage(
+            at: checkedInDemandingMV3FixtureDirectory(),
+            expectedExtensionID: extensionID
+        )
+        let script = FloorpWebExtensionRegisteredScript(
+            id: "persistent-tamper-target",
+            matches: [try .init("https://*.fixture.test/*")],
+            javaScript: [try .init("content/document-start.js")],
+            persistAcrossSessions: true
+        )
+        try await store.updatePersistentRegisteredScripts(
+            [script],
+            for: extensionID,
+            expectedGeneration: installed.generation
+        )
+    }
+
+    private func mutateFirstPersistentRegisteredScript(
+        root: URL,
+        mutation: (inout [String: Any]) throws -> Void
+    ) throws {
+        let registryURL = root.appendingPathComponent("installed-packages.json")
+        var registry = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: registryURL)) as? [String: Any]
+        )
+        var packages = try XCTUnwrap(registry["packages"] as? [[String: Any]])
+        var package = try XCTUnwrap(packages.first)
+        var scripts = try XCTUnwrap(
+            package["persistentRegisteredScripts"] as? [[String: Any]]
+        )
+        var script = try XCTUnwrap(scripts.first)
+        try mutation(&script)
+        scripts[0] = script
+        package["persistentRegisteredScripts"] = scripts
+        packages[0] = package
+        registry["packages"] = packages
+        try JSONSerialization.data(withJSONObject: registry, options: [.sortedKeys]).write(
+            to: registryURL,
+            options: [.atomic]
+        )
+    }
+
     private func writeRegistry(
         root: URL,
         packages: [FloorpWebExtensionInstalledPackage]
@@ -2023,6 +2454,11 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             // Callers assert the transaction state after the expected failure.
         }
     }
+}
+
+private struct PersistentScriptAPIView: Decodable {
+    let id: String
+    let persistAcrossSessions: Bool
 }
 
 /// Holds the first live-state revocation in a reload so a competing lifecycle
@@ -2106,6 +2542,60 @@ private final class RegistryWriteFailureInjector: @unchecked Sendable {
     func persist(_ data: Data, to url: URL) throws {
         if shouldFail {
             throw Failure.expected
+        }
+        try data.write(to: url, options: [.atomic])
+    }
+}
+
+/// Blocks exactly one synchronous package-registry write without blocking the
+/// main actor. This exposes coordinator reentrancy around its actor hop and
+/// lets the test prove a second script mutation waits behind the first.
+private final class PausedRegistryPersister: @unchecked Sendable {
+    private let lock = NSLock()
+    private let resumeSemaphore = DispatchSemaphore(value: 0)
+    private var pausesNextWrite = false
+    private var writeIsPaused = false
+    private var pauseWaiter: CheckedContinuation<Void, Never>?
+
+    func pauseNextWrite() {
+        lock.lock()
+        pausesNextWrite = true
+        lock.unlock()
+    }
+
+    func waitUntilWriteIsPaused() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if writeIsPaused {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                pauseWaiter = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    func resumeWrite() {
+        resumeSemaphore.signal()
+    }
+
+    func persist(_ data: Data, to url: URL) throws {
+        lock.lock()
+        let shouldPause = pausesNextWrite
+        pausesNextWrite = false
+        if shouldPause {
+            writeIsPaused = true
+        }
+        let waiter = shouldPause ? pauseWaiter : nil
+        if shouldPause {
+            pauseWaiter = nil
+        }
+        lock.unlock()
+
+        if shouldPause {
+            waiter?.resume()
+            resumeSemaphore.wait()
         }
         try data.write(to: url, options: [.atomic])
     }

@@ -5,9 +5,11 @@ pinned, synthetic fixtures' manifests and rule corpora; it is not package-
 opening or real-device evidence. The runtime provides a profile-local evidence
 schema and optional store. This tree includes a narrowly scoped, native-only
 measurement of repeated fresh-store/cache-bypassing transformation of the
-synthetic 5,000-rule fixture. It is not WebKit content-rule compilation,
-page-load, memory, device/OS, or UI evidence; those release gates remain
-unrecorded here.
+synthetic 5,000-rule fixture and an unrun, simulator-only record generator
+for WebKit/page/host-memory scopes. Neither is release evidence until a clean,
+SHA-attested run is preserved. The native measurement is not WebKit
+content-rule compilation, page-load, memory, device/OS, or UI evidence; those
+release gates remain unrecorded here.
 
 | Area | Status | Floorp iOS behaviour |
 | --- | --- | --- |
@@ -19,13 +21,13 @@ unrecorded here.
 | DNR redirects | Unsupported | WebKit on the iOS 15 baseline has no general subresource redirect mapping. |
 | DNR request/response header modification | Unsupported | WebKit content rules do not expose an equivalent. |
 | DNR matched-rule feedback and automatic action badge counts | Unsupported | WebKit does not offer the necessary per-request callbacks. |
-| Registered content scripts | Supported subset | `scripting.registerContentScripts`, `updateContentScripts`, and `unregisterContentScripts` accept preflight-validated package resources and granted match patterns. Registrations must set `persistAcrossSessions: false`; persistent registrations are rejected. |
+| Registered content scripts | Supported subset | `scripting.registerContentScripts`, `updateContentScripts`, and `unregisterContentScripts` accept preflight-validated package resources and granted match patterns. Persistent registrations are supported only for an installed, active digest-pinned package backed by the profile package store; they are generation/resource-validated and restored at composition startup. `persistAcrossSessions: false` remains memory-only; omitted API values default to persistent. |
 | Registered content-script `allFrames` | Supported subset | Isolated-world package scripts and styles perform a nonce-authenticated native authorization round trip in every frame immediately before package code runs. The native check uses the live profile/mode, package generation, document session, registered script ID, frame URL, match/exclude rules, host grant, and activeTab expiry. This makes document-start execution asynchronous. MAIN-world `allFrames` package bodies fail closed and do not execute because page code can tamper with any JavaScript-only frame guard while the native bridge is intentionally unavailable in MAIN. |
 | `scripting.executeScript` | Supported subset | Only a non-empty `files` list of preflight-inventoried package JavaScript may execute in the current, settled top-level document after profile, host-access, and `scripting` permission checks. Function/source injection (`func`, `code`, and `args`), document IDs, subframes, `allFrames`, and arbitrary remote or document-provided code are rejected. |
 | `scripting.insertCSS` / `removeCSS` | Supported subset | The standard CSS-text or package-CSS-file forms are accepted for the current, settled top-level document with `origin: "AUTHOR"` only. A native opaque handle is tracked by extension, tab, document generation, requested frame set, origin, and exact source; removal must reproduce that identity. `USER` origin, subframe, `allFrames`, and document-ID targeting are rejected. |
 | Optional permissions | Fail closed pending native consent UI | `permissions.getAll`, `contains`, and `remove` operate on the profile-local durable grant snapshot. `permissions.request` may request only manifest-declared optional API permissions and optional hosts, and requires an application-owned visible-consent authorizer. The production composition does not yet install that authorizer, so requests reject rather than treating JavaScript or a synthetic event as consent. |
 | Tabs query/create/update/reload/sendMessage | Supported subset | The profile- and private-mode-scoped host uses live app tabs, rejects stale document generations before delivery, and exposes only active/current query, URL navigation, reload, creation, and isolated-world content messaging. |
-| Cosmetic / procedural / scriptlet filters | Supported subset | Generated resources run in the declared isolated or MAIN world. MAIN-world scripts never receive the native WebExtensions bridge. |
+| Cosmetic / procedural / scriptlet filters | Supported subset | Only a bundled, digest-pinned package may declare the Floorp-specific `floorp_cosmetic_filter_resources` JSON resources. The closed schema applies per-resource and package-wide bounds to static selectors, `has-text` / `has-selector` / attribute-equality procedures, and the three reviewed scriptlets; remote lists, imported lists, arbitrary JavaScript, and dynamic cosmetic registration are rejected. Resources are main-frame-only and require the existing `scripting` and per-site host grants for each navigation. Generated resources run in the declared isolated or MAIN world; MAIN-world scripts never receive the native WebExtensions bridge. No catalog fixture currently declares one, so product/reviewer evidence for a catalog cosmetic filter remains unrecorded. |
 | Per-site access | Supported | Denied, selected-site, requested-site, private, and active-tab grants are checked for every privileged operation. |
 | Exact Chromium DNR priority parity | Unsupported | Conflicting combinations are rejected rather than reported as enabled. |
 | Bundled MV3 background JavaScript | Supported subset | A preflight-verified bundled package may run `background.service_worker` (module or classic) or `persistent: false` `background.scripts` in a hidden, nonpersistent package-origin WebKit document. The runtime is created lazily for runtime messages and alarms, and is revoked on disable or generation replacement. |
