@@ -175,7 +175,7 @@ jobs:
         timeout-minutes: 30
         run: |
           set -o pipefail
-          revision="$(git rev-parse --verify HEAD^{commit})"
+          revision="$(git rev-parse --verify 'HEAD^{commit}')"
           if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Stage 3 performance tests require a 40-character Git HEAD." >&2
             exit 1
@@ -210,7 +210,7 @@ jobs:
             FLOORP_STAGE3_WORKTREE_STATE=clean \
             2>&1 | tee "$RUNNER_TEMP/test.log"
 
-          if [[ "$(git rev-parse --verify HEAD^{commit})" != "$revision" ]] || \
+          if [[ "$(git rev-parse --verify 'HEAD^{commit}')" != "$revision" ]] || \
              [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
             echo "Git HEAD or worktree state changed during Stage 3 performance tests." >&2
             exit 1
