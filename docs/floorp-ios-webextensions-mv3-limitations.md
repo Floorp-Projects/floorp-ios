@@ -3,13 +3,15 @@
 This matrix is the intended Stage 3 compatibility contract. It is derived from
 pinned, synthetic fixtures' manifests and rule corpora; it is not package-
 opening or real-device evidence. The runtime provides a profile-local evidence
-schema and optional store. This tree includes a narrowly scoped, native-only
-measurement of repeated fresh-store/cache-bypassing transformation of the
-synthetic 5,000-rule fixture and an unrun, simulator-only record generator
-for WebKit/page/host-memory scopes. Neither is release evidence until a clean,
-SHA-attested run is preserved. The native measurement is not WebKit
-content-rule compilation, page-load, memory, device/OS, or UI evidence; those
-release gates remain unrecorded here.
+schema and optional store. This tree includes a simulator-only record generator
+and a completed simulator record from a clean, SHA-attested worktree for native transformation,
+WebKit compilation, localhost DNR-policy page-load, and Client-host memory
+scopes. The resulting bundle and attachment remain local-only: no durable
+release-evidence-store URI, archived artifact, or archival checksum has been
+recorded. It is therefore not release evidence. The record is not a true cold
+WebKit compiler measurement, full extension page-load workload, WebContent or
+Network process memory, OS-delivered memory-pressure, device/OS, or UI
+evidence; those release gates remain unrecorded here.
 
 | Area | Status | Floorp iOS behaviour |
 | --- | --- | --- |
