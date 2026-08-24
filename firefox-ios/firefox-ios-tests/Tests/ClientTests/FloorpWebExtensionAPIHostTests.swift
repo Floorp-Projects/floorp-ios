@@ -890,6 +890,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let profileIdentifier = "api-stage3-\(UUID().uuidString)"
+        let bridgeAuthorizationSource = try FloorpWebExtensionScriptSource("registered.js")
         let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: APIHostRuleListCompiler())
         let coordinator = FloorpWebExtensionCoordinator(
             profileIdentifier: profileIdentifier,
@@ -920,6 +921,17 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             try await coordinator.configureDNR(for: self.extensionID)
         }
         XCTAssertTrue(configuredDNR)
+        // A content script only receives the native bridge after a matching
+        // isolated-world script has been materialized for the document. Model
+        // that production precondition before exercising scripting.* APIs.
+        try await coordinator.restoreManifestScripts(
+            [.init(
+                id: "bridge-authorization",
+                matches: [allowedHost],
+                javaScript: [bridgeAuthorizationSource]
+            )],
+            for: extensionID
+        )
         let tab = FloorpWebExtensionTabContext(
             tabID: 301,
             documentGeneration: 8,
@@ -963,6 +975,14 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             declaredHosts: [allowedHost],
             resourcePaths: ["registered.js", "fixture.css"]
         )
+        let sender = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: tab.tabID,
+            documentGeneration: tab.documentGeneration,
+            url: tab.url,
+            isMainFrame: true,
+            isPrivate: tab.isPrivate
+        )
 
         _ = try await checkedStage("register content script") {
             try await host.dispatch(
@@ -973,14 +993,14 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                     "js": ["registered.js"],
                     "persistAcrossSessions": false
                 ]]]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let optionalRegisteredPayload = try await checkedStage("get registered content scripts") {
             try await host.dispatch(
                 operation: "scripting.getRegisteredContentScripts",
                 payload: try self.payload(["filter": ["ids": ["runtime-script"]]]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let registeredPayload = try XCTUnwrap(optionalRegisteredPayload)
@@ -997,7 +1017,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                     "files": ["registered.js"],
                     "world": "ISOLATED"
                 ]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let executionPayload = try XCTUnwrap(optionalExecutionPayload)
@@ -1017,7 +1037,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                     "target": ["tabId": tab.tabID, "frameIds": [0]],
                     "files": ["fixture.css"]
                 ]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         XCTAssertNotNil(optionalInsertedPayload)
@@ -1028,7 +1048,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                     "target": ["tabId": tab.tabID, "frameIds": [0]],
                     "files": ["fixture.css"]
                 ]),
-                sender: self.testSender()
+                sender: sender
             )
         }
 
@@ -1040,7 +1060,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                     "matches": ["https://allowed.example/*"],
                     "js": ["registered.js"]
                 ]]]),
-                sender: testSender()
+                sender: sender
             )
             XCTFail("Default persistence must not silently become memory-only without a package store")
         } catch {
@@ -1062,14 +1082,14 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                     ]],
                     "removeRuleIds": []
                 ]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let optionalDynamicPayload = try await checkedStage("get dynamic DNR") {
             try await host.dispatch(
                 operation: "declarativeNetRequest.getDynamicRules",
                 payload: try self.payload([String: String]()),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let dynamicPayload = try XCTUnwrap(optionalDynamicPayload)
@@ -1079,7 +1099,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             try await host.dispatch(
                 operation: "declarativeNetRequest.updateDynamicRules",
                 payload: try self.payload(["removeRuleIds": [999_999]]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         do {
@@ -1093,7 +1113,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                         "excludedRequestMethods": ["get"]
                     ]
                 ]]]),
-                sender: testSender()
+                sender: sender
             )
             XCTFail("Unsupported DNR condition keys must fail closed")
         } catch {
@@ -1104,7 +1124,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             try await host.dispatch(
                 operation: "declarativeNetRequest.isRegexSupported",
                 payload: try self.payload(["regex": "tracker\\.example"]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let regexPayload = try XCTUnwrap(optionalRegexPayload)
@@ -1116,7 +1136,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
                     "regex": "(tracker)\\.example",
                     "requireCapturing": true
                 ]),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let capturingPayload = try XCTUnwrap(optionalCapturingPayload)
@@ -1125,7 +1145,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             try await host.dispatch(
                 operation: "declarativeNetRequest.getLimits",
                 payload: try self.payload([String: String]()),
-                sender: self.testSender()
+                sender: sender
             )
         }
         let limitsPayload = try XCTUnwrap(optionalLimitsPayload)
@@ -1138,7 +1158,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             _ = try await host.dispatch(
                 operation: "scripting.executeScript",
                 payload: try payload(["func": "() => 1"]),
-                sender: testSender()
+                sender: sender
             )
             XCTFail("Arbitrary function/code execution must remain unavailable")
         } catch {
