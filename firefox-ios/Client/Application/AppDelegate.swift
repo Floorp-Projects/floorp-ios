@@ -274,6 +274,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, LegacyFeatureFlaggable {
 
     func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         logger.log("Received memory warning", level: .info, category: .lifecycle)
+        FloorpBootstrapper.releaseWebExtensionBackgroundResources(for: profile)
     }
 
     private func updateTopSitesWidget() {

@@ -620,14 +620,25 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         case failed
     }
 
+    /// WebKit exposes JavaScript values as untyped property-list objects.
+    /// The value is produced and consumed exclusively on MainActor; this box
+    /// only permits the continuation hand-off required by Swift 6's sending
+    /// checks and is never exposed outside the actor.
+    private struct JavaScriptResult: @unchecked Sendable {
+        let value: Any?
+    }
+
     private let identity: FloorpWebExtensionBackgroundBridgeIdentity
     private weak var messageRuntime: FloorpWebExtensionMessageRuntime?
     private let entryPointURL: URL
     private var loadState = LoadState.idle
     private var scriptsReady = false
     private var loadWaiters = [CheckedContinuation<Void, Error>]()
+    private var nextJavaScriptCallID: UInt64 = 0
+    private var pendingJavaScriptCalls = [UInt64: CheckedContinuation<JavaScriptResult, Error>]()
+    private var isInvalidated = false
 
-    let webView: WKWebView
+    private(set) var webView: WKWebView?
 
     init(
         profileKey: FloorpWebExtensionCoordinatorProfileKey,
@@ -668,7 +679,8 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         guard messageRuntime.installBackgroundBridge(identity, on: configuration.userContentController) else {
             throw FloorpWebExtensionBackgroundRuntimeError.bridgeInstallationFailed
         }
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        self.webView = webView
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -691,16 +703,16 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         let senderJSON = try Self.senderJSON(sender)
         let rawResult: Any?
         do {
-            rawResult = try await webView.callAsyncJavaScript(
+            rawResult = try await callBackgroundJavaScript(
                 """
                 const deliver = globalThis.__floorpWebExtensionDeliverRuntimeMessage;
                 if (typeof deliver !== "function") throw new Error("Background bridge unavailable");
                 return await deliver(JSON.parse(messageJSON), JSON.parse(senderJSON));
                 """,
-                arguments: ["messageJSON": messageJSON, "senderJSON": senderJSON],
-                in: nil,
-                contentWorld: .page
+                arguments: ["messageJSON": messageJSON, "senderJSON": senderJSON]
             )
+        } catch let error as FloorpWebExtensionMessageError {
+            throw error
         } catch {
             throw FloorpWebExtensionMessageError.handlerFailed
         }
@@ -734,16 +746,16 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         let data = try JSONSerialization.data(withJSONObject: alarm)
         let alarmJSON = try Self.jsonString(from: data)
         do {
-            _ = try await webView.callAsyncJavaScript(
+            _ = try await callBackgroundJavaScript(
                 """
                 const deliver = globalThis.__floorpWebExtensionDeliverAlarm;
                 if (typeof deliver !== "function") throw new Error("Alarm bridge unavailable");
                 await deliver(JSON.parse(alarmJSON));
                 """,
-                arguments: ["alarmJSON": alarmJSON],
-                in: nil,
-                contentWorld: .page
+                arguments: ["alarmJSON": alarmJSON]
             )
+        } catch let error as FloorpWebExtensionMessageError {
+            throw error
         } catch {
             throw FloorpWebExtensionMessageError.handlerFailed
         }
@@ -794,7 +806,34 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         nil
     }
 
+    func invalidateBackgroundResources() {
+        guard !isInvalidated else { return }
+        isInvalidated = true
+        loadState = .failed
+        scriptsReady = false
+
+        let loadWaiters = self.loadWaiters
+        self.loadWaiters.removeAll()
+        loadWaiters.forEach {
+            $0.resume(throwing: FloorpWebExtensionMessageError.backgroundReplaced)
+        }
+
+        let javaScriptCalls = pendingJavaScriptCalls.values
+        pendingJavaScriptCalls.removeAll()
+        javaScriptCalls.forEach {
+            $0.resume(throwing: FloorpWebExtensionMessageError.backgroundReplaced)
+        }
+
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+        webView = nil
+    }
+
     private func ensureLoaded() async throws {
+        guard !isInvalidated else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
         switch loadState {
         case .ready:
             break
@@ -805,7 +844,7 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
                 loadWaiters.append(continuation)
                 if loadState == .idle {
                     loadState = .loading
-                    guard webView.load(URLRequest(url: entryPointURL)) != nil else {
+                    guard webView?.load(URLRequest(url: entryPointURL)) != nil else {
                         finishLoading(with: FloorpWebExtensionBackgroundRuntimeError.loadFailed)
                         return
                     }
@@ -814,9 +853,8 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         }
         guard !scriptsReady else { return }
         for _ in 0..<250 {
-            let ready = try await webView.callAsyncJavaScript(
-                "return globalThis.__floorpWebExtensionBackgroundScriptsReady === true",
-                contentWorld: .page
+            let ready = try await callBackgroundJavaScript(
+                "return globalThis.__floorpWebExtensionBackgroundScriptsReady === true"
             ) as? Bool
             if ready == true {
                 scriptsReady = true
@@ -825,6 +863,53 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         throw FloorpWebExtensionBackgroundRuntimeError.loadFailed
+    }
+
+    /// Uses WebKit's callback API so the async task does not keep a strong
+    /// reference to the hidden WKWebView while JavaScript is outstanding.
+    /// Invalidation resumes the Swift waiter immediately; a late WebKit
+    /// callback is ignored by its removed call identifier.
+    private func callBackgroundJavaScript(
+        _ source: String,
+        arguments: [String: Any] = [:]
+    ) async throws -> Any? {
+        guard !isInvalidated, webView != nil else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
+        nextJavaScriptCallID &+= 1
+        let callID = nextJavaScriptCallID
+        let result: JavaScriptResult = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<JavaScriptResult, Error>) in
+            guard !isInvalidated, let webView = self.webView else {
+                continuation.resume(throwing: FloorpWebExtensionMessageError.backgroundReplaced)
+                return
+            }
+            pendingJavaScriptCalls[callID] = continuation
+            webView.callAsyncJavaScript(
+                source,
+                arguments: arguments,
+                in: nil,
+                in: .page
+            ) { [weak self] result in
+                self?.finishJavaScriptCall(callID, with: result)
+            }
+        }
+        return result.value
+    }
+
+    private func finishJavaScriptCall(
+        _ callID: UInt64,
+        with result: Result<Any, Error>
+    ) {
+        guard let continuation = pendingJavaScriptCalls.removeValue(forKey: callID) else {
+            return
+        }
+        switch result {
+        case .success(let value):
+            continuation.resume(returning: JavaScriptResult(value: value))
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
     }
 
     private func finishLoading(with error: Error?) {
