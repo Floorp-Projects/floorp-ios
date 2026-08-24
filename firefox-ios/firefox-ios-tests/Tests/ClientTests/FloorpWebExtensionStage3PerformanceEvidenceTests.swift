@@ -472,17 +472,24 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
             )
         }
 
-        let arbitraryFixture = try writeArtifactFixture(
-            files: [
-                ("artifacts/stage3-ios26.5-simulator-001.xcresult.zip", .testResultBundle, Data("xcresult-archive".utf8)),
-                ("artifacts/stage3-ios26.5-simulator-001.trace.zip", .performanceProfile, Data("performance-profile".utf8)),
-                (
-                    "artifacts/stage3-ios26.5-simulator-001-samples.json",
-                    .measurementRecord,
-                    Data("{\"samples\":[1,2,3]}".utf8)
-                )
-            ]
-        )
+        let arbitraryFiles: [ArtifactFixtureFile] = [
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001.xcresult.zip",
+                kind: .testResultBundle,
+                data: Data("xcresult-archive".utf8)
+            ),
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001.trace.zip",
+                kind: .performanceProfile,
+                data: Data("performance-profile".utf8)
+            ),
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001-samples.json",
+                kind: .measurementRecord,
+                data: Data("{\"samples\":[1,2,3]}".utf8)
+            )
+        ]
+        let arbitraryFixture = try writeArtifactFixture(files: arbitraryFiles)
         defer { try? FileManager.default.removeItem(at: arbitraryFixture.directory) }
         XCTAssertThrowsError(
             try FloorpWebExtensionStage3PerformanceEvidenceVerifier.verifyAcceptance(
@@ -709,27 +716,26 @@ final class FloorpWebExtensionStage3PerformanceEvidenceTests: XCTestCase {
         let chunkLimit = FloorpWebExtensionPerformanceArtifactValidatedSnapshot
             .maximumStreamingChunkByteCount
         let largeProfilePayload = Data(repeating: 0x7c, count: (chunkLimit * 3) + 37)
-        let artifactFixture = try writeArtifactFixture(
-            files: [
-                (
-                    "artifacts/stage3-ios26.5-simulator-001.xcresult.zip",
-                    .testResultBundle,
-                    SemanticValidator.xcresultPayload
-                ),
-                (
-                    "artifacts/stage3-ios26.5-simulator-001.trace.zip",
-                    .performanceProfile,
-                    largeProfilePayload
-                ),
-                (
-                    "artifacts/stage3-ios26.5-simulator-001-samples.json",
-                    .measurementRecord,
-                    try FloorpWebExtensionStage3PerformanceEvidenceVerifier.measurementRecordData(
-                        for: baseEvidence
-                    )
+        let artifactFiles: [ArtifactFixtureFile] = [
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001.xcresult.zip",
+                kind: .testResultBundle,
+                data: SemanticValidator.xcresultPayload
+            ),
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001.trace.zip",
+                kind: .performanceProfile,
+                data: largeProfilePayload
+            ),
+            .init(
+                relativePath: "artifacts/stage3-ios26.5-simulator-001-samples.json",
+                kind: .measurementRecord,
+                data: try FloorpWebExtensionStage3PerformanceEvidenceVerifier.measurementRecordData(
+                    for: baseEvidence
                 )
-            ]
-        )
+            )
+        ]
+        let artifactFixture = try writeArtifactFixture(files: artifactFiles)
         defer { try? FileManager.default.removeItem(at: artifactFixture.directory) }
         let semanticValidator = SemanticValidator(profilePayload: largeProfilePayload)
 
