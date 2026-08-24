@@ -1212,6 +1212,132 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         ))
     }
 
+    func testMemoryPressureReleasesBothBackgroundsAndPreservesAPIHostState() async throws {
+        let normalDirectory = temporaryDirectory()
+        let privateDirectory = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: normalDirectory)
+            try? FileManager.default.removeItem(at: privateDirectory)
+        }
+        let profileIdentifier = "api-memory-pressure-\(UUID().uuidString)"
+        let normalHost = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: false,
+            directory: normalDirectory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil }
+        )
+        let privateHost = try FloorpWebExtensionAPIHost(
+            profileIdentifier: profileIdentifier,
+            isPrivateBrowsing: true,
+            directory: privateDirectory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil }
+        )
+        await normalHost.activate(
+            extensionID: extensionID,
+            grants: .init(apiPermissions: [.storage, .alarms]),
+            defaultLocale: "en"
+        )
+        await privateHost.activate(
+            extensionID: extensionID,
+            grants: .init(apiPermissions: [.alarms]),
+            defaultLocale: "en"
+        )
+
+        let normalRuntime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: normalHost)
+        let privateRuntime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: privateHost)
+        let normalRecorder = AlarmEventRecorder()
+        let privateRecorder = AlarmEventRecorder()
+        var normalFactoryCalls = 0
+        var privateFactoryCalls = 0
+        normalRuntime.backgroundHost.register(extensionID: extensionID) {
+            normalFactoryCalls += 1
+            return APIHostAlarmBackgroundHandler(recorder: normalRecorder)
+        }
+        privateRuntime.backgroundHost.register(extensionID: extensionID) {
+            privateFactoryCalls += 1
+            return APIHostAlarmBackgroundHandler(recorder: privateRecorder)
+        }
+        FloorpWebExtensionAPIHostRegistry.install(normalHost, messageRuntime: normalRuntime)
+        FloorpWebExtensionAPIHostRegistry.install(privateHost, messageRuntime: privateRuntime)
+
+        let now = Date(timeIntervalSinceReferenceDate: 70_000)
+        try await normalRuntime.dispatchAlarmEvent(.init(
+            extensionID: extensionID,
+            alarm: .init(name: "before-warning", scheduledTime: now),
+            deliveredAt: now
+        ))
+        try await privateRuntime.dispatchAlarmEvent(.init(
+            extensionID: extensionID,
+            alarm: .init(name: "before-warning", scheduledTime: now),
+            deliveredAt: now
+        ))
+        _ = try await normalHost.dispatch(
+            operation: "storage.local.set",
+            payload: try payload(["items": ["durable": "kept"]]),
+            sender: testSender()
+        )
+        _ = try await normalHost.dispatch(
+            operation: "alarms.create",
+            payload: try payload(["name": "kept", "delayInMinutes": 5]),
+            sender: testSender()
+        )
+        _ = try await normalHost.dispatch(
+            operation: "action.setBadgeText",
+            payload: try payload(["value": "7"]),
+            sender: testSender()
+        )
+
+        FloorpBootstrapper.releaseWebExtensionBackgroundResources(
+            profileIdentifier: profileIdentifier
+        )
+
+        XCTAssertTrue(FloorpWebExtensionAPIHostRegistry.host(
+            for: profileIdentifier,
+            isPrivateBrowsing: false
+        ) === normalHost)
+        XCTAssertTrue(FloorpWebExtensionAPIHostRegistry.host(
+            for: profileIdentifier,
+            isPrivateBrowsing: true
+        ) === privateHost)
+        XCTAssertEqual(
+            normalRuntime.backgroundHost.snapshot(for: extensionID),
+            .init(isRegistered: true, isActive: false, activationCount: 1, pendingMessageCount: 0)
+        )
+        XCTAssertEqual(
+            privateRuntime.backgroundHost.snapshot(for: extensionID),
+            .init(isRegistered: true, isActive: false, activationCount: 1, pendingMessageCount: 0)
+        )
+        let localValues = try await normalHost.storage.values(for: extensionID, in: .local)
+        let alarms = await normalHost.alarms.alarms(for: extensionID)
+        let action = await normalHost.actions.state(for: extensionID)
+        XCTAssertEqual(
+            localValues["durable"],
+            .string("kept")
+        )
+        XCTAssertEqual(alarms.map(\.name), ["kept"])
+        XCTAssertEqual(action.badgeText, "7")
+
+        try await normalRuntime.dispatchAlarmEvent(.init(
+            extensionID: extensionID,
+            alarm: .init(name: "after-warning", scheduledTime: now),
+            deliveredAt: now
+        ))
+        try await privateRuntime.dispatchAlarmEvent(.init(
+            extensionID: extensionID,
+            alarm: .init(name: "after-warning", scheduledTime: now),
+            deliveredAt: now
+        ))
+        XCTAssertEqual(normalFactoryCalls, 2)
+        XCTAssertEqual(privateFactoryCalls, 2)
+        XCTAssertEqual(normalRecorder.events.map(\.alarm.name), ["before-warning", "after-warning"])
+        XCTAssertEqual(privateRecorder.events.map(\.alarm.name), ["before-warning", "after-warning"])
+
+        await FloorpWebExtensionAPIHostRegistry.removeHost(for: normalHost.profileKey)
+        await FloorpWebExtensionAPIHostRegistry.removeHost(for: privateHost.profileKey)
+    }
+
     private func payload(_ object: Any) throws -> FloorpWebExtensionMessagePayload {
         try .init(jsonData: JSONSerialization.data(withJSONObject: object, options: .fragmentsAllowed))
     }
@@ -1401,6 +1527,26 @@ private final class APIHostLiveTargetBox {
 @MainActor
 private final class AlarmEventRecorder {
     var events = [FloorpWebExtensionAlarmEvent]()
+}
+
+@MainActor
+private final class APIHostAlarmBackgroundHandler: FloorpWebExtensionBackgroundEventHandling {
+    private let recorder: AlarmEventRecorder
+
+    init(recorder: AlarmEventRecorder) {
+        self.recorder = recorder
+    }
+
+    func handleRuntimeMessage(
+        _ message: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        throw FloorpWebExtensionMessageError.unsupportedOperation
+    }
+
+    func handleAlarm(_ event: FloorpWebExtensionAlarmEvent) async throws {
+        recorder.events.append(event)
+    }
 }
 
 @MainActor

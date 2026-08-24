@@ -291,6 +291,22 @@ public final class FloorpBootstrapper {
         }
     }
 
+    /// Responds to system memory pressure without dismantling the installed
+    /// WebExtensions composition. Hidden background WebViews are recreated
+    /// lazily; package stores, grants, content/DNR policy, alarms, storage,
+    /// action state, and extension pages remain owned by their existing hosts.
+    @MainActor
+    static func releaseWebExtensionBackgroundResources(for profile: Profile) {
+        releaseWebExtensionBackgroundResources(profileIdentifier: profile.localName())
+    }
+
+    @MainActor
+    static func releaseWebExtensionBackgroundResources(profileIdentifier: String) {
+        FloorpWebExtensionAPIHostRegistry.releaseBackgroundResources(
+            for: profileIdentifier
+        )
+    }
+
     @MainActor
     private static func privateRuleStoreDirectory(for profileIdentifier: String) throws -> URL {
         if let directory = privateRuleStoreDirectories[profileIdentifier] {

@@ -840,7 +840,22 @@
         "FloorpWebExtensionAPIHostTests/testPurgeSurfacesDurableStoreFailureAndCanBeRetried()",
         "FloorpWebExtensionAPIHostTests/testPermissionConsentCannotCrossPackageGeneration()",
         "FloorpWebExtensionAPIHostTests/testPermissionConsentCannotCrossContentDocumentGeneration()",
-        "FloorpWebExtensionAPIHostTests/testCSSMutationRevalidatesDocumentGenerationBeforeCommittingHandleOrDOM()"
+        "FloorpWebExtensionAPIHostTests/testCSSMutationRevalidatesDocumentGenerationBeforeCommittingHandleOrDOM()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testComputesStatisticsAndPreservesSignedPageDelta()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testStrictVerifierRoundTripsCompleteVersionedEvidence()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testRejectsTamperedDerivedStatisticsPageAndMemoryDeltas()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testRejectsUnknownKeysUnsafePathsAndInconsistentCounts()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testArtifactManifestBindsContentAndAcceptanceRequiresExactKinds()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testRejectsOversizedAndCumulativeArtifactManifestsBeforeFileAccess()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testRejectsSparseArtifactBeforeSnapshotCopy()",
+        "FloorpWebExtensionStage3PerformanceEvidenceTests/testFailedRunRequiresAndRetainsFailureDescriptions()",
+        "FloorpWebExtensionStage3NativeDNRPerformanceTests/testRecordsRepeatedDemandingFixtureNativeTransformEvidence()",
+        "FloorpWebExtensionMessageRuntimeTests/testMemoryPressureReleaseRecreatesBackgroundAndSuppressesInFlightReply()",
+        "FloorpWebExtensionMessageRuntimeTests/testDetachedBridgeSuppressesInFlightDirectNativeAPIReply()",
+        "FloorpWebExtensionMessageRuntimeTests/testReattachedBridgeRejectsRequestCapturedBeforeExecutionWithoutNativeDispatch()",
+        "FloorpWebExtensionMessageRuntimeTests/testMemoryPressureInvalidatesInFlightAlarmAndReleasesHandlerResource()",
+        "FloorpWebExtensionMessageRuntimeTests/testMemoryPressureInvalidatesInFlightWKAlarmAndDropsHiddenWebView()",
+        "FloorpWebExtensionAPIHostTests/testMemoryPressureReleasesBothBackgroundsAndPreservesAPIHostState()"
       ],
       "target": {
         "containerPath": "container:Client.xcodeproj",

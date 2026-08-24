@@ -2,9 +2,12 @@
 
 This matrix is the intended Stage 3 compatibility contract. It is derived from
 pinned, synthetic fixtures' manifests and rule corpora; it is not package-
-opening, real-device, or performance evidence. The runtime provides a
-profile-local evidence schema and optional store, but this tree does not yet
-contain recorded device/OS, benchmark, or UI evidence.
+opening or real-device evidence. The runtime provides a profile-local evidence
+schema and optional store. This tree includes a narrowly scoped, native-only
+measurement of repeated fresh-store/cache-bypassing transformation of the
+synthetic 5,000-rule fixture. It is not WebKit content-rule compilation,
+page-load, memory, device/OS, or UI evidence; those release gates remain
+unrecorded here.
 
 | Area | Status | Floorp iOS behaviour |
 | --- | --- | --- |

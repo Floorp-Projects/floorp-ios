@@ -280,6 +280,7 @@ class AppDelegate: UIResponder,
 
     func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         logger.log("Received memory warning", level: .info, category: .lifecycle)
+        FloorpBootstrapper.releaseWebExtensionBackgroundResources(for: profile)
         Task {
             for uuid in windowManager.allWindowUUIDs(includingReserved: false) {
                 await windowManager.tabManager(for: uuid)?.offloadBackgroundWebViews()

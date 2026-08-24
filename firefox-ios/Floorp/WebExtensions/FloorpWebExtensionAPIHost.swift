@@ -2125,6 +2125,16 @@ enum FloorpWebExtensionAPIHostRegistry {
         await entry.host.suspend(extensionID)
     }
 
+    /// Handles memory pressure for both normal and private runtimes belonging
+    /// to one browser profile. API hosts and all durable/profile-owned state
+    /// stay installed; only lazy hidden background resources are released.
+    static func releaseBackgroundResources(for profileIdentifier: String) {
+        let runtimes = entries.compactMap { profileKey, entry in
+            profileKey.profileIdentifier == profileIdentifier ? entry.messageRuntime : nil
+        }
+        runtimes.forEach { $0.releaseBackgroundResources() }
+    }
+
     static func purge(
         _ extensionID: FloorpWebExtensionID,
         profileKey: FloorpWebExtensionCoordinatorProfileKey

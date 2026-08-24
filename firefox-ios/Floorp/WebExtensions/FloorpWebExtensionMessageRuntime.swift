@@ -146,12 +146,20 @@ protocol FloorpWebExtensionBackgroundEventHandling: AnyObject {
     ) async throws -> FloorpWebExtensionMessagePayload?
 
     func handleAlarm(_ event: FloorpWebExtensionAlarmEvent) async throws
+
+    /// Invalidates volatile resources owned by this activation. Implementations
+    /// must make outstanding work complete fail-closed and release any hidden
+    /// WebKit document even when the caller that started the work is still
+    /// awaiting its result.
+    func invalidateBackgroundResources()
 }
 
 extension FloorpWebExtensionBackgroundEventHandling {
     func handleAlarm(_ event: FloorpWebExtensionAlarmEvent) async throws {
         throw FloorpWebExtensionMessageError.unsupportedOperation
     }
+
+    func invalidateBackgroundResources() {}
 }
 
 /// Lazily creates one restricted event handler per installed extension.
@@ -195,19 +203,45 @@ final class FloorpWebExtensionLazyBackgroundHost {
         extensionID: FloorpWebExtensionID,
         factory: @escaping Factory
     ) {
+        entries[extensionID]?.handler?.invalidateBackgroundResources()
         nextGeneration &+= 1
         entries[extensionID] = Entry(generation: nextGeneration, factory: factory)
     }
 
     func suspend(extensionID: FloorpWebExtensionID) {
-        entries[extensionID]?.handler = nil
+        guard let current = entries[extensionID] else { return }
+        current.handler?.invalidateBackgroundResources()
+        nextGeneration &+= 1
+        let replacement = Entry(generation: nextGeneration, factory: current.factory)
+        replacement.activationCount = current.activationCount
+        entries[extensionID] = replacement
+    }
+
+    /// Drops only active background handlers while retaining their reviewed
+    /// factories. Replacing each active entry gives in-flight work an obsolete
+    /// identity, so a reply that completes after the release fails closed.
+    /// The next message or alarm creates a fresh handler lazily.
+    func releaseActiveHandlers() {
+        let activeExtensionIDs = entries.compactMap { extensionID, entry in
+            entry.handler == nil ? nil : extensionID
+        }
+        for extensionID in activeExtensionIDs {
+            guard let current = entries[extensionID] else { continue }
+            current.handler?.invalidateBackgroundResources()
+            nextGeneration &+= 1
+            let replacement = Entry(generation: nextGeneration, factory: current.factory)
+            replacement.activationCount = current.activationCount
+            entries[extensionID] = replacement
+        }
     }
 
     func unregister(extensionID: FloorpWebExtensionID) {
+        entries[extensionID]?.handler?.invalidateBackgroundResources()
         entries.removeValue(forKey: extensionID)
     }
 
     func tearDown() {
+        entries.values.forEach { $0.handler?.invalidateBackgroundResources() }
         entries.removeAll()
     }
 
@@ -259,8 +293,14 @@ final class FloorpWebExtensionLazyBackgroundHost {
         do {
             response = try await handler.handleRuntimeMessage(message, sender: sender)
         } catch let error as FloorpWebExtensionMessageError {
+            guard entries[sender.extensionID] === entry else {
+                throw FloorpWebExtensionMessageError.backgroundReplaced
+            }
             throw error
         } catch {
+            guard entries[sender.extensionID] === entry else {
+                throw FloorpWebExtensionMessageError.backgroundReplaced
+            }
             throw FloorpWebExtensionMessageError.handlerFailed
         }
 
@@ -299,8 +339,14 @@ final class FloorpWebExtensionLazyBackgroundHost {
         do {
             try await handler.handleAlarm(event)
         } catch let error as FloorpWebExtensionMessageError {
+            guard entries[event.extensionID] === entry else {
+                throw FloorpWebExtensionMessageError.backgroundReplaced
+            }
             throw error
         } catch {
+            guard entries[event.extensionID] === entry else {
+                throw FloorpWebExtensionMessageError.backgroundReplaced
+            }
             throw FloorpWebExtensionMessageError.handlerFailed
         }
         guard entries[event.extensionID] === entry else {
@@ -353,6 +399,9 @@ final class FloorpWebExtensionMessageRuntime {
     let backgroundHost: FloorpWebExtensionLazyBackgroundHost
     let profileKey: FloorpWebExtensionCoordinatorProfileKey?
     private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
+    private let scheduleBridgeRequest: @MainActor (
+        @escaping @MainActor @Sendable () async -> Void
+    ) -> Void
     private var controllers = [ObjectIdentifier: ControllerEntry]()
     private var activePageGenerations = [FloorpWebExtensionID: String]()
     private var activeBackgroundGenerations = [FloorpWebExtensionID: String]()
@@ -360,11 +409,19 @@ final class FloorpWebExtensionMessageRuntime {
     init(
         backgroundHost: FloorpWebExtensionLazyBackgroundHost,
         nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)? = nil,
-        profileKey: FloorpWebExtensionCoordinatorProfileKey? = nil
+        profileKey: FloorpWebExtensionCoordinatorProfileKey? = nil,
+        scheduleBridgeRequest: @escaping @MainActor (
+            @escaping @MainActor @Sendable () async -> Void
+        ) -> Void = { operation in
+            Task { @MainActor in
+                await operation()
+            }
+        }
     ) {
         self.backgroundHost = backgroundHost
         self.nativeAPIDispatcher = nativeAPIDispatcher
         self.profileKey = profileKey
+        self.scheduleBridgeRequest = scheduleBridgeRequest
     }
 
     convenience init(
@@ -421,6 +478,7 @@ final class FloorpWebExtensionMessageRuntime {
                 }
                 return authorizeFrameScript(scriptID, revisionToken, url, isMainFrame, tab)
             },
+            scheduleRequest: scheduleBridgeRequest,
             makeSender: { url, isMainFrame in
                 FloorpWebExtensionRuntimeMessageSender(
                     extensionID: extensionID,
@@ -504,6 +562,7 @@ final class FloorpWebExtensionMessageRuntime {
                 self?.activePageGenerations[page.extensionID] == page.packageGeneration &&
                     page.authorizesDocument(url, isMainFrame: isMainFrame)
             },
+            scheduleRequest: scheduleBridgeRequest,
             makeSender: { _, _ in
                 FloorpWebExtensionPageRuntimeMessageSender(
                     extensionID: page.extensionID,
@@ -558,6 +617,7 @@ final class FloorpWebExtensionMessageRuntime {
                 self?.activeBackgroundGenerations[background.extensionID] == background.packageGeneration &&
                     background.authorizesDocument(url, isMainFrame: isMainFrame)
             },
+            scheduleRequest: scheduleBridgeRequest,
             makeSender: { _, _ in
                 FloorpWebExtensionBackgroundRuntimeMessageSender(
                     extensionID: background.extensionID,
@@ -662,6 +722,18 @@ final class FloorpWebExtensionMessageRuntime {
         backgroundHost.tearDown()
     }
 
+    /// Releases the memory-heavy hidden background documents without
+    /// disturbing tab/page bridges, package registration, native API state,
+    /// or profile-owned policy. Background factories remain registered and
+    /// will install a new authenticated bridge on the next event.
+    func releaseBackgroundResources() {
+        backgroundHost.releaseActiveHandlers()
+        let extensionIDs = Set(activeBackgroundGenerations.keys)
+        for extensionID in extensionIDs {
+            invalidateBackgroundBridges(for: extensionID)
+        }
+    }
+
     private func removeReleasedControllers() {
         controllers = controllers.filter { _, entry in entry.controller != nil }
     }
@@ -678,11 +750,15 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private let contentPolicyOwner: String
     private let authorizeDocument: @MainActor (URL, Bool) -> Bool
     private let authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)?
+    private let scheduleRequest: @MainActor (
+        @escaping @MainActor @Sendable () async -> Void
+    ) -> Void
     private let makeSender: @MainActor (URL, Bool) -> any FloorpWebExtensionMessageSender
     private let nonce: String
     private let handlerName: String
     private let contentWorld: WKContentWorld
     private weak var controller: WKUserContentController?
+    private var attachmentGeneration: UInt64 = 0
 
     init(
         extensionID: FloorpWebExtensionID,
@@ -692,6 +768,9 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         owner: String,
         authorizeDocument: @escaping @MainActor (URL, Bool) -> Bool,
         authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)? = nil,
+        scheduleRequest: @escaping @MainActor (
+            @escaping @MainActor @Sendable () async -> Void
+        ) -> Void,
         makeSender: @escaping @MainActor (URL, Bool) -> any FloorpWebExtensionMessageSender
     ) {
         self.extensionID = extensionID
@@ -700,6 +779,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         contentPolicyOwner = owner
         self.authorizeDocument = authorizeDocument
         self.authorizeFrameScript = authorizeFrameScript
+        self.scheduleRequest = scheduleRequest
         self.makeSender = makeSender
         nonce = Self.makeNonce()
         handlerName = "floorpRuntime_\(nonce.prefix(24))"
@@ -708,6 +788,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
 
     func attach(to controller: WKUserContentController) {
         detach()
+        attachmentGeneration &+= 1
         self.controller = controller
         controller.addScriptMessageHandler(self, contentWorld: contentWorld, name: handlerName)
         let script = WKUserScript(
@@ -727,6 +808,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     }
 
     func detach() {
+        attachmentGeneration &+= 1
         guard let controller else { return }
         FloorpWebContentPolicyCoordinator.coordinator(for: controller).removeUserScripts(
             ownedBy: contentPolicyOwner
@@ -747,15 +829,17 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         }
 
         let body = message.body
-        Task { @MainActor [weak self] in
-            guard let self else {
-                replyHandler(Self.failureReply(.backgroundUnavailable, requestID: nil), nil)
-                return
-            }
+        let isMainFrame = message.frameInfo.isMainFrame
+        let expectedAttachment = AttachmentToken(
+            generation: attachmentGeneration,
+            controllerIdentifier: ObjectIdentifier(userContentController)
+        )
+        scheduleRequest { [self] in
             let reply = await serializedReply(
                 body: body,
                 currentURL: currentURL,
-                isMainFrame: message.frameInfo.isMainFrame
+                isMainFrame: isMainFrame,
+                expectedAttachment: expectedAttachment
             )
             replyHandler(reply, nil)
         }
@@ -763,18 +847,25 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
 
     /// Kept as a narrow test seam so authentication and authorization failures
     /// do not require constructing WebKit-owned `WKScriptMessage` instances.
-    func serializedReply(
+    private func serializedReply(
         body: Any,
         currentURL: URL,
-        isMainFrame: Bool
+        isMainFrame: Bool,
+        expectedAttachment: AttachmentToken
     ) async -> String {
         var requestID: String?
         do {
             let envelope = try decodeEnvelope(body)
             requestID = envelope.requestID
+            guard isRequestAuthorized(
+                expectedAttachment: expectedAttachment,
+                currentURL: currentURL,
+                isMainFrame: isMainFrame
+            ) else {
+                throw FloorpWebExtensionMessageError.unauthorizedDocument
+            }
             if envelope.operation == FloorpWebExtensionMessageRuntime.frameAuthorizationOperation {
-                guard controller != nil,
-                      let authorizeFrameScript else {
+                guard let authorizeFrameScript else {
                     throw FloorpWebExtensionMessageError.unauthorizedDocument
                 }
                 let request = try envelope.payload.decode(FrameAuthorizationRequest.self)
@@ -788,15 +879,28 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
                     currentURL,
                     isMainFrame
                 )
+                guard isExpectedAttachmentCurrent(expectedAttachment) else {
+                    throw FloorpWebExtensionMessageError.unauthorizedDocument
+                }
                 return try Self.successReply(
                     FloorpWebExtensionMessagePayload(FrameAuthorizationResponse(authorized: authorized)),
                     requestID: envelope.requestID
                 )
             }
-            guard authorizeDocument(currentURL, isMainFrame) else {
+            guard isExpectedAttachmentCurrent(expectedAttachment) else {
                 throw FloorpWebExtensionMessageError.unauthorizedDocument
             }
             let sender = makeSender(currentURL, isMainFrame)
+            // Authorization callbacks and sender construction are synchronous,
+            // but may trigger bridge reconciliation. Recheck the exact receipt
+            // attachment immediately before invoking native code.
+            guard isRequestAuthorized(
+                expectedAttachment: expectedAttachment,
+                currentURL: currentURL,
+                isMainFrame: isMainFrame
+            ) else {
+                throw FloorpWebExtensionMessageError.unauthorizedDocument
+            }
             let response: FloorpWebExtensionMessagePayload?
             if envelope.operation == "runtime.sendMessage" {
                 response = try await backgroundHost.dispatch(envelope.payload, sender: sender)
@@ -809,12 +913,53 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             } else {
                 throw FloorpWebExtensionMessageError.unsupportedOperation
             }
+            guard isRequestAuthorized(
+                expectedAttachment: expectedAttachment,
+                currentURL: currentURL,
+                isMainFrame: isMainFrame
+            ) else {
+                throw FloorpWebExtensionMessageError.unauthorizedDocument
+            }
             return try Self.successReply(response, requestID: envelope.requestID)
         } catch let error as FloorpWebExtensionMessageError {
+            if !isRequestAuthorized(
+                expectedAttachment: expectedAttachment,
+                currentURL: currentURL,
+                isMainFrame: isMainFrame
+            ) {
+                return Self.failureReply(.unauthorizedDocument, requestID: requestID)
+            }
             return Self.failureReply(error, requestID: requestID)
         } catch {
+            if !isRequestAuthorized(
+                expectedAttachment: expectedAttachment,
+                currentURL: currentURL,
+                isMainFrame: isMainFrame
+            ) {
+                return Self.failureReply(.unauthorizedDocument, requestID: requestID)
+            }
             return Self.failureReply(.handlerFailed, requestID: requestID)
         }
+    }
+
+    private func isRequestAuthorized(
+        expectedAttachment: AttachmentToken,
+        currentURL: URL,
+        isMainFrame: Bool
+    ) -> Bool {
+        isExpectedAttachmentCurrent(expectedAttachment) &&
+            authorizeDocument(currentURL, isMainFrame)
+    }
+
+    private func isExpectedAttachmentCurrent(_ expectedAttachment: AttachmentToken) -> Bool {
+        guard let controller else { return false }
+        return attachmentGeneration == expectedAttachment.generation &&
+            ObjectIdentifier(controller) == expectedAttachment.controllerIdentifier
+    }
+
+    private struct AttachmentToken: Sendable {
+        let generation: UInt64
+        let controllerIdentifier: ObjectIdentifier
     }
 
     private struct Envelope {

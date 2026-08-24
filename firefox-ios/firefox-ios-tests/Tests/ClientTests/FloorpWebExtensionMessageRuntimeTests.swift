@@ -556,12 +556,290 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         }
     }
 
+    func testMemoryPressureReleaseRecreatesBackgroundAndSuppressesInFlightReply() async throws {
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let gate = AsyncReplyGate()
+        var factoryCalls = 0
+        host.register(extensionID: extensionID) {
+            factoryCalls += 1
+            return factoryCalls == 1 ? gate : EchoBackgroundHandler()
+        }
+        let runtime = FloorpWebExtensionMessageRuntime(backgroundHost: host)
+        let payload = try FloorpWebExtensionMessagePayload(Ping(type: "ping"))
+        let sender = testSender(extensionID: extensionID)
+
+        let inFlight = Task {
+            try await host.dispatch(payload, sender: sender)
+        }
+        await gate.waitUntilStarted()
+
+        runtime.releaseBackgroundResources()
+
+        XCTAssertEqual(
+            host.snapshot(for: extensionID),
+            .init(isRegistered: true, isActive: false, activationCount: 1, pendingMessageCount: 0)
+        )
+
+        let replacementReply = try await host.dispatch(payload, sender: sender)
+        XCTAssertEqual(try replacementReply?.decode(Pong.self), Pong(accepted: true))
+        XCTAssertEqual(factoryCalls, 2)
+        XCTAssertEqual(
+            host.snapshot(for: extensionID),
+            .init(isRegistered: true, isActive: true, activationCount: 2, pendingMessageCount: 0)
+        )
+
+        await gate.release()
+        do {
+            _ = try await inFlight.value
+            XCTFail("Expected the pre-memory-pressure reply to fail closed")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .backgroundReplaced)
+        }
+    }
+
+    func testDetachedBridgeSuppressesInFlightDirectNativeAPIReply() async throws {
+        let dispatcher = AsyncNativeAPIDispatchGate()
+        let runtime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: dispatcher)
+        let configuration = WKWebViewConfiguration()
+        let tab = testTab()
+        runtime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: { _, isMainFrame, trustedTab in
+                isMainFrame && trustedTab == tab
+            }
+        )
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString("<html><body>in-flight native API</body></html>", baseURL: tab.url)
+        try await waitForLoad(webView)
+
+        let inFlight = Task {
+            try await directNativeAPIResult(in: webView)
+        }
+        await dispatcher.waitUntilStarted()
+
+        runtime.removeBridge(
+            for: extensionID,
+            from: configuration.userContentController
+        )
+        dispatcher.succeed()
+
+        let reply = try await inFlight.value
+        XCTAssertEqual(reply.status, "rejected")
+        XCTAssertEqual(reply.code, "document_not_authorized")
+    }
+
+    func testReattachedBridgeRejectsRequestCapturedBeforeExecutionWithoutNativeDispatch() async throws {
+        let scheduler = SuspendedBridgeRequestScheduler()
+        let dispatcher = PageNativeDispatcher()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: .init(),
+            nativeAPIDispatcher: dispatcher,
+            scheduleBridgeRequest: scheduler.schedule
+        )
+        let configuration = WKWebViewConfiguration()
+        let tab = testTab()
+        let authorizeDocument: FloorpWebExtensionMessageRuntime.DocumentAuthorization = {
+            _, isMainFrame, trustedTab in
+            isMainFrame && trustedTab == tab
+        }
+        runtime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: authorizeDocument
+        )
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString("<html><body>pre-start reattach</body></html>", baseURL: tab.url)
+        try await waitForLoad(webView)
+
+        let staleRequest = Task {
+            try await directNativeAPIResult(in: webView)
+        }
+        await scheduler.waitUntilScheduled()
+
+        // The receipt token belongs to the first session. Replace that session
+        // before its scheduled operation begins, using the same controller so
+        // generation alone and controller-presence checks cannot be confused
+        // with authorization for the new attachment.
+        runtime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: authorizeDocument
+        )
+        await scheduler.runScheduledRequest()
+
+        let reply = try await staleRequest.value
+        XCTAssertEqual(reply.status, "rejected")
+        XCTAssertEqual(reply.code, "document_not_authorized")
+        XCTAssertTrue(dispatcher.receivedSenders.isEmpty)
+    }
+
+    func testMemoryPressureInvalidatesInFlightAlarmAndReleasesHandlerResource() async throws {
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        var resource: VolatileBackgroundResource? = VolatileBackgroundResource()
+        weak var releasedResource = resource
+        let firstHandler = AsyncAlarmResourceGate(resource: try XCTUnwrap(resource))
+        resource = nil
+        let replacementHandler = AlarmRecordingHandler()
+        var factoryCalls = 0
+        host.register(extensionID: extensionID) {
+            factoryCalls += 1
+            return factoryCalls == 1 ? firstHandler : replacementHandler
+        }
+        let runtime = FloorpWebExtensionMessageRuntime(backgroundHost: host)
+        let beforeWarning = FloorpWebExtensionAlarmEvent(
+            extensionID: extensionID,
+            alarm: .init(name: "before-warning", scheduledTime: .distantPast),
+            deliveredAt: .distantPast
+        )
+        let inFlight = Task { @MainActor in
+            try await host.dispatchAlarm(beforeWarning)
+        }
+        let failSafe = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            firstHandler.forceFinish()
+        }
+        defer {
+            failSafe.cancel()
+            firstHandler.forceFinish()
+        }
+        await firstHandler.waitUntilStarted()
+
+        runtime.releaseBackgroundResources()
+
+        XCTAssertEqual(firstHandler.invalidationCount, 1)
+        XCTAssertNil(releasedResource)
+        do {
+            try await inFlight.value
+            XCTFail("Expected the pre-memory-pressure alarm to fail closed")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .backgroundReplaced)
+        }
+
+        let afterWarning = FloorpWebExtensionAlarmEvent(
+            extensionID: extensionID,
+            alarm: .init(name: "after-warning", scheduledTime: .distantPast),
+            deliveredAt: .distantPast
+        )
+        try await host.dispatchAlarm(afterWarning)
+        XCTAssertEqual(factoryCalls, 2)
+        XCTAssertEqual(replacementHandler.events.map(\.alarm.name), ["after-warning"])
+    }
+
+    func testMemoryPressureInvalidatesInFlightWKAlarmAndDropsHiddenWebView() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "hidden-webview-release-profile",
+            isPrivateBrowsing: false
+        )
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let dispatcher = AsyncNativeAPIDispatchGate()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: host,
+            nativeAPIDispatcher: dispatcher,
+            profileKey: profileKey
+        )
+        let resources = [
+            "background.js": Data("""
+            browser.alarms.onAlarm.addListener(async () => {
+              await browser.i18n.getUILanguage();
+            });
+            """.utf8)
+        ]
+        let package = try makeBackgroundInstalledPackage(
+            generation: "hidden-webview-release-generation",
+            resources: resources
+        )
+        let background = try FloorpWebExtensionBackgroundPackageGeneration(
+            installedPackage: package
+        )
+        let resolver = FloorpWebExtensionPageResourceResolver { request in
+            guard let data = resources[request.path] else {
+                throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+            }
+            return data
+        }
+        weak var activatedHandler: FloorpWebExtensionWKBackgroundEventHandler?
+        weak var hiddenWebView: WKWebView?
+        host.register(extensionID: extensionID) {
+            let handler = try FloorpWebExtensionWKBackgroundEventHandler(
+                profileKey: profileKey,
+                background: background,
+                resolver: resolver,
+                messageRuntime: runtime
+            )
+            activatedHandler = handler
+            hiddenWebView = handler.webView
+            return handler
+        }
+
+        let event = FloorpWebExtensionAlarmEvent(
+            extensionID: extensionID,
+            alarm: .init(name: "in-flight-webkit-alarm", scheduledTime: .distantPast),
+            deliveredAt: .distantPast
+        )
+        let inFlight = Task { @MainActor in
+            try await runtime.dispatchAlarmEvent(event)
+        }
+        let failSafe = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            dispatcher.fail()
+        }
+        defer {
+            failSafe.cancel()
+            dispatcher.fail()
+        }
+        await dispatcher.waitUntilStarted()
+        XCTAssertNotNil(activatedHandler)
+        XCTAssertNotNil(hiddenWebView)
+
+        runtime.releaseBackgroundResources()
+
+        XCTAssertNil(activatedHandler?.webView)
+        do {
+            try await inFlight.value
+            XCTFail("Expected the in-flight WebKit alarm to fail closed")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .backgroundReplaced)
+        }
+
+        dispatcher.succeed()
+        for _ in 0..<100 where hiddenWebView != nil {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertNil(hiddenWebView)
+    }
+
     private func testTab() -> FloorpWebExtensionTabContext {
         FloorpWebExtensionTabContext(
             tabID: 41,
             documentGeneration: 9,
             url: URL(string: "https://allowed.example/bridge")!,
             isPrivate: false
+        )
+    }
+
+    private func directNativeAPIResult(in webView: WKWebView) async throws -> DirectNativeAPIResult {
+        let rawReply = try await webView.callAsyncJavaScript(
+            """
+            try {
+              const language = await browser.i18n.getUILanguage();
+              return { status: "resolved", language };
+            } catch (error) {
+              return { status: "rejected", code: error.code || null };
+            }
+            """,
+            contentWorld: .world(
+                name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: extensionID)
+            )
+        ) as? [String: Any]
+        return DirectNativeAPIResult(
+            status: rawReply?["status"] as? String,
+            code: rawReply?["code"] as? String
         )
     }
 
@@ -733,12 +1011,156 @@ private final class AsyncReplyGate: FloorpWebExtensionBackgroundEventHandling {
     }
 }
 
+@MainActor
+private final class AsyncNativeAPIDispatchGate: FloorpWebExtensionNativeAPIDispatching {
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var replyContinuation: CheckedContinuation<FloorpWebExtensionMessagePayload?, Error>?
+    private var didStart = false
+
+    func waitUntilStarted() async {
+        if didStart { return }
+        await withCheckedContinuation { continuation in
+            startedContinuation = continuation
+        }
+    }
+
+    func succeed() {
+        let payload = try! FloorpWebExtensionMessagePayload(
+            jsonData: Data(#"{"value":"en-US"}"#.utf8)
+        )
+        replyContinuation?.resume(returning: payload)
+        replyContinuation = nil
+    }
+
+    func fail() {
+        replyContinuation?.resume(throwing: FloorpWebExtensionMessageError.handlerFailed)
+        replyContinuation = nil
+    }
+
+    func dispatch(
+        operation: String,
+        payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        guard operation == "i18n.getUILanguage" else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+        didStart = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        return try await withCheckedThrowingContinuation { continuation in
+            replyContinuation = continuation
+        }
+    }
+}
+
+@MainActor
+private final class SuspendedBridgeRequestScheduler {
+    typealias Operation = @MainActor @Sendable () async -> Void
+
+    private var scheduledContinuation: CheckedContinuation<Void, Never>?
+    private var pendingOperation: Operation?
+    private var didSchedule = false
+
+    func schedule(_ operation: @escaping Operation) {
+        precondition(pendingOperation == nil, "Only one bridge request may be suspended at a time")
+        pendingOperation = operation
+        didSchedule = true
+        scheduledContinuation?.resume()
+        scheduledContinuation = nil
+    }
+
+    func waitUntilScheduled() async {
+        if didSchedule { return }
+        await withCheckedContinuation { continuation in
+            scheduledContinuation = continuation
+        }
+    }
+
+    func runScheduledRequest() async {
+        let operation = pendingOperation
+        pendingOperation = nil
+        await operation?()
+    }
+}
+
+private final class VolatileBackgroundResource {}
+
+@MainActor
+private final class AsyncAlarmResourceGate: FloorpWebExtensionBackgroundEventHandling {
+    private var resource: VolatileBackgroundResource?
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var alarmContinuation: CheckedContinuation<Void, Error>?
+    private var didStart = false
+    private(set) var invalidationCount = 0
+
+    init(resource: VolatileBackgroundResource) {
+        self.resource = resource
+    }
+
+    func waitUntilStarted() async {
+        if didStart { return }
+        await withCheckedContinuation { continuation in
+            startedContinuation = continuation
+        }
+    }
+
+    func handleRuntimeMessage(
+        _ message: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        throw FloorpWebExtensionMessageError.unsupportedOperation
+    }
+
+    func handleAlarm(_ event: FloorpWebExtensionAlarmEvent) async throws {
+        didStart = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        try await withCheckedThrowingContinuation { continuation in
+            alarmContinuation = continuation
+        }
+    }
+
+    func invalidateBackgroundResources() {
+        invalidationCount += 1
+        resource = nil
+        alarmContinuation?.resume(throwing: FloorpWebExtensionMessageError.backgroundReplaced)
+        alarmContinuation = nil
+    }
+
+    func forceFinish() {
+        alarmContinuation?.resume(throwing: FloorpWebExtensionMessageError.handlerFailed)
+        alarmContinuation = nil
+    }
+}
+
+@MainActor
+private final class AlarmRecordingHandler: FloorpWebExtensionBackgroundEventHandling {
+    private(set) var events = [FloorpWebExtensionAlarmEvent]()
+
+    func handleRuntimeMessage(
+        _ message: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        throw FloorpWebExtensionMessageError.unsupportedOperation
+    }
+
+    func handleAlarm(_ event: FloorpWebExtensionAlarmEvent) async throws {
+        events.append(event)
+    }
+}
+
 private struct Ping: Codable, Equatable {
     let type: String
 }
 
 private struct Pong: Codable, Equatable {
     let accepted: Bool
+}
+
+private struct DirectNativeAPIResult: Equatable, Sendable {
+    let status: String?
+    let code: String?
 }
 
 private struct GenericBackgroundReply: Codable, Equatable {
