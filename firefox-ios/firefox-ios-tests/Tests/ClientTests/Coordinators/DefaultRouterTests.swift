@@ -6,6 +6,7 @@ import XCTest
 @testable import Client
 
 final class DefaultRouterTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     var navigationController: MockNavigationController!
 
     override func setUp() async throws {
