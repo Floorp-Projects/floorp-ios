@@ -880,14 +880,13 @@ final class FloorpNoteEditorInteractionTests: XCTestCase {
         let previousKeyWindow = windowScene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: windowScene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        editor.loadViewIfNeeded()
         window.rootViewController = navigationController
         window.makeKeyAndVisible()
         defer {
             window.isHidden = true
             previousKeyWindow?.makeKey()
         }
-        editor.loadViewIfNeeded()
-        editor.viewDidAppear(false)
 
         let title = try XCTUnwrap(editor.view.floorpDescendant(
             withIdentifier: "Floorp.Notes.Editor.Title"

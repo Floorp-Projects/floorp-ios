@@ -1,0 +1,14 @@
+{
+  "fixture": {
+    "extensionID": "floorp.fixture.demanding-mv3",
+    "sourceRepository": "https://github.com/Floorp-Projects/floorp-ios",
+    "sourceCommit": "6f58b2578825f74394fe16bb1c15aa17a17ad91d",
+    "version": "1.0.0",
+    "buildFlavor": "local-stage3-fixture",
+    "packageSHA256": "05c6dc2719aea1429f70cffc1c0fc1ad8dcb053a842eb0f3a3fa994424f33d37",
+    "license": "MPL-2.0",
+    "supportedOSFloor": "iOS 15"
+  },
+  "requiredOperatingSystems": ["iOS 15", "iOS 18"],
+  "generatedRulesetLog": "static=5000; dynamic=runtime-managed; session=runtime-managed; unsupported=0"
+}

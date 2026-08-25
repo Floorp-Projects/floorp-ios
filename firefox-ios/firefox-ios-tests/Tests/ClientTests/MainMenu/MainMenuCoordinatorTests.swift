@@ -9,6 +9,7 @@ import XCTest
 
 @MainActor
 final class MainMenuCoordinatorTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockRouter: MockRouter!
 
     override func setUp() async throws {
@@ -91,6 +92,18 @@ final class MainMenuCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(mockDelegate.showSummarizePanelCalled, 1)
         XCTAssertEqual(mockDelegate.showSummarizePanelTrigger, .mainMenu)
+        XCTAssertEqual(mockRouter.dismissCalled, 1)
+    }
+
+    func testHandleNavigation_webExtensionActions_callsDelegate() {
+        let subject = createSubject()
+        let mockDelegate = MockMainMenuCoordinatorDelegate()
+        subject.navigationHandler = mockDelegate
+
+        subject.navigateTo(MenuNavigationDestination(.webExtensionActions), animated: false)
+        mockRouter.savedCompletion?()
+
+        XCTAssertEqual(mockDelegate.showWebExtensionActionsCalled, 1)
         XCTAssertEqual(mockRouter.dismissCalled, 1)
     }
 

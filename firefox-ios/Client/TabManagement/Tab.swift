@@ -477,6 +477,17 @@ class Tab: NSObject,
     private let fileManager: FileManagerProtocol
     private var logger: Logger
     private let documentLogger: DocumentLogger
+    /// Increments for every navigation prepared by this tab. The coordinator
+    /// binds activeTab/CSS capabilities to this generation so a policy issued
+    /// for one document cannot be replayed into a later one.
+    private var floorpWebExtensionDocumentGeneration: UInt64 = 0
+    private var floorpWebExtensionActiveDocument: FloorpWebExtensionTabContext?
+    /// Tracks a direct `WKWebView` load through its action and response
+    /// callbacks. A first document can install its policy before `load`; once a
+    /// visible document exists, HTTP(S) replacement is deferred until the final
+    /// response is known to be allowed.
+    private var floorpWebExtensionPreparedNavigationURL: URL?
+    private var floorpWebExtensionPreparedNavigationPolicyWasApplied = false
 
     init(profile: Profile,
          isPrivate: Bool = false,
@@ -557,19 +568,22 @@ class Tab: NSObject,
         // which allows the content appear beneath the toolbars in the BrowserViewController
         webView.scrollView.layer.masksToBounds = false
 
-        restore(webView, interactionState: restoreSessionData)
-
         self.webView = webView
-
-        configureEdgeSwipeGestureRecognizers()
 
         UserScriptManager.shared.injectUserScriptsIntoWebView(
             webView,
             nightMode: nightMode,
             noImageMode: noImageMode
         )
+        FloorpWebExtensionRuntime.runtime(
+            for: profile.localName(),
+            isPrivateBrowsing: isPrivate
+        ).apply(to: webView)
 
         tabDelegate?.tab(self, didCreateWebView: webView)
+        restore(webView, interactionState: restoreSessionData)
+
+        configureEdgeSwipeGestureRecognizers()
         webViewLoadingObserver = webView.observe(\.isLoading) { [weak self] _, _ in
             guard let self else { return }
             ensureMainThread {
@@ -580,6 +594,7 @@ class Tab: NSObject,
 
     func restore(_ webView: WKWebView, interactionState: Data? = nil) {
         if let url = url {
+            prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
             if let internalURL = InternalURL(url),
                internalURL.isAboutHomeURL {
                 webView.load(PrivilegedRequest(url: url) as URLRequest)
@@ -641,7 +656,19 @@ class Tab: NSObject,
         webView?.stopLoading()
 
         contentScriptManager.uninstall(tab: self)
-        webView?.removeAllUserScripts()
+        if let activeDocument = floorpWebExtensionActiveDocument {
+            let coordinator = FloorpWebExtensionCoordinator.coordinator(
+                for: profile.localName(),
+                isPrivateBrowsing: isPrivate
+            )
+            Task {
+                await coordinator.invalidate(tab: activeDocument)
+            }
+            floorpWebExtensionActiveDocument = nil
+        }
+        if let controller = webView?.configuration.userContentController {
+            FloorpWebContentPolicyCoordinator.coordinator(for: controller).removeAllPoliciesForFinalTeardown()
+        }
 
         if let webView = webView {
             tabDelegate?.tab(self, willDeleteWebView: webView)
@@ -668,6 +695,9 @@ class Tab: NSObject,
         // if the file was cancelled then return and avoid calling webView.goBack
         // since the previous page is already there
         guard !cancelTemporaryDocumentDownload() else { return }
+        if let webView, let url = webView.backForwardList.backItem?.url {
+            prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
+        }
         _ = webView?.goBack()
     }
 
@@ -675,11 +705,17 @@ class Tab: NSObject,
         // if the file was cancelled then return and avoid calling webView.goForward
         // since the previous page is already there
         guard !cancelTemporaryDocumentDownload() else { return }
+        if let webView, let url = webView.backForwardList.forwardItem?.url {
+            prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
+        }
         _ = webView?.goForward()
     }
 
     func goToBackForwardListItem(_ item: WKBackForwardListItem) {
         cancelTemporaryDocumentDownload()
+        if let webView {
+            prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: item.url)
+        }
         _ = webView?.go(to: item)
     }
 
@@ -695,11 +731,16 @@ class Tab: NSObject,
                ) {
                 let readerModeRequest = PrivilegedRequest(url: localReaderModeURL) as URLRequest
                 lastRequest = readerModeRequest
+                prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: localReaderModeURL)
                 return webView.load(readerModeRequest)
             }
             lastRequest = request
             if let url = request.url, url.isFileURL, request.isPrivileged {
+                prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
                 return webView.loadFileURL(url, allowingReadAccessTo: url)
+            }
+            if let url = request.url {
+                prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
             }
             return webView.load(request)
         }
@@ -718,6 +759,9 @@ class Tab: NSObject,
         // If the current page is an error page, and the reload button is tapped, load the original URL
         if let url = webView?.url, let internalUrl = InternalURL(url), let page = internalUrl.originalURLFromErrorPage {
             let request = URLRequest(url: page, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
+            if let webView {
+                prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: page)
+            }
             webView?.load(request)
             return
         }
@@ -727,6 +771,9 @@ class Tab: NSObject,
                                            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
                                            timeoutInterval: 10.0)
 
+            if let webView {
+                prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
+            }
             if webView?.load(reloadRequest) != nil {
                 logger.log("Reloaded the tab from originating source, ignoring local cache.",
                            level: .debug,
@@ -735,7 +782,8 @@ class Tab: NSObject,
             }
         }
 
-        if let webView, webView.url != nil {
+        if let webView, let url = webView.url {
+            prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
             webView.reloadFromOrigin()
             logger.log("Reloaded zombified tab from origin",
                        level: .debug,
@@ -749,6 +797,174 @@ class Tab: NSObject,
                        category: .tabs)
             restore(webView)
         }
+    }
+
+    /// Reconciles one URL- and grant-qualified extension policy immediately
+    /// before WebKit begins a navigation. Controller-local owners are cleared
+    /// first because WebKit otherwise retains their user scripts for a later
+    /// URL after a host permission or match rule changes.
+    func prepareFloorpWebExtensionPolicy(for webView: WKWebView, navigationURL: URL) {
+        let runtime = FloorpWebExtensionRuntime.runtime(
+            for: profile.localName(),
+            isPrivateBrowsing: isPrivate
+        )
+        runtime.apply(to: webView)
+        let coordinator = FloorpWebExtensionCoordinator.coordinator(
+            for: profile.localName(),
+            isPrivateBrowsing: isPrivate
+        )
+        if let activeDocument = floorpWebExtensionActiveDocument {
+            // Registry cleanup is actor-isolated, while the replacement
+            // snapshot must remain synchronous for this imminent navigation.
+            // The old generation can no longer authorize a new document.
+            Task {
+                await coordinator.invalidate(tab: activeDocument)
+            }
+        }
+        floorpWebExtensionDocumentGeneration &+= 1
+        let tab = FloorpWebExtensionTabContext(
+            tabID: floorpWebExtensionTabIdentifier,
+            documentGeneration: floorpWebExtensionDocumentGeneration,
+            url: navigationURL,
+            isPrivate: isPrivate
+        )
+        let controller = webView.configuration.userContentController
+        runtime.clearPreNavigationPolicies(from: controller)
+        let policies = coordinator.preNavigationPolicies(for: tab)
+        let messageRuntime = FloorpWebExtensionAPIHostRegistry.messageRuntime(
+            for: profile.localName(),
+            isPrivateBrowsing: isPrivate
+        )
+        // A MAIN-world script deliberately never receives `browser`.  Do not
+        // leave an otherwise-unused isolated-world bridge behind for it: the
+        // bridge's presence is itself a capability and must exactly follow
+        // the isolated scripts in this navigation snapshot.
+        let bridgePolicies = policies.filter { policy in
+            policy.scriptPolicies.contains { $0.world == .isolated }
+        }
+        messageRuntime?.reconcileTabBridges(
+            on: controller,
+            retaining: Set(bridgePolicies.map(\.extensionID))
+        )
+        bridgePolicies.forEach { policy in
+            messageRuntime?.installBridge(
+                for: policy.extensionID,
+                tab: tab,
+                on: controller,
+                authorizeDocument: { currentURL, isMainFrame, trustedTab in
+                    coordinator.authorizesBridge(
+                        for: policy.extensionID,
+                        currentURL: currentURL,
+                        isMainFrame: isMainFrame,
+                        tab: trustedTab
+                    )
+                },
+                authorizeFrameScript: { scriptID, revisionToken, currentURL, isMainFrame, trustedTab in
+                    coordinator.authorizesFrameScript(
+                        for: policy.extensionID,
+                        scriptID: scriptID,
+                        revisionToken: revisionToken,
+                        currentURL: currentURL,
+                        isMainFrame: isMainFrame,
+                        tab: trustedTab
+                    )
+                }
+            )
+        }
+        // MAIN-world policies are still legitimate content scripts; they just
+        // must not acquire an isolated-world WebExtension API bridge.
+        policies.forEach { policy in
+            runtime.applyPreNavigationPolicy(policy, to: controller)
+        }
+        floorpWebExtensionActiveDocument = tab
+    }
+
+    /// Starts a load without revoking the document that remains visible while
+    /// WebKit determines whether an HTTP(S) response is displayable. The very
+    /// first document and non-network schemes keep the established earliest
+    /// possible pre-load installation path.
+    private func prepareFloorpWebExtensionPolicyForDirectLoad(
+        for webView: WKWebView,
+        navigationURL: URL
+    ) {
+        floorpWebExtensionPreparedNavigationURL = navigationURL
+        guard !shouldDeferFloorpWebExtensionPolicyReplacement(for: navigationURL) else {
+            floorpWebExtensionPreparedNavigationPolicyWasApplied = false
+            return
+        }
+        prepareFloorpWebExtensionPolicy(for: webView, navigationURL: navigationURL)
+        floorpWebExtensionPreparedNavigationPolicyWasApplied = true
+    }
+
+    /// Prepares a first WebKit-driven main-frame navigation immediately. When
+    /// an HTTP(S) document is already visible, records the target while leaving
+    /// replacement to the final allowed-response callback.
+    func prepareFloorpWebExtensionPolicyForNavigationAction(
+        for webView: WKWebView,
+        navigationURL: URL
+    ) {
+        if floorpWebExtensionPreparedNavigationURL == navigationURL,
+           floorpWebExtensionPreparedNavigationPolicyWasApplied {
+            return
+        }
+        floorpWebExtensionPreparedNavigationURL = navigationURL
+        guard !shouldDeferFloorpWebExtensionPolicyReplacement(for: navigationURL) else {
+            floorpWebExtensionPreparedNavigationPolicyWasApplied = false
+            return
+        }
+        prepareFloorpWebExtensionPolicy(for: webView, navigationURL: navigationURL)
+        floorpWebExtensionPreparedNavigationPolicyWasApplied = true
+    }
+
+    private func shouldDeferFloorpWebExtensionPolicyReplacement(for navigationURL: URL) -> Bool {
+        guard floorpWebExtensionActiveDocument != nil,
+              let scheme = navigationURL.scheme?.lowercased()
+        else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+
+    /// Reconciles an allowed main-frame response against the final URL WebKit
+    /// will load. Callers must invoke this only after ruling out download and
+    /// cancellation outcomes: until then the currently visible document stays
+    /// authoritative. The synchronous replacement still completes before the
+    /// response delegate returns `.allow`, so a redirected document cannot
+    /// inherit scripts granted only to the initial URL.
+    func reconcileFloorpWebExtensionPolicyForAllowedNavigationResponse(
+        for webView: WKWebView,
+        responseURL: URL
+    ) {
+        defer { discardFloorpWebExtensionPreparedNavigation() }
+        if floorpWebExtensionPreparedNavigationPolicyWasApplied,
+           floorpWebExtensionActiveDocument?.url == responseURL {
+            return
+        }
+        prepareFloorpWebExtensionPolicy(for: webView, navigationURL: responseURL)
+    }
+
+    /// Completes a download/cancel response without disturbing the visible
+    /// document. No rollback is required because its policy was never replaced.
+    func discardFloorpWebExtensionPreparedNavigation() {
+        floorpWebExtensionPreparedNavigationURL = nil
+        floorpWebExtensionPreparedNavigationPolicyWasApplied = false
+    }
+
+    private var floorpWebExtensionTabIdentifier: Int {
+        // Stable within a restored tab, without exposing the browser's UUID to
+        // an extension API. FNV-1a gives a deterministic, process-local ID.
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for byte in tabUUID.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return Int(truncatingIfNeeded: hash & UInt64(Int.max))
+    }
+
+    var floorpWebExtensionTabID: Int {
+        floorpWebExtensionTabIdentifier
+    }
+
+    var floorpWebExtensionActiveDocumentContext: FloorpWebExtensionTabContext? {
+        floorpWebExtensionActiveDocument
     }
 
     // MARK: - Content script
@@ -813,6 +1029,9 @@ class Tab: NSObject,
         if changedUserAgent, let url = activeURL {
             let url = ChangeUserAgent().removeMobilePrefixFrom(url: url)
             let request = URLRequest(url: url)
+            if let webView {
+                prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
+            }
             webView?.load(request)
         } else {
             reload()
@@ -962,10 +1181,14 @@ class Tab: NSObject,
                 guard let url else { return }
 
                 // Prevent the WebView to load a new item so it doesn't add a new entry to the back and forward list.
-                if let item = self?.backForwardList?.firstItem(with: url) as? WKBackForwardListItem {
-                    self?.webView?.go(to: item)
-                } else {
-                    self?.webView?.loadFileURL(url, allowingReadAccessTo: url)
+                if let self,
+                   let webView = self.webView,
+                   let item = self.backForwardList?.firstItem(with: url) as? WKBackForwardListItem {
+                    self.prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: item.url)
+                    webView.go(to: item)
+                } else if let self, let webView = self.webView {
+                    self.prepareFloorpWebExtensionPolicyForDirectLoad(for: webView, navigationURL: url)
+                    webView.loadFileURL(url, allowingReadAccessTo: url)
                 }
 
                 // Don't add a source URL if it is a local one. That's happen when reloading the PDF content

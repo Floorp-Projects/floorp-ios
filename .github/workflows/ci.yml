@@ -175,6 +175,15 @@ jobs:
         timeout-minutes: 30
         run: |
           set -o pipefail
+          revision="$(git rev-parse --verify 'HEAD^{commit}')"
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Stage 3 performance tests require a 40-character Git HEAD." >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+            echo "Stage 3 performance tests require a clean worktree." >&2
+            exit 1
+          fi
           xcodebuild test-without-building \
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME" \
@@ -196,7 +205,16 @@ jobs:
             CODE_SIGN_IDENTITY= \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            FLOORP_STAGE3_SOURCE_REVISION="$revision" \
+            FLOORP_STAGE3_CLEAN_WORKTREE_ATTESTED_REVISION="$revision" \
+            FLOORP_STAGE3_WORKTREE_STATE=clean \
             2>&1 | tee "$RUNNER_TEMP/test.log"
+
+          if [[ "$(git rev-parse --verify 'HEAD^{commit}')" != "$revision" ]] || \
+             [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+            echo "Git HEAD or worktree state changed during Stage 3 performance tests." >&2
+            exit 1
+          fi
 
           if grep -Fq \
             "Fatal error: No definition registered for type:" \

@@ -80,6 +80,9 @@ struct MainMenuConfigurationUtility: Equatable, FeatureFlaggable {
             menuSections.append(getHorizontalTabsSection(with: uuid, tabInfo: tabInfo))
             menuSections.append(getAccountSection(with: uuid, tabInfo: tabInfo, profileImage: profileImage))
         }
+        if FloorpFlags.isWebExtensionFeatureEnabled(.core) {
+            menuSections.append(getWebExtensionsSection(with: uuid, tabInfo: tabInfo))
+        }
 
         return menuSections
     }
@@ -218,6 +221,30 @@ struct MainMenuConfigurationUtility: Equatable, FeatureFlaggable {
                         )
                     }
                 ),
+        ])
+    }
+
+    private func getWebExtensionsSection(with uuid: WindowUUID, tabInfo: MainMenuTabInfo) -> MenuSection {
+        MenuSection(options: [
+            MenuElement(
+                title: "Extensions",
+                iconName: Icons.settings,
+                isEnabled: true,
+                isActive: false,
+                a11yLabel: "Extensions",
+                a11yHint: "Open extension actions",
+                a11yId: "Floorp.WebExtensions.Browser.Actions",
+                action: {
+                    store.dispatch(
+                        MainMenuAction(
+                            windowUUID: uuid,
+                            actionType: MainMenuActionType.tapNavigateToDestination,
+                            navigationDestination: MenuNavigationDestination(.webExtensionActions),
+                            telemetryInfo: TelemetryInfo(isHomepage: tabInfo.isHomepage)
+                        )
+                    )
+                }
+            )
         ])
     }
 

@@ -9,9 +9,13 @@ import SwiftUI
 
 @MainActor
 final class SettingsCoordinatorTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockRouter: MockRouter!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var wallpaperManager: WallpaperManagerMock!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var delegate: MockSettingsCoordinatorDelegate!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockSettingsVC: MockAppSettingsScreen!
 
     override func setUp() async throws {
@@ -546,6 +550,15 @@ final class SettingsCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(mockRouter.pushCalled, 1)
         XCTAssertTrue(mockRouter.pushedViewController is ContentBlockerSettingViewController)
+    }
+
+    func testWebExtensionsSettingsDelegate_pushedExtensionsSettings() {
+        let subject = createSubject()
+
+        subject.pressedWebExtensions()
+
+        XCTAssertEqual(mockRouter.pushCalled, 1)
+        XCTAssertTrue(mockRouter.pushedViewController is FloorpWebExtensionSettingsViewController)
     }
 
     func testPrivacySettingsDelegate_handlePasswordRoute() {
