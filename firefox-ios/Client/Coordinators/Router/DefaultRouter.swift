@@ -29,7 +29,14 @@ class DefaultRouter: NSObject, Router {
             completions[viewController] = completion
         }
 
-        viewController.presentationController?.delegate = self
+        // UIAlertController owns its presentation-controller delegate. On
+        // iOS 26, assigning the router to that delegate triggers UIKit's
+        // assertion and terminates the app before the alert can be shown.
+        // Other presentation controllers continue to use the router for
+        // adaptive-dismissal callbacks.
+        if !(viewController is UIAlertController) {
+            viewController.presentationController?.delegate = self
+        }
         navigationController.present(viewController, animated: animated, completion: nil)
     }
 

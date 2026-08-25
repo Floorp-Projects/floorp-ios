@@ -6,6 +6,7 @@ import XCTest
 @testable import Client
 
 final class DefaultRouterTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     var navigationController: MockNavigationController!
 
     override func setUp() async throws {
@@ -36,6 +37,16 @@ final class DefaultRouterTests: XCTestCase {
         XCTAssertEqual(navigationController.presentCalled, 1)
         XCTAssertEqual(navigationController.presentedViewController, viewController)
         XCTAssertEqual(subject.completions.count, 1)
+    }
+
+    @MainActor
+    func testPresentAlert_doesNotReplaceUIKitPresentationDelegate() {
+        let subject = DefaultRouter(navigationController: navigationController)
+        let alert = UIAlertController(title: "Extensions", message: nil, preferredStyle: .alert)
+
+        subject.present(alert)
+
+        XCTAssertEqual(navigationController.presentCalled, 1)
     }
 
     @MainActor
