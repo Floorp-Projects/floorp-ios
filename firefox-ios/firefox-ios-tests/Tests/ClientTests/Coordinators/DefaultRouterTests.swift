@@ -39,6 +39,16 @@ final class DefaultRouterTests: XCTestCase {
     }
 
     @MainActor
+    func testPresentAlert_doesNotReplaceUIKitPresentationDelegate() {
+        let subject = DefaultRouter(navigationController: navigationController)
+        let alert = UIAlertController(title: "Extensions", message: nil, preferredStyle: .alert)
+
+        subject.present(alert)
+
+        XCTAssertEqual(navigationController.presentCalled, 1)
+    }
+
+    @MainActor
     func testPresentViewController_dismissModalCompletionCalled() {
         let subject = DefaultRouter(navigationController: navigationController)
         let viewController = UIViewController()
