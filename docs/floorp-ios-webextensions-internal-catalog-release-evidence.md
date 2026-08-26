@@ -38,6 +38,7 @@ or release evidence required below.
 | 項目 | 記録 |
 | --- | --- |
 | main merge SHA | 未記録 |
+| release-candidate branch / SHA | `codex/floorp-extension-catalog-design` / `9a06e780f96d6a8decff383e8baed56303d0ab9e` (2026-08-26 に remote ref へ push 済み。main には未統合) |
 | catalog ID / sequence / signing key ID | 未記録 |
 | catalog canonical digest | 未記録 |
 | artifact SHA-256 / manifest SHA-256 / inventory SHA-256 | 未記録 |
@@ -79,9 +80,10 @@ or release evidence required below.
 
 | Item | Status |
 | --- | --- |
-| prior GitHub Actions / Xcode Cloud invocation | `Floorp TestFlight Deploy (Xcode Cloud)` run `32879372157` completed successfully on 2026-08-25 for `main` SHA `9898ddb598cdee27ea60c9b138af0dc6d9759e75`; it predates and does not contain the uncommitted catalog implementation. |
-| App Store Connect observation | 2026-08-26: iOS 0.2.0 (59) is `提出準備完了` / ready to submit with zero assigned groups and zero individual testers. Its exact source SHA is not recorded, so it is not release evidence for this change. |
+| prior GitHub Actions / Xcode Cloud invocation | `Floorp TestFlight Deploy (Xcode Cloud)` run `32879372157` completed successfully on 2026-08-25 for `main` SHA `9898ddb598cdee27ea60c9b138af0dc6d9759e75`. App Store Connect confirms the resulting Xcode Cloud build 59 as successful and bound to that same commit; it predates and does not contain this candidate. |
+| App Store Connect observation | 2026-08-26: iOS 0.2.0 (59) is `提出準備完了` / ready to submit with zero assigned groups and zero individual testers. It is source-bound to `9898ddb…`, not to the catalog candidate, so it is not release evidence for this change. |
 | prior external build | 0.2.0 (58) is already testing in the existing external group; it is unrelated to this change and is not used as evidence. |
+| Beta App Review information | Existing notes state that extensions are disabled. They are not valid for this candidate; no information was edited or submitted. |
 | workflow / Xcode Cloud run for this source | not started — requires the merged exact main SHA |
 | build number / processed build for this source | not available |
 | External TestFlight group for this source | not selected; group assignment and Beta App Review submission require a source-bound build and action-time release confirmation |

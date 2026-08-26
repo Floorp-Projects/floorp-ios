@@ -38,7 +38,7 @@ artifact, and a merged main SHA are still absent.**
 | `OWNER_APPROVAL_MISSING` | blocked | Security | root private key の offline custody、leaf signer と有効期間、二者承認、監査ログ、key rotation、侵害時の on-call、署名済み失効演習の承認。root key は CDN、GitHub Actions、アプリ、Xcode Cloud に置かない。 |
 | `POLICY_DECISION_MISSING` | blocked | Product / Privacy / Security | `FWEA1`/canonical JSON/Ed25519/サイズ・DNR 上限/14 日 catalog・90 日 leaf の契約承認、失効・disable・uninstall 時の data retention/deletion policy、private browsing の初期既定値。 |
 | `UPSTREAM_ARTIFACT_MISSING` | blocked | Engineering / QA | author-approved pilot の signed catalog、artifact/manifest/inventory digest、静的検査、P2–P4 実機 OS matrix、失効演習、アクセシビリティ、性能・memory・battery 測定、既知 API 非互換一覧。Stage 3 fixture evidence は代替にならない。 |
-| `AUTHORIZATION_MISSING` | partially verified / blocked | Release / Operations | App Store Connect の Floorp / TestFlight 読み取りアクセスと既存外部 group は確認済み。Beta App Review details、署名/provisioning、保護された Actions environment secrets、Xcode Cloud mutation 権限の実証は未記録。 |
+| `AUTHORIZATION_MISSING` | partially verified / blocked | Release / Operations | App Store Connect の Floorp / TestFlight 読み取りアクセスと既存外部 group は確認済み。既存 Beta App Review notes は extensions が無効と記載しており、この候補には使えない。候補用 details、署名/provisioning、保護された Actions environment secrets、Xcode Cloud mutation 権限の実証は未記録。 |
 | `MERGE_REQUIRED` | blocked | Maintainer | 承認済み review を経た main のマージ済み SHA。正規 workflow は `refs/heads/main` とその完全一致 SHA を検証する。依頼時点の「PR を作成しない・main へ直接 push しない」を守るため、承認済み maintainer の通常の統合操作が必要。 |
 
 ## 再開条件と順序
