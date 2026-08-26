@@ -665,12 +665,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         try await activatePreparedPackageTransaction(transaction, extensionID: item.id)
     }
 
+    // swiftlint:disable function_body_length
     /// The managed source is intentionally not exposed by Settings. This
     /// lifecycle endpoint exists only for the P0-gated catalog composition,
     /// and receives a lifecycle-authorized, verifier-produced artifact rather
     /// than a URL or file. The opaque authorization can only be minted by the
     /// catalog lifecycle coordinator after it rechecks current device state.
-    // swiftlint:disable:next function_body_length
     func installVerifiedCatalogPackage(
         _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
         catalogAuthorization: FloorpWebExtensionCatalogInstallationAuthorization,
@@ -723,6 +723,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         )
         try await activatePreparedPackageTransaction(transaction, extensionID: extensionID)
     }
+    // swiftlint:enable function_body_length
 
     /// Shows the product-owned update confirmation before an immutable catalog
     /// generation can replace an installed catalog generation. The default

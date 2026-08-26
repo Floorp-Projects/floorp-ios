@@ -2193,6 +2193,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         await FloorpWebExtensionAPIHostRegistry.removeHost(for: apiHost.profileKey)
     }
 
+    // swiftlint:disable:next function_body_length
     func testSignedCatalogVerifierFailsClosedForTamperingExpiryRollbackAndCrossLeafReuse() throws {
         let signing = try CatalogSigningFixture()
         let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
@@ -2569,7 +2570,10 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         )
         let unsupportedRecord = try XCTUnwrap(unsupportedCatalog.catalog.packages.first)
         let unsupportedArchive = try signing.archive(resources: signing.unsupportedDNRResources())
-        let unsupportedArtifact = try await downloader.download(catalog: unsupportedCatalog, record: unsupportedRecord) { url in
+        let unsupportedArtifact = try await downloader.download(
+            catalog: unsupportedCatalog,
+            record: unsupportedRecord
+        ) { url in
             .init(finalURL: url, statusCode: 200, data: unsupportedArchive)
         }
         await assertAsyncThrows {
@@ -2627,7 +2631,10 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             isPrivateBrowsing: false,
             directory: directory
         )
-        var reconciliation = [(FloorpWebExtensionInstalledPackage?, FloorpWebExtensionLivePackageManager.ReconciliationOperation)]()
+        var reconciliation = [(
+            FloorpWebExtensionInstalledPackage?,
+            FloorpWebExtensionLivePackageManager.ReconciliationOperation
+        )]()
         let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
             reconciliation.append((package, operation))
         }
@@ -2678,7 +2685,10 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             isPrivateBrowsing: false,
             directory: directory
         )
-        var reconciliation = [(FloorpWebExtensionInstalledPackage?, FloorpWebExtensionLivePackageManager.ReconciliationOperation)]()
+        var reconciliation = [(
+            FloorpWebExtensionInstalledPackage?,
+            FloorpWebExtensionLivePackageManager.ReconciliationOperation
+        )]()
         let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
             reconciliation.append((package, operation))
         }
@@ -2741,7 +2751,10 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             isPrivateBrowsing: false,
             directory: directory
         )
-        var reconciliation = [(FloorpWebExtensionInstalledPackage?, FloorpWebExtensionLivePackageManager.ReconciliationOperation)]()
+        var reconciliation = [(
+            FloorpWebExtensionInstalledPackage?,
+            FloorpWebExtensionLivePackageManager.ReconciliationOperation
+        )]()
         let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
             reconciliation.append((package, operation))
         }
@@ -3584,7 +3597,19 @@ private struct CatalogSigningFixture {
     func resources() -> [String: Data] {
         [
             "manifest.json": Data("""
-            {"manifest_version":3,"name":"Catalog Content Script","version":"1.0.0","host_permissions":["https://content-message.fixture.test/*"],"content_scripts":[{"matches":["https://content-message.fixture.test/*"],"js":["content/document-start.js"],"css":["content/marker.css"],"run_at":"document_start","world":"ISOLATED"}]}
+            {
+              "manifest_version": 3,
+              "name": "Catalog Content Script",
+              "version": "1.0.0",
+              "host_permissions": ["https://content-message.fixture.test/*"],
+              "content_scripts": [{
+                "matches": ["https://content-message.fixture.test/*"],
+                "js": ["content/document-start.js"],
+                "css": ["content/marker.css"],
+                "run_at": "document_start",
+                "world": "ISOLATED"
+              }]
+            }
             """.utf8),
             "content/document-start.js": Data("globalThis.floorpCatalogContentScript = true;".utf8),
             "content/marker.css": Data(".floorp-catalog-marker { display: block; }".utf8)
@@ -3594,10 +3619,30 @@ private struct CatalogSigningFixture {
     func unsupportedDNRResources() -> [String: Data] {
         [
             "manifest.json": Data("""
-            {"manifest_version":3,"name":"Unsupported DNR","version":"1.0.0","permissions":["declarativeNetRequest"],"declarative_net_request":{"rule_resources":[{"id":"redirect-rules","enabled":true,"path":"rules/static.json"}]}}
+            {
+              "manifest_version": 3,
+              "name": "Unsupported DNR",
+              "version": "1.0.0",
+              "permissions": ["declarativeNetRequest"],
+              "declarative_net_request": {
+                "rule_resources": [{
+                  "id": "redirect-rules",
+                  "enabled": true,
+                  "path": "rules/static.json"
+                }]
+              }
+            }
             """.utf8),
             "rules/static.json": Data("""
-            [{"id":1,"priority":1,"action":{"type":"redirect","redirect":{"url":"https://blocked.fixture.test/"}},"condition":{"urlFilter":"ads.fixture.test"}}]
+            [{
+              "id": 1,
+              "priority": 1,
+              "action": {
+                "type": "redirect",
+                "redirect": {"url": "https://blocked.fixture.test/"}
+              },
+              "condition": {"urlFilter": "ads.fixture.test"}
+            }]
             """.utf8)
         ]
     }

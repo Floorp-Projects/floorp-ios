@@ -682,10 +682,10 @@ actor FloorpWebExtensionPackageStore {
     }
     // swiftlint:enable function_body_length
 
+    // swiftlint:disable function_body_length
     /// Stages bytes that were already bound to one verified `catalog-v1`
     /// record. This accepts no path, URL, ZIP, CRX, or caller-provided
     /// archive: only the resource map emitted by the signed-artifact decoder.
-    // swiftlint:disable function_body_length
     func installVerifiedCatalogPackageTransaction(
         _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
         initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,

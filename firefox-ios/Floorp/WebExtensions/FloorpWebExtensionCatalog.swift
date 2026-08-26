@@ -711,6 +711,9 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         self.clockRollbackTolerance = clockRollbackTolerance
     }
 
+    // This is intentionally a single verification transaction; splitting it
+    // would make the ordering between anti-rollback and trust checks unclear.
+    // swiftlint:disable:next function_body_length
     func verify(
         catalogData: Data,
         previousState: FloorpWebExtensionCatalogAcceptanceState?,
@@ -1231,18 +1234,6 @@ struct FloorpWebExtensionVerifiedCatalogArtifact: Sendable {
     let catalogSequence: Int64
     let record: FloorpWebExtensionCatalogPackageRecord
     let resources: [String: Data]
-
-    init(
-        catalogID: String,
-        catalogSequence: Int64,
-        record: FloorpWebExtensionCatalogPackageRecord,
-        resources: [String: Data]
-    ) {
-        self.catalogID = catalogID
-        self.catalogSequence = catalogSequence
-        self.record = record
-        self.resources = resources
-    }
 }
 
 /// An opaque capability minted only by the lifecycle acceptance coordinator
@@ -1368,10 +1359,9 @@ enum FloorpWebExtensionCatalogArchive {
               headerSize <= bytes.count - payloadOffset else {
             throw FloorpWebExtensionCatalogError.artifactRejected("invalid archive header length")
         }
-        let header = try FloorpWebExtensionCanonicalJSON.parse(
-            Data(bytes[payloadOffset..<(payloadOffset + headerSize)])
-        )
-        guard try FloorpWebExtensionCanonicalJSON.canonicalData(header) == Data(bytes[payloadOffset..<(payloadOffset + headerSize)]) else {
+        let headerData = Data(bytes[payloadOffset..<(payloadOffset + headerSize)])
+        let header = try FloorpWebExtensionCanonicalJSON.parse(headerData)
+        guard try FloorpWebExtensionCanonicalJSON.canonicalData(header) == headerData else {
             throw FloorpWebExtensionCatalogError.artifactRejected("non-canonical archive header")
         }
         let entries = try parseHeader(header)
@@ -1521,7 +1511,9 @@ protocol FloorpWebExtensionCatalogAcceptanceStatePersisting: AnyObject, Sendable
 /// Anti-rollback state is device-bound rather than ordinary profile data. A
 /// private-browsing teardown therefore cannot erase the highest accepted
 /// sequence and re-open an old catalog for installation.
-final class FloorpWebExtensionCatalogKeychainStateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting, @unchecked Sendable {
+final class FloorpWebExtensionCatalogKeychainStateStore:
+    FloorpWebExtensionCatalogAcceptanceStatePersisting,
+    @unchecked Sendable {
     private let service: String
     private let lock = NSLock()
 
