@@ -17,6 +17,7 @@ struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     let name: String
     let version: String
     let isEnabled: Bool
+    let isCatalogRevoked: Bool
     let permissions: [FloorpWebExtensionPermissionCategory]
     let siteAccessDescription: String
     let privateAccessDescription: String
@@ -25,6 +26,132 @@ struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     /// immutable generation prevents an already-open page from seeing files
     /// belonging to a later package update.
     let optionsPage: FloorpWebExtensionSettingsOptionsPage?
+}
+
+/// Product-owned consent for `permissions.request`. Extension documents do
+/// not supply text, a view controller, or a success callback; they only name
+/// an already-declared optional capability that the API host authenticated.
+@MainActor
+final class FloorpWebExtensionNativePermissionConsentPresenter {
+    struct RequestPresentation: Sendable {
+        let extensionName: String
+        let extensionID: FloorpWebExtensionID
+        let packageGeneration: String
+        let apiPermissions: [FloorpWebExtensionAPIGrant]
+        let origins: [FloorpWebExtensionMatchPattern]
+        let isPrivateBrowsing: Bool
+
+        var message: String {
+            var lines = [String]()
+            if !apiPermissions.isEmpty {
+                lines.append(contentsOf: apiPermissions.map { "• \(Self.title(for: $0))" })
+            }
+            if !origins.isEmpty {
+                lines.append("Sites:")
+                lines.append(contentsOf: origins.map { "• \($0.original)" })
+            }
+            lines.append(isPrivateBrowsing
+                ? "This permission applies only in private browsing."
+                : "This permission applies to this browsing profile.")
+            return lines.joined(separator: "\n")
+        }
+
+        private static func title(for permission: FloorpWebExtensionAPIGrant) -> String {
+            switch permission {
+            case .activeTab: return "Access the active tab after an explicit action"
+            case .alarms: return "Schedule extension alarms"
+            case .declarativeNetRequest: return "Apply supported network blocking rules"
+            case .scripting: return "Run approved package scripts on the selected sites"
+            case .storage: return "Store extension settings on this device"
+            case .tabs: return "Read tab metadata and open or reload tabs"
+            }
+        }
+    }
+
+    typealias PackageNameLookup = @MainActor @Sendable (
+        FloorpWebExtensionID,
+        String
+    ) async -> String?
+    typealias Confirmation = @MainActor @Sendable (RequestPresentation) async -> Bool
+
+    private let isPrivateBrowsing: Bool
+    private let packageNameLookup: PackageNameLookup
+    private let confirmation: Confirmation
+
+    init(
+        isPrivateBrowsing: Bool,
+        packageNameLookup: @escaping PackageNameLookup,
+        confirmation: Confirmation? = nil
+    ) {
+        self.isPrivateBrowsing = isPrivateBrowsing
+        self.packageNameLookup = packageNameLookup
+        self.confirmation = confirmation ?? { presentation in
+            await Self.presentNativeConfirmation(presentation)
+        }
+    }
+
+    func authorize(_ request: FloorpWebExtensionPermissionRequest) async -> Bool {
+        guard let generation = request.packageGeneration,
+              !generation.isEmpty,
+              !request.apiPermissions.isEmpty || !request.origins.isEmpty,
+              let extensionName = await packageNameLookup(request.extensionID, generation) else {
+            return false
+        }
+        return await confirmation(.init(
+            extensionName: extensionName,
+            extensionID: request.extensionID,
+            packageGeneration: generation,
+            apiPermissions: request.apiPermissions.sorted { $0.rawValue < $1.rawValue },
+            origins: request.origins.sorted { $0.original < $1.original },
+            isPrivateBrowsing: isPrivateBrowsing
+        ))
+    }
+
+    private static func presentNativeConfirmation(_ presentation: RequestPresentation) async -> Bool {
+        guard let presenter = topPresenter(),
+              !(presenter is UIAlertController),
+              presenter.viewIfLoaded?.window != nil else {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            let alert = UIAlertController(
+                title: "Allow \(presentation.extensionName)?",
+                message: presentation.message,
+                preferredStyle: .alert
+            )
+            alert.view.accessibilityIdentifier = "Floorp.WebExtensions.OptionalPermissionConsent"
+            alert.addAction(UIAlertAction(title: "Don’t Allow", style: .cancel) { _ in
+                continuation.resume(returning: false)
+            })
+            alert.addAction(UIAlertAction(title: "Allow", style: .default) { _ in
+                continuation.resume(returning: true)
+            })
+            // Do not replace UIAlertController's presentation delegate. UIKit
+            // owns it and may assert if an unrelated delegate is installed.
+            presenter.present(alert, animated: true)
+        }
+    }
+
+    private static func topPresenter() -> UIViewController? {
+        guard let root = UIWindow.keyWindow?.rootViewController else { return nil }
+        return topPresenter(from: root)
+    }
+
+    private static func topPresenter(from controller: UIViewController) -> UIViewController {
+        if let presented = controller.presentedViewController,
+           !presented.isBeingDismissed {
+            return topPresenter(from: presented)
+        }
+        if let navigation = controller as? UINavigationController,
+           let visible = navigation.visibleViewController {
+            return topPresenter(from: visible)
+        }
+        if let tab = controller as? UITabBarController,
+           let selected = tab.selectedViewController {
+            return topPresenter(from: selected)
+        }
+        return controller
+    }
 }
 
 /// A narrow UI boundary around the profile-owned package store.
@@ -235,12 +362,14 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             package.errorDescription
         ].compactMap { $0 }.joined(separator: "\n\n")
         let alert = UIAlertController(title: package.name, message: message, preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(
-            title: package.isEnabled ? "Disable" : "Enable",
-            style: .default
-        ) { [weak self] _ in
-            self?.setEnabled(!package.isEnabled, for: package.id)
-        })
+        if !package.isCatalogRevoked {
+            alert.addAction(UIAlertAction(
+                title: package.isEnabled ? "Disable" : "Enable",
+                style: .default
+            ) { [weak self] _ in
+                self?.setEnabled(!package.isEnabled, for: package.id)
+            })
+        }
         if package.optionsPage != nil,
            pageResourceResolver != nil,
            pageMessageRuntime != nil {
@@ -395,6 +524,29 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         fileprivate let lifecycleRevision: UInt64
     }
 
+    /// One-use, in-memory authority for replacing a catalog generation. The
+    /// fields bind a user's confirmation to both sides of the immutable
+    /// transition; a stale dialog cannot approve another package or digest.
+    struct CatalogUpdateAuthorization: Sendable, Equatable {
+        fileprivate let extensionID: FloorpWebExtensionID
+        fileprivate let installedGeneration: String
+        fileprivate let replacementCatalogGeneration: String
+        fileprivate let replacementArtifactSHA256: String
+        fileprivate let lifecycleRevision: UInt64
+    }
+
+    /// Product-owned UI receives the before/after immutable identities. It
+    /// must not accept text, callbacks, or URLs from an extension document.
+    struct CatalogUpdateConfirmationRequest: Sendable, Equatable {
+        let extensionID: FloorpWebExtensionID
+        let extensionName: String
+        let installedVersion: String
+        let installedGeneration: String
+        let replacementVersion: String
+        let replacementCatalogGeneration: String
+        let replacementArtifactSHA256: String
+    }
+
     typealias Reconciler = @MainActor (
         FloorpWebExtensionID,
         FloorpWebExtensionInstalledPackage?,
@@ -408,12 +560,24 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     ) async throws -> Void
     typealias BundledPackageURLResolver = @MainActor (FloorpWebExtensionBundledCatalogItem) -> URL?
     typealias CurrentCompositionCheck = @MainActor () -> Bool
+    typealias CatalogUpdateConfirmation = @MainActor (
+        CatalogUpdateConfirmationRequest
+    ) async -> Bool
+    /// A catalog package can be restored or re-enabled only when the P0
+    /// composition can still authorize its record against device-bound
+    /// catalog state. Bundled packages have no catalog record and bypass this
+    /// closure entirely.
+    typealias CatalogRecordAuthorization = @MainActor @Sendable (
+        FloorpWebExtensionCatalogPackageRecord
+    ) throws -> Void
 
     let store: FloorpWebExtensionPackageStore
     private let isCurrentComposition: CurrentCompositionCheck
     private let reconcile: Reconciler
     private let reconcilePrepared: PreparedReconciler?
     private let bundledPackageURL: BundledPackageURLResolver
+    private let catalogUpdateConfirmation: CatalogUpdateConfirmation
+    private let catalogRecordAuthorization: CatalogRecordAuthorization
     private var lifecycleMutationGates = [FloorpWebExtensionID: FloorpWebExtensionLifecycleMutationGate]()
     private var lifecycleRevisions = [FloorpWebExtensionID: UInt64]()
 
@@ -422,13 +586,19 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         isCurrentComposition: @escaping CurrentCompositionCheck = { true },
         reconcile: @escaping Reconciler,
         bundledPackageURL: @escaping BundledPackageURLResolver = { $0.packageURL() },
-        reconcilePrepared: PreparedReconciler? = nil
+        reconcilePrepared: PreparedReconciler? = nil,
+        catalogUpdateConfirmation: @escaping CatalogUpdateConfirmation = { _ in false },
+        catalogRecordAuthorization: @escaping CatalogRecordAuthorization = { _ in
+            throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
+        }
     ) {
         self.store = store
         self.isCurrentComposition = isCurrentComposition
         self.reconcile = reconcile
         self.reconcilePrepared = reconcilePrepared
         self.bundledPackageURL = bundledPackageURL
+        self.catalogUpdateConfirmation = catalogUpdateConfirmation
+        self.catalogRecordAuthorization = catalogRecordAuthorization
     }
 
     func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] {
@@ -438,6 +608,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 name: package.name,
                 version: package.version,
                 isEnabled: package.isEnabled,
+                isCatalogRevoked: package.isCatalogRevoked,
                 permissions: Self.settingsPermissionCategories(for: package.grants),
                 siteAccessDescription: Self.siteAccessDescription(
                     package.grants.normalHostAccess,
@@ -491,6 +662,188 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             expectedExtensionID: item.id,
             initialGrants: initialGrants
         )
+        try await activatePreparedPackageTransaction(transaction, extensionID: item.id)
+    }
+
+    // swiftlint:disable function_body_length
+    /// The managed source is intentionally not exposed by Settings. This
+    /// lifecycle endpoint exists only for the P0-gated catalog composition,
+    /// and receives a lifecycle-authorized, verifier-produced artifact rather
+    /// than a URL or file. The opaque authorization can only be minted by the
+    /// catalog lifecycle coordinator after it rechecks current device state.
+    func installVerifiedCatalogPackage(
+        _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
+        catalogAuthorization: FloorpWebExtensionCatalogInstallationAuthorization,
+        initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
+        updateAuthorization: CatalogUpdateAuthorization? = nil
+    ) async throws {
+        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        guard catalogAuthorization.authorizes(artifact) else {
+            throw FloorpWebExtensionCatalogError.artifactRejected(
+                "catalog installation authorization does not match artifact"
+            )
+        }
+        let extensionID = artifact.record.extensionID
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+
+        let installed = await store.installedPackage(for: extensionID)
+        if let installed {
+            guard let authorization = updateAuthorization,
+                  installed.catalogRecord != nil,
+                  authorization.extensionID == extensionID,
+                  authorization.installedGeneration == installed.generation,
+                  authorization.replacementCatalogGeneration == artifact.record.generation,
+                  authorization.replacementArtifactSHA256 == artifact.record.artifactSHA256,
+                  authorization.lifecycleRevision == lifecycleRevisions[extensionID, default: 0],
+                  isCurrentComposition() else {
+                throw FloorpWebExtensionCatalogError.updateConsentRequired
+            }
+        }
+        invalidatePermissionAuthorizations(for: extensionID)
+
+        if await store.hasPendingDataPurge(for: extensionID) {
+            try await reconcile(extensionID, nil, .suspend)
+            try await reconcile(extensionID, nil, .uninstall)
+            try await store.completeUninstallCleanup(extensionID)
+        }
+        let updateConsent = updateAuthorization.map {
+            FloorpWebExtensionCatalogUpdateConsent(
+                extensionID: $0.extensionID,
+                installedGeneration: $0.installedGeneration,
+                replacementCatalogGeneration: $0.replacementCatalogGeneration,
+                replacementArtifactSHA256: $0.replacementArtifactSHA256
+            )
+        }
+        let transaction = try await store.installVerifiedCatalogPackageTransaction(
+            artifact,
+            initialGrants: initialGrants,
+            updateConsent: updateConsent
+        )
+        try await activatePreparedPackageTransaction(transaction, extensionID: extensionID)
+    }
+    // swiftlint:enable function_body_length
+
+    /// Shows the product-owned update confirmation before an immutable catalog
+    /// generation can replace an installed catalog generation. The default
+    /// confirmation denies, so an unreviewed composition cannot silently turn
+    /// a catalog refresh into an update.
+    func authorizeCatalogUpdate(
+        for artifact: FloorpWebExtensionVerifiedCatalogArtifact
+    ) async throws -> CatalogUpdateAuthorization {
+        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        let extensionID = artifact.record.extensionID
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        guard isCurrentComposition(),
+              let installed = await store.installedPackage(for: extensionID),
+              installed.catalogRecord != nil,
+              installed.generation != artifact.record.localGeneration else {
+            throw FloorpWebExtensionCatalogError.updateConsentRequired
+        }
+        let request = CatalogUpdateConfirmationRequest(
+            extensionID: extensionID,
+            extensionName: installed.name,
+            installedVersion: installed.version,
+            installedGeneration: installed.generation,
+            replacementVersion: artifact.record.version,
+            replacementCatalogGeneration: artifact.record.generation,
+            replacementArtifactSHA256: artifact.record.artifactSHA256
+        )
+        guard await catalogUpdateConfirmation(request),
+              isCurrentComposition(),
+              let current = await store.installedPackage(for: extensionID),
+              current.generation == installed.generation else {
+            throw FloorpWebExtensionCatalogError.updateConsentRequired
+        }
+        return .init(
+            extensionID: extensionID,
+            installedGeneration: installed.generation,
+            replacementCatalogGeneration: artifact.record.generation,
+            replacementArtifactSHA256: artifact.record.artifactSHA256,
+            lifecycleRevision: lifecycleRevisions[extensionID, default: 0]
+        )
+    }
+
+    /// Stops an installed catalog generation in the same order used for a
+    /// user disable: live policy first, then the durable registry. It does not
+    /// delete storage or select a rollback target.
+    func revokeCatalogGeneration(
+        extensionID: FloorpWebExtensionID,
+        catalogGeneration: String
+    ) async throws {
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+        invalidatePermissionAuthorizations(for: extensionID)
+        guard let package = await store.installedPackage(for: extensionID),
+              package.catalogRecord?.generation == catalogGeneration else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        if package.isEnabled {
+            try await reconcile(extensionID, nil, .suspend)
+        }
+        do {
+            try await store.recordCatalogRevocation(
+                for: extensionID,
+                catalogGeneration: catalogGeneration
+            )
+        } catch {
+            if package.isEnabled {
+                try? await reconcile(extensionID, package, .suspend)
+            }
+            throw error
+        }
+    }
+
+    /// Applies the complete, signature-verified device acceptance state before
+    /// it is committed to Keychain. This is deliberately stronger than
+    /// applying just the signed revocation entries: a locally altered registry
+    /// record must not keep running merely because its substituted leaf key is
+    /// absent from the catalog's revocation list. A package continues only if
+    /// its exact generation/digest/key binding is accepted and non-revoked.
+    /// Neither rejection path selects a fallback package.
+    func applySignedCatalogAcceptanceState(
+        _ state: FloorpWebExtensionCatalogAcceptanceState
+    ) async throws {
+        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        let targets = await store.installedPackages().compactMap { package -> (FloorpWebExtensionID, String)? in
+            guard let record = package.catalogRecord else { return nil }
+            let generation = FloorpWebExtensionCatalogGeneration(
+                extensionID: record.extensionID,
+                generation: record.generation
+            )
+            let binding = FloorpWebExtensionCatalogGenerationArtifactDigest(
+                catalogGeneration: generation,
+                artifactSHA256: record.artifactSHA256,
+                signingKeyID: record.signingKeyID
+            )
+            guard !state.acceptedGenerationArtifacts.contains(binding) ||
+                    state.revokedGenerations.contains(generation) ||
+                    state.revokedKeyIDs.contains(record.signingKeyID) else {
+                return nil
+            }
+            return (record.extensionID, record.generation)
+        }.sorted { lhs, rhs in
+            lhs.0.rawValue == rhs.0.rawValue
+                ? lhs.1 < rhs.1
+                : lhs.0.rawValue < rhs.0.rawValue
+        }
+        for target in targets {
+            try await revokeCatalogGeneration(
+                extensionID: target.0,
+                catalogGeneration: target.1
+            )
+        }
+    }
+
+    // swiftlint:disable:next function_body_length
+    private func activatePreparedPackageTransaction(
+        _ transaction: FloorpWebExtensionPackageStore.BundledPackageInstallationTransaction,
+        extensionID: FloorpWebExtensionID
+    ) async throws {
         let installed = transaction.installedPackage
         let previousPackage = transaction.previousPackage
 
@@ -516,7 +869,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             }
         } catch {
             try? await store.abortPreparedBundledPackageUpdate(
-                extensionID: item.id,
+                extensionID: extensionID,
                 replacementGeneration: installed.generation
             )
             if previousPackage.isEnabled {
@@ -532,7 +885,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         if installed.isEnabled {
             do {
                 let resources = try await store.preparedPackageResources(
-                    extensionID: item.id,
+                    extensionID: extensionID,
                     replacementGeneration: installed.generation
                 )
                 if let reconcilePrepared {
@@ -551,7 +904,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             } catch {
                 try? await reconcile(installed.extensionID, nil, .suspend)
                 try? await store.abortPreparedBundledPackageUpdate(
-                    extensionID: item.id,
+                    extensionID: extensionID,
                     replacementGeneration: installed.generation
                 )
                 if previousPackage.isEnabled {
@@ -567,7 +920,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
 
         do {
             try await store.commitPreparedBundledPackageUpdate(
-                extensionID: item.id,
+                extensionID: extensionID,
                 replacementGeneration: installed.generation
             )
         } catch {
@@ -575,7 +928,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 try? await reconcile(installed.extensionID, nil, .suspend)
             }
             try? await store.abortPreparedBundledPackageUpdate(
-                extensionID: item.id,
+                extensionID: extensionID,
                 replacementGeneration: installed.generation
             )
             if previousPackage.isEnabled {
@@ -599,6 +952,11 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             // Revoke live privileges before persisting the disable. If the
             // registry write fails, the extension remains safely inactive.
             try await reconcile(extensionID, nil, .suspend)
+        } else {
+            guard let package = await store.installedPackage(for: extensionID) else {
+                throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
+            }
+            try authorizeCatalogRecord(package)
         }
         try await store.setEnabled(isEnabled, for: extensionID)
         if isEnabled {
@@ -726,6 +1084,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         }
         invalidatePermissionAuthorizations(for: extensionID)
         do {
+            try authorizeCatalogRecord(currentPackage)
             try await reconcile(extensionID, currentPackage, .suspend)
             guard isCurrentComposition(),
                   await store.installedPackage(for: extensionID) == currentPackage else {
@@ -734,9 +1093,9 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             return true
         } catch {
             if isCurrentComposition() {
-                try? await store.recordActivationFailure(
-                    for: extensionID,
-                    expectedGeneration: currentPackage.generation
+                await persistCatalogAuthorizationFailureIfNeeded(
+                    error,
+                    for: currentPackage
                 )
             }
             throw error
@@ -798,6 +1157,21 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         guard package.isEnabled else {
             throw FloorpWebExtensionError.unsupported("Cannot reload a disabled extension")
         }
+        do {
+            try authorizeCatalogRecord(package)
+        } catch {
+            // A reload begins while this package is already live. Unlike
+            // startup restoration, an authorization failure must first stop
+            // that live policy before persisting the fail-closed state.
+            try await reconcile(extensionID, nil, .suspend)
+            if isCurrentComposition() {
+                await persistCatalogAuthorizationFailureIfNeeded(
+                    error,
+                    for: package
+                )
+            }
+            throw error
+        }
 
         try await reconcile(extensionID, nil, .suspend)
         do {
@@ -820,6 +1194,39 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         let gate = FloorpWebExtensionLifecycleMutationGate()
         lifecycleMutationGates[extensionID] = gate
         return gate
+    }
+
+    private func authorizeCatalogRecord(
+        _ package: FloorpWebExtensionInstalledPackage
+    ) throws {
+        guard let record = package.catalogRecord else { return }
+        guard !package.isCatalogRevoked else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        try catalogRecordAuthorization(record)
+    }
+
+    /// A restart can observe a package that was persisted before a process
+    /// interruption but whose latest device-wide catalog state now revokes it.
+    /// Preserve that as a durable kill-switch state, not merely a retryable
+    /// activation error. Other startup failures retain the normal diagnostic
+    /// path and remain disabled until an explicit retry.
+    private func persistCatalogAuthorizationFailureIfNeeded(
+        _ error: Error,
+        for package: FloorpWebExtensionInstalledPackage
+    ) async {
+        guard case .revoked = error as? FloorpWebExtensionCatalogError,
+              let catalogGeneration = package.catalogRecord?.generation else {
+            try? await store.recordActivationFailure(
+                for: package.extensionID,
+                expectedGeneration: package.generation
+            )
+            return
+        }
+        try? await store.recordCatalogRevocation(
+            for: package.extensionID,
+            catalogGeneration: catalogGeneration
+        )
     }
 
     private func invalidatePermissionAuthorizations(

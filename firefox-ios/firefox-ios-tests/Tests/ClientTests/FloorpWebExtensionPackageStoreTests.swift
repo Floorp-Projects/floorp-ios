@@ -2193,6 +2193,1120 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         await FloorpWebExtensionAPIHostRegistry.removeHost(for: apiHost.profileKey)
     }
 
+    // swiftlint:disable:next function_body_length
+    func testSignedCatalogVerifierFailsClosedForTamperingExpiryRollbackAndCrossLeafReuse() throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let valid = try signing.catalog(sequence: 2)
+        let accepted = try verifier.verify(catalogData: valid, previousState: nil, now: signing.now)
+
+        XCTAssertEqual(accepted.catalog.sequence, 2)
+        XCTAssertEqual(accepted.catalog.packages.count, 1)
+        XCTAssertEqual(accepted.catalog.packages[0].generation, "catalog-gen-1")
+        var redefinedGenerationResources = signing.resources()
+        redefinedGenerationResources["content/document-start.js"] = Data(
+            "globalThis.floorpCatalogContentScript = 'redefined-generation';".utf8
+        )
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 3,
+                resources: redefinedGenerationResources
+            ),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            guard case .invalidCatalog = error as? FloorpWebExtensionCatalogError else {
+                return XCTFail("Expected an immutable-generation catalog rejection, got \(error)")
+            }
+        }
+
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 3,
+                signingKeyID: "catalog-2026-q4",
+                signingKey: signing.replacementLeaf
+            ),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            guard case .invalidCatalog = error as? FloorpWebExtensionCatalogError else {
+                return XCTFail("Expected cross-leaf generation reuse to be rejected, got \(error)")
+            }
+        }
+
+        let revoked = try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 3,
+                revocations: [.object([
+                    "kind": .string("generation"),
+                    "extensionID": .string(signing.extensionID.rawValue),
+                    "generation": .string("catalog-gen-1"),
+                    "effectiveAt": .string("2026-08-25T00:00:00Z")
+                ])]
+            ),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )
+        XCTAssertTrue(revoked.catalog.nextAcceptanceState.revokedGenerations.contains(
+            .init(extensionID: signing.extensionID, generation: "catalog-gen-1")
+        ))
+        XCTAssertThrowsError(try revoked.installablePackage(
+            extensionID: signing.extensionID,
+            generation: "catalog-gen-1"
+        )) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .revoked)
+        }
+
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 4,
+                revocations: [.object([
+                    "kind": .string("generation"),
+                    "extensionID": .string(signing.extensionID.rawValue),
+                    "generation": .string("catalog-gen-1"),
+                    "effectiveAt": .string("2026-08-27T12:00:00Z")
+                ])]
+            ),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(
+                error as? FloorpWebExtensionCatalogError,
+                .invalidCatalog("future-dated revocations are not supported")
+            )
+        }
+
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(sequence: 3, corruptCatalogSignature: true),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .invalidSignature)
+        }
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(sequence: 3, expiresAt: "2026-08-25T00:00:00Z"),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
+        }
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .sequenceRollback)
+        }
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: Data("{\"schemaVersion\":1,\"schemaVersion\":1}".utf8),
+            previousState: nil,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .invalidCanonicalJSON)
+        }
+        var nonCanonicalCatalog = try signing.catalog(sequence: 4)
+        nonCanonicalCatalog.append(0x0A)
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: nonCanonicalCatalog,
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .invalidCanonicalJSON)
+        }
+    }
+
+    func testCatalogStateMigratesLegacySignerlessBindingWithoutAuthorizingIt() throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let generation = FloorpWebExtensionCatalogGeneration(
+            extensionID: record.extensionID,
+            generation: record.generation
+        )
+        let legacyState = FloorpWebExtensionCatalogAcceptanceState(
+            catalogID: signing.configuration.catalogID,
+            highestSequence: 1,
+            maximumObservedAt: signing.now,
+            revokedKeyIDs: [],
+            revokedGenerations: [],
+            acceptedGenerationArtifacts: [
+                .init(
+                    catalogGeneration: generation,
+                    artifactSHA256: record.artifactSHA256,
+                    signingKeyID: nil
+                )
+            ]
+        )
+
+        let migrated = try verifier.verify(
+            catalogData: signing.catalog(sequence: 2),
+            previousState: legacyState,
+            now: signing.now
+        )
+        XCTAssertTrue(migrated.catalog.nextAcceptanceState.acceptedGenerationArtifacts.contains(
+            .init(
+                catalogGeneration: generation,
+                artifactSHA256: record.artifactSHA256,
+                signingKeyID: "catalog-2026-q3"
+            )
+        ))
+        XCTAssertFalse(migrated.catalog.nextAcceptanceState.acceptedGenerationArtifacts.contains(
+            .init(
+                catalogGeneration: generation,
+                artifactSHA256: record.artifactSHA256,
+                signingKeyID: nil
+            )
+        ))
+
+        var redefinedResources = signing.resources()
+        redefinedResources["content/document-start.js"] = Data(
+            "globalThis.floorpCatalogContentScript = 'legacy-binding-redefinition';".utf8
+        )
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(sequence: 2, resources: redefinedResources),
+            previousState: legacyState,
+            now: signing.now
+        )) { error in
+            guard case .invalidCatalog = error as? FloorpWebExtensionCatalogError else {
+                return XCTFail("Expected legacy immutable-generation rejection, got \(error)")
+            }
+        }
+    }
+
+    func testCatalogAcceptanceStateIsCommittedOnlyForANewerVerifiedCatalog() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        XCTAssertEqual(stateStore.state?.highestSequence, 1)
+
+        await assertAsyncThrows {
+            _ = try await coordinator.acceptAndApplyRevocations(
+                catalogData: signing.catalog(sequence: 2, corruptCatalogSignature: true),
+                now: signing.now
+            )
+        }
+        XCTAssertEqual(stateStore.state?.highestSequence, 1)
+
+        do {
+            _ = try await coordinator.acceptAndApplyRevocations(
+                catalogData: signing.catalog(sequence: 2),
+                now: signing.now.addingTimeInterval(-301)
+            )
+            XCTFail("Clock rollback must reject catalog acceptance")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .clockRollback)
+        }
+        XCTAssertEqual(stateStore.state?.highestSequence, 1)
+    }
+
+    func testManagedRemoteCatalogGateIsClosedUnlessExplicitlyEnabled() throws {
+        let wasEnabled = FloorpFlags.isWebExtensionFeatureEnabled(.managedRemoteSource)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: wasEnabled) }
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false)
+
+        XCTAssertThrowsError(try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()) {
+            XCTAssertEqual($0 as? FloorpWebExtensionCatalogError, .remoteCatalogDisabled)
+        }
+    }
+
+    func testSignedCatalogArtifactRejectsDigestZipAndPathAttacks() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let result = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(result.catalog.packages.first)
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let downloaded = try await downloader.download(catalog: result, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        XCTAssertEqual(downloaded.resources["manifest.json"], signing.resources()["manifest.json"])
+
+        await assertAsyncThrows {
+            _ = try await downloader.download(catalog: result, record: record) { _ in
+                .init(
+                    finalURL: URL(string: "https://catalog.floorp.test/redirected.fwea")!,
+                    statusCode: 200,
+                    data: archive
+                )
+            }
+        }
+
+        var modified = archive
+        modified[modified.startIndex] ^= 0x01
+        let tamperedArchive = modified
+        await assertAsyncThrows {
+            _ = try await downloader.download(catalog: result, record: record) { url in
+                .init(finalURL: url, statusCode: 200, data: tamperedArchive)
+            }
+        }
+
+        let manifestMismatchRecord = signing.record(
+            generation: "manifest-mismatch",
+            artifact: archive,
+            manifestDigest: String(repeating: "0", count: 64),
+            inventoryDigest: record.resourceInventorySHA256
+        )
+        await assertAsyncThrows {
+            _ = try await downloader.download(catalog: result, record: manifestMismatchRecord) { url in
+                .init(finalURL: url, statusCode: 200, data: archive)
+            }
+        }
+
+        let zip = Data([0x50, 0x4B, 0x03, 0x04])
+        let zipRecord = signing.record(
+            generation: "zip-attack",
+            artifact: zip,
+            manifestDigest: String(repeating: "0", count: 64),
+            inventoryDigest: String(repeating: "0", count: 64)
+        )
+        await assertAsyncThrows {
+            _ = try await downloader.download(catalog: result, record: zipRecord) { url in
+                .init(finalURL: url, statusCode: 200, data: zip)
+            }
+        }
+
+        let unsafeArchive = try signing.rawArchive(
+            path: "../manifest.json",
+            payload: Data("blocked".utf8)
+        )
+        let unsafeRecord = signing.record(
+            generation: "path-attack",
+            artifact: unsafeArchive,
+            manifestDigest: String(repeating: "0", count: 64),
+            inventoryDigest: String(repeating: "0", count: 64)
+        )
+        await assertAsyncThrows {
+            _ = try await downloader.download(catalog: result, record: unsafeRecord) { url in
+                .init(finalURL: url, statusCode: 200, data: unsafeArchive)
+            }
+        }
+    }
+
+    func testCatalogPackageInstallationIsAtomicAndRevocationStopsResources() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let firstCatalog = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let firstRecord = try XCTUnwrap(firstCatalog.catalog.packages.first)
+        let firstArchive = try signing.archive()
+        let firstArtifact = try await downloader.download(catalog: firstCatalog, record: firstRecord) { url in
+            .init(finalURL: url, statusCode: 200, data: firstArchive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "signed-catalog-package-store",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let forgedRecord = signing.record(
+            generation: "catalog-forged-manifest",
+            artifact: firstArchive,
+            manifestDigest: String(repeating: "0", count: 64),
+            inventoryDigest: firstRecord.resourceInventorySHA256
+        )
+        await assertAsyncThrows {
+            _ = try await store.installVerifiedCatalogPackageTransaction(.init(
+                catalogID: firstArtifact.catalogID,
+                catalogSequence: firstArtifact.catalogSequence,
+                record: forgedRecord,
+                resources: firstArtifact.resources
+            ))
+        }
+        let packagesAfterForgedArtifact = await store.installedPackages()
+        XCTAssertTrue(packagesAfterForgedArtifact.isEmpty)
+        let initialGrants = FloorpWebExtensionPermissionSnapshot(
+            requestedHosts: [try .init("https://content-message.fixture.test/*")],
+            normalHostAccess: .allRequestedSites
+        )
+        let installed = (try await store.installVerifiedCatalogPackageTransaction(
+            firstArtifact,
+            initialGrants: initialGrants
+        )).installedPackage
+        XCTAssertEqual(installed.catalogRecord, firstRecord)
+        XCTAssertNil(installed.fixture)
+        XCTAssertTrue(try store.makeResourceLoader()(
+            firstRecord.extensionID,
+            .init("content/document-start.js")
+        ).contains("floorpCatalogContentScript"))
+
+        let unsupportedCatalog = try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 2,
+                generation: "catalog-gen-2",
+                resources: signing.unsupportedDNRResources()
+            ),
+            previousState: firstCatalog.catalog.nextAcceptanceState,
+            now: signing.now
+        )
+        let unsupportedRecord = try XCTUnwrap(unsupportedCatalog.catalog.packages.first)
+        let unsupportedArchive = try signing.archive(resources: signing.unsupportedDNRResources())
+        let unsupportedArtifact = try await downloader.download(
+            catalog: unsupportedCatalog,
+            record: unsupportedRecord
+        ) { url in
+            .init(finalURL: url, statusCode: 200, data: unsupportedArchive)
+        }
+        await assertAsyncThrows {
+            _ = try await store.installVerifiedCatalogPackageTransaction(unsupportedArtifact)
+        }
+        let afterRejectedRecord = await store.installedPackage(for: firstRecord.extensionID)
+        let afterRejectedUpdate = try XCTUnwrap(afterRejectedRecord)
+        XCTAssertEqual(afterRejectedUpdate.generation, installed.generation)
+        XCTAssertTrue(afterRejectedUpdate.isEnabled)
+
+        try await store.recordCatalogRevocation(
+            for: firstRecord.extensionID,
+            catalogGeneration: firstRecord.generation
+        )
+        let revokedRecord = await store.installedPackage(for: firstRecord.extensionID)
+        let revoked = try XCTUnwrap(revokedRecord)
+        XCTAssertFalse(revoked.isEnabled)
+        XCTAssertTrue(revoked.activationError?.contains("revoked") == true)
+        XCTAssertThrowsError(try store.makeResourceLoader()(
+            firstRecord.extensionID,
+            .init("content/document-start.js")
+        ))
+        await assertAsyncThrows {
+            try await store.setEnabled(true, for: firstRecord.extensionID)
+        }
+        let afterEnableAttempt = await store.installedPackage(for: firstRecord.extensionID)
+        XCTAssertTrue(try XCTUnwrap(afterEnableAttempt).isCatalogRevoked)
+        XCTAssertFalse(try XCTUnwrap(afterEnableAttempt).isEnabled)
+
+        let restarted = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "signed-catalog-package-store",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restartedRecord = await restarted.installedPackage(for: firstRecord.extensionID)
+        XCTAssertFalse(try XCTUnwrap(restartedRecord).isEnabled)
+    }
+
+    func testCatalogRevocationReconcilesRuntimeBeforePersistingDisable() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let catalog = try verifier.verify(catalogData: signing.catalog(sequence: 1), previousState: nil, now: signing.now)
+        let record = try XCTUnwrap(catalog.catalog.packages.first)
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: catalog, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "signed-catalog-manager",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var reconciliation = [(
+            FloorpWebExtensionInstalledPackage?,
+            FloorpWebExtensionLivePackageManager.ReconciliationOperation
+        )]()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
+            reconciliation.append((package, operation))
+        }
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [manager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+        try await manager.revokeCatalogGeneration(
+            extensionID: record.extensionID,
+            catalogGeneration: record.generation
+        )
+        XCTAssertEqual(reconciliation.last?.0, nil)
+        XCTAssertEqual(reconciliation.last?.1, .suspend)
+        let managerRecord = await store.installedPackage(for: record.extensionID)
+        XCTAssertFalse(try XCTUnwrap(managerRecord).isEnabled)
+    }
+
+    func testKeyRevocationStopsInstalledGenerationsBeforeCatalogStateCommits() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        XCTAssertEqual(record.signingKeyID, "catalog-2026-q3")
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "signed-catalog-key-revocation",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var reconciliation = [(
+            FloorpWebExtensionInstalledPackage?,
+            FloorpWebExtensionLivePackageManager.ReconciliationOperation
+        )]()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
+            reconciliation.append((package, operation))
+        }
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [manager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+
+        let revokedCatalog = try signing.catalog(
+            sequence: 2,
+            generation: "catalog-gen-2",
+            revocations: [.object([
+                "kind": .string("key"),
+                "keyID": .string("catalog-2026-q3"),
+                "effectiveAt": .string("2026-08-25T00:00:00Z")
+            ])],
+            signingKeyID: "catalog-2026-q4",
+            signingKey: signing.replacementLeaf
+        )
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: revokedCatalog,
+            now: signing.now
+        )
+        XCTAssertTrue(stateStore.state?.revokedKeyIDs.contains("catalog-2026-q3") == true)
+        XCTAssertEqual(reconciliation.last?.0, nil)
+        XCTAssertEqual(reconciliation.last?.1, .suspend)
+        let revoked = await store.installedPackage(for: record.extensionID)
+        XCTAssertFalse(try XCTUnwrap(revoked).isEnabled)
+    }
+
+    func testCatalogAcceptanceStateStopsAnUnboundCatalogPackageBeforeCommit() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-acceptance-state",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var reconciliation = [(
+            FloorpWebExtensionInstalledPackage?,
+            FloorpWebExtensionLivePackageManager.ReconciliationOperation
+        )]()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
+            reconciliation.append((package, operation))
+        }
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: InMemoryCatalogStateStore(),
+            packageManagers: { [manager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+        reconciliation.removeAll()
+
+        try await manager.applySignedCatalogAcceptanceState(
+            initial.catalog.nextAcceptanceState
+        )
+        XCTAssertTrue(reconciliation.isEmpty)
+
+        // This models a catalog record whose immutable provenance no longer
+        // appears in the verifier-produced device state (for example after a
+        // local registry-record alteration). The runtime must stop before the
+        // new state is written to Keychain.
+        let unboundState = FloorpWebExtensionCatalogAcceptanceState(
+            catalogID: initial.catalog.catalogID,
+            highestSequence: 2,
+            maximumObservedAt: signing.now,
+            revokedKeyIDs: [],
+            revokedGenerations: [],
+            acceptedGenerationArtifacts: []
+        )
+        try await manager.applySignedCatalogAcceptanceState(unboundState)
+
+        XCTAssertEqual(reconciliation.count, 1)
+        XCTAssertNil(reconciliation.first?.0)
+        XCTAssertEqual(reconciliation.first?.1, .suspend)
+        let stoppedPackage = await store.installedPackage(for: record.extensionID)
+        let stopped = try XCTUnwrap(stoppedPackage)
+        XCTAssertFalse(stopped.isEnabled)
+        XCTAssertTrue(stopped.isCatalogRevoked)
+    }
+
+    func testCatalogLifecycleRejectsAStaleArtifactAfterLaterRevocation() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let archive = try signing.archive()
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "stale-revoked-catalog-artifact",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, _, _ in }
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [manager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(
+                sequence: 2,
+                generation: "catalog-gen-2",
+                revocations: [.object([
+                    "kind": .string("key"),
+                    "keyID": .string("catalog-2026-q3"),
+                    "effectiveAt": .string("2026-08-25T00:00:00Z")
+                ])],
+                signingKeyID: "catalog-2026-q4",
+                signingKey: signing.replacementLeaf
+            ),
+            now: signing.now
+        )
+
+        await assertAsyncThrows {
+            try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+        }
+        let packageAfterRejectedInstall = await store.installedPackage(for: record.extensionID)
+        XCTAssertNil(packageAfterRejectedInstall)
+    }
+
+    func testCatalogStartupAuthorizationRequiresAcceptedBindingAndPersistsRevocation() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-startup-authorization",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [] }
+        )
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, _, _ in },
+            catalogRecordAuthorization: { record in
+                try coordinator.authorizeInstalledCatalogRecord(record)
+            }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+
+        let rogueRecord = signing.record(
+            generation: "not-accepted-by-catalog",
+            artifact: archive,
+            manifestDigest: record.manifestSHA256,
+            inventoryDigest: record.resourceInventorySHA256
+        )
+        XCTAssertThrowsError(try coordinator.authorizeInstalledCatalogRecord(rogueRecord)) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .revoked)
+        }
+        let alteredSignerRecord = FloorpWebExtensionCatalogPackageRecord(
+            extensionID: record.extensionID,
+            generation: record.generation,
+            signingKeyID: "catalog-2026-q4",
+            version: record.version,
+            artifactURL: record.artifactURL,
+            artifactBytes: record.artifactBytes,
+            artifactSHA256: record.artifactSHA256,
+            manifestSHA256: record.manifestSHA256,
+            resourceInventorySHA256: record.resourceInventorySHA256,
+            compatibilityProfiles: record.compatibilityProfiles,
+            availability: record.availability
+        )
+        XCTAssertThrowsError(try coordinator.authorizeInstalledCatalogRecord(alteredSignerRecord)) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .revoked)
+        }
+
+        let revoked = try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 2,
+                revocations: [.object([
+                    "kind": .string("generation"),
+                    "extensionID": .string(record.extensionID.rawValue),
+                    "generation": .string(record.generation),
+                    "effectiveAt": .string("2026-08-25T00:00:00Z")
+                ])]
+            ),
+            previousState: stateStore.state,
+            now: signing.now
+        )
+        try stateStore.save(revoked.catalog.nextAcceptanceState)
+
+        let installedPackage = await store.installedPackage(for: record.extensionID)
+        let installed = try XCTUnwrap(installedPackage)
+        await assertAsyncThrows {
+            _ = try await manager.restoreInstalledPackageIfCurrent(installed)
+        }
+        let afterRestorePackage = await store.installedPackage(for: record.extensionID)
+        let afterRestore = try XCTUnwrap(afterRestorePackage)
+        XCTAssertTrue(afterRestore.isCatalogRevoked)
+        XCTAssertFalse(afterRestore.isEnabled)
+    }
+
+    func testCatalogReloadAuthorizationFailureStopsRuntimeAndPersistsRevocation() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-reload-authorization",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [] }
+        )
+        var reconciledPackages = [FloorpWebExtensionInstalledPackage?]()
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, package, operation in
+                XCTAssertEqual(operation, .suspend)
+                reconciledPackages.append(package)
+            },
+            catalogRecordAuthorization: { record in
+                try coordinator.authorizeInstalledCatalogRecord(record)
+            }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+        reconciledPackages.removeAll()
+
+        let revoked = try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 2,
+                revocations: [.object([
+                    "kind": .string("generation"),
+                    "extensionID": .string(record.extensionID.rawValue),
+                    "generation": .string(record.generation),
+                    "effectiveAt": .string("2026-08-25T00:00:00Z")
+                ])]
+            ),
+            previousState: stateStore.state,
+            now: signing.now
+        )
+        try stateStore.save(revoked.catalog.nextAcceptanceState)
+
+        do {
+            try await manager.reload(record.extensionID)
+            XCTFail("A revoked catalog package must not reload")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .revoked)
+        }
+        XCTAssertEqual(reconciledPackages.count, 1)
+        XCTAssertNil(reconciledPackages.first!)
+        let afterReloadPackage = await store.installedPackage(for: record.extensionID)
+        let afterReload = try XCTUnwrap(afterReloadPackage)
+        XCTAssertTrue(afterReload.isCatalogRevoked)
+        XCTAssertFalse(afterReload.isEnabled)
+    }
+
+    func testCatalogRevocationFansOutToNormalAndPrivateManagers() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let normalStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-revocation-fanout",
+            isPrivateBrowsing: false,
+            directory: directory.appendingPathComponent("normal", isDirectory: true)
+        )
+        let privateStore = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-revocation-fanout",
+            isPrivateBrowsing: true,
+            directory: directory.appendingPathComponent("private", isDirectory: true)
+        )
+        let normalManager = FloorpWebExtensionLivePackageManager(store: normalStore) { _, _, _ in }
+        let privateManager = FloorpWebExtensionLivePackageManager(store: privateStore) { _, _, _ in }
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: InMemoryCatalogStateStore(),
+            packageManagers: { [normalManager, privateManager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: normalManager)
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: privateManager)
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(
+                sequence: 2,
+                revocations: [.object([
+                    "kind": .string("generation"),
+                    "extensionID": .string(record.extensionID.rawValue),
+                    "generation": .string(record.generation),
+                    "effectiveAt": .string("2026-08-25T00:00:00Z")
+                ])]
+            ),
+            now: signing.now
+        )
+
+        let normalPackage = await normalStore.installedPackage(for: record.extensionID)
+        let privatePackage = await privateStore.installedPackage(for: record.extensionID)
+        XCTAssertFalse(try XCTUnwrap(normalPackage).isEnabled)
+        XCTAssertFalse(try XCTUnwrap(privatePackage).isEnabled)
+    }
+
+    func testCatalogLifecycleSerializesConcurrentAcceptanceBeforeSavingState() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let archive = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: archive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-acceptance-serialization",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let reconciliation = PausedLifecycleReconciliation()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, package, operation in
+            XCTAssertEqual(operation, .suspend)
+            await reconciliation.reconcile(package)
+        }
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [manager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+        let secondCatalog = try signing.catalog(
+            sequence: 2,
+            generation: "catalog-gen-2",
+            revocations: [.object([
+                "kind": .string("key"),
+                "keyID": .string("catalog-2026-q3"),
+                "effectiveAt": .string("2026-08-25T00:00:00Z")
+            ])],
+            signingKeyID: "catalog-2026-q4",
+            signingKey: signing.replacementLeaf
+        )
+        let thirdCatalog = try signing.catalog(
+            sequence: 3,
+            generation: "catalog-gen-2",
+            signingKeyID: "catalog-2026-q4",
+            signingKey: signing.replacementLeaf
+        )
+
+        let secondAcceptance = Task { @MainActor in
+            try await coordinator.acceptAndApplyRevocations(catalogData: secondCatalog, now: signing.now)
+        }
+        await reconciliation.waitUntilInitialRevocation()
+        let thirdAcceptance = Task { @MainActor in
+            try await coordinator.acceptAndApplyRevocations(catalogData: thirdCatalog, now: signing.now)
+        }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(stateStore.state?.highestSequence, 1)
+
+        await reconciliation.resumeInitialRevocation()
+        _ = try await secondAcceptance.value
+        let final = try await thirdAcceptance.value
+        XCTAssertEqual(final.catalog.sequence, 3)
+        XCTAssertEqual(stateStore.state?.highestSequence, 3)
+        XCTAssertTrue(stateStore.state?.revokedKeyIDs.contains("catalog-2026-q3") == true)
+    }
+
+    func testCatalogUpdateRequiresDigestBoundExplicitConsent() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let firstCatalog = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let firstRecord = try XCTUnwrap(firstCatalog.catalog.packages.first)
+        let firstArchive = try signing.archive()
+        let firstArtifact = try await downloader.download(catalog: firstCatalog, record: firstRecord) { url in
+            .init(finalURL: url, statusCode: 200, data: firstArchive)
+        }
+        var updatedResources = signing.resources()
+        updatedResources["content/document-start.js"] = Data(
+            "globalThis.floorpCatalogContentScript = 'generation-2';".utf8
+        )
+        let secondCatalogData = try signing.catalog(
+                sequence: 2,
+                generation: "catalog-gen-2",
+                resources: updatedResources
+            )
+        let secondCatalog = try verifier.verify(
+            catalogData: secondCatalogData,
+            previousState: firstCatalog.catalog.nextAcceptanceState,
+            now: signing.now
+        )
+        let secondRecord = try XCTUnwrap(secondCatalog.catalog.packages.first)
+        let secondArchive = try signing.archive(resources: updatedResources)
+        let secondArtifact = try await downloader.download(catalog: secondCatalog, record: secondRecord) { url in
+            .init(finalURL: url, statusCode: 200, data: secondArchive)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "signed-catalog-update-consent",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        var confirmation: FloorpWebExtensionLivePackageManager.CatalogUpdateConfirmationRequest?
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, _, _ in },
+            catalogUpdateConfirmation: { request in
+                confirmation = request
+                return true
+            }
+        )
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            packageManagers: { [manager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(firstArtifact, packageManager: manager)
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: secondCatalogData,
+            now: signing.now
+        )
+
+        await assertAsyncThrows {
+            try await coordinator.installVerifiedCatalogPackage(secondArtifact, packageManager: manager)
+        }
+        let authorization = try await manager.authorizeCatalogUpdate(for: secondArtifact)
+        XCTAssertEqual(confirmation?.installedGeneration, firstRecord.localGeneration)
+        XCTAssertEqual(confirmation?.replacementCatalogGeneration, secondRecord.generation)
+        XCTAssertEqual(confirmation?.replacementArtifactSHA256, secondRecord.artifactSHA256)
+        try await coordinator.installVerifiedCatalogPackage(
+            secondArtifact,
+            packageManager: manager,
+            updateAuthorization: authorization
+        )
+        let installed = await store.installedPackage(for: secondRecord.extensionID)
+        XCTAssertEqual(try XCTUnwrap(installed).generation, secondRecord.localGeneration)
+    }
+
+    func testNativeOptionalPermissionConsentRequiresCurrentGenerationAndIsProfileScoped() async throws {
+        let extensionID = FloorpWebExtensionID(rawValue: "floorp.permission-consent")!
+        let origin = try FloorpWebExtensionMatchPattern("https://permissions.fixture.test/*")
+        var shown: FloorpWebExtensionNativePermissionConsentPresenter.RequestPresentation?
+        let presenter = FloorpWebExtensionNativePermissionConsentPresenter(
+            isPrivateBrowsing: true,
+            packageNameLookup: { id, generation in
+                id == extensionID && generation == "generation-1" ? "Permission Fixture" : nil
+            },
+            confirmation: { presentation in
+                shown = presentation
+                return true
+            }
+        )
+        let allowed = await presenter.authorize(.init(
+            extensionID: extensionID,
+            packageGeneration: "generation-1",
+            apiPermissions: [.storage],
+            origins: [origin]
+        ))
+        XCTAssertTrue(allowed)
+        XCTAssertEqual(shown?.extensionName, "Permission Fixture")
+        XCTAssertEqual(shown?.packageGeneration, "generation-1")
+        XCTAssertEqual(shown?.origins, [origin])
+        XCTAssertTrue(shown?.isPrivateBrowsing == true)
+        XCTAssertTrue(shown?.message.contains("private browsing") == true)
+
+        let stale = await presenter.authorize(.init(
+            extensionID: extensionID,
+            packageGeneration: "generation-2",
+            apiPermissions: [.storage],
+            origins: [origin]
+        ))
+        XCTAssertFalse(stale)
+        let empty = await presenter.authorize(.init(
+            extensionID: extensionID,
+            packageGeneration: "generation-1",
+            apiPermissions: [],
+            origins: []
+        ))
+        XCTAssertFalse(empty)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("floorp-webextension-package-store-tests", isDirectory: true)
@@ -2458,9 +3572,223 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
     }
 }
 
+@MainActor
+private struct CatalogSigningFixture {
+    let root = Curve25519.Signing.PrivateKey()
+    let leaf = Curve25519.Signing.PrivateKey()
+    let replacementLeaf = Curve25519.Signing.PrivateKey()
+    let configuration: FloorpWebExtensionCatalogTrustConfiguration
+    let now: Date
+    let extensionID = FloorpWebExtensionID(rawValue: "floorp.catalog.fixture")!
+
+    init() throws {
+        configuration = try .init(
+            catalogID: "floorp-production",
+            appBundleID: "one.ablaze.floorp",
+            appVersion: "0.3.0",
+            channel: "production",
+            rootPublicKey: root.publicKey.rawRepresentation
+        )
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        now = try XCTUnwrap(formatter.date(from: "2026-08-26T12:00:00Z"))
+    }
+
+    func resources() -> [String: Data] {
+        [
+            "manifest.json": Data("""
+            {
+              "manifest_version": 3,
+              "name": "Catalog Content Script",
+              "version": "1.0.0",
+              "host_permissions": ["https://content-message.fixture.test/*"],
+              "content_scripts": [{
+                "matches": ["https://content-message.fixture.test/*"],
+                "js": ["content/document-start.js"],
+                "css": ["content/marker.css"],
+                "run_at": "document_start",
+                "world": "ISOLATED"
+              }]
+            }
+            """.utf8),
+            "content/document-start.js": Data("globalThis.floorpCatalogContentScript = true;".utf8),
+            "content/marker.css": Data(".floorp-catalog-marker { display: block; }".utf8)
+        ]
+    }
+
+    func unsupportedDNRResources() -> [String: Data] {
+        [
+            "manifest.json": Data("""
+            {
+              "manifest_version": 3,
+              "name": "Unsupported DNR",
+              "version": "1.0.0",
+              "permissions": ["declarativeNetRequest"],
+              "declarative_net_request": {
+                "rule_resources": [{
+                  "id": "redirect-rules",
+                  "enabled": true,
+                  "path": "rules/static.json"
+                }]
+              }
+            }
+            """.utf8),
+            "rules/static.json": Data("""
+            [{
+              "id": 1,
+              "priority": 1,
+              "action": {
+                "type": "redirect",
+                "redirect": {"url": "https://blocked.fixture.test/"}
+              },
+              "condition": {"urlFilter": "ads.fixture.test"}
+            }]
+            """.utf8)
+        ]
+    }
+
+    func archive(resources: [String: Data]? = nil) throws -> Data {
+        try FloorpWebExtensionCatalogArchive.encodedArtifact(resources: resources ?? self.resources())
+    }
+
+    func catalog(
+        sequence: Int64,
+        generation: String = "catalog-gen-1",
+        expiresAt: String = "2026-09-01T00:00:00Z",
+        resources: [String: Data]? = nil,
+        compatibilityProfiles: [String] = ["content-script"],
+        revocations: [FloorpWebExtensionCanonicalJSON.Value] = [],
+        signingKeyID: String = "catalog-2026-q3",
+        signingKey: Curve25519.Signing.PrivateKey? = nil,
+        corruptCatalogSignature: Bool = false
+    ) throws -> Data {
+        let signer = signingKey ?? leaf
+        let packageResources = resources ?? self.resources()
+        let artifact = try archive(resources: packageResources)
+        let package = FloorpWebExtensionCanonicalJSON.Value.object([
+            "extensionID": .string(extensionID.rawValue),
+            "generation": .string(generation),
+            "version": .string("1.0.0"),
+            "artifactURL": .string("https://catalog.floorp.test/artifacts/\(generation).fwea"),
+            "artifactBytes": .integer(Int64(artifact.count)),
+            "artifactSHA256": .string(digest(artifact)),
+            "manifestSHA256": .string(digest(try XCTUnwrap(packageResources["manifest.json"]))),
+            "resourceInventorySHA256": .string(archiveInventoryDigest(artifact)),
+            "compatibilityProfiles": .array(compatibilityProfiles.map { .string($0) }),
+            "availability": .string("available")
+        ])
+        let unsigned = FloorpWebExtensionCanonicalJSON.Value.object([
+            "schemaVersion": .integer(1),
+            "catalogID": .string("floorp-production"),
+            "sequence": .integer(sequence),
+            "issuedAt": .string("2026-08-26T00:00:00Z"),
+            "expiresAt": .string(expiresAt),
+            "audience": .object([
+                "bundleIDs": .array([.string("one.ablaze.floorp")]),
+                "minimumAppVersion": .string("0.3.0"),
+                "channel": .string("production")
+            ]),
+            "signingKey": try signingKeyCertificate(keyID: signingKeyID, publicKey: signer.publicKey),
+            "packages": .array([package]),
+            "revocations": .array(revocations)
+        ])
+        let signature = corruptCatalogSignature
+            ? Data(repeating: 0, count: 64)
+            : try signer.signature(for: FloorpWebExtensionCanonicalJSON.canonicalData(unsigned))
+        guard case .object(var object) = unsigned else { fatalError("catalog must be an object") }
+        object["signature"] = .string(base64URL(signature))
+        return try FloorpWebExtensionCanonicalJSON.canonicalData(.object(object))
+    }
+
+    func record(
+        generation: String,
+        artifact: Data,
+        manifestDigest: String,
+        inventoryDigest: String
+    ) -> FloorpWebExtensionCatalogPackageRecord {
+        .init(
+            extensionID: extensionID,
+            generation: generation,
+            signingKeyID: "catalog-2026-q3",
+            version: "1.0.0",
+            artifactURL: URL(string: "https://catalog.floorp.test/artifacts/\(generation).fwea")!,
+            artifactBytes: artifact.count,
+            artifactSHA256: digest(artifact),
+            manifestSHA256: manifestDigest,
+            resourceInventorySHA256: inventoryDigest,
+            compatibilityProfiles: ["content-script"],
+            availability: .available
+        )
+    }
+
+    func rawArchive(path: String, payload: Data) throws -> Data {
+        let header = try FloorpWebExtensionCanonicalJSON.canonicalData(.object([
+            "files": .array([.object([
+                "path": .string(path),
+                "sha256": .string(digest(payload)),
+                "size": .integer(Int64(payload.count))
+            ])])
+        ]))
+        var archive = Data([0x46, 0x57, 0x45, 0x41, 0x31, 0x0A])
+        let length = UInt32(header.count)
+        archive.append(UInt8((length >> 24) & 0xFF))
+        archive.append(UInt8((length >> 16) & 0xFF))
+        archive.append(UInt8((length >> 8) & 0xFF))
+        archive.append(UInt8(length & 0xFF))
+        archive.append(header)
+        archive.append(payload)
+        return archive
+    }
+
+    private func signingKeyCertificate(
+        keyID: String,
+        publicKey: Curve25519.Signing.PublicKey
+    ) throws -> FloorpWebExtensionCanonicalJSON.Value {
+        let unsigned = FloorpWebExtensionCanonicalJSON.Value.object([
+            "keyID": .string(keyID),
+            "publicKey": .string(base64URL(publicKey.rawRepresentation)),
+            "notBefore": .string("2026-08-01T00:00:00Z"),
+            "notAfter": .string("2026-10-01T00:00:00Z")
+        ])
+        let signature = try root.signature(for: FloorpWebExtensionCanonicalJSON.canonicalData(unsigned))
+        guard case .object(var object) = unsigned else { fatalError("certificate must be an object") }
+        object["signature"] = .string(base64URL(signature))
+        return .object(object)
+    }
+
+    private func archiveInventoryDigest(_ artifact: Data) -> String {
+        let bytes = Array(artifact)
+        let length = Int(bytes[6]) << 24 | Int(bytes[7]) << 16 | Int(bytes[8]) << 8 | Int(bytes[9])
+        return digest(Data(bytes[10..<(10 + length)]))
+    }
+
+    private func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func base64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}
+
 private struct PersistentScriptAPIView: Decodable {
     let id: String
     let persistAcrossSessions: Bool
+}
+
+private final class InMemoryCatalogStateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting, @unchecked Sendable {
+    var state: FloorpWebExtensionCatalogAcceptanceState?
+
+    func load(catalogID: String) throws -> FloorpWebExtensionCatalogAcceptanceState? {
+        state
+    }
+
+    func save(_ state: FloorpWebExtensionCatalogAcceptanceState) throws {
+        self.state = state
+    }
 }
 
 /// Holds the first live-state revocation in a reload so a competing lifecycle
