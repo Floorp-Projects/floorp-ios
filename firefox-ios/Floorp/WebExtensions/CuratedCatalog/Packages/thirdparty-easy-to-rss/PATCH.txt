@@ -1,0 +1,4 @@
+Reduced the MV2 route-recognition extension to static DOM feed discovery.
+The compatibility popup shows only the last page-declared feed URL held in
+profile-scoped storage. Removed clipboard access, tabs, RSSHub integration,
+background interaction, dynamic data, and all external requests.

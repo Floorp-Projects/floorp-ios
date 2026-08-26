@@ -93,6 +93,11 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let rawManifest: Data?
         let packageGeneration: String?
         let resourcePaths: Set<String>
+        /// The externally shipped curated catalog deliberately exposes only
+        /// immutable static block rules. Generic Stage 3 fixtures retain the
+        /// broader dynamic/session contract, but a signed catalog package
+        /// cannot create a new DNR policy at runtime.
+        let allowsMutableDNR: Bool
     }
 
     private enum PermissionMutationAuthority {
@@ -672,7 +677,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             optionalHosts: Set(package.preflight.manifest.optionalHostPermissions),
             rawManifest: package.rawManifest,
             packageGeneration: package.generation,
-            resourcePaths: package.resourcePaths
+            resourcePaths: package.resourcePaths,
+            allowsMutableDNR: package.catalogRecord == nil
         )
     }
 
@@ -686,7 +692,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         optionalHosts: Set<FloorpWebExtensionMatchPattern> = [],
         rawManifest: Data? = nil,
         packageGeneration: String? = nil,
-        resourcePaths: Set<String> = []
+        resourcePaths: Set<String> = [],
+        allowsMutableDNR: Bool = true
     ) async {
         activeExtensions[extensionID] = .init(
             authorityRevision: UUID(),
@@ -698,7 +705,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             optionalHosts: optionalHosts,
             rawManifest: rawManifest,
             packageGeneration: packageGeneration,
-            resourcePaths: resourcePaths
+            resourcePaths: resourcePaths,
+            allowsMutableDNR: allowsMutableDNR
         )
         await permissionBroker.grant(
             grants.apiPermissions,
@@ -851,15 +859,19 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             return try await updateEnabledStaticRuleSets(payload, extensionID: sender.extensionID)
         case "declarativeNetRequest.getDynamicRules":
             try require(.declarativeNetRequest, in: active)
+            try requireMutableDNR(in: active)
             return try await getDNRRules(scope: .dynamic, extensionID: sender.extensionID)
         case "declarativeNetRequest.updateDynamicRules":
             try require(.declarativeNetRequest, in: active)
+            try requireMutableDNR(in: active)
             return try await updateDNRRules(payload, scope: .dynamic, extensionID: sender.extensionID)
         case "declarativeNetRequest.getSessionRules":
             try require(.declarativeNetRequest, in: active)
+            try requireMutableDNR(in: active)
             return try await getDNRRules(scope: .session, extensionID: sender.extensionID)
         case "declarativeNetRequest.updateSessionRules":
             try require(.declarativeNetRequest, in: active)
+            try requireMutableDNR(in: active)
             return try await updateDNRRules(payload, scope: .session, extensionID: sender.extensionID)
         case "declarativeNetRequest.isRegexSupported":
             try require(.declarativeNetRequest, in: active)
@@ -2126,6 +2138,12 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     ) throws {
         guard active.permissions.contains(permission) else {
             throw FloorpWebExtensionMessageError.permissionDenied
+        }
+    }
+
+    private func requireMutableDNR(in active: ActiveExtension) throws {
+        guard active.allowsMutableDNR else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
         }
     }
 

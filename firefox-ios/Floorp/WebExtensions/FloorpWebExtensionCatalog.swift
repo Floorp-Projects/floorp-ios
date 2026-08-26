@@ -47,12 +47,39 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
     let license: String
     let packageDirectoryName: String
     let requestedPermissions: [FloorpWebExtensionPermissionCategory]
+    /// Present only for a package selected by a signature-verified bundled
+    /// catalog. Settings may display this immutable metadata, but cannot use
+    /// it to turn an arbitrary file or URL into an installation request.
+    let catalogRecord: FloorpWebExtensionCatalogPackageRecord?
+
+    init(
+        id: FloorpWebExtensionID,
+        name: String,
+        version: String,
+        summary: String,
+        source: String,
+        license: String,
+        packageDirectoryName: String,
+        requestedPermissions: [FloorpWebExtensionPermissionCategory],
+        catalogRecord: FloorpWebExtensionCatalogPackageRecord? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.version = version
+        self.summary = summary
+        self.source = source
+        self.license = license
+        self.packageDirectoryName = packageDirectoryName
+        self.requestedPermissions = requestedPermissions
+        self.catalogRecord = catalogRecord
+    }
 
     /// Resolves the directory after the fixture has been copied as a folder
     /// resource into the application bundle.  It intentionally only accepts
     /// the actual bundle resource location so missing resources fail closed.
     func packageURL(in bundle: Bundle = .main) -> URL? {
-        bundle.url(forResource: packageDirectoryName, withExtension: nil) ??
+        guard catalogRecord == nil else { return nil }
+        return bundle.url(forResource: packageDirectoryName, withExtension: nil) ??
             bundle.url(
                 forResource: packageDirectoryName,
                 withExtension: nil,
@@ -98,6 +125,39 @@ enum FloorpWebExtensionBundledCatalog {
     /// The App Store MVP intentionally exposes only pinned bundled packages.
     /// Remote sources and arbitrary file import remain independently gated.
     static let items = [contentMessagingMV3Fixture, eventRuntimeMV3Fixture, demandingMV3Fixture]
+
+    static func signedItem(
+        record: FloorpWebExtensionCatalogPackageRecord
+    ) -> FloorpWebExtensionBundledCatalogItem? {
+        guard let metadata = record.metadata else { return nil }
+        var categories = [FloorpWebExtensionPermissionCategory]()
+        if !metadata.hostPermissions.isEmpty {
+            categories.append(.siteData)
+        }
+        if metadata.permissions.contains(.tabs) || metadata.permissions.contains(.activeTab) {
+            categories.append(.tabs)
+        }
+        if metadata.permissions.contains(.storage) {
+            categories.append(.storage)
+        }
+        if metadata.permissions.contains(.declarativeNetRequest) {
+            categories.append(.networkBlocking)
+        }
+        if metadata.permissions.contains(.scripting) {
+            categories.append(.browserAutomation)
+        }
+        return .init(
+            id: record.extensionID,
+            name: metadata.displayName,
+            version: record.version,
+            summary: metadata.description,
+            source: "\(metadata.upstream) @ \(metadata.upstreamRevision)",
+            license: metadata.license,
+            packageDirectoryName: record.artifactURL.lastPathComponent,
+            requestedPermissions: categories,
+            catalogRecord: record
+        )
+    }
 }
 
 enum FloorpWebExtensionCatalogError: Error, Equatable, LocalizedError, Sendable {
@@ -522,6 +582,41 @@ struct FloorpWebExtensionCatalogTrustConfiguration: Sendable {
     }
 }
 
+/// Signed, user-visible provenance for a curated package.  This deliberately
+/// lives in the catalog rather than an unsigned app-side presentation map so
+/// an artifact cannot acquire a different upstream, license, or permission
+/// description after review.
+struct FloorpWebExtensionCatalogPackageMetadata: Codable, Hashable, Sendable {
+    enum PrivateProfileCapability: String, Codable, Hashable, Sendable {
+        case notSupported = "not-supported"
+        case optIn = "opt-in"
+        case supported
+    }
+
+    enum ModificationStatus: String, Codable, Hashable, Sendable {
+        case unmodified
+        case compatibilityPatched = "compatibility-patched"
+        case floorpManaged = "floorp-managed"
+    }
+
+    let displayName: String
+    let description: String
+    let category: String
+    let upstream: String
+    let upstreamRevision: String
+    /// Digest of the acquired upstream ZIP/XPI/CRX/tree before Floorp's
+    /// bounded compatibility patch is applied.
+    let originalArtifactSHA256: String
+    let sourceURL: URL
+    let license: String
+    let noticesSHA256: String
+    let permissions: Set<FloorpWebExtensionAPIGrant>
+    let hostPermissions: Set<FloorpWebExtensionMatchPattern>
+    let privateProfileCapability: PrivateProfileCapability
+    let modificationStatus: ModificationStatus
+    let minimumFloorpBuild: String
+}
+
 struct FloorpWebExtensionCatalogPackageRecord: Codable, Hashable, Sendable {
     enum Availability: String, Codable, Hashable, Sendable {
         case available
@@ -544,6 +639,37 @@ struct FloorpWebExtensionCatalogPackageRecord: Codable, Hashable, Sendable {
     let resourceInventorySHA256: String
     let compatibilityProfiles: Set<String>
     let availability: Availability
+    /// Required by catalog schema v2.  `nil` is retained only for accepted
+    /// schema-v1 records, which have no curated product presentation.
+    let metadata: FloorpWebExtensionCatalogPackageMetadata?
+
+    init(
+        extensionID: FloorpWebExtensionID,
+        generation: String,
+        signingKeyID: String,
+        version: String,
+        artifactURL: URL,
+        artifactBytes: Int,
+        artifactSHA256: String,
+        manifestSHA256: String,
+        resourceInventorySHA256: String,
+        compatibilityProfiles: Set<String>,
+        availability: Availability,
+        metadata: FloorpWebExtensionCatalogPackageMetadata? = nil
+    ) {
+        self.extensionID = extensionID
+        self.generation = generation
+        self.signingKeyID = signingKeyID
+        self.version = version
+        self.artifactURL = artifactURL
+        self.artifactBytes = artifactBytes
+        self.artifactSHA256 = artifactSHA256
+        self.manifestSHA256 = manifestSHA256
+        self.resourceInventorySHA256 = resourceInventorySHA256
+        self.compatibilityProfiles = compatibilityProfiles
+        self.availability = availability
+        self.metadata = metadata
+    }
 
     var localGeneration: String {
         "\(generation)-\(artifactSHA256.prefix(16))"
@@ -608,6 +734,22 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
     /// introduced without making an existing state unreadable. Once a new
     /// catalog is accepted, every observed catalog generation is bound here.
     let acceptedGenerationArtifacts: Set<FloorpWebExtensionCatalogGenerationArtifactDigest>
+    /// The exact generation/digest/key bindings that the newest accepted
+    /// catalog still permits to execute. This is intentionally distinct from
+    /// `acceptedGenerationArtifacts`: the latter preserves the immutable
+    /// history needed to reject a later conflicting reuse of a generation,
+    /// whereas this set makes a withdrawn catalog entry stop immediately.
+    ///
+    /// A legacy persisted state has no value for this field and is decoded as
+    /// an empty set. That is deliberately fail-closed: it cannot authorize an
+    /// old package until a current signed catalog is accepted again.
+    let currentGenerationArtifacts: Set<FloorpWebExtensionCatalogGenerationArtifactDigest>
+    /// The exact canonical catalog bytes accepted at `highestSequence`.
+    /// This makes an application-bundled catalog safely idempotent across
+    /// launches while continuing to reject a different catalog that reuses a
+    /// sequence number. Legacy state deliberately has no digest and therefore
+    /// cannot use the idempotent path.
+    let acceptedCatalogSHA256: String?
 
     init(
         catalogID: String,
@@ -615,7 +757,9 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
         maximumObservedAt: Date,
         revokedKeyIDs: Set<String>,
         revokedGenerations: Set<FloorpWebExtensionCatalogGeneration>,
-        acceptedGenerationArtifacts: Set<FloorpWebExtensionCatalogGenerationArtifactDigest> = []
+        acceptedGenerationArtifacts: Set<FloorpWebExtensionCatalogGenerationArtifactDigest> = [],
+        currentGenerationArtifacts: Set<FloorpWebExtensionCatalogGenerationArtifactDigest>? = nil,
+        acceptedCatalogSHA256: String? = nil
     ) {
         self.catalogID = catalogID
         self.highestSequence = highestSequence
@@ -623,6 +767,11 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
         self.revokedKeyIDs = revokedKeyIDs
         self.revokedGenerations = revokedGenerations
         self.acceptedGenerationArtifacts = acceptedGenerationArtifacts
+        // This default maintains the intended behavior for in-memory callers
+        // that build a state explicitly. Persisted legacy state follows the
+        // stricter decoding path below instead.
+        self.currentGenerationArtifacts = currentGenerationArtifacts ?? acceptedGenerationArtifacts
+        self.acceptedCatalogSHA256 = acceptedCatalogSHA256
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -632,6 +781,8 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
         case revokedKeyIDs
         case revokedGenerations
         case acceptedGenerationArtifacts
+        case currentGenerationArtifacts
+        case acceptedCatalogSHA256
     }
 
     init(from decoder: Decoder) throws {
@@ -648,6 +799,14 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
             Set<FloorpWebExtensionCatalogGenerationArtifactDigest>.self,
             forKey: .acceptedGenerationArtifacts
         ) ?? []
+        currentGenerationArtifacts = try container.decodeIfPresent(
+            Set<FloorpWebExtensionCatalogGenerationArtifactDigest>.self,
+            forKey: .currentGenerationArtifacts
+        ) ?? []
+        acceptedCatalogSHA256 = try container.decodeIfPresent(
+            String.self,
+            forKey: .acceptedCatalogSHA256
+        )
     }
 }
 
@@ -719,8 +878,9 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         previousState: FloorpWebExtensionCatalogAcceptanceState?,
         now: Date = Date()
     ) throws -> FloorpWebExtensionCatalogVerificationResult {
+        let catalogDigest = FloorpWebExtensionArtifactDownloader.sha256(catalogData)
         let value = try FloorpWebExtensionCanonicalJSON.parse(catalogData)
-        // The signature covers the canonical form, and catalog-v1 also
+        // The signature covers the canonical form, and every supported schema
         // requires the transported bytes themselves to be canonical. This
         // keeps a signed semantic value from acquiring a second, tolerated
         // wire representation through whitespace, key ordering, or escapes.
@@ -734,7 +894,8 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
                 "signingKey", "packages", "revocations", "signature"
             ]
         )
-        guard try integer(root, "schemaVersion") == 1,
+        let schemaVersion = try integer(root, "schemaVersion")
+        guard [1, 2].contains(schemaVersion),
               try string(root, "catalogID", maximumLength: 96) == configuration.catalogID else {
             throw FloorpWebExtensionCatalogError.invalidCatalog("unsupported catalog identity")
         }
@@ -757,7 +918,10 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             guard now.addingTimeInterval(clockRollbackTolerance) >= previousState.maximumObservedAt else {
                 throw FloorpWebExtensionCatalogError.clockRollback
             }
-            guard sequence > previousState.highestSequence else {
+            guard sequence > previousState.highestSequence || (
+                sequence == previousState.highestSequence &&
+                    previousState.acceptedCatalogSHA256 == catalogDigest
+            ) else {
                 throw FloorpWebExtensionCatalogError.sequenceRollback
             }
         }
@@ -819,7 +983,8 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         }
         let packages = try parsePackages(
             try array(root, "packages"),
-            signingKeyID: signingKey.keyID
+            signingKeyID: signingKey.keyID,
+            schemaVersion: schemaVersion
         )
         var acceptedGenerationArtifacts = Set<FloorpWebExtensionCatalogGenerationArtifactDigest>()
         for binding in previousState?.acceptedGenerationArtifacts ?? [] {
@@ -853,13 +1018,53 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
                 into: &acceptedGenerationArtifacts
             )
         }
+        let currentExtensionIDs = Set(packages.compactMap { record -> FloorpWebExtensionID? in
+            guard record.availability == .available || record.availability == .updateAvailable else {
+                return nil
+            }
+            return record.extensionID
+        })
+        var currentGenerationArtifacts = Set<FloorpWebExtensionCatalogGenerationArtifactDigest>()
+        // A replacement generation must not shut down the known-good
+        // immutable generation before the update itself has been applied.
+        // Carry it only while the newest catalog still offers *some* active
+        // generation for that extension; an explicit revocation or a wholly
+        // withdrawn extension is never carried forward.
+        for binding in acceptedGenerationArtifacts where
+            currentExtensionIDs.contains(binding.catalogGeneration.extensionID) &&
+            !revokedGenerations.contains(binding.catalogGeneration) &&
+            !revokedKeyIDs.contains(binding.signingKeyID ?? "") {
+            try mergeAcceptedGenerationBinding(binding, into: &currentGenerationArtifacts)
+        }
+        for record in packages where record.availability == .available || record.availability == .updateAvailable {
+            let identity = FloorpWebExtensionCatalogGeneration(
+                extensionID: record.extensionID,
+                generation: record.generation
+            )
+            // A catalog is permitted to retain a revoked record for audit
+            // metadata, but it cannot keep that record executable.
+            guard !revokedGenerations.contains(identity),
+                  !revokedKeyIDs.contains(signingKey.keyID) else {
+                continue
+            }
+            try mergeAcceptedGenerationBinding(
+                .init(
+                    catalogGeneration: identity,
+                    artifactSHA256: record.artifactSHA256,
+                    signingKeyID: signingKey.keyID
+                ),
+                into: &currentGenerationArtifacts
+            )
+        }
         let state = FloorpWebExtensionCatalogAcceptanceState(
             catalogID: configuration.catalogID,
             highestSequence: sequence,
             maximumObservedAt: max(previousState?.maximumObservedAt ?? .distantPast, now),
             revokedKeyIDs: revokedKeyIDs,
             revokedGenerations: revokedGenerations,
-            acceptedGenerationArtifacts: acceptedGenerationArtifacts
+            acceptedGenerationArtifacts: acceptedGenerationArtifacts,
+            currentGenerationArtifacts: currentGenerationArtifacts,
+            acceptedCatalogSHA256: catalogDigest
         )
         return .init(catalog: .init(
             catalogID: configuration.catalogID,
@@ -964,7 +1169,8 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
 
     private func parsePackages(
         _ values: [FloorpWebExtensionCanonicalJSON.Value],
-        signingKeyID: String
+        signingKeyID: String,
+        schemaVersion: Int64
     ) throws -> [FloorpWebExtensionCatalogPackageRecord] {
         guard values.count <= 128 else {
             throw FloorpWebExtensionCatalogError.invalidCatalog("too many packages")
@@ -972,10 +1178,14 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         var records = [FloorpWebExtensionCatalogPackageRecord]()
         var identifiers = Set<FloorpWebExtensionCatalogGeneration>()
         for value in values {
-            let object = try exactObject(value, keys: [
+            var expectedFields: Set<String> = [
                 "extensionID", "generation", "version", "artifactURL", "artifactBytes", "artifactSHA256",
                 "manifestSHA256", "resourceInventorySHA256", "compatibilityProfiles", "availability"
-            ])
+            ]
+            if schemaVersion == 2 {
+                expectedFields.insert("metadata")
+            }
+            let object = try exactObject(value, keys: expectedFields)
             let extensionIDValue = try string(object, "extensionID", maximumLength: 128)
             guard let extensionID = FloorpWebExtensionID(rawValue: extensionIDValue),
                   extensionID.rawValue == extensionIDValue else {
@@ -1026,7 +1236,8 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
                 manifestSHA256: try sha256(object, "manifestSHA256"),
                 resourceInventorySHA256: try sha256(object, "resourceInventorySHA256"),
                 compatibilityProfiles: profiles,
-                availability: availability
+                availability: availability,
+                metadata: schemaVersion == 2 ? try parseMetadata(object["metadata"]) : nil
             )
             guard identifiers.insert(.init(extensionID: extensionID, generation: generation)).inserted else {
                 throw FloorpWebExtensionCatalogError.invalidCatalog("duplicate package generation")
@@ -1034,6 +1245,111 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             records.append(record)
         }
         return records
+    }
+
+    private func parseMetadata(
+        _ value: FloorpWebExtensionCanonicalJSON.Value?
+    ) throws -> FloorpWebExtensionCatalogPackageMetadata {
+        let object = try exactObject(value, keys: [
+            "displayName", "description", "category", "upstream", "upstreamRevision",
+            "originalArtifactSHA256", "sourceURL", "license", "noticesSHA256", "permissions",
+            "hostPermissions", "privateProfileCapability", "modificationStatus", "minimumFloorpBuild"
+        ])
+        let displayName = try productText(object, "displayName", maximumLength: 256)
+        let description = try productText(object, "description", maximumLength: 1_024)
+        let category = try string(object, "category", maximumLength: 64)
+        guard Self.isSafeIdentifier(category, maximumLength: 64) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package category")
+        }
+        let upstream = try productText(object, "upstream", maximumLength: 256)
+        let upstreamRevision = try productText(object, "upstreamRevision", maximumLength: 256)
+        let sourceURLValue = try string(object, "sourceURL", maximumLength: 2_048)
+        guard let sourceURL = URL(string: sourceURLValue),
+              sourceURL.absoluteString == sourceURLValue,
+              sourceURL.scheme?.lowercased() == "https",
+              sourceURL.host != nil,
+              sourceURL.user == nil,
+              sourceURL.password == nil else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("invalid upstream source URL")
+        }
+        let license = try string(object, "license", maximumLength: 96)
+        guard license.unicodeScalars.allSatisfy({ scalar in
+            (0x41...0x5A).contains(scalar.value) ||
+                (0x61...0x7A).contains(scalar.value) ||
+                (0x30...0x39).contains(scalar.value) ||
+                [0x2E, 0x2B, 0x2D, 0x28, 0x29, 0x20].contains(scalar.value)
+        }) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package license")
+        }
+        let permissions = try Set(array(object, "permissions").map { value -> FloorpWebExtensionAPIGrant in
+            guard let raw = value.string,
+                  let permission = FloorpWebExtensionAPIGrant(rawValue: raw) else {
+                throw FloorpWebExtensionCatalogError.invalidCatalog("unsupported metadata permission")
+            }
+            return permission
+        })
+        let permissionValues = try array(object, "permissions")
+        guard permissions.count == permissionValues.count else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("duplicate metadata permission")
+        }
+        let hostPermissionValues = try array(object, "hostPermissions")
+        guard hostPermissionValues.count <= 128 else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("too many metadata host permissions")
+        }
+        let hostPermissions = try Set(hostPermissionValues.map { value -> FloorpWebExtensionMatchPattern in
+            guard let raw = value.string else {
+                throw FloorpWebExtensionCatalogError.invalidCatalog("invalid metadata host permission")
+            }
+            do {
+                return try FloorpWebExtensionMatchPattern(raw)
+            } catch {
+                throw FloorpWebExtensionCatalogError.invalidCatalog("invalid metadata host permission")
+            }
+        })
+        guard hostPermissions.count == hostPermissionValues.count else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("duplicate metadata host permission")
+        }
+        let minimumFloorpBuild = try string(object, "minimumFloorpBuild", maximumLength: 32)
+        guard let privateProfileCapability = FloorpWebExtensionCatalogPackageMetadata.PrivateProfileCapability(
+            rawValue: try string(object, "privateProfileCapability", maximumLength: 32)
+        ), let modificationStatus = FloorpWebExtensionCatalogPackageMetadata.ModificationStatus(
+            rawValue: try string(object, "modificationStatus", maximumLength: 32)
+        ), let minimumVersion = Self.semanticVersion(minimumFloorpBuild),
+           let currentVersion = Self.semanticVersion(configuration.appVersion),
+           Self.semanticVersionIsAtLeast(currentVersion, minimumVersion) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package metadata capability")
+        }
+        return .init(
+            displayName: displayName,
+            description: description,
+            category: category,
+            upstream: upstream,
+            upstreamRevision: upstreamRevision,
+            originalArtifactSHA256: try sha256(object, "originalArtifactSHA256"),
+            sourceURL: sourceURL,
+            license: license,
+            noticesSHA256: try sha256(object, "noticesSHA256"),
+            permissions: permissions,
+            hostPermissions: hostPermissions,
+            privateProfileCapability: privateProfileCapability,
+            modificationStatus: modificationStatus,
+            minimumFloorpBuild: minimumFloorpBuild
+        )
+    }
+
+    private func productText(
+        _ object: [String: FloorpWebExtensionCanonicalJSON.Value],
+        _ key: String,
+        maximumLength: Int
+    ) throws -> String {
+        let value = try string(object, key, maximumLength: maximumLength)
+        guard value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+              value.unicodeScalars.allSatisfy({ scalar in
+                  scalar.value >= 0x20 && !(0x7F...0x9F).contains(scalar.value)
+              }) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package \(key)")
+        }
+        return value
     }
 
     private func parseRevocations(
@@ -1384,7 +1700,31 @@ enum FloorpWebExtensionCatalogArchive {
               try inventoryDigest(entries) == record.resourceInventorySHA256 else {
             throw FloorpWebExtensionCatalogError.artifactRejected("manifest or inventory digest mismatch")
         }
+        try validateSignedMetadata(record.metadata, manifestData: manifest)
         return resources
+    }
+
+    /// Schema-v2 metadata is not merely a display label.  It must agree with
+    /// the staged manifest before the resource map crosses into the package
+    /// store, otherwise a correctly signed catalog could misrepresent an
+    /// artifact's user-consent surface.
+    private static func validateSignedMetadata(
+        _ metadata: FloorpWebExtensionCatalogPackageMetadata?,
+        manifestData: Data
+    ) throws {
+        guard let metadata else { return }
+        let manifest: FloorpWebExtensionManifest
+        do {
+            manifest = try FloorpWebExtensionManifest.decode(manifestData)
+        } catch {
+            throw FloorpWebExtensionCatalogError.artifactRejected("metadata manifest cannot be decoded")
+        }
+        let declaredPermissions = manifest.apiPermissions.union(manifest.optionalAPIPermissions)
+        let declaredHosts = Set(manifest.hostPermissions).union(manifest.optionalHostPermissions)
+        guard metadata.permissions == declaredPermissions,
+              metadata.hostPermissions == declaredHosts else {
+            throw FloorpWebExtensionCatalogError.artifactRejected("signed metadata does not match manifest permissions")
+        }
     }
 
     static func encodedArtifact(resources: [String: Data]) throws -> Data {
@@ -1499,6 +1839,27 @@ enum FloorpWebExtensionInternalCatalogReleaseGate {
     static func requireManagedSourceEnabled() throws {
         guard FloorpFlags.isWebExtensionFeatureEnabled(.managedRemoteSource) else {
             throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
+        }
+    }
+}
+
+/// Catalog bytes can arrive only from one of two fixed product compositions.
+/// The bundled path is verified from app resources and never creates a
+/// network or file-import capability; the remote path remains independently
+/// P0-gated. Keeping this distinction in the lifecycle boundary prevents a
+/// future bundled catalog from accidentally enabling managed remote updates.
+enum FloorpWebExtensionCatalogSource: Sendable {
+    case signedBundled
+    case managedRemote
+
+    func requireEnabled() throws {
+        switch self {
+        case .signedBundled:
+            guard FloorpFlags.isWebExtensionFeatureEnabled(.bundledCatalog) else {
+                throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
+            }
+        case .managedRemote:
+            try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
         }
     }
 }
@@ -1630,16 +1991,19 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
     private let verifier: FloorpWebExtensionCatalogVerifier
     private let stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting
     private let packageManagers: PackageManagerProvider
+    private let source: FloorpWebExtensionCatalogSource
 
     init(
         verifier: FloorpWebExtensionCatalogVerifier,
         stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting,
+        source: FloorpWebExtensionCatalogSource = .managedRemote,
         packageManagers: @escaping PackageManagerProvider = {
             FloorpWebExtensionPackageStoreRegistry.catalogRevocationManagers()
         }
     ) {
         self.verifier = verifier
         self.stateStore = stateStore
+        self.source = source
         self.packageManagers = packageManagers
     }
 
@@ -1647,7 +2011,7 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
         catalogData: Data,
         now: Date = Date()
     ) async throws -> FloorpWebExtensionCatalogVerificationResult {
-        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        try source.requireEnabled()
         let gate = FloorpWebExtensionCatalogLifecycleAcceptanceGate.shared
         await gate.acquire()
         defer { Task { await gate.release() } }
@@ -1659,7 +2023,8 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
         )
         for packageManager in packageManagers() {
             try await packageManager.applySignedCatalogAcceptanceState(
-                result.catalog.nextAcceptanceState
+                result.catalog.nextAcceptanceState,
+                source: source
             )
         }
         try stateStore.save(result.catalog.nextAcceptanceState)
@@ -1676,7 +2041,7 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
         initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
         updateAuthorization: FloorpWebExtensionLivePackageManager.CatalogUpdateAuthorization? = nil
     ) async throws {
-        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        try source.requireEnabled()
         let gate = FloorpWebExtensionCatalogLifecycleAcceptanceGate.shared
         await gate.acquire()
         defer { Task { await gate.release() } }
@@ -1689,7 +2054,8 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
             artifact,
             catalogAuthorization: .init(artifact: artifact),
             initialGrants: initialGrants,
-            updateAuthorization: updateAuthorization
+            updateAuthorization: updateAuthorization,
+            source: source
         )
     }
 
@@ -1699,6 +2065,7 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
     func authorizeInstalledCatalogRecord(
         _ record: FloorpWebExtensionCatalogPackageRecord
     ) throws {
+        try source.requireEnabled()
         let state = try stateStore.load(catalogID: verifier.configuration.catalogID)
         guard catalogState(state, authorizes: record) else {
             throw FloorpWebExtensionCatalogError.revoked
@@ -1738,7 +2105,319 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
             signingKeyID: record.signingKeyID
         )
         return state.acceptedGenerationArtifacts.contains(binding) &&
+            state.currentGenerationArtifacts.contains(binding) &&
             !state.revokedKeyIDs.contains(record.signingKeyID) &&
             !state.revokedGenerations.contains(generation)
+    }
+}
+
+/// The shipping catalog composition for packages that are already embedded in
+/// the signed application. It deliberately has no transport, URL request, or
+/// archive-import API: every artifact is resolved from a fixed app resource,
+/// checked against the signed record, decoded as FWEA1, and then handed to the
+/// same atomic catalog-install path used by the P0 verifier tests.
+@MainActor
+final class FloorpWebExtensionSignedBundledCatalog {
+    typealias ArtifactDataProvider = @MainActor @Sendable (
+        FloorpWebExtensionCatalogPackageRecord
+    ) -> Data?
+
+    static let catalogID = "floorp-ios-curated-testflight"
+    static let channel = "testflight"
+
+    private let catalogData: Data
+    private let verifier: FloorpWebExtensionCatalogVerifier
+    private let stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting
+    private let coordinator: FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator
+    private let artifactDataProvider: ArtifactDataProvider
+    private let packageManagers: FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator.PackageManagerProvider
+    private var acceptedCatalog: FloorpWebExtensionCatalogVerificationResult?
+
+    init(
+        catalogData: Data,
+        rootPublicKey: Data,
+        appBundleID: String,
+        appVersion: String,
+        catalogID: String = FloorpWebExtensionSignedBundledCatalog.catalogID,
+        channel: String = FloorpWebExtensionSignedBundledCatalog.channel,
+        stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting,
+        artifactDataProvider: @escaping ArtifactDataProvider,
+        packageManagers: @escaping FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator.PackageManagerProvider = {
+            FloorpWebExtensionPackageStoreRegistry.catalogRevocationManagers()
+        }
+    ) throws {
+        let configuration = try FloorpWebExtensionCatalogTrustConfiguration(
+            catalogID: catalogID,
+            appBundleID: appBundleID,
+            appVersion: appVersion,
+            channel: channel,
+            rootPublicKey: rootPublicKey
+        )
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: configuration)
+        self.catalogData = catalogData
+        self.verifier = verifier
+        self.stateStore = stateStore
+        self.artifactDataProvider = artifactDataProvider
+        self.packageManagers = packageManagers
+        coordinator = .init(
+            verifier: verifier,
+            stateStore: stateStore,
+            source: .signedBundled,
+            packageManagers: packageManagers
+        )
+    }
+
+    /// Loads exactly the two immutable catalog resources that a release build
+    /// must contain. A missing or malformed resource is an error, not a
+    /// fixture fallback. Callers leave curated packages unavailable in that
+    /// case, and restart authorization then keeps any old catalog generation
+    /// from executing.
+    static func loadFromBundle(
+        _ bundle: Bundle = .main,
+        stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting =
+            FloorpWebExtensionCatalogKeychainStateStore()
+    ) throws -> FloorpWebExtensionSignedBundledCatalog {
+        guard let catalogURL = resourceURL(
+            named: "catalog",
+            fileExtension: "json",
+            bundle: bundle,
+            subdirectory: "Artifacts/Signed"
+        ), let rootURL = resourceURL(
+            named: "root-public-key",
+            fileExtension: "txt",
+            bundle: bundle,
+            subdirectory: "Artifacts/Signed"
+        ) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog(
+                "signed bundled catalog resources are missing"
+            )
+        }
+        let rootText = try String(contentsOf: rootURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let rootPublicKey = decodeBase64URL(rootText), rootPublicKey.count == 32,
+              let appBundleID = bundle.bundleIdentifier,
+              let appVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog(
+                "signed bundled catalog trust configuration is invalid"
+            )
+        }
+        return try .init(
+            catalogData: Data(contentsOf: catalogURL, options: .mappedIfSafe),
+            rootPublicKey: rootPublicKey,
+            appBundleID: appBundleID,
+            appVersion: appVersion,
+            stateStore: stateStore,
+            artifactDataProvider: { record in
+                guard let filename = safeArtifactFilename(record.artifactURL) else { return nil }
+                guard let artifactURL = resourceURL(
+                    named: filename,
+                    fileExtension: nil,
+                    bundle: bundle,
+                    subdirectory: "Artifacts"
+                ) else {
+                    return nil
+                }
+                return try? Data(contentsOf: artifactURL, options: .mappedIfSafe)
+            }
+        )
+    }
+
+    /// Verifies all catalog records and all local artifacts before committing
+    /// the anti-rollback state or making any package visible in Settings. This
+    /// prevents an incomplete app resource set from authorizing an old
+    /// installed generation on restart.
+    func acceptAndApplyRevocations(
+        now: Date = Date()
+    ) async throws -> FloorpWebExtensionCatalogVerificationResult {
+        let previous = try stateStore.load(catalogID: verifier.configuration.catalogID)
+        let candidate = try verifier.verify(
+            catalogData: catalogData,
+            previousState: previous,
+            now: now
+        )
+        try validateLocalArtifacts(in: candidate)
+        let accepted = try await coordinator.acceptAndApplyRevocations(
+            catalogData: catalogData,
+            now: now
+        )
+        acceptedCatalog = accepted
+        return accepted
+    }
+
+    func catalogItems() -> [FloorpWebExtensionBundledCatalogItem] {
+        guard let acceptedCatalog else { return [] }
+        return acceptedCatalog.catalog.packages.compactMap { record in
+            guard let installable = try? acceptedCatalog.installablePackage(
+                extensionID: record.extensionID,
+                generation: record.generation
+            ), installable == record else {
+                return nil
+            }
+            return FloorpWebExtensionBundledCatalog.signedItem(record: record)
+        }
+            .sorted { lhs, rhs in
+                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    /// The Settings-facing installation operation accepts an item only if it
+    /// still exactly matches the currently accepted catalog record. In
+    /// particular, a stale screen cannot install an artifact after a later
+    /// revocation or catalog update has been applied.
+    func install(
+        _ item: FloorpWebExtensionBundledCatalogItem,
+        packageManager: FloorpWebExtensionLivePackageManager
+    ) async throws {
+        guard let requestedRecord = item.catalogRecord,
+              let acceptedCatalog,
+              let record = acceptedCatalog.catalog.packages.first(where: {
+                  $0.extensionID == requestedRecord.extensionID &&
+                      $0.generation == requestedRecord.generation
+              }), record == requestedRecord else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        let artifact = try verifiedArtifact(
+            for: record,
+            catalog: acceptedCatalog
+        )
+        guard let manifestData = artifact.resources["manifest.json"] else {
+            throw FloorpWebExtensionCatalogError.artifactRejected(
+                "catalog artifact is missing its manifest"
+            )
+        }
+        let manifest = try FloorpWebExtensionManifest.decode(manifestData)
+        let installIntoPrivateProfile = packageManager.store.profileKey.isPrivateBrowsing
+        if installIntoPrivateProfile,
+           record.metadata?.privateProfileCapability == .notSupported {
+            throw FloorpWebExtensionCatalogError.artifactRejected(
+                "catalog package is not approved for private browsing"
+            )
+        }
+        let initialGrants = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: manifest.apiPermissions,
+            requestedHosts: Set(manifest.hostPermissions),
+            normalHostAccess: .denied,
+            privateHostAccess: .denied,
+            privateBrowsingEnabled: installIntoPrivateProfile
+        )
+        let updateAuthorization: FloorpWebExtensionLivePackageManager.CatalogUpdateAuthorization?
+        if await packageManager.store.installedPackage(for: record.extensionID) != nil {
+            guard try await packageManager.store.catalogUpdateRequiresExplicitConsent(
+                for: artifact
+            ) else {
+                throw FloorpWebExtensionCatalogError.updateConsentRequired
+            }
+            // The product-owned native presenter is reached through the live
+            // manager. The signed catalog and extension document cannot mint
+            // or replay this authorization themselves.
+            updateAuthorization = try await packageManager.authorizeCatalogUpdate(
+                for: artifact,
+                source: .signedBundled
+            )
+        } else {
+            updateAuthorization = nil
+        }
+        try await coordinator.installVerifiedCatalogPackage(
+            artifact,
+            packageManager: packageManager,
+            initialGrants: initialGrants,
+            updateAuthorization: updateAuthorization
+        )
+    }
+
+    /// A package that survived on disk from an earlier launch is executable
+    /// only after this launch accepted the exact bundled catalog and bound the
+    /// package's immutable record to its persisted device state.
+    func authorizeInstalledCatalogRecord(
+        _ record: FloorpWebExtensionCatalogPackageRecord
+    ) throws {
+        guard acceptedCatalog != nil else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        try coordinator.authorizeInstalledCatalogRecord(record)
+    }
+
+    private func validateLocalArtifacts(
+        in catalog: FloorpWebExtensionCatalogVerificationResult
+    ) throws {
+        for record in catalog.catalog.packages {
+            guard record.availability == .available || record.availability == .updateAvailable else {
+                continue
+            }
+            _ = try verifiedArtifact(for: record, catalog: catalog)
+        }
+    }
+
+    private func verifiedArtifact(
+        for record: FloorpWebExtensionCatalogPackageRecord,
+        catalog: FloorpWebExtensionCatalogVerificationResult
+    ) throws -> FloorpWebExtensionVerifiedCatalogArtifact {
+        let installableRecord = try catalog.installablePackage(
+            extensionID: record.extensionID,
+            generation: record.generation
+        )
+        guard installableRecord == record,
+              let data = artifactDataProvider(record),
+              data.count == record.artifactBytes,
+              FloorpWebExtensionArtifactDownloader.sha256(data) == record.artifactSHA256 else {
+            throw FloorpWebExtensionCatalogError.artifactRejected(
+                "bundled catalog artifact is absent or does not match its signed digest"
+            )
+        }
+        return try .init(
+            catalogID: catalog.catalog.catalogID,
+            catalogSequence: catalog.catalog.sequence,
+            record: record,
+            resources: FloorpWebExtensionCatalogArchive.decode(data, record: record)
+        )
+    }
+
+    private static func resourceURL(
+        named name: String,
+        fileExtension: String?,
+        bundle: Bundle,
+        subdirectory: String? = nil
+    ) -> URL? {
+        let directories = [
+            subdirectory.map { "WebExtensions/CuratedCatalog/\($0)" },
+            subdirectory.map { "CuratedCatalog/\($0)" },
+            subdirectory
+        ].compactMap { $0 }
+        for directory in directories {
+            if let url = bundle.url(
+                forResource: name,
+                withExtension: fileExtension,
+                subdirectory: directory
+            ) {
+                return url
+            }
+        }
+        return bundle.url(forResource: name, withExtension: fileExtension)
+    }
+
+    private static func safeArtifactFilename(_ url: URL) -> String? {
+        let name = url.lastPathComponent
+        guard let finalPathComponent = url.pathComponents.last,
+              name == finalPathComponent,
+              name.range(of: "^[a-z0-9][a-z0-9-]{2,46}\\.fwea1$", options: .regularExpression) != nil else {
+            return nil
+        }
+        return name
+    }
+
+    private static func decodeBase64URL(_ value: String) -> Data? {
+        guard !value.isEmpty,
+              value.unicodeScalars.allSatisfy({ scalar in
+                  (0x41...0x5A).contains(scalar.value) ||
+                      (0x61...0x7A).contains(scalar.value) ||
+                      (0x30...0x39).contains(scalar.value) ||
+                      scalar.value == 0x2D || scalar.value == 0x5F
+              }) else {
+            return nil
+        }
+        let standard = value.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = String(repeating: "=", count: (4 - standard.count % 4) % 4)
+        return Data(base64Encoded: standard + padding)
     }
 }

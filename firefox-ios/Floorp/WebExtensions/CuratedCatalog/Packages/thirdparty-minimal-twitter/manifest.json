@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Minimal Twitter — Floorp compatibility build",
+  "version": "1.0.0",
+  "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
+  "content_scripts": [{
+    "matches": ["https://x.com/*", "https://twitter.com/*"],
+    "css": ["content/minimal.css"],
+    "js": ["content/minimal.js"],
+    "run_at": "document_start",
+    "world": "ISOLATED"
+  }]
+}

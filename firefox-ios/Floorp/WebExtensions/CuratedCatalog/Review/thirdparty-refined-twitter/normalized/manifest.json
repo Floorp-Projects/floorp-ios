@@ -1,0 +1,1 @@
+{"content_scripts":[{"css":["content/refined.css"],"js":["content/refined.js"],"matches":["https://x.com/*","https://twitter.com/*"],"run_at":"document_end","world":"ISOLATED"}],"host_permissions":["https://x.com/*","https://twitter.com/*"],"manifest_version":3,"name":"Refined Twitter — Floorp compatibility build","version":"1.0.0"}

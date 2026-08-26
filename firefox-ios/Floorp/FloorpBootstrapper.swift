@@ -23,6 +23,12 @@ public final class FloorpBootstrapper {
     private static var packageRestoreTasks = [String: Task<Void, Never>]()
     @MainActor
     private static var packageCompositionGenerations = [String: UUID]()
+    /// The curated catalog is loaded only from the app bundle. A failed load
+    /// leaves no curated package install path and makes any persisted catalog
+    /// package fail restart authorization; it never falls back to a network,
+    /// ZIP/CRX, or unsigned folder resource.
+    @MainActor
+    private static var signedBundledCatalog: FloorpWebExtensionSignedBundledCatalog?
     /// Apply all Floorp customizations.
     ///
     /// This method is called once during app startup, after
@@ -108,6 +114,21 @@ public final class FloorpBootstrapper {
         FloorpFlags.setWebExtensionFeature(.core, enabled: true)
         FloorpFlags.setWebExtensionFeature(.bundledCatalog, enabled: true)
         FloorpFlags.setWebExtensionFeature(.compatibilityHarness, enabled: true)
+        do {
+            signedBundledCatalog = try FloorpWebExtensionSignedBundledCatalog.loadFromBundle()
+            logger.log(
+                "Floorp: signed bundled WebExtensions catalog resources loaded",
+                level: .info,
+                category: .setup
+            )
+        } catch {
+            signedBundledCatalog = nil
+            logger.log(
+                "Floorp: signed bundled WebExtensions catalog unavailable: \(error)",
+                level: .warning,
+                category: .setup
+            )
+        }
         logger.log(
             "Floorp: WebExtensions core, bundled catalog, and compatibility harness enabled",
             level: .info,
@@ -220,6 +241,19 @@ public final class FloorpBootstrapper {
                 compositionGeneration: compositionGeneration
             )
             packageRestoreTasks[profileIdentifier] = Task { @MainActor in
+                if let signedBundledCatalog {
+                    do {
+                        _ = try await signedBundledCatalog.acceptAndApplyRevocations()
+                    } catch {
+                        logger.log(
+                            "Floorp: signed bundled WebExtensions catalog was rejected: \(error)",
+                            level: .warning,
+                            category: .setup
+                        )
+                    }
+                }
+                guard !Task.isCancelled,
+                      packageCompositionGenerations[profileIdentifier] == compositionGeneration else { return }
                 await restoreInstalledPackages(
                     from: normalPackageStore,
                     into: normalCoordinator,
@@ -416,8 +450,29 @@ public final class FloorpBootstrapper {
             reconcile: { extensionID, package, operation in
                 try await reconcileComposition(extensionID, package, operation, nil)
             },
+            catalogItemsProvider: {
+                signedBundledCatalog?.catalogItems() ?? []
+            },
+            signedBundledCatalogInstaller: { manager, item in
+                guard let signedBundledCatalog else {
+                    throw FloorpWebExtensionCatalogError.revoked
+                }
+                try await signedBundledCatalog.install(item, packageManager: manager)
+            },
             reconcilePrepared: { extensionID, package, operation, resources in
                 try await reconcileComposition(extensionID, package, operation, resources)
+            },
+            catalogUpdateConfirmation: { request in
+                await FloorpWebExtensionNativeCatalogUpdateConsentPresenter.confirm(request)
+            },
+            catalogRecordAuthorization: { record in
+                guard let signedBundledCatalog else {
+                    throw FloorpWebExtensionCatalogError.revoked
+                }
+                try signedBundledCatalog.authorizeInstalledCatalogRecord(record)
+            },
+            dnrExcludedTopLevelDomainsUpdater: { extensionID, domains in
+                try await coordinator.updateExcludedTopLevelDomains(domains, for: extensionID)
             }
         )
         try FloorpWebExtensionPackageStoreRegistry.install(store, manager: manager)
@@ -705,7 +760,9 @@ public final class FloorpBootstrapper {
                 staticRuleSets: staticRuleSets,
                 enabledStaticRuleSetIDs: enabledRuleSetIDs,
                 dynamicRules: storedDNRConfiguration?.dynamicRules ?? [],
-                limits: storedDNRConfiguration?.limits ?? .init()
+                limits: storedDNRConfiguration?.limits ?? .init(),
+                excludedTopLevelDomains: storedDNRConfiguration?.excludedTopLevelDomains ?? [],
+                policyGeneration: storedDNRConfiguration?.policyGeneration ?? 1
             )
             guard applied else {
                 throw FloorpWebExtensionError.unsupported("restored DNR generation was superseded")

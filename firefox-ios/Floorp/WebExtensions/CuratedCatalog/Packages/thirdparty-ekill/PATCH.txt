@@ -1,0 +1,4 @@
+Converted the MV2 action/background/options package to an isolated MV3 page
+interaction. The compatibility build retains only temporary local hide/undo;
+it removes activeTab, storage, arbitrary selectors, remote resources, popup,
+and all unsupported browser APIs.

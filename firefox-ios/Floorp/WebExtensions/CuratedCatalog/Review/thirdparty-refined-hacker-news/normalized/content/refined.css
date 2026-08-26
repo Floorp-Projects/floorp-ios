@@ -1,0 +1,4 @@
+/* Compatibility subset inspired by plibither8/refined-hacker-news. */
+body { background: #f6f6ef !important; font-size: 16px !important; }
+.titleline > a:focus-visible, a:focus-visible { outline: 3px solid #ff6600 !important; outline-offset: 2px; }
+.comhead { line-height: 1.45 !important; }

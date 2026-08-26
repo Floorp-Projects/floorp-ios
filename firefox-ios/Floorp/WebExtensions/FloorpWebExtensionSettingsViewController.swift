@@ -12,20 +12,206 @@ struct FloorpWebExtensionSettingsOptionsPage: Hashable, Sendable {
     let entryPoint: FloorpWebExtensionActionResource
 }
 
+/// Presents one normal-profile catalog as a product setting while making
+/// private browsing an explicit, independent installation into the ephemeral
+/// private profile. This prevents private runtime, DNR, storage, and package
+/// directories from sharing normal-profile state.
+@MainActor
+final class FloorpWebExtensionProfileSettingsManager: FloorpWebExtensionSettingsManaging {
+    private let normalManager: FloorpWebExtensionLivePackageManager
+    private let privateManager: FloorpWebExtensionLivePackageManager
+
+    init(
+        normalManager: FloorpWebExtensionLivePackageManager,
+        privateManager: FloorpWebExtensionLivePackageManager
+    ) {
+        self.normalManager = normalManager
+        self.privateManager = privateManager
+    }
+
+    func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] {
+        let normalPackages = await normalManager.settingsPackages()
+        let privatePackages = await privateManager.settingsPackages()
+        let privateByID = Dictionary(uniqueKeysWithValues: privatePackages.map { ($0.id, $0) })
+        return normalPackages.map { normalPackage in
+            guard let privatePackage = privateByID[normalPackage.id] else {
+                return normalPackage
+            }
+            return .init(
+                id: normalPackage.id,
+                name: normalPackage.name,
+                version: normalPackage.version,
+                catalogGeneration: normalPackage.catalogGeneration,
+                isEnabled: normalPackage.isEnabled,
+                isCatalogRevoked: normalPackage.isCatalogRevoked || privatePackage.isCatalogRevoked,
+                permissions: normalPackage.permissions,
+                siteAccessDescription: normalPackage.siteAccessDescription,
+                requestedSites: normalPackage.requestedSites,
+                normalHostAccess: normalPackage.normalHostAccess,
+                privateHostAccess: privatePackage.privateHostAccess,
+                isPrivateBrowsingEnabled: privatePackage.isPrivateBrowsingEnabled,
+                privateAccessDescription: privatePackage.isPrivateBrowsingEnabled
+                    ? privatePackage.privateAccessDescription
+                    : "Not allowed",
+                errorDescription: normalPackage.errorDescription ?? privatePackage.errorDescription,
+                optionsPage: normalPackage.optionsPage,
+                dnrStatus: normalPackage.dnrStatus,
+                privateDNRStatus: privatePackage.dnrStatus
+            )
+        }
+    }
+
+    func catalogItems() async -> [FloorpWebExtensionBundledCatalogItem] {
+        await normalManager.catalogItems()
+    }
+
+    func installBundledPackage(_ item: FloorpWebExtensionBundledCatalogItem) async throws {
+        try await normalManager.installBundledPackage(item)
+    }
+
+    func setNormalSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        try await normalManager.setNormalSiteAccess(access, for: extensionID)
+    }
+
+    func setPrivateBrowsingEnabled(
+        _ isEnabled: Bool,
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        if !isEnabled {
+            guard let installed = await privateManager.store.installedPackage(for: extensionID) else {
+                return
+            }
+            guard installed.grants.privateBrowsingEnabled else { return }
+            try await privateManager.setPrivateBrowsingEnabled(false, for: extensionID)
+            return
+        }
+
+        guard let normalPackage = await normalManager.store.installedPackage(for: extensionID),
+              let normalRecord = normalPackage.catalogRecord,
+              let privateProfileCapability = normalRecord.metadata?.privateProfileCapability,
+              privateProfileCapability != .notSupported else {
+            throw FloorpWebExtensionError.unsupported(
+                "this extension is not approved for private browsing"
+            )
+        }
+        if let privatePackage = await privateManager.store.installedPackage(for: extensionID) {
+            guard privatePackage.catalogRecord != nil else {
+                throw FloorpWebExtensionError.unsupported(
+                    "private browsing requires a signed catalog package"
+                )
+            }
+            if !privatePackage.grants.privateBrowsingEnabled {
+                try await privateManager.setPrivateBrowsingEnabled(true, for: extensionID)
+            }
+            return
+        }
+
+        let candidates = await normalManager.catalogItems().filter { item in
+            item.id == normalRecord.extensionID && item.catalogRecord != nil
+        }
+        // Catalogs with two installable generations require the normal
+        // Settings update control to choose one; private setup never guesses.
+        guard candidates.count == 1, let item = candidates.first else {
+            throw FloorpWebExtensionCatalogError.updateConsentRequired
+        }
+        try await privateManager.installBundledPackage(item)
+    }
+
+    func setPrivateSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        try await privateManager.setPrivateSiteAccess(access, for: extensionID)
+    }
+
+    func setNormalDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        try await normalManager.setNormalDNRExcludedTopLevelDomains(domains, for: extensionID)
+    }
+
+    func setPrivateDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        try await privateManager.setPrivateDNRExcludedTopLevelDomains(domains, for: extensionID)
+    }
+
+    func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) async throws {
+        if !isEnabled {
+            if let normalPackage = await normalManager.store.installedPackage(for: extensionID),
+               normalPackage.isEnabled {
+                try await normalManager.setEnabled(false, for: extensionID)
+            }
+            if let privatePackage = await privateManager.store.installedPackage(for: extensionID),
+               privatePackage.isEnabled {
+                try await privateManager.setEnabled(false, for: extensionID)
+            }
+            return
+        }
+
+        try await normalManager.setEnabled(true, for: extensionID)
+        if let privatePackage = await privateManager.store.installedPackage(for: extensionID),
+           privatePackage.grants.privateBrowsingEnabled,
+           !privatePackage.isEnabled {
+            try await privateManager.setEnabled(true, for: extensionID)
+        }
+    }
+
+    func uninstall(_ extensionID: FloorpWebExtensionID) async throws {
+        // Suspend both profile runtimes before touching durable state. If a
+        // later disk operation fails, neither profile remains executing.
+        try await setEnabled(false, for: extensionID)
+        try await normalManager.uninstall(extensionID)
+        if await privateManager.store.installedPackage(for: extensionID) != nil {
+            try await privateManager.uninstall(extensionID)
+        }
+    }
+}
+
+/// A product-owned summary of a DNR policy. It exposes no rule bodies or
+/// package resource paths, only the state needed for a user to understand the
+/// active fixed ruleset and manage their own exclusions.
+struct FloorpWebExtensionSettingsDNRStatus: Hashable, Sendable {
+    let enabledStaticRuleSetIDs: [String]
+    let policyGeneration: UInt64
+    let excludedTopLevelDomains: [String]
+}
+
 struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     let id: FloorpWebExtensionID
     let name: String
     let version: String
+    /// Product-owned immutable generation for an installed signed catalog
+    /// package. It is display/control metadata only; Settings never receives
+    /// an artifact URL or package bytes.
+    let catalogGeneration: String?
     let isEnabled: Bool
     let isCatalogRevoked: Bool
     let permissions: [FloorpWebExtensionPermissionCategory]
     let siteAccessDescription: String
+    /// Declared site patterns, exposed only as product-owned consent choices.
+    /// The Settings screen never reads an extension-supplied page to obtain
+    /// these values.
+    let requestedSites: [FloorpWebExtensionMatchPattern]
+    let normalHostAccess: FloorpWebExtensionHostAccess
+    let privateHostAccess: FloorpWebExtensionHostAccess
+    /// Private browsing is an independent, opt-in installation in the
+    /// ephemeral private profile. A normal-profile package never grants it by
+    /// itself.
+    let isPrivateBrowsingEnabled: Bool
     let privateAccessDescription: String
     let errorDescription: String?
     /// Present only for an enabled, manifest-declared options page. The
     /// immutable generation prevents an already-open page from seeing files
     /// belonging to a later package update.
     let optionsPage: FloorpWebExtensionSettingsOptionsPage?
+    let dnrStatus: FloorpWebExtensionSettingsDNRStatus?
+    let privateDNRStatus: FloorpWebExtensionSettingsDNRStatus?
 }
 
 /// Product-owned consent for `permissions.request`. Extension documents do
@@ -132,7 +318,7 @@ final class FloorpWebExtensionNativePermissionConsentPresenter {
         }
     }
 
-    private static func topPresenter() -> UIViewController? {
+    fileprivate static func topPresenter() -> UIViewController? {
         guard let root = UIWindow.keyWindow?.rootViewController else { return nil }
         return topPresenter(from: root)
     }
@@ -154,6 +340,43 @@ final class FloorpWebExtensionNativePermissionConsentPresenter {
     }
 }
 
+/// A native, product-owned confirmation for every immutable catalog-generation
+/// replacement. It is intentionally unavailable when Settings is not visible;
+/// background catalog processing always retains the known-good generation.
+@MainActor
+enum FloorpWebExtensionNativeCatalogUpdateConsentPresenter {
+    static func confirm(
+        _ request: FloorpWebExtensionLivePackageManager.CatalogUpdateConfirmationRequest
+    ) async -> Bool {
+        guard let presenter = FloorpWebExtensionNativePermissionConsentPresenter.topPresenter(),
+              !(presenter is UIAlertController),
+              presenter.viewIfLoaded?.window != nil else {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            let message = [
+                "Update \(request.installedVersion) to \(request.replacementVersion)?",
+                "Review and allow this immutable replacement before it changes the installed extension.",
+                "Generation: \(request.replacementCatalogGeneration)",
+                "Artifact SHA-256: \(request.replacementArtifactSHA256)"
+            ].joined(separator: "\n\n")
+            let alert = UIAlertController(
+                title: "Allow update for \(request.extensionName)?",
+                message: message,
+                preferredStyle: .alert
+            )
+            alert.view.accessibilityIdentifier = "Floorp.WebExtensions.CatalogUpdateConsent"
+            alert.addAction(UIAlertAction(title: "Keep Current Version", style: .cancel) { _ in
+                continuation.resume(returning: false)
+            })
+            alert.addAction(UIAlertAction(title: "Allow Update", style: .default) { _ in
+                continuation.resume(returning: true)
+            })
+            presenter.present(alert, animated: true)
+        }
+    }
+}
+
 /// A narrow UI boundary around the profile-owned package store.
 ///
 /// The protocol prevents Settings from reading package files or touching the
@@ -163,7 +386,28 @@ final class FloorpWebExtensionNativePermissionConsentPresenter {
 @MainActor
 protocol FloorpWebExtensionSettingsManaging: AnyObject, Sendable {
     func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage]
+    func catalogItems() async -> [FloorpWebExtensionBundledCatalogItem]
     func installBundledPackage(_ item: FloorpWebExtensionBundledCatalogItem) async throws
+    func setNormalSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID
+    ) async throws
+    func setPrivateBrowsingEnabled(
+        _ isEnabled: Bool,
+        for extensionID: FloorpWebExtensionID
+    ) async throws
+    func setPrivateSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID
+    ) async throws
+    func setNormalDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws
+    func setPrivateDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws
     func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) async throws
     func uninstall(_ extensionID: FloorpWebExtensionID) async throws
 }
@@ -199,6 +443,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private let pageMessageRuntime: FloorpWebExtensionMessageRuntime?
     private let openExternalURL: FloorpWebExtensionPageViewController.ExternalNavigationHandler
     private var installedPackages = [FloorpWebExtensionSettingsInstalledPackage]()
+    private var catalogItems = FloorpWebExtensionBundledCatalog.items
     private var isLoading = false
 
     init(
@@ -246,10 +491,12 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         navigationItem.rightBarButtonItem?.isEnabled = false
         Task { [weak self, packageManager] in
             let packages = await packageManager.settingsPackages()
+            let catalogItems = await packageManager.catalogItems()
             guard let self, !Task.isCancelled else { return }
             self.installedPackages = packages.sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
+            self.catalogItems = catalogItems
             self.isLoading = false
             self.navigationItem.rightBarButtonItem?.isEnabled = true
             self.tableView.reloadData()
@@ -326,7 +573,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             return installedPackages.isEmpty ? [.emptyInstalled] : installedPackages.map(Row.installed)
         case .available:
             let installedIDs = Set(installedPackages.map(\.id))
-            return FloorpWebExtensionBundledCatalog.items
+            return catalogItems
                 .filter { !installedIDs.contains($0.id) }
                 .map(Row.available)
         }
@@ -343,7 +590,10 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 
     private func confirmInstall(_ item: FloorpWebExtensionBundledCatalogItem) {
         let permissions = item.requestedPermissions.map(\.title).joined(separator: "\n• ")
-        let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)"
+        let siteNotice = item.requestedPermissions.contains(.siteData)
+            ? "\n\nSite access starts disabled. You can explicitly choose sites after installation."
+            : ""
+        let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)\(siteNotice)"
         let alert = UIAlertController(title: "Install \(item.name)?", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Install", style: .default) { [weak self] _ in
@@ -375,6 +625,53 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
            pageMessageRuntime != nil {
             alert.addAction(UIAlertAction(title: "Options", style: .default) { [weak self] _ in
                 self?.openOptionsPage(for: package)
+            })
+        }
+        if package.isEnabled, !package.requestedSites.isEmpty, !package.isCatalogRevoked {
+            alert.addAction(UIAlertAction(title: "Site Access", style: .default) { [weak self] _ in
+                self?.showSiteAccess(package)
+            })
+        }
+        if !package.isCatalogRevoked {
+            alert.addAction(UIAlertAction(
+                title: package.isPrivateBrowsingEnabled
+                    ? "Disable in Private Browsing"
+                    : "Allow in Private Browsing",
+                style: .default
+            ) { [weak self] _ in
+                self?.confirmPrivateBrowsingChange(
+                    enabled: !package.isPrivateBrowsingEnabled,
+                    package: package
+                )
+            })
+        }
+        if package.isPrivateBrowsingEnabled, !package.requestedSites.isEmpty, !package.isCatalogRevoked {
+            alert.addAction(UIAlertAction(title: "Private Site Access", style: .default) { [weak self] _ in
+                self?.showPrivateSiteAccess(package)
+            })
+        }
+        if package.isEnabled, package.dnrStatus != nil, !package.isCatalogRevoked {
+            alert.addAction(UIAlertAction(title: "Network Protection", style: .default) { [weak self] _ in
+                self?.showDNRExclusions(package, isPrivateBrowsing: false)
+            })
+        }
+        if package.isPrivateBrowsingEnabled, package.privateDNRStatus != nil, !package.isCatalogRevoked {
+            alert.addAction(UIAlertAction(
+                title: "Private Network Protection",
+                style: .default
+            ) { [weak self] _ in
+                self?.showDNRExclusions(package, isPrivateBrowsing: true)
+            })
+        }
+        if let update = catalogItems.first(where: { item in
+            item.id == package.id &&
+                item.catalogRecord?.generation != package.catalogGeneration
+        }), !package.isCatalogRevoked {
+            alert.addAction(UIAlertAction(
+                title: "Update to \(update.version)",
+                style: .default
+            ) { [weak self] _ in
+                self?.performInstall(update)
             })
         }
         alert.addAction(UIAlertAction(title: "Uninstall", style: .destructive) { [weak self] _ in
@@ -411,6 +708,276 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         }
     }
 
+    private func showSiteAccess(_ package: FloorpWebExtensionSettingsInstalledPackage) {
+        showSiteAccess(package, isPrivateBrowsing: false)
+    }
+
+    private func showSiteAccess(
+        _ package: FloorpWebExtensionSettingsInstalledPackage,
+        isPrivateBrowsing: Bool
+    ) {
+        let currentAccess = isPrivateBrowsing ? package.privateHostAccess : package.normalHostAccess
+        let profileTitle = isPrivateBrowsing ? "Private site access" : "Site access"
+        let profileMessage = isPrivateBrowsing
+            ? "Choose exactly where this separately installed private extension may read or change page data."
+            : "Choose exactly where this extension may read or change page data."
+        let alert = UIAlertController(
+            title: "\(profileTitle) for \(package.name)",
+            message: profileMessage,
+            preferredStyle: .actionSheet
+        )
+        alert.addAction(UIAlertAction(title: "No sites", style: .destructive) { [weak self] _ in
+            self?.setSiteAccess(.denied, for: package.id, isPrivateBrowsing: isPrivateBrowsing)
+        })
+        alert.addAction(UIAlertAction(title: "All requested sites", style: .default) { [weak self] _ in
+            self?.setSiteAccess(.allRequestedSites, for: package.id, isPrivateBrowsing: isPrivateBrowsing)
+        })
+        for site in package.requestedSites {
+            alert.addAction(UIAlertAction(title: "Only \(site.original)", style: .default) { [weak self] _ in
+                self?.setSiteAccess(
+                    .selectedSites([site]),
+                    for: package.id,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            })
+        }
+        if case .allRequestedSites = currentAccess {
+            // No narrower controls are needed: every declared site is already
+            // authorized. The explicit "No sites" and "Only" actions above
+            // remain available to reduce access.
+        } else {
+            alert.addAction(UIAlertAction(title: "Add a site…", style: .default) { [weak self] _ in
+                self?.promptForSelectedSite(package, isPrivateBrowsing: isPrivateBrowsing)
+            })
+            for site in Self.selectedSites(from: currentAccess).sorted(by: { $0.original < $1.original }) {
+                alert.addAction(UIAlertAction(
+                    title: "Remove \(site.original)",
+                    style: .destructive
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    var selectedSites = Self.selectedSites(from: currentAccess)
+                    selectedSites.remove(site)
+                    self.setSiteAccess(
+                        selectedSites.isEmpty ? .denied : .selectedSites(selectedSites),
+                        for: package.id,
+                        isPrivateBrowsing: isPrivateBrowsing
+                    )
+                })
+            }
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = view.bounds
+        }
+        present(alert, animated: true)
+    }
+
+    private func confirmPrivateBrowsingChange(
+        enabled: Bool,
+        package: FloorpWebExtensionSettingsInstalledPackage
+    ) {
+        if !enabled {
+            setPrivateBrowsingEnabled(false, for: package.id)
+            return
+        }
+        let alert = UIAlertController(
+            title: "Allow \(package.name) in Private Browsing?",
+            message: "This installs a separate ephemeral copy for private browsing. Its site access starts disabled and private data is removed when the private session ends.",
+            preferredStyle: .alert
+        )
+        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.PrivateBrowsingConsent"
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Allow", style: .default) { [weak self] _ in
+            self?.setPrivateBrowsingEnabled(true, for: package.id)
+        })
+        present(alert, animated: true)
+    }
+
+    private func showPrivateSiteAccess(_ package: FloorpWebExtensionSettingsInstalledPackage) {
+        showSiteAccess(package, isPrivateBrowsing: true)
+    }
+
+    private func promptForSelectedSite(
+        _ package: FloorpWebExtensionSettingsInstalledPackage,
+        isPrivateBrowsing: Bool
+    ) {
+        let alert = UIAlertController(
+            title: "Add a site",
+            message: "Enter a hostname or HTTPS URL. This authorizes only that site, not every requested site.",
+            preferredStyle: .alert
+        )
+        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.AddSelectedSite"
+        alert.addTextField { field in
+            field.placeholder = "example.com"
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+            field.keyboardType = .URL
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Add", style: .default) { [weak self, weak alert] _ in
+            guard let self,
+                  let input = alert?.textFields?.first?.text,
+                  let selectedSite = Self.selectedSitePattern(from: input) else {
+                self?.presentSiteInputError(
+                    "Enter a hostname or HTTP(S) URL without a path, port, query, or credentials."
+                )
+                return
+            }
+            guard package.requestedSites.contains(where: { $0.covers(selectedSite) }) else {
+                self.presentSiteInputError(
+                    "This extension did not request access to \(selectedSite.original)."
+                )
+                return
+            }
+            let currentAccess = isPrivateBrowsing ? package.privateHostAccess : package.normalHostAccess
+            var selectedSites = Self.selectedSites(from: currentAccess)
+            selectedSites.insert(selectedSite)
+            self.setSiteAccess(
+                .selectedSites(selectedSites),
+                for: package.id,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
+        })
+        present(alert, animated: true)
+    }
+
+    private func showDNRExclusions(
+        _ package: FloorpWebExtensionSettingsInstalledPackage,
+        isPrivateBrowsing: Bool
+    ) {
+        guard let status = isPrivateBrowsing ? package.privateDNRStatus : package.dnrStatus else {
+            return
+        }
+        let profile = isPrivateBrowsing ? "Private" : "Standard"
+        let ruleSets = status.enabledStaticRuleSetIDs.isEmpty
+            ? "None"
+            : status.enabledStaticRuleSetIDs.joined(separator: ", ")
+        let exclusionNotice = status.excludedTopLevelDomains.isEmpty
+            ? "No site exclusions."
+            : "\(status.excludedTopLevelDomains.count) site exclusion\(status.excludedTopLevelDomains.count == 1 ? "" : "s")."
+        let alert = UIAlertController(
+            title: "\(profile) network protection",
+            message: [
+                "Active rulesets: \(ruleSets)",
+                "Rules generation: \(status.policyGeneration)",
+                exclusionNotice,
+                "A site exclusion keeps fixed block rules active everywhere else."
+            ].joined(separator: "\n\n"),
+            preferredStyle: .actionSheet
+        )
+        alert.view.accessibilityIdentifier = isPrivateBrowsing
+            ? "Floorp.WebExtensions.PrivateDNRExclusions"
+            : "Floorp.WebExtensions.DNRExclusions"
+        alert.addAction(UIAlertAction(title: "Exclude a site…", style: .default) { [weak self] _ in
+            self?.promptForDNRExclusion(package, status: status, isPrivateBrowsing: isPrivateBrowsing)
+        })
+        for domain in status.excludedTopLevelDomains {
+            alert.addAction(UIAlertAction(
+                title: "Remove \(domain)",
+                style: .destructive
+            ) { [weak self] _ in
+                self?.setDNRExcludedTopLevelDomains(
+                    status.excludedTopLevelDomains.filter { $0 != domain },
+                    for: package.id,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            })
+        }
+        if !status.excludedTopLevelDomains.isEmpty {
+            alert.addAction(UIAlertAction(title: "Remove all site exclusions", style: .destructive) {
+                [weak self] _ in
+                self?.setDNRExcludedTopLevelDomains(
+                    [],
+                    for: package.id,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            })
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = view.bounds
+        }
+        present(alert, animated: true)
+    }
+
+    private func promptForDNRExclusion(
+        _ package: FloorpWebExtensionSettingsInstalledPackage,
+        status: FloorpWebExtensionSettingsDNRStatus,
+        isPrivateBrowsing: Bool
+    ) {
+        let alert = UIAlertController(
+            title: "Exclude a site from blocking",
+            message: "Enter a hostname or HTTP(S) URL. The exemption applies to that host and its subdomains only.",
+            preferredStyle: .alert
+        )
+        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.AddDNRExclusion"
+        alert.addTextField { field in
+            field.placeholder = "example.com"
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+            field.keyboardType = .URL
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Exclude", style: .default) { [weak self, weak alert] _ in
+            guard let self,
+                  let input = alert?.textFields?.first?.text,
+                  let domain = FloorpWebExtensionDNRExcludedTopLevelDomain.normalizeUserInput(input) else {
+                self?.presentSiteInputError(
+                    "Enter a hostname or HTTP(S) URL without a path, port, query, or credentials."
+                )
+                return
+            }
+            let domains = Array(Set(status.excludedTopLevelDomains + [domain])).sorted()
+            self.setDNRExcludedTopLevelDomains(
+                domains,
+                for: package.id,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
+        })
+        present(alert, animated: true)
+    }
+
+    private static func selectedSites(
+        from access: FloorpWebExtensionHostAccess
+    ) -> Set<FloorpWebExtensionMatchPattern> {
+        guard case .selectedSites(let sites) = access else { return [] }
+        return sites
+    }
+
+    private static func selectedSitePattern(from input: String) -> FloorpWebExtensionMatchPattern? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let source = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard let components = URLComponents(string: source),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.path.isEmpty || components.path == "/",
+              let host = components.host?.lowercased() else {
+            return nil
+        }
+        return try? FloorpWebExtensionMatchPattern("\(scheme)://\(host)/*")
+    }
+
+    private func presentSiteInputError(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let alert = UIAlertController(
+                title: "Site could not be added",
+                message: message,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            self.present(alert, animated: true)
+        }
+    }
+
     private func confirmUninstall(_ package: FloorpWebExtensionSettingsInstalledPackage) {
         let alert = UIAlertController(
             title: "Uninstall \(package.name)?",
@@ -433,6 +1000,49 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) {
         mutate { manager in
             try await manager.setEnabled(isEnabled, for: extensionID)
+        }
+    }
+
+    private func setSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID,
+        isPrivateBrowsing: Bool = false
+    ) {
+        mutate { manager in
+            if isPrivateBrowsing {
+                try await manager.setPrivateSiteAccess(access, for: extensionID)
+            } else {
+                try await manager.setNormalSiteAccess(access, for: extensionID)
+            }
+        }
+    }
+
+    private func setPrivateBrowsingEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) {
+        mutate { manager in
+            try await manager.setPrivateBrowsingEnabled(isEnabled, for: extensionID)
+        }
+    }
+
+    private func setPrivateSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID
+    ) {
+        mutate { manager in
+            try await manager.setPrivateSiteAccess(access, for: extensionID)
+        }
+    }
+
+    private func setDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID,
+        isPrivateBrowsing: Bool
+    ) {
+        mutate { manager in
+            if isPrivateBrowsing {
+                try await manager.setPrivateDNRExcludedTopLevelDomains(domains, for: extensionID)
+            } else {
+                try await manager.setNormalDNRExcludedTopLevelDomains(domains, for: extensionID)
+            }
         }
     }
 
@@ -559,6 +1169,11 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         FloorpWebExtensionPackageStore.PreparedPackageResources
     ) async throws -> Void
     typealias BundledPackageURLResolver = @MainActor (FloorpWebExtensionBundledCatalogItem) -> URL?
+    typealias CatalogItemsProvider = @MainActor @Sendable () async -> [FloorpWebExtensionBundledCatalogItem]
+    typealias SignedBundledCatalogInstaller = @MainActor @Sendable (
+        FloorpWebExtensionLivePackageManager,
+        FloorpWebExtensionBundledCatalogItem
+    ) async throws -> Void
     typealias CurrentCompositionCheck = @MainActor () -> Bool
     typealias CatalogUpdateConfirmation = @MainActor (
         CatalogUpdateConfirmationRequest
@@ -570,14 +1185,21 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     typealias CatalogRecordAuthorization = @MainActor @Sendable (
         FloorpWebExtensionCatalogPackageRecord
     ) throws -> Void
+    typealias DNRExcludedTopLevelDomainsUpdater = @MainActor @Sendable (
+        FloorpWebExtensionID,
+        [String]
+    ) async throws -> Bool
 
     let store: FloorpWebExtensionPackageStore
     private let isCurrentComposition: CurrentCompositionCheck
     private let reconcile: Reconciler
     private let reconcilePrepared: PreparedReconciler?
     private let bundledPackageURL: BundledPackageURLResolver
+    private let catalogItemsProvider: CatalogItemsProvider
+    private let signedBundledCatalogInstaller: SignedBundledCatalogInstaller
     private let catalogUpdateConfirmation: CatalogUpdateConfirmation
     private let catalogRecordAuthorization: CatalogRecordAuthorization
+    private let dnrExcludedTopLevelDomainsUpdater: DNRExcludedTopLevelDomainsUpdater
     private var lifecycleMutationGates = [FloorpWebExtensionID: FloorpWebExtensionLifecycleMutationGate]()
     private var lifecycleRevisions = [FloorpWebExtensionID: UInt64]()
 
@@ -586,10 +1208,17 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         isCurrentComposition: @escaping CurrentCompositionCheck = { true },
         reconcile: @escaping Reconciler,
         bundledPackageURL: @escaping BundledPackageURLResolver = { $0.packageURL() },
+        catalogItemsProvider: @escaping CatalogItemsProvider = { FloorpWebExtensionBundledCatalog.items },
+        signedBundledCatalogInstaller: @escaping SignedBundledCatalogInstaller = { _, _ in
+            throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
+        },
         reconcilePrepared: PreparedReconciler? = nil,
         catalogUpdateConfirmation: @escaping CatalogUpdateConfirmation = { _ in false },
         catalogRecordAuthorization: @escaping CatalogRecordAuthorization = { _ in
             throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
+        },
+        dnrExcludedTopLevelDomainsUpdater: @escaping DNRExcludedTopLevelDomainsUpdater = { _, _ in
+            throw FloorpWebExtensionError.unsupported("DNR settings are unavailable")
         }
     ) {
         self.store = store
@@ -597,8 +1226,11 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         self.reconcile = reconcile
         self.reconcilePrepared = reconcilePrepared
         self.bundledPackageURL = bundledPackageURL
+        self.catalogItemsProvider = catalogItemsProvider
+        self.signedBundledCatalogInstaller = signedBundledCatalogInstaller
         self.catalogUpdateConfirmation = catalogUpdateConfirmation
         self.catalogRecordAuthorization = catalogRecordAuthorization
+        self.dnrExcludedTopLevelDomainsUpdater = dnrExcludedTopLevelDomainsUpdater
     }
 
     func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] {
@@ -607,6 +1239,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 id: package.extensionID,
                 name: package.name,
                 version: package.version,
+                catalogGeneration: package.catalogRecord?.generation,
                 isEnabled: package.isEnabled,
                 isCatalogRevoked: package.isCatalogRevoked,
                 permissions: Self.settingsPermissionCategories(for: package.grants),
@@ -614,6 +1247,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                     package.grants.normalHostAccess,
                     requestedHosts: package.grants.requestedHosts
                 ),
+                requestedSites: package.grants.requestedHosts.sorted {
+                    $0.original < $1.original
+                },
+                normalHostAccess: package.grants.normalHostAccess,
+                privateHostAccess: package.grants.privateHostAccess,
+                isPrivateBrowsingEnabled: package.grants.privateBrowsingEnabled,
                 privateAccessDescription: package.grants.privateBrowsingEnabled
                     ? Self.siteAccessDescription(
                         package.grants.privateHostAccess,
@@ -623,13 +1262,117 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 errorDescription: package.activationError ?? (package.preflight.isActivationAllowed
                     ? nil
                     : "This extension is incompatible with the current Floorp build."),
-                optionsPage: Self.optionsPage(for: package)
+                optionsPage: Self.optionsPage(for: package),
+                dnrStatus: Self.settingsDNRStatus(for: package),
+                privateDNRStatus: nil
             )
         }
     }
 
+    func catalogItems() async -> [FloorpWebExtensionBundledCatalogItem] {
+        await catalogItemsProvider()
+    }
+
+    func setNormalSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        guard let package = await store.installedPackage(for: extensionID) else {
+            throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
+        }
+        let authorization = try await authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: package.generation
+        )
+        let grants = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: package.grants.apiPermissions,
+            requestedHosts: package.grants.requestedHosts,
+            normalHostAccess: access,
+            privateHostAccess: package.grants.privateHostAccess,
+            privateBrowsingEnabled: package.grants.privateBrowsingEnabled
+        )
+        try await updateGrants(grants, authorization: authorization)
+    }
+
+    func setNormalDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        guard !store.profileKey.isPrivateBrowsing else {
+            throw FloorpWebExtensionError.unsupported("normal DNR settings are owned by the normal profile")
+        }
+        try await updateDNRExcludedTopLevelDomains(domains, for: extensionID)
+    }
+
+    func setPrivateDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        guard store.profileKey.isPrivateBrowsing,
+              let package = await store.installedPackage(for: extensionID),
+              package.grants.privateBrowsingEnabled else {
+            throw FloorpWebExtensionError.unsupported("private browsing is not enabled for this extension")
+        }
+        try await updateDNRExcludedTopLevelDomains(domains, for: extensionID)
+    }
+
+    /// The concrete private-profile manager owns only its ephemeral package
+    /// store. Cross-profile installation is coordinated by
+    /// `FloorpWebExtensionProfileSettingsManager`; this method merely changes
+    /// the already-installed private copy after an explicit native consent.
+    func setPrivateBrowsingEnabled(
+        _ isEnabled: Bool,
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        guard store.profileKey.isPrivateBrowsing else {
+            throw FloorpWebExtensionError.unsupported("private browsing is owned by the private profile")
+        }
+        guard let package = await store.installedPackage(for: extensionID) else {
+            throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
+        }
+        let authorization = try await authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: package.generation
+        )
+        let grants = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: package.grants.apiPermissions,
+            requestedHosts: package.grants.requestedHosts,
+            normalHostAccess: package.grants.normalHostAccess,
+            privateHostAccess: isEnabled ? package.grants.privateHostAccess : .denied,
+            privateBrowsingEnabled: isEnabled
+        )
+        try await updateGrants(grants, authorization: authorization)
+    }
+
+    func setPrivateSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        guard store.profileKey.isPrivateBrowsing,
+              let package = await store.installedPackage(for: extensionID),
+              package.grants.privateBrowsingEnabled else {
+            throw FloorpWebExtensionError.unsupported("private browsing is not enabled for this extension")
+        }
+        let authorization = try await authorizePermissionMutation(
+            for: extensionID,
+            expectedGeneration: package.generation
+        )
+        let grants = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: package.grants.apiPermissions,
+            requestedHosts: package.grants.requestedHosts,
+            normalHostAccess: package.grants.normalHostAccess,
+            privateHostAccess: access,
+            privateBrowsingEnabled: true
+        )
+        try await updateGrants(grants, authorization: authorization)
+    }
+
     // swiftlint:disable:next function_body_length
     func installBundledPackage(_ item: FloorpWebExtensionBundledCatalogItem) async throws {
+        if item.catalogRecord != nil {
+            try await signedBundledCatalogInstaller(self, item)
+            return
+        }
         let gate = lifecycleMutationGate(for: item.id)
         await gate.acquire()
         defer { Task { await gate.release() } }
@@ -653,7 +1396,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         let initialGrants = FloorpWebExtensionPermissionSnapshot(
             apiPermissions: manifest.apiPermissions,
             requestedHosts: Set(manifest.hostPermissions),
-            normalHostAccess: .allRequestedSites,
+            normalHostAccess: .denied,
             privateHostAccess: .denied,
             privateBrowsingEnabled: false
         )
@@ -675,9 +1418,10 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
         catalogAuthorization: FloorpWebExtensionCatalogInstallationAuthorization,
         initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
-        updateAuthorization: CatalogUpdateAuthorization? = nil
+        updateAuthorization: CatalogUpdateAuthorization? = nil,
+        source: FloorpWebExtensionCatalogSource = .managedRemote
     ) async throws {
-        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        try source.requireEnabled()
         guard catalogAuthorization.authorizes(artifact) else {
             throw FloorpWebExtensionCatalogError.artifactRejected(
                 "catalog installation authorization does not match artifact"
@@ -690,8 +1434,10 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
 
         let installed = await store.installedPackage(for: extensionID)
         if let installed {
+            guard installed.catalogRecord != nil else {
+                throw FloorpWebExtensionCatalogError.updateConsentRequired
+            }
             guard let authorization = updateAuthorization,
-                  installed.catalogRecord != nil,
                   authorization.extensionID == extensionID,
                   authorization.installedGeneration == installed.generation,
                   authorization.replacementCatalogGeneration == artifact.record.generation,
@@ -730,9 +1476,10 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     /// confirmation denies, so an unreviewed composition cannot silently turn
     /// a catalog refresh into an update.
     func authorizeCatalogUpdate(
-        for artifact: FloorpWebExtensionVerifiedCatalogArtifact
+        for artifact: FloorpWebExtensionVerifiedCatalogArtifact,
+        source: FloorpWebExtensionCatalogSource = .managedRemote
     ) async throws -> CatalogUpdateAuthorization {
-        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        try source.requireEnabled()
         let extensionID = artifact.record.extensionID
         let gate = lifecycleMutationGate(for: extensionID)
         await gate.acquire()
@@ -806,9 +1553,10 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     /// its exact generation/digest/key binding is accepted and non-revoked.
     /// Neither rejection path selects a fallback package.
     func applySignedCatalogAcceptanceState(
-        _ state: FloorpWebExtensionCatalogAcceptanceState
+        _ state: FloorpWebExtensionCatalogAcceptanceState,
+        source: FloorpWebExtensionCatalogSource = .managedRemote
     ) async throws {
-        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        try source.requireEnabled()
         let targets = await store.installedPackages().compactMap { package -> (FloorpWebExtensionID, String)? in
             guard let record = package.catalogRecord else { return nil }
             let generation = FloorpWebExtensionCatalogGeneration(
@@ -820,7 +1568,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 artifactSHA256: record.artifactSHA256,
                 signingKeyID: record.signingKeyID
             )
-            guard !state.acceptedGenerationArtifacts.contains(binding) ||
+            guard !state.currentGenerationArtifacts.contains(binding) ||
                     state.revokedGenerations.contains(generation) ||
                     state.revokedKeyIDs.contains(record.signingKeyID) else {
                 return nil
@@ -1062,6 +1810,36 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         }
     }
 
+    /// Keeps the native DNR-exemption mutation on the same lifecycle gate as
+    /// disable, uninstall, update, and catalog revocation. The coordinator
+    /// performs its own compile/persist transaction; this wrapper prevents a
+    /// stale Settings sheet from applying that transaction to a superseded
+    /// immutable generation.
+    private func updateDNRExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws {
+        let gate = lifecycleMutationGate(for: extensionID)
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+
+        guard isCurrentComposition(),
+              let package = await store.installedPackage(for: extensionID),
+              package.isEnabled,
+              package.grants.apiPermissions.contains(.declarativeNetRequest),
+              isCurrentComposition() else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        try authorizeCatalogRecord(package)
+        guard try await dnrExcludedTopLevelDomainsUpdater(extensionID, domains),
+              isCurrentComposition(),
+              let currentPackage = await store.installedPackage(for: extensionID),
+              currentPackage.generation == package.generation,
+              currentPackage.isEnabled else {
+            throw FloorpWebExtensionPackageStoreError.stalePackageComposition
+        }
+    }
+
     /// Serializes startup restoration with every Settings/API lifecycle
     /// mutation. The full captured record is compared, not only its immutable
     /// package generation, because grants and durable DNR state may change
@@ -1270,6 +2048,23 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             return nil
         }
         return .init(packageGeneration: packageGeneration, entryPoint: entryPoint)
+    }
+
+    private static func settingsDNRStatus(
+        for package: FloorpWebExtensionInstalledPackage
+    ) -> FloorpWebExtensionSettingsDNRStatus? {
+        let declaredResources = package.preflight.manifest.dnrRuleResources
+        guard !declaredResources.isEmpty || package.dnrConfiguration != nil else {
+            return nil
+        }
+        let configuration = package.dnrConfiguration
+        return .init(
+            enabledStaticRuleSetIDs: (configuration?.enabledStaticRuleSetIDs
+                ?? Set(declaredResources.filter { $0.enabled }.map(\.identifier))
+            ).sorted(),
+            policyGeneration: configuration?.policyGeneration ?? 1,
+            excludedTopLevelDomains: configuration?.excludedTopLevelDomains ?? []
+        )
     }
 
     private static func siteAccessDescription(

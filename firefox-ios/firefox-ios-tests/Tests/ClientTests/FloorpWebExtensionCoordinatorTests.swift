@@ -256,6 +256,130 @@ final class FloorpWebExtensionCoordinatorTests: XCTestCase {
         XCTAssertEqual(after.dynamicRules, [])
     }
 
+    func testNativeDNRSiteExclusionsCompileAsBlockOnlyAndFailClosed() async throws {
+        let compiler = CoordinatorRuleListCompiler()
+        let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: compiler)
+        let coordinator = makeCoordinator(runtime: runtime)
+        await coordinator.grantPermissions(
+            [.declarativeNetRequest],
+            requestedHosts: [],
+            hostAccess: .denied,
+            to: extensionID
+        )
+        let staticRule = FloorpWebExtensionDNRRule(
+            id: 1,
+            action: .init(type: .block),
+            condition: .init(urlFilter: "ads.example")
+        )
+        let configured = try await coordinator.configureDNR(
+            for: extensionID,
+            staticRuleSets: [.init(identifier: "tracker", rules: [staticRule])],
+            enabledStaticRuleSetIDs: ["tracker"]
+        )
+        XCTAssertTrue(configured)
+
+        let exclusionApplied = try await coordinator.updateExcludedTopLevelDomains(
+            ["example.com"],
+            for: extensionID
+        )
+        XCTAssertTrue(exclusionApplied)
+        let afterExclusionSnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        let afterExclusion = try XCTUnwrap(afterExclusionSnapshot)
+        XCTAssertEqual(afterExclusion.excludedTopLevelDomains, ["example.com"])
+        XCTAssertEqual(afterExclusion.compilation.report.rejectedRuleCount, 0)
+        XCTAssertEqual(afterExclusion.compilation.compiledRules.count, 1)
+
+        let json = try XCTUnwrap(
+            afterExclusion.compilation.compiledRules.first?.webKitRuleJSON.data(using: .utf8)
+        )
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: json) as? [String: Any]
+        )
+        let trigger = try XCTUnwrap(object["trigger"] as? [String: Any])
+        let exclusions = try XCTUnwrap(trigger["unless-top-url"] as? [String])
+        XCTAssertEqual(
+            exclusions,
+            [FloorpWebExtensionDNRExcludedTopLevelDomain.webKitTopURLPattern(for: "example.com")]
+        )
+        XCTAssertEqual((object["action"] as? [String: String])?["type"], "block")
+
+        // Extension-supplied excluded initiator domains remain rejected; only
+        // the native Settings path may produce a top-URL exemption.
+        await assertAsyncThrows {
+            _ = try await coordinator.updateDynamicRules(
+                addRules: [
+                    .init(
+                        id: 2,
+                        action: .init(type: .block),
+                        condition: .init(
+                            urlFilter: "dynamic.example",
+                            excludedInitiatorDomains: ["extension.example"]
+                        )
+                    )
+                ],
+                removeRuleIDs: [],
+                for: self.extensionID
+            )
+        }
+
+        let beforeFailedApplySnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        let beforeFailedApply = try XCTUnwrap(beforeFailedApplySnapshot)
+        compiler.shouldFail = true
+        await assertAsyncThrows {
+            _ = try await coordinator.updateExcludedTopLevelDomains(
+                ["example.com", "next.example"],
+                for: self.extensionID
+            )
+        }
+        let afterFailedApplySnapshot = await coordinator.dnrSnapshot(for: extensionID)
+        let afterFailedApply = try XCTUnwrap(afterFailedApplySnapshot)
+        XCTAssertEqual(afterFailedApply.generation, beforeFailedApply.generation)
+        XCTAssertEqual(afterFailedApply.excludedTopLevelDomains, ["example.com"])
+    }
+
+    func testNativeDNRSiteExclusionsAreIsolatedByProfile() async throws {
+        let profile = "coordinator-dnr-profile-\(UUID().uuidString)"
+        let normal = makeCoordinator(
+            profileIdentifier: profile,
+            isPrivateBrowsing: false,
+            runtime: .init(contentRuleListCompiler: CoordinatorRuleListCompiler())
+        )
+        let privateCoordinator = makeCoordinator(
+            profileIdentifier: profile,
+            isPrivateBrowsing: true,
+            runtime: .init(contentRuleListCompiler: CoordinatorRuleListCompiler())
+        )
+        let staticRule = FloorpWebExtensionDNRRule(
+            id: 1,
+            action: .init(type: .block),
+            condition: .init(urlFilter: "ads.example")
+        )
+        for coordinator in [normal, privateCoordinator] {
+            await coordinator.grantPermissions(
+                [.declarativeNetRequest],
+                requestedHosts: [],
+                hostAccess: .denied,
+                to: extensionID
+            )
+            let configured = try await coordinator.configureDNR(
+                for: extensionID,
+                staticRuleSets: [.init(identifier: "tracker", rules: [staticRule])],
+                enabledStaticRuleSetIDs: ["tracker"]
+            )
+            XCTAssertTrue(configured)
+        }
+
+        let exclusionApplied = try await normal.updateExcludedTopLevelDomains(
+            ["normal-only.example"],
+            for: extensionID
+        )
+        XCTAssertTrue(exclusionApplied)
+        let normalSnapshot = await normal.dnrSnapshot(for: extensionID)
+        let privateSnapshot = await privateCoordinator.dnrSnapshot(for: extensionID)
+        XCTAssertEqual(normalSnapshot?.excludedTopLevelDomains, ["normal-only.example"])
+        XCTAssertEqual(privateSnapshot?.excludedTopLevelDomains, [])
+    }
+
     func testRemovingExtensionInvalidatesAnInFlightDNRMutation() async throws {
         let compiler = CoordinatorRuleListCompiler()
         let runtime = FloorpWebExtensionRuntime(contentRuleListCompiler: compiler)

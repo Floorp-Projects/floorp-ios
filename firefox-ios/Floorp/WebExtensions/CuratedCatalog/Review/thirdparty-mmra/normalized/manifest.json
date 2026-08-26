@@ -1,0 +1,1 @@
+{"content_scripts":[{"css":["content/reading.css"],"js":["content/reading.js"],"matches":["https://medium.com/*"],"run_at":"document_end","world":"ISOLATED"}],"host_permissions":["https://medium.com/*"],"manifest_version":3,"name":"Medium Reading Layout — Floorp compatibility build","version":"1.5.1"}

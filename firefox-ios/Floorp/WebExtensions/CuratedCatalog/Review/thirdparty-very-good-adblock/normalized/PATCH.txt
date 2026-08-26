@@ -1,0 +1,11 @@
+Derived from the fixed curated block-rule seeds in
+chrisbbreuer/very-good-adblock at the pinned upstream revision. The
+compatibility build retains 16 reviewed advertising and tracking host rules as
+immutable manifest-v3 static DNR rules. Each rule is a supported block-only
+action limited to script, image, stylesheet, and XMLHttpRequest resource types.
+
+Removed the upstream generated and remotely refreshed filter corpus, redirect
+rules, dynamic allowlisting, service/background code, cosmetic filters, media
+and page mutation, storage/sync statistics, diagnostics, issue reporting, and
+every external request. Floorp's native signed-catalog UI owns the only
+per-site exclusion control; the extension cannot create allow/redirect rules.

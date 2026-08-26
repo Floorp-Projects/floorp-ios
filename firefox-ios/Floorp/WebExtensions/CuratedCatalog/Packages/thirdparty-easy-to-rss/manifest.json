@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Easy to RSS — Floorp compatibility build",
+  "version": "0.2.0",
+  "permissions": ["storage"],
+  "host_permissions": ["https://*/*"],
+  "action": {
+    "default_title": "Easy to RSS",
+    "default_popup": "popup/index.html"
+  },
+  "content_scripts": [{
+    "matches": ["https://*/*"],
+    "js": ["content/rss.js"],
+    "css": ["content/rss.css"],
+    "run_at": "document_end",
+    "world": "ISOLATED"
+  }]
+}

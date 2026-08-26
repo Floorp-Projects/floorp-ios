@@ -1438,6 +1438,71 @@ final class FloorpWebExtensionsStage3Tests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(server.requestCount(for: "/dnr/subresource-allowed"), 1)
     }
 
+    /// Product Settings use a top-URL exclusion condition on fixed block
+    /// rules, rather than installing a DNR allow action. This exercises the
+    /// generated condition through a real WKContentRuleList and proves that a
+    /// top-level site exemption leaves both otherwise-blocked subresources
+    /// loadable only on that site.
+    @MainActor
+    func testWebKitDNRNativeSiteExclusionExemptsOnlyTheTopLevelSite() async throws {
+        let server = try Stage3WebKitIntegrationServer()
+        defer { server.stop() }
+        let topLevelURL = server.url(path: "/dnr/subresources")
+        let topLevelHost = try XCTUnwrap(topLevelURL.host?.lowercased())
+        let basePattern = NSRegularExpression.escapedPattern(
+            for: server.url(path: "/dnr/subresource-").absoluteString
+        )
+        let rules = try FloorpWebExtensionDNRStore(
+            staticRuleSets: [.init(
+                identifier: "block-only",
+                rules: [
+                    .init(
+                        id: 50,
+                        action: .init(type: .block),
+                        condition: .init(
+                            regexFilter: "^\(basePattern).*$",
+                            resourceTypes: [.image]
+                        )
+                    )
+                ]
+            )],
+            enabledStaticRuleSetIDs: ["block-only"],
+            excludedTopLevelDomains: [topLevelHost]
+        )
+        let compilation = await rules.currentCompilation()
+        XCTAssertFalse(compilation.report.hasRejections)
+        XCTAssertEqual(compilation.compiledRules.count, 1)
+        let compiledRule = try XCTUnwrap(compilation.compiledRules.first)
+        XCTAssertFalse(compiledRule.webKitRuleJSON.contains("ignore-previous-rules"))
+        XCTAssertTrue(compiledRule.webKitRuleJSON.contains("unless-top-url"))
+
+        let ruleStore = TestContentRuleListStore()
+        let ruleList = try await ruleStore.compile(
+            identifier: "stage3-native-exclusion-\(UUID().uuidString)",
+            contentRuleListJSON: compilation.webKitContentRuleJSON
+        )
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(ruleList)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let navigation = Stage3NavigationRecorder()
+        webView.navigationDelegate = navigation
+        webView.load(URLRequest(url: topLevelURL))
+        try await waitForSuccessfulNavigation(navigation)
+        let events = try await waitForJavaScriptString(
+            in: webView,
+            source: """
+            const events = globalThis.floorpSubresourceEvents || [];
+            return events.includes('blocked-load') && events.includes('allowed-load')
+              ? JSON.stringify([...events].sort())
+              : '';
+            """,
+            expected: "[\"allowed-load\",\"blocked-load\"]"
+        )
+        XCTAssertEqual(events, "[\"allowed-load\",\"blocked-load\"]")
+        XCTAssertEqual(server.requestCount(for: "/dnr/subresource-blocked"), 1)
+        XCTAssertEqual(server.requestCount(for: "/dnr/subresource-allowed"), 1)
+    }
+
     private func script(
         id: String,
         source: String,

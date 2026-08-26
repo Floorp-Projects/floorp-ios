@@ -383,9 +383,22 @@ final class SettingsCoordinator: BaseCoordinator,
             for: profile.localName(),
             isPrivateBrowsing: false
         )
+        let privatePackageManager = FloorpWebExtensionPackageStoreRegistry.manager(
+            for: profile.localName(),
+            isPrivateBrowsing: true
+        )
+        let settingsPackageManager: (any FloorpWebExtensionSettingsManaging)?
+        if let packageManager, let privatePackageManager {
+            settingsPackageManager = FloorpWebExtensionProfileSettingsManager(
+                normalManager: packageManager,
+                privateManager: privatePackageManager
+            )
+        } else {
+            settingsPackageManager = packageManager
+        }
         let viewController = FloorpWebExtensionSettingsViewController(
             windowUUID: windowUUID,
-            packageManager: packageManager,
+            packageManager: settingsPackageManager,
             pageResourceResolver: store?.makePageResourceResolver(),
             pageMessageRuntime: FloorpWebExtensionAPIHostRegistry.messageRuntime(
                 for: profile.localName(),

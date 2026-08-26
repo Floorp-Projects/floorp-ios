@@ -595,6 +595,7 @@ final class FloorpWebExtensionCoordinator {
         for extensionID: FloorpWebExtensionID,
         staticRuleSets: [FloorpWebExtensionDNRStaticRuleSet] = [],
         enabledStaticRuleSetIDs: Set<String> = [],
+        excludedTopLevelDomains: [String] = [],
         limits: FloorpWebExtensionDNRLimits = .init()
     ) async throws -> Bool {
         let gate = dnrMutationGate(for: extensionID)
@@ -608,7 +609,8 @@ final class FloorpWebExtensionCoordinator {
             staticRuleSets: staticRuleSets,
             enabledStaticRuleSetIDs: enabledStaticRuleSetIDs,
             limits: limits,
-            generation: (previousSnapshot?.generation ?? 0) &+ 1
+            generation: (previousSnapshot?.generation ?? 0) &+ 1,
+            excludedTopLevelDomains: excludedTopLevelDomains
         )
         return try await installDNR(
             candidate,
@@ -630,7 +632,9 @@ final class FloorpWebExtensionCoordinator {
         staticRuleSets: [FloorpWebExtensionDNRStaticRuleSet],
         enabledStaticRuleSetIDs: Set<String>,
         dynamicRules: [FloorpWebExtensionDNRRule],
-        limits: FloorpWebExtensionDNRLimits
+        limits: FloorpWebExtensionDNRLimits,
+        excludedTopLevelDomains: [String] = [],
+        policyGeneration: UInt64 = 1
     ) async throws -> Bool {
         let gate = dnrMutationGate(for: extensionID)
         await gate.acquire()
@@ -643,7 +647,11 @@ final class FloorpWebExtensionCoordinator {
             enabledStaticRuleSetIDs: enabledStaticRuleSetIDs,
             dynamicRules: dynamicRules,
             limits: limits,
-            generation: (previousSnapshot?.generation ?? 0) &+ 1
+            generation: max(
+                (previousSnapshot?.generation ?? 0) &+ 1,
+                max(policyGeneration, 1)
+            ),
+            excludedTopLevelDomains: excludedTopLevelDomains
         )
         let compilation = await candidate.currentCompilation()
         let applied = try await runtime.compileAndSetDNR(compilation, for: extensionID)
@@ -672,6 +680,19 @@ final class FloorpWebExtensionCoordinator {
     ) async throws -> Bool {
         try await stageDNRMutation(for: extensionID) { candidate in
             try await candidate.updateDynamicRules(addRules: addRules, removeRuleIDs: removeRuleIDs)
+        }
+    }
+
+    /// Replaces the native Settings-owned exemption set for immutable static
+    /// block rules. This is intentionally separate from the WebExtension DNR
+    /// API: an extension cannot request top-URL exclusion conditions itself.
+    @discardableResult
+    func updateExcludedTopLevelDomains(
+        _ domains: [String],
+        for extensionID: FloorpWebExtensionID
+    ) async throws -> Bool {
+        try await stageDNRMutation(for: extensionID) { candidate in
+            try await candidate.updateExcludedTopLevelDomains(domains)
         }
     }
 

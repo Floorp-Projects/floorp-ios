@@ -1491,6 +1491,7 @@
 		F10A3E000000000000000210 /* demanding-mv3 in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000110 /* demanding-mv3 */; };
 		F10A3E000000000000000217 /* content-messaging-mv3 in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000117 /* content-messaging-mv3 */; };
 		F10A3E000000000000000218 /* event-runtime-mv3 in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000118 /* event-runtime-mv3 */; };
+		F10A3E000000000000000221 /* Curated FWEA1 Artifacts in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000121 /* Artifacts */; };
 		F10A3E000000000000000219 /* FloorpWebExtensionStage3PerformanceEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000119 /* FloorpWebExtensionStage3PerformanceEvidence.swift */; };
 		F10A3E000000000000000220 /* FloorpWebExtensionStage3SimulatorPerformanceRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000120 /* FloorpWebExtensionStage3SimulatorPerformanceRecord.swift */; };
 		F10A3E000000000000000401 /* FloorpWebExtensionCompatibilityHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000301 /* FloorpWebExtensionCompatibilityHarnessTests.swift */; };
@@ -11218,6 +11219,7 @@
 		F10A3E000000000000000110 /* demanding-mv3 */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Fixtures/demanding-mv3"; sourceTree = "<group>"; };
 		F10A3E000000000000000117 /* content-messaging-mv3 */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Fixtures/content-messaging-mv3"; sourceTree = "<group>"; };
 		F10A3E000000000000000118 /* event-runtime-mv3 */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Fixtures/event-runtime-mv3"; sourceTree = "<group>"; };
+		F10A3E000000000000000121 /* Artifacts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = CuratedCatalog/Artifacts; sourceTree = "<group>"; };
 		F10A3E000000000000000119 /* FloorpWebExtensionStage3PerformanceEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionStage3PerformanceEvidence.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000120 /* FloorpWebExtensionStage3SimulatorPerformanceRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionStage3SimulatorPerformanceRecord.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000111 /* FloorpWebExtensionAlarms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionAlarms.swift; sourceTree = "<group>"; };
@@ -16579,6 +16581,7 @@
 				F10A3E000000000000000110 /* demanding-mv3 */,
 				F10A3E000000000000000117 /* content-messaging-mv3 */,
 				F10A3E000000000000000118 /* event-runtime-mv3 */,
+				F10A3E000000000000000121 /* Artifacts */,
 			);
 			path = WebExtensions;
 			sourceTree = "<group>";
@@ -19150,6 +19153,7 @@
 				F10A3E000000000000000210 /* demanding-mv3 in Resources */,
 				F10A3E000000000000000217 /* content-messaging-mv3 in Resources */,
 				F10A3E000000000000000218 /* event-runtime-mv3 in Resources */,
+				F10A3E000000000000000221 /* Curated FWEA1 Artifacts in Resources */,
 				C2F335372ECE339F0071588A /* TranslationsEngine.html in Resources */,
 				8A94DB962E0F16E80005FE69 /* homepageSearchBarOff.json in Resources */,
 				8A94DB972E0F16E80005FE69 /* homepageSearchBarOn.json in Resources */,

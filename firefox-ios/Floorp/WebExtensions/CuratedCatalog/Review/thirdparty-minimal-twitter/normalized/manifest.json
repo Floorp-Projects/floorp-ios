@@ -1,0 +1,1 @@
+{"content_scripts":[{"css":["content/minimal.css"],"js":["content/minimal.js"],"matches":["https://x.com/*","https://twitter.com/*"],"run_at":"document_start","world":"ISOLATED"}],"host_permissions":["https://x.com/*","https://twitter.com/*"],"manifest_version":3,"name":"Minimal Twitter — Floorp compatibility build","version":"1.0.0"}

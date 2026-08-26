@@ -756,6 +756,10 @@ actor FloorpWebExtensionPackageStore {
                   preflight.manifest.version == record.version else {
                 throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
             }
+            try FloorpWebExtensionManifest.validateCuratedCatalogDNRRules(
+                manifest: preflight.manifest,
+                ruleResourceData: resources.dataByPath
+            )
             try Self.validateCatalogCompatibilityProfiles(
                 record.compatibilityProfiles,
                 manifest: preflight.manifest
@@ -780,14 +784,6 @@ actor FloorpWebExtensionPackageStore {
             if let previousPackage,
                previousPackage.generation == generation {
                 throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
-            }
-            if let previousPackage,
-               Self.updateRequiresPermissionConsent(
-                   from: previousPackage,
-                   to: preflight.manifest
-               ) {
-                throw FloorpWebExtensionPackageStoreError
-                    .packageUpdateRequiresPermissionConsent(record.extensionID)
             }
             let grants = if let previousPackage {
                 try Self.migratedGrants(from: previousPackage, to: preflight.manifest)
@@ -890,6 +886,39 @@ actor FloorpWebExtensionPackageStore {
         for extensionID: FloorpWebExtensionID
     ) -> FloorpWebExtensionInstalledPackage? {
         registry.packages.first { $0.extensionID == extensionID }
+    }
+
+    /// Every replacement of an installed signed-catalog generation requires
+    /// fresh, native, digest-bound consent. This helper validates the offered
+    /// artifact before the UI requests that consent; the transaction repeats
+    /// the binding after full FWEA1 reconstruction so a caller cannot turn
+    /// this convenience check into an authorization boundary.
+    func catalogUpdateRequiresExplicitConsent(
+        for artifact: FloorpWebExtensionVerifiedCatalogArtifact
+    ) throws -> Bool {
+        let record = artifact.record
+        guard record.availability == .available || record.availability == .updateAvailable else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        guard registry.packages.contains(where: { $0.extensionID == record.extensionID }) else {
+            return false
+        }
+        guard let manifestData = artifact.resources["manifest.json"] else {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        let manifest: FloorpWebExtensionManifest
+        do {
+            manifest = try FloorpWebExtensionManifest.decode(manifestData)
+        } catch {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        guard manifest.version == record.version else {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        // A signed catalog is authentication, not user consent. Even a
+        // same-permission replacement changes executable extension bytes and
+        // therefore must remain an explicit immutable-generation transition.
+        return true
     }
 
     func preparedPackageResources(
@@ -1743,6 +1772,10 @@ actor FloorpWebExtensionPackageStore {
 
         if let catalogRecord = package.catalogRecord {
             do {
+                try FloorpWebExtensionManifest.validateCuratedCatalogDNRRules(
+                    manifest: preflight.manifest,
+                    ruleResourceData: resources.dataByPath
+                )
                 try validateCatalogCompatibilityProfiles(
                     catalogRecord.compatibilityProfiles,
                     manifest: preflight.manifest

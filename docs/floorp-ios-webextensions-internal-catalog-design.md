@@ -1,8 +1,8 @@
 # Floorp iOS: 署名付き内部 WebExtensions カタログ設計
 
-Status: P1 implementation contract; P0 approvals remain required. This document
-does not authorize a remote package, an App Store release, or redistribution of
-a third-party extension.
+Status: signed-bundled catalog implementation contract; P0 approvals remain
+required. This document does not authorize a remote package, an App Store
+release, or redistribution of a third-party extension.
 
 ## 1. 目的と決定
 
@@ -22,6 +22,13 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 [MV3 compatibility limitations](floorp-ios-webextensions-mv3-limitations.md) を
 正とする。
 
+> 2026-08-26 実装上の明確化 — 最初の External TestFlight candidate は、**署名済みで
+> アプリに同梱した catalog と FWEA1 だけ**を使う。端末は catalog／artifact をネットワーク
+> から取得せず、アプリ資源中の `catalog.json`、root 公開鍵、固定 `FWEA1` を全て検証する。
+> `managedRemoteSource` は有効化しない。この変更は、任意 URL や remote code を導入する
+> ためではなく、実配布前に catalog の全 trust contract を検証可能にするための、より狭い
+> 導入面である。
+
 ### 1.1 非目標
 
 - Chrome ウェブストア、Firefox Add-ons、または任意 URL をアプリ内に一覧・
@@ -29,7 +36,8 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 - CRX、ZIP、共有シート、ローカルファイルからの公開版への任意導入。
 - カタログを通さない JavaScript、WASM、ルールリスト、CSS、画像の取得または
   更新。
-- 既存拡張のサイレントな置換。更新は新しい不変世代として扱う。
+- network catalog や任意 bytes による既存拡張のサイレントな置換。すべての更新は新しい
+  不変世代として扱い、再検証後も明示的な native confirmation を必要とする。
 - MV2、`webRequestBlocking`、DNR リダイレクト／ヘッダー変更、完全な
   Service Worker 互換。
 
@@ -45,6 +53,25 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 
 参考: [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)、
 [Chrome MV3](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)。
+
+#### 2026-08-26: External TestFlight policy gate
+
+最初の External TestFlight candidate は、catalog が署名済み・同梱済みであることだけを
+理由に提出してはならない。Apple の現行 App Review Guideline 3.2.2(i) は、第三者の
+apps、extensions、plug-ins の一般的 collection を表示する interface を不許可としている。
+また、Guideline 4.7 は binary 外で提供する plug-ins に index、個別の同意、privacy、
+年齢・reporting safeguards を求める。
+
+従って、13 本の第三者互換ビルドを含む 16 本の固定 catalog は、次のいずれかを immutable release evidence として
+記録するまで公開 candidate では無効のままとする。
+
+1. Apple が、固定で non-downloadable な product-curated set の reviewer exercise path と
+   許容性を確認する。
+2. Product が user-facing surface を一般的な第三者 extension collection でなくなるよう
+   範囲変更し、Security と Legal がその新しい review rationale を記録する。
+
+これは verifier を弱める理由、任意 installer を公開する理由、または
+`managedRemoteSource` を有効化する理由にはならない。
 
 ## 2. セキュリティ原則
 
@@ -113,29 +140,37 @@ Floorp account / app attestation
 
 ### 3.2 導入フロー
 
-1. クライアントは、アプリ版・配布チャネル・ロケールを添えてカタログを要求する。
-   認証トークンは短命で、パッケージ署名の代わりにはならない。
-2. verifier は canonical JSON を再構成し、署名鎖、`audience`、`minAppVersion`、
-   `expiresAt`、連番、失効鍵を検証する。失敗時は前回の検証済みカタログだけを
-   表示してよく、新規導入と更新は無効にする。
-3. UI は互換性、権限要約、プライバシー表示、ライセンス、版、審査日を表示する。
-   導入ボタンは、選択した固定 `generation` にだけ紐付く。
-4. downloader は一時ディレクトリへ取得し、最大サイズ、SHA-256、アーカイブ形式、
-   パス安全性を検証する。リダイレクト先や追加リソースの追跡取得はしない。
-5. package store は全ファイルをインベントリ化し、manifest とリソース参照、
-   DNR ルール、許可された API を preflight する。失敗時は一時ディレクトリを
-   消去し、現世代を維持する。
+1. build/review 環境だけが ZIP、XPI、CRX、HTTPS、source checkout、または local
+   input を**未信頼な審査入力**として受け取る。展開、安全検査、互換パッチ、license／notice
+   と provenance の固定を済ませ、非圧縮 `FWEA1` と record digest を生成する。この入力
+   parser は iOS client には存在しない。
+2. managed signer が canonical `catalog.json` と root/leaf 署名鎖を発行する。公開版には
+   root public key、署名済み catalog、`FWEA1` だけを同梱し、private key、input archive、
+   review workspace、remote endpoint は同梱しない。
+3. 起動時の verifier は canonical JSON、署名鎖、`audience`、`minAppVersion`、
+   `expiresAt`、連番、失効を検証し、全ての同梱 artifact の SHA-256、manifest、inventory、
+   manifest preflight まで通してから catalog を可視化する。ひとつでも欠けるか不正なら、
+   catalog package は新規導入・更新・再有効化を fail closed する。
+4. UI は署名済み metadata の互換性、権限要約、プライバシー表示、ライセンス、版、
+   provenance を表示する。導入ボタンは、選択した固定 `generation` にだけ紐付く。
+5. package store は検証済み resource map を profile 専用 staging directory に materialize
+   し、DNR と許可 API を preflight してから atomic rename する。失敗時は staging を破棄し、
+   現世代を維持する。
 6. UI は最終的なサイト・API 権限をネイティブ画面で同意取得する。必要な同意が
-   完了するまで、導入済みでも inactive とする。
+   完了するまで、導入済みでも inactive とする。private browsing は通常 profile のコピー
+   ではなく、別の ephemeral package installation として明示同意を要する。
 7. 同意後にだけ、package store が新世代を原子的に active にし、coordinator が
    古い runtime／content rule を解放して新世代を合成する。
 
 ### 3.3 更新・失効・オフライン動作
 
-- カタログの新しい `generation` は通知できるが、自動ダウンロード・自動有効化は
-  しない。ユーザーが版と変更権限を確認して更新する。
-- 更新で権限が同一または縮小しても、新成果物は別の SHA-256 を持つ。旧世代は
-  新世代の正常な preflight と同意が完了するまで残す。
+- 新しい `generation` は新しい immutable artifact である。ネットワークからの
+  自動ダウンロード、catalog の再取得による silent update、古い generation への自動
+  rollback は行わない。
+- アプリ更新に同梱された catalog であっても、起動時に replacement を自動適用しない。
+  API、host pattern、DNR capability、private profile 可否が同一・縮小・増加のいずれでも、
+  old/new generation と artifact digest に束縛した native confirmation が完了するまで
+  導入しない。既存の同意を再利用しない。
 - 緊急失効では該当 generation を無効化し、DNR、content script、background、
   popup／options の package origin を停止する。失効はロールバック先を指定せず、
   古い世代への自動復帰もしない。利用者が後で承認済みの別 generation を明示的に
@@ -288,12 +323,12 @@ P0 の署名方式と配布運用はまだ承認されていない。このた�
   には、永続化された scheduled revocation、確実な lifecycle wake-up、再起動・時計変更時の
   再評価、実機失効演習、P0 の再承認を同時に導入しなければならない。運用側は、それまで
   即時有効な失効だけを発行する。
-- 既存 catalog package の更新は、現在の local generation、候補 catalog generation、
-  候補 artifact SHA-256、lifecycle revision に束縛した一回限りの native confirmation が
-  なければ拒否する。既定の confirmation は拒否であり、catalog の再取得や署名の有効性
-  だけから silent update を導かない。`compatibilityProfiles` は表示用ではなく、固定
-  manifest が使う content-script／DNR／action-storage capability family をすべて含む
-  ことを導入時・再起動時に検査する。
+- 既存 catalog package の**すべての更新**は、現在の local generation、候補 catalog
+  generation、候補 artifact SHA-256、lifecycle revision に束縛した一回限りの native
+  confirmation がなければ拒否する。既定の confirmation は拒否である。catalog の再取得、
+  署名の有効性だけ、または任意の remote bytes から silent update を導かない。
+  `compatibilityProfiles` は表示用ではなく、固定 manifest が使う content-script／DNR／
+  action-storage capability family をすべて含むことを導入時・再起動時に検査する。
 
 この下位契約は、当初の「package format が P0 の未決事項」という記述をより狭くした。
 理由は、任意の ZIP/CRX parser を公開版に置かず、artifact の受入形式そのものを
@@ -335,6 +370,15 @@ catalog record と同じ不変性境界に置くためである。P0 はこの�
 広告ブロッカーは機能・性能・誤ブロックの影響が大きいため、ルール数、展開サイズ、
 コンパイル時間、メモリ、更新頻度をカタログ審査項目に含める。現在の互換契約にない
 ルール action は「一部が無視される」のではなく導入拒否とする。
+
+**2026-08-27 の公開カタログ境界の絞り込み。** 上表は Stage 3 の汎用 DNR engine が
+検証できる互換性上限である。一方、今回 External TestFlight に向けて作成する
+`CuratedCatalog` の広告・追跡防止 artifact は、静的な `block` action だけに固定する。
+package store は署名済み catalog artifact を導入・再起動復元する前にこの制約を再検査し、
+`allow`、`upgradeScheme`、dynamic/session rule を含む artifact を fail closed で拒否する。
+これは Stage 3 の既存 fixture 互換性を削らず、外部配布する狭い profile の安全境界を
+追加する変更である。将来この profile を拡張するには、別の設計・法務/プライバシー・
+性能/誤ブロック審査と署名済み generation を要する。
 
 ### 5.3 プロファイル C: ポップアップ・設定画面・`storage`
 

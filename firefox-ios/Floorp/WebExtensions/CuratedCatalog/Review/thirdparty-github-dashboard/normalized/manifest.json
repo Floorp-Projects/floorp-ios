@@ -1,0 +1,1 @@
+{"content_scripts":[{"css":["content/dashboard.css"],"js":["content/dashboard.js"],"matches":["https://github.com/","https://github.com/orgs/*/dashboard"],"run_at":"document_end","world":"ISOLATED"}],"host_permissions":["https://github.com/","https://github.com/orgs/*/dashboard"],"manifest_version":3,"name":"GitHub Dashboard Filter — Floorp compatibility build","version":"0.8.8"}

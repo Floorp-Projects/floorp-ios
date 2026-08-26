@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Web Search Navigator — Floorp compatibility build",
+  "version": "1.0.0",
+  "host_permissions": ["https://www.google.com/*", "https://www.bing.com/*", "https://github.com/search*"],
+  "content_scripts": [{
+    "matches": ["https://www.google.com/*", "https://www.bing.com/*", "https://github.com/search*"],
+    "js": ["content/navigator.js"],
+    "css": ["content/navigator.css"],
+    "run_at": "document_end",
+    "world": "ISOLATED"
+  }]
+}

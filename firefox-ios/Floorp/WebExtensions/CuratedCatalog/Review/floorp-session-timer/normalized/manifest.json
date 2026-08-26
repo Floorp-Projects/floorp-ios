@@ -1,0 +1,1 @@
+{"action":{"default_popup":"popup/index.html","default_title":"Session Timer"},"background":{"service_worker":"background/service-worker.js","type":"module"},"manifest_version":3,"name":"Floorp Session Timer","options_ui":{"open_in_tab":true,"page":"options/index.html"},"permissions":["alarms","storage"],"version":"1.0.0"}

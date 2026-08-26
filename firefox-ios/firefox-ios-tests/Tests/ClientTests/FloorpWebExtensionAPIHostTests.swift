@@ -1169,6 +1169,44 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         }
     }
 
+    func testCuratedCatalogProfileRejectsMutableDNRAPIs() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-curated-dnr-\(UUID().uuidString)",
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(apiPermissions: [.declarativeNetRequest]),
+            defaultLocale: "en",
+            declaredPermissions: [.declarativeNetRequest],
+            allowsMutableDNR: false
+        )
+        let sender = testSender()
+
+        for operation in [
+            "declarativeNetRequest.getDynamicRules",
+            "declarativeNetRequest.updateDynamicRules",
+            "declarativeNetRequest.getSessionRules",
+            "declarativeNetRequest.updateSessionRules"
+        ] {
+            do {
+                _ = try await host.dispatch(
+                    operation: operation,
+                    payload: try payload([String: String]()),
+                    sender: sender
+                )
+                XCTFail("\(operation) must be unavailable to a curated catalog package")
+            } catch {
+                XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unsupportedOperation)
+            }
+        }
+    }
+
     func testForegroundAlarmDrainIsProfileScopedAndRegistryRemovalTearsDownHost() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
