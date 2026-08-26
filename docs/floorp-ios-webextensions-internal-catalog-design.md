@@ -1,7 +1,8 @@
 # Floorp iOS: 署名付き内部 WebExtensions カタログ設計
 
-Status: proposed design. This document does not authorize a remote package,
-an App Store release, or redistribution of a third-party extension.
+Status: P1 implementation contract; P0 approvals remain required. This document
+does not authorize a remote package, an App Store release, or redistribution of
+a third-party extension.
 
 ## 1. 目的と決定
 
@@ -102,13 +103,13 @@ Floorp account / app attestation
 
 | コンポーネント | 責務 | 信頼してよい入力 |
 | --- | --- | --- |
-| `FloorpExtensionCatalogClient`（新規） | カタログ・失効リストの取得、認証ヘッダー付与、キャッシュ | ネットワーク応答は未信頼 |
-| `FloorpExtensionCatalogVerifier`（新規） | canonical JSON、署名鎖、対象アプリ、有効期限、連番、鍵失効を検証 | アプリ同梱 root 公開鍵 |
-| `FloorpExtensionArtifactDownloader`（新規） | 選択済みレコードの単一成果物のみを取得し、サイズと SHA-256 を検証 | 検証済みレコードの digest とサイズ |
+| P0-gated catalog transport（未接続） | 固定 endpoint から catalog/失効情報を取得し、認証ヘッダーを付与する。任意 URL を受け取らない | ネットワーク応答は未信頼 |
+| `FloorpWebExtensionCatalogVerifier` | canonical JSON、root/leaf 署名鎖、対象アプリ、有効期限、連番、鍵失効を検証 | レビュー済み composition が渡すアプリ同梱 root 公開鍵 |
+| `FloorpWebExtensionArtifactDownloader` | 検証済みレコードで選択済みの一成果物のみを取得し、許可 host、redirect、サイズ、SHA-256 を検証 | 検証済みレコードの digest、サイズ、endpoint allow-list |
 | `FloorpWebExtensionPackageStore`（拡張） | 事前検証済みファイルを世代付きで原子的に導入・削除・復元 | verifier と downloader の検証結果 |
 | `FloorpWebExtensionManifest`（既存） | MV3 manifest の閉じたサブセットとリソース参照を preflight | 導入候補の展開済みリソース |
 | `FloorpWebExtensionCoordinator`（既存） | プロファイル／private mode／サイト権限を毎操作で適用 | 有効な package generation |
-| Extensions UI（拡張） | カタログ表示、導入確認、権限同意、更新・失効状態の説明 | 検証済みカタログの表示専用メタデータ |
+| Extensions UI（既存 + P0-gated 拡張） | 公開版は同梱 catalog のみを表示する。承認後に限り、検証済み catalog の表示、導入確認、更新・失効状態を追加する | 検証済み catalog の表示専用メタデータ |
 
 ### 3.2 導入フロー
 
@@ -136,8 +137,9 @@ Floorp account / app attestation
 - 更新で権限が同一または縮小しても、新成果物は別の SHA-256 を持つ。旧世代は
   新世代の正常な preflight と同意が完了するまで残す。
 - 緊急失効では該当 generation を無効化し、DNR、content script、background、
-  popup／options の package origin を停止する。失効はロールバック先を指定できるが、
-  それも署名済みカタログの既存世代に限る。
+  popup／options の package origin を停止する。失効はロールバック先を指定せず、
+  古い世代への自動復帰もしない。利用者が後で承認済みの別 generation を明示的に
+  導入する場合にも、通常の署名・digest・同意検証を再実行する。
 - オフライン時は有効な既存パッケージをそのまま利用する。期限切れカタログを
   使って新規導入・更新・復活はしない。
 
@@ -162,7 +164,13 @@ CryptoKit を利用できる Ed25519 を第一候補とする。
     "minimumAppVersion": "0.3.0",
     "channel": "production"
   },
-  "signingKeyID": "catalog-2026-q3",
+  "signingKey": {
+    "keyID": "catalog-2026-q3",
+    "publicKey": "base64url-ed25519-public-key",
+    "notBefore": "2026-08-01T00:00:00Z",
+    "notAfter": "2026-10-01T00:00:00Z",
+    "signature": "base64url-root-signature"
+  },
   "packages": [],
   "revocations": [],
   "signature": "base64url-ed25519-signature"
@@ -173,7 +181,12 @@ CryptoKit を利用できる Ed25519 を第一候補とする。
 改ざん検出可能なアプリ保存領域に保存する。時計が大きく後退した端末は更新を停止し、
 既存の有効世代のみを使う。
 
-### 4.2 パッケージレコード
+### 4.2 パッケージレコードと掲載審査メタデータ
+
+`catalog-v1` の実行可能な wire record は §4.4 に列挙した技術フィールドだけである。
+以下の publisher/privacy/review フィールドは、P0 承認後に artifact ごとの掲載審査
+記録・release evidence として必須にする。未承認のサーバー metadata を実行時の権限、
+URL、コードとして扱ってはならない。
 
 | フィールド | 用途 |
 | --- | --- |
@@ -186,7 +199,7 @@ CryptoKit を利用できる Ed25519 を第一候補とする。
 | `requestedPermissions` / `hostPatterns` | ネイティブ同意で提示する、人間が読める最小権限。 |
 | `privacyDeclaration` | データ種別、送信先、保持、作者連絡先、通報先。 |
 | `reviewEvidence` | 静的検査、実機 OS、テストサイト、性能、レビュー日、承認者。 |
-| `availability` | `available`, `updateAvailable`, `withdrawn`, `revoked`, `minAppVersion`。 |
+| `availability` | `available`, `updateAvailable`, `withdrawn`, `revoked`。最低 app version は catalog の `audience` で固定する。 |
 
 成果物は `manifest.json`、宣言済みリソース、ライセンス・notice、Floorp 審査
 メタデータだけを含む。`update_url`、リモート module、リモート DNR list、実行時の
@@ -200,13 +213,70 @@ CryptoKit を利用できる Ed25519 を第一候補とする。
 WebExtensions/
   packages/<extensionID>/<generation>-<artifactSHA256>/...
   registry.json
-  accepted-catalogs/<catalogID>-<sequence>.json
-  revocations/<catalogID>-<sequence>.json
 ```
 
 導入中は同階層の一時ディレクトリに展開し、全検査と同意の後に rename で確定する。
 確定済みディレクトリを上書きしない。`registry.json` は現在の
 `FloorpWebExtensionPackageStore` の generation・profile 境界と整合させる。
+受理済み最大 sequence、最大観測時刻、失効済み key/generation は profile data ではなく
+catalog ID ごとの ThisDeviceOnly Keychain に保存する。catalog 本文を将来キャッシュする
+場合も、それは表示用であり、新規導入・更新・再有効化の信頼根拠にはしない。
+
+### 4.4 実装で固定する `catalog-v1` の安全な下位契約
+
+P0 の署名方式と配布運用はまだ承認されていない。このため実装は公開版で
+`managedRemoteSource` を有効化せず、次の下位契約をテスト可能な verifier として
+実装する。これは P0 の承認に代わるものではなく、承認時に安全性を下げずに接続する
+ための固定点である。
+
+- canonical JSON は UTF-8、ASCII のフィールド名、重複キーなし、整数以外の数値
+  なし、NFC でないキーなしとする。署名対象は最上位の `signature` を除く全フィールド
+  を UTF-8 byte 順でキーソートして再直列化した bytes とする。未知フィールド、
+  小数・指数表記、`-0`、署名対象外の任意フィールドは拒否する。
+- catalog は root が署名した `signingKey`（`keyID`、Ed25519 public key、
+  `notBefore`、`notAfter`、root signature）を含み、その leaf で catalog 本体を署名
+  する。root public key はアプリ設定からのみ渡し、root private key・catalog endpoint・
+  実運用 key ID はアプリに埋め込まない。catalog と leaf の有効期間は RFC 3339 UTC の
+  秒精度、catalog は最大 14 日、leaf は最大 90 日とする。
+- `packages` の各レコードは `extensionID`、`generation`、`version`、
+  `artifactURL`、`artifactBytes`、`artifactSHA256`、`manifestSHA256`、
+  `resourceInventorySHA256`、`compatibilityProfiles`、`availability` を持つ。
+  `generation` と artifact SHA-256 の先頭 16 文字から導くローカル generation は一度
+  作成したら再利用しない。artifact URL は HTTPS の事前許可 host に限り、redirect、
+  query、fragment、資格情報を拒否する。
+- 成果物の wire format は任意の ZIP/CRX ではない、署名済みレコード専用の
+  `FWEA1`（非圧縮、固定 inventory、各ファイルの SHA-256 と byte size）とする。
+  ZIP magic、symlink、絶対/親相対 path、case/NFC collision、未列挙ファイル、圧縮・
+  data descriptor は受け付けない。これにより ZIP Slip と展開爆弾の入力面を公開版から
+  除去する。`FWEA1` を将来変更する場合も schema version を上げ、新しい verifier を
+  追加して旧 parser の受入範囲を広げない。
+- resource inventory digest は、path の UTF-8 byte 順で並べた
+  `[{path,sha256,size}]` の canonical JSON に対する SHA-256 とする。manifest digest と
+  inventory digest は artifact digest と独立に照合する。manifest preflight の閉じた
+  MV3 subset に通らない候補は、署名が有効でも導入しない。
+- 受理済み最大 sequence、最大観測時刻、失効済み key/generation は ThisDeviceOnly の
+  Keychain に catalog ID ごとに保存する。時刻が最大観測時刻から 5 分を超えて戻った場合、
+  または sequence が同値・低下した場合は、新規導入、更新、再有効化を拒否する。既存の
+  有効世代はこの失敗だけでは削除しない。さらに、一度受理した
+  `(extensionID, generation)` と `artifactSHA256` の束縛を同じ Keychain state に保持し、
+  後続 catalog が同じ generation を別 digest に再定義した場合も reject する。
+- `revocations` は catalog の署名対象であり、key または
+  `(extensionID, generation)` だけを停止できる。失効は置換や古い世代への自動復帰を
+  指示できない。失効時は runtime、DNR、page origin を先に停止し、`storage.local` と
+  dynamic DNR state は P0 で承認される明示的ポリシーまで保持する。導入済み record は
+  root-certified leaf `keyID` を保持し、key revocation でその key が導入した全 generation
+  を停止する。新しい anti-rollback state は停止成功後にだけ Keychain へ commit する。
+- 既存 catalog package の更新は、現在の local generation、候補 catalog generation、
+  候補 artifact SHA-256、lifecycle revision に束縛した一回限りの native confirmation が
+  なければ拒否する。既定の confirmation は拒否であり、catalog の再取得や署名の有効性
+  だけから silent update を導かない。`compatibilityProfiles` は表示用ではなく、固定
+  manifest が使う content-script／DNR／action-storage capability family をすべて含む
+  ことを導入時・再起動時に検査する。
+
+この下位契約は、当初の「package format が P0 の未決事項」という記述をより狭くした。
+理由は、任意の ZIP/CRX parser を公開版に置かず、artifact の受入形式そのものを
+catalog record と同じ不変性境界に置くためである。P0 はこの契約、サイズ・ルール上限、
+鍵保管、レビュー経路を承認または差し戻さなければならない。
 
 ## 5. 3 つの初期互換プロファイル
 
@@ -273,6 +343,12 @@ presentation delegate を置き換えない。
 
 P2〜P4 は順番に出すが、P1 のスキーマと verifier は共通である。P3 と P4 を
 先に有効化するために、P2 のサイト同意や世代管理を迂回してはならない。
+
+TestFlight を実機 OS 行列の取得に使う場合は、source-bound な candidate を最小の
+承認済みテスター範囲に配る段階として扱う。candidate のインストール自体は P5 の受入結果
+ではなく、通常・private profile、失効、アクセシビリティ、性能、battery の記録が揃うまで
+P5 完了や一般公開を主張してはならない。この明確化は、実機検証を TestFlight 後に行う
+運用順序を許容しつつ、P0/P5 の fail-closed な公開ゲートを弱めないためである。
 
 ## 7. UI と利用者体験
 

@@ -442,6 +442,17 @@ public final class FloorpBootstrapper {
             isPrivateBrowsing: isPrivateBrowsing,
             windowManager: windowManager
         )
+        let permissionConsent = FloorpWebExtensionNativePermissionConsentPresenter(
+            isPrivateBrowsing: isPrivateBrowsing,
+            packageNameLookup: { extensionID, generation in
+                guard let package = await store.installedPackage(for: extensionID),
+                      package.isEnabled,
+                      package.generation == generation else {
+                    return nil
+                }
+                return package.name
+            }
+        )
         let backgroundRuntimeReference = FloorpWebExtensionBackgroundRuntimeReference()
         let host = try FloorpWebExtensionAPIHost(
             profileIdentifier: profileIdentifier,
@@ -472,6 +483,9 @@ public final class FloorpBootstrapper {
                     throw FloorpWebExtensionError.unsupported("WebExtension package manager is unavailable")
                 }
                 try await manager.reload(extensionID)
+            },
+            permissionRequestAuthorizer: { request in
+                await permissionConsent.authorize(request)
             },
             liveScriptingTargetResolver: { tabID in
                 try tabsHost.liveScriptingTarget(tabID: tabID)

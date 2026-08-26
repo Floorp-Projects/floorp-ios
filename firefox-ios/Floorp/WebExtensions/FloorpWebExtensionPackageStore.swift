@@ -16,6 +16,8 @@ enum FloorpWebExtensionPackageStoreError: Error, Equatable, LocalizedError, Send
     case packageUpdateRequiresPermissionConsent(FloorpWebExtensionID)
     case stalePackageComposition
     case resourceUnavailable(String)
+    case immutableGenerationConflict(FloorpWebExtensionID)
+    case invalidCatalogArtifact
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +43,10 @@ enum FloorpWebExtensionPackageStoreError: Error, Equatable, LocalizedError, Send
             return "The WebExtensions package-store composition is no longer current."
         case .resourceUnavailable(let path):
             return "The extension package resource is unavailable: \(path)"
+        case .immutableGenerationConflict(let extensionID):
+            return "The immutable package generation conflicts with the installed extension: \(extensionID.rawValue)"
+        case .invalidCatalogArtifact:
+            return "The verified catalog artifact cannot be installed."
         }
     }
 }
@@ -102,7 +108,11 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
     let generation: String
     let name: String
     let version: String
-    let fixture: FloorpWebExtensionFixture
+    /// Exactly one provenance record is present. Bundled fixtures retain their
+    /// existing pinned verification; managed catalog generations retain the
+    /// signed record's immutable artifact digests.
+    let fixture: FloorpWebExtensionFixture?
+    let catalogRecord: FloorpWebExtensionCatalogPackageRecord?
     let packageSHA256: String
     let installedAt: Date
     let rawManifest: Data
@@ -119,6 +129,45 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
     /// keeps a runtime activation failure distinct from a deliberate user
     /// disable after process restart.
     var activationError: String?
+
+    /// The optional catalog provenance defaults to `nil` solely for existing
+    /// bundled-fixture construction. Catalog installation calls pass the
+    /// verified record explicitly; no decoded or default path can invent one.
+    init(
+        extensionID: FloorpWebExtensionID,
+        generation: String,
+        name: String,
+        version: String,
+        fixture: FloorpWebExtensionFixture?,
+        catalogRecord: FloorpWebExtensionCatalogPackageRecord? = nil,
+        packageSHA256: String,
+        installedAt: Date,
+        rawManifest: Data,
+        preflight: FloorpWebExtensionManifestPreflightReport,
+        resourcePaths: Set<String>,
+        isEnabled: Bool,
+        grants: FloorpWebExtensionPermissionSnapshot,
+        dnrConfiguration: FloorpWebExtensionStoredDNRConfiguration? = nil,
+        persistentRegisteredScripts: [FloorpWebExtensionRegisteredScript]? = nil,
+        activationError: String? = nil
+    ) {
+        self.extensionID = extensionID
+        self.generation = generation
+        self.name = name
+        self.version = version
+        self.fixture = fixture
+        self.catalogRecord = catalogRecord
+        self.packageSHA256 = packageSHA256
+        self.installedAt = installedAt
+        self.rawManifest = rawManifest
+        self.preflight = preflight
+        self.resourcePaths = resourcePaths
+        self.isEnabled = isEnabled
+        self.grants = grants
+        self.dnrConfiguration = dnrConfiguration
+        self.persistentRegisteredScripts = persistentRegisteredScripts
+        self.activationError = activationError
+    }
 
     var registeredPersistentScripts: [FloorpWebExtensionRegisteredScript] {
         persistentRegisteredScripts ?? []
@@ -448,12 +497,10 @@ actor FloorpWebExtensionPackageStore {
                     replacementGeneration: transaction.installedPackage.generation
                 )
             } catch {
-                if let previousPackage = transaction.previousPackage {
-                    try? abortPreparedBundledPackageUpdate(
-                        extensionID: expectedExtensionID,
-                        replacementGeneration: transaction.installedPackage.generation
-                    )
-                }
+                try? abortPreparedBundledPackageUpdate(
+                    extensionID: expectedExtensionID,
+                    replacementGeneration: transaction.installedPackage.generation
+                )
                 throw error
             }
         }
@@ -563,6 +610,7 @@ actor FloorpWebExtensionPackageStore {
                 name: preflight.manifest.name,
                 version: preflight.manifest.version,
                 fixture: fixtureMetadata.fixture,
+                catalogRecord: nil,
                 packageSHA256: fixtureMetadata.fixture.packageSHA256,
                 installedAt: Date(),
                 rawManifest: manifestData,
@@ -607,6 +655,197 @@ actor FloorpWebExtensionPackageStore {
                 installedPackage: installed,
                 previousPackage: previousPackage
             )
+        } catch {
+            try? FileManager.default.removeItem(at: stagedPackage)
+            throw error
+        }
+    }
+    // swiftlint:enable function_body_length
+
+    /// Stages bytes that were already bound to one verified `catalog-v1`
+    /// record. This accepts no path, URL, ZIP, CRX, or caller-provided
+    /// archive: only the resource map emitted by the signed-artifact decoder.
+    // swiftlint:disable function_body_length
+    func installVerifiedCatalogPackageTransaction(
+        _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
+        initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
+        updateConsent: FloorpWebExtensionCatalogUpdateConsent? = nil
+    ) throws -> BundledPackageInstallationTransaction {
+        let record = artifact.record
+        guard record.availability == .available || record.availability == .updateAvailable else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        guard !registry.pendingDataPurges.contains(record.extensionID),
+              registry.pendingPackageUpdates[record.extensionID] == nil else {
+            throw FloorpWebExtensionPackageStoreError.resourceUnavailable(
+                "package transaction pending for \(record.extensionID.rawValue)"
+            )
+        }
+        let resourcePaths = Set(artifact.resources.keys)
+        let reconstructedArtifact: Data
+        do {
+            reconstructedArtifact = try FloorpWebExtensionCatalogArchive.encodedArtifact(
+                resources: artifact.resources
+            )
+        } catch {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        guard resourcePaths.count == artifact.resources.count,
+              resourcePaths.contains("manifest.json"),
+              resourcePaths.allSatisfy({ (try? FloorpWebExtensionScriptSource($0)) != nil }),
+              artifact.resources.values.allSatisfy({
+                  $0.count <= FloorpWebExtensionManifest.maximumPackageResourceByteSize
+              }),
+              artifact.resources.values.reduce(0, { $0 + $1.count }) <= Self.maximumPackageByteSize,
+              FloorpWebExtensionArtifactDownloader.sha256(reconstructedArtifact) == record.artifactSHA256 else {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        do {
+            // The downloader normally performed this check already. Repeating
+            // it here makes the package-store boundary independently reject a
+            // forged in-memory "verified" value or a corrupted durable
+            // catalog record before any resource is materialized.
+            _ = try FloorpWebExtensionCatalogArchive.decode(
+                reconstructedArtifact,
+                record: record
+            )
+        } catch {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        let resources = ResourceSnapshot(
+            dataByPath: artifact.resources,
+            inventory: .init(resources: resourcePaths.sorted().map {
+                .init(path: $0, isRegularFile: true, byteSize: artifact.resources[$0]?.count ?? 0)
+            })
+        )
+        let transactionID = UUID().uuidString.lowercased()
+        let stagedPackage = stagingDirectory.appendingPathComponent(transactionID, isDirectory: true)
+        let generation = record.localGeneration
+
+        do {
+            try Self.materialize(resources.dataByPath, at: stagedPackage)
+            guard let manifestData = resources.dataByPath["manifest.json"] else {
+                throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+            }
+            let preflight = try FloorpWebExtensionManifest.preflight(
+                manifestData: manifestData,
+                packageInventory: resources.inventory,
+                ruleResourceData: resources.dataByPath
+            )
+            guard preflight.isActivationAllowed,
+                  preflight.manifest.version == record.version else {
+                throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+            }
+            try Self.validateCatalogCompatibilityProfiles(
+                record.compatibilityProfiles,
+                manifest: preflight.manifest
+            )
+            let previousPackage = registry.packages.first {
+                $0.extensionID == record.extensionID
+            }
+            if let previousCatalogRecord = previousPackage?.catalogRecord,
+               previousCatalogRecord.generation == record.generation {
+                throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
+            }
+            if let previousPackage {
+                guard let updateConsent,
+                      previousPackage.catalogRecord != nil,
+                      updateConsent.extensionID == record.extensionID,
+                      updateConsent.installedGeneration == previousPackage.generation,
+                      updateConsent.replacementCatalogGeneration == record.generation,
+                      updateConsent.replacementArtifactSHA256 == record.artifactSHA256 else {
+                    throw FloorpWebExtensionCatalogError.updateConsentRequired
+                }
+            }
+            if let previousPackage,
+               previousPackage.generation == generation {
+                throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
+            }
+            if let previousPackage,
+               Self.updateRequiresPermissionConsent(
+                   from: previousPackage,
+                   to: preflight.manifest
+               ) {
+                throw FloorpWebExtensionPackageStoreError
+                    .packageUpdateRequiresPermissionConsent(record.extensionID)
+            }
+            let grants = if let previousPackage {
+                try Self.migratedGrants(from: previousPackage, to: preflight.manifest)
+            } else {
+                try Self.validatedGrants(
+                    initialGrants,
+                    for: preflight.manifest,
+                    scope: .initialInstallation
+                )
+            }
+            let generationDirectory = Self.generationDirectory(
+                packagesDirectory: packagesDirectory,
+                extensionID: record.extensionID,
+                generation: generation
+            )
+            let existingDNRConfiguration = previousPackage?.dnrConfiguration
+            if let existingDNRConfiguration {
+                let manifestRuleIDs = Set(preflight.manifest.dnrRuleResources.map(\.identifier))
+                guard existingDNRConfiguration.enabledStaticRuleSetIDs.isSubset(of: manifestRuleIDs) else {
+                    throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+                }
+                try Self.validateStoredDNRConfiguration(existingDNRConfiguration)
+            }
+            let existingPersistentScripts = previousPackage?.registeredPersistentScripts ?? []
+            try Self.validatePersistentRegisteredScripts(
+                existingPersistentScripts,
+                for: preflight.manifest,
+                resourcePaths: resourcePaths
+            )
+            try Self.ensureStoreDirectory(generationDirectory.deletingLastPathComponent())
+            guard !FileManager.default.fileExists(atPath: generationDirectory.path) else {
+                throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
+            }
+            try FileManager.default.moveItem(at: stagedPackage, to: generationDirectory)
+            let installed = FloorpWebExtensionInstalledPackage(
+                extensionID: record.extensionID,
+                generation: generation,
+                name: preflight.manifest.name,
+                version: preflight.manifest.version,
+                fixture: nil,
+                catalogRecord: record,
+                packageSHA256: record.artifactSHA256,
+                installedAt: Date(),
+                rawManifest: manifestData,
+                preflight: preflight,
+                resourcePaths: resourcePaths,
+                isEnabled: previousPackage?.isEnabled ?? true,
+                grants: grants,
+                dnrConfiguration: existingDNRConfiguration,
+                persistentRegisteredScripts: existingPersistentScripts,
+                activationError: previousPackage?.activationError
+            )
+            var next = registry
+            if let previousPackage {
+                next.pendingPackageUpdates[record.extensionID] = .init(
+                    previousPackage: previousPackage,
+                    replacementPackage: installed
+                )
+            } else {
+                next.packages.append(installed)
+                next.packages.sort { $0.extensionID.rawValue < $1.extensionID.rawValue }
+            }
+            do {
+                try persist(next)
+            } catch {
+                try? FileManager.default.removeItem(at: generationDirectory)
+                throw error
+            }
+            registry = next
+            if previousPackage == nil {
+                refreshResourceState()
+            } else {
+                preparedResourceStates[record.extensionID] = .init(
+                    package: installed,
+                    packagesDirectory: packagesDirectory
+                )
+            }
+            return .init(installedPackage: installed, previousPackage: previousPackage)
         } catch {
             try? FileManager.default.removeItem(at: stagedPackage)
             throw error
@@ -757,6 +996,30 @@ actor FloorpWebExtensionPackageStore {
         }
         next.packages[index].isEnabled = false
         next.packages[index].activationError = "This extension could not be activated. Enable it to try again."
+        try persist(next)
+        registry = next
+        refreshResourceState()
+    }
+
+    /// A signed generation revocation never swaps in another package. Runtime
+    /// ownership is revoked by the lifecycle manager before this durable
+    /// transition; package-owned storage is retained until the P0-approved
+    /// policy explicitly requests an uninstall.
+    func recordCatalogRevocation(
+        for extensionID: FloorpWebExtensionID,
+        catalogGeneration: String
+    ) throws {
+        guard registry.pendingPackageUpdates[extensionID] == nil else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        var next = registry
+        guard let index = next.packages.firstIndex(where: { $0.extensionID == extensionID }),
+              let catalogRecord = next.packages[index].catalogRecord,
+              catalogRecord.generation == catalogGeneration else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
+        }
+        next.packages[index].isEnabled = false
+        next.packages[index].activationError = "This extension generation was revoked and has been stopped."
         try persist(next)
         registry = next
         refreshResourceState()
@@ -1039,6 +1302,41 @@ actor FloorpWebExtensionPackageStore {
                 $0.covers(newRequiredHost)
             }
             return !wasAlreadyRequired && !wasAlreadyAuthorized
+        }
+    }
+
+    /// Catalog profiles are a review boundary, not display-only metadata. A
+    /// signed record must claim every capability family present in the fixed
+    /// manifest, including optional permissions that could later be requested.
+    private static func validateCatalogCompatibilityProfiles(
+        _ profiles: Set<String>,
+        manifest: FloorpWebExtensionManifest
+    ) throws {
+        var required = Set<String>()
+        let allAPIs = manifest.apiPermissions.union(manifest.optionalAPIPermissions)
+        let contentScriptAPIs: Set<FloorpWebExtensionAPIGrant> = [.activeTab, .scripting]
+        if !manifest.contentScripts.isEmpty ||
+            !manifest.hostPermissions.isEmpty ||
+            !manifest.optionalHostPermissions.isEmpty ||
+            !allAPIs.intersection(contentScriptAPIs).isEmpty {
+            required.insert("content-script")
+        }
+        if !manifest.dnrRuleResources.isEmpty ||
+            !manifest.cosmeticFilterResources.isEmpty ||
+            allAPIs.contains(.declarativeNetRequest) {
+            required.insert("dnr")
+        }
+        let actionStorageAPIs: Set<FloorpWebExtensionAPIGrant> = [.alarms, .storage, .tabs]
+        if manifest.action != nil ||
+            manifest.optionsUI != nil ||
+            manifest.background != nil ||
+            !allAPIs.intersection(actionStorageAPIs).isEmpty {
+            required.insert("action-storage")
+        }
+        guard profiles.isSuperset(of: required) else {
+            throw FloorpWebExtensionCatalogError.artifactRejected(
+                "catalog compatibility profile does not cover manifest capabilities"
+            )
         }
     }
 
@@ -1337,8 +1635,6 @@ actor FloorpWebExtensionPackageStore {
         packagesDirectory: URL
     ) throws {
         guard isSafeGeneration(package.generation),
-              package.extensionID == package.fixture.extensionID,
-              package.packageSHA256 == package.fixture.packageSHA256,
               package.resourcePaths.contains("manifest.json"),
               package.resourcePaths.allSatisfy({ (try? FloorpWebExtensionScriptSource($0)) != nil }) else {
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
@@ -1356,13 +1652,51 @@ actor FloorpWebExtensionPackageStore {
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
         }
 
-        let fixtureMetadata = try FloorpWebExtensionCompatibilityHarness.verifyFixturePackage(
-            at: generationDirectory
-        )
-        guard fixtureMetadata.fixture == package.fixture,
-              fixtureMetadata.fixture.extensionID == package.extensionID,
-              fixtureMetadata.fixture.version == package.version,
-              fixtureMetadata.fixture.packageSHA256 == package.packageSHA256 else {
+        switch (package.fixture, package.catalogRecord) {
+        case let (.some(fixture), .none):
+            guard package.extensionID == fixture.extensionID,
+                  package.packageSHA256 == fixture.packageSHA256 else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+            let fixtureMetadata = try FloorpWebExtensionCompatibilityHarness.verifyFixturePackage(
+                at: generationDirectory
+            )
+            guard fixtureMetadata.fixture == fixture,
+                  fixtureMetadata.fixture.extensionID == package.extensionID,
+                  fixtureMetadata.fixture.version == package.version,
+                  fixtureMetadata.fixture.packageSHA256 == package.packageSHA256 else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+        case let (.none, .some(record)):
+            let reconstructedArtifact: Data
+            do {
+                reconstructedArtifact = try FloorpWebExtensionCatalogArchive.encodedArtifact(
+                    resources: resources.dataByPath
+                )
+            } catch {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+            guard record.extensionID == package.extensionID,
+                  FloorpWebExtensionCatalogVerifier.isSafeIdentifier(
+                      record.signingKeyID,
+                      maximumLength: 96
+                  ),
+                  record.version == package.version,
+                  record.localGeneration == package.generation,
+                  record.availability == .available || record.availability == .updateAvailable,
+                  record.artifactSHA256 == package.packageSHA256,
+                  FloorpWebExtensionArtifactDownloader.sha256(reconstructedArtifact) == record.artifactSHA256 else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+            do {
+                _ = try FloorpWebExtensionCatalogArchive.decode(
+                    reconstructedArtifact,
+                    record: record
+                )
+            } catch {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+        case (.some, .some), (.none, .none):
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
         }
 
@@ -1381,6 +1715,17 @@ actor FloorpWebExtensionPackageStore {
                   scope: .durablePermissionUpdate
               ) == package.grants else {
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+        }
+
+        if let catalogRecord = package.catalogRecord {
+            do {
+                try validateCatalogCompatibilityProfiles(
+                    catalogRecord.compatibilityProfiles,
+                    manifest: preflight.manifest
+                )
+            } catch {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
         }
 
         if let dnrConfiguration = package.dnrConfiguration {
