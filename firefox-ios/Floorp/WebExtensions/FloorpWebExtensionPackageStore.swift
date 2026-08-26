@@ -18,6 +18,7 @@ enum FloorpWebExtensionPackageStoreError: Error, Equatable, LocalizedError, Send
     case resourceUnavailable(String)
     case immutableGenerationConflict(FloorpWebExtensionID)
     case invalidCatalogArtifact
+    case catalogGenerationRevoked(FloorpWebExtensionID)
 
     var errorDescription: String? {
         switch self {
@@ -47,6 +48,8 @@ enum FloorpWebExtensionPackageStoreError: Error, Equatable, LocalizedError, Send
             return "The immutable package generation conflicts with the installed extension: \(extensionID.rawValue)"
         case .invalidCatalogArtifact:
             return "The verified catalog artifact cannot be installed."
+        case .catalogGenerationRevoked(let extensionID):
+            return "The signed catalog revoked this extension generation: \(extensionID.rawValue)"
         }
     }
 }
@@ -97,6 +100,14 @@ private final class FloorpWebExtensionPackageRegistrySnapshotState: @unchecked S
     }
 }
 
+/// Durable, non-user-overridable evidence that a signed catalog kill switch
+/// stopped this exact immutable generation. The package bytes and owned data
+/// may remain until policy-approved uninstall, but the generation can never
+/// be re-enabled through the ordinary Settings lifecycle.
+struct FloorpWebExtensionCatalogPackageRevocation: Codable, Equatable, Sendable {
+    let catalogGeneration: String
+}
+
 /// Durable metadata for one active immutable package generation.
 ///
 /// The raw manifest is retained for the future `runtime.getManifest()` bridge,
@@ -129,6 +140,9 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
     /// keeps a runtime activation failure distinct from a deliberate user
     /// disable after process restart.
     var activationError: String?
+    /// Unlike `activationError`, this is a durable signed kill-switch state
+    /// and is not cleared by a user enable attempt.
+    var catalogRevocation: FloorpWebExtensionCatalogPackageRevocation?
 
     /// The optional catalog provenance defaults to `nil` solely for existing
     /// bundled-fixture construction. Catalog installation calls pass the
@@ -149,7 +163,8 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
         grants: FloorpWebExtensionPermissionSnapshot,
         dnrConfiguration: FloorpWebExtensionStoredDNRConfiguration? = nil,
         persistentRegisteredScripts: [FloorpWebExtensionRegisteredScript]? = nil,
-        activationError: String? = nil
+        activationError: String? = nil,
+        catalogRevocation: FloorpWebExtensionCatalogPackageRevocation? = nil
     ) {
         self.extensionID = extensionID
         self.generation = generation
@@ -167,10 +182,15 @@ struct FloorpWebExtensionInstalledPackage: Codable, Equatable, Sendable {
         self.dnrConfiguration = dnrConfiguration
         self.persistentRegisteredScripts = persistentRegisteredScripts
         self.activationError = activationError
+        self.catalogRevocation = catalogRevocation
     }
 
     var registeredPersistentScripts: [FloorpWebExtensionRegisteredScript] {
         persistentRegisteredScripts ?? []
+    }
+
+    var isCatalogRevoked: Bool {
+        catalogRevocation != nil
     }
 }
 
@@ -964,6 +984,9 @@ actor FloorpWebExtensionPackageStore {
         guard let index = next.packages.firstIndex(where: { $0.extensionID == extensionID }) else {
             throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
         }
+        guard !enabled || next.packages[index].catalogRevocation == nil else {
+            throw FloorpWebExtensionPackageStoreError.catalogGenerationRevoked(extensionID)
+        }
         next.packages[index].isEnabled = enabled
         // A user-initiated state change clears a prior failed attempt. A
         // subsequent failed activation records a new failure atomically below.
@@ -1020,6 +1043,7 @@ actor FloorpWebExtensionPackageStore {
         }
         next.packages[index].isEnabled = false
         next.packages[index].activationError = "This extension generation was revoked and has been stopped."
+        next.packages[index].catalogRevocation = .init(catalogGeneration: catalogGeneration)
         try persist(next)
         registry = next
         refreshResourceState()
@@ -1728,6 +1752,13 @@ actor FloorpWebExtensionPackageStore {
             }
         }
 
+        if let catalogRevocation = package.catalogRevocation {
+            guard package.catalogRecord?.generation == catalogRevocation.catalogGeneration,
+                  !package.isEnabled else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+        }
+
         if let dnrConfiguration = package.dnrConfiguration {
             let manifestRuleIDs = Set(preflight.manifest.dnrRuleResources.map(\.identifier))
             guard dnrConfiguration.enabledStaticRuleSetIDs.isSubset(of: manifestRuleIDs) else {
@@ -1929,6 +1960,18 @@ enum FloorpWebExtensionPackageStoreRegistry {
             profileIdentifier: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing
         )]
+    }
+
+    /// Catalog acceptance is device-wide, so a signed kill switch must fan
+    /// out to every currently composed normal/private profile manager rather
+    /// than trusting the caller to remember one browsing mode.
+    static func catalogRevocationManagers() -> [FloorpWebExtensionLivePackageManager] {
+        managers.keys.sorted { lhs, rhs in
+            if lhs.profileIdentifier != rhs.profileIdentifier {
+                return lhs.profileIdentifier < rhs.profileIdentifier
+            }
+            return !lhs.isPrivateBrowsing && rhs.isPrivateBrowsing
+        }.compactMap { managers[$0] }
     }
 
     static func removeStore(for profileIdentifier: String, isPrivateBrowsing: Bool) {

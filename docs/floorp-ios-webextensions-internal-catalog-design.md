@@ -238,6 +238,8 @@ P0 の署名方式と配布運用はまだ承認されていない。このた�
   する。root public key はアプリ設定からのみ渡し、root private key・catalog endpoint・
   実運用 key ID はアプリに埋め込まない。catalog と leaf の有効期間は RFC 3339 UTC の
   秒精度、catalog は最大 14 日、leaf は最大 90 日とする。
+  `keyID` は公開鍵そのものの不変な運用識別子であり、異なる公開鍵に再利用してはならない。
+  鍵素材を変更する場合は新しい `keyID` と新しい immutable generation を発行する。
 - `packages` の各レコードは `extensionID`、`generation`、`version`、
   `artifactURL`、`artifactBytes`、`artifactSHA256`、`manifestSHA256`、
   `resourceInventorySHA256`、`compatibilityProfiles`、`availability` を持つ。
@@ -258,14 +260,34 @@ P0 の署名方式と配布運用はまだ承認されていない。このた�
   Keychain に catalog ID ごとに保存する。時刻が最大観測時刻から 5 分を超えて戻った場合、
   または sequence が同値・低下した場合は、新規導入、更新、再有効化を拒否する。既存の
   有効世代はこの失敗だけでは削除しない。さらに、一度受理した
-  `(extensionID, generation)` と `artifactSHA256` の束縛を同じ Keychain state に保持し、
-  後続 catalog が同じ generation を別 digest に再定義した場合も reject する。
+  `(extensionID, generation)`、`artifactSHA256`、その artifact を承認した leaf `keyID` の
+  束縛を同じ Keychain state に保持し、後続 catalog が同じ generation を別 digest **または別 leaf**
+  に再定義した場合も reject する。鍵ローテーションでは artifact bytes が同一でも新しい immutable
+  generation を発行する。この厳格化により、ローカル registry record の key ID を新 leaf に
+  書き換えて旧 key revocation を回避する経路を作らない。
+- 再起動時の restore と利用者による再有効化では、永続化された package record だけを
+  信頼しない。P0 composition が Keychain state に対して同じ `(extensionID, generation,
+  artifactSHA256, leaf keyID)` の受理済み束縛と非失効状態を再確認し、満たせない catalog package は
+  runtime を起動せず durable な revoked 状態にする。これにより、古い／局所的に偽造された
+  record が通常の activation retry を通って実行されることを防ぐ。鍵ローテーションは新しい
+  immutable generation と明示的 update consent を必要とし、旧 leaf の record を新 leaf として
+  再解釈しない。失効した旧 leaf の record は停止する。
 - `revocations` は catalog の署名対象であり、key または
   `(extensionID, generation)` だけを停止できる。失効は置換や古い世代への自動復帰を
   指示できない。失効時は runtime、DNR、page origin を先に停止し、`storage.local` と
   dynamic DNR state は P0 で承認される明示的ポリシーまで保持する。導入済み record は
   root-certified leaf `keyID` を保持し、key revocation でその key が導入した全 generation
   を停止する。新しい anti-rollback state は停止成功後にだけ Keychain へ commit する。
+  この停止前の fan-out は revocation の一致だけでなく、新しい Keychain acceptance state が
+  exact `(extensionID, generation, artifactSHA256, leaf keyID)` binding を承認しているかも再確認する。
+  そのため、ローカル registry record の署名 key や digest を差し替えても、次の catalog acceptance
+  時点で normal/private の全 runtime が停止する。
+- `effectiveAt` が端末の検証時刻より未来である失効レコードは、catalog-v1 では catalog
+  全体を reject する。将来の失効を記録するだけでは、アプリ再起動・端末時計変更・
+  background 実行不可時に停止を保証できず fail-open になるためである。この制約を緩める
+  には、永続化された scheduled revocation、確実な lifecycle wake-up、再起動・時計変更時の
+  再評価、実機失効演習、P0 の再承認を同時に導入しなければならない。運用側は、それまで
+  即時有効な失効だけを発行する。
 - 既存 catalog package の更新は、現在の local generation、候補 catalog generation、
   候補 artifact SHA-256、lifecycle revision に束縛した一回限りの native confirmation が
   なければ拒否する。既定の confirmation は拒否であり、catalog の再取得や署名の有効性

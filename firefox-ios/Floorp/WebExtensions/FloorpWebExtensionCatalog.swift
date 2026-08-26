@@ -562,6 +562,40 @@ struct FloorpWebExtensionCatalogGeneration: Codable, Hashable, Sendable {
 struct FloorpWebExtensionCatalogGenerationArtifactDigest: Codable, Hashable, Sendable {
     let catalogGeneration: FloorpWebExtensionCatalogGeneration
     let artifactSHA256: String
+    /// The one leaf key that authorized this immutable generation. Leaf-key
+    /// provenance is deliberately as immutable as the artifact digest: a
+    /// key rotation must publish a new generation even when bytes are
+    /// unchanged, so a mutable registry record cannot retag an old-key
+    /// installation as a new-key installation after revocation.
+    /// `nil` is only the read-compatible representation of pre-P0 Keychain
+    /// state; it never authorizes a catalog package at startup or re-enable.
+    let signingKeyID: String?
+
+    init(
+        catalogGeneration: FloorpWebExtensionCatalogGeneration,
+        artifactSHA256: String,
+        signingKeyID: String? = nil
+    ) {
+        self.catalogGeneration = catalogGeneration
+        self.artifactSHA256 = artifactSHA256
+        self.signingKeyID = signingKeyID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case catalogGeneration
+        case artifactSHA256
+        case signingKeyID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        catalogGeneration = try container.decode(
+            FloorpWebExtensionCatalogGeneration.self,
+            forKey: .catalogGeneration
+        )
+        artifactSHA256 = try container.decode(String.self, forKey: .artifactSHA256)
+        signingKeyID = try container.decodeIfPresent(String.self, forKey: .signingKeyID)
+    }
 }
 
 struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
@@ -637,7 +671,9 @@ struct FloorpWebExtensionCatalogVerificationResult: Sendable {
     ) throws -> FloorpWebExtensionCatalogPackageRecord {
         guard let record = catalog.packages.first(where: {
             $0.extensionID == extensionID && $0.generation == generation
-        }), record.availability == .available || record.availability == .updateAvailable,
+        }),
+              record.availability == .available || record.availability == .updateAvailable,
+              !catalog.revokedKeyIDs.contains(record.signingKeyID),
               !catalog.revokedGenerations.contains(.init(extensionID: extensionID, generation: generation)) else {
             throw FloorpWebExtensionCatalogError.revoked
         }
@@ -753,14 +789,23 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         }
 
         let revocations = try parseRevocations(try array(root, "revocations"))
-        let activeRevocations = revocations.filter { revocation in
+        // The client deliberately has no background scheduler that could
+        // safely enforce a future kill switch while it is suspended. Accepting
+        // a future-dated revocation and then forgetting it would be fail-open,
+        // so catalog-v1 only accepts revocations that are already effective.
+        guard revocations.allSatisfy({ revocation in
             switch revocation {
-            case .key(_, let effectiveAt), .generation(_, let effectiveAt): return effectiveAt <= now
+            case .key(_, let effectiveAt), .generation(_, let effectiveAt):
+                return effectiveAt <= now
             }
+        }) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog(
+                "future-dated revocations are not supported"
+            )
         }
         var revokedKeyIDs = previousState?.revokedKeyIDs ?? []
         var revokedGenerations = previousState?.revokedGenerations ?? []
-        for revocation in activeRevocations {
+        for revocation in revocations {
             switch revocation {
             case .key(let keyID, _): revokedKeyIDs.insert(keyID)
             case .generation(let generation, _): revokedGenerations.insert(generation)
@@ -773,7 +818,7 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             try array(root, "packages"),
             signingKeyID: signingKey.keyID
         )
-        var artifactDigestByGeneration = [FloorpWebExtensionCatalogGeneration: String]()
+        var acceptedGenerationArtifacts = Set<FloorpWebExtensionCatalogGenerationArtifactDigest>()
         for binding in previousState?.acceptedGenerationArtifacts ?? [] {
             let identity = binding.catalogGeneration
             guard Self.isSafeGeneration(identity.generation),
@@ -782,33 +827,29 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
                   binding.artifactSHA256.allSatisfy(\.isHexDigit) else {
                 throw FloorpWebExtensionCatalogError.invalidCatalog("catalog generation state is malformed")
             }
-            if let previousDigest = artifactDigestByGeneration[identity],
-               previousDigest != binding.artifactSHA256 {
-                throw FloorpWebExtensionCatalogError.invalidCatalog(
-                    "catalog generation state has conflicting digests"
-                )
+            if let signingKeyID = binding.signingKeyID,
+               !Self.isSafeIdentifier(signingKeyID, maximumLength: 96) {
+                throw FloorpWebExtensionCatalogError.invalidCatalog("catalog generation state has invalid signing key")
             }
-            artifactDigestByGeneration[identity] = binding.artifactSHA256
+            try mergeAcceptedGenerationBinding(
+                binding,
+                into: &acceptedGenerationArtifacts
+            )
         }
         for record in packages {
             let identity = FloorpWebExtensionCatalogGeneration(
                 extensionID: record.extensionID,
                 generation: record.generation
             )
-            if let previousDigest = artifactDigestByGeneration[identity],
-               previousDigest != record.artifactSHA256 {
-                throw FloorpWebExtensionCatalogError.invalidCatalog(
-                    "catalog generation was already bound to another artifact"
-                )
-            }
-            artifactDigestByGeneration[identity] = record.artifactSHA256
-        }
-        let acceptedGenerationArtifacts = Set(artifactDigestByGeneration.map { element in
-            FloorpWebExtensionCatalogGenerationArtifactDigest(
-                catalogGeneration: element.key,
-                artifactSHA256: element.value
+            try mergeAcceptedGenerationBinding(
+                .init(
+                    catalogGeneration: identity,
+                    artifactSHA256: record.artifactSHA256,
+                    signingKeyID: signingKey.keyID
+                ),
+                into: &acceptedGenerationArtifacts
             )
-        })
+        }
         let state = FloorpWebExtensionCatalogAcceptanceState(
             catalogID: configuration.catalogID,
             highestSequence: sequence,
@@ -827,6 +868,42 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             revokedGenerations: revokedGenerations,
             nextAcceptanceState: state
         ))
+    }
+
+    /// Keeps a generation immutable across every accepted catalog dimension
+    /// that controls execution, including leaf-key provenance. A trusted key
+    /// rotation must therefore publish a new generation even if the artifact
+    /// bytes are unchanged. An older Keychain state may lack provenance; it
+    /// is replaced when a newly verified record supplies one and can never
+    /// authorize execution itself.
+    private func mergeAcceptedGenerationBinding(
+        _ proposed: FloorpWebExtensionCatalogGenerationArtifactDigest,
+        into bindings: inout Set<FloorpWebExtensionCatalogGenerationArtifactDigest>
+    ) throws {
+        let identity = proposed.catalogGeneration
+        if proposed.signingKeyID != nil {
+            let legacyBindings = bindings.filter { binding in
+                binding.catalogGeneration == identity && binding.signingKeyID == nil
+            }
+            guard legacyBindings.allSatisfy({
+                $0.artifactSHA256 == proposed.artifactSHA256
+            }) else {
+                throw FloorpWebExtensionCatalogError.invalidCatalog(
+                    "catalog generation was already bound to another artifact"
+                )
+            }
+            bindings.subtract(legacyBindings)
+        }
+        guard !bindings.contains(where: {
+            $0.catalogGeneration == identity &&
+                ($0.artifactSHA256 != proposed.artifactSHA256 ||
+                    $0.signingKeyID != proposed.signingKeyID)
+        }) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog(
+                "catalog generation was already bound to another artifact or signing key"
+            )
+        }
+        bindings.insert(proposed)
     }
 
     private func verifyAudience(_ audience: [String: FloorpWebExtensionCanonicalJSON.Value]) throws {
@@ -1145,9 +1222,51 @@ struct FloorpWebExtensionCatalogFetchResponse: Sendable {
     let data: Data
 }
 
+/// A downloaded FWEA1 artifact bound to the exact accepted catalog sequence
+/// that selected it. The package-manager entry point separately requires an
+/// opaque lifecycle authorization, so merely assembling this in-process value
+/// cannot become a catalog/import authority.
 struct FloorpWebExtensionVerifiedCatalogArtifact: Sendable {
+    let catalogID: String
+    let catalogSequence: Int64
     let record: FloorpWebExtensionCatalogPackageRecord
     let resources: [String: Data]
+
+    init(
+        catalogID: String,
+        catalogSequence: Int64,
+        record: FloorpWebExtensionCatalogPackageRecord,
+        resources: [String: Data]
+    ) {
+        self.catalogID = catalogID
+        self.catalogSequence = catalogSequence
+        self.record = record
+        self.resources = resources
+    }
+}
+
+/// An opaque capability minted only by the lifecycle acceptance coordinator
+/// after it has rechecked the current durable anti-rollback state. The
+/// capability remains bound to the exact catalog-selected artifact at the
+/// package-manager boundary, so it cannot be replayed for another record.
+/// Keeping construction file-scoped prevents the package-manager entry point
+/// from becoming an alternate catalog/import authority.
+struct FloorpWebExtensionCatalogInstallationAuthorization: Sendable {
+    private let catalogID: String
+    private let catalogSequence: Int64
+    private let record: FloorpWebExtensionCatalogPackageRecord
+
+    fileprivate init(artifact: FloorpWebExtensionVerifiedCatalogArtifact) {
+        catalogID = artifact.catalogID
+        catalogSequence = artifact.catalogSequence
+        record = artifact.record
+    }
+
+    func authorizes(_ artifact: FloorpWebExtensionVerifiedCatalogArtifact) -> Bool {
+        catalogID == artifact.catalogID &&
+            catalogSequence == artifact.catalogSequence &&
+            record == artifact.record
+    }
 }
 
 /// The package-store half of an explicit catalog-update confirmation. It
@@ -1169,9 +1288,19 @@ struct FloorpWebExtensionArtifactDownloader: Sendable {
     let endpointPolicy: FloorpWebExtensionCatalogArtifactEndpointPolicy
 
     func download(
+        catalog: FloorpWebExtensionCatalogVerificationResult,
         record: FloorpWebExtensionCatalogPackageRecord,
         transport: Transport
     ) async throws -> FloorpWebExtensionVerifiedCatalogArtifact {
+        let installableRecord = try catalog.installablePackage(
+            extensionID: record.extensionID,
+            generation: record.generation
+        )
+        guard installableRecord == record else {
+            throw FloorpWebExtensionCatalogError.artifactRejected(
+                "artifact record is not the verified catalog record"
+            )
+        }
         guard endpointPolicy.permits(record.artifactURL) else {
             throw FloorpWebExtensionCatalogError.artifactRejected("artifact endpoint is not allowed")
         }
@@ -1189,7 +1318,12 @@ struct FloorpWebExtensionArtifactDownloader: Sendable {
         guard Self.sha256(response.data) == record.artifactSHA256 else {
             throw FloorpWebExtensionCatalogError.artifactRejected("artifact digest mismatch")
         }
-        return try FloorpWebExtensionCatalogArchive.decode(response.data, record: record)
+        return try .init(
+            catalogID: catalog.catalog.catalogID,
+            catalogSequence: catalog.catalog.sequence,
+            record: record,
+            resources: FloorpWebExtensionCatalogArchive.decode(response.data, record: record)
+        )
     }
 
     static func sha256(_ data: Data) -> String {
@@ -1213,7 +1347,7 @@ enum FloorpWebExtensionCatalogArchive {
     static func decode(
         _ data: Data,
         record: FloorpWebExtensionCatalogPackageRecord
-    ) throws -> FloorpWebExtensionVerifiedCatalogArtifact {
+    ) throws -> [String: Data] {
         guard data.count == record.artifactBytes,
               data.count >= magic.count + 4,
               data.count <= FloorpWebExtensionPackageStore.maximumPackageByteSize,
@@ -1260,7 +1394,7 @@ enum FloorpWebExtensionCatalogArchive {
               try inventoryDigest(entries) == record.resourceInventorySHA256 else {
             throw FloorpWebExtensionCatalogError.artifactRejected("manifest or inventory digest mismatch")
         }
-        return .init(record: record, resources: resources)
+        return resources
     }
 
     static func encodedArtifact(resources: [String: Data]) throws -> Data {
@@ -1463,26 +1597,31 @@ final class FloorpWebExtensionCatalogKeychainStateStore: FloorpWebExtensionCatal
     }
 }
 
-final class FloorpWebExtensionCatalogAcceptanceCoordinator: @unchecked Sendable {
-    private let verifier: FloorpWebExtensionCatalogVerifier
-    private let stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting
-    private let lock = NSLock()
+/// Serializes the complete read/verify/revoke/save lifecycle for every
+/// catalog coordinator in this process. `@MainActor` alone is insufficient:
+/// it becomes re-entrant at the package-manager await points.
+private actor FloorpWebExtensionCatalogLifecycleAcceptanceGate {
+    static let shared = FloorpWebExtensionCatalogLifecycleAcceptanceGate()
 
-    init(
-        verifier: FloorpWebExtensionCatalogVerifier,
-        stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting
-    ) {
-        self.verifier = verifier
-        self.stateStore = stateStore
+    private var isLocked = false
+    private var waiters = [CheckedContinuation<Void, Never>]()
+
+    func acquire() async {
+        guard isLocked else {
+            isLocked = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 
-    func accept(catalogData: Data, now: Date = Date()) throws -> FloorpWebExtensionCatalogVerificationResult {
-        lock.lock()
-        defer { lock.unlock() }
-        let previous = try stateStore.load(catalogID: verifier.configuration.catalogID)
-        let result = try verifier.verify(catalogData: catalogData, previousState: previous, now: now)
-        try stateStore.save(result.catalog.nextAcceptanceState)
-        return result
+    func release() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }
 
@@ -1494,31 +1633,120 @@ final class FloorpWebExtensionCatalogAcceptanceCoordinator: @unchecked Sendable 
 /// successfully applied.
 @MainActor
 final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
+    typealias PackageManagerProvider = @MainActor @Sendable () -> [FloorpWebExtensionLivePackageManager]
+
     private let verifier: FloorpWebExtensionCatalogVerifier
     private let stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting
+    private let packageManagers: PackageManagerProvider
 
     init(
         verifier: FloorpWebExtensionCatalogVerifier,
-        stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting
+        stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting,
+        packageManagers: @escaping PackageManagerProvider = {
+            FloorpWebExtensionPackageStoreRegistry.catalogRevocationManagers()
+        }
     ) {
         self.verifier = verifier
         self.stateStore = stateStore
+        self.packageManagers = packageManagers
     }
 
     func acceptAndApplyRevocations(
         catalogData: Data,
-        packageManager: FloorpWebExtensionLivePackageManager,
         now: Date = Date()
     ) async throws -> FloorpWebExtensionCatalogVerificationResult {
         try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        let gate = FloorpWebExtensionCatalogLifecycleAcceptanceGate.shared
+        await gate.acquire()
+        defer { Task { await gate.release() } }
         let previous = try stateStore.load(catalogID: verifier.configuration.catalogID)
         let result = try verifier.verify(
             catalogData: catalogData,
             previousState: previous,
             now: now
         )
-        try await packageManager.applySignedCatalogRevocations(result.catalog)
+        for packageManager in packageManagers() {
+            try await packageManager.applySignedCatalogAcceptanceState(
+                result.catalog.nextAcceptanceState
+            )
+        }
         try stateStore.save(result.catalog.nextAcceptanceState)
         return result
+    }
+
+    /// Installs only an artifact selected by the currently accepted catalog.
+    /// An artifact that was downloaded before a subsequent acceptance (for
+    /// example, before a key/generation revocation) is rejected rather than
+    /// being allowed to race the kill switch.
+    func installVerifiedCatalogPackage(
+        _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
+        packageManager: FloorpWebExtensionLivePackageManager,
+        initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
+        updateAuthorization: FloorpWebExtensionLivePackageManager.CatalogUpdateAuthorization? = nil
+    ) async throws {
+        try FloorpWebExtensionInternalCatalogReleaseGate.requireManagedSourceEnabled()
+        let gate = FloorpWebExtensionCatalogLifecycleAcceptanceGate.shared
+        await gate.acquire()
+        defer { Task { await gate.release() } }
+
+        let state = try stateStore.load(catalogID: verifier.configuration.catalogID)
+        guard catalogState(state, authorizes: artifact) else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        try await packageManager.installVerifiedCatalogPackage(
+            artifact,
+            catalogAuthorization: .init(artifact: artifact),
+            initialGrants: initialGrants,
+            updateAuthorization: updateAuthorization
+        )
+    }
+
+    /// A P0 composition injects this method into every normal/private live
+    /// manager. It also protects a restart where a catalog package remains on
+    /// disk but the latest accepted state has revoked it.
+    func authorizeInstalledCatalogRecord(
+        _ record: FloorpWebExtensionCatalogPackageRecord
+    ) throws {
+        let state = try stateStore.load(catalogID: verifier.configuration.catalogID)
+        guard catalogState(state, authorizes: record) else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+    }
+
+    private func catalogState(
+        _ state: FloorpWebExtensionCatalogAcceptanceState?,
+        authorizes artifact: FloorpWebExtensionVerifiedCatalogArtifact
+    ) -> Bool {
+        guard artifact.catalogID == verifier.configuration.catalogID,
+              artifact.catalogSequence == state?.highestSequence else {
+            return false
+        }
+        return catalogState(state, authorizes: artifact.record)
+    }
+
+    /// A persisted package record carries only its immutable record, not a
+    /// cached catalog response. The device-bound acceptance state must still
+    /// prove the exact generation/digest binding before startup or re-enable;
+    /// otherwise a locally forged or stale record could become executable.
+    private func catalogState(
+        _ state: FloorpWebExtensionCatalogAcceptanceState?,
+        authorizes record: FloorpWebExtensionCatalogPackageRecord
+    ) -> Bool {
+        guard let state,
+              state.catalogID == verifier.configuration.catalogID else {
+            return false
+        }
+        let generation = FloorpWebExtensionCatalogGeneration(
+            extensionID: record.extensionID,
+            generation: record.generation
+        )
+        let binding = FloorpWebExtensionCatalogGenerationArtifactDigest(
+            catalogGeneration: generation,
+            artifactSHA256: record.artifactSHA256,
+            signingKeyID: record.signingKeyID
+        )
+        return state.acceptedGenerationArtifacts.contains(binding) &&
+            !state.revokedKeyIDs.contains(record.signingKeyID) &&
+            !state.revokedGenerations.contains(generation)
     }
 }

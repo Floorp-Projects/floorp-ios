@@ -12,6 +12,9 @@ artifact, and a merged main SHA are still absent.**
 
 - 2026-08-26: 依頼者はリリース作業の続行を承認し、pre-distribution の実機確認を
   TestFlight インストール後の確認に繰り延べるよう指示した。
+- 2026-08-26: 依頼者（maintainer）は、通常の review・CI を通過した既存の統合経路で
+  `main` へマージすることを許可した。この許可は direct push、新規 PR、CI の迂回、または
+  P0/P5 ゲートの免除を意味しない。
 - この繰り延べは **TestFlight candidate の実機確認順序** だけを変更する。
   P5 完了、一般公開、またはリモート catalog の有効化を承認するものではない。
 - App Store Connect の既存の外部グループとアクセス可能な TestFlight 画面は確認済み。
@@ -27,6 +30,11 @@ artifact, and a merged main SHA are still absent.**
   接続点である。実運用 root key、endpoint、access token、実拡張はソースに含めない。
 - 失効は generation の runtime/DNR/page origin を停止し、別 artifact や古い generation
   を自動選択しない。`storage.local` と dynamic DNR state は明示的 uninstall まで保持する。
+- catalog-v1 は future-dated revocation を受理しない。停止を将来まで延期する durable
+  scheduler は未実装のため、catalog service は即時有効の失効だけを発行する。
+- leaf key の rotation は、artifact bytes が同じ場合も新しい immutable generation を必要とする。
+  同じ generation を別 leaf に再承認しないため、mutable registry record の signer 書換えで
+  旧 key revocation を回避できない。
 
 ## 必須ゲート
 
@@ -35,11 +43,11 @@ artifact, and a merged main SHA are still absent.**
 | `REQUESTER_RELEASE_DIRECTION` | approved — 2026-08-26 | Requester | 本タスクで、GitHub Actions の正規ワークフローを用いること、pre-distribution 実機確認を TestFlight に繰り延べること、App Store Connect を利用することを明示。 |
 | `EXTERNAL_REVIEW_PENDING` | blocked | Product / Release | Apple に確認済みの reviewer exercise path、カタログが一般ストアではない説明、リモートコード配布可否、年齢区分、通報・削除・モデレーション手順。4.7 の要件に必要な利用者同意・metadata/index・プライバシー説明も含める。 |
 | `AGREEMENT_MISSING` | blocked | Legal / Privacy | 最初の各 artifact について、作者の再配布・更新・サポート許可、license/notice、source 公開義務、privacy declaration、保存期間、問い合わせ/通報先。 |
-| `OWNER_APPROVAL_MISSING` | blocked | Security | root private key の offline custody、leaf signer と有効期間、二者承認、監査ログ、key rotation、侵害時の on-call、署名済み失効演習の承認。root key は CDN、GitHub Actions、アプリ、Xcode Cloud に置かない。 |
+| `OWNER_APPROVAL_MISSING` | blocked | Security | root private key の offline custody、leaf signer と有効期間、二者承認、監査ログ、key rotation、侵害時の on-call、署名済み失効演習の承認。`keyID` の一意性と異なる公開鍵への再利用禁止も承認する。root key は CDN、GitHub Actions、アプリ、Xcode Cloud に置かない。 |
 | `POLICY_DECISION_MISSING` | blocked | Product / Privacy / Security | `FWEA1`/canonical JSON/Ed25519/サイズ・DNR 上限/14 日 catalog・90 日 leaf の契約承認、失効・disable・uninstall 時の data retention/deletion policy、private browsing の初期既定値。 |
 | `UPSTREAM_ARTIFACT_MISSING` | blocked | Engineering / QA | author-approved pilot の signed catalog、artifact/manifest/inventory digest、静的検査、P2–P4 実機 OS matrix、失効演習、アクセシビリティ、性能・memory・battery 測定、既知 API 非互換一覧。Stage 3 fixture evidence は代替にならない。 |
 | `AUTHORIZATION_MISSING` | partially verified / blocked | Release / Operations | App Store Connect の Floorp / TestFlight 読み取りアクセスと既存外部 group は確認済み。既存 Beta App Review notes は extensions が無効と記載しており、この候補には使えない。候補用 details、署名/provisioning、保護された Actions environment secrets、Xcode Cloud mutation 権限の実証は未記録。 |
-| `MERGE_REQUIRED` | blocked | Maintainer | 承認済み review を経た main のマージ済み SHA。正規 workflow は `refs/heads/main` とその完全一致 SHA を検証する。依頼時点の「PR を作成しない・main へ直接 push しない」を守るため、承認済み maintainer の通常の統合操作が必要。 |
+| `MERGE_REQUIRED` | approved in principle / pending checks | Maintainer | 2026-08-26 に依頼者（maintainer）が、既存 PR #138 を通常の review・source-bound CI・通常 merge で統合することを許可。正規 workflow は `refs/heads/main` とその完全一致 SHA を検証する。direct push、新規 PR、CI の迂回は許可されない。 |
 
 ## 再開条件と順序
 
