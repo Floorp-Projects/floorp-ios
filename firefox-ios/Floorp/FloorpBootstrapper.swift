@@ -400,7 +400,10 @@ public final class FloorpBootstrapper {
         return directory
     }
 
+    // The composition deliberately keeps the entire per-profile trust boundary
+    // together so every reconciliation path uses the same signed catalog hooks.
     @MainActor
+    // swiftlint:disable:next function_body_length
     private static func installPackageComposition(
         store: FloorpWebExtensionPackageStore,
         apiHost: FloorpWebExtensionAPIHost,

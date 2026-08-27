@@ -3974,6 +3974,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertEqual(history.first?.method, .userApproved)
     }
 
+    // swiftlint:disable:next function_body_length
     func testPrivateProfileRequiresExplicitSeparateSignedInstallationAndKeepsGrantsIsolated() async throws {
         let signing = try CatalogSigningFixture()
         let catalogData = try signing.catalog(sequence: 1, schemaVersion: 2)
@@ -4646,6 +4647,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertTrue(stateStore.state?.revokedKeyIDs.contains("catalog-2026-q3") == true)
     }
 
+    // swiftlint:disable:next function_body_length
     func testCatalogUpdateRequiresDigestBoundExplicitConsent() async throws {
         let signing = try CatalogSigningFixture()
         let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
