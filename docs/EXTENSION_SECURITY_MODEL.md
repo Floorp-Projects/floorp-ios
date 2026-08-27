@@ -7,7 +7,7 @@ untrusted upstream ZIP/XPI/CRX/source/HTTPS
         │  review-only quarantine, static inspection, compatibility patch
         ▼
 reviewed immutable FWEA1 + provenance/digests
-        │  managed root/leaf signing, two-person approval
+        │  managed root/leaf signing, sole-maintainer P0 approval
         ▼
 signed catalog.json + root public key + FWEA1 app resources
         │  iOS canonical verification and local artifact validation
@@ -78,11 +78,16 @@ and digest in the profile-local update history.
 - A short-lived leaf signs catalog records. Key IDs are immutable and may not
   be reused for a different public key. Rotation uses a new key ID and a new
   extension generation even if artifact bytes are unchanged.
-- Signing, publication, and revocation require a recorded two-person approval,
-  audit identity/timestamp, and on-call owner. The public root key is safe to
-  bundle; it is not a signing credential.
+- Signing, publication, and revocation require the sole Floorp iOS
+  maintainer's recorded P0 approval and a timestamped audit record. Managed
+  signer custody plus the normal PR, CI, and protected-`main` integration path
+  are separate technical requirements; no fictional second organizational
+  approver is implied. The public root key is safe to bundle; it is not a
+  signing credential.
 
-Until Security, Product, Legal/Privacy, and Release supply the required P0
-records, this security model is an implementation boundary—not permission to
-ship or to submit External TestFlight review. See
+Until the exact signed catalog/public-root binding, verified third-party
+license/notice/provenance, managed-signing evidence, device/P5 evidence, and
+actual Apple Beta App Review are complete, this security model is an
+implementation boundary—not permission to ship or to submit External
+TestFlight review. See
 [release gates](floorp-ios-webextensions-internal-catalog-release-gates.md).

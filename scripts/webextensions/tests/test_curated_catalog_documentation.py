@@ -24,6 +24,8 @@ RELEASE_EVIDENCE = (
     REPOSITORY_ROOT / "docs/floorp-ios-webextensions-internal-catalog-release-evidence.md"
 )
 MANAGED_SIGNER = REPOSITORY_ROOT / "docs/floorp-ios-webextensions-managed-signer.md"
+SECURITY_MODEL = REPOSITORY_ROOT / "docs/EXTENSION_SECURITY_MODEL.md"
+MV3_LIMITATIONS = REPOSITORY_ROOT / "docs/floorp-ios-webextensions-mv3-limitations.md"
 P0_POLICY_APPROVAL = (
     REPOSITORY_ROOT / "docs/floorp-ios-webextensions-curated-catalog-p0-policy-approval.json"
 )
@@ -43,6 +45,8 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         cls.pilot_candidates = PILOT_CANDIDATES.read_text(encoding="utf-8")
         cls.release_evidence = RELEASE_EVIDENCE.read_text(encoding="utf-8")
         cls.managed_signer = MANAGED_SIGNER.read_text(encoding="utf-8")
+        cls.security_model = SECURITY_MODEL.read_text(encoding="utf-8")
+        cls.mv3_limitations = MV3_LIMITATIONS.read_text(encoding="utf-8")
         cls.what_to_test_en = WHAT_TO_TEST_EN.read_text(encoding="utf-8")
         cls.what_to_test_ja = WHAT_TO_TEST_JA.read_text(encoding="utf-8")
         cls.p0_policy_approval_data = P0_POLICY_APPROVAL.read_bytes()
@@ -129,7 +133,14 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         self.assertIn("no silent update", self.beta_review_draft)
 
     def test_governance_documents_use_the_sole_maintainer_and_license_basis(self) -> None:
-        for text in (self.ingestion, self.beta_review_draft, self.release_evidence, self.managed_signer):
+        for text in (
+            self.ingestion,
+            self.beta_review_draft,
+            self.release_evidence,
+            self.managed_signer,
+            self.security_model,
+            self.mv3_limitations,
+        ):
             self.assertIn("maintainer", text)
             self.assertNotIn("opaque evidence IDs for Legal", text)
             self.assertNotIn("two approval identities", text)
@@ -137,6 +148,9 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         self.assertNotIn("dual-control", self.managed_signer)
         self.assertNotIn("Security-approved signing workstation", self.managed_signer)
         self.assertNotIn("Before the first operation, Security", self.managed_signer)
+        self.assertNotIn("two-person approval", self.security_model)
+        self.assertNotIn("Until Security, Product, Legal/Privacy, and Release", self.security_model)
+        self.assertNotIn("product/legal must approve", self.mv3_limitations)
         self.assertIn("license/notice/provenance", self.pilot_candidates)
         self.assertNotIn("author-approved", self.pilot_candidates)
 

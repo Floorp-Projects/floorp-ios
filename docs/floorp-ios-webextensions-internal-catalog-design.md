@@ -300,7 +300,7 @@ metadata を実行時の権限、URL、コードとして扱ってはならな�
 | `requestedPermissions` / `hostPatterns` | ネイティブ同意で提示する、人間が読める最小権限。 |
 | `metadata.disclosure.privacySummary` / `retentionPolicy` | 表示用のデータ／保持要約。sole maintainer が承認した private mode と data-retention policy を表示し、exact signed candidate への束縛は release approval record で別途確認する。 |
 | `metadata.disclosure.supportRoute` / `reportRoute` | `floorp-github-issues` と `floorp-github-bug-report` だけを許可する fixed first-party route enum。署名 metadata は任意 URL を持たない。 |
-| `reviewEvidence` | 静的検査、実機 OS、テストサイト、性能、レビュー日、承認者。 |
+| `reviewEvidence` | 静的検査、実機 OS、テストサイト、性能、レビュー日、sole maintainer の承認記録参照。 |
 | `availability` | `available`, `updateAvailable`, `withdrawn`, `revoked`。最低 app version は catalog の `audience` で固定する。 |
 
 成果物は `manifest.json`、宣言済みリソース、ライセンス・notice、Floorp 審査
