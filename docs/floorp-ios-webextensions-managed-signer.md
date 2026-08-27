@@ -6,14 +6,15 @@ GitHub Actions, Xcode Cloud, the app bundle, or a shell argument.
 
 ## Where signing runs
 
-Run signing on the Security-approved signing workstation or release service,
+Run signing on the sole maintainer's 1Password-enabled signing workstation,
 after the catalog infrastructure is merged and from a clean clone of that
 exact `main` commit. Do not run it in GitHub Actions or Xcode Cloud.
 
-Security provides two non-exportable Ed25519 keys:
+The maintainer uses two non-exportable Ed25519 keys from the approved
+`iOS Extensions` vault:
 
 - an offline root key that signs the leaf-key certificate and requires the
-  approved dual-control operation;
+  locally confirmed 1Password SSH Agent operation;
 - a short-lived leaf key that signs the canonical catalog.
 
 The root and leaf `keyID` values are stable approved identifiers, not key
