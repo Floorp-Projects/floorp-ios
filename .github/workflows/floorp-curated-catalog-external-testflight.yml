@@ -265,6 +265,7 @@ jobs:
             printf -- '- Release tag: `%s`\n' "${FLOORP_CATALOG_RELEASE_TAG:-unverified}"
             printf -- '- Source: `%s`\n' "${FLOORP_CATALOG_CANDIDATE_SHA:-unverified}"
             if [[ -n "${FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE:-}" && -f "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE" ]]; then
+              # shellcheck disable=SC2016
               /usr/bin/python3 - "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE" <<'PY'
           import json
           import sys
