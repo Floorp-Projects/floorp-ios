@@ -507,6 +507,18 @@ public final class FloorpBootstrapper {
                 }
                 try signedBundledCatalog.authorizeInstalledCatalogRecord(record)
             },
+            catalogRecordExpirationProvider: { record in
+                guard let signedBundledCatalog else {
+                    throw FloorpWebExtensionCatalogError.revoked
+                }
+                return try signedBundledCatalog.currentCatalogAuthorizationExpiry(for: record)
+            },
+            catalogRecordRestoreAuthorization: { record in
+                guard let signedBundledCatalog else {
+                    throw FloorpWebExtensionCatalogError.revoked
+                }
+                try signedBundledCatalog.authorizeInstalledCatalogRecordForOfflineRestore(record)
+            },
             unsignedPackageActivationPolicy: .reject,
             dnrExcludedTopLevelDomainsUpdater: { extensionID, domains in
                 try await coordinator.updateExcludedTopLevelDomains(domains, for: extensionID)

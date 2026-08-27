@@ -372,6 +372,10 @@ actor FloorpWebExtensionPackageStore {
         FloorpWebExtensionScriptSource
     ) throws -> String
     typealias RegistryPersister = @Sendable (Data, URL) throws -> Void
+    /// The clock is injected so a catalog authorization can be enforced at
+    /// the actor-isolated persistence boundary, rather than only before an
+    /// async lifecycle operation starts.
+    typealias Clock = @Sendable () -> Date
 
     struct BundledPackageInstallationTransaction: Sendable {
         let installedPackage: FloorpWebExtensionInstalledPackage
@@ -504,6 +508,7 @@ actor FloorpWebExtensionPackageStore {
     private let stagingDirectory: URL
     nonisolated private let registryURL: URL
     private let registryPersister: RegistryPersister
+    private let clock: Clock
     private let resourceState = FloorpWebExtensionPackageResourceState()
     private let compositionState = FloorpWebExtensionPackageCompositionState()
     nonisolated private let durableSnapshotState = FloorpWebExtensionPackageRegistrySnapshotState()
@@ -521,7 +526,8 @@ actor FloorpWebExtensionPackageStore {
         directory: URL,
         registryPersister: @escaping RegistryPersister = { data, url in
             try data.write(to: url, options: [.atomic])
-        }
+        },
+        clock: @escaping Clock = { Date() }
     ) throws {
         profileKey = .init(
             profileIdentifier: profileIdentifier,
@@ -532,6 +538,7 @@ actor FloorpWebExtensionPackageStore {
         stagingDirectory = self.directory.appendingPathComponent("staging", isDirectory: true)
         registryURL = self.directory.appendingPathComponent("installed-packages.json", isDirectory: false)
         self.registryPersister = registryPersister
+        self.clock = clock
 
         try Self.ensureStoreDirectory(self.directory)
         try Self.ensureStoreDirectory(packagesDirectory)
@@ -770,8 +777,10 @@ actor FloorpWebExtensionPackageStore {
     func installVerifiedCatalogPackageTransaction(
         _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
         initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
-        updateConsent: FloorpWebExtensionCatalogUpdateConsent? = nil
+        updateConsent: FloorpWebExtensionCatalogUpdateConsent? = nil,
+        catalogExpiresAt: Date? = nil
     ) throws -> BundledPackageInstallationTransaction {
+        try requireCatalogNotExpired(catalogExpiresAt)
         let record = artifact.record
         guard record.availability == .available || record.availability == .updateAvailable else {
             throw FloorpWebExtensionCatalogError.revoked
@@ -928,6 +937,10 @@ actor FloorpWebExtensionPackageStore {
             guard !FileManager.default.fileExists(atPath: generationDirectory.path) else {
                 throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
             }
+            // Staging is not executable. Recheck before moving it into the
+            // immutable package area, then again immediately before the
+            // registry commit below so a long preflight cannot cross expiry.
+            try requireCatalogNotExpired(catalogExpiresAt)
             try FileManager.default.moveItem(at: stagedPackage, to: generationDirectory)
             let installed = FloorpWebExtensionInstalledPackage(
                 extensionID: record.extensionID,
@@ -959,6 +972,7 @@ actor FloorpWebExtensionPackageStore {
                 next.packages.sort { $0.extensionID.rawValue < $1.extensionID.rawValue }
             }
             do {
+                try requireCatalogNotExpired(catalogExpiresAt)
                 try persist(next)
             } catch {
                 try? FileManager.default.removeItem(at: generationDirectory)
@@ -1066,7 +1080,8 @@ actor FloorpWebExtensionPackageStore {
     /// unless both changes reached disk in the same registry write.
     func commitPreparedBundledPackageUpdate(
         extensionID: FloorpWebExtensionID,
-        replacementGeneration: String
+        replacementGeneration: String,
+        catalogExpiresAt: Date? = nil
     ) throws {
         guard let update = registry.pendingPackageUpdates[extensionID],
               update.replacementPackage.generation == replacementGeneration,
@@ -1092,6 +1107,7 @@ actor FloorpWebExtensionPackageStore {
                 )
             }
         }
+        try requireCatalogNotExpired(catalogExpiresAt)
         try persist(next)
         registry = next
         refreshResourceState()
@@ -1134,7 +1150,11 @@ actor FloorpWebExtensionPackageStore {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    func setEnabled(_ enabled: Bool, for extensionID: FloorpWebExtensionID) throws {
+    func setEnabled(
+        _ enabled: Bool,
+        for extensionID: FloorpWebExtensionID,
+        catalogExpiresAt: Date? = nil
+    ) throws {
         guard registry.pendingPackageUpdates[extensionID] == nil else {
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
         }
@@ -1149,6 +1169,9 @@ actor FloorpWebExtensionPackageStore {
         // A user-initiated state change clears a prior failed attempt. A
         // subsequent failed activation records a new failure atomically below.
         next.packages[index].activationError = nil
+        if enabled {
+            try requireCatalogNotExpired(catalogExpiresAt)
+        }
         try persist(next)
         registry = next
         refreshResourceState()
@@ -1210,7 +1233,8 @@ actor FloorpWebExtensionPackageStore {
     func updateGrants(
         _ grants: FloorpWebExtensionPermissionSnapshot,
         for extensionID: FloorpWebExtensionID,
-        expectedGeneration: String
+        expectedGeneration: String,
+        catalogExpiresAt: Date? = nil
     ) throws {
         guard registry.pendingPackageUpdates[extensionID] == nil else {
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
@@ -1228,6 +1252,7 @@ actor FloorpWebExtensionPackageStore {
             for: next.packages[index].preflight.manifest,
             scope: .durablePermissionUpdate
         )
+        try requireCatalogNotExpired(catalogExpiresAt)
         try persist(next)
         registry = next
     }
@@ -2087,6 +2112,20 @@ actor FloorpWebExtensionPackageStore {
     private static func registrySnapshotData(at registryURL: URL) throws -> Data? {
         guard FileManager.default.fileExists(atPath: registryURL.path) else { return nil }
         return try Data(contentsOf: registryURL, options: [.mappedIfSafe])
+    }
+
+    /// A catalog operation may wait for consent, runtime suspension, or an
+    /// actor hop after its initial signature check. Requiring the signed
+    /// lifetime again at the write boundary prevents that stale authority
+    /// from becoming a durable install, update, revival, or grant change.
+    private func requireCatalogNotExpired(_ catalogExpiresAt: Date?) throws {
+        guard let catalogExpiresAt else { return }
+        // Treat the exact timestamp as expired. This conservative boundary
+        // matches Settings and avoids granting an operation to a timer wake
+        // that races the catalog lifetime endpoint.
+        guard clock() < catalogExpiresAt else {
+            throw FloorpWebExtensionCatalogError.expired
+        }
     }
 
     private func persist(_ registry: Registry) throws {

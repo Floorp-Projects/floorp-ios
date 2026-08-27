@@ -485,6 +485,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private let pageResourceResolver: FloorpWebExtensionPageResourceResolver?
     private let pageMessageRuntime: FloorpWebExtensionMessageRuntime?
     private let openExternalURL: FloorpWebExtensionPageViewController.ExternalNavigationHandler
+    private let clock: () -> Date
     private var installedPackages = [FloorpWebExtensionSettingsInstalledPackage]()
     // Never seed the visible catalog with Stage 3 fixtures. The catalog is
     // allowed to become visible only after the profile composition returns a
@@ -493,6 +494,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private var catalogItems = [FloorpWebExtensionBundledCatalogItem]()
     private var hasLoadedCatalog = false
     private var isLoading = false
+    private weak var catalogInstallConsentController: UIAlertController?
+    private var catalogExpiryTask: Task<Void, Never>?
 
     init(
         windowUUID: WindowUUID,
@@ -500,6 +503,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         pageResourceResolver: FloorpWebExtensionPageResourceResolver? = nil,
         pageMessageRuntime: FloorpWebExtensionMessageRuntime? = nil,
         openExternalURL: @escaping FloorpWebExtensionPageViewController.ExternalNavigationHandler = { _ in },
+        clock: @escaping () -> Date = { Date() },
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default
     ) {
@@ -507,6 +511,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         self.pageResourceResolver = pageResourceResolver
         self.pageMessageRuntime = pageMessageRuntime
         self.openExternalURL = openExternalURL
+        self.clock = clock
         super.init(
             style: .insetGrouped,
             windowUUID: windowUUID,
@@ -517,6 +522,10 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        catalogExpiryTask?.cancel()
     }
 
     override func viewDidLoad() {
@@ -542,6 +551,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             tableView.reloadData()
             return
         }
+        catalogExpiryTask?.cancel()
+        catalogExpiryTask = nil
         isLoading = true
         // Do not leave a previously accepted listing actionable while the
         // current profile composition is being checked again. An installation
@@ -562,8 +573,50 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             self.hasLoadedCatalog = true
             self.isLoading = false
             self.navigationItem.rightBarButtonItem?.isEnabled = true
+            self.scheduleCatalogExpiryInvalidation(for: catalogItems)
             self.tableView.reloadData()
         }
+    }
+
+    private func scheduleCatalogExpiryInvalidation(
+        for items: [FloorpWebExtensionBundledCatalogItem]
+    ) {
+        catalogExpiryTask?.cancel()
+        guard let expiresAt = items.compactMap(\.catalogExpiresAt).min() else { return }
+        let interval = expiresAt.timeIntervalSince(clock())
+        guard interval > 0 else {
+            invalidateExpiredCatalogItems()
+            return
+        }
+        let maximumInterval = Double(UInt64.max) / 1_000_000_000
+        let nanoseconds = UInt64(min(interval, maximumInterval) * 1_000_000_000)
+        catalogExpiryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.invalidateExpiredCatalogItems()
+        }
+    }
+
+    private func invalidateExpiredCatalogItems() {
+        guard catalogItems.contains(where: { !isCurrentCatalogItem($0) }) else { return }
+        catalogItems.removeAll(where: { !isCurrentCatalogItem($0) })
+        catalogInstallConsentController?.dismiss(animated: true)
+        catalogInstallConsentController = nil
+        tableView.reloadData()
+        refresh()
+    }
+
+    private func isCurrentCatalogItem(_ item: FloorpWebExtensionBundledCatalogItem) -> Bool {
+        guard let expiresAt = item.catalogExpiresAt else { return true }
+        // The verifier admits the exact expiry instant. The Settings surface
+        // is deliberately one-sided: treating that boundary as unavailable
+        // ensures the scheduled invalidation cannot miss an exact-timestamp
+        // wake-up and keeps UI affordances fail-closed.
+        return clock() < expiresAt
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -650,7 +703,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             guard hasLoadedCatalog else { return [.catalogLoading] }
             let installedIDs = Set(installedPackages.map(\.id))
             let availableItems = catalogItems
-                .filter { !installedIDs.contains($0.id) }
+                .filter { !installedIDs.contains($0.id) && isCurrentCatalogItem($0) }
                 .map(Row.available)
             return availableItems.isEmpty ? [.catalogUnavailable] : availableItems
         }
@@ -697,6 +750,10 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     }
 
     private func confirmInstall(_ item: FloorpWebExtensionBundledCatalogItem) {
+        guard isCurrentCatalogItem(item) else {
+            invalidateExpiredCatalogItems()
+            return
+        }
         let permissions = item.requestedPermissions.map(\.title).joined(separator: "\n• ")
         let requestedHosts = item.catalogRecord?.metadata?.hostPermissions
             .sorted { $0.original < $1.original }
@@ -720,8 +777,12 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)\(siteNotice)\(privateNotice)"
         let alert = UIAlertController(title: "Install \(item.name)?", message: message, preferredStyle: .alert)
         alert.view.accessibilityIdentifier = "Floorp.WebExtensions.InstallConsent.\(item.id.rawValue)"
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        catalogInstallConsentController = alert
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
+            self?.catalogInstallConsentController = nil
+        })
         alert.addAction(UIAlertAction(title: "Install", style: .default) { [weak self] _ in
+            self?.catalogInstallConsentController = nil
             self?.performInstall(item)
         })
         present(alert, animated: true)
@@ -804,7 +865,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             })
         }
         if let update = catalogItems.first(where: { item in
-            item.id == package.id &&
+            isCurrentCatalogItem(item) &&
+                item.id == package.id &&
                 item.catalogRecord?.generation != package.catalogGeneration
         }), !package.isCatalogRevoked {
             alert.addAction(UIAlertAction(
@@ -1163,6 +1225,10 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     }
 
     private func performInstall(_ item: FloorpWebExtensionBundledCatalogItem) {
+        guard isCurrentCatalogItem(item) else {
+            invalidateExpiredCatalogItems()
+            return
+        }
         mutate { manager in
             try await manager.installBundledPackage(item)
         }
@@ -1359,6 +1425,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     typealias CatalogRecordAuthorization = @MainActor @Sendable (
         FloorpWebExtensionCatalogPackageRecord
     ) throws -> Void
+    /// Supplies the signed catalog lifetime after the same device-bound
+    /// authorization check. A normal catalog mutation must carry this value
+    /// into the package-store actor; a missing provider is fail-closed.
+    typealias CatalogRecordExpirationProvider = @MainActor @Sendable (
+        FloorpWebExtensionCatalogPackageRecord
+    ) throws -> Date
     /// Unsigned fixtures exist only to support the pre-catalog compatibility
     /// harness. A production composition must never restore, enable, or
     /// install one: an app upgrade must not turn a persisted Stage 3 fixture
@@ -1381,6 +1453,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     private let signedBundledCatalogInstaller: SignedBundledCatalogInstaller
     private let catalogUpdateConfirmation: CatalogUpdateConfirmation
     private let catalogRecordAuthorization: CatalogRecordAuthorization
+    private let catalogRecordExpirationProvider: CatalogRecordExpirationProvider
+    /// Startup restoration is the one offline path allowed to continue using
+    /// an already-enabled package after catalog expiry. The production
+    /// composition injects a narrower authorization closure here; all other
+    /// lifecycle operations retain `catalogRecordAuthorization`.
+    private let catalogRecordRestoreAuthorization: CatalogRecordAuthorization
     private let unsignedPackageActivationPolicy: UnsignedPackageActivationPolicy
     private let dnrExcludedTopLevelDomainsUpdater: DNRExcludedTopLevelDomainsUpdater
     private var lifecycleMutationGates = [FloorpWebExtensionID: FloorpWebExtensionLifecycleMutationGate]()
@@ -1404,6 +1482,10 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         catalogRecordAuthorization: @escaping CatalogRecordAuthorization = { _ in
             throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
         },
+        catalogRecordExpirationProvider: @escaping CatalogRecordExpirationProvider = { _ in
+            throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
+        },
+        catalogRecordRestoreAuthorization: CatalogRecordAuthorization? = nil,
         unsignedPackageActivationPolicy: UnsignedPackageActivationPolicy = .reject,
         dnrExcludedTopLevelDomainsUpdater: @escaping DNRExcludedTopLevelDomainsUpdater = { _, _ in
             throw FloorpWebExtensionError.unsupported("DNR settings are unavailable")
@@ -1418,6 +1500,8 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         self.signedBundledCatalogInstaller = signedBundledCatalogInstaller
         self.catalogUpdateConfirmation = catalogUpdateConfirmation
         self.catalogRecordAuthorization = catalogRecordAuthorization
+        self.catalogRecordExpirationProvider = catalogRecordExpirationProvider
+        self.catalogRecordRestoreAuthorization = catalogRecordRestoreAuthorization ?? catalogRecordAuthorization
         self.unsignedPackageActivationPolicy = unsignedPackageActivationPolicy
         self.dnrExcludedTopLevelDomainsUpdater = dnrExcludedTopLevelDomainsUpdater
     }
@@ -1674,9 +1758,14 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         let transaction = try await store.installVerifiedCatalogPackageTransaction(
             artifact,
             initialGrants: initialGrants,
-            updateConsent: updateConsent
+            updateConsent: updateConsent,
+            catalogExpiresAt: catalogAuthorization.expiresAt
         )
-        try await activatePreparedPackageTransaction(transaction, extensionID: extensionID)
+        try await activatePreparedPackageTransaction(
+            transaction,
+            extensionID: extensionID,
+            catalogExpiresAt: catalogAuthorization.expiresAt
+        )
     }
     // swiftlint:enable function_body_length
 
@@ -1806,7 +1895,8 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     // swiftlint:disable:next function_body_length
     private func activatePreparedPackageTransaction(
         _ transaction: FloorpWebExtensionPackageStore.BundledPackageInstallationTransaction,
-        extensionID: FloorpWebExtensionID
+        extensionID: FloorpWebExtensionID,
+        catalogExpiresAt: Date? = nil
     ) async throws {
         let installed = transaction.installedPackage
         let previousPackage = transaction.previousPackage
@@ -1885,7 +1975,8 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         do {
             try await store.commitPreparedBundledPackageUpdate(
                 extensionID: extensionID,
-                replacementGeneration: installed.generation
+                replacementGeneration: installed.generation,
+                catalogExpiresAt: catalogExpiresAt
             )
         } catch {
             if installed.isEnabled {
@@ -1912,7 +2003,9 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         defer { Task { await gate.release() } }
         invalidatePermissionAuthorizations(for: extensionID)
 
+        let catalogExpiresAt: Date?
         if !isEnabled {
+            catalogExpiresAt = nil
             // Revoke live privileges before persisting the disable. If the
             // registry write fails, the extension remains safely inactive.
             try await reconcile(extensionID, nil, .suspend)
@@ -1920,9 +2013,13 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             guard let package = await store.installedPackage(for: extensionID) else {
                 throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
             }
-            try authorizeCatalogRecord(package)
+            catalogExpiresAt = try catalogAuthorizationExpiry(for: package)
         }
-        try await store.setEnabled(isEnabled, for: extensionID)
+        try await store.setEnabled(
+            isEnabled,
+            for: extensionID,
+            catalogExpiresAt: catalogExpiresAt
+        )
         if isEnabled {
             guard let package = await store.installedPackage(for: extensionID) else {
                 throw FloorpWebExtensionPackageStoreError.packageNotInstalled(extensionID)
@@ -1984,6 +2081,11 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
               validateSender() else {
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
         }
+        // Native permission consent may have remained visible across catalog
+        // expiry. Recheck the immutable record immediately before mutating
+        // grants so an authorization captured before the prompt cannot add
+        // capabilities after the signed catalog lifetime ends.
+        _ = try catalogAuthorizationExpiry(for: previousPackage)
         // Consume the authorization before the first reconciliation await.
         // A second request authorized from the same grant snapshot must not
         // overwrite this transaction and lose permissions it did not observe.
@@ -1996,10 +2098,15 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             throw FloorpWebExtensionPackageStoreError.stalePackageComposition
         }
         do {
+            // Revalidate after the async runtime suspension. The Store then
+            // repeats this signed lifetime check inside its actor immediately
+            // before its durable registry write.
+            let catalogExpiresAt = try catalogAuthorizationExpiry(for: previousPackage)
             try await store.updateGrants(
                 grants,
                 for: extensionID,
-                expectedGeneration: authorization.packageGeneration
+                expectedGeneration: authorization.packageGeneration,
+                catalogExpiresAt: catalogExpiresAt
             )
         } catch {
             // The registry is unchanged, so restore the exact generation that
@@ -2094,7 +2201,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         }
         invalidatePermissionAuthorizations(for: extensionID)
         do {
-            try authorizeCatalogRecord(currentPackage)
+            try authorizeCatalogRecordForOfflineRestore(currentPackage)
             try await reconcile(extensionID, currentPackage, .suspend)
             guard isCurrentComposition(),
                   await store.installedPackage(for: extensionID) == currentPackage else {
@@ -2209,6 +2316,41 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     private func authorizeCatalogRecord(
         _ package: FloorpWebExtensionInstalledPackage
     ) throws {
+        try authorizeCatalogRecord(package, with: catalogRecordAuthorization)
+    }
+
+    private func authorizeCatalogRecordForOfflineRestore(
+        _ package: FloorpWebExtensionInstalledPackage
+    ) throws {
+        try authorizeCatalogRecord(package, with: catalogRecordRestoreAuthorization)
+    }
+
+    /// Normal catalog mutations need more than a successful pre-await
+    /// authorization: they also carry the verified expiry to the package
+    /// store, which rechecks it at the durable commit boundary. Unsigned
+    /// fixtures may reach this only under the explicit test-only policy and
+    /// have no catalog lifetime to enforce.
+    private func catalogAuthorizationExpiry(
+        for package: FloorpWebExtensionInstalledPackage
+    ) throws -> Date? {
+        guard let record = package.catalogRecord else {
+            guard unsignedPackageActivationPolicy == .allowVerifiedFixtureForTesting,
+                  package.fixture != nil else {
+                throw FloorpWebExtensionCatalogError.unsignedPackageRejected
+            }
+            return nil
+        }
+        guard !package.isCatalogRevoked else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        try catalogRecordAuthorization(record)
+        return try catalogRecordExpirationProvider(record)
+    }
+
+    private func authorizeCatalogRecord(
+        _ package: FloorpWebExtensionInstalledPackage,
+        with authorization: CatalogRecordAuthorization
+    ) throws {
         guard let record = package.catalogRecord else {
             guard unsignedPackageActivationPolicy == .allowVerifiedFixtureForTesting,
                   package.fixture != nil else {
@@ -2219,7 +2361,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         guard !package.isCatalogRevoked else {
             throw FloorpWebExtensionCatalogError.revoked
         }
-        try catalogRecordAuthorization(record)
+        try authorization(record)
     }
 
     /// A restart can observe a package that was persisted before a process

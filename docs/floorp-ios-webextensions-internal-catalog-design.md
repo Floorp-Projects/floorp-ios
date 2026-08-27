@@ -358,6 +358,12 @@ P0 の署名方式と配布運用はまだ承認されていない。このた�
   record が通常の activation retry を通って実行されることを防ぐ。鍵ローテーションは新しい
   immutable generation と明示的 update consent を必要とし、旧 leaf の record を新 leaf として
   再解釈しない。失効した旧 leaf の record は停止する。
+- 期限は catalog 受理時だけでなく authorization property とする。native consent、runtime
+  suspend、actor hop をまたぐ新規導入・更新・再有効化・grant 変更は、現在の Keychain binding を
+  再確認し、同じ signed `expiresAt` を package store の durable write 直前にも検査する。exact
+  expiry timestamp 以降は拒否し、途中で期限を越えた candidate は journal を abort して既存世代を
+  維持する。この設計により、事前に取得した consent token や installation capability を使う
+  time-of-check/time-of-use の fail-open を作らない。
 - `revocations` は catalog の署名対象であり、key または
   `(extensionID, generation)` だけを停止できる。失効は置換や古い世代への自動復帰を
   指示できない。失効時は runtime、DNR、page origin を先に停止し、`storage.local` と

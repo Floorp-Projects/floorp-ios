@@ -1111,6 +1111,7 @@ private enum FloorpWebExtensionDNRCompiler {
         return lhs.rule.id < rhs.rule.id
     }
 
+    // swiftlint:disable:next function_body_length
     private static func translate(
         _ activeRule: ActiveRule
     ) -> TranslationResult<[String: Any]> {

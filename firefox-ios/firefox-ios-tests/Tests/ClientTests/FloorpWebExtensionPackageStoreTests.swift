@@ -4,6 +4,7 @@
 
 import CryptoKit
 import Dispatch
+import Foundation
 import WebKit
 import XCTest
 @testable import Client
@@ -2511,6 +2512,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: signing.configuration.channel,
             stateStore: InMemoryCatalogStateStore(),
             artifactDataProvider: { _ in nil },
+            clock: { signing.now },
             packageManagers: { [] }
         )
         await assertAsyncThrows {
@@ -2529,6 +2531,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             artifactDataProvider: { record in
                 record.extensionID == signing.extensionID ? artifactData : nil
             },
+            clock: { signing.now },
             packageManagers: { [] }
         )
         let directory = temporaryDirectory()
@@ -2601,6 +2604,227 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         }
     }
 
+    // swiftlint:disable:next function_body_length
+    func testCatalogExpiryBlocksInstallAndRevivalWhilePreservingOfflineRestore() async throws {
+        let signing = try CatalogSigningFixture()
+        let expiresAt = "2026-08-26T12:01:00Z"
+        var catalogResources = signing.resources()
+        catalogResources["manifest.json"] = Data("""
+        {
+          "manifest_version": 3,
+          "name": "Catalog Content Script",
+          "version": "1.0.0",
+          "host_permissions": ["https://content-message.fixture.test/*"],
+          "optional_permissions": ["tabs"],
+          "content_scripts": [{
+            "matches": ["https://content-message.fixture.test/*"],
+            "js": ["content/document-start.js"],
+            "css": ["content/marker.css"],
+            "run_at": "document_start",
+            "world": "ISOLATED"
+          }]
+        }
+        """.utf8)
+        let catalogData = try signing.catalog(
+            sequence: 1,
+            expiresAt: expiresAt,
+            resources: catalogResources,
+            compatibilityProfiles: ["content-script", "action-storage"],
+            schemaVersion: 2,
+            packageMetadata: signing.v2Metadata(permissions: ["tabs"])
+        )
+        let artifactData = try signing.archive(resources: catalogResources)
+        let stateStore = InMemoryCatalogStateStore()
+        let clock = CatalogMutableClock(signing.now)
+        let wasEnabled = FloorpFlags.isWebExtensionFeatureEnabled(.bundledCatalog)
+        FloorpFlags.setWebExtensionFeature(.bundledCatalog, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.bundledCatalog, enabled: wasEnabled) }
+
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-expiry-offline-restore",
+            isPrivateBrowsing: false,
+            directory: directory,
+            clock: { clock.now() }
+        )
+        let signedRuntime = SignedCatalogRuntimeReference()
+        let reconciliation = PausedLifecycleReconciliation()
+        let manager = FloorpWebExtensionLivePackageManager(
+            store: store,
+            reconcile: { _, package, _ in
+                await reconciliation.reconcile(package)
+            },
+            catalogRecordAuthorization: { record in
+                try signedRuntime.require().authorizeInstalledCatalogRecord(record)
+            },
+            catalogRecordExpirationProvider: { record in
+                try signedRuntime.require().currentCatalogAuthorizationExpiry(for: record)
+            },
+            catalogRecordRestoreAuthorization: { record in
+                try signedRuntime.require().authorizeInstalledCatalogRecordForOfflineRestore(record)
+            }
+        )
+        let runtime = try FloorpWebExtensionSignedBundledCatalog(
+            catalogData: catalogData,
+            rootPublicKey: signing.root.publicKey.rawRepresentation,
+            appBundleID: signing.configuration.appBundleID,
+            appVersion: signing.configuration.appVersion,
+            catalogID: signing.configuration.catalogID,
+            channel: signing.configuration.channel,
+            stateStore: stateStore,
+            artifactDataProvider: { _ in artifactData },
+            clock: { clock.now() },
+            packageManagers: { [manager] }
+        )
+        signedRuntime.value = runtime
+
+        _ = try await runtime.acceptAndApplyRevocations(now: signing.now)
+        let item = try XCTUnwrap(runtime.catalogItems().first)
+        let record = try XCTUnwrap(item.catalogRecord)
+        let catalogExpiresAt = try XCTUnwrap(item.catalogExpiresAt)
+        try await runtime.install(item, packageManager: manager)
+        let installedPackage = await store.installedPackage(for: record.extensionID)
+        let installed = try XCTUnwrap(installedPackage)
+        let pendingOptionalPermission = try await manager.authorizePermissionMutation(
+            for: record.extensionID,
+            expectedGeneration: installed.generation
+        )
+        let proposedOptionalPermissionGrants = FloorpWebExtensionPermissionSnapshot(
+            apiPermissions: installed.grants.apiPermissions.union([.tabs]),
+            requestedHosts: installed.grants.requestedHosts,
+            normalHostAccess: installed.grants.normalHostAccess,
+            privateHostAccess: installed.grants.privateHostAccess,
+            privateBrowsingEnabled: installed.grants.privateBrowsingEnabled
+        )
+
+        // The consent begins while valid, then the reconciler holds its
+        // runtime suspension. Advancing past expiry at that await proves the
+        // post-await authorization and actor-local durable write both reject
+        // a grant captured before the native consent completed.
+        let pendingGrantUpdate = Task { @MainActor in
+            try await manager.updateGrants(
+                proposedOptionalPermissionGrants,
+                authorization: pendingOptionalPermission
+            )
+        }
+        await reconciliation.waitUntilInitialRevocation()
+        clock.advance(by: 120)
+        reconciliation.resumeInitialRevocation()
+
+        XCTAssertTrue(runtime.catalogItems().isEmpty)
+
+        // A consent token captured before expiry cannot add an optional API
+        // permission after the signed catalog lifetime ends.
+        do {
+            try await pendingGrantUpdate.value
+            XCTFail("Expired catalog must not commit a pending optional permission grant")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
+        }
+        let afterExpiredConsent = await store.installedPackage(for: record.extensionID)
+        XCTAssertFalse(try XCTUnwrap(afterExpiredConsent).grants.apiPermissions.contains(.tabs))
+
+        // A fresh wrapper records the expiry failure, keeps catalog UI hidden,
+        // and uses the narrow restore-only path for the already-enabled
+        // package state. It never makes the expired catalog installable.
+        let resumed = try FloorpWebExtensionSignedBundledCatalog(
+            catalogData: catalogData,
+            rootPublicKey: signing.root.publicKey.rawRepresentation,
+            appBundleID: signing.configuration.appBundleID,
+            appVersion: signing.configuration.appVersion,
+            catalogID: signing.configuration.catalogID,
+            channel: signing.configuration.channel,
+            stateStore: stateStore,
+            artifactDataProvider: { _ in artifactData },
+            clock: { clock.now() },
+            packageManagers: { [] }
+        )
+        do {
+            _ = try await resumed.acceptAndApplyRevocations(now: clock.now())
+            XCTFail("Expired catalog must not be accepted after restart")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
+        }
+        XCTAssertTrue(resumed.catalogItems().isEmpty)
+        signedRuntime.value = resumed
+
+        // Expiry does not revoke an already-enabled package: documented
+        // offline behavior still restores its immutable generation.
+        let restored = try await manager.restoreInstalledPackageIfCurrent(installed)
+        XCTAssertTrue(restored)
+
+        do {
+            try await resumed.install(item, packageManager: manager)
+            XCTFail("Expired catalog must not install a stale catalog item")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
+        }
+
+        try await manager.setEnabled(false, for: record.extensionID)
+        do {
+            try await store.setEnabled(
+                true,
+                for: record.extensionID,
+                catalogExpiresAt: catalogExpiresAt
+            )
+            XCTFail("Store must reject an expired catalog at its durable enable boundary")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
+        }
+        do {
+            try await manager.setEnabled(true, for: record.extensionID)
+            XCTFail("Expired catalog must not revive a disabled package")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
+        }
+        let disabledPackage = await store.installedPackage(for: record.extensionID)
+        let disabled = try XCTUnwrap(disabledPackage)
+        XCTAssertFalse(disabled.isEnabled)
+        XCTAssertFalse(disabled.isCatalogRevoked)
+        XCTAssertThrowsError(try resumed.authorizeInstalledCatalogRecord(record)) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
+        }
+
+        // A pre-P0 Keychain record remains readable for anti-rollback history,
+        // but has no signed expiry and therefore cannot authorize any path.
+        let identity = FloorpWebExtensionCatalogGeneration(
+            extensionID: record.extensionID,
+            generation: record.generation
+        )
+        let binding = FloorpWebExtensionCatalogGenerationArtifactDigest(
+            catalogGeneration: identity,
+            artifactSHA256: record.artifactSHA256,
+            signingKeyID: record.signingKeyID
+        )
+        let legacyStore = InMemoryCatalogStateStore()
+        try legacyStore.save(.init(
+            catalogID: signing.configuration.catalogID,
+            highestSequence: 1,
+            maximumObservedAt: signing.now,
+            revokedKeyIDs: [],
+            revokedGenerations: [],
+            acceptedGenerationArtifacts: [binding],
+            currentGenerationArtifacts: [binding]
+        ))
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let legacyCoordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: legacyStore,
+            clock: { signing.now },
+            packageManagers: { [] }
+        )
+        let wasRemoteEnabled = FloorpFlags.isWebExtensionFeatureEnabled(.managedRemoteSource)
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: wasRemoteEnabled) }
+        XCTAssertThrowsError(try legacyCoordinator.authorizeInstalledCatalogRecord(record)) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .revoked)
+        }
+        XCTAssertThrowsError(try legacyCoordinator.authorizeInstalledCatalogRecordForOfflineRestore(record)) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .revoked)
+        }
+    }
+
     func testSettingsNeverShowsFixtureCatalogWhileSignedCatalogIsLoading() async {
         let manager = PausedCatalogSettingsManager()
         defer { manager.resumeCatalogLoad() }
@@ -2661,6 +2885,55 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         )
         XCTAssertEqual(refreshLoading.accessibilityIdentifier, "Floorp.WebExtensions.CatalogLoading")
         XCTAssertFalse(refreshLoading.isUserInteractionEnabled)
+    }
+
+    func testSettingsHidesCachedCatalogItemsWhenTheirSignedLifetimeEnds() async {
+        let clock = CatalogMutableClock(Date(timeIntervalSince1970: 1_000))
+        let item = FloorpWebExtensionBundledCatalogItem(
+            id: extensionID,
+            name: "Expiring catalog item",
+            version: "1.0.0",
+            summary: "A test-only Settings row with signed-lifetime metadata.",
+            source: "Floorp test",
+            license: "MPL-2.0",
+            packageDirectoryName: "expiring-catalog-item",
+            requestedPermissions: [],
+            catalogExpiresAt: clock.now().addingTimeInterval(86_400)
+        )
+        let manager = PausedCatalogSettingsManager(
+            initialCatalog: [item],
+            pauseOnRequest: 2
+        )
+        defer { manager.resumeCatalogLoad() }
+        let subject = FloorpWebExtensionSettingsViewController(
+            windowUUID: .XCTestDefaultUUID,
+            packageManager: manager,
+            clock: { clock.now() },
+            themeManager: MockThemeManager()
+        )
+
+        subject.loadViewIfNeeded()
+        await manager.waitUntilInitialCatalogDelivered()
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        let available = subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 1)
+        )
+        XCTAssertEqual(
+            available.accessibilityIdentifier,
+            "Floorp.WebExtensions.Available.\(extensionID.rawValue)"
+        )
+
+        clock.advance(by: 86_401)
+        XCTAssertEqual(subject.tableView(subject.tableView, numberOfRowsInSection: 1), 1)
+        let unavailable = subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 1)
+        )
+        XCTAssertEqual(unavailable.accessibilityIdentifier, "Floorp.WebExtensions.CatalogUnavailable")
+        XCTAssertFalse(unavailable.isUserInteractionEnabled)
     }
 
     func testLiveManagerDefaultCompositionRejectsUnsignedFixtureCatalog() async throws {
@@ -2839,6 +3112,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -3132,6 +3406,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -3186,6 +3461,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -3251,6 +3527,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: InMemoryCatalogStateStore(),
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -3319,6 +3596,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -3377,6 +3655,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [] }
         )
         let manager = FloorpWebExtensionLivePackageManager(
@@ -3474,6 +3753,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [] }
         )
         var reconciledPackages = [FloorpWebExtensionInstalledPackage?]()
@@ -3559,6 +3839,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: InMemoryCatalogStateStore(),
+            clock: { signing.now },
             packageManagers: { [normalManager, privateManager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -3650,6 +3931,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: signing.configuration.channel,
             stateStore: stateStore,
             artifactDataProvider: { _ in firstArtifactData },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await firstRuntime.acceptAndApplyRevocations(now: signing.now)
@@ -3667,6 +3949,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: signing.configuration.channel,
             stateStore: stateStore,
             artifactDataProvider: { _ in secondArtifactData },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await secondRuntime.acceptAndApplyRevocations(now: signing.now)
@@ -3726,6 +4009,12 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
                     throw FloorpWebExtensionCatalogError.revoked
                 }
                 try signedRuntime.authorizeInstalledCatalogRecord(record)
+            },
+            catalogRecordExpirationProvider: { record in
+                guard let signedRuntime else {
+                    throw FloorpWebExtensionCatalogError.revoked
+                }
+                return try signedRuntime.currentCatalogAuthorizationExpiry(for: record)
             }
         )
         let privateManager = FloorpWebExtensionLivePackageManager(
@@ -3740,6 +4029,12 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
                     throw FloorpWebExtensionCatalogError.revoked
                 }
                 try signedRuntime.authorizeInstalledCatalogRecord(record)
+            },
+            catalogRecordExpirationProvider: { record in
+                guard let signedRuntime else {
+                    throw FloorpWebExtensionCatalogError.revoked
+                }
+                return try signedRuntime.currentCatalogAuthorizationExpiry(for: record)
             }
         )
         let wasEnabled = FloorpFlags.isWebExtensionFeatureEnabled(.bundledCatalog)
@@ -3754,6 +4049,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: signing.configuration.channel,
             stateStore: InMemoryCatalogStateStore(),
             artifactDataProvider: { _ in artifactData },
+            clock: { signing.now },
             packageManagers: { [normalManager, privateManager] }
         )
         signedRuntime = runtime
@@ -3827,6 +4123,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -3923,6 +4220,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: InMemoryCatalogStateStore(),
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -4026,6 +4324,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: "production",
             stateStore: stateStore,
             artifactDataProvider: { _ in firstArchive },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await first.acceptAndApplyRevocations(now: signing.now)
@@ -4041,6 +4340,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: "production",
             stateStore: stateStore,
             artifactDataProvider: { _ in secondArchive },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await second.acceptAndApplyRevocations(now: signing.now)
@@ -4122,6 +4422,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: "production",
             stateStore: stateStore,
             artifactDataProvider: { _ in firstArchive },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await first.acceptAndApplyRevocations(now: signing.now)
@@ -4136,6 +4437,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: "production",
             stateStore: stateStore,
             artifactDataProvider: { _ in downgradeArchive },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await downgrade.acceptAndApplyRevocations(now: signing.now)
@@ -4227,6 +4529,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: "production",
             stateStore: stateStore,
             artifactDataProvider: { _ in firstArchive },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await first.acceptAndApplyRevocations(now: signing.now)
@@ -4241,6 +4544,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             channel: "production",
             stateStore: stateStore,
             artifactDataProvider: { _ in secondArchive },
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         _ = try await second.acceptAndApplyRevocations(now: signing.now)
@@ -4293,6 +4597,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: stateStore,
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -4419,6 +4724,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
             verifier: verifier,
             stateStore: InMemoryCatalogStateStore(),
+            clock: { signing.now },
             packageManagers: { [manager] }
         )
         FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
@@ -5038,6 +5344,39 @@ private final class InMemoryCatalogStateStore: FloorpWebExtensionCatalogAcceptan
 
     func save(_ state: FloorpWebExtensionCatalogAcceptanceState) throws {
         self.state = state
+    }
+}
+
+@MainActor
+private final class SignedCatalogRuntimeReference {
+    var value: FloorpWebExtensionSignedBundledCatalog?
+
+    func require() throws -> FloorpWebExtensionSignedBundledCatalog {
+        guard let value else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        return value
+    }
+}
+
+private final class CatalogMutableClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ value: Date) {
+        self.value = value
+    }
+
+    func now() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func advance(by interval: TimeInterval) {
+        lock.lock()
+        defer { lock.unlock() }
+        value = value.addingTimeInterval(interval)
     }
 }
 

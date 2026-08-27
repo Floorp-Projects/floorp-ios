@@ -51,6 +51,10 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
     /// catalog. Settings may display this immutable metadata, but cannot use
     /// it to turn an arbitrary file or URL into an installation request.
     let catalogRecord: FloorpWebExtensionCatalogPackageRecord?
+    /// The signed catalog lifetime that made this Settings item available.
+    /// This is display/lifecycle metadata only; installation independently
+    /// reauthorizes against device-bound catalog state.
+    let catalogExpiresAt: Date?
 
     init(
         id: FloorpWebExtensionID,
@@ -61,7 +65,8 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
         license: String,
         packageDirectoryName: String,
         requestedPermissions: [FloorpWebExtensionPermissionCategory],
-        catalogRecord: FloorpWebExtensionCatalogPackageRecord? = nil
+        catalogRecord: FloorpWebExtensionCatalogPackageRecord? = nil,
+        catalogExpiresAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -72,6 +77,7 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
         self.packageDirectoryName = packageDirectoryName
         self.requestedPermissions = requestedPermissions
         self.catalogRecord = catalogRecord
+        self.catalogExpiresAt = catalogExpiresAt
     }
 
     /// Resolves the directory after the fixture has been copied as a folder
@@ -127,7 +133,8 @@ enum FloorpWebExtensionBundledCatalog {
     static let items = [contentMessagingMV3Fixture, eventRuntimeMV3Fixture, demandingMV3Fixture]
 
     static func signedItem(
-        record: FloorpWebExtensionCatalogPackageRecord
+        record: FloorpWebExtensionCatalogPackageRecord,
+        catalogExpiresAt: Date
     ) -> FloorpWebExtensionBundledCatalogItem? {
         guard let metadata = record.metadata else { return nil }
         var categories = [FloorpWebExtensionPermissionCategory]()
@@ -155,7 +162,8 @@ enum FloorpWebExtensionBundledCatalog {
             license: metadata.license,
             packageDirectoryName: record.artifactURL.lastPathComponent,
             requestedPermissions: categories,
-            catalogRecord: record
+            catalogRecord: record,
+            catalogExpiresAt: catalogExpiresAt
         )
     }
 }
@@ -731,6 +739,10 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
     let catalogID: String
     let highestSequence: Int64
     let maximumObservedAt: Date
+    /// The expiry of the exact catalog accepted at `highestSequence`. A
+    /// missing value is legacy Keychain state and deliberately cannot authorize
+    /// a new install, update, or revival.
+    let acceptedCatalogExpiresAt: Date?
     let revokedKeyIDs: Set<String>
     let revokedGenerations: Set<FloorpWebExtensionCatalogGeneration>
     /// Optional in old Keychain state so the P0-gated implementation can be
@@ -758,6 +770,7 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
         catalogID: String,
         highestSequence: Int64,
         maximumObservedAt: Date,
+        acceptedCatalogExpiresAt: Date? = nil,
         revokedKeyIDs: Set<String>,
         revokedGenerations: Set<FloorpWebExtensionCatalogGeneration>,
         acceptedGenerationArtifacts: Set<FloorpWebExtensionCatalogGenerationArtifactDigest> = [],
@@ -767,6 +780,7 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
         self.catalogID = catalogID
         self.highestSequence = highestSequence
         self.maximumObservedAt = maximumObservedAt
+        self.acceptedCatalogExpiresAt = acceptedCatalogExpiresAt
         self.revokedKeyIDs = revokedKeyIDs
         self.revokedGenerations = revokedGenerations
         self.acceptedGenerationArtifacts = acceptedGenerationArtifacts
@@ -781,6 +795,7 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
         case catalogID
         case highestSequence
         case maximumObservedAt
+        case acceptedCatalogExpiresAt
         case revokedKeyIDs
         case revokedGenerations
         case acceptedGenerationArtifacts
@@ -793,6 +808,10 @@ struct FloorpWebExtensionCatalogAcceptanceState: Codable, Equatable, Sendable {
         catalogID = try container.decode(String.self, forKey: .catalogID)
         highestSequence = try container.decode(Int64.self, forKey: .highestSequence)
         maximumObservedAt = try container.decode(Date.self, forKey: .maximumObservedAt)
+        acceptedCatalogExpiresAt = try container.decodeIfPresent(
+            Date.self,
+            forKey: .acceptedCatalogExpiresAt
+        )
         revokedKeyIDs = try container.decode(Set<String>.self, forKey: .revokedKeyIDs)
         revokedGenerations = try container.decode(
             Set<FloorpWebExtensionCatalogGeneration>.self,
@@ -871,6 +890,30 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         }
         self.configuration = configuration
         self.clockRollbackTolerance = clockRollbackTolerance
+    }
+
+    /// Catalog validity is an authorization property, not only an ingestion
+    /// property. The device-bound state retains the expiry so an already
+    /// accepted catalog cannot create a new installation, update, or revival
+    /// after its signed lifetime ends.
+    func currentAcceptanceState(
+        _ state: FloorpWebExtensionCatalogAcceptanceState?,
+        now: Date = Date()
+    ) throws -> FloorpWebExtensionCatalogAcceptanceState {
+        guard let state,
+              state.catalogID == configuration.catalogID,
+              let expiresAt = state.acceptedCatalogExpiresAt else {
+            // Old state has no signed expiry binding. It remains readable for
+            // anti-rollback history but cannot become new execution authority.
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        guard now.addingTimeInterval(clockRollbackTolerance) >= state.maximumObservedAt else {
+            throw FloorpWebExtensionCatalogError.clockRollback
+        }
+        guard max(now, state.maximumObservedAt) <= expiresAt else {
+            throw FloorpWebExtensionCatalogError.expired
+        }
+        return state
     }
 
     // This is intentionally a single verification transaction; splitting it
@@ -1063,6 +1106,7 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             catalogID: configuration.catalogID,
             highestSequence: sequence,
             maximumObservedAt: max(previousState?.maximumObservedAt ?? .distantPast, now),
+            acceptedCatalogExpiresAt: expiresAt,
             revokedKeyIDs: revokedKeyIDs,
             revokedGenerations: revokedGenerations,
             acceptedGenerationArtifacts: acceptedGenerationArtifacts,
@@ -1594,11 +1638,19 @@ struct FloorpWebExtensionCatalogInstallationAuthorization: Sendable {
     private let catalogID: String
     private let catalogSequence: Int64
     private let record: FloorpWebExtensionCatalogPackageRecord
+    /// This value is minted only after the lifecycle coordinator verifies the
+    /// device-bound acceptance state. The package-store actor rechecks it at
+    /// every durable catalog mutation, after any intervening async work.
+    let expiresAt: Date
 
-    fileprivate init(artifact: FloorpWebExtensionVerifiedCatalogArtifact) {
+    fileprivate init(
+        artifact: FloorpWebExtensionVerifiedCatalogArtifact,
+        expiresAt: Date
+    ) {
         catalogID = artifact.catalogID
         catalogSequence = artifact.catalogSequence
         record = artifact.record
+        self.expiresAt = expiresAt
     }
 
     func authorizes(_ artifact: FloorpWebExtensionVerifiedCatalogArtifact) -> Bool {
@@ -2019,16 +2071,19 @@ private actor FloorpWebExtensionCatalogLifecycleAcceptanceGate {
 @MainActor
 final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
     typealias PackageManagerProvider = @MainActor @Sendable () -> [FloorpWebExtensionLivePackageManager]
+    typealias Clock = @MainActor () -> Date
 
     private let verifier: FloorpWebExtensionCatalogVerifier
     private let stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting
     private let packageManagers: PackageManagerProvider
     private let source: FloorpWebExtensionCatalogSource
+    private let clock: Clock
 
     init(
         verifier: FloorpWebExtensionCatalogVerifier,
         stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting,
         source: FloorpWebExtensionCatalogSource = .managedRemote,
+        clock: @escaping Clock = { Date() },
         packageManagers: @escaping PackageManagerProvider = {
             FloorpWebExtensionPackageStoreRegistry.catalogRevocationManagers()
         }
@@ -2036,6 +2091,7 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
         self.verifier = verifier
         self.stateStore = stateStore
         self.source = source
+        self.clock = clock
         self.packageManagers = packageManagers
     }
 
@@ -2071,20 +2127,24 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
         _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
         packageManager: FloorpWebExtensionLivePackageManager,
         initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
-        updateAuthorization: FloorpWebExtensionLivePackageManager.CatalogUpdateAuthorization? = nil
+        updateAuthorization: FloorpWebExtensionLivePackageManager.CatalogUpdateAuthorization? = nil,
+        now: Date? = nil
     ) async throws {
         try source.requireEnabled()
         let gate = FloorpWebExtensionCatalogLifecycleAcceptanceGate.shared
         await gate.acquire()
         defer { Task { await gate.release() } }
 
-        let state = try stateStore.load(catalogID: verifier.configuration.catalogID)
+        let state = try currentAcceptanceState(now: now)
         guard catalogState(state, authorizes: artifact) else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        guard let expiresAt = state.acceptedCatalogExpiresAt else {
             throw FloorpWebExtensionCatalogError.revoked
         }
         try await packageManager.installVerifiedCatalogPackage(
             artifact,
-            catalogAuthorization: .init(artifact: artifact),
+            catalogAuthorization: .init(artifact: artifact, expiresAt: expiresAt),
             initialGrants: initialGrants,
             updateAuthorization: updateAuthorization,
             source: source
@@ -2095,6 +2155,35 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
     /// manager. It also protects a restart where a catalog package remains on
     /// disk but the latest accepted state has revoked it.
     func authorizeInstalledCatalogRecord(
+        _ record: FloorpWebExtensionCatalogPackageRecord,
+        now: Date? = nil
+    ) throws {
+        _ = try currentCatalogAuthorizationExpiry(for: record, now: now)
+    }
+
+    /// Returns the exact signed catalog lifetime only after revalidating the
+    /// current device-bound sequence, immutable record binding, and
+    /// revocation state. The live manager carries this value to the
+    /// package-store actor so a durable mutation cannot cross an async
+    /// consent/runtime boundary after expiry.
+    func currentCatalogAuthorizationExpiry(
+        for record: FloorpWebExtensionCatalogPackageRecord,
+        now: Date? = nil
+    ) throws -> Date {
+        try source.requireEnabled()
+        let state = try currentAcceptanceState(now: now)
+        guard catalogState(state, authorizes: record),
+              let expiresAt = state.acceptedCatalogExpiresAt else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        return expiresAt
+    }
+
+    /// The offline policy permits a package that was already enabled before
+    /// the catalog expired to continue restoring. This narrowly bypasses only
+    /// the time check; it never bypasses the immutable binding, legacy-state,
+    /// or revocation checks, and it is not used for install/update/revival.
+    func authorizeInstalledCatalogRecordForOfflineRestore(
         _ record: FloorpWebExtensionCatalogPackageRecord
     ) throws {
         try source.requireEnabled()
@@ -2102,6 +2191,14 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
         guard catalogState(state, authorizes: record) else {
             throw FloorpWebExtensionCatalogError.revoked
         }
+    }
+
+    func currentAcceptanceState(
+        now: Date? = nil
+    ) throws -> FloorpWebExtensionCatalogAcceptanceState {
+        try source.requireEnabled()
+        let state = try stateStore.load(catalogID: verifier.configuration.catalogID)
+        return try verifier.currentAcceptanceState(state, now: now ?? clock())
     }
 
     private func catalogState(
@@ -2125,6 +2222,12 @@ final class FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator {
     ) -> Bool {
         guard let state,
               state.catalogID == verifier.configuration.catalogID else {
+            return false
+        }
+        // Missing expiry is a read-compatible legacy representation only. It
+        // cannot authorize either an offline restore or a current catalog
+        // operation until a signed catalog writes the new state format.
+        guard state.acceptedCatalogExpiresAt != nil else {
             return false
         }
         let generation = FloorpWebExtensionCatalogGeneration(
@@ -2164,6 +2267,10 @@ final class FloorpWebExtensionSignedBundledCatalog {
     private let artifactDataProvider: ArtifactDataProvider
     private let packageManagers: FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator.PackageManagerProvider
     private var acceptedCatalog: FloorpWebExtensionCatalogVerificationResult?
+    /// Retains the reason a freshly loaded bundled catalog was rejected so an
+    /// expired catalog can preserve the documented offline-restore behavior
+    /// without treating a missing or malformed catalog as trusted.
+    private var catalogAcceptanceFailure: FloorpWebExtensionCatalogError?
 
     init(
         catalogData: Data,
@@ -2174,6 +2281,7 @@ final class FloorpWebExtensionSignedBundledCatalog {
         channel: String = FloorpWebExtensionSignedBundledCatalog.channel,
         stateStore: FloorpWebExtensionCatalogAcceptanceStatePersisting,
         artifactDataProvider: @escaping ArtifactDataProvider,
+        clock: @escaping FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator.Clock = { Date() },
         packageManagers: @escaping FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator.PackageManagerProvider = {
             FloorpWebExtensionPackageStoreRegistry.catalogRevocationManagers()
         }
@@ -2195,6 +2303,7 @@ final class FloorpWebExtensionSignedBundledCatalog {
             verifier: verifier,
             stateStore: stateStore,
             source: .signedBundled,
+            clock: clock,
             packageManagers: packageManagers
         )
     }
@@ -2261,23 +2370,33 @@ final class FloorpWebExtensionSignedBundledCatalog {
     func acceptAndApplyRevocations(
         now: Date = Date()
     ) async throws -> FloorpWebExtensionCatalogVerificationResult {
-        let previous = try stateStore.load(catalogID: verifier.configuration.catalogID)
-        let candidate = try verifier.verify(
-            catalogData: catalogData,
-            previousState: previous,
-            now: now
-        )
-        try validateLocalArtifacts(in: candidate)
-        let accepted = try await coordinator.acceptAndApplyRevocations(
-            catalogData: catalogData,
-            now: now
-        )
-        acceptedCatalog = accepted
-        return accepted
+        catalogAcceptanceFailure = nil
+        do {
+            let previous = try stateStore.load(catalogID: verifier.configuration.catalogID)
+            let candidate = try verifier.verify(
+                catalogData: catalogData,
+                previousState: previous,
+                now: now
+            )
+            try validateLocalArtifacts(in: candidate)
+            let accepted = try await coordinator.acceptAndApplyRevocations(
+                catalogData: catalogData,
+                now: now
+            )
+            acceptedCatalog = accepted
+            return accepted
+        } catch {
+            acceptedCatalog = nil
+            catalogAcceptanceFailure = error as? FloorpWebExtensionCatalogError
+            throw error
+        }
     }
 
     func catalogItems() -> [FloorpWebExtensionBundledCatalogItem] {
-        guard let acceptedCatalog else { return [] }
+        guard let acceptedCatalog,
+              (try? coordinator.currentAcceptanceState()) != nil else {
+            return []
+        }
         return acceptedCatalog.catalog.packages.compactMap { record in
             guard let installable = try? acceptedCatalog.installablePackage(
                 extensionID: record.extensionID,
@@ -2285,7 +2404,10 @@ final class FloorpWebExtensionSignedBundledCatalog {
             ), installable == record else {
                 return nil
             }
-            return FloorpWebExtensionBundledCatalog.signedItem(record: record)
+            return FloorpWebExtensionBundledCatalog.signedItem(
+                record: record,
+                catalogExpiresAt: acceptedCatalog.catalog.expiresAt
+            )
         }
             .sorted { lhs, rhs in
                 lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
@@ -2300,6 +2422,10 @@ final class FloorpWebExtensionSignedBundledCatalog {
         _ item: FloorpWebExtensionBundledCatalogItem,
         packageManager: FloorpWebExtensionLivePackageManager
     ) async throws {
+        // Check the signed expiry before artifact processing or update consent
+        // presentation. A stale Settings item must not turn an expired catalog
+        // into a new installation, update, or revival attempt.
+        _ = try coordinator.currentAcceptanceState()
         guard let requestedRecord = item.catalogRecord,
               let acceptedCatalog,
               let record = acceptedCatalog.catalog.packages.first(where: {
@@ -2359,9 +2485,36 @@ final class FloorpWebExtensionSignedBundledCatalog {
         _ record: FloorpWebExtensionCatalogPackageRecord
     ) throws {
         guard acceptedCatalog != nil else {
-            throw FloorpWebExtensionCatalogError.revoked
+            throw catalogAcceptanceFailure ?? FloorpWebExtensionCatalogError.revoked
         }
         try coordinator.authorizeInstalledCatalogRecord(record)
+    }
+
+    /// Returns the currently authorized signed lifetime for a normal catalog
+    /// lifecycle mutation. Unlike the offline restore capability below, this
+    /// fails after expiration and is passed through to the actor-isolated
+    /// persistence boundary.
+    func currentCatalogAuthorizationExpiry(
+        for record: FloorpWebExtensionCatalogPackageRecord
+    ) throws -> Date {
+        guard acceptedCatalog != nil else {
+            throw catalogAcceptanceFailure ?? FloorpWebExtensionCatalogError.revoked
+        }
+        return try coordinator.currentCatalogAuthorizationExpiry(for: record)
+    }
+
+    /// The documented offline policy retains a package that was already
+    /// enabled before a catalog expired. This method is injected solely into
+    /// startup restoration; all install, update, enable, and reload paths use
+    /// `authorizeInstalledCatalogRecord` above and therefore require a
+    /// current catalog.
+    func authorizeInstalledCatalogRecordForOfflineRestore(
+        _ record: FloorpWebExtensionCatalogPackageRecord
+    ) throws {
+        guard acceptedCatalog != nil || catalogAcceptanceFailure == .expired else {
+            throw catalogAcceptanceFailure ?? FloorpWebExtensionCatalogError.revoked
+        }
+        try coordinator.authorizeInstalledCatalogRecordForOfflineRestore(record)
     }
 
     private func validateLocalArtifacts(
