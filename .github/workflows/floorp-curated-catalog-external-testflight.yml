@@ -265,15 +265,7 @@ jobs:
             printf -- '- Release tag: `%s`\n' "${FLOORP_CATALOG_RELEASE_TAG:-unverified}"
             printf -- '- Source: `%s`\n' "${FLOORP_CATALOG_CANDIDATE_SHA:-unverified}"
             if [[ -n "${FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE:-}" && -f "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE" ]]; then
-              # shellcheck disable=SC2016
-              /usr/bin/python3 - "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE" <<'PY'
-          import json
-          import sys
-          evidence = json.load(open(sys.argv[1], encoding="utf-8"))
-          print(f"- App Store Connect build: `{evidence['buildID']}` ({evidence['marketingVersion']} ({evidence['buildNumber']}))")
-          print(f"- Xcode Cloud run: `{evidence['xcodeCloudRunID']}`")
-          print(f"- Signed catalog: `{evidence['catalogID']}` sequence `{evidence['catalogSequence']}` SHA-256 `{evidence['catalogSHA256']}`")
-          PY
+              /usr/bin/python3 scripts/release/render-curated-catalog-testflight-summary.py "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE"
             else
               echo '- Source-bound build verification did not complete; no Beta App Review mutation should have run.'
             fi

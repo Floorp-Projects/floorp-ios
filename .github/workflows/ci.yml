@@ -117,7 +117,8 @@ jobs:
               scripts.release.tests.test_curated_catalog_external_testflight_workflow \
               scripts.release.tests.test_curated_catalog_xcode_cloud_post_clone \
               scripts.release.tests.test_trigger_xcode_cloud \
-              scripts.release.tests.test_verify_curated_catalog_testflight_submission
+              scripts.release.tests.test_verify_curated_catalog_testflight_submission \
+              scripts.release.tests.test_render_curated_catalog_testflight_summary
           node scripts/webextensions/tests/curated_catalog_functional.mjs \
             firefox-ios/Floorp/WebExtensions/CuratedCatalog
 
