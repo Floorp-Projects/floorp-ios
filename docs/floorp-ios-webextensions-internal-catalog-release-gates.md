@@ -55,6 +55,11 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
   `catalog-input.json` byte snapshot のみの署名、private key 読込直前の clean recheck、既定の
   public output path、source checkout 外の audit evidence を必須にする。これは signer 実行や
   Security の鍵運用承認を代替しない。
+- 2026-08-27: [managed-signer handoff](floorp-ios-webextensions-managed-signer.md)
+  を追加した。root/leaf の非 export Ed25519 key を、checkout 外で SHA-256 固定された
+  adapter の canonical stdin/stdout protocol に接続できる。adapter は private key を
+  返さず、release tool は response の key ID/public key/Ed25519 signature を即時検証する。
+  GitHub/Xcode Cloud に signer を置かず、public output のみを第 2 normal integration へ渡す。
 - 2026-08-27: release control を再設計した。通常の `Floorp TestFlight Deploy (Xcode Cloud)` に
   任意 `catalog_release` switch を置く方式は、switch を外すだけで signed-catalog verifier を
   通らず App Store Connect mutation へ到達できるため撤回した。候補専用の
@@ -122,7 +127,7 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
 | `IMMUTABLE_CANDIDATE_REF_MISSING` | blocked | Release / Security | `floorp-catalog-<40 lowercase commit SHA>` の annotated tag を、通常 merge 後の**現在の** exact `main` commit にだけ作成でき、force update/delete を release approver 以外に許さない GitHub tag protection を設定する。候補 workflow は tag 名・tag commit・checkout・`origin/main` HEAD の完全一致を credential 前に確認し、Xcode Cloud `Floorp TestFlight Manual` が同じ tag を `sourceBranchOrTag` として解決できることを read-only preflight で記録する。Cloud 側も post-clone で `CI_GIT_REF`/`CI_TAG`/`CI_COMMIT`/workflow/bundle ID/checkout/current `origin/main` を archive 前に再照合する。tag/branch の同名混同、tag move、古い main commit の再利用、branch-only dispatch、auto start、async/no-wait は候補経路で許可しない。 |
 | `EXTERNAL_SUBMISSION_PATH_MISSING` | blocked | Release / App Store Connect | candidate workflow は build 作成と exact `sourceCommit` readback までで止まる。Beta App Review / external group mutation の前に、processed build がその verified Xcode Cloud run に属し、catalog evidence、tag SHA、App Store build ID、reviewer details、選択 external group を一つの readback record に束縛する、candidate 専用の承認済み運用経路が必要。既存 Notes Sync `Floorp Public Beta Release` の流用や Xcode Cloud の自動外部公開では代替しない。 |
 | `CATALOG_COMPOSITION_SEQUENCE_MISSING` | blocked | Security / Release / Maintainer | 現行 Xcode Cloud は main の source tree をそのまま archive し catalog signer を呼ばない。従って「main 統合後に署名」と「初回 binary に signed catalog を同梱」を両立するには、(a) review 対象 input の source-bound pre-merge signing、または (b) infrastructure main 統合後の public signed output 用第 2 PR、あるいは Security 承認済みの別 composition mechanism が必要。private key を CI に追加してこの矛盾を解くことは許可されない。 |
-| `RELEASE_IDENTITY_PENDING` | blocked | Release / Maintainer | `catalog-input.json` は最低 Floorp 版 `0.3.0` を要求する一方、現行 release configuration は `0.2.0`。署名の前に、今回用の marketing version と未使用の build number を通常の release policy に従って確定し、catalog audience と App Store Connect build の対応を記録する。既存 0.2.0 TestFlight build は再利用しない。 |
+| `RELEASE_IDENTITY_PENDING` | partially configured / blocked | Release / Maintainer | `catalog-input.json` の最低 Floorp 版と release configuration は `0.3.0` に整合済み（build number は `4`）。通常の `main` 統合後に App Store Connect で `0.3.0 (4)` が未使用であることを確認し、既に使われていれば通常の versioning policy に従って未使用 build number を割り当てる。catalog audience と実際の App Store build の対応を記録するまでこの gate は完了しない。既存 0.2.0 TestFlight build は再利用しない。 |
 | `MERGE_REQUIRED` | blocked — route decision required | Maintainer | GitHub の有効 main ruleset は pull request、解決済み review thread、`Validate workflows`、`Build and unit test` を必須にする（required approval count は 0）。現 candidate の PR は存在せず、direct push は許可されない。したがって「新規 PR は作成しない」制約を維持したまま normal main merge を行う方法はない。ruleset は signed Git commit を要求していないが、ローカルの signing policy を無断で無効化してはならない。 |
 
 ### Current non-secret capability observations

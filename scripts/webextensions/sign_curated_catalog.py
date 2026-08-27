@@ -4,7 +4,7 @@
 This is the managed-signing handoff for the checked-in curated catalog. It is
 not an iOS runtime component and never fetches source material. The signer
 must pass review-quarantined archives explicitly; they are matched to pinned
-digests before root/leaf private keys are read. The only app-bound outputs are
+digests before root/leaf signing authority is invoked. The only app-bound outputs are
 the public signed catalog and root public key. The provenance evidence is a
 separate, review-only audit record and is rejected if placed under Artifacts/.
 """
@@ -23,9 +23,10 @@ from typing import Any
 from ingest_extension import canonical_json, sha256, strict_json_loads
 from sign_catalog import (
     CatalogSigningError,
+    ManagedEd25519Signer,
     base64url,
     build_parser as build_catalog_parser,
-    load_private_key,
+    load_catalog_signer,
     load_records_bytes,
     signed_catalog,
 )
@@ -241,14 +242,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         records = load_records_bytes(records_bytes, schema=arguments.schema)
         # The catalog bytes and provenance declaration were read from this
-        # checkout.  Re-check immediately before private keys are read so a
-        # concurrent source-tree modification cannot be signed unnoticed.
+        # checkout. Re-check immediately before any signing authority is
+        # invoked so a concurrent source-tree modification cannot be signed
+        # unnoticed.
         _require_catalog_checkout(repository_root, catalog_root)
         _require_clean_source_commit(repository_root, arguments.source_commit)
+        root_signer = load_catalog_signer(arguments, "root")
+        leaf_signer = load_catalog_signer(arguments, "leaf")
+        for signer in (root_signer, leaf_signer):
+            if isinstance(signer, ManagedEd25519Signer):
+                signer.require_outside(repository_root)
         catalog, root_public = signed_catalog(
             records=records,
-            root_key=load_private_key(arguments.root_private_key),
-            leaf_key=load_private_key(arguments.leaf_private_key),
+            root_key=root_signer,
+            leaf_key=leaf_signer,
             root_key_id=arguments.root_key_id,
             leaf_key_id=arguments.leaf_key_id,
             catalog_id=arguments.catalog_id,
@@ -275,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         "issuedAt": arguments.issued_at,
         "leafKeyID": arguments.leaf_key_id,
         "rootKeyID": arguments.root_key_id,
+        "rootPublicKeySHA256": sha256(root_public),
         "schema": 1,
         "sequence": arguments.sequence,
         "sourceCommit": arguments.source_commit,
@@ -291,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({
         "catalog_sha256": evidence["catalogSHA256"],
         "catalog_input_sha256": evidence["catalogInputSHA256"],
+        "root_public_key_sha256": evidence["rootPublicKeySHA256"],
         "source_commit": evidence["sourceCommit"],
         "source_provenance_count": len(source_verification),
         "status": "signed",

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -127,6 +132,125 @@ class SignCatalogTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SIGN.CatalogSigningError, "non-empty JSON array"):
             SIGN.load_records_bytes(b"[]", schema=2)
+
+    def test_managed_signers_are_pinned_and_receive_only_the_protocol_request(self) -> None:
+        root = Ed25519PrivateKey.generate()
+        leaf = Ed25519PrivateKey.generate()
+        keys = {"managed-root": root, "managed-leaf": leaf}
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            adapter = Path(temporary_directory) / "floorp-managed-signer"
+            adapter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            adapter.chmod(0o700)
+            adapter_sha256 = hashlib.sha256(adapter.read_bytes()).hexdigest()
+
+            def managed_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                self.assertEqual(command, [str(adapter.resolve())])
+                self.assertEqual(kwargs["cwd"], "/")
+                environment = kwargs["env"]
+                assert isinstance(environment, dict)
+                self.assertEqual(environment["FLOORP_HSM_SOCKET"], "/tmp/floorp-hsm.sock")
+                self.assertEqual(environment["PATH"], SIGN.SAFE_MANAGED_SIGNER_PATH)
+                self.assertNotIn("GITHUB_TOKEN", environment)
+                request = SIGN.strict_json_loads(kwargs["input"], label="test request")
+                assert isinstance(request, dict)
+                key = keys[request["keyID"]]
+                public_key = key.public_key().public_bytes(
+                    serialization.Encoding.Raw,
+                    serialization.PublicFormat.Raw,
+                )
+                response: dict[str, object] = {
+                    "keyID": request["keyID"],
+                    "operation": request["operation"],
+                    "publicKey": SIGN.base64url(public_key),
+                    "schemaVersion": 1,
+                }
+                if request["operation"] == "sign":
+                    response["purpose"] = request["purpose"]
+                    response["signature"] = SIGN.base64url(
+                        key.sign(decode_base64url(request["payload"]))
+                    )
+                return subprocess.CompletedProcess(command, 0, stdout=SIGN.canonical_json(response))
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"FLOORP_HSM_SOCKET": "/tmp/floorp-hsm.sock", "GITHUB_TOKEN": "must-not-pass"},
+                    clear=False,
+                ),
+                mock.patch.object(SIGN.subprocess, "run", side_effect=managed_run),
+            ):
+                root_signer = SIGN.ManagedEd25519Signer(
+                    command=adapter,
+                    command_sha256=adapter_sha256,
+                    key_id="managed-root",
+                    environment_names=["FLOORP_HSM_SOCKET"],
+                    timeout_seconds=30,
+                )
+                leaf_signer = SIGN.ManagedEd25519Signer(
+                    command=adapter,
+                    command_sha256=adapter_sha256,
+                    key_id="managed-leaf",
+                    environment_names=["FLOORP_HSM_SOCKET"],
+                    timeout_seconds=30,
+                )
+                catalog, root_raw = SIGN.signed_catalog(
+                    records=[record()],
+                    root_key=root_signer,
+                    leaf_key=leaf_signer,
+                    root_key_id="managed-root",
+                    leaf_key_id="managed-leaf",
+                    catalog_id="floorp-curated-beta",
+                    app_bundle_id="org.floorp.ios",
+                    minimum_app_version="0.2.0",
+                    channel="testflight",
+                    sequence=1,
+                    issued_at="2026-08-26T12:00:00Z",
+                    expires_at="2026-09-01T12:00:00Z",
+                    leaf_not_before="2026-08-25T12:00:00Z",
+                    leaf_not_after="2026-10-01T12:00:00Z",
+                )
+
+        parsed = json.loads(catalog)
+        self.assertEqual(
+            root_raw,
+            root.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw),
+        )
+        unsigned_leaf = dict(parsed["signingKey"])
+        leaf_signature = decode_base64url(unsigned_leaf.pop("signature"))
+        Ed25519PublicKey.from_public_bytes(root_raw).verify(leaf_signature, SIGN.canonical_json(unsigned_leaf))
+
+    def test_managed_signer_command_must_be_pinned_and_not_checkout_local(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            adapter = temporary_root / "floorp-managed-signer"
+            adapter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            adapter.chmod(0o700)
+            digest = hashlib.sha256(adapter.read_bytes()).hexdigest()
+            signer = SIGN.ManagedEd25519Signer(
+                command=adapter,
+                command_sha256=digest,
+                key_id="managed-root",
+                environment_names=[],
+                timeout_seconds=30,
+            )
+            with self.assertRaisesRegex(SIGN.CatalogSigningError, "outside the signing checkout"):
+                signer.require_outside(temporary_root)
+            with self.assertRaisesRegex(SIGN.CatalogSigningError, "approved SHA-256"):
+                SIGN.ManagedEd25519Signer(
+                    command=adapter,
+                    command_sha256="0" * 64,
+                    key_id="managed-root",
+                    environment_names=[],
+                    timeout_seconds=30,
+                )
+            with self.assertRaisesRegex(SIGN.CatalogSigningError, "not allowed: PATH"):
+                SIGN.ManagedEd25519Signer(
+                    command=adapter,
+                    command_sha256=digest,
+                    key_id="managed-root",
+                    environment_names=["PATH"],
+                    timeout_seconds=30,
+                )
 
 
 if __name__ == "__main__":

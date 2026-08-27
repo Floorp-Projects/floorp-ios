@@ -132,7 +132,7 @@ class SignCuratedCatalogTests(unittest.TestCase):
                 mock.patch.object(SIGN, "verify_release_inputs", return_value=(records_bytes, [])),
                 mock.patch.object(SIGN, "_require_output_contract"),
                 mock.patch.object(SIGN, "load_records_bytes", wraps=SIGN.load_records_bytes) as load_snapshot,
-                mock.patch.object(SIGN, "load_private_key", return_value=object()),
+                mock.patch.object(SIGN, "load_catalog_signer", side_effect=[object(), object()]),
                 mock.patch.object(SIGN, "signed_catalog", return_value=(b"{}", b"root")),
                 mock.patch.object(SIGN, "_atomic_write"),
             ):
