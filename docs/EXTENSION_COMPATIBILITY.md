@@ -73,6 +73,34 @@ exceptions remain rejected.
   `importScripts`, remote module loading, and arbitrary fetch are not part of
   the supported catalog contract.
 
+## Per-package verification matrix
+
+This is the current source-bound compatibility record for every immutable
+package. “Install/start” means the FWEA1 preflight, profile-scoped activation,
+and lifecycle test route passed locally; it does **not** claim that a managed
+production signature or TestFlight build exists. The functional column names
+the behavior exercised by `curated_catalog_functional.mjs` against local Web
+content. A real signed-device pass remains a P5 release gate.
+
+| Catalog package | Install/start and primary functional evidence | Content script / DNR / UI / network | Normal and private profiles | Update and known limitations |
+| --- | --- | --- | --- | --- |
+| Floorp Site Appearance | Preflight then site-grant activation; adds local readability class/style to an allowed document | content script / — / no extension page / no network | normal grant starts denied; private copy is separate opt-in and also denied | digest-bound update confirmation; users cannot author arbitrary CSS |
+| Floorp Tracker Block Lite | Preflight then static rule installation; reviewed tracker host request is blocked | — / static `block` / native per-site exclusion / no network | static rules and exclusions are profile-local; private is separate opt-in | digest-bound update confirmation; no redirect, headers, allow, or dynamic/session rules |
+| Floorp Session Timer | Popup/options/background page host starts a bounded alarm; completion timestamp is stored | — / — / popup + options + alarms/storage / no network | storage and alarms do not cross profiles; private data is ephemeral | digest-bound update confirmation; no sync or arbitrary background fetch |
+| Tracking Token Stripper | Content-script activation removes UTM/gclid parameters from current URL and links; popup shows/reset count | content script / — / popup + local storage / no network | host access is separately granted per profile; counts never mix | digest-bound update confirmation; does not intercept requests or redirect traffic |
+| Minimal Twitter | Content script applies the focus/escape aid on X/Twitter | content script / — / no extension page / no network | host access and private installation are separate | digest-bound update confirmation; only the retained local interaction is supported |
+| Refined Hacker News | Content script adds keyboard story navigation and accessible rank labels | content script / — / no extension page / no network | Hacker News grant and private copy are separate | digest-bound update confirmation; no upstream broader UI/API set |
+| ekill | Content script marks hovered element; keyboard hide/restore changes only current page DOM | content script / — / no extension page / no network | page mutation is limited to the enabled profile and granted site | digest-bound update confirmation; no persistent or cross-site element policy |
+| Medium Reading Layout | Content script marks the rendered Medium article for local readability treatment | content script / — / no extension page / no network | Medium host grant and private copy are separate | digest-bound update confirmation; no dynamic style generator or remote site-fix data |
+| Web Search Navigator | Content script focuses and marks the next existing Google/Bing/GitHub-search result | content script / — / no extension page / no network | each search host grant is profile-scoped and starts denied | digest-bound update confirmation; no broad keyboard-command/navigation runtime |
+| GitHub Dashboard Filter | Content script inserts a local filter that mutes nonmatching rendered dashboard rows | content script / — / no extension page / no network | GitHub dashboard grant and private copy are separate | digest-bound update confirmation; no GitHub API/network client |
+| Enhanced GitHub | Content script adds path labels to rendered GitHub tree/blob links | content script / — / no extension page / no network | GitHub host grant and private copy are separate | digest-bound update confirmation; no file editing, downloads, or broad upstream feature set |
+| Useful Forks | Content script locally filters rendered GitHub forks list | content script / — / no extension page / no network | GitHub forks grant and private copy are separate | digest-bound update confirmation; no server-side ranking or remote data |
+| Easy to RSS | Content script finds an existing page-local feed link; popup displays stored discovery | content script / — / popup + local storage / no network | feed discovery and popup state stay profile-local | digest-bound update confirmation; no subscription service or remote feed fetch |
+| Scroll To Top | Content script adds an accessible button and scrolls the current page to the top | content script / — / no extension page / no network | host grant and private copy are separate | digest-bound update confirmation; no global user-script injection |
+| Refined Twitter | Content script marks rendered tweets for fixed local styling | content script / — / no extension page / no network | X/Twitter grants and private copy are separate | digest-bound update confirmation; no dynamic social API or remote rules |
+| Very Good AdBlock | Preflight accepts exactly 16 static block rules; advertising/tracking request matching is blocked | — / static `block` / native per-site exclusion / no network | rules and exclusions are profile-local; private is separate opt-in | digest-bound update confirmation; no redirect, cosmetic remote list, telemetry, report, or dynamic/session rules |
+
 ## Known non-compatible APIs and patterns
 
 The following are intentionally not adopted by this catalog:

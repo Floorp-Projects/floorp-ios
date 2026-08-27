@@ -145,7 +145,18 @@ def validate_record(value: Any, *, schema: int) -> dict[str, Any]:
 
 
 def load_records(path: Path, *, schema: int) -> list[dict[str, Any]]:
-    value = strict_json_loads(path.read_bytes(), label="catalog records")
+    return load_records_bytes(path.read_bytes(), schema=schema)
+
+
+def load_records_bytes(data: bytes, *, schema: int) -> list[dict[str, Any]]:
+    """Validate catalog records from immutable caller-supplied bytes.
+
+    The managed curated signer verifies its input file before private keys are
+    accessed.  Keeping this byte-oriented form lets that caller sign the exact
+    bytes it verified rather than re-opening a mutable path.
+    """
+
+    value = strict_json_loads(data, label="catalog records")
     if not isinstance(value, list) or not value:
         raise CatalogSigningError("catalog records must be a non-empty JSON array")
     if len(value) > 128:

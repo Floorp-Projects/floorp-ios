@@ -9,9 +9,9 @@
     "modificationStatus": "floorp-managed",
     "package": "Packages/floorp-site-appearance",
     "privateProfileCapability": "opt-in",
-    "sourceURL": "https://github.com/Floorp-Projects/Floorp",
-    "upstream": "Floorp-managed package",
-    "upstreamRevision": "2026-08-26"
+    "sourceURL": "https://github.com/Floorp-Projects/floorp-ios",
+    "upstream": "Floorp iOS-managed package",
+    "upstreamRevision": "940118d86a3966932881cac5dd46c7b6071dfc00"
   },
   {
     "id": "floorp-tracker-block-lite",
@@ -23,9 +23,9 @@
     "modificationStatus": "floorp-managed",
     "package": "Packages/floorp-tracker-block-lite",
     "privateProfileCapability": "opt-in",
-    "sourceURL": "https://github.com/Floorp-Projects/Floorp",
-    "upstream": "Floorp-managed reviewed DNR corpus",
-    "upstreamRevision": "2026-08-26"
+    "sourceURL": "https://github.com/Floorp-Projects/floorp-ios",
+    "upstream": "Floorp iOS-managed reviewed DNR corpus",
+    "upstreamRevision": "940118d86a3966932881cac5dd46c7b6071dfc00"
   },
   {
     "id": "floorp-session-timer",
@@ -37,9 +37,9 @@
     "modificationStatus": "floorp-managed",
     "package": "Packages/floorp-session-timer",
     "privateProfileCapability": "opt-in",
-    "sourceURL": "https://github.com/Floorp-Projects/Floorp",
-    "upstream": "Floorp-managed package",
-    "upstreamRevision": "2026-08-26"
+    "sourceURL": "https://github.com/Floorp-Projects/floorp-ios",
+    "upstream": "Floorp iOS-managed package",
+    "upstreamRevision": "940118d86a3966932881cac5dd46c7b6071dfc00"
   },
   {
     "id": "thirdparty-utm-stripper",
@@ -229,10 +229,11 @@
     "description": "Blocks a fixed, reviewed set of advertising and tracking hosts with block-only DNR rules.",
     "license": "MIT",
     "modificationStatus": "compatibility-patched",
-    "originalArtifactSHA256": "028a2844e61029c92385b329b1e2b03ed31335bac4189653be60278bf3292c9f",
+    "originalArtifactSHA256": "1f7e2a0560a2d5e606893993a470a342d21ed314ae5d94a9ec468259283f3fc4",
     "package": "Packages/thirdparty-very-good-adblock",
     "privateProfileCapability": "opt-in",
     "sourceURL": "https://github.com/chrisbbreuer/very-good-adblock",
+    "sourceProvenance": "SourceProvenance/thirdparty-very-good-adblock.json",
     "upstream": "chrisbbreuer/very-good-adblock",
     "upstreamRevision": "828148f94b12da2ad109c4ed8477947931544bb2"
   }

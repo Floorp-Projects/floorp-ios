@@ -102,6 +102,25 @@ jobs:
           env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
             python3 -m unittest discover -s scripts/staging/tests -p 'test_*.py'
 
+      - name: Run curated WebExtensions catalog contracts
+        run: |
+          set -euo pipefail
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            python3 -m unittest \
+              scripts.webextensions.tests.test_build_curated_catalog \
+              scripts.webextensions.tests.test_curated_catalog_documentation \
+              scripts.webextensions.tests.test_curated_catalog_functional \
+              scripts.webextensions.tests.test_curated_catalog_project_resources \
+              scripts.webextensions.tests.test_curated_catalog_source_provenance \
+              scripts.webextensions.tests.test_ingest_extension \
+              scripts.release.tests.test_curated_catalog_testflight_workflow \
+              scripts.release.tests.test_curated_catalog_external_testflight_workflow \
+              scripts.release.tests.test_curated_catalog_xcode_cloud_post_clone \
+              scripts.release.tests.test_trigger_xcode_cloud \
+              scripts.release.tests.test_verify_curated_catalog_testflight_submission
+          node scripts/webextensions/tests/curated_catalog_functional.mjs \
+            firefox-ios/Floorp/WebExtensions/CuratedCatalog
+
       - name: Select Xcode
         run: |
           xcode_version="$(<.xcode-version)"

@@ -1,0 +1,299 @@
+name: Floorp Curated Catalog External TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: Protected floorp-catalog-<40 lowercase commit SHA> tag.
+        required: true
+        type: string
+      xcode_cloud_run_id:
+        description: Successful Floorp TestFlight Manual Xcode Cloud run ID for this tag.
+        required: true
+        type: string
+      build_id:
+        description: Processed App Store Connect build ID produced by that Xcode Cloud run.
+        required: true
+        type: string
+      external_group_id:
+        description: Existing external TestFlight group ID; leave blank only when exactly one exists.
+        required: false
+        type: string
+      submit_beta_app_review:
+        description: Submit the verified build to Beta App Review and attach it to the selected existing external group.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: floorp-curated-catalog-external-testflight
+  cancel-in-progress: false
+
+env:
+  FLOORP_APP_ID: "6796708699"
+  FLOORP_TEAM_ID: "74c6a531-19e2-4ed5-a34b-915003cc10f9"
+  FLOORP_XCODE_CLOUD_WORKFLOW_ID: "f75adb00-1ca4-4b24-9bec-f6b5b943903a"
+  FLOORP_XCODE_CLOUD_WORKFLOW_NAME: "Floorp TestFlight Manual"
+  FLOORP_XCODE_CLOUD_REPOSITORY: "https://github.com/Floorp-Projects/floorp-ios.git"
+
+jobs:
+  submit:
+    name: Verify and submit the curated-catalog external beta
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.submit_beta_app_review == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: floorp-testflight
+
+    steps:
+      - name: Check out the selected immutable candidate tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.candidate_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify protected tag and merged source identity
+        env:
+          FLOORP_REQUESTED_CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+          candidate_tag="$FLOORP_REQUESTED_CANDIDATE_TAG"
+          [[ "$candidate_tag" =~ ^floorp-catalog-([0-9a-f]{40})$ ]]
+          test "$(git cat-file -t "refs/tags/$candidate_tag")" = "tag"
+          candidate_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "refs/tags/$candidate_tag^{commit}")"
+          test "$candidate_sha" = "$tag_sha"
+          test "$candidate_tag" = "floorp-catalog-$candidate_sha"
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          main_sha="$(git rev-parse "refs/remotes/origin/main")"
+          test "$candidate_sha" = "$main_sha"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          printf 'FLOORP_CATALOG_CANDIDATE_SHA=%s\n' "$candidate_sha" >> "$GITHUB_ENV"
+          printf 'FLOORP_CATALOG_RELEASE_TAG=%s\n' "$candidate_tag" >> "$GITHUB_ENV"
+
+      - name: Verify the signed curated catalog release contract
+        env:
+          FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256: ${{ secrets.FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256"
+          marketing_version="$(/usr/bin/python3 - firefox-ios/Client/Configuration/FloorpRelease.xcconfig <<'PY'
+          import sys
+          values = [
+              line.split("=", 1)[1].split("#", 1)[0].strip()
+              for line in open(sys.argv[1], encoding="utf-8")
+              if line.lstrip().startswith("FLOORP_MARKETING_VERSION") and "=" in line
+          ]
+          if len(values) != 1:
+              raise SystemExit("FLOORP_MARKETING_VERSION must occur exactly once")
+          print(values[0])
+          PY
+          )"
+          evidence="$RUNNER_TEMP/floorp-curated-catalog-release.json"
+          python3 scripts/webextensions/verify_signed_curated_catalog_release.py \
+            --catalog-root firefox-ios/Floorp/WebExtensions/CuratedCatalog \
+            --release-xcconfig firefox-ios/Client/Configuration/FloorpRelease.xcconfig \
+            --expected-root-public-key-sha256 "$FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256" \
+            --bundle-id app.floorp.Floorp \
+            --channel testflight \
+            --catalog-id floorp-ios-curated-testflight \
+            --expected-package-count 16 \
+            --artifact-origin https://catalog.floorp.invalid/fwea1/ \
+            --output "$evidence"
+          printf 'FLOORP_CATALOG_MARKETING_VERSION=%s\n' "$marketing_version" >> "$GITHUB_ENV"
+          printf 'FLOORP_CURATED_CATALOG_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_DEVELOPER_API_KEY_JSON: ${{ secrets.APPLE_DEVELOPER_API_KEY_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$APPLE_DEVELOPER_API_KEY_JSON"
+          api_json="$RUNNER_TEMP/app-store-connect-api.json"
+          printf '%s' "$APPLE_DEVELOPER_API_KEY_JSON" > "$api_json"
+          /usr/bin/python3 - "$api_json" "$RUNNER_TEMP/AuthKey.p8" "$GITHUB_ENV" <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          source_path, key_path, env_path = sys.argv[1:]
+          value = json.loads(Path(source_path).read_text(encoding="utf-8"))
+          issuer = value.get("issuer_id") or value.get("issuerId") or value.get("issuer")
+          key_id = value.get("key_id") or value.get("keyId") or value.get("key")
+          private_key = value.get("private_key") or value.get("privateKey") or value.get("api_key")
+          if not all(isinstance(item, str) and item for item in (issuer, key_id, private_key)):
+              raise SystemExit("App Store Connect API key JSON must contain issuer_id, key_id, and private_key")
+          if not re.fullmatch(r"[A-Za-z0-9._-]+", issuer) or not re.fullmatch(r"[A-Za-z0-9._-]+", key_id):
+              raise SystemExit("App Store Connect API key identity is invalid")
+          if private_key.lstrip().startswith("-----BEGIN"):
+              raw = private_key.encode("utf-8")
+          else:
+              raw = base64.b64decode(private_key, validate=True)
+          if b"BEGIN PRIVATE KEY" not in raw:
+              raise SystemExit("App Store Connect private key is not a PKCS#8 PEM")
+          Path(key_path).write_bytes(raw)
+          os.chmod(key_path, 0o600)
+          with Path(env_path).open("a", encoding="utf-8") as handle:
+              handle.write(f"APP_STORE_CONNECT_ISSUER_ID={issuer}\n")
+              handle.write(f"APP_STORE_CONNECT_KEY_ID={key_id}\n")
+              handle.write(f"APP_STORE_CONNECT_PRIVATE_KEY_PATH={key_path}\n")
+          PY
+
+      - name: Bind the processed App Store build to the exact candidate
+        env:
+          FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID: ${{ inputs.xcode_cloud_run_id }}
+          FLOORP_REQUESTED_BUILD_ID: ${{ inputs.build_id }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/floorp-curated-catalog-submission-binding.json"
+          python3 scripts/release/verify_curated_catalog_testflight_submission.py \
+            --workflow-id "$FLOORP_XCODE_CLOUD_WORKFLOW_ID" \
+            --expected-workflow-name "$FLOORP_XCODE_CLOUD_WORKFLOW_NAME" \
+            --expected-repository "$FLOORP_XCODE_CLOUD_REPOSITORY" \
+            --candidate-tag "$FLOORP_CATALOG_RELEASE_TAG" \
+            --candidate-sha "$FLOORP_CATALOG_CANDIDATE_SHA" \
+            --xcode-cloud-run-id "$FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID" \
+            --build-id "$FLOORP_REQUESTED_BUILD_ID" \
+            --app-id "$FLOORP_APP_ID" \
+            --marketing-version "$FLOORP_CATALOG_MARKETING_VERSION" \
+            --catalog-evidence "$FLOORP_CURATED_CATALOG_EVIDENCE" \
+            --output "$evidence"
+          printf 'FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+
+      - name: Select an existing external group and build Beta App Review details
+        env:
+          FLOORP_EXTERNAL_GROUP_REQUESTED: ${{ inputs.external_group_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/floorp-curated-catalog-external-testflight"
+          mkdir -p "$root"
+          python3 scripts/release/app-store-connect-api.py get \
+            "/v1/betaGroups?filter[app]=$FLOORP_APP_ID&limit=200" \
+            --output "$root/beta-groups.json"
+          python3 scripts/release/app-store-connect-api.py get \
+            "/v1/betaAppReviewDetails?filter[app]=$FLOORP_APP_ID" \
+            --output "$root/beta-review-details.json"
+          python3 - "$root/beta-groups.json" "$root/beta-review-details.json" \
+            "$FLOORP_CURATED_CATALOG_EVIDENCE" "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE" \
+            "$FLOORP_EXTERNAL_GROUP_REQUESTED" "$root/review-details-payload.json" \
+            "$root/external-group-id" "$GITHUB_ENV" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          groups_path, review_path, catalog_path, submission_path = map(Path, sys.argv[1:5])
+          requested = sys.argv[5].strip()
+          payload_path, group_path, env_path = map(Path, sys.argv[6:])
+          groups = json.loads(groups_path.read_text(encoding="utf-8")).get("data", [])
+          if requested and not re.fullmatch(r"[A-Za-z0-9._-]+", requested):
+              raise SystemExit("external_group_id is invalid")
+          external = [
+              row for row in groups
+              if isinstance(row, dict) and row.get("attributes", {}).get("isInternalGroup") is False
+          ]
+          if requested:
+              matches = [row for row in external if row.get("id") == requested]
+              if len(matches) != 1:
+                  raise SystemExit("requested external TestFlight group does not exist or is internal")
+              group_id = requested
+          elif len(external) == 1 and isinstance(external[0].get("id"), str):
+              group_id = external[0]["id"]
+          else:
+              raise SystemExit("select exactly one existing external TestFlight group")
+
+          rows = json.loads(review_path.read_text(encoding="utf-8")).get("data", [])
+          if len(rows) != 1 or not isinstance(rows[0], dict):
+              raise SystemExit("App Store Connect must expose exactly one Beta App Review details record")
+          attributes = rows[0].get("attributes", {})
+          contact_fields = ("contactEmail", "contactFirstName", "contactLastName", "contactPhone")
+          if any(not isinstance(attributes.get(field), str) or not attributes[field].strip() for field in contact_fields):
+              raise SystemExit("live Beta App Review contact details are incomplete")
+
+          catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+          submission = json.loads(submission_path.read_text(encoding="utf-8"))
+          notes = (
+              f"Floorp for iOS {submission['marketingVersion']} (build {submission['buildNumber']}) contains a fixed, app-bundled set of 16 WebExtensions: three Floorp-managed packages and thirteen third-party compatibility builds. This is not an extension store or catalog download client. The app has no Chrome Web Store, Firefox Add-ons, arbitrary URL, ZIP/XPI/CRX, shared-sheet, or local-file installation flow. It does not fetch or execute remote JavaScript, WebAssembly, or DNR/filter lists.\n\n"
+              "The submitted binary validates a bundled signed catalog before it exposes any package. It checks the catalog audience, expiry, anti-rollback sequence, revocation state, immutable generation, artifact SHA-256, manifest, and resource inventory. A failed check leaves catalog packages unavailable. Updates require explicit native confirmation and cannot silently increase authority. Private browsing is opt-in and profile-local.\n\n"
+              f"Catalog evidence: ID {catalog['catalogID']}; sequence {catalog['sequence']}; SHA-256 {catalog['catalogSHA256']}; 16 fixed packages. Reviewer path: Settings > Extensions. Test Floorp Site Appearance (content script), Floorp Tracker Block Lite or Very Good AdBlock (static block-only DNR), and Floorp Session Timer (popup/options/storage/alarms). DNR accepts only static block actions; dynamic/session rules, redirects, headers, and remote refresh are unsupported. Disable and remove packages to confirm runtime/rules/actions stop and package-owned local data is cleared.\n\n"
+              "No demo account is required. We recognize the scope of Guideline 3.2.2(i) and request concrete feedback if this fixed app-bundled model requires any change."
+          )
+          payload = {field: attributes[field] for field in contact_fields}
+          payload["notes"] = notes
+          payload_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+          group_path.write_text(group_id + "\n", encoding="utf-8")
+          with env_path.open("a", encoding="utf-8") as stream:
+              stream.write(f"FLOORP_EXTERNAL_GROUP_ID={group_id}\n")
+              stream.write(f"FLOORP_CURATED_CATALOG_SUBMISSION_ROOT={payload_path.parent}\n")
+          PY
+
+      - name: Submit the verified build to Beta App Review
+        env:
+          FLOORP_REQUESTED_BUILD_ID: ${{ inputs.build_id }}
+        run: |
+          set -euo pipefail
+          root="$FLOORP_CURATED_CATALOG_SUBMISSION_ROOT"
+          /bin/bash scripts/release/submit-floorp-external-beta.sh \
+            --client scripts/release/app-store-connect-api.py \
+            --app-id "$FLOORP_APP_ID" \
+            --build-id "$FLOORP_REQUESTED_BUILD_ID" \
+            --external-group-id "$FLOORP_EXTERNAL_GROUP_ID" \
+            --localization docs/app-store-connect-metadata.json \
+            --review-details "$root/review-details-payload.json" \
+            --before "$root/asc-before.json" \
+            --after "$root/asc-after.json" \
+            --what-to-test-en firefox-ios/TestFlight/WhatToTest.en-US.txt \
+            --what-to-test-ja firefox-ios/TestFlight/WhatToTest.ja-JP.txt \
+            --authorize-mutation \
+            --output "$root/external-beta-submission.json"
+
+      - name: Publish source-bound submission summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            printf '%s\n\n' '## Floorp curated catalog External TestFlight submission'
+            printf -- '- Release tag: `%s`\n' "${FLOORP_CATALOG_RELEASE_TAG:-unverified}"
+            printf -- '- Source: `%s`\n' "${FLOORP_CATALOG_CANDIDATE_SHA:-unverified}"
+            if [[ -n "${FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE:-}" && -f "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE" ]]; then
+              /usr/bin/python3 - "$FLOORP_CURATED_CATALOG_SUBMISSION_EVIDENCE" <<'PY'
+          import json
+          import sys
+          evidence = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(f"- App Store Connect build: `{evidence['buildID']}` ({evidence['marketingVersion']} ({evidence['buildNumber']}))")
+          print(f"- Xcode Cloud run: `{evidence['xcodeCloudRunID']}`")
+          print(f"- Signed catalog: `{evidence['catalogID']}` sequence `{evidence['catalogSequence']}` SHA-256 `{evidence['catalogSHA256']}`")
+          PY
+            else
+              echo '- Source-bound build verification did not complete; no Beta App Review mutation should have run.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload non-secret submission evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-curated-catalog-external-testflight-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-curated-catalog-release.json
+            ${{ runner.temp }}/floorp-curated-catalog-submission-binding.json
+            ${{ runner.temp }}/floorp-curated-catalog-external-testflight/external-beta-submission.json
+            ${{ runner.temp }}/floorp-curated-catalog-external-testflight/asc-before.json
+            ${{ runner.temp }}/floorp-curated-catalog-external-testflight/asc-after.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Remove runner-local credential material
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/app-store-connect-api.json"

@@ -2,21 +2,96 @@
 // Copyright (c) Floorp Contributors.
 // SPDX-License-Identifier: MPL-2.0
 
-// Functional smoke tests for every curated package.  These deliberately use a
+// Functional smoke tests for every curated artifact. These deliberately use a
 // tiny in-process DOM rather than a browser or a fetched page: each package is
-// executed with only the fixed resources committed to CuratedCatalog/Packages.
-// The tests prove its declared local behavior without granting a network API.
+// decoded from its fixed FWEA1 bytes and matched against catalog-input.json
+// before execution. The tests prove local behavior without granting a network
+// API or substituting the review source tree for the shipped artifact.
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
-const packageRoot = process.argv[2] || path.resolve(
+const catalogRoot = process.argv[2] || path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../../../firefox-ios/Floorp/WebExtensions/CuratedCatalog/Packages"
+  "../../../firefox-ios/Floorp/WebExtensions/CuratedCatalog"
 );
+const artifactRoot = path.join(catalogRoot, "Artifacts");
+const fwea1Magic = Buffer.from("FWEA1\n", "ascii");
+const artifacts = new Map();
+
+function sha256(data) {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+async function catalogRecords() {
+  const records = JSON.parse(await readFile(path.join(catalogRoot, "catalog-input.json"), "utf8"));
+  assert.ok(Array.isArray(records), "catalog input must be an array");
+  assert.equal(records.length, 16, "the initial curated candidate has 16 records");
+  return records;
+}
+
+function artifactName(record) {
+  let artifactURL;
+  try {
+    artifactURL = new URL(record.artifactURL);
+  } catch {
+    assert.fail(`invalid artifact URL for ${record.extensionID}`);
+  }
+  return path.basename(artifactURL.pathname);
+}
+
+function decodeArtifact(data, record, filename) {
+  assert.ok(data.subarray(0, fwea1Magic.length).equals(fwea1Magic), `${filename} must be FWEA1`);
+  assert.ok(data.length >= fwea1Magic.length + 4, `${filename} is truncated before its inventory`);
+  const headerSize = data.readUInt32BE(fwea1Magic.length);
+  const headerStart = fwea1Magic.length + 4;
+  const headerEnd = headerStart + headerSize;
+  assert.ok(headerEnd <= data.length, `${filename} inventory exceeds artifact length`);
+  const headerData = data.subarray(headerStart, headerEnd);
+  const header = JSON.parse(headerData.toString("utf8"));
+  assert.ok(Array.isArray(header.files) && header.files.length > 0, `${filename} has no resources`);
+  assert.equal(sha256(headerData), record.resourceInventorySHA256, `${filename} inventory digest`);
+
+  let offset = headerEnd;
+  const resources = new Map();
+  for (const entry of header.files) {
+    assert.equal(typeof entry.path, "string", `${filename} inventory path`);
+    assert.ok(Number.isSafeInteger(entry.size) && entry.size >= 0, `${filename} inventory size`);
+    assert.match(entry.sha256, /^[0-9a-f]{64}$/, `${filename} inventory digest syntax`);
+    assert.ok(!resources.has(entry.path), `${filename} has duplicate resource ${entry.path}`);
+    const end = offset + entry.size;
+    assert.ok(end <= data.length, `${filename} resource ${entry.path} exceeds artifact length`);
+    const resource = data.subarray(offset, end);
+    assert.equal(sha256(resource), entry.sha256, `${filename} resource digest for ${entry.path}`);
+    resources.set(entry.path, resource);
+    offset = end;
+  }
+  assert.equal(offset, data.length, `${filename} has trailing bytes`);
+
+  const manifest = resources.get("manifest.json");
+  assert.ok(manifest, `${filename} is missing manifest.json`);
+  assert.equal(sha256(manifest), record.manifestSHA256, `${filename} manifest digest`);
+  return resources;
+}
+
+async function artifactResources(packageID) {
+  if (artifacts.has(packageID)) return artifacts.get(packageID);
+
+  const records = await catalogRecords();
+  const filename = `${packageID}.fwea1`;
+  const record = records.find(candidate => artifactName(candidate) === filename);
+  assert.ok(record, `${filename} must be registered in catalog-input.json`);
+  const data = await readFile(path.join(artifactRoot, filename));
+  assert.equal(data.length, record.artifactBytes, `${filename} byte count`);
+  assert.equal(sha256(data), record.artifactSHA256, `${filename} artifact digest`);
+  const resources = decodeArtifact(data, record, filename);
+  artifacts.set(packageID, resources);
+  return resources;
+}
 
 class ClassList {
   constructor() { this.values = new Set(); }
@@ -163,7 +238,9 @@ function sandbox(document, overrides = {}) {
 }
 
 async function source(packageID, relativePath) {
-  return readFile(path.join(packageRoot, packageID, relativePath), "utf8");
+  const resource = (await artifactResources(packageID)).get(relativePath);
+  assert.ok(resource, `${packageID} is missing ${relativePath} in its immutable artifact`);
+  return resource.toString("utf8");
 }
 
 async function run(packageID, relativePath, context) {
@@ -493,4 +570,5 @@ await Promise.all([
   testSessionTimer()
 ]);
 
-process.stdout.write(JSON.stringify({ status: "ok", adoptedPackages: 16 }) + "\n");
+assert.equal(artifacts.size, 16, "every catalog artifact must execute one functional smoke path");
+process.stdout.write(JSON.stringify({ status: "ok", adoptedArtifacts: 16 }) + "\n");

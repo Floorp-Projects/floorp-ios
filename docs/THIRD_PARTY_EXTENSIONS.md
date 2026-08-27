@@ -15,6 +15,16 @@ artifact SHA-256, manifest/inventory digests, notices digest, and inspection
 result are in `CuratedCatalog/review-index.json` and
 `Review/<id>/inspection.json`.
 
+For `floorp.thirdparty.very-good-adblock`, the review-only
+`SourceProvenance/thirdparty-very-good-adblock.json` declares the expected
+archive digest, license, exact `src/rules/static-rules.ts` member, and the
+sixteen retained upstream rule IDs. The managed signer must receive the real
+quarantined archive, re-verify this binding, and preserve its separate
+provenance-evidence output before a candidate can rely on it. The regression
+test uses a synthetic archive to test rejection behavior; it is not proof that
+a candidate archive was re-fetched. `verify_curated_source_provenance.py` is
+not packaged in the app and performs no runtime fetch.
+
 | Floorp ID | Upstream / pinned revision | License | Retained local function | Legal release state |
 | --- | --- | --- | --- | --- |
 | `floorp.thirdparty.utm-stripper` | [jparise/chrome-utm-stripper](https://github.com/jparise/chrome-utm-stripper) `b1e83aa49cb7` | MIT | Cleans fixed tracking parameters from the current document and rendered links | pending authorization |
@@ -30,6 +40,31 @@ result are in `CuratedCatalog/review-index.json` and
 | `floorp.thirdparty.scroll-to-top` | [pratikabu/scrolltotop](https://github.com/pratikabu/scrolltotop) `ec3db4664765` | MIT | Adds an accessible local scroll-to-top button | pending authorization |
 | `floorp.thirdparty.refined-twitter` | [sindresorhus/refined-twitter](https://github.com/sindresorhus/refined-twitter) `bceb4440811f` | MIT | Applies a fixed local marker/style to rendered tweets | pending authorization |
 | `floorp.thirdparty.very-good-adblock` | [chrisbbreuer/very-good-adblock](https://github.com/chrisbbreuer/very-good-adblock) `828148f94b12` | MIT | Fixed 16-rule, block-only DNR subset for advertising/tracking hosts | pending authorization |
+
+### Exact immutable compatibility-build records
+
+The following values are copied from the deterministic unsigned catalog input
+that the managed signer will sign. `original SHA-256` is the frozen upstream
+input recorded before Floorp's compatibility reduction; `FWEA1 SHA-256` is the
+immutable normalized package that the iOS client verifies. Every row is an
+`opt-in` private-profile candidate. None has a remote executable, remote DNR
+list, `update_url`, or a client-side download path.
+
+| Floorp ID | Floorp version / immutable generation | Original SHA-256 | FWEA1 SHA-256 | Declared APIs / host patterns | Recorded compatibility modification |
+| --- | --- | --- | --- | --- | --- |
+| `floorp.thirdparty.utm-stripper` | `2.12.0` / `g20260826-thirdparty-utm-stripper` | `55351ab8e93c3701bfab5ebd300ace16c7495341766f7508182f1a90ba27ee09` | `bc946caf8ab7fbc2077f35dec06b007c55515be5e43314251e8453e4c2a763a3` | `storage` / `https://*/*` | `PATCH.txt`; fixed local document/link cleaner and popup, no upstream request interception |
+| `floorp.thirdparty.minimal-twitter` | `1.0.0` / `g20260826-thirdparty-minimal-twitter` | `ac5956e69792f3c02d8f9d202acfdfd01693d405182e6842dab35226a5019e5e` | `5b8170c0fe6e2e9358f7de7c7caad0f6e7a8075760d46fc56ca377f1af250e59` | none / `https://twitter.com/*`, `https://x.com/*` | `PATCH.txt`; retained local focus/escape behavior only |
+| `floorp.thirdparty.refined-hacker-news` | `1.0.0` / `g20260826-thirdparty-refined-hacker-news` | `fb0157d83b22eaee14e30c6585e68f3f5d71cfcd578f39855ab538b4c1346b03` | `efdada6572de5a05ff06e704971716429964499a70a45a0a6141a21c6edb34c1` | none / `https://news.ycombinator.com/*` | `PATCH.txt`; retained keyboard navigation and labels |
+| `floorp.thirdparty.ekill` | `1.9.0` / `g20260826-thirdparty-ekill` | `234ec4de9fc0091aae995532265afebc7e8127b0003b19ed95fd47819eaeb96b` | `2c08345418b096aa2598238b52f0f117fd6d61eddd6b5d61ef811e3d9facee4d` | none / `https://*/*` | `PATCH.txt`; retained temporary local hide/restore only |
+| `floorp.thirdparty.medium-reading-layout` | `1.5.1` / `g20260826-thirdparty-mmra` | `e19f32b8ba31d780bc08a66986b5e46ab12060298b78dc861e4a4e3c1ac7d51a` | `83a307980ac272e9e6c08c1921748de63440370ac8533e6e1d12babc04b9e344` | none / `https://medium.com/*` | `PATCH.txt`; retained article readability treatment only |
+| `floorp.thirdparty.web-search-navigator` | `1.0.0` / `g20260826-thirdparty-web-search-navigator` | `fb3b398f3ac11eeb12a2a9dbcd329ee461c99b46b87d44a67e70dcd3d3e8ec51` | `a82ca8e3a39ef8edaa7376f47cd6502947dbbbbd909c424da6086c9cdb9d4cc3` | none / Google, Bing, GitHub Search | `PATCH.txt`; retained fixed result-key navigation only |
+| `floorp.thirdparty.github-dashboard` | `0.8.8` / `g20260826-thirdparty-github-dashboard` | `aaf2fa3e6ff1049d941a639cfbadf099929d002ccbb919756c5354b211511840` | `deb3b4ffaf0b7b4fc781d8310394a3b11f91862e389a420c6066d14aa8142d69` | none / GitHub dashboard | `PATCH.txt`; retained local rendered-list filter only |
+| `floorp.thirdparty.enhanced-github` | `1.0.0` / `g20260826-thirdparty-enhanced-github` | `b6083814b9349e96b3b43f3284f30c273e286b64fcd91133318d7a3f4856550e` | `a9608d1a3795867741e85984a56564fd8a950c23e6541d74a48c8a9c45782e67` | none / `https://github.com/*` | `PATCH.txt`; retained local tree/blob path labels only |
+| `floorp.thirdparty.useful-forks` | `1.0.0` / `g20260826-thirdparty-useful-forks` | `b7bf5746a388c3e3ce30f81bd0e3532af30e0e2729d2786f86bc564478be315c` | `c794f7a211b24b284046b7b58c7a1af030cc179868b9d9ef1aa1d5d64636583e` | none / `https://github.com/*/forks` | `PATCH.txt`; retained local rendered-fork filter only |
+| `floorp.thirdparty.easy-to-rss` | `0.2.0` / `g20260826-thirdparty-easy-to-rss` | `4d829b6cc03035e7d23a33037da9d662d0db5de25dce3e60e0589b7c3ab4c2f9` | `ccea21a177196f76e55b2b42d0ffdc8c06a0c3da5993d8cfa5017bb9e03ba38d` | `storage` / `https://*/*` | `PATCH.txt`; retained page-local feed discovery and popup only |
+| `floorp.thirdparty.scroll-to-top` | `1.0.0` / `g20260826-thirdparty-scrolltotop` | `c0953a05d96775d98c69430a830e1690be260d961b6c90efb2d2cf293d48a6dd` | `f4e2c388bf0a03468e1eb1bdf07439f9ce62033c162c896f63aea8524bf83f95` | none / `https://*/*` | `PATCH.txt`; retained one accessible local control only |
+| `floorp.thirdparty.refined-twitter` | `1.0.0` / `g20260826-thirdparty-refined-twitter` | `9db815c188f7ce413e0282774a29c0158775494ca6a08f408056d3831bdd7133` | `c9b7a9ceb57ca727d4887cefdfa7453f401b38d8efd65376db653d37acca3c6f` | none / `https://twitter.com/*`, `https://x.com/*` | `PATCH.txt`; retained fixed local tweet marker/style only |
+| `floorp.thirdparty.very-good-adblock` | `1.0.0` / `g20260826-thirdparty-very-good-adblock` | `1f7e2a0560a2d5e606893993a470a342d21ed314ae5d94a9ec468259283f3fc4` | `85b77dadf2e4e0faa160a1403696cf2e0d528d649b84227cd4926c85b41c9ffe` | `declarativeNetRequest` / none | `PATCH.txt` + source-provenance record; retained mapped 16 static `block` rules only; removed redirect, dynamic rules, remote refresh, telemetry, reports, and UI |
 
 Floorp-managed Site Appearance, Tracker Block Lite, and Session Timer are in
 [the catalog inventory](EXTENSION_CATALOG.md). The current technical inventory

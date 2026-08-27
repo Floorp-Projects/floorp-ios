@@ -73,6 +73,13 @@ class CuratedCatalogBuildTests(unittest.TestCase):
             review_index = json.loads((output / "review-index.json").read_bytes())
             self.assertEqual(len(review_index["packages"]), len(records))
 
+    def test_floorp_managed_sources_are_bound_to_immutable_revisions(self) -> None:
+        sources = BUILD.source_entries(CATALOG_ROOT / "catalog-sources.json")
+        managed = [source for source in sources if source["modificationStatus"] == "floorp-managed"]
+        self.assertEqual(len(managed), 3)
+        for source in managed:
+            self.assertRegex(source["upstreamRevision"], r"^[0-9a-f]{40}$")
+
 
 if __name__ == "__main__":
     unittest.main()

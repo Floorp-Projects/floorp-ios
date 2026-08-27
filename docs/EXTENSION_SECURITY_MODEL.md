@@ -50,11 +50,13 @@ old runtime/DNR/page hosts, and publishes the new generation atomically. A
 failed transition keeps the known-good generation active where it is still
 authorized.
 
-There is no remote, catalog-refresh, or app-bundle silent update. Every
-replacement generation needs one-use native consent bound to both generations
-and the replacement digest, even when its authority is unchanged or reduced.
-A stale dialog, cancellation, missing presenter, or ambiguous candidate
-rejects and keeps the known-good generation active.
+There is no arbitrary remote, catalog-refresh, or app-bundle silent update.
+Every replacement needs one-use native consent bound to both generations, the
+exact added authority (including an explicit empty-delta indication), and the
+replacement digest. A stale dialog, cancellation, missing presenter, ambiguous
+candidate, or equal/older semantic version rejects and keeps the known-good
+generation active. The successful path records the user-confirmed generation
+and digest in the profile-local update history.
 
 ## Revocation and withdrawal
 

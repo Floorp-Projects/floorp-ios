@@ -1,5 +1,5 @@
 Floorp Tracker Block Lite
-Source: Floorp-managed reviewed DNR corpus
-Revision: 2026-08-26
+Source: Floorp iOS-managed reviewed DNR corpus
+Revision: 940118d86a3966932881cac5dd46c7b6071dfc00
 Network behavior: no remote filter subscription or remote rule source
 Modification status: floorp-managed

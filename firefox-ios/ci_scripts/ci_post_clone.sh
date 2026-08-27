@@ -10,6 +10,13 @@ set -euo pipefail
 defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
 
 readonly REPOSITORY_PATH="${CI_PRIMARY_REPOSITORY_PATH:?CI_PRIMARY_REPOSITORY_PATH is required}"
+readonly CI_SCRIPTS_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# A curated-catalog candidate is tag-bound twice: GitHub Actions checks it
+# before requesting a build, and this gate checks the commit Xcode Cloud
+# actually cloned before any generated source or archive is produced.
+bash "${CI_SCRIPTS_PATH}/verify_curated_catalog_candidate_source.sh" "${REPOSITORY_PATH}"
+
 readonly NODE_VERSION="$(<"${REPOSITORY_PATH}/.nvmrc")"
 
 case "$(uname -m)" in

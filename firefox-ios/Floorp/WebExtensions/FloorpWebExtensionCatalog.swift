@@ -170,6 +170,7 @@ enum FloorpWebExtensionCatalogError: Error, Equatable, LocalizedError, Sendable 
     case revoked
     case artifactRejected(String)
     case remoteCatalogDisabled
+    case unsignedPackageRejected
     case updateConsentRequired
 
     var errorDescription: String? {
@@ -192,6 +193,8 @@ enum FloorpWebExtensionCatalogError: Error, Equatable, LocalizedError, Sendable 
             return "The signed WebExtensions artifact was rejected: \(reason)"
         case .remoteCatalogDisabled:
             return "The managed WebExtensions catalog is not authorized for this build."
+        case .unsignedPackageRejected:
+            return "This unsigned legacy WebExtension package cannot run in this release."
         case .updateConsentRequired:
             return "Updating this WebExtension requires an explicit confirmation for this immutable generation."
         }
@@ -1177,6 +1180,7 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         }
         var records = [FloorpWebExtensionCatalogPackageRecord]()
         var identifiers = Set<FloorpWebExtensionCatalogGeneration>()
+        var activeExtensionIDs = Set<FloorpWebExtensionID>()
         for value in values {
             var expectedFields: Set<String> = [
                 "extensionID", "generation", "version", "artifactURL", "artifactBytes", "artifactSHA256",
@@ -1241,6 +1245,13 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             )
             guard identifiers.insert(.init(extensionID: extensionID, generation: generation)).inserted else {
                 throw FloorpWebExtensionCatalogError.invalidCatalog("duplicate package generation")
+            }
+            if availability == .available || availability == .updateAvailable {
+                guard activeExtensionIDs.insert(extensionID).inserted else {
+                    throw FloorpWebExtensionCatalogError.invalidCatalog(
+                        "catalog has multiple active generations for one extension"
+                    )
+                }
             }
             records.append(record)
         }
@@ -1497,6 +1508,27 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             return nil
         }
         return components.compactMap { Int($0) }
+    }
+
+    /// A different immutable generation is not sufficient evidence that it is
+    /// a forward update. A later signed catalog must not use an explicit
+    /// confirmation to reintroduce an equal or older package version. Versions
+    /// are parsed when the catalog is accepted, but parse them again here so a
+    /// damaged durable record also fails closed.
+    static func semanticVersionIsStrictlyGreater(_ candidate: String, than installed: String) -> Bool {
+        guard let candidateComponents = semanticVersion(candidate),
+              let installedComponents = semanticVersion(installed) else {
+            return false
+        }
+        let count = max(candidateComponents.count, installedComponents.count)
+        for index in 0..<count {
+            let candidateComponent = index < candidateComponents.count ? candidateComponents[index] : 0
+            let installedComponent = index < installedComponents.count ? installedComponents[index] : 0
+            if candidateComponent != installedComponent {
+                return candidateComponent > installedComponent
+            }
+        }
+        return false
     }
 
     private static func semanticVersionIsAtLeast(_ lhs: [Int], _ rhs: [Int]) -> Bool {
@@ -2302,11 +2334,6 @@ final class FloorpWebExtensionSignedBundledCatalog {
         )
         let updateAuthorization: FloorpWebExtensionLivePackageManager.CatalogUpdateAuthorization?
         if await packageManager.store.installedPackage(for: record.extensionID) != nil {
-            guard try await packageManager.store.catalogUpdateRequiresExplicitConsent(
-                for: artifact
-            ) else {
-                throw FloorpWebExtensionCatalogError.updateConsentRequired
-            }
             // The product-owned native presenter is reached through the live
             // manager. The signed catalog and extension document cannot mint
             // or replay this authorization themselves.

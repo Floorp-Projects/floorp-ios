@@ -26,6 +26,7 @@ class CuratedCatalogProjectResourceTests(unittest.TestCase):
         for review_only_path in (
             "CuratedCatalog/Packages",
             "CuratedCatalog/Review",
+            "CuratedCatalog/SourceProvenance",
             "CuratedCatalog/catalog-sources.json",
             "CuratedCatalog/catalog-input.json",
             "CuratedCatalog/review-index.json",

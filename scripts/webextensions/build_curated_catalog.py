@@ -20,11 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from ingest_extension import IngestionError, canonical_json, ingest, sha256, strict_json_loads
+from verify_curated_source_provenance import SourceProvenanceError, validate_declared_provenance
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CATALOG_ROOT = REPOSITORY_ROOT / "firefox-ios/Floorp/WebExtensions/CuratedCatalog"
-SOURCE_KEYS = {
+SOURCE_REQUIRED_KEYS = {
     "id",
     "extensionID",
     "category",
@@ -32,13 +33,17 @@ SOURCE_KEYS = {
     "description",
     "license",
     "modificationStatus",
-    "originalArtifactSHA256",
     "package",
     "privateProfileCapability",
     "sourceURL",
     "upstream",
     "upstreamRevision",
 }
+SOURCE_OPTIONAL_KEYS = {
+    "originalArtifactSHA256",
+    "sourceProvenance",
+}
+SOURCE_KEYS = SOURCE_REQUIRED_KEYS | SOURCE_OPTIONAL_KEYS
 
 
 class CuratedCatalogBuildError(RuntimeError):
@@ -69,7 +74,7 @@ def source_entries(path: Path) -> list[dict[str, Any]]:
         if not isinstance(value, dict):
             raise CuratedCatalogBuildError(f"source entry {index} must be an object")
         unknown = set(value) - SOURCE_KEYS
-        missing = SOURCE_KEYS - set(value) - {"originalArtifactSHA256"}
+        missing = SOURCE_REQUIRED_KEYS - set(value)
         if unknown or missing:
             raise CuratedCatalogBuildError(
                 f"source entry {index} has unexpected/missing fields: {sorted(unknown | missing)}"
@@ -86,6 +91,13 @@ def source_entries(path: Path) -> list[dict[str, Any]]:
         extension_ids.add(extension_id)
         if value["modificationStatus"] not in {"floorp-managed", "compatibility-patched"}:
             raise CuratedCatalogBuildError(f"source entry {identifier} has invalid modification status")
+        if value["modificationStatus"] == "floorp-managed" and not re.fullmatch(
+            r"[0-9a-f]{40}",
+            value["upstreamRevision"],
+        ):
+            raise CuratedCatalogBuildError(
+                f"floorp-managed source entry {identifier} must bind an immutable Git revision"
+            )
         if value["privateProfileCapability"] not in {"not-supported", "opt-in", "supported"}:
             raise CuratedCatalogBuildError(f"source entry {identifier} has invalid private capability")
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value["category"]):
@@ -98,6 +110,10 @@ def source_entries(path: Path) -> list[dict[str, Any]]:
         original = value.get("originalArtifactSHA256")
         if original is not None and (not isinstance(original, str) or not re.fullmatch(r"[0-9a-f]{64}", original)):
             raise CuratedCatalogBuildError(f"source entry {identifier} has invalid original artifact digest")
+        source_provenance = value.get("sourceProvenance")
+        if source_provenance is not None:
+            if not isinstance(source_provenance, str) or not source_provenance.strip():
+                raise CuratedCatalogBuildError(f"source entry {identifier} has invalid sourceProvenance")
         result.append(value)
     return sorted(result, key=lambda item: (item["extensionID"], item["id"]))
 
@@ -155,6 +171,10 @@ def build(*, sources_path: Path, output_directory: Path, generation_prefix: str)
     with tempfile.TemporaryDirectory(prefix="floorp-curated-catalog-", dir=output_directory.parent) as temporary:
         staging = Path(temporary)
         for source in sources:
+            try:
+                provenance = validate_declared_provenance(sources_path.parent, source)
+            except SourceProvenanceError as error:
+                raise CuratedCatalogBuildError(f"quarantined {source['id']} source provenance: {error}") from error
             package = (sources_path.parent / source["package"]).resolve()
             try:
                 package.relative_to(sources_path.parent.resolve())
@@ -219,7 +239,7 @@ def build(*, sources_path: Path, output_directory: Path, generation_prefix: str)
                 },
             }
             records.append(record)
-            index.append({
+            review_record = {
                 "id": source["id"],
                 "extensionID": source["extensionID"],
                 "artifact": f"Artifacts/{artifact_name}",
@@ -227,7 +247,11 @@ def build(*, sources_path: Path, output_directory: Path, generation_prefix: str)
                 "originalArtifactSHA256": original_digest,
                 "sourceURL": source["sourceURL"],
                 "upstreamRevision": source["upstreamRevision"],
-            })
+            }
+            if provenance is not None:
+                review_record["sourceProvenance"] = provenance["path"]
+                review_record["sourceProvenanceSHA256"] = provenance["sha256"]
+            index.append(review_record)
 
     records.sort(key=lambda record: (record["extensionID"], record["generation"]))
     index.sort(key=lambda item: item["extensionID"])

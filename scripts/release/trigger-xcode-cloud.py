@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import time
@@ -116,9 +117,17 @@ def verify_workflow(
     return workflow, repository_id, repository
 
 
-def resolve_branch(
-    api: Callable[..., dict[str, Any]], repository_id: str, branch: str
+def resolve_source_reference(
+    api: Callable[..., dict[str, Any]], repository_id: str, reference_name: str, reference_kind: str
 ) -> dict[str, Any]:
+    """Resolve exactly one live Xcode Cloud branch or tag reference.
+
+    A candidate release may use only an immutable, protected tag.  The generic
+    deployment route remains restricted to ``main``; resolving the reference
+    kind here prevents a same-named branch and tag from being confused.
+    """
+    if reference_kind not in {"branch", "tag"}:
+        raise ValueError(f"unsupported Git reference kind {reference_kind!r}")
     response = api(
         "GET",
         f"/v1/scmRepositories/{repository_id}/gitReferences"
@@ -127,7 +136,8 @@ def resolve_branch(
     rows = response.get("data")
     if not isinstance(rows, list):
         raise ValueError("App Store Connect returned no Git references")
-    canonical = f"refs/heads/{branch}"
+    canonical_prefix = "heads" if reference_kind == "branch" else "tags"
+    canonical = f"refs/{canonical_prefix}/{reference_name}"
     matches = []
     for row in rows:
         if not isinstance(row, dict) or row.get("type") != "scmGitReferences":
@@ -135,11 +145,37 @@ def resolve_branch(
         attributes = row.get("attributes")
         if not isinstance(attributes, dict) or attributes.get("isDeleted") is True:
             continue
-        if attributes.get("name") == branch or attributes.get("canonicalName") == canonical:
+        actual_kind = attributes.get("kind")
+        if not isinstance(actual_kind, str) or actual_kind.lower() != reference_kind:
+            continue
+        # A source reference is a security boundary for the curated candidate:
+        # the short display name is not enough.  Require both the API's name
+        # and its canonical Git namespace to agree, so a malformed or
+        # same-looking reference cannot be passed as the protected tag.
+        if (
+            attributes.get("name") == reference_name
+            and attributes.get("canonicalName") == canonical
+        ):
             matches.append(row)
     if len(matches) != 1:
-        raise ValueError(f"expected one live Git reference for {branch!r}, found {len(matches)}")
+        raise ValueError(
+            f"expected one live {reference_kind} reference for {reference_name!r}, found {len(matches)}"
+        )
     return matches[0]
+
+
+def resolve_branch(
+    api: Callable[..., dict[str, Any]], repository_id: str, branch: str
+) -> dict[str, Any]:
+    """Compatibility wrapper for the ordinary main-branch deployment route."""
+    return resolve_source_reference(api, repository_id, branch, "branch")
+
+
+def resolve_tag(
+    api: Callable[..., dict[str, Any]], repository_id: str, tag: str
+) -> dict[str, Any]:
+    """Resolve a protected catalog-candidate tag without accepting a branch."""
+    return resolve_source_reference(api, repository_id, tag, "tag")
 
 
 def build_request(workflow_id: str, reference_id: str) -> dict[str, Any]:
@@ -167,8 +203,23 @@ def credentials(client) -> tuple[str, str, Path]:
 def run(arguments: argparse.Namespace) -> dict[str, Any]:
     if not arguments.authorize_mutation:
         raise ValueError("refusing to start a build without --authorize-mutation")
-    if arguments.branch != "main":
-        raise ValueError("the release workflow only permits the main branch")
+    if not re.fullmatch(r"[0-9a-f]{40}", arguments.expected_head):
+        raise ValueError("expected source head must be a lowercase 40-character Git SHA")
+
+    if arguments.branch is not None:
+        if arguments.branch != "main":
+            raise ValueError("the ordinary release workflow only permits the main branch")
+        source_name = arguments.branch
+        source_kind = "branch"
+    else:
+        source_name = arguments.source_tag
+        if not isinstance(source_name, str) or not re.fullmatch(
+            r"floorp-catalog-[0-9a-f]{40}", source_name
+        ):
+            raise ValueError("catalog release tags must match floorp-catalog-<40 lowercase Git SHA>")
+        source_kind = "tag"
+        if not arguments.wait:
+            raise ValueError("catalog-tag builds must wait for source-commit verification")
 
     client = load_client()
     issuer_id, key_id, private_key = credentials(client)
@@ -183,7 +234,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         arguments.expected_workflow_name,
         arguments.expected_repository,
     )
-    reference = resolve_branch(api, repository_id, arguments.branch)
+    reference = resolve_source_reference(api, repository_id, source_name, source_kind)
     reference_id = reference.get("id")
     if not isinstance(reference_id, str) or not reference_id:
         raise ValueError("resolved Git reference has no ID")
@@ -225,7 +276,8 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             "http_clone_url": repository.get("attributes", {}).get("httpCloneUrl"),
         },
         "source": {
-            "branch": arguments.branch,
+            "name": source_name,
+            "kind": source_kind,
             "reference_id": reference_id,
             "expected_head": arguments.expected_head,
         },
@@ -243,7 +295,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workflow-id", required=True)
     parser.add_argument("--expected-workflow-name", required=True)
     parser.add_argument("--expected-repository", required=True)
-    parser.add_argument("--branch", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--branch")
+    source.add_argument("--source-tag")
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--team-id", required=True)
     parser.add_argument("--app-id", required=True)

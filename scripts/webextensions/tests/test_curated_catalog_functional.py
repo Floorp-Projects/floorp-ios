@@ -1,4 +1,4 @@
-"""Runs every curated WebExtension package through its local functional harness."""
+"""Runs every immutable curated WebExtension artifact through its functional harness."""
 
 from __future__ import annotations
 
@@ -10,23 +10,23 @@ import unittest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 HARNESS = Path(__file__).with_name("curated_catalog_functional.mjs")
-PACKAGES = (
+CATALOG = (
     REPOSITORY_ROOT
-    / "firefox-ios/Floorp/WebExtensions/CuratedCatalog/Packages"
+    / "firefox-ios/Floorp/WebExtensions/CuratedCatalog"
 )
 
 
 class CuratedCatalogFunctionalTests(unittest.TestCase):
-    def test_every_adopted_package_has_a_local_functional_smoke_test(self) -> None:
+    def test_every_adopted_artifact_has_a_local_functional_smoke_test(self) -> None:
         completed = subprocess.run(
-            ["node", str(HARNESS), str(PACKAGES)],
+            ["node", str(HARNESS), str(CATALOG)],
             check=True,
             capture_output=True,
             text=True,
             cwd=REPOSITORY_ROOT,
         )
         result = json.loads(completed.stdout)
-        self.assertEqual(result, {"status": "ok", "adoptedPackages": 16})
+        self.assertEqual(result, {"status": "ok", "adoptedArtifacts": 16})
 
 
 if __name__ == "__main__":

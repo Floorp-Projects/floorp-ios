@@ -241,48 +241,88 @@ public final class FloorpBootstrapper {
                 compositionGeneration: compositionGeneration
             )
             packageRestoreTasks[profileIdentifier] = Task { @MainActor in
-                if let signedBundledCatalog {
-                    do {
-                        _ = try await signedBundledCatalog.acceptAndApplyRevocations()
-                    } catch {
-                        logger.log(
-                            "Floorp: signed bundled WebExtensions catalog was rejected: \(error)",
-                            level: .warning,
-                            category: .setup
-                        )
-                    }
-                }
-                guard !Task.isCancelled,
-                      packageCompositionGenerations[profileIdentifier] == compositionGeneration else { return }
-                await restoreInstalledPackages(
-                    from: normalPackageStore,
-                    into: normalCoordinator,
-                    apiHost: normalAPIHost,
-                    logger: logger,
-                    while: {
-                        packageCompositionGenerations[profileIdentifier] == compositionGeneration
-                    }
+                await restoreWebExtensionPackageComposition(
+                    profileIdentifier: profileIdentifier,
+                    compositionGeneration: compositionGeneration,
+                    normalPackageStore: normalPackageStore,
+                    privatePackageStore: privatePackageStore,
+                    normalCoordinator: normalCoordinator,
+                    privateCoordinator: privateCoordinator,
+                    normalAPIHost: normalAPIHost,
+                    privateAPIHost: privateAPIHost,
+                    logger: logger
                 )
-                guard !Task.isCancelled,
-                      packageCompositionGenerations[profileIdentifier] == compositionGeneration else { return }
-                await restoreInstalledPackages(
-                    from: privatePackageStore,
-                    into: privateCoordinator,
-                    apiHost: privateAPIHost,
-                    logger: logger,
-                    while: {
-                        packageCompositionGenerations[profileIdentifier] == compositionGeneration
-                    }
-                )
-                guard !Task.isCancelled,
-                      packageCompositionGenerations[profileIdentifier] == compositionGeneration else { return }
-                packageRestoreTasks.removeValue(forKey: profileIdentifier)
-                signalWebExtensionReadiness()
             }
         } catch {
             logger.log("Floorp: WebExtensions rule-list store setup failed: \(error)", level: .warning, category: .setup)
             signalWebExtensionReadiness()
         }
+    }
+
+    @MainActor
+    private static func restoreWebExtensionPackageComposition(
+        profileIdentifier: String,
+        compositionGeneration: UUID,
+        normalPackageStore: FloorpWebExtensionPackageStore,
+        privatePackageStore: FloorpWebExtensionPackageStore,
+        normalCoordinator: FloorpWebExtensionCoordinator,
+        privateCoordinator: FloorpWebExtensionCoordinator,
+        normalAPIHost: FloorpWebExtensionAPIHost,
+        privateAPIHost: FloorpWebExtensionAPIHost,
+        logger: Logger
+    ) async {
+        if let signedBundledCatalog {
+            do {
+                _ = try await signedBundledCatalog.acceptAndApplyRevocations()
+            } catch {
+                logger.log(
+                    "Floorp: signed bundled WebExtensions catalog was rejected: \(error)",
+                    level: .warning,
+                    category: .setup
+                )
+            }
+        }
+        guard isCurrentWebExtensionPackageComposition(
+            profileIdentifier: profileIdentifier,
+            compositionGeneration: compositionGeneration
+        ) else { return }
+        await restoreInstalledPackages(
+            from: normalPackageStore,
+            into: normalCoordinator,
+            apiHost: normalAPIHost,
+            logger: logger,
+            while: {
+                packageCompositionGenerations[profileIdentifier] == compositionGeneration
+            }
+        )
+        guard isCurrentWebExtensionPackageComposition(
+            profileIdentifier: profileIdentifier,
+            compositionGeneration: compositionGeneration
+        ) else { return }
+        await restoreInstalledPackages(
+            from: privatePackageStore,
+            into: privateCoordinator,
+            apiHost: privateAPIHost,
+            logger: logger,
+            while: {
+                packageCompositionGenerations[profileIdentifier] == compositionGeneration
+            }
+        )
+        guard isCurrentWebExtensionPackageComposition(
+            profileIdentifier: profileIdentifier,
+            compositionGeneration: compositionGeneration
+        ) else { return }
+        packageRestoreTasks.removeValue(forKey: profileIdentifier)
+        signalWebExtensionReadiness()
+    }
+
+    @MainActor
+    private static func isCurrentWebExtensionPackageComposition(
+        profileIdentifier: String,
+        compositionGeneration: UUID
+    ) -> Bool {
+        !Task.isCancelled &&
+            packageCompositionGenerations[profileIdentifier] == compositionGeneration
     }
 
     /// Removes both runtime instances on process termination and deletes the
@@ -381,12 +421,8 @@ public final class FloorpBootstrapper {
             ),
             scriptResourceLoader: store.makeResourceLoader(),
             packageStore: store,
-            suspendAPIHost: { extensionID in
-                await apiHost.suspend(extensionID)
-            },
-            purgeAPIHost: { extensionID in
-                try await apiHost.purge(extensionID)
-            }
+            suspendAPIHost: { extensionID in await apiHost.suspend(extensionID) },
+            purgeAPIHost: { extensionID in try await apiHost.purge(extensionID) }
         )
         let reconcileComposition: @MainActor (
             FloorpWebExtensionID,
@@ -471,6 +507,7 @@ public final class FloorpBootstrapper {
                 }
                 try signedBundledCatalog.authorizeInstalledCatalogRecord(record)
             },
+            unsignedPackageActivationPolicy: .reject,
             dnrExcludedTopLevelDomainsUpdater: { extensionID, domains in
                 try await coordinator.updateExcludedTopLevelDomains(domains, for: extensionID)
             }

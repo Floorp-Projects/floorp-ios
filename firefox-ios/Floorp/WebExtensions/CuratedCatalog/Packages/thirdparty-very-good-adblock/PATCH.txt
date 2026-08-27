@@ -1,8 +1,17 @@
 Derived from the fixed curated block-rule seeds in
-chrisbbreuer/very-good-adblock at the pinned upstream revision. The
-compatibility build retains 16 reviewed advertising and tracking host rules as
-immutable manifest-v3 static DNR rules. Each rule is a supported block-only
-action limited to script, image, stylesheet, and XMLHttpRequest resource types.
+chrisbbreuer/very-good-adblock at the pinned upstream revision. The source
+archive and exact seed member are bound as follows:
+
+Source archive SHA-256: 1f7e2a0560a2d5e606893993a470a342d21ed314ae5d94a9ec468259283f3fc4
+Source member: src/rules/static-rules.ts
+Source member SHA-256: 9ee5c78bbee1036ccef457a3075c46acf388d5f30c0c4ce7c8578bc49d9b7071
+Selected upstream rule IDs: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 18, 19, 22, 23, 24, 27.
+
+The compatibility build renumbers this exact subset as artifact rules 1–16,
+preserves each upstream `urlFilter`, and narrows each upstream
+`blockedHostTypes` scope to script, image, stylesheet, and XMLHttpRequest.
+Each resulting rule is immutable manifest-v3 static DNR with only a supported
+`block` action.
 
 Removed the upstream generated and remotely refreshed filter corpus, redirect
 rules, dynamic allowlisting, service/background code, cosmetic filters, media

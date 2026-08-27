@@ -120,6 +120,14 @@ class SignCatalogTests(unittest.TestCase):
                 leaf_not_after="2026-10-01T12:00:00Z",
             )
 
+    def test_load_records_bytes_validates_the_supplied_snapshot(self) -> None:
+        expected = record()
+        records = SIGN.load_records_bytes(json.dumps([expected]).encode("utf-8"), schema=2)
+        self.assertEqual(records, [expected])
+
+        with self.assertRaisesRegex(SIGN.CatalogSigningError, "non-empty JSON array"):
+            SIGN.load_records_bytes(b"[]", schema=2)
+
 
 if __name__ == "__main__":
     unittest.main()

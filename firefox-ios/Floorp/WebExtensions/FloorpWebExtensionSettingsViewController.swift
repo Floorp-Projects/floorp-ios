@@ -42,6 +42,10 @@ final class FloorpWebExtensionProfileSettingsManager: FloorpWebExtensionSettings
                 name: normalPackage.name,
                 version: normalPackage.version,
                 catalogGeneration: normalPackage.catalogGeneration,
+                catalogDescription: normalPackage.catalogDescription,
+                catalogSource: normalPackage.catalogSource,
+                catalogLicense: normalPackage.catalogLicense,
+                catalogHomepage: normalPackage.catalogHomepage,
                 isEnabled: normalPackage.isEnabled,
                 isCatalogRevoked: normalPackage.isCatalogRevoked || privatePackage.isCatalogRevoked,
                 permissions: normalPackage.permissions,
@@ -56,7 +60,8 @@ final class FloorpWebExtensionProfileSettingsManager: FloorpWebExtensionSettings
                 errorDescription: normalPackage.errorDescription ?? privatePackage.errorDescription,
                 optionsPage: normalPackage.optionsPage,
                 dnrStatus: normalPackage.dnrStatus,
-                privateDNRStatus: privatePackage.dnrStatus
+                privateDNRStatus: privatePackage.dnrStatus,
+                updateHistory: normalPackage.updateHistory
             )
         }
     }
@@ -190,6 +195,13 @@ struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     /// package. It is display/control metadata only; Settings never receives
     /// an artifact URL or package bytes.
     let catalogGeneration: String?
+    /// The signed catalog's product description and provenance. These are
+    /// safe for the native UI to display, but deliberately exclude artifact
+    /// locations and any installation transport.
+    let catalogDescription: String?
+    let catalogSource: String?
+    let catalogLicense: String?
+    let catalogHomepage: URL?
     let isEnabled: Bool
     let isCatalogRevoked: Bool
     let permissions: [FloorpWebExtensionPermissionCategory]
@@ -212,6 +224,9 @@ struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     let optionsPage: FloorpWebExtensionSettingsOptionsPage?
     let dnrStatus: FloorpWebExtensionSettingsDNRStatus?
     let privateDNRStatus: FloorpWebExtensionSettingsDNRStatus?
+    /// Normal-profile immutable update audit history. Private-profile package
+    /// state is ephemeral by design and disappears with the private profile.
+    let updateHistory: [FloorpWebExtensionCatalogUpdateHistoryEntry]
 }
 
 /// Product-owned consent for `permissions.request`. Extension documents do
@@ -242,7 +257,7 @@ final class FloorpWebExtensionNativePermissionConsentPresenter {
             return lines.joined(separator: "\n")
         }
 
-        private static func title(for permission: FloorpWebExtensionAPIGrant) -> String {
+        fileprivate static func title(for permission: FloorpWebExtensionAPIGrant) -> String {
             switch permission {
             case .activeTab: return "Access the active tab after an explicit action"
             case .alarms: return "Schedule extension alarms"
@@ -340,9 +355,9 @@ final class FloorpWebExtensionNativePermissionConsentPresenter {
     }
 }
 
-/// A native, product-owned confirmation for every immutable catalog-generation
-/// replacement. It is intentionally unavailable when Settings is not visible;
-/// background catalog processing always retains the known-good generation.
+/// A native, product-owned confirmation for every catalog replacement. It is
+/// intentionally unavailable when Settings is not visible, so the known-good
+/// generation remains active until the user opens this confirmation flow.
 @MainActor
 enum FloorpWebExtensionNativeCatalogUpdateConsentPresenter {
     static func confirm(
@@ -353,13 +368,8 @@ enum FloorpWebExtensionNativeCatalogUpdateConsentPresenter {
               presenter.viewIfLoaded?.window != nil else {
             return false
         }
+        let message = confirmationMessage(for: request)
         return await withCheckedContinuation { continuation in
-            let message = [
-                "Update \(request.installedVersion) to \(request.replacementVersion)?",
-                "Review and allow this immutable replacement before it changes the installed extension.",
-                "Generation: \(request.replacementCatalogGeneration)",
-                "Artifact SHA-256: \(request.replacementArtifactSHA256)"
-            ].joined(separator: "\n\n")
             let alert = UIAlertController(
                 title: "Allow update for \(request.extensionName)?",
                 message: message,
@@ -374,6 +384,37 @@ enum FloorpWebExtensionNativeCatalogUpdateConsentPresenter {
             })
             presenter.present(alert, animated: true)
         }
+    }
+
+    private static func confirmationMessage(
+        for request: FloorpWebExtensionLivePackageManager.CatalogUpdateConfirmationRequest
+    ) -> String {
+        var sections = ["Update \(request.installedVersion) to \(request.replacementVersion)?"]
+        if request.addedRequiredAPIPermissions.isEmpty &&
+            request.addedRequiredHostPermissions.isEmpty {
+            sections.append(
+                "This signed update adds no required capabilities or site access. Confirm the exact replacement."
+            )
+        } else {
+            sections.append(
+                "This update adds the following access. Keep the current version unless you want to allow it."
+            )
+        }
+        if !request.addedRequiredAPIPermissions.isEmpty {
+            let permissions = request.addedRequiredAPIPermissions.map {
+                "• \(FloorpWebExtensionNativePermissionConsentPresenter.RequestPresentation.title(for: $0))"
+            }.joined(separator: "\n")
+            sections.append("New capabilities:\n\(permissions)")
+        }
+        if !request.addedRequiredHostPermissions.isEmpty {
+            let hosts = request.addedRequiredHostPermissions.map {
+                "• \($0.original)"
+            }.joined(separator: "\n")
+            sections.append("New site access:\n\(hosts)")
+        }
+        sections.append("Generation: \(request.replacementCatalogGeneration)")
+        sections.append("Artifact SHA-256: \(request.replacementArtifactSHA256)")
+        return sections.joined(separator: "\n\n")
     }
 }
 
@@ -435,6 +476,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         case installed(FloorpWebExtensionSettingsInstalledPackage)
         case available(FloorpWebExtensionBundledCatalogItem)
         case emptyInstalled
+        case catalogLoading
+        case catalogUnavailable
         case unavailable
     }
 
@@ -443,7 +486,12 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private let pageMessageRuntime: FloorpWebExtensionMessageRuntime?
     private let openExternalURL: FloorpWebExtensionPageViewController.ExternalNavigationHandler
     private var installedPackages = [FloorpWebExtensionSettingsInstalledPackage]()
-    private var catalogItems = FloorpWebExtensionBundledCatalog.items
+    // Never seed the visible catalog with Stage 3 fixtures. The catalog is
+    // allowed to become visible only after the profile composition returns a
+    // currently accepted signed result; a missing or rejected catalog must
+    // remain non-installable from the first rendered frame.
+    private var catalogItems = [FloorpWebExtensionBundledCatalogItem]()
+    private var hasLoadedCatalog = false
     private var isLoading = false
 
     init(
@@ -451,13 +499,20 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         packageManager: (any FloorpWebExtensionSettingsManaging)?,
         pageResourceResolver: FloorpWebExtensionPageResourceResolver? = nil,
         pageMessageRuntime: FloorpWebExtensionMessageRuntime? = nil,
-        openExternalURL: @escaping FloorpWebExtensionPageViewController.ExternalNavigationHandler = { _ in }
+        openExternalURL: @escaping FloorpWebExtensionPageViewController.ExternalNavigationHandler = { _ in },
+        themeManager: ThemeManager = AppContainer.shared.resolve(),
+        notificationCenter: NotificationProtocol = NotificationCenter.default
     ) {
         self.packageManager = packageManager
         self.pageResourceResolver = pageResourceResolver
         self.pageMessageRuntime = pageMessageRuntime
         self.openExternalURL = openExternalURL
-        super.init(style: .insetGrouped, windowUUID: windowUUID)
+        super.init(
+            style: .insetGrouped,
+            windowUUID: windowUUID,
+            themeManager: themeManager,
+            notificationCenter: notificationCenter
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -488,7 +543,14 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             return
         }
         isLoading = true
+        // Do not leave a previously accepted listing actionable while the
+        // current profile composition is being checked again. An installation
+        // still performs its own catalog authorization, but the UI must not
+        // advertise an old result as currently trusted.
+        hasLoadedCatalog = false
+        catalogItems = []
         navigationItem.rightBarButtonItem?.isEnabled = false
+        tableView.reloadData()
         Task { [weak self, packageManager] in
             let packages = await packageManager.settingsPackages()
             let catalogItems = await packageManager.catalogItems()
@@ -497,6 +559,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
             self.catalogItems = catalogItems
+            self.hasLoadedCatalog = true
             self.isLoading = false
             self.navigationItem.rightBarButtonItem?.isEnabled = true
             self.tableView.reloadData()
@@ -536,7 +599,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             cell.accessibilityIdentifier = "Floorp.WebExtensions.Installed.\(package.id.rawValue)"
         case .available(let item):
             cell.textLabel?.text = item.name
-            cell.detailTextLabel?.text = item.summary
+            cell.detailTextLabel?.text = availableDetail(item)
             cell.accessoryType = .disclosureIndicator
             cell.accessibilityIdentifier = "Floorp.WebExtensions.Available.\(item.id.rawValue)"
         case .emptyInstalled:
@@ -544,6 +607,18 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             cell.detailTextLabel?.text = "Install a bundled extension to enable it for this profile."
             cell.selectionStyle = .none
             cell.isUserInteractionEnabled = false
+        case .catalogLoading:
+            cell.textLabel?.text = "Checking signed catalog…"
+            cell.detailTextLabel?.text = "Extensions become available only after catalog verification succeeds."
+            cell.selectionStyle = .none
+            cell.isUserInteractionEnabled = false
+            cell.accessibilityIdentifier = "Floorp.WebExtensions.CatalogLoading"
+        case .catalogUnavailable:
+            cell.textLabel?.text = "No verified extensions available"
+            cell.detailTextLabel?.text = "The signed catalog is unavailable or contains no installable extensions."
+            cell.selectionStyle = .none
+            cell.isUserInteractionEnabled = false
+            cell.accessibilityIdentifier = "Floorp.WebExtensions.CatalogUnavailable"
         case .unavailable:
             cell.textLabel?.text = "Extensions are unavailable"
             cell.detailTextLabel?.text = "The extension package store is not configured for this profile."
@@ -560,7 +635,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             showInstalledPackage(package)
         case .available(let item):
             confirmInstall(item)
-        case .emptyInstalled, .unavailable:
+        case .emptyInstalled, .catalogLoading, .catalogUnavailable, .unavailable:
             break
         }
     }
@@ -572,29 +647,79 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         case .installed:
             return installedPackages.isEmpty ? [.emptyInstalled] : installedPackages.map(Row.installed)
         case .available:
+            guard hasLoadedCatalog else { return [.catalogLoading] }
             let installedIDs = Set(installedPackages.map(\.id))
-            return catalogItems
+            let availableItems = catalogItems
                 .filter { !installedIDs.contains($0.id) }
                 .map(Row.available)
+            return availableItems.isEmpty ? [.catalogUnavailable] : availableItems
         }
     }
 
     private func installedDetail(_ package: FloorpWebExtensionSettingsInstalledPackage) -> String {
         var details = ["Version \(package.version)", package.isEnabled ? "Enabled" : "Disabled"]
         details.append(package.siteAccessDescription)
+        if let catalogGeneration = package.catalogGeneration {
+            details.append("Catalog \(catalogGeneration)")
+        }
+        if let catalogSource = package.catalogSource {
+            details.append(catalogSource)
+        }
+        if package.isCatalogRevoked {
+            details.append("Revoked")
+        }
         if let errorDescription = package.errorDescription {
             details.append(errorDescription)
         }
         return details.joined(separator: " · ")
     }
 
+    private func availableDetail(_ item: FloorpWebExtensionBundledCatalogItem) -> String {
+        let permissions = item.requestedPermissions.isEmpty
+            ? "No additional capabilities"
+            : item.requestedPermissions.map(\.title).joined(separator: ", ")
+        let privateBrowsing: String
+        switch item.catalogRecord?.metadata?.privateProfileCapability {
+        case .some(.notSupported):
+            privateBrowsing = "Private browsing: unavailable"
+        case .some(.optIn), .some(.supported):
+            privateBrowsing = "Private browsing: separate opt-in"
+        case .none:
+            privateBrowsing = ""
+        }
+        return [
+            item.summary,
+            "Source: \(item.source)",
+            "License: \(item.license)",
+            "Capabilities: \(permissions)",
+            privateBrowsing
+        ].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
     private func confirmInstall(_ item: FloorpWebExtensionBundledCatalogItem) {
         let permissions = item.requestedPermissions.map(\.title).joined(separator: "\n• ")
-        let siteNotice = item.requestedPermissions.contains(.siteData)
-            ? "\n\nSite access starts disabled. You can explicitly choose sites after installation."
-            : ""
-        let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)\(siteNotice)"
+        let requestedHosts = item.catalogRecord?.metadata?.hostPermissions
+            .sorted { $0.original < $1.original }
+            .map { "• \($0.original)" }
+            .joined(separator: "\n")
+        let siteNotice: String
+        if let requestedHosts, !requestedHosts.isEmpty {
+            siteNotice = "\n\nRequested sites:\n\(requestedHosts)\n\nSite access starts disabled. You can explicitly choose sites after installation."
+        } else {
+            siteNotice = ""
+        }
+        let privateNotice: String
+        switch item.catalogRecord?.metadata?.privateProfileCapability {
+        case .some(.notSupported):
+            privateNotice = "\n\nPrivate browsing: not available for this extension."
+        case .some(.optIn), .some(.supported):
+            privateNotice = "\n\nPrivate browsing: separate opt-in and separate private-profile storage."
+        case .none:
+            privateNotice = ""
+        }
+        let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)\(siteNotice)\(privateNotice)"
         let alert = UIAlertController(title: "Install \(item.name)?", message: message, preferredStyle: .alert)
+        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.InstallConsent.\(item.id.rawValue)"
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Install", style: .default) { [weak self] _ in
             self?.performInstall(item)
@@ -606,6 +731,11 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         let permissionList = package.permissions.map(\.title).joined(separator: "\n• ")
         let message = [
             "Version: \(package.version)",
+            package.catalogDescription,
+            package.catalogGeneration.map { "Signed catalog generation: \($0)" },
+            package.catalogSource.map { "Source: \($0)" },
+            package.catalogLicense.map { "License: \($0)" },
+            package.catalogHomepage.map { "Homepage: \($0.absoluteString)" },
             "Site access: \(package.siteAccessDescription)",
             "Private access: \(package.privateAccessDescription)",
             permissionList.isEmpty ? nil : "Permissions:\n• \(permissionList)",
@@ -625,6 +755,11 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
            pageMessageRuntime != nil {
             alert.addAction(UIAlertAction(title: "Options", style: .default) { [weak self] _ in
                 self?.openOptionsPage(for: package)
+            })
+        }
+        if let catalogHomepage = package.catalogHomepage {
+            alert.addAction(UIAlertAction(title: "Project Website", style: .default) { [weak self] _ in
+                self?.openExternalURL(catalogHomepage)
             })
         }
         if package.isEnabled, !package.requestedSites.isEmpty, !package.isCatalogRevoked {
@@ -663,6 +798,11 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
                 self?.showDNRExclusions(package, isPrivateBrowsing: true)
             })
         }
+        if !package.updateHistory.isEmpty {
+            alert.addAction(UIAlertAction(title: "Update History", style: .default) { [weak self] _ in
+                self?.showUpdateHistory(package)
+            })
+        }
         if let update = catalogItems.first(where: { item in
             item.id == package.id &&
                 item.catalogRecord?.generation != package.catalogGeneration
@@ -682,6 +822,31 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             popover.sourceView = view
             popover.sourceRect = view.bounds
         }
+        present(alert, animated: true)
+    }
+
+    private func showUpdateHistory(_ package: FloorpWebExtensionSettingsInstalledPackage) {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let entries = package.updateHistory.reversed().map { entry -> String in
+            let method = switch entry.method {
+            case .userApproved:
+                "Installed after confirmation"
+            }
+            return [
+                "\(entry.previousVersion) → \(entry.replacementVersion)",
+                method,
+                "Generation: \(entry.replacementCatalogGeneration)",
+                formatter.string(from: entry.occurredAt)
+            ].joined(separator: "\n")
+        }
+        let alert = UIAlertController(
+            title: "Update History",
+            message: entries.joined(separator: "\n\n"),
+            preferredStyle: .alert
+        )
+        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.UpdateHistory.\(package.id.rawValue)"
+        alert.addAction(UIAlertAction(title: "Done", style: .default))
         present(alert, animated: true)
     }
 
@@ -781,9 +946,13 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             setPrivateBrowsingEnabled(false, for: package.id)
             return
         }
+        let privateBrowsingMessage = [
+            "This installs a separate ephemeral copy for private browsing.",
+            "Its site access starts disabled and private data is removed when the private session ends."
+        ].joined(separator: " ")
         let alert = UIAlertController(
             title: "Allow \(package.name) in Private Browsing?",
-            message: "This installs a separate ephemeral copy for private browsing. Its site access starts disabled and private data is removed when the private session ends.",
+            message: privateBrowsingMessage,
             preferredStyle: .alert
         )
         alert.view.accessibilityIdentifier = "Floorp.WebExtensions.PrivateBrowsingConsent"
@@ -885,8 +1054,10 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             })
         }
         if !status.excludedTopLevelDomains.isEmpty {
-            alert.addAction(UIAlertAction(title: "Remove all site exclusions", style: .destructive) {
-                [weak self] _ in
+            alert.addAction(UIAlertAction(
+                title: "Remove all site exclusions",
+                style: .destructive
+            ) { [weak self] _ in
                 self?.setDNRExcludedTopLevelDomains(
                     [],
                     for: package.id,
@@ -1134,9 +1305,9 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         fileprivate let lifecycleRevision: UInt64
     }
 
-    /// One-use, in-memory authority for replacing a catalog generation. The
-    /// fields bind a user's confirmation to both sides of the immutable
-    /// transition; a stale dialog cannot approve another package or digest.
+    /// One-use, in-memory authority for a catalog update. The fields bind a
+    /// user's confirmation to both sides of the immutable transition; a stale
+    /// dialog cannot approve another package or digest.
     struct CatalogUpdateAuthorization: Sendable, Equatable {
         fileprivate let extensionID: FloorpWebExtensionID
         fileprivate let installedGeneration: String
@@ -1145,8 +1316,9 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         fileprivate let lifecycleRevision: UInt64
     }
 
-    /// Product-owned UI receives the before/after immutable identities. It
-    /// must not accept text, callbacks, or URLs from an extension document.
+    /// Product-owned UI receives the before/after immutable identities and
+    /// the exact new authority. It must not accept text, callbacks, or URLs
+    /// from an extension document.
     struct CatalogUpdateConfirmationRequest: Sendable, Equatable {
         let extensionID: FloorpWebExtensionID
         let extensionName: String
@@ -1155,6 +1327,8 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         let replacementVersion: String
         let replacementCatalogGeneration: String
         let replacementArtifactSHA256: String
+        let addedRequiredAPIPermissions: [FloorpWebExtensionAPIGrant]
+        let addedRequiredHostPermissions: [FloorpWebExtensionMatchPattern]
     }
 
     typealias Reconciler = @MainActor (
@@ -1180,11 +1354,19 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     ) async -> Bool
     /// A catalog package can be restored or re-enabled only when the P0
     /// composition can still authorize its record against device-bound
-    /// catalog state. Bundled packages have no catalog record and bypass this
-    /// closure entirely.
+    /// catalog state. An unsigned fixture has no catalog record, but is only
+    /// eligible under the explicit test-only activation policy below.
     typealias CatalogRecordAuthorization = @MainActor @Sendable (
         FloorpWebExtensionCatalogPackageRecord
     ) throws -> Void
+    /// Unsigned fixtures exist only to support the pre-catalog compatibility
+    /// harness. A production composition must never restore, enable, or
+    /// install one: an app upgrade must not turn a persisted Stage 3 fixture
+    /// into a bypass around the signed catalog acceptance state.
+    enum UnsignedPackageActivationPolicy: Sendable, Equatable {
+        case reject
+        case allowVerifiedFixtureForTesting
+    }
     typealias DNRExcludedTopLevelDomainsUpdater = @MainActor @Sendable (
         FloorpWebExtensionID,
         [String]
@@ -1199,6 +1381,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     private let signedBundledCatalogInstaller: SignedBundledCatalogInstaller
     private let catalogUpdateConfirmation: CatalogUpdateConfirmation
     private let catalogRecordAuthorization: CatalogRecordAuthorization
+    private let unsignedPackageActivationPolicy: UnsignedPackageActivationPolicy
     private let dnrExcludedTopLevelDomainsUpdater: DNRExcludedTopLevelDomainsUpdater
     private var lifecycleMutationGates = [FloorpWebExtensionID: FloorpWebExtensionLifecycleMutationGate]()
     private var lifecycleRevisions = [FloorpWebExtensionID: UInt64]()
@@ -1207,8 +1390,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         store: FloorpWebExtensionPackageStore,
         isCurrentComposition: @escaping CurrentCompositionCheck = { true },
         reconcile: @escaping Reconciler,
-        bundledPackageURL: @escaping BundledPackageURLResolver = { $0.packageURL() },
-        catalogItemsProvider: @escaping CatalogItemsProvider = { FloorpWebExtensionBundledCatalog.items },
+        // Fixture package resolution is injected by focused tests only. A
+        // production composition has no unsigned bundled-install fallback.
+        bundledPackageURL: @escaping BundledPackageURLResolver = { _ in nil },
+        // A missing composition must fail closed rather than publishing the
+        // legacy Stage 3 fixture catalog.
+        catalogItemsProvider: @escaping CatalogItemsProvider = { [] },
         signedBundledCatalogInstaller: @escaping SignedBundledCatalogInstaller = { _, _ in
             throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
         },
@@ -1217,6 +1404,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         catalogRecordAuthorization: @escaping CatalogRecordAuthorization = { _ in
             throw FloorpWebExtensionCatalogError.remoteCatalogDisabled
         },
+        unsignedPackageActivationPolicy: UnsignedPackageActivationPolicy = .reject,
         dnrExcludedTopLevelDomainsUpdater: @escaping DNRExcludedTopLevelDomainsUpdater = { _, _ in
             throw FloorpWebExtensionError.unsupported("DNR settings are unavailable")
         }
@@ -1230,16 +1418,26 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         self.signedBundledCatalogInstaller = signedBundledCatalogInstaller
         self.catalogUpdateConfirmation = catalogUpdateConfirmation
         self.catalogRecordAuthorization = catalogRecordAuthorization
+        self.unsignedPackageActivationPolicy = unsignedPackageActivationPolicy
         self.dnrExcludedTopLevelDomainsUpdater = dnrExcludedTopLevelDomainsUpdater
     }
 
     func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] {
-        await store.installedPackages().map { package in
-            FloorpWebExtensionSettingsInstalledPackage(
+        let packages = await store.installedPackages()
+        var settingsPackages = [FloorpWebExtensionSettingsInstalledPackage]()
+        settingsPackages.reserveCapacity(packages.count)
+        for package in packages {
+            let updateHistory = await store.catalogUpdateHistory(for: package.extensionID)
+            let catalogMetadata = package.catalogRecord?.metadata
+            settingsPackages.append(.init(
                 id: package.extensionID,
                 name: package.name,
                 version: package.version,
                 catalogGeneration: package.catalogRecord?.generation,
+                catalogDescription: catalogMetadata?.description,
+                catalogSource: catalogMetadata.map { "\($0.upstream) @ \($0.upstreamRevision)" },
+                catalogLicense: catalogMetadata?.license,
+                catalogHomepage: catalogMetadata?.sourceURL,
                 isEnabled: package.isEnabled,
                 isCatalogRevoked: package.isCatalogRevoked,
                 permissions: Self.settingsPermissionCategories(for: package.grants),
@@ -1264,9 +1462,11 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                     : "This extension is incompatible with the current Floorp build."),
                 optionsPage: Self.optionsPage(for: package),
                 dnrStatus: Self.settingsDNRStatus(for: package),
-                privateDNRStatus: nil
-            )
+                privateDNRStatus: nil,
+                updateHistory: updateHistory
+            ))
         }
+        return settingsPackages
     }
 
     func catalogItems() async -> [FloorpWebExtensionBundledCatalogItem] {
@@ -1373,6 +1573,9 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             try await signedBundledCatalogInstaller(self, item)
             return
         }
+        guard unsignedPackageActivationPolicy == .allowVerifiedFixtureForTesting else {
+            throw FloorpWebExtensionCatalogError.unsignedPackageRejected
+        }
         let gate = lifecycleMutationGate(for: item.id)
         await gate.acquire()
         defer { Task { await gate.release() } }
@@ -1427,6 +1630,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 "catalog installation authorization does not match artifact"
             )
         }
+        guard !store.profileKey.isPrivateBrowsing ||
+                artifact.record.metadata?.privateProfileCapability != .notSupported else {
+            throw FloorpWebExtensionCatalogError.artifactRejected(
+                "catalog package is not approved for private browsing"
+            )
+        }
         let extensionID = artifact.record.extensionID
         let gate = lifecycleMutationGate(for: extensionID)
         await gate.acquire()
@@ -1471,10 +1680,9 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     }
     // swiftlint:enable function_body_length
 
-    /// Shows the product-owned update confirmation before an immutable catalog
-    /// generation can replace an installed catalog generation. The default
-    /// confirmation denies, so an unreviewed composition cannot silently turn
-    /// a catalog refresh into an update.
+    /// Shows the product-owned update confirmation for every immutable catalog
+    /// replacement. A signed catalog never substitutes for this explicit
+    /// confirmation, even when the authority delta is empty.
     func authorizeCatalogUpdate(
         for artifact: FloorpWebExtensionVerifiedCatalogArtifact,
         source: FloorpWebExtensionCatalogSource = .managedRemote
@@ -1490,6 +1698,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
               installed.generation != artifact.record.localGeneration else {
             throw FloorpWebExtensionCatalogError.updateConsentRequired
         }
+        guard FloorpWebExtensionCatalogVerifier.semanticVersionIsStrictlyGreater(
+            artifact.record.version,
+            than: installed.version
+        ), let permissionDelta = try await store.catalogUpdatePermissionDelta(for: artifact) else {
+            throw FloorpWebExtensionCatalogError.updateConsentRequired
+        }
         let request = CatalogUpdateConfirmationRequest(
             extensionID: extensionID,
             extensionName: installed.name,
@@ -1497,7 +1711,9 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             installedGeneration: installed.generation,
             replacementVersion: artifact.record.version,
             replacementCatalogGeneration: artifact.record.generation,
-            replacementArtifactSHA256: artifact.record.artifactSHA256
+            replacementArtifactSHA256: artifact.record.artifactSHA256,
+            addedRequiredAPIPermissions: permissionDelta.addedRequiredAPIPermissions,
+            addedRequiredHostPermissions: permissionDelta.addedRequiredHostPermissions
         )
         guard await catalogUpdateConfirmation(request),
               isCurrentComposition(),
@@ -1741,6 +1957,7 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
               isCurrentComposition() else {
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
         }
+        try authorizeCatalogRecord(package)
         return .init(
             extensionID: extensionID,
             packageGeneration: expectedGeneration,
@@ -1830,7 +2047,22 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
               isCurrentComposition() else {
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
         }
-        try authorizeCatalogRecord(package)
+        do {
+            try authorizeCatalogRecord(package)
+        } catch {
+            // A rejected package may have reached this lifecycle endpoint
+            // before startup restoration runs (for example immediately after
+            // an app upgrade). Stop its live DNR policy before returning the
+            // error, then persist the same fail-closed state as reload.
+            try? await reconcile(extensionID, nil, .suspend)
+            if isCurrentComposition() {
+                await persistCatalogAuthorizationFailureIfNeeded(
+                    error,
+                    for: package
+                )
+            }
+            throw error
+        }
         guard try await dnrExcludedTopLevelDomainsUpdater(extensionID, domains),
               isCurrentComposition(),
               let currentPackage = await store.installedPackage(for: extensionID),
@@ -1977,7 +2209,13 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     private func authorizeCatalogRecord(
         _ package: FloorpWebExtensionInstalledPackage
     ) throws {
-        guard let record = package.catalogRecord else { return }
+        guard let record = package.catalogRecord else {
+            guard unsignedPackageActivationPolicy == .allowVerifiedFixtureForTesting,
+                  package.fixture != nil else {
+                throw FloorpWebExtensionCatalogError.unsignedPackageRejected
+            }
+            return
+        }
         guard !package.isCatalogRevoked else {
             throw FloorpWebExtensionCatalogError.revoked
         }

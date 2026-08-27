@@ -1,0 +1,182 @@
+name: Floorp Curated Catalog TestFlight Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: floorp-curated-catalog-testflight
+  cancel-in-progress: false
+
+env:
+  FLOORP_APP_ID: "6796708699"
+  FLOORP_TEAM_ID: "74c6a531-19e2-4ed5-a34b-915003cc10f9"
+  FLOORP_XCODE_CLOUD_WORKFLOW_ID: "f75adb00-1ca4-4b24-9bec-f6b5b943903a"
+  FLOORP_XCODE_CLOUD_WORKFLOW_NAME: "Floorp TestFlight Manual"
+  FLOORP_XCODE_CLOUD_REPOSITORY: "https://github.com/Floorp-Projects/floorp-ios.git"
+
+jobs:
+  deploy:
+    name: Verify and build the curated-catalog candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 195
+    environment: floorp-testflight
+
+    steps:
+      - name: Check out the selected immutable release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify protected tag and merged source identity
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = "tag"
+          [[ "$GITHUB_REF_NAME" =~ ^floorp-catalog-([0-9a-f]{40})$ ]]
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = "tag"
+          candidate_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          test "$candidate_sha" = "$tag_sha"
+          test "$GITHUB_REF_NAME" = "floorp-catalog-$candidate_sha"
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          main_sha="$(git rev-parse "refs/remotes/origin/main")"
+          test "$candidate_sha" = "$main_sha"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          printf 'FLOORP_CATALOG_CANDIDATE_SHA=%s\n' "$candidate_sha" >> "$GITHUB_ENV"
+          printf 'FLOORP_CATALOG_RELEASE_TAG=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+
+      - name: Verify signed curated catalog release contract
+        env:
+          FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256: ${{ secrets.FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256"
+          python3 -c 'import cryptography'
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+              -s scripts/webextensions/tests -v
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+              scripts.release.tests.test_curated_catalog_testflight_workflow \
+              scripts.release.tests.test_curated_catalog_xcode_cloud_post_clone \
+              scripts.release.tests.test_trigger_xcode_cloud
+          node scripts/webextensions/tests/curated_catalog_functional.mjs \
+            firefox-ios/Floorp/WebExtensions/CuratedCatalog
+          evidence="$RUNNER_TEMP/floorp-curated-catalog-release.json"
+          python3 scripts/webextensions/verify_signed_curated_catalog_release.py \
+            --catalog-root firefox-ios/Floorp/WebExtensions/CuratedCatalog \
+            --release-xcconfig firefox-ios/Client/Configuration/FloorpRelease.xcconfig \
+            --expected-root-public-key-sha256 "$FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256" \
+            --bundle-id app.floorp.Floorp \
+            --channel testflight \
+            --catalog-id floorp-ios-curated-testflight \
+            --expected-package-count 16 \
+            --artifact-origin https://catalog.floorp.invalid/fwea1/ \
+            --output "$evidence"
+          printf 'FLOORP_CURATED_CATALOG_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_DEVELOPER_API_KEY_JSON: ${{ secrets.APPLE_DEVELOPER_API_KEY_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$APPLE_DEVELOPER_API_KEY_JSON"
+          api_json="$RUNNER_TEMP/app-store-connect-api.json"
+          printf '%s' "$APPLE_DEVELOPER_API_KEY_JSON" > "$api_json"
+          /usr/bin/python3 - "$api_json" "$RUNNER_TEMP/AuthKey.p8" "$GITHUB_ENV" <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          source_path, key_path, env_path = sys.argv[1:]
+          value = json.loads(Path(source_path).read_text(encoding="utf-8"))
+          issuer = value.get("issuer_id") or value.get("issuerId") or value.get("issuer")
+          key_id = value.get("key_id") or value.get("keyId") or value.get("key")
+          private_key = value.get("private_key") or value.get("privateKey") or value.get("api_key")
+          if not all(isinstance(item, str) and item for item in (issuer, key_id, private_key)):
+              raise SystemExit("App Store Connect API key JSON must contain issuer_id, key_id, and private_key")
+          if not re.fullmatch(r"[A-Za-z0-9._-]+", issuer) or not re.fullmatch(r"[A-Za-z0-9._-]+", key_id):
+              raise SystemExit("App Store Connect API key identity is invalid")
+          if private_key.lstrip().startswith("-----BEGIN"):
+              raw = private_key.encode("utf-8")
+          else:
+              raw = base64.b64decode(private_key, validate=True)
+          if b"BEGIN PRIVATE KEY" not in raw:
+              raise SystemExit("App Store Connect private key is not a PKCS#8 PEM")
+          Path(key_path).write_bytes(raw)
+          os.chmod(key_path, 0o600)
+          with Path(env_path).open("a", encoding="utf-8") as handle:
+              handle.write(f"APP_STORE_CONNECT_ISSUER_ID={issuer}\n")
+              handle.write(f"APP_STORE_CONNECT_KEY_ID={key_id}\n")
+              handle.write(f"APP_STORE_CONNECT_PRIVATE_KEY_PATH={key_path}\n")
+          PY
+
+      - name: Start Xcode Cloud and require exact source completion
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/floorp-curated-catalog-xcode-cloud-run.json"
+          python3 scripts/release/trigger-xcode-cloud.py \
+            --workflow-id "$FLOORP_XCODE_CLOUD_WORKFLOW_ID" \
+            --expected-workflow-name "$FLOORP_XCODE_CLOUD_WORKFLOW_NAME" \
+            --expected-repository "$FLOORP_XCODE_CLOUD_REPOSITORY" \
+            --source-tag "$FLOORP_CATALOG_RELEASE_TAG" \
+            --expected-head "$FLOORP_CATALOG_CANDIDATE_SHA" \
+            --team-id "$FLOORP_TEAM_ID" \
+            --app-id "$FLOORP_APP_ID" \
+            --output "$output" \
+            --authorize-mutation \
+            --wait
+          printf 'FLOORP_CURATED_CATALOG_XCODE_CLOUD_RUN=%s\n' "$output" >> "$GITHUB_ENV"
+
+      - name: Publish candidate deployment summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            printf '%s\n\n' '## Floorp curated catalog TestFlight candidate'
+            code_span="$(printf '\140')"
+            printf -- '- Release tag: %s%s%s\n' \
+              "$code_span" "${FLOORP_CATALOG_RELEASE_TAG:-unverified}" "$code_span"
+            printf -- '- Source: %s%s%s\n' \
+              "$code_span" "${FLOORP_CATALOG_CANDIDATE_SHA:-unverified}" "$code_span"
+            if [[ -n "${FLOORP_CURATED_CATALOG_EVIDENCE:-}" && -f "$FLOORP_CURATED_CATALOG_EVIDENCE" ]]; then
+              /usr/bin/python3 - "$FLOORP_CURATED_CATALOG_EVIDENCE" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          print(f"- Curated catalog: `{report['catalogID']}` sequence `{report['sequence']}`")
+          print(f"- Curated catalog SHA-256: `{report['catalogSHA256']}`")
+          print(f"- Curated packages: `{report['packageCount']}` for app version `{report['marketingVersion']}`")
+          PY
+            else
+              echo '- Curated catalog release contract did not complete; no Apple credential step should have run.'
+            fi
+            if [[ -n "${FLOORP_CURATED_CATALOG_XCODE_CLOUD_RUN:-}" && -f "$FLOORP_CURATED_CATALOG_XCODE_CLOUD_RUN" ]]; then
+              /usr/bin/python3 - "$FLOORP_CURATED_CATALOG_XCODE_CLOUD_RUN" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          run = report.get("run") or {}
+          attributes = run.get("attributes") or {}
+          print(f"- Xcode Cloud run: `{run.get('id', 'unknown')}`")
+          print(f"- Progress: `{attributes.get('executionProgress', 'unknown')}`")
+          print(f"- Completion: `{attributes.get('completionStatus', 'unknown')}`")
+          print(f"- [Open App Store Connect build]({report['build_url']})")
+          PY
+            else
+              echo '- Xcode Cloud source-commit verification did not complete.'
+            fi
+            echo '- This workflow does not assign an external TestFlight group or submit Beta App Review.'
+          } >> "$GITHUB_STEP_SUMMARY"

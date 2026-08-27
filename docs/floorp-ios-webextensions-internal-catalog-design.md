@@ -4,6 +4,13 @@ Status: signed-bundled catalog implementation contract; P0 approvals remain
 required. This document does not authorize a remote package, an App Store
 release, or redistribution of a third-party extension.
 
+> 2026-08-27 safety clarification — a signed catalog authenticates fixed
+> artifacts but never substitutes for the user's native confirmation. Every
+> immutable replacement, including a same-or-reduced-authority security fix,
+> stays on the current generation until a product-owned dialog binds the
+> installed generation, replacement generation, artifact digest, and concrete
+> authority delta. This preserves the requested no-silent-update boundary.
+
 ## 1. 目的と決定
 
 Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
@@ -36,8 +43,10 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 - CRX、ZIP、共有シート、ローカルファイルからの公開版への任意導入。
 - カタログを通さない JavaScript、WASM、ルールリスト、CSS、画像の取得または
   更新。
-- network catalog や任意 bytes による既存拡張のサイレントな置換。すべての更新は新しい
-  不変世代として扱い、再検証後も明示的な native confirmation を必要とする。
+- network catalog や任意 bytes による既存拡張の置換。更新は必ず新しい不変世代とし、
+  catalog 署名・対象アプリ・期限・連番・失効・artifact/manifest/inventory digest と
+  package preflight をすべて再検証する。権限差分の有無にかかわらず、更新は native
+  confirmation なしに適用しない。
 - MV2、`webRequestBlocking`、DNR リダイレクト／ヘッダー変更、完全な
   Service Worker 互換。
 
@@ -62,6 +71,13 @@ apps、extensions、plug-ins の一般的 collection を表示する interface �
 また、Guideline 4.7 は binary 外で提供する plug-ins に index、個別の同意、privacy、
 年齢・reporting safeguards を求める。
 
+2026-08-27 に Apple の現行ガイドラインを再確認した結果、3.2.1(ii) は specific approved need
+に向けた第三者 app collection を robust editorial content とともに許容し得る。一方、現在の
+16 本は accessibility だけに限定されない appearance/privacy/productivity/developer-tools を含む
+横断的な collection であり、この条項を自己判断の例外根拠にしてはならない。4.7 は binary 外の
+software を対象にするため、FWEA1 が app bundle にあることだけで 4.7 の適用可否を決めることも
+できない。
+
 従って、13 本の第三者互換ビルドを含む 16 本の固定 catalog は、次のいずれかを immutable release evidence として
 記録するまで公開 candidate では無効のままとする。
 
@@ -72,6 +88,39 @@ apps、extensions、plug-ins の一般的 collection を表示する interface �
 
 これは verifier を弱める理由、任意 installer を公開する理由、または
 `managedRemoteSource` を有効化する理由にはならない。
+
+#### 2026-08-27: release-composition clarification
+
+署名済み public output をアプリ bundle に入れるため、managed signer は clean な
+reviewed source commit に対して `Artifacts/Signed/catalog.json` と root public key を
+発行し、その出力も通常の review/CI/main integration を通る必要がある。Xcode Cloud は
+source tree を archive するだけなので、main 統合後に signer を初めて実行しても、その
+最初の binary に output は存在しない。したがって pre-merge source-bound signing、または
+input を main に統合した後の public-output 専用の第 2 integration のどちらかを選ぶ。
+private key を CI、Xcode Cloud、アプリ bundle に置くことでこの順序を迂回してはならない。
+
+2026-08-27 の release-source binding 明確化として、catalog candidate は通常の
+`main` TestFlight dispatch に任意の switch を足して起動してはならない。候補専用の
+`Floorp Curated Catalog TestFlight Candidate` workflow は、現在の `origin/main` HEAD と同じ commit を
+指す、保護された annotated `floorp-catalog-<40 lowercase commit SHA>` tag からだけ手動起動する。この
+workflow は tag 名・annotation・tag commit・現在の `main` SHA の完全一致を Apple credential より先に確認し、protected release
+environment の独立 root public-key SHA-256 と canonical signed catalog、固定 16 record、
+bundle ID/channel/marketing version、全 FWEA1 digest/inventory/manifest を fail closed で
+照合する。Xcode Cloud には branch ではなく同じ tag を `sourceBranchOrTag` として渡す。さらに
+source-controlled post-clone gate が `CI_GIT_REF`、`CI_TAG`、`CI_COMMIT`、承認済み manual
+workflow/bundle ID、実 checkout、取得し直した current `origin/main` の全一致を `xcodebuild` 前に
+要求するため、tag move、stale main、auto start、別 workflow は archive 前に停止する。候補は
+非同期完了を許さず、完了した run の `sourceCommit.commitSha` が tag の commit と一致しなければ
+失敗にする。
+
+GitHub の tag protection / force-update 禁止と、Xcode Cloud の manual tag start、および build
+完了時に外部 TestFlight group / Beta App Review へ自動公開しない設定は repository 外の P0
+release gate である。候補 workflow 自身は外部 group 割当・Beta App Review 提出を行わない。
+それらは、source commit と processed App Store Connect build の readback を再確認した別の
+明示的 release action に限る。この gate は managed-signing approval や Apple/Legal approval の
+代替ではない。3.2.2(i) の書面上の reviewer path が得られない場合、より安全な代替は
+Floorp-managed 3 package に初回 scope を縮小することだが、これは Product/Maintainer の
+明示的な scope change が必要であり、16 package を自動的に置換してはならない。
 
 ## 2. セキュリティ原則
 
@@ -164,13 +213,15 @@ Floorp account / app attestation
 
 ### 3.3 更新・失効・オフライン動作
 
-- 新しい `generation` は新しい immutable artifact である。ネットワークからの
-  自動ダウンロード、catalog の再取得による silent update、古い generation への自動
-  rollback は行わない。
-- アプリ更新に同梱された catalog であっても、起動時に replacement を自動適用しない。
-  API、host pattern、DNR capability、private profile 可否が同一・縮小・増加のいずれでも、
-  old/new generation と artifact digest に束縛した native confirmation が完了するまで
-  導入しない。既存の同意を再利用しない。
+- 新しい `generation` は新しい immutable artifact である。任意 URL、任意 bytes、
+  extension-provided update URL、古い generation への自動 rollback は行わない。
+- replacement は署名・audience・期限・sequence・revocation・artifact/manifest/inventory
+  digest・FWEA1・preflight を満たすだけでは適用しない。candidate の semantic version が
+  導入済み version より厳密に大きいこと、old/new version・generation・artifact digest・
+  追加 API・追加 host（なければその旨）を表示する一回限りの native confirmation が成功する
+  ことを必須とする。同値または旧 version を指す後続署名カタログは fail closed する。
+- 更新履歴には generation、version、digest、適用時刻、`userApproved` を残す。catalog の
+  再取得、署名の有効性、権限差分が空であることは confirmation の代替にならない。
 - 緊急失効では該当 generation を無効化し、DNR、content script、background、
   popup／options の package origin を停止する。失効はロールバック先を指定せず、
   古い世代への自動復帰もしない。利用者が後で承認済みの別 generation を明示的に
@@ -323,10 +374,10 @@ P0 の署名方式と配布運用はまだ承認されていない。このた�
   には、永続化された scheduled revocation、確実な lifecycle wake-up、再起動・時計変更時の
   再評価、実機失効演習、P0 の再承認を同時に導入しなければならない。運用側は、それまで
   即時有効な失効だけを発行する。
-- 既存 catalog package の**すべての更新**は、現在の local generation、候補 catalog
-  generation、候補 artifact SHA-256、lifecycle revision に束縛した一回限りの native
-  confirmation がなければ拒否する。既定の confirmation は拒否である。catalog の再取得、
-  署名の有効性だけ、または任意の remote bytes から silent update を導かない。
+- 既存 catalog package の更新は、現在の local generation、候補 catalog generation、
+  候補 artifact SHA-256、lifecycle revision に束縛する。権限差分の有無にかかわらず一回限りの
+  native confirmation を必須とし、既定の confirmation は拒否である。catalog の再取得、署名の
+  有効性だけ、または任意の remote bytes から更新を導かない。
   `compatibilityProfiles` は表示用ではなく、固定 manifest が使う content-script／DNR／
   action-storage capability family をすべて含むことを導入時・再起動時に検査する。
 
