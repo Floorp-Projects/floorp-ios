@@ -54,6 +54,17 @@ def record() -> dict[str, object]:
             "sourceURL": "https://github.com/example/useful-extension",
             "upstream": "example/useful-extension",
             "upstreamRevision": "v1.0.0",
+            "disclosure": {
+                "attribution": "Original project: example/useful-extension.",
+                "privacySummary": "Review requested sites and permissions before installation.",
+                "publisherDisplayName": "Floorp iOS",
+                "reportRoute": "floorp-github-bug-report",
+                "retentionPolicy": "Settings remain in the selected profile until removal.",
+                "reviewEvidenceSHA256": "f" * 64,
+                "reviewedAt": "2026-08-26T00:00:00Z",
+                "sourceReviewSHA256": "0" * 64,
+                "supportRoute": "floorp-github-issues",
+            },
         },
         "resourceInventorySHA256": "e" * 64,
         "version": "1.0.0",
@@ -86,7 +97,7 @@ class SignCatalogTests(unittest.TestCase):
         )
         parsed = json.loads(catalog)
         self.assertEqual(catalog, SIGN.canonical_json(parsed))
-        self.assertEqual(parsed["schemaVersion"], 2)
+        self.assertEqual(parsed["schemaVersion"], 3)
         self.assertEqual(root_raw, root.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw))
 
         signing_key = parsed["signingKey"]
@@ -103,7 +114,12 @@ class SignCatalogTests(unittest.TestCase):
         invalid = record()
         invalid.pop("metadata")
         with self.assertRaisesRegex(SIGN.CatalogSigningError, "unexpected fields"):
-            SIGN.validate_record(invalid, schema=2)
+            SIGN.validate_record(invalid, schema=3)
+
+        invalid_disclosure = record()
+        invalid_disclosure["metadata"]["disclosure"]["supportRoute"] = "arbitrary-url"
+        with self.assertRaisesRegex(SIGN.CatalogSigningError, "supportRoute"):
+            SIGN.validate_record(invalid_disclosure, schema=3)
 
         root = Ed25519PrivateKey.generate()
         leaf = Ed25519PrivateKey.generate()
@@ -127,11 +143,11 @@ class SignCatalogTests(unittest.TestCase):
 
     def test_load_records_bytes_validates_the_supplied_snapshot(self) -> None:
         expected = record()
-        records = SIGN.load_records_bytes(json.dumps([expected]).encode("utf-8"), schema=2)
+        records = SIGN.load_records_bytes(json.dumps([expected]).encode("utf-8"), schema=3)
         self.assertEqual(records, [expected])
 
         with self.assertRaisesRegex(SIGN.CatalogSigningError, "non-empty JSON array"):
-            SIGN.load_records_bytes(b"[]", schema=2)
+            SIGN.load_records_bytes(b"[]", schema=3)
 
     def test_managed_signers_are_pinned_and_receive_only_the_protocol_request(self) -> None:
         root = Ed25519PrivateKey.generate()

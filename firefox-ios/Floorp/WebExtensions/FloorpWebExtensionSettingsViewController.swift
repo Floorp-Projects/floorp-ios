@@ -731,6 +731,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         let permissions = item.requestedPermissions.isEmpty
             ? "No additional capabilities"
             : item.requestedPermissions.map(\.title).joined(separator: ", ")
+        let disclosure = item.catalogRecord?.metadata?.disclosure
         let privateBrowsing: String
         switch item.catalogRecord?.metadata?.privateProfileCapability {
         case .some(.notSupported):
@@ -742,11 +743,19 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         }
         return [
             item.summary,
+            disclosure.map { "Publisher: \($0.publisherDisplayName)" },
+            disclosure.map { "Attribution: \($0.attribution)" },
+            item.catalogRecord.map { "Floorp review: version \(item.version), generation \($0.generation)" },
+            disclosure.map { "Reviewed: \($0.reviewedAt)" },
+            disclosure.map { "Privacy: \($0.privacySummary)" },
+            disclosure.map { "Data retention: \($0.retentionPolicy)" },
+            disclosure.map { _ in "Support: Floorp GitHub Issues" },
+            disclosure.map { _ in "Report a problem: Floorp GitHub bug report" },
             "Source: \(item.source)",
             "License: \(item.license)",
             "Capabilities: \(permissions)",
             privateBrowsing
-        ].filter { !$0.isEmpty }.joined(separator: "\n")
+        ].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     private func confirmInstall(_ item: FloorpWebExtensionBundledCatalogItem) {
@@ -774,7 +783,14 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         case .none:
             privateNotice = ""
         }
-        let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)\(siteNotice)\(privateNotice)"
+        let disclosureNotice: String
+        if let disclosure = item.catalogRecord?.metadata?.disclosure,
+           let catalogRecord = item.catalogRecord {
+            disclosureNotice = "\n\nPublisher: \(disclosure.publisherDisplayName)\n\(disclosure.attribution)\nFloorp reviewed version \(item.version), generation \(catalogRecord.generation) on \(disclosure.reviewedAt).\n\nPrivacy: \(disclosure.privacySummary)\nData retention: \(disclosure.retentionPolicy)\nSupport: Floorp GitHub Issues\nReport a problem: Floorp GitHub bug report"
+        } else {
+            disclosureNotice = ""
+        }
+        let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)\(siteNotice)\(privateNotice)\(disclosureNotice)"
         let alert = UIAlertController(title: "Install \(item.name)?", message: message, preferredStyle: .alert)
         alert.view.accessibilityIdentifier = "Floorp.WebExtensions.InstallConsent.\(item.id.rawValue)"
         catalogInstallConsentController = alert

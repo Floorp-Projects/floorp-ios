@@ -1,0 +1,21 @@
+{
+  "archiveRoot": "sindresorhus-refined-twitter-bceb444",
+  "archiveSHA256": "9db815c188f7ce413e0282774a29c0158775494ca6a08f408056d3831bdd7133",
+  "archiveURL": "https://api.github.com/repos/sindresorhus/refined-twitter/tarball/bceb4440811fa97caedd0c1e1d94a5a1bf868e2e",
+  "licenseMember": "license",
+  "licenseMemberSHA256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0",
+  "package": "Packages/thirdparty-refined-twitter",
+  "packageLicense": "Packages/thirdparty-refined-twitter/LICENSE",
+  "packageLicenseSHA256": "83e18a3855e0f8e811a878853a92ef01774f50cf44c3cb7877128e613b1edc9a",
+  "packageManifest": "Packages/thirdparty-refined-twitter/manifest.json",
+  "packageManifestSHA256": "908e5b3b97a27403d8ae7237fb7443684f7d2d9de392068ecf1476a6170fc72b",
+  "packageNotice": "Packages/thirdparty-refined-twitter/NOTICE",
+  "packageNoticeSHA256": "360e8d377350f6e47e38191e7811da7e8f8107fd7cac59e16ca84a7783ecb98e",
+  "packagePatch": "Packages/thirdparty-refined-twitter/PATCH.txt",
+  "packagePatchSHA256": "f2999c8435f25f5b348b140157296e9dbdd3f2a59b0a973ac0a77763557c39ea",
+  "reviewedSourceMembers": [
+    { "path": "source/manifest.json", "sha256": "35fc896903305ce2afd5f1a7fb5b297d97682a0aeee05d7baa2dcf8f1071bc62" },
+    { "path": "source/content.js", "sha256": "14f8a9e87618c708246c8c24319ca79750f46b26f935fe3f310ed7ac446406f9" }
+  ],
+  "schema": 2
+}

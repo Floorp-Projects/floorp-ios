@@ -25,7 +25,7 @@ class CuratedCatalogExternalTestFlightWorkflowTests(unittest.TestCase):
             "submit_beta_app_review:",
             "default: false",
             "inputs.submit_beta_app_review == true",
-            "environment: floorp-testflight",
+            "environment: floorp-curated-catalog-external-release",
         ):
             self.assertIn(required, self.workflow)
         self.assertNotIn("pull_request:", self.workflow)
@@ -49,8 +49,23 @@ class CuratedCatalogExternalTestFlightWorkflowTests(unittest.TestCase):
         )
         self.assertLess(
             self.workflow.index("- name: Verify the signed curated catalog release contract"),
+            self.workflow.index("- name: Verify P0 approvals before App Store Connect credentials"),
+        )
+        self.assertLess(
+            self.workflow.index("- name: Verify P0 approvals before App Store Connect credentials"),
             self.workflow.index("- name: Prepare App Store Connect API key"),
         )
+
+    def test_requires_a_protected_candidate_bound_p0_approval_before_credentials(self) -> None:
+        for required in (
+            "FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256",
+            "verify_curated_catalog_release_approval.py",
+            "docs/floorp-ios-webextensions-curated-catalog-release-approval.json",
+            "--catalog-evidence \"$FLOORP_CURATED_CATALOG_EVIDENCE\"",
+            "--expected-package-count 16",
+            "floorp-curated-catalog-p0-approval.json",
+        ):
+            self.assertIn(required, self.workflow)
 
     def test_binds_the_selected_processed_build_to_the_xcode_cloud_tag_run(self) -> None:
         for required in (

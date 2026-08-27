@@ -1,0 +1,21 @@
+{
+  "archiveRoot": "muan-github-dashboard-4aca2d4",
+  "archiveSHA256": "aaf2fa3e6ff1049d941a639cfbadf099929d002ccbb919756c5354b211511840",
+  "archiveURL": "https://api.github.com/repos/muan/github-dashboard/tarball/4aca2d4e9fe2e15ddfc044ed667514428f08b2da",
+  "licenseMember": "LICENSE",
+  "licenseMemberSHA256": "da00c2955742e85d06f80a34f5142f96a6167df2d8762b2dc5a998c9f919a715",
+  "package": "Packages/thirdparty-github-dashboard",
+  "packageLicense": "Packages/thirdparty-github-dashboard/LICENSE",
+  "packageLicenseSHA256": "8e8797aabe8dc441e77cada0e886e6062aa4aed4c7e67aaa8219dc8a85b188b8",
+  "packageManifest": "Packages/thirdparty-github-dashboard/manifest.json",
+  "packageManifestSHA256": "39b2d6231c0872c3e4cfdec899211dbfd816ec2b4ec1d73d309dcda41a9a296b",
+  "packageNotice": "Packages/thirdparty-github-dashboard/NOTICE",
+  "packageNoticeSHA256": "832557cb08882f9ad46a813721032f2c5c17683e38c6fc31e05fe1131b8b7fe2",
+  "packagePatch": "Packages/thirdparty-github-dashboard/PATCH.txt",
+  "packagePatchSHA256": "6e63c269d61bdcdd022f0313299e4ac8a146621fa35b361c6446046b31dcd72c",
+  "reviewedSourceMembers": [
+    { "path": "chrome/manifest.json", "sha256": "f4eb475f3a521d98186d9a211ab2261891eeef1690e1e16b075625bb3b9718a0" },
+    { "path": "dashboard.js", "sha256": "e49fda4c05da92325287f57bcf5cdaa74c4c655f23834a4b14a2cb609f0e54e8" }
+  ],
+  "schema": 2
+}

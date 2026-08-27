@@ -1,0 +1,21 @@
+{
+  "archiveRoot": "pratikabu-scrolltotop-ec3db46",
+  "archiveSHA256": "c0953a05d96775d98c69430a830e1690be260d961b6c90efb2d2cf293d48a6dd",
+  "archiveURL": "https://api.github.com/repos/pratikabu/scrolltotop/tarball/ec3db46647655c0949d33ab5ff5bfc250c5988ca",
+  "licenseMember": "LICENSE",
+  "licenseMemberSHA256": "ecd6f3b333b55caacfcdbf8ffd07a99bdd39b114004164b2a3a7a83c1bc2ef85",
+  "package": "Packages/thirdparty-scrolltotop",
+  "packageLicense": "Packages/thirdparty-scrolltotop/LICENSE",
+  "packageLicenseSHA256": "cc0e0ab84e5c08ae303c03d1515e7060152d6d07ab3e87d191ad75eeebf72ce8",
+  "packageManifest": "Packages/thirdparty-scrolltotop/manifest.json",
+  "packageManifestSHA256": "3a7526b1afc07009eab4ccaf3da9a151396700acd308b0faff93711e5a1112fa",
+  "packageNotice": "Packages/thirdparty-scrolltotop/NOTICE",
+  "packageNoticeSHA256": "395a8e54339fe03bed952bc063dd8a3f43e2c0fd7e9db42bd2ab47242e17cb66",
+  "packagePatch": "Packages/thirdparty-scrolltotop/PATCH.txt",
+  "packagePatchSHA256": "0a19c3cda8821f9cf79fb7c0200150254610463564d9e53975de3a21a50efad3",
+  "reviewedSourceMembers": [
+    { "path": "src/manifest.json", "sha256": "6fab32c82670af1ad26bb84a920d732659a3b4b4b31b02774bd093651a9a7a8e" },
+    { "path": "src/pratikabu-stt.js", "sha256": "7f80867334fde6eb24cbf2510e81ea2ca33d49b5435e60843b89f83836f73dae" }
+  ],
+  "schema": 2
+}

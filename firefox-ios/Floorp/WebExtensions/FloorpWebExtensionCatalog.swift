@@ -610,6 +610,28 @@ struct FloorpWebExtensionCatalogPackageMetadata: Codable, Hashable, Sendable {
         case floorpManaged = "floorp-managed"
     }
 
+    /// Signed product disclosures are display-only. They cannot add a route,
+    /// capability, host grant, or runtime communication path to a package.
+    struct Disclosure: Codable, Hashable, Sendable {
+        enum SupportRoute: String, Codable, Hashable, Sendable {
+            case floorpGitHubIssues = "floorp-github-issues"
+        }
+
+        enum ReportRoute: String, Codable, Hashable, Sendable {
+            case floorpGitHubBugReport = "floorp-github-bug-report"
+        }
+
+        let publisherDisplayName: String
+        let attribution: String
+        let privacySummary: String
+        let retentionPolicy: String
+        let reviewedAt: String
+        let reviewEvidenceSHA256: String
+        let sourceReviewSHA256: String
+        let supportRoute: SupportRoute
+        let reportRoute: ReportRoute
+    }
+
     let displayName: String
     let description: String
     let category: String
@@ -626,6 +648,9 @@ struct FloorpWebExtensionCatalogPackageMetadata: Codable, Hashable, Sendable {
     let privateProfileCapability: PrivateProfileCapability
     let modificationStatus: ModificationStatus
     let minimumFloorpBuild: String
+    /// Present only in schema-v3 catalog records. Schema-v2 remains readable
+    /// for a staged migration but cannot become a current release candidate.
+    let disclosure: Disclosure?
 }
 
 struct FloorpWebExtensionCatalogPackageRecord: Codable, Hashable, Sendable {
@@ -650,7 +675,7 @@ struct FloorpWebExtensionCatalogPackageRecord: Codable, Hashable, Sendable {
     let resourceInventorySHA256: String
     let compatibilityProfiles: Set<String>
     let availability: Availability
-    /// Required by catalog schema v2.  `nil` is retained only for accepted
+    /// Required by catalog schema v2 and later. `nil` is retained only for accepted
     /// schema-v1 records, which have no curated product presentation.
     let metadata: FloorpWebExtensionCatalogPackageMetadata?
 
@@ -941,7 +966,7 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             ]
         )
         let schemaVersion = try integer(root, "schemaVersion")
-        guard [1, 2].contains(schemaVersion),
+        guard [1, 2, 3].contains(schemaVersion),
               try string(root, "catalogID", maximumLength: 96) == configuration.catalogID else {
             throw FloorpWebExtensionCatalogError.invalidCatalog("unsupported catalog identity")
         }
@@ -1030,7 +1055,8 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
         let packages = try parsePackages(
             try array(root, "packages"),
             signingKeyID: signingKey.keyID,
-            schemaVersion: schemaVersion
+            schemaVersion: schemaVersion,
+            issuedAt: issuedAt
         )
         var acceptedGenerationArtifacts = Set<FloorpWebExtensionCatalogGenerationArtifactDigest>()
         for binding in previousState?.acceptedGenerationArtifacts ?? [] {
@@ -1217,7 +1243,8 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
     private func parsePackages(
         _ values: [FloorpWebExtensionCanonicalJSON.Value],
         signingKeyID: String,
-        schemaVersion: Int64
+        schemaVersion: Int64,
+        issuedAt: Date
     ) throws -> [FloorpWebExtensionCatalogPackageRecord] {
         guard values.count <= 128 else {
             throw FloorpWebExtensionCatalogError.invalidCatalog("too many packages")
@@ -1230,7 +1257,7 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
                 "extensionID", "generation", "version", "artifactURL", "artifactBytes", "artifactSHA256",
                 "manifestSHA256", "resourceInventorySHA256", "compatibilityProfiles", "availability"
             ]
-            if schemaVersion == 2 {
+            if schemaVersion >= 2 {
                 expectedFields.insert("metadata")
             }
             let object = try exactObject(value, keys: expectedFields)
@@ -1285,7 +1312,11 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
                 resourceInventorySHA256: try sha256(object, "resourceInventorySHA256"),
                 compatibilityProfiles: profiles,
                 availability: availability,
-                metadata: schemaVersion == 2 ? try parseMetadata(object["metadata"]) : nil
+                metadata: schemaVersion >= 2 ? try parseMetadata(
+                    object["metadata"],
+                    schemaVersion: schemaVersion,
+                    issuedAt: issuedAt
+                ) : nil
             )
             guard identifiers.insert(.init(extensionID: extensionID, generation: generation)).inserted else {
                 throw FloorpWebExtensionCatalogError.invalidCatalog("duplicate package generation")
@@ -1303,13 +1334,19 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
     }
 
     private func parseMetadata(
-        _ value: FloorpWebExtensionCanonicalJSON.Value?
+        _ value: FloorpWebExtensionCanonicalJSON.Value?,
+        schemaVersion: Int64,
+        issuedAt: Date
     ) throws -> FloorpWebExtensionCatalogPackageMetadata {
-        let object = try exactObject(value, keys: [
+        var expectedFields: Set<String> = [
             "displayName", "description", "category", "upstream", "upstreamRevision",
             "originalArtifactSHA256", "sourceURL", "license", "noticesSHA256", "permissions",
             "hostPermissions", "privateProfileCapability", "modificationStatus", "minimumFloorpBuild"
-        ])
+        ]
+        if schemaVersion == 3 {
+            expectedFields.insert("disclosure")
+        }
+        let object = try exactObject(value, keys: expectedFields)
         let displayName = try productText(object, "displayName", maximumLength: 256)
         let description = try productText(object, "description", maximumLength: 1_024)
         let category = try string(object, "category", maximumLength: 64)
@@ -1374,6 +1411,41 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
            Self.semanticVersionIsAtLeast(currentVersion, minimumVersion) else {
             throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package metadata capability")
         }
+        let disclosure: FloorpWebExtensionCatalogPackageMetadata.Disclosure?
+        if schemaVersion == 3 {
+            let disclosureObject = try exactObject(object["disclosure"], keys: [
+                "publisherDisplayName", "attribution", "privacySummary", "retentionPolicy", "reviewedAt",
+                "reviewEvidenceSHA256", "sourceReviewSHA256", "supportRoute", "reportRoute"
+            ])
+            let reviewedAt = try timestamp(
+                try string(disclosureObject, "reviewedAt", maximumLength: 20)
+            )
+            guard reviewedAt <= issuedAt,
+                  let supportRoute = FloorpWebExtensionCatalogPackageMetadata.Disclosure.SupportRoute(
+                      rawValue: try string(disclosureObject, "supportRoute", maximumLength: 64)
+                  ), let reportRoute = FloorpWebExtensionCatalogPackageMetadata.Disclosure.ReportRoute(
+                      rawValue: try string(disclosureObject, "reportRoute", maximumLength: 64)
+                  ) else {
+                throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package disclosure")
+            }
+            disclosure = .init(
+                publisherDisplayName: try productText(
+                    disclosureObject,
+                    "publisherDisplayName",
+                    maximumLength: 256
+                ),
+                attribution: try productText(disclosureObject, "attribution", maximumLength: 512),
+                privacySummary: try productText(disclosureObject, "privacySummary", maximumLength: 1_024),
+                retentionPolicy: try productText(disclosureObject, "retentionPolicy", maximumLength: 1_024),
+                reviewedAt: try string(disclosureObject, "reviewedAt", maximumLength: 20),
+                reviewEvidenceSHA256: try sha256(disclosureObject, "reviewEvidenceSHA256"),
+                sourceReviewSHA256: try sha256(disclosureObject, "sourceReviewSHA256"),
+                supportRoute: supportRoute,
+                reportRoute: reportRoute
+            )
+        } else {
+            disclosure = nil
+        }
         return .init(
             displayName: displayName,
             description: description,
@@ -1388,7 +1460,8 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             hostPermissions: hostPermissions,
             privateProfileCapability: privateProfileCapability,
             modificationStatus: modificationStatus,
-            minimumFloorpBuild: minimumFloorpBuild
+            minimumFloorpBuild: minimumFloorpBuild,
+            disclosure: disclosure
         )
     }
 

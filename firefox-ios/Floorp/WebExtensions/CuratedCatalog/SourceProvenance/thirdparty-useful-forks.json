@@ -1,0 +1,21 @@
+{
+  "archiveRoot": "useful-forks-useful-forks.github.io-8254d60",
+  "archiveSHA256": "b7bf5746a388c3e3ce30f81bd0e3532af30e0e2729d2786f86bc564478be315c",
+  "archiveURL": "https://api.github.com/repos/useful-forks/useful-forks.github.io/tarball/8254d60e85867c8f9d377e8cf48a03edea9faccf",
+  "licenseMember": "LICENSE",
+  "licenseMemberSHA256": "7820aaea592a089f95feaca9bb6da79f9a7511bbf11852f2abc36d64c2aa7412",
+  "package": "Packages/thirdparty-useful-forks",
+  "packageLicense": "Packages/thirdparty-useful-forks/LICENSE",
+  "packageLicenseSHA256": "7118d5757f3b3246c6a9a93e705a9a60b73b9187d626f4832d683ccd1a70a201",
+  "packageManifest": "Packages/thirdparty-useful-forks/manifest.json",
+  "packageManifestSHA256": "0312ad989c2915bba8001dd96fbaa29d066fb71a47af83677d6eed9a82ce265d",
+  "packageNotice": "Packages/thirdparty-useful-forks/NOTICE",
+  "packageNoticeSHA256": "eaf640d29db978a30824f0bf69c2cdf461015255aeedd0117476b0fa082d09b3",
+  "packagePatch": "Packages/thirdparty-useful-forks/PATCH.txt",
+  "packagePatchSHA256": "89a1a2b13f230aa21b61ec2cc147f6a193523eb72b2611f8f7a9608d74a957f7",
+  "reviewedSourceMembers": [
+    { "path": "plugin/manifest.json", "sha256": "2ad101c23eafa1dfd5b5396876694e50f7816d13a597d6f3872b58766e0b23ac" },
+    { "path": "plugin/useful-forks.js", "sha256": "c91c5752ae41e7ad14e75493bdc9471e1cb3d1334e0e1871d627cbb61bba941e" }
+  ],
+  "schema": 2
+}

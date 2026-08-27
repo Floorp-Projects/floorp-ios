@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,18 @@ SOURCE_OPTIONAL_KEYS = {
     "sourceProvenance",
 }
 SOURCE_KEYS = SOURCE_REQUIRED_KEYS | SOURCE_OPTIONAL_KEYS
+DISCLOSURE_ROOT_KEYS = {"schema", "packages"}
+DISCLOSURE_KEYS = {
+    "publisherDisplayName",
+    "attribution",
+    "privacySummary",
+    "retentionPolicy",
+    "reviewedAt",
+    "supportRoute",
+    "reportRoute",
+}
+DISCLOSURE_SUPPORT_ROUTES = {"floorp-github-issues"}
+DISCLOSURE_REPORT_ROUTES = {"floorp-github-bug-report"}
 
 
 class CuratedCatalogBuildError(RuntimeError):
@@ -114,8 +127,100 @@ def source_entries(path: Path) -> list[dict[str, Any]]:
         if source_provenance is not None:
             if not isinstance(source_provenance, str) or not source_provenance.strip():
                 raise CuratedCatalogBuildError(f"source entry {identifier} has invalid sourceProvenance")
+        elif value["modificationStatus"] == "compatibility-patched":
+            raise CuratedCatalogBuildError(
+                f"compatibility-patched source entry {identifier} requires sourceProvenance"
+            )
         result.append(value)
     return sorted(result, key=lambda item: (item["extensionID"], item["id"]))
+
+
+def _strict_timestamp(value: Any, *, field: str) -> str:
+    timestamp = require_string(value, field=field, maximum_length=20)
+    try:
+        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as error:
+        raise CuratedCatalogBuildError(f"{field} must use RFC3339 UTC seconds") from error
+    return timestamp
+
+
+def disclosure_entries(path: Path, sources: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Load signed, display-only disclosures for the exact curated source set.
+
+    The review evidence digest is generated only after immutable artifact
+    creation.  This input therefore contains only human-readable fields that
+    Product/Privacy can review without depending on a mutable UI map.
+    """
+    try:
+        raw = strict_json_loads(path.read_bytes(), label="curated catalog disclosures")
+    except (OSError, ValueError) as error:
+        raise CuratedCatalogBuildError(f"cannot read curated catalog disclosures: {error}") from error
+    if not isinstance(raw, dict) or set(raw) != DISCLOSURE_ROOT_KEYS or raw.get("schema") != 1:
+        raise CuratedCatalogBuildError("curated catalog disclosures have an unsupported schema")
+    packages = raw["packages"]
+    if not isinstance(packages, dict):
+        raise CuratedCatalogBuildError("curated catalog disclosure packages must be an object")
+    source_ids = {source["id"] for source in sources}
+    if set(packages) != source_ids:
+        raise CuratedCatalogBuildError("curated catalog disclosures do not exactly match source IDs")
+    result: dict[str, dict[str, str]] = {}
+    for source_id, value in packages.items():
+        if not isinstance(value, dict) or set(value) != DISCLOSURE_KEYS:
+            raise CuratedCatalogBuildError(f"curated catalog disclosure {source_id} has unexpected fields")
+        disclosure = {
+            "publisherDisplayName": require_string(
+                value["publisherDisplayName"],
+                field=f"curated catalog disclosure {source_id}.publisherDisplayName",
+                maximum_length=256,
+            ),
+            "attribution": require_string(
+                value["attribution"],
+                field=f"curated catalog disclosure {source_id}.attribution",
+                maximum_length=512,
+            ),
+            "privacySummary": require_string(
+                value["privacySummary"],
+                field=f"curated catalog disclosure {source_id}.privacySummary",
+                maximum_length=1_024,
+            ),
+            "retentionPolicy": require_string(
+                value["retentionPolicy"],
+                field=f"curated catalog disclosure {source_id}.retentionPolicy",
+                maximum_length=1_024,
+            ),
+            "reviewedAt": _strict_timestamp(
+                value["reviewedAt"],
+                field=f"curated catalog disclosure {source_id}.reviewedAt",
+            ),
+            "supportRoute": require_string(
+                value["supportRoute"],
+                field=f"curated catalog disclosure {source_id}.supportRoute",
+                maximum_length=64,
+            ),
+            "reportRoute": require_string(
+                value["reportRoute"],
+                field=f"curated catalog disclosure {source_id}.reportRoute",
+                maximum_length=64,
+            ),
+        }
+        if disclosure["supportRoute"] not in DISCLOSURE_SUPPORT_ROUTES:
+            raise CuratedCatalogBuildError(f"curated catalog disclosure {source_id} has invalid support route")
+        if disclosure["reportRoute"] not in DISCLOSURE_REPORT_ROUTES:
+            raise CuratedCatalogBuildError(f"curated catalog disclosure {source_id} has invalid report route")
+        result[source_id] = disclosure
+    return result
+
+
+def source_review_digest(source: dict[str, Any], provenance: dict[str, str] | None) -> str:
+    """Return a stable review-lineage fingerprint, never used for execution."""
+    if provenance is not None:
+        return provenance["sha256"]
+    return sha256(canonical_json({
+        "license": source["license"],
+        "package": source["package"],
+        "sourceURL": source["sourceURL"],
+        "upstreamRevision": source["upstreamRevision"],
+    }))
 
 
 def notices_digest(package: Path, *, modification_status: str) -> str:
@@ -156,6 +261,7 @@ def metadata_hosts(manifest: dict[str, Any]) -> list[str]:
 
 def build(*, sources_path: Path, output_directory: Path, generation_prefix: str) -> list[dict[str, Any]]:
     sources = source_entries(sources_path)
+    disclosures = disclosure_entries(sources_path.parent / "catalog-disclosures.json", sources)
     resolved_output = output_directory.resolve()
     unsafe_outputs = {Path("/").resolve(), REPOSITORY_ROOT.resolve(), Path.home().resolve()}
     if resolved_output in unsafe_outputs:
@@ -207,6 +313,25 @@ def build(*, sources_path: Path, output_directory: Path, generation_prefix: str)
                 shutil.rmtree(final_review)
             os.replace(build_directory, final_review)
             original_digest = source.get("originalArtifactSHA256") or result.source_digest
+            notices_sha256 = notices_digest(
+                package,
+                modification_status=source["modificationStatus"],
+            )
+            review_source_sha256 = source_review_digest(source, provenance)
+            disclosure = disclosures[source["id"]]
+            review_evidence_sha256 = sha256(canonical_json({
+                "artifactSHA256": result.artifact_digest,
+                "manifestSHA256": result.manifest_digest,
+                "noticesSHA256": notices_sha256,
+                "resourceInventorySHA256": result.inventory_digest,
+                "source": {
+                    "id": source["id"],
+                    "sourceReviewSHA256": review_source_sha256,
+                    "sourceURL": source["sourceURL"],
+                    "upstreamRevision": source["upstreamRevision"],
+                },
+                "userDisclosure": disclosure,
+            }))
             record = {
                 "extensionID": source["extensionID"],
                 "generation": generation,
@@ -227,15 +352,17 @@ def build(*, sources_path: Path, output_directory: Path, generation_prefix: str)
                     "originalArtifactSHA256": original_digest,
                     "sourceURL": source["sourceURL"],
                     "license": source["license"],
-                    "noticesSHA256": notices_digest(
-                        package,
-                        modification_status=source["modificationStatus"],
-                    ),
+                    "noticesSHA256": notices_sha256,
                     "permissions": metadata_permissions(result.manifest),
                     "hostPermissions": metadata_hosts(result.manifest),
                     "privateProfileCapability": source["privateProfileCapability"],
                     "modificationStatus": source["modificationStatus"],
                     "minimumFloorpBuild": "0.3.0",
+                    "disclosure": {
+                        **disclosure,
+                        "reviewEvidenceSHA256": review_evidence_sha256,
+                        "sourceReviewSHA256": review_source_sha256,
+                    },
                 },
             }
             records.append(record)

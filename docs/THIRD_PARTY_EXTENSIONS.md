@@ -15,15 +15,21 @@ artifact SHA-256, manifest/inventory digests, notices digest, and inspection
 result are in `CuratedCatalog/review-index.json` and
 `Review/<id>/inspection.json`.
 
-For `floorp.thirdparty.very-good-adblock`, the review-only
-`SourceProvenance/thirdparty-very-good-adblock.json` declares the expected
-archive digest, license, exact `src/rules/static-rules.ts` member, and the
-sixteen retained upstream rule IDs. The managed signer must receive the real
-quarantined archive, re-verify this binding, and preserve its separate
-provenance-evidence output before a candidate can rely on it. The regression
-test uses a synthetic archive to test rejection behavior; it is not proof that
-a candidate archive was re-fetched. `verify_curated_source_provenance.py` is
-not packaged in the app and performs no runtime fetch.
+All 13 third-party compatibility builds carry a review-only
+`SourceProvenance/<id>.json` record. For the twelve generic compatibility
+builds it pins the GitHub archive URL/root/SHA-256, upstream license member,
+reviewed source-member hashes, and the local `LICENSE`, `NOTICE`,
+`manifest.json`, and `PATCH.txt` derivation hashes. The managed signer must
+receive exactly one real quarantined archive for each of those 13 records,
+re-verify every binding, and preserve a separate provenance-evidence output
+before a candidate can rely on them. For
+`floorp.thirdparty.very-good-adblock`, the specialized record also requires
+the exact `src/rules/static-rules.ts` member and its sixteen retained upstream
+static `block` rule mappings. Synthetic regression archives test reject paths;
+they are not proof that a candidate archive was re-fetched.
+`verify_curated_source_provenance.py` is not packaged in the app and performs
+no runtime fetch. These technical records do not themselves approve
+redistribution, privacy, support, or author contact obligations.
 
 | Floorp ID | Upstream / pinned revision | License | Retained local function | Legal release state |
 | --- | --- | --- | --- | --- |

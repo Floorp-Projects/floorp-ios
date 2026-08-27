@@ -61,6 +61,10 @@ class CuratedCatalogTestFlightWorkflowTests(unittest.TestCase):
             self.catalog_workflow.index("- name: Verify signed curated catalog release contract"),
         )
 
+    def test_candidate_uses_its_own_protected_environment(self) -> None:
+        self.assertIn("environment: floorp-curated-catalog-candidate", self.catalog_workflow)
+        self.assertNotIn("environment: floorp-testflight", self.catalog_workflow)
+
     def test_candidate_never_submits_external_beta_automatically(self) -> None:
         self.assertIn(
             "This workflow does not assign an external TestFlight group or submit Beta App Review.",
@@ -82,7 +86,11 @@ class CuratedCatalogTestFlightWorkflowTests(unittest.TestCase):
             "Run curated WebExtensions catalog contracts",
             "scripts.webextensions.tests.test_build_curated_catalog",
             "scripts.webextensions.tests.test_curated_catalog_source_provenance",
+            "scripts.webextensions.tests.test_sign_catalog",
+            "scripts.webextensions.tests.test_sign_curated_catalog",
+            "scripts.webextensions.tests.test_verify_signed_curated_catalog_release",
             "scripts.release.tests.test_curated_catalog_testflight_workflow",
+            "scripts.release.tests.test_verify_curated_catalog_release_approval",
             "scripts.release.tests.test_curated_catalog_xcode_cloud_post_clone",
             "scripts.release.tests.test_trigger_xcode_cloud",
             "node scripts/webextensions/tests/curated_catalog_functional.mjs",

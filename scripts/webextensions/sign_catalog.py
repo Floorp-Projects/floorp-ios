@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from ingest_extension import IngestionError, canonical_json, sha256, strict_json_loads
 
 
-CURRENT_SCHEMA = 2
+CURRENT_SCHEMA = 3
 PACKAGE_KEYS_V1 = {
     "artifactBytes",
     "artifactSHA256",
@@ -42,6 +42,7 @@ PACKAGE_KEYS_V1 = {
     "version",
 }
 PACKAGE_KEYS_V2 = PACKAGE_KEYS_V1 | {"metadata"}
+PACKAGE_KEYS_V3 = PACKAGE_KEYS_V2
 METADATA_KEYS_V2 = {
     "category",
     "description",
@@ -57,6 +58,18 @@ METADATA_KEYS_V2 = {
     "sourceURL",
     "upstream",
     "upstreamRevision",
+}
+METADATA_KEYS_V3 = METADATA_KEYS_V2 | {"disclosure"}
+DISCLOSURE_KEYS_V3 = {
+    "attribution",
+    "privacySummary",
+    "publisherDisplayName",
+    "reportRoute",
+    "retentionPolicy",
+    "reviewEvidenceSHA256",
+    "reviewedAt",
+    "sourceReviewSHA256",
+    "supportRoute",
 }
 MANAGED_SIGNER_PROTOCOL_VERSION = 1
 ROOT_CERTIFICATE_PURPOSE = "floorp-curated-catalog/root-leaf-certificate/v1"
@@ -347,7 +360,14 @@ def validate_string_list(value: Any, *, field: str, maximum_count: int = 128) ->
 def validate_record(value: Any, *, schema: int) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise CatalogSigningError("catalog record must be an object")
-    expected = PACKAGE_KEYS_V2 if schema == 2 else PACKAGE_KEYS_V1
+    if schema == 1:
+        expected = PACKAGE_KEYS_V1
+    elif schema == 2:
+        expected = PACKAGE_KEYS_V2
+    elif schema == 3:
+        expected = PACKAGE_KEYS_V3
+    else:
+        raise CatalogSigningError("unsupported schema")
     if set(value) != expected:
         raise CatalogSigningError(f"catalog record has unexpected fields: {sorted(set(value) ^ expected)}")
     extension_id = value["extensionID"]
@@ -369,9 +389,10 @@ def validate_record(value: Any, *, schema: int) -> dict[str, Any]:
         raise CatalogSigningError("catalog record compatibilityProfiles is invalid")
     if value["availability"] not in {"available", "updateAvailable", "withdrawn", "revoked"}:
         raise CatalogSigningError("catalog record availability is invalid")
-    if schema == 2:
+    if schema >= 2:
         metadata = value["metadata"]
-        if not isinstance(metadata, dict) or set(metadata) != METADATA_KEYS_V2:
+        metadata_keys = METADATA_KEYS_V3 if schema == 3 else METADATA_KEYS_V2
+        if not isinstance(metadata, dict) or set(metadata) != metadata_keys:
             raise CatalogSigningError("catalog record metadata has unexpected fields")
         for field in ("displayName", "description", "category", "upstream", "upstreamRevision", "license", "minimumFloorpBuild"):
             if not isinstance(metadata[field], str) or not metadata[field].strip() or len(metadata[field]) > 512:
@@ -386,6 +407,32 @@ def validate_record(value: Any, *, schema: int) -> dict[str, Any]:
             raise CatalogSigningError("catalog metadata privateProfileCapability is invalid")
         if metadata["modificationStatus"] not in {"unmodified", "compatibility-patched", "floorp-managed"}:
             raise CatalogSigningError("catalog metadata modificationStatus is invalid")
+        if schema == 3:
+            disclosure = metadata["disclosure"]
+            if not isinstance(disclosure, dict) or set(disclosure) != DISCLOSURE_KEYS_V3:
+                raise CatalogSigningError("catalog disclosure has unexpected fields")
+            for field, maximum_length in (
+                ("publisherDisplayName", 256),
+                ("attribution", 512),
+                ("privacySummary", 1_024),
+                ("retentionPolicy", 1_024),
+            ):
+                if (
+                    not isinstance(disclosure[field], str)
+                    or not disclosure[field].strip()
+                    or len(disclosure[field]) > maximum_length
+                ):
+                    raise CatalogSigningError(f"catalog disclosure {field} is invalid")
+            try:
+                parse_timestamp(disclosure["reviewedAt"])
+            except CatalogSigningError as error:
+                raise CatalogSigningError("catalog disclosure reviewedAt is invalid") from error
+            for field in ("reviewEvidenceSHA256", "sourceReviewSHA256"):
+                validate_sha256(disclosure[field], field=f"catalog disclosure {field}")
+            if disclosure["supportRoute"] != "floorp-github-issues":
+                raise CatalogSigningError("catalog disclosure supportRoute is invalid")
+            if disclosure["reportRoute"] != "floorp-github-bug-report":
+                raise CatalogSigningError("catalog disclosure reportRoute is invalid")
     return value
 
 
@@ -431,7 +478,7 @@ def signed_catalog(
     leaf_not_after: str,
     schema: int = CURRENT_SCHEMA,
 ) -> tuple[bytes, bytes]:
-    if schema not in {1, 2}:
+    if schema not in {1, 2, 3}:
         raise CatalogSigningError("unsupported schema")
     safe_id(root_key_id)
     safe_id(leaf_key_id)
@@ -536,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
     result.add_argument("--expires-at", required=True)
     result.add_argument("--leaf-not-before", required=True)
     result.add_argument("--leaf-not-after", required=True)
-    result.add_argument("--schema", type=int, default=CURRENT_SCHEMA, choices=(1, 2))
+    result.add_argument("--schema", type=int, default=CURRENT_SCHEMA, choices=(1, 2, 3))
     return result
 
 

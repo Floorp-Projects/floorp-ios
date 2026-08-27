@@ -1,0 +1,22 @@
+{
+  "archiveRoot": "infokiller-web-search-navigator-b3364e7",
+  "archiveSHA256": "fb3b398f3ac11eeb12a2a9dbcd329ee461c99b46b87d44a67e70dcd3d3e8ec51",
+  "archiveURL": "https://api.github.com/repos/infokiller/web-search-navigator/tarball/b3364e74621f083eafddac7801eb2e8316bd3fad",
+  "licenseMember": "LICENSE",
+  "licenseMemberSHA256": "d50456e4cc4efc3cef081225550e00da53a0798585891c54f692a3d348bfedc4",
+  "package": "Packages/thirdparty-web-search-navigator",
+  "packageLicense": "Packages/thirdparty-web-search-navigator/LICENSE",
+  "packageLicenseSHA256": "3d15ed0cbcaffa050011d4bd333f2872d67377a030fcbff2b7be157cabf050c4",
+  "packageManifest": "Packages/thirdparty-web-search-navigator/manifest.json",
+  "packageManifestSHA256": "57c7146b09ef09ba2b79a3ff93efd62f3753585adb76b7233d63d56e56f8ef8d",
+  "packageNotice": "Packages/thirdparty-web-search-navigator/NOTICE",
+  "packageNoticeSHA256": "b0e30931f9d87fc169c5a4debeba46f3cf4e399a99fefe6cf9a7429c43fad4d1",
+  "packagePatch": "Packages/thirdparty-web-search-navigator/PATCH.txt",
+  "packagePatchSHA256": "db81a8cb958b10d2310c8ffe08cbee8add14aa3f5d0da410b3a3ea1dd295d891",
+  "reviewedSourceMembers": [
+    { "path": "src/manifest.json", "sha256": "b9eda8cb04aae8c40e64d95627d07cf21791d119acc695334f53e5944b185a9f" },
+    { "path": "src/main.js", "sha256": "947d8f42f4728f62eff11e1cf5a0065aae3f6e8841a6bf3d3a448e71f9dbac72" },
+    { "path": "src/search_engines.js", "sha256": "0b9853362b942ea61e189a1a1e8ffe8a4e7c961042b053f77aa9a7242c39251a" }
+  ],
+  "schema": 2
+}

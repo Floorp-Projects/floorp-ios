@@ -37,6 +37,21 @@ class SignCuratedCatalogTests(unittest.TestCase):
         with self.assertRaises(SIGN.CuratedCatalogSigningError):
             SIGN._require_catalog_checkout(repository_root, repository_root / "unrelated-catalog")
 
+    def test_signer_requires_one_quarantined_archive_for_each_compatibility_source(self) -> None:
+        catalog_root = Path(__file__).parents[3] / "firefox-ios/Floorp/WebExtensions/CuratedCatalog"
+        sources = SIGN._load_sources(catalog_root)
+        expected = {
+            source["id"] for source in sources
+            if source["modificationStatus"] == "compatibility-patched"
+        }
+        self.assertEqual(len(expected), 13)
+        with self.assertRaisesRegex(SIGN.CuratedCatalogSigningError, "exactly match"):
+            SIGN.verify_release_inputs(
+                catalog_root=catalog_root,
+                records_path=catalog_root / "catalog-input.json",
+                source_archives={},
+            )
+
     def test_output_contract_rejects_shipped_or_overlapping_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)

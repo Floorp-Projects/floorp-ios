@@ -83,12 +83,16 @@ python3 scripts/webextensions/build_curated_catalog.py \
 The builder requires 12–128 source records, unique IDs, a bounded HTTPS source
 URL, an immutable upstream revision, a license, a private-profile declaration,
 and a package-local `LICENSE` and `NOTICE`. Compatibility-patched packages also
-require `PATCH.txt`. It produces:
+require `PATCH.txt` and a review-only `SourceProvenance/<id>.json`; the current
+fixed candidate has exactly thirteen such records. It also requires the exact
+16-entry `catalog-disclosures.json`, which produces schema-v3 signed,
+display-only publisher/attribution/review/privacy/retention/fixed-route
+metadata. It produces:
 
 ```text
 Artifacts/<id>.fwea1       normalized execution artifact
 Review/<id>/inspection.json, normalized/, inventory/  review evidence
-catalog-input.json         deterministic unsigned signed-record input
+catalog-input.json         deterministic schema-v3 unsigned signed-record input
 review-index.json          provenance index
 ```
 
@@ -103,7 +107,7 @@ The production handoff for this catalog is
 `scripts/webextensions/sign_curated_catalog.py`: it accepts the deterministic
 record input and managed paths to root/leaf PKCS#8 Ed25519 keys **only after**
 it has checked a clean, exact source commit and every review-quarantined source
-archive declared by `sourceProvenance`. It binds the catalog root to that same
+archive declared by `sourceProvenance` (all thirteen compatibility builds). It binds the catalog root to that same
 Git checkout, parses the verified `catalog-input.json` byte snapshot without
 reopening it, and rechecks checkout cleanliness immediately before private keys
 are read. It writes only
@@ -150,3 +154,15 @@ ordinary TestFlight workflow run is not evidence for this catalog
 candidate. The protected root digest is intentionally not inferred from
 `root-public-key.txt`; otherwise a source change could replace both public files
 and make a self-signed catalog appear valid.
+
+The separate `Floorp Curated Catalog External TestFlight` workflow may mutate
+App Store Connect only after the same release verifier has succeeded and
+`verify_curated_catalog_release_approval.py` has accepted
+`docs/floorp-ios-webextensions-curated-catalog-release-approval.json`. The
+approval file must be canonical, `approved`, bound to the exact catalog/input/
+root/leaf/sequence/version/expiry evidence, and have its raw SHA-256 stored as
+`FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256` in the protected
+`floorp-curated-catalog-external-release` environment. The checked-in
+`pending` template is intentionally a release block. This record contains
+opaque evidence IDs for Legal, Privacy, Security, Product, and Release; it
+does not expose identities, keys, or source archives.

@@ -67,6 +67,12 @@ class CuratedCatalogBuildTests(unittest.TestCase):
                 metadata = record["metadata"]
                 self.assertEqual(metadata["minimumFloorpBuild"], "0.3.0")
                 self.assertRegex(metadata["noticesSHA256"], r"^[0-9a-f]{64}$")
+                disclosure = metadata["disclosure"]
+                self.assertEqual(disclosure["publisherDisplayName"], "Floorp iOS")
+                self.assertEqual(disclosure["supportRoute"], "floorp-github-issues")
+                self.assertEqual(disclosure["reportRoute"], "floorp-github-bug-report")
+                self.assertRegex(disclosure["reviewEvidenceSHA256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(disclosure["sourceReviewSHA256"], r"^[0-9a-f]{64}$")
 
             catalog_input = json.loads((output / "catalog-input.json").read_bytes())
             self.assertEqual(catalog_input, records)
@@ -79,6 +85,14 @@ class CuratedCatalogBuildTests(unittest.TestCase):
         self.assertEqual(len(managed), 3)
         for source in managed:
             self.assertRegex(source["upstreamRevision"], r"^[0-9a-f]{40}$")
+
+    def test_disclosures_must_cover_the_exact_catalog_source_set(self) -> None:
+        sources = BUILD.source_entries(CATALOG_ROOT / "catalog-sources.json")
+        with tempfile.TemporaryDirectory() as directory:
+            disclosure_path = Path(directory) / "catalog-disclosures.json"
+            disclosure_path.write_text('{"schema":1,"packages":{}}', encoding="utf-8")
+            with self.assertRaisesRegex(BUILD.CuratedCatalogBuildError, "exactly match source IDs"):
+                BUILD.disclosure_entries(disclosure_path, sources)
 
 
 if __name__ == "__main__":

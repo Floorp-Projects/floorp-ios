@@ -47,7 +47,7 @@ jobs:
       inputs.submit_beta_app_review == true
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    environment: floorp-testflight
+    environment: floorp-curated-catalog-external-release
 
     steps:
       - name: Check out the selected immutable candidate tag
@@ -107,6 +107,21 @@ jobs:
             --output "$evidence"
           printf 'FLOORP_CATALOG_MARKETING_VERSION=%s\n' "$marketing_version" >> "$GITHUB_ENV"
           printf 'FLOORP_CURATED_CATALOG_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+
+      - name: Verify P0 approvals before App Store Connect credentials
+        env:
+          FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256: ${{ secrets.FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256"
+          evidence="$RUNNER_TEMP/floorp-curated-catalog-p0-approval.json"
+          python3 scripts/release/verify_curated_catalog_release_approval.py \
+            --approval docs/floorp-ios-webextensions-curated-catalog-release-approval.json \
+            --expected-approval-sha256 "$FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256" \
+            --catalog-evidence "$FLOORP_CURATED_CATALOG_EVIDENCE" \
+            --expected-package-count 16 \
+            --output "$evidence"
+          printf 'FLOORP_CURATED_CATALOG_P0_APPROVAL_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
 
       - name: Prepare App Store Connect API key
         env:
@@ -285,6 +300,7 @@ jobs:
           name: floorp-curated-catalog-external-testflight-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/floorp-curated-catalog-release.json
+            ${{ runner.temp }}/floorp-curated-catalog-p0-approval.json
             ${{ runner.temp }}/floorp-curated-catalog-submission-binding.json
             ${{ runner.temp }}/floorp-curated-catalog-external-testflight/external-beta-submission.json
             ${{ runner.temp }}/floorp-curated-catalog-external-testflight/asc-before.json

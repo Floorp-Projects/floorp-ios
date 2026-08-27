@@ -22,7 +22,7 @@ jobs:
     name: Verify and build the curated-catalog candidate
     runs-on: ubuntu-latest
     timeout-minutes: 195
-    environment: floorp-testflight
+    environment: floorp-curated-catalog-candidate
 
     steps:
       - name: Check out the selected immutable release tag

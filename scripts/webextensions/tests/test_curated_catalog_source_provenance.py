@@ -31,9 +31,14 @@ class CuratedCatalogSourceProvenanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         sources = json.loads((CATALOG_ROOT / "catalog-sources.json").read_text(encoding="utf-8"))
+        cls.sources = sources
         cls.source = next(source for source in sources if source["id"] == "thirdparty-very-good-adblock")
+        cls.compatibility_source = next(source for source in sources if source["id"] == "thirdparty-utm-stripper")
         cls.provenance = json.loads(
             (CATALOG_ROOT / cls.source["sourceProvenance"]).read_text(encoding="utf-8")
+        )
+        cls.compatibility_provenance = json.loads(
+            (CATALOG_ROOT / cls.compatibility_source["sourceProvenance"]).read_text(encoding="utf-8")
         )
 
     @staticmethod
@@ -54,6 +59,76 @@ class CuratedCatalogSourceProvenanceTests(unittest.TestCase):
         result = PROVENANCE.validate_declared_provenance(CATALOG_ROOT, self.source)
         self.assertEqual(result["path"], self.source["sourceProvenance"])
         self.assertRegex(result["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_every_compatibility_package_requires_a_review_only_provenance_record(self) -> None:
+        compatibility_sources = [
+            source for source in self.sources
+            if source["modificationStatus"] == "compatibility-patched"
+        ]
+        self.assertEqual(len(compatibility_sources), 13)
+        for source in compatibility_sources:
+            self.assertIn("sourceProvenance", source)
+            result = PROVENANCE.validate_declared_provenance(CATALOG_ROOT, source)
+            self.assertEqual(result["path"], source["sourceProvenance"])
+
+    def test_compatibility_archive_verifier_binds_reviewed_members_and_local_package(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "source.tar"
+            fixture = copy.deepcopy(self.compatibility_provenance)
+            root = "fixture-root"
+            members = [(fixture["licenseMember"], b"license")]
+            for index, member in enumerate(fixture["reviewedSourceMembers"]):
+                payload = f"reviewed-member-{index}".encode("ascii")
+                members.append((member["path"], payload))
+                member["sha256"] = hashlib.sha256(payload).hexdigest()
+            self._write_archive(archive, root, members)
+            fixture["archiveRoot"] = root
+            fixture["archiveSHA256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+            fixture["licenseMemberSHA256"] = hashlib.sha256(b"license").hexdigest()
+            source = copy.deepcopy(self.compatibility_source)
+            source["originalArtifactSHA256"] = fixture["archiveSHA256"]
+            original_loader = PROVENANCE._load_provenance
+            try:
+                PROVENANCE._load_provenance = lambda _root, _source: (
+                    fixture,
+                    CATALOG_ROOT / self.compatibility_source["sourceProvenance"],
+                )
+                result = PROVENANCE.verify_archive(CATALOG_ROOT, source, archive)
+            finally:
+                PROVENANCE._load_provenance = original_loader
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(
+            result["reviewedMemberCount"],
+            len(self.compatibility_provenance["reviewedSourceMembers"]),
+        )
+
+    def test_compatibility_archive_verifier_rejects_member_digest_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "source.tar"
+            fixture = copy.deepcopy(self.compatibility_provenance)
+            root = "fixture-root"
+            members = [(fixture["licenseMember"], b"license")]
+            for index, member in enumerate(fixture["reviewedSourceMembers"]):
+                payload = f"reviewed-member-{index}".encode("ascii")
+                members.append((member["path"], payload))
+                member["sha256"] = hashlib.sha256(payload).hexdigest()
+            fixture["reviewedSourceMembers"][0]["sha256"] = "0" * 64
+            self._write_archive(archive, root, members)
+            fixture["archiveRoot"] = root
+            fixture["archiveSHA256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+            fixture["licenseMemberSHA256"] = hashlib.sha256(b"license").hexdigest()
+            source = copy.deepcopy(self.compatibility_source)
+            source["originalArtifactSHA256"] = fixture["archiveSHA256"]
+            original_loader = PROVENANCE._load_provenance
+            try:
+                PROVENANCE._load_provenance = lambda _root, _source: (
+                    fixture,
+                    CATALOG_ROOT / self.compatibility_source["sourceProvenance"],
+                )
+                with self.assertRaisesRegex(PROVENANCE.SourceProvenanceError, "member digest"):
+                    PROVENANCE.verify_archive(CATALOG_ROOT, source, archive)
+            finally:
+                PROVENANCE._load_provenance = original_loader
 
     def test_archive_verifier_accepts_only_the_mapped_block_rule_subset(self) -> None:
         upstream_source = "\n".join(

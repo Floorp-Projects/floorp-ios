@@ -2433,7 +2433,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             hostPermissions: metadata.hostPermissions,
             privateProfileCapability: metadata.privateProfileCapability,
             modificationStatus: metadata.modificationStatus,
-            minimumFloorpBuild: metadata.minimumFloorpBuild
+            minimumFloorpBuild: metadata.minimumFloorpBuild,
+            disclosure: metadata.disclosure
         )
         let misleadingRecord = FloorpWebExtensionCatalogPackageRecord(
             extensionID: record.extensionID,
@@ -2457,6 +2458,57 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             XCTAssertEqual(
                 error as? FloorpWebExtensionCatalogError,
                 .artifactRejected("signed metadata does not match manifest permissions")
+            )
+        }
+    }
+
+    func testSignedCatalogSchema3BindsDisplayOnlyDisclosureAndRejectsUnsafeValues() throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let accepted = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1, schemaVersion: 3),
+            previousState: nil,
+            now: signing.now
+        )
+
+        let disclosure = try XCTUnwrap(accepted.catalog.packages.first?.metadata?.disclosure)
+        XCTAssertEqual(disclosure.publisherDisplayName, "Floorp iOS")
+        XCTAssertEqual(disclosure.attribution, "Original project: Floorp test fixture.")
+        XCTAssertEqual(disclosure.supportRoute, .floorpGitHubIssues)
+        XCTAssertEqual(disclosure.reportRoute, .floorpGitHubBugReport)
+        XCTAssertEqual(disclosure.reviewedAt, "2026-08-26T00:00:00Z")
+
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 2,
+                schemaVersion: 3,
+                packageMetadata: signing.v3Metadata(
+                    disclosure: signing.v3Disclosure(supportRoute: "unreviewed-external-url")
+                )
+            ),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(
+                error as? FloorpWebExtensionCatalogError,
+                .invalidCatalog("invalid package disclosure")
+            )
+        }
+
+        XCTAssertThrowsError(try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 2,
+                schemaVersion: 3,
+                packageMetadata: signing.v3Metadata(
+                    disclosure: signing.v3Disclosure(reviewedAt: "2026-08-27T00:00:00Z")
+                )
+            ),
+            previousState: accepted.catalog.nextAcceptanceState,
+            now: signing.now
+        )) { error in
+            XCTAssertEqual(
+                error as? FloorpWebExtensionCatalogError,
+                .invalidCatalog("invalid package disclosure")
             )
         }
     }
@@ -2885,6 +2937,54 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         )
         XCTAssertEqual(refreshLoading.accessibilityIdentifier, "Floorp.WebExtensions.CatalogLoading")
         XCTAssertFalse(refreshLoading.isUserInteractionEnabled)
+    }
+
+    func testSettingsAvailableCatalogRowDisplaysSignedSchema3Disclosure() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let accepted = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1, schemaVersion: 3),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(accepted.catalog.packages.first)
+        let item = try XCTUnwrap(FloorpWebExtensionBundledCatalog.signedItem(
+            record: record,
+            catalogExpiresAt: accepted.catalog.expiresAt
+        ))
+        let manager = PausedCatalogSettingsManager(
+            initialCatalog: [item],
+            pauseOnRequest: 2
+        )
+        defer { manager.resumeCatalogLoad() }
+        let subject = FloorpWebExtensionSettingsViewController(
+            windowUUID: .XCTestDefaultUUID,
+            packageManager: manager,
+            themeManager: MockThemeManager()
+        )
+
+        subject.loadViewIfNeeded()
+        await manager.waitUntilInitialCatalogDelivered()
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+
+        let available = subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 1)
+        )
+        let detail = try XCTUnwrap(available.detailTextLabel?.text)
+        XCTAssertEqual(
+            available.accessibilityIdentifier,
+            "Floorp.WebExtensions.Available.\(record.extensionID.rawValue)"
+        )
+        XCTAssertTrue(detail.contains("Publisher: Floorp iOS"))
+        XCTAssertTrue(detail.contains("Attribution: Original project: Floorp test fixture."))
+        XCTAssertTrue(detail.contains("Floorp review: version 1.0.0, generation catalog-gen-1"))
+        XCTAssertTrue(detail.contains("Privacy: Review requested sites and permissions before installation."))
+        XCTAssertTrue(detail.contains("Data retention: Settings stay in the selected profile until removal."))
+        XCTAssertTrue(detail.contains("Support: Floorp GitHub Issues"))
+        XCTAssertTrue(detail.contains("Report a problem: Floorp GitHub bug report"))
     }
 
     func testSettingsHidesCachedCatalogItemsWhenTheirSignedLifetimeEnds() async {
@@ -5209,8 +5309,8 @@ private struct CatalogSigningFixture {
             "compatibilityProfiles": .array(compatibilityProfiles.map { .string($0) }),
             "availability": .string(availability)
         ]
-        if schemaVersion == 2 {
-            package["metadata"] = packageMetadata ?? v2Metadata()
+        if schemaVersion >= 2 {
+            package["metadata"] = packageMetadata ?? (schemaVersion == 3 ? v3Metadata() : v2Metadata())
         }
         let unsigned = FloorpWebExtensionCanonicalJSON.Value.object([
             "schemaVersion": .integer(schemaVersion),
@@ -5255,6 +5355,41 @@ private struct CatalogSigningFixture {
             "privateProfileCapability": .string("opt-in"),
             "modificationStatus": .string("compatibility-patched"),
             "minimumFloorpBuild": .string("0.3.0")
+        ])
+    }
+
+    func v3Metadata(
+        disclosure: FloorpWebExtensionCanonicalJSON.Value? = nil,
+        permissions: [String] = [],
+        hostPermissions: [String] = ["https://content-message.fixture.test/*"],
+        sourceURL: String = "https://github.com/Floorp-Projects/Floorp"
+    ) -> FloorpWebExtensionCanonicalJSON.Value {
+        guard case .object(var metadata) = v2Metadata(
+            permissions: permissions,
+            hostPermissions: hostPermissions,
+            sourceURL: sourceURL
+        ) else {
+            fatalError("schema-v2 metadata must be an object")
+        }
+        metadata["disclosure"] = disclosure ?? v3Disclosure()
+        return .object(metadata)
+    }
+
+    func v3Disclosure(
+        reviewedAt: String = "2026-08-26T00:00:00Z",
+        supportRoute: String = "floorp-github-issues",
+        reportRoute: String = "floorp-github-bug-report"
+    ) -> FloorpWebExtensionCanonicalJSON.Value {
+        .object([
+            "publisherDisplayName": .string("Floorp iOS"),
+            "attribution": .string("Original project: Floorp test fixture."),
+            "privacySummary": .string("Review requested sites and permissions before installation."),
+            "retentionPolicy": .string("Settings stay in the selected profile until removal."),
+            "reviewedAt": .string(reviewedAt),
+            "reviewEvidenceSHA256": .string(String(repeating: "c", count: 64)),
+            "sourceReviewSHA256": .string(String(repeating: "d", count: 64)),
+            "supportRoute": .string(supportRoute),
+            "reportRoute": .string(reportRoute)
         ])
     }
 

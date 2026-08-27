@@ -28,6 +28,7 @@ class CuratedCatalogProjectResourceTests(unittest.TestCase):
             "CuratedCatalog/Review",
             "CuratedCatalog/SourceProvenance",
             "CuratedCatalog/catalog-sources.json",
+            "CuratedCatalog/catalog-disclosures.json",
             "CuratedCatalog/catalog-input.json",
             "CuratedCatalog/review-index.json",
         ):

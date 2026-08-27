@@ -78,16 +78,25 @@ apps、extensions、plug-ins の一般的 collection を表示する interface �
 software を対象にするため、FWEA1 が app bundle にあることだけで 4.7 の適用可否を決めることも
 できない。
 
-従って、13 本の第三者互換ビルドを含む 16 本の固定 catalog は、次のいずれかを immutable release evidence として
-記録するまで公開 candidate では無効のままとする。
+従って、署名済み・同梱済みであること**だけ**では、13 本の第三者互換ビルドを含む
+16 本の固定 catalog を外部利用可能にしてはならない。ただし、Maintainer が明示承認した
+exact 16-package candidate は、Apple の判断を得る目的に限り、次のすべてを満たした後に
+Beta App Review へ**提出**できる。
 
-1. Apple が、固定で non-downloadable な product-curated set の reviewer exercise path と
-   許容性を確認する。
-2. Product が user-facing surface を一般的な第三者 extension collection でなくなるよう
-   範囲変更し、Security と Legal がその新しい review rationale を記録する。
+1. P0 の Legal、Privacy、Security、Product、Release の candidate-bound approval record と、
+   protected environment の同 record SHA-256 が一致する。
+2. managed signer が clean source commit と 13 本の review-quarantined upstream archive を
+   再照合し、公開 signed catalog/root key と provenance evidence を発行する。
+3. public output が通常の review/CI/main integration を通り、現在の `main` と一致する
+   protected annotated tag から candidate build が作られる。
+4. P5 の candidate 前提（実機計画、失効演習手順、アクセシビリティ／性能の測定計画、
+   reviewer details）が release evidence に揃う。
 
-これは verifier を弱める理由、任意 installer を公開する理由、または
-`managedRemoteSource` を有効化する理由にはならない。
+提出は Start Testing、外部 tester への通知、外部利用可能化、または Apple 方針適合の
+主張を許可しない。Apple の結果と P5 実機証跡が揃うまで external availability は
+`pending` のままとする。却下または条件提示時は提出を停止し、Product、Legal、Security
+が変更範囲を再決定する。これは verifier を弱める理由、任意 installer を公開する理由、
+または `managedRemoteSource` を有効化する理由にはならない。
 
 #### 2026-08-27: release-composition clarification
 
@@ -269,21 +278,24 @@ CryptoKit を利用できる Ed25519 を第一候補とする。
 
 ### 4.2 パッケージレコードと掲載審査メタデータ
 
-`catalog-v1` の実行可能な wire record は §4.4 に列挙した技術フィールドだけである。
-以下の publisher/privacy/review フィールドは、P0 承認後に artifact ごとの掲載審査
-記録・release evidence として必須にする。未承認のサーバー metadata を実行時の権限、
-URL、コードとして扱ってはならない。
+catalog schema v3 は、従来の技術フィールドに加え `metadata.disclosure` を署名する。
+この display-only object は、publisher、attribution、review date、privacy/retention
+summary、review/source evidence digest、固定 support/report route を含む。未承認の
+metadata を実行時の権限、URL、コードとして扱ってはならない。v2 は既存状態の読取互換
+のためだけに残し、External TestFlight candidate は v3 を必須にする。
 
 | フィールド | 用途 |
 | --- | --- |
 | `extensionID` / `generation` / `version` | Floorp 内の一意な不変世代。Chrome の item ID を実行時 ID として流用しない。 |
 | `artifactURL` / `artifactBytes` / `artifactSHA256` | 一つの成果物を取得・検証するための不変参照。URL は信頼根拠ではない。 |
 | `manifestSHA256` / `resourceInventorySHA256` | manifest と展開後全リソースの期待値。隠しファイルを含む差し替えを検知する。 |
-| `publisher` / `sourceProvenance` | 作者、配布許可、外部ストア item URL、取得日、審査担当を記録する。外部 URL は更新取得に使わない。 |
+| `metadata.disclosure.publisherDisplayName` / `attribution` | Floorp が再配布する package の表示上の publisher と、LICENSE/NOTICE に基づく attribution。個人連絡先や任意 URL を推測・表示しない。 |
+| `metadata.disclosure.reviewedAt` / `reviewEvidenceSHA256` / `sourceReviewSHA256` | artifact、manifest、notice、source lineage、表示 input に束縛された技術 review digest。これは Legal/Privacy/Security の P0 承認そのものではない。 |
 | `license` / `noticesDigest` | 再配布許可、ライセンス全文、notice／ソース公開義務への参照。 |
 | `compatibilityProfile` | `content-script`, `dnr`, `action-storage` の対応状況と、拒否される API を示す。 |
 | `requestedPermissions` / `hostPatterns` | ネイティブ同意で提示する、人間が読める最小権限。 |
-| `privacyDeclaration` | データ種別、送信先、保持、作者連絡先、通報先。 |
+| `metadata.disclosure.privacySummary` / `retentionPolicy` | Privacy が承認する表示用のデータ／保持要約。現在の technical disclosure は P0 承認待ちであることを release approval record で別途確認する。 |
+| `metadata.disclosure.supportRoute` / `reportRoute` | `floorp-github-issues` と `floorp-github-bug-report` だけを許可する fixed first-party route enum。署名 metadata は任意 URL を持たない。 |
 | `reviewEvidence` | 静的検査、実機 OS、テストサイト、性能、レビュー日、承認者。 |
 | `availability` | `available`, `updateAvailable`, `withdrawn`, `revoked`。最低 app version は catalog の `audience` で固定する。 |
 

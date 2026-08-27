@@ -43,6 +43,8 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
   `Build and unit test` が必要であり、direct push は正規経路にならない。ruleset 自体は
   signed Git commit を要求していない。ただし依頼者の「新規 PR は作成しない」という制約と
   衝突するため、PR を作成せずにこの候補を main へ統合する経路は存在しない。
+- 2026-08-28: existing normal PR #139 を確認した。依頼者は通常の review/CI/main integration を
+  承認しているため、この既存 PR を更新して用いる。新規 PR、direct push、ruleset bypass は行わない。
 - 2026-08-27: 初回 signed candidate の構成順序を再確認した。現在の Xcode Cloud workflow は
   main の完全一致 SHA を build するだけで catalog signer を呼ばない。そのため「main 統合後に
   初めて signer を動かす」と、最初の binary に signed `catalog.json` と root public key を
@@ -77,11 +79,12 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
   candidate build を外部 TestFlight に自動公開しない Xcode Cloud 設定を前提にする。これらは
   repository から自己証明できないため、`IMMUTABLE_CANDIDATE_REF_MISSING` と
   `EXTERNAL_SUBMISSION_PATH_MISSING` の P0 release gate に記録する。
-- 2026-08-27: `floorp-testflight` environment の secret 名を読み取り確認した時点では
-  `APPLE_DEVELOPER_API_KEY_JSON` だけが存在し、catalog root trust-anchor secret
-  `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` は未登録だった。secret value や private
-  key は読んでいない。Security が approved root public key の SHA-256 をこの protected
-  environment に設定するまで、この gate は意図的に fail closed する。
+- 2026-08-28: candidate build と External TestFlight mutation は異なる GitHub environment
+  に分離した。`floorp-curated-catalog-candidate` は root trust anchor と Xcode Cloud API
+  credential、`floorp-curated-catalog-external-release` はそれらに加えて P0 approval record
+  digest を必要とする。repository から reviewer protection や secret value は自己証明できない。
+  secret value や private key は読んでいない。未設定なら credential step より前に fail closed
+  する。
 - 2026-08-27: Apple の現行 [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
   を再確認した。3.2.2(i) は第三者 apps/extensions/plug-ins を App Store 類似または general-interest
   collection として表示する UI を明示的に不許可としている。一方 3.2.1(ii) は specific approved need
@@ -121,14 +124,16 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
 | `AGREEMENT_MISSING` | blocked | Legal / Privacy | 最初の各 artifact について、作者の再配布・更新・サポート許可、license/notice、source 公開義務、privacy declaration、保存期間、問い合わせ/通報先。 |
 | `OWNER_APPROVAL_MISSING` | blocked | Security | root private key の offline custody、leaf signer と有効期間、二者承認、監査ログ、key rotation、侵害時の on-call、署名済み失効演習の承認。`keyID` の一意性と異なる公開鍵への再利用禁止も承認する。root key は CDN、GitHub Actions、アプリ、Xcode Cloud に置かない。 |
 | `POLICY_DECISION_MISSING` | blocked | Product / Privacy / Security | `FWEA1`/canonical JSON/Ed25519/サイズ・DNR 上限/14 日 catalog・90 日 leaf の契約承認、失効・disable・uninstall 時の data retention/deletion policy、private browsing の初期既定値。 |
-| `UPSTREAM_ARTIFACT_MISSING` | partially verified / blocked | Engineering / QA | 16 constrained FWEA1 と artifact/manifest/inventory digest、静的検査・16/16 functional harness はローカルで記録済み。13 第三者 source は immutable revision に固定し、Very Good AdBlock の digest/member/16 static-`block` rule mapping は verifier と synthetic regression で契約化した。候補用の実 archive を signer に渡して再照合し、candidate-bound provenance evidence を保存するまでは「実 archive 検証済み」とは扱わない。Floorp-managed 3 本も full source commit に固定した。ただし author-approved pilot の signed catalog、P2–P4 実機 OS matrix、失効演習、アクセシビリティ、性能・memory・battery 測定、既知 API 非互換一覧は未完了。Stage 3 fixture evidence は代替にならない。 |
+| `UPSTREAM_ARTIFACT_MISSING` | partially verified / blocked | Engineering / QA | 16 constrained FWEA1 と artifact/manifest/inventory digest、静的検査・16/16 functional harness はローカルで記録済み。13 第三者 source は immutable revision に固定し、全 13 本に archive/license/reviewed-member/local-derivation を exact-key で束縛する `SourceProvenance` record を追加した。Very Good AdBlock の 16 static-`block` rule mapping も維持する。候補用の実 archive を signer に渡して再照合し、candidate-bound provenance evidence を保存するまでは「実 archive 検証済み」とは扱わない。Floorp-managed 3 本も full source commit に固定した。ただし author-approved pilot の signed catalog、P2–P4 実機 OS matrix、失効演習、アクセシビリティ、性能・memory・battery 測定、既知 API 非互換一覧は未完了。Stage 3 fixture evidence は代替にならない。 |
 | `AUTHORIZATION_MISSING` | partially verified / blocked | Release / Operations | App Store Connect の Floorp / TestFlight 読み取りアクセスと既存外部 group は確認済み。2026-08-27 読み取り時点で 0.2.0 (61) は external testing 中だが、`main` `c7c8490…` に束縛された Stage 3 fixture-only build であり、この候補には使えない。managed signer handoff は実装済みだが、実 archive を使う signer invocation、root/leaf key ID、二者承認、発行監査記録、署名済み `catalog.json`/root public key の受渡し先は未記録である。秘密鍵ではなく、承認済み signer job または invocation、候補用 reviewer details、署名/provisioning、Xcode Cloud mutation 権限を記録する必要がある。 |
-| `RELEASE_TRUST_ANCHOR_MISSING` | blocked | Security / Release | protected `floorp-testflight` environment に、approved root public key の raw-32-byte SHA-256 を `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` として登録し、key ID/custody record と照合する。2026-08-27 の secret-name-only read はこの secret を見つけなかった。source tree の `root-public-key.txt` 自身を信頼根拠にしてこの条件を満たしてはならない。 |
+| `RELEASE_TRUST_ANCHOR_MISSING` | blocked | Security / Release | protected `floorp-curated-catalog-candidate` と `floorp-curated-catalog-external-release` environment に、approved root public key の raw-32-byte SHA-256 を `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` として登録し、key ID/custody record と照合する。source tree の `root-public-key.txt` 自身を信頼根拠にしてこの条件を満たしてはならない。 |
 | `IMMUTABLE_CANDIDATE_REF_MISSING` | blocked | Release / Security | `floorp-catalog-<40 lowercase commit SHA>` の annotated tag を、通常 merge 後の**現在の** exact `main` commit にだけ作成でき、force update/delete を release approver 以外に許さない GitHub tag protection を設定する。候補 workflow は tag 名・tag commit・checkout・`origin/main` HEAD の完全一致を credential 前に確認し、Xcode Cloud `Floorp TestFlight Manual` が同じ tag を `sourceBranchOrTag` として解決できることを read-only preflight で記録する。Cloud 側も post-clone で `CI_GIT_REF`/`CI_TAG`/`CI_COMMIT`/workflow/bundle ID/checkout/current `origin/main` を archive 前に再照合する。tag/branch の同名混同、tag move、古い main commit の再利用、branch-only dispatch、auto start、async/no-wait は候補経路で許可しない。 |
-| `EXTERNAL_SUBMISSION_PATH_MISSING` | blocked | Release / App Store Connect | candidate workflow は build 作成と exact `sourceCommit` readback までで止まる。Beta App Review / external group mutation の前に、processed build がその verified Xcode Cloud run に属し、catalog evidence、tag SHA、App Store build ID、reviewer details、選択 external group を一つの readback record に束縛する、candidate 専用の承認済み運用経路が必要。既存 Notes Sync `Floorp Public Beta Release` の流用や Xcode Cloud の自動外部公開では代替しない。 |
+| `EXTERNAL_SUBMISSION_PATH_MISSING` | implemented / blocked pending evidence | Release / App Store Connect | `Floorp Curated Catalog External TestFlight` は processed build を exact Xcode Cloud tag run、catalog evidence、tag SHA、App Store build ID、reviewer details、既存 external group に readback で束縛する。Apple credential より前に canonical P0 approval record と protected `FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256` を照合する。`pending` template、digest drift、未保護 environment、複数／internal group は fail closed。実 candidate での実行、group/readback、Beta App Review state は未証跡である。既存 Notes Sync workflow や Xcode Cloud の自動外部公開では代替しない。 |
+| `P0_APPROVAL_RECORD_MISSING` | blocked | Legal / Privacy / Security / Product / Release | `docs/floorp-ios-webextensions-curated-catalog-release-approval.json` は `pending` template である。exact signed catalog の ID/input SHA/catalog SHA/root SHA/leaf key/sequence/schema/version/expiry と、五つの opaque approval evidence ID を含む canonical `approved` record を通常 review で統合し、その raw SHA-256 を protected external-release environment に登録する。Maintainer の release direction はこの五者承認を代替しない。 |
+| `ENVIRONMENT_PROTECTION_MISSING` | blocked | Release / Security | `floorp-curated-catalog-candidate` と `floorp-curated-catalog-external-release` に required reviewers と least-privilege secret scope を設定する。external environment には Legal/Privacy record digest を含む P0 approval gate が必要で、candidate environment から external mutation credential を継承してはならない。 |
 | `CATALOG_COMPOSITION_SEQUENCE_MISSING` | blocked | Security / Release / Maintainer | 現行 Xcode Cloud は main の source tree をそのまま archive し catalog signer を呼ばない。従って「main 統合後に署名」と「初回 binary に signed catalog を同梱」を両立するには、(a) review 対象 input の source-bound pre-merge signing、または (b) infrastructure main 統合後の public signed output 用第 2 PR、あるいは Security 承認済みの別 composition mechanism が必要。private key を CI に追加してこの矛盾を解くことは許可されない。 |
 | `RELEASE_IDENTITY_PENDING` | partially configured / blocked | Release / Maintainer | `catalog-input.json` の最低 Floorp 版と release configuration は `0.3.0` に整合済み（build number は `4`）。通常の `main` 統合後に App Store Connect で `0.3.0 (4)` が未使用であることを確認し、既に使われていれば通常の versioning policy に従って未使用 build number を割り当てる。catalog audience と実際の App Store build の対応を記録するまでこの gate は完了しない。既存 0.2.0 TestFlight build は再利用しない。 |
-| `MERGE_REQUIRED` | blocked — route decision required | Maintainer | GitHub の有効 main ruleset は pull request、解決済み review thread、`Validate workflows`、`Build and unit test` を必須にする（required approval count は 0）。現 candidate の PR は存在せず、direct push は許可されない。したがって「新規 PR は作成しない」制約を維持したまま normal main merge を行う方法はない。ruleset は signed Git commit を要求していないが、ローカルの signing policy を無断で無効化してはならない。 |
+| `MERGE_REQUIRED` | blocked — normal review pending | Maintainer / reviewer | GitHub の有効 main ruleset は pull request、解決済み review thread、`Validate workflows`、`Build and unit test` を必須にする（required approval count は 0）。既存の normal PR #139 を更新して用いる。新規 PR、direct push、ruleset bypass は行わない。通常レビューと CI 成功後に Maintainer が merge を実行する。ruleset は signed Git commit を要求していないが、ローカルの signing policy を無断で無効化してはならない。 |
 
 ### Current non-secret capability observations
 
@@ -146,18 +151,19 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
 
 1. Product、Legal/Privacy、Security、Release が上表の自分のゲートを、担当者・日時・
    immutable evidence URL 付きで `approved` に変更する。
-2. Security が approved root public key の SHA-256 を protected `floorp-testflight`
-   environment に登録し、managed signer が発行した root public key と signed catalog を、
-   別途レビュー済みの production composition に導入する。`managedRemoteSource` はこの時点まで
-   false のままにする。
+2. Security が approved root public key の SHA-256 を protected
+   `floorp-curated-catalog-candidate` と `floorp-curated-catalog-external-release`
+   environment に登録し、後者には approved P0 record の raw SHA-256 も登録する。managed signer
+   が発行した root public key と signed catalog を、別途レビュー済みの production composition に
+   導入する。`managedRemoteSource` はこの時点まで false のままにする。
 3. author-approved pilot を使い、tamper/expiry/rollback/revocation/archive attack の自動試験、
    normal/private profile の実機試験、失効演習を source-bound evidence として保存する。
    依頼者の指示により、実機試験は TestFlight candidate のインストール後に行うが、
    結果が出るまで P5 は完了扱いにしない。
 4. 今回の marketing version/build number と catalog の audience/minimum version が一致することを
    release evidence に記録する。既存 TestFlight build を candidate として再利用しない。
-5. Maintainer が、PR を許可するか既存の正規 PR を指定し、上記の (a)/(b) の catalog
-   composition sequence を選ぶ。変更を通常の review と main merge に通す。public signed output を
+5. Maintainer が既存の正規 PR #139 を通常の review と main merge に通し、上記の (a)/(b) の catalog
+   composition sequence を選ぶ。public signed output を
    含む exact merged commit に対して Security/Release が protected annotated
    `floorp-catalog-<40 lowercase commit SHA>` tag を作成し、tag 名・tag commit・checkout・現在の
    `origin/main` HEAD が一致することを確認して、その tag からだけ candidate workflow を開始する。

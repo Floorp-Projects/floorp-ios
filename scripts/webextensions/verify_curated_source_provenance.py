@@ -27,7 +27,7 @@ UPSTREAM_RULE = re.compile(
     r"\s*resourceTypes:\s*blockedHostTypes\s*\}",
     re.MULTILINE,
 )
-PROVENANCE_KEYS = {
+DNR_PROVENANCE_KEYS = {
     "archiveRoot",
     "archiveSHA256",
     "archiveURL",
@@ -41,6 +41,24 @@ PROVENANCE_KEYS = {
     "schema",
     "sourceMember",
     "sourceMemberSHA256",
+}
+COMPATIBILITY_PROVENANCE_KEYS = {
+    "archiveRoot",
+    "archiveSHA256",
+    "archiveURL",
+    "licenseMember",
+    "licenseMemberSHA256",
+    "package",
+    "packageLicense",
+    "packageLicenseSHA256",
+    "packageManifest",
+    "packageManifestSHA256",
+    "packageNotice",
+    "packageNoticeSHA256",
+    "packagePatch",
+    "packagePatchSHA256",
+    "reviewedSourceMembers",
+    "schema",
 }
 MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 # These limits apply before any archive member is materialized.  They keep the
@@ -88,13 +106,98 @@ def _relative_file(catalog_root: Path, value: Any, label: str) -> Path:
     return resolved
 
 
+def _archive_relative_path(value: Any, label: str) -> str:
+    relative = Path(_require_string(value, label))
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        raise SourceProvenanceError(f"{label} must be a safe archive-relative path")
+    return relative.as_posix()
+
+
+def _expected_archive_url(source: dict[str, Any]) -> str:
+    source_url = source.get("sourceURL")
+    revision = source.get("upstreamRevision")
+    match = (
+        re.fullmatch(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", source_url)
+        if isinstance(source_url, str)
+        else None
+    )
+    if match is None or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise SourceProvenanceError("catalog source is not bound to an immutable GitHub revision")
+    return f"https://api.github.com/repos/{match.group(1)}/{match.group(2)}/tarball/{revision}"
+
+
+def _load_compatibility_provenance(
+    catalog_root: Path,
+    source: dict[str, Any],
+    value: dict[str, Any],
+    provenance_path: Path,
+) -> tuple[dict[str, Any], Path]:
+    """Validate the generic review-only binding for a compatibility build.
+
+    The declaration does not prove a copyright licence or authorize distribution.
+    It makes the exact immutable source archive, review-relevant source members,
+    and the checked-in compatibility package reproducible for the independent
+    signer.  It is deliberately never evaluated by iOS at runtime.
+    """
+    if set(value) != COMPATIBILITY_PROVENANCE_KEYS or value.get("schema") != 2:
+        raise SourceProvenanceError("compatibility sourceProvenance has unexpected or missing fields")
+    if source.get("modificationStatus") != "compatibility-patched":
+        raise SourceProvenanceError("compatibility sourceProvenance is not allowed for this source")
+    _require_string(value["archiveRoot"], "archiveRoot", maximum=128)
+    archive_url = _require_string(value["archiveURL"], "archiveURL")
+    if archive_url != _expected_archive_url(source):
+        raise SourceProvenanceError("archiveURL is not bound to the pinned upstream revision")
+    for field in (
+        "archiveSHA256",
+        "licenseMemberSHA256",
+        "packageLicenseSHA256",
+        "packageManifestSHA256",
+        "packageNoticeSHA256",
+        "packagePatchSHA256",
+    ):
+        _require_digest(value[field], field)
+    if value["archiveSHA256"] != source.get("originalArtifactSHA256"):
+        raise SourceProvenanceError("source archive digest is not bound to catalog source metadata")
+    if value["package"] != source.get("package"):
+        raise SourceProvenanceError("sourceProvenance package is not bound to catalog source metadata")
+    _archive_relative_path(value["licenseMember"], "licenseMember")
+    package = value["package"]
+    expected_package_files = {
+        "packageLicense": "LICENSE",
+        "packageManifest": "manifest.json",
+        "packageNotice": "NOTICE",
+        "packagePatch": "PATCH.txt",
+    }
+    for field, filename in expected_package_files.items():
+        if value[field] != f"{package}/{filename}":
+            raise SourceProvenanceError(f"{field} is not the fixed compatibility package {filename}")
+        _relative_file(catalog_root, value[field], field)
+    members = value["reviewedSourceMembers"]
+    if not isinstance(members, list) or not 1 <= len(members) <= 16:
+        raise SourceProvenanceError("reviewedSourceMembers must contain 1–16 immutable source members")
+    member_paths: set[str] = set()
+    for member in members:
+        if not isinstance(member, dict) or set(member) != {"path", "sha256"}:
+            raise SourceProvenanceError("reviewedSourceMembers contains an invalid entry")
+        path = _archive_relative_path(member["path"], "reviewedSourceMembers.path")
+        _require_digest(member["sha256"], "reviewedSourceMembers.sha256")
+        if path == value["licenseMember"] or path in member_paths:
+            raise SourceProvenanceError("reviewedSourceMembers contains a duplicate source member")
+        member_paths.add(path)
+    return value, provenance_path
+
+
 def _load_provenance(catalog_root: Path, source: dict[str, Any]) -> tuple[dict[str, Any], Path]:
     provenance_path = _relative_file(catalog_root, source.get("sourceProvenance"), "sourceProvenance")
     try:
         value = json.loads(provenance_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise SourceProvenanceError(f"invalid sourceProvenance: {error}") from error
-    if not isinstance(value, dict) or set(value) != PROVENANCE_KEYS:
+    if not isinstance(value, dict):
+        raise SourceProvenanceError("sourceProvenance must be an object")
+    if value.get("schema") == 2:
+        return _load_compatibility_provenance(catalog_root, source, value, provenance_path)
+    if set(value) != DNR_PROVENANCE_KEYS:
         raise SourceProvenanceError("sourceProvenance has unexpected or missing fields")
     if value.get("schema") != 1:
         raise SourceProvenanceError("sourceProvenance has an unsupported schema")
@@ -105,9 +208,7 @@ def _load_provenance(catalog_root: Path, source: dict[str, Any]) -> tuple[dict[s
     for field in ("archiveSHA256", "licenseMemberSHA256", "sourceMemberSHA256"):
         _require_digest(value[field], field)
     for field in ("licenseMember", "sourceMember"):
-        relative = Path(_require_string(value[field], field))
-        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
-            raise SourceProvenanceError(f"{field} must be a safe archive-relative path")
+        _archive_relative_path(value[field], field)
     resource_types = value["requiredResourceTypes"]
     if resource_types != ["script", "image", "stylesheet", "xmlhttprequest"]:
         raise SourceProvenanceError("requiredResourceTypes must be the approved static DNR subset")
@@ -133,11 +234,7 @@ def _load_provenance(catalog_root: Path, source: dict[str, Any]) -> tuple[dict[s
         raise SourceProvenanceError("source archive digest is not bound to catalog source metadata")
     if source.get("package") != "Packages/thirdparty-very-good-adblock":
         raise SourceProvenanceError("Very Good AdBlock source package path changed unexpectedly")
-    expected_archive_url = (
-        "https://api.github.com/repos/chrisbbreuer/very-good-adblock/tarball/"
-        f"{source.get('upstreamRevision', '')}"
-    )
-    if archive_url != expected_archive_url:
+    if archive_url != _expected_archive_url(source):
         raise SourceProvenanceError("archiveURL is not bound to the pinned upstream revision")
     return value, provenance_path
 
@@ -169,13 +266,36 @@ def _assert_patch_and_license(catalog_root: Path, provenance: dict[str, Any]) ->
         raise SourceProvenanceError("PATCH.txt does not bind the reduced rules to the pinned source")
 
 
+def _assert_compatibility_package(catalog_root: Path, provenance: dict[str, Any]) -> None:
+    """Bind local package review inputs before an archive reaches the signer."""
+    expected = {
+        "packageLicense": "packageLicenseSHA256",
+        "packageManifest": "packageManifestSHA256",
+        "packageNotice": "packageNoticeSHA256",
+        "packagePatch": "packagePatchSHA256",
+    }
+    for path_field, digest_field in expected.items():
+        path = _relative_file(catalog_root, provenance[path_field], path_field)
+        if sha256(path.read_bytes()) != provenance[digest_field]:
+            raise SourceProvenanceError(f"{path_field} no longer matches the reviewed compatibility package")
+    if not _relative_file(catalog_root, provenance["packagePatch"], "packagePatch").read_text(
+        encoding="utf-8"
+    ).strip():
+        raise SourceProvenanceError("packagePatch must describe the compatibility modification")
+
+
 def validate_declared_provenance(catalog_root: Path, source: dict[str, Any]) -> dict[str, Any] | None:
     """Validate the local, review-only provenance declaration without network IO."""
     if source.get("sourceProvenance") is None:
+        if source.get("modificationStatus") == "compatibility-patched":
+            raise SourceProvenanceError("compatibility-patched source has no sourceProvenance")
         return None
     provenance, provenance_path = _load_provenance(catalog_root, source)
-    _read_package_rules(catalog_root, provenance)
-    _assert_patch_and_license(catalog_root, provenance)
+    if provenance["schema"] == 1:
+        _read_package_rules(catalog_root, provenance)
+        _assert_patch_and_license(catalog_root, provenance)
+    else:
+        _assert_compatibility_package(catalog_root, provenance)
     return {
         "path": provenance_path.relative_to(catalog_root.resolve()).as_posix(),
         "sha256": sha256(provenance_path.read_bytes()),
@@ -257,6 +377,25 @@ def _upstream_rule_filters(source_text: str) -> dict[int, str]:
 def verify_archive(catalog_root: Path, source: dict[str, Any], archive: Path) -> dict[str, Any]:
     """Bind the local compatibility package to an independently supplied archive."""
     provenance, provenance_path = _load_provenance(catalog_root, source)
+    if provenance["schema"] == 2:
+        member_digests = {
+            provenance["licenseMember"]: provenance["licenseMemberSHA256"],
+            **{
+                member["path"]: member["sha256"]
+                for member in provenance["reviewedSourceMembers"]
+            },
+        }
+        archive_members = _read_archive_members(archive, provenance, list(member_digests))
+        for member_name, expected_digest in member_digests.items():
+            if sha256(archive_members[member_name]) != expected_digest:
+                raise SourceProvenanceError(f"upstream source member digest does not match: {member_name}")
+        _assert_compatibility_package(catalog_root, provenance)
+        return {
+            "archiveSHA256": provenance["archiveSHA256"],
+            "provenanceSHA256": sha256(provenance_path.read_bytes()),
+            "reviewedMemberCount": len(provenance["reviewedSourceMembers"]),
+            "status": "accepted",
+        }
     archive_members = _read_archive_members(
         archive,
         provenance,
