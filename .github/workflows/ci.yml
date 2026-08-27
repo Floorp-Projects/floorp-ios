@@ -121,6 +121,7 @@ jobs:
               scripts.webextensions.tests.test_curated_catalog_functional \
               scripts.webextensions.tests.test_curated_catalog_project_resources \
               scripts.webextensions.tests.test_curated_catalog_source_provenance \
+              scripts.webextensions.tests.test_floorp_1password_ssh_agent_signer \
               scripts.webextensions.tests.test_ingest_extension \
               scripts.webextensions.tests.test_sign_catalog \
               scripts.webextensions.tests.test_sign_curated_catalog \

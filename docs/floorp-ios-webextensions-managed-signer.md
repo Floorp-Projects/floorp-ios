@@ -19,8 +19,13 @@ Security provides two non-exportable Ed25519 keys:
 The root and leaf `keyID` values are stable approved identifiers, not key
 material. The signing adapter executable must live outside the checkout, be
 owner-controlled and non-group/world-writable, and be pinned by its SHA-256
-in the invocation. A root and leaf adapter may be separate executables or a
-single pinned executable with a key-ID allowlist.
+in the invocation. Its existing parent directory chain is checked both when
+rendering and before every invocation: each directory must belong to the
+signing user or root and cannot be group/world-writable, except for a
+root-owned sticky system directory such as `/tmp`. The renderer never creates
+the output parent; create a private directory first. A root and leaf adapter
+may be separate executables or a single pinned executable with a key-ID
+allowlist.
 
 ## Adapter protocol v1
 
@@ -84,9 +89,11 @@ signature before writing any public artifact.
    through a second normal review/CI integration. Do not commit the evidence,
    source archive, adapter, private key, or adapter configuration.
 5. Put the reported `root_public_key_sha256` into the protected GitHub
-   environment secret `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` for
-   `floorp-testflight`. This is the release trust anchor; it is the SHA-256 of
-   the raw 32-byte root public key, not a hash of the text file.
+   environment secret `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` for both
+   `floorp-curated-catalog-candidate` and
+   `floorp-curated-catalog-external-release`. This is the release trust
+   anchor; it is the SHA-256 of the raw 32-byte root public key, not a hash of
+   the text file.
 6. After the public-output integration is merged and CI passes, create the
    protected annotated `floorp-catalog-<main-sha>` tag and use the curated
    candidate workflow. It will reject any mismatched root, source, tag,
@@ -96,6 +103,38 @@ signature before writing any public artifact.
 The production command deliberately has no `--root-private-key` or
 `--leaf-private-key` argument when using this handoff. A local PEM mode remains
 only for isolated automated tests and is not a release authority.
+
+## 1Password SSH Agent adapter
+
+For the approved `iOS Extensions` vault, use
+`render_floorp_1password_managed_signer.py` from the clean, exact signing
+checkout to render `floorp_1password_ssh_agent_signer.py` into an
+owner-controlled, non-group/world-writable executable **outside** that
+checkout. The renderer receives only the two raw public keys, stable key IDs,
+and the independently approved root raw-key SHA-256; it rejects a root key
+that does not match that digest and refuses to overwrite an existing output.
+Its parent must already exist and pass the owner-control check described
+above; this prevents replacing an approved pathname between the SHA-256 check
+and invocation. The rendered file is the artifact whose SHA-256 is pinned in
+the signing invocation.
+
+The adapter is intentionally a narrow SSH-agent client rather than a generic
+shell wrapper. It does not enumerate identities or invoke `ssh-add`,
+`ssh-keygen`, or a private-key tool. It constructs the configured
+`ssh-ed25519` public-key blob and asks the agent for a raw signature only when
+the managed-signer request exactly matches one of these bindings:
+
+- root key ID → `floorp-curated-catalog/root-leaf-certificate/v1`;
+- leaf key ID → `floorp-curated-catalog/leaf-catalog/v1`.
+
+Pass only `SSH_AUTH_SOCK` with `--managed-signer-env SSH_AUTH_SOCK`; the
+adapter verifies that it is the current user's non-group/world-writable Unix
+socket. It returns the configured public key for `public-key` requests and
+validates the SSH-agent response shape before it returns a 64-byte Ed25519
+signature. The release tool independently verifies that signature before it
+writes a public artifact. The SSH Agent must supply any required local user
+confirmation; no secret is read from, copied from, or written to the source
+checkout.
 
 ## Required approval record
 

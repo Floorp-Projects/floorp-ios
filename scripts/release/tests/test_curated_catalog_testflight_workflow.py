@@ -88,6 +88,7 @@ class CuratedCatalogTestFlightWorkflowTests(unittest.TestCase):
             "Run curated WebExtensions catalog contracts",
             "scripts.webextensions.tests.test_build_curated_catalog",
             "scripts.webextensions.tests.test_curated_catalog_source_provenance",
+            "scripts.webextensions.tests.test_floorp_1password_ssh_agent_signer",
             "scripts.webextensions.tests.test_sign_catalog",
             "scripts.webextensions.tests.test_sign_curated_catalog",
             "scripts.webextensions.tests.test_verify_signed_curated_catalog_release",

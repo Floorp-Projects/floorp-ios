@@ -151,6 +151,41 @@ def _managed_signer_environment(names: list[str]) -> dict[str, str]:
     return environment
 
 
+def _require_owner_controlled_directory(directory: Path, *, label: str) -> None:
+    """Require a stable directory chain for a locally invoked signer.
+
+    The adapter is hashed immediately before it is launched.  A writable
+    parent would nevertheless let another local account replace its pathname
+    after that hash check.  Each directory in the resolved chain must
+    therefore belong to this user (or root) and must not be group/world
+    writable.  The one safe exception is a root-owned sticky directory such
+    as ``/tmp``: another user cannot rename or remove this user's child there.
+    """
+
+    try:
+        resolved = directory.resolve(strict=True)
+    except OSError as error:
+        raise CatalogSigningError(f"cannot inspect {label} directory: {error}") from error
+    expected_uid = os.geteuid()
+    current = resolved
+    while True:
+        try:
+            metadata = current.stat()
+        except OSError as error:
+            raise CatalogSigningError(f"cannot inspect {label} directory: {error}") from error
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise CatalogSigningError(f"{label} directory must be a directory")
+        if metadata.st_uid not in {0, expected_uid}:
+            raise CatalogSigningError(f"{label} directory must be owner-controlled")
+        writable_by_group_or_other = metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        root_sticky_directory = metadata.st_uid == 0 and bool(metadata.st_mode & stat.S_ISVTX)
+        if writable_by_group_or_other and not root_sticky_directory:
+            raise CatalogSigningError(f"{label} directory must be owner-controlled")
+        if current.parent == current:
+            return
+        current = current.parent
+
+
 class ManagedEd25519Signer:
     """A pinned external adapter that exposes only Ed25519 public/sign calls.
 
@@ -190,12 +225,15 @@ class ManagedEd25519Signer:
         self._public_key: bytes | None = None
 
     def _assert_command_integrity(self) -> None:
+        _require_owner_controlled_directory(self.command.parent, label="managed signer command parent")
         try:
             metadata = self.command.stat()
         except OSError as error:
             raise CatalogSigningError(f"cannot inspect managed signer command: {error}") from error
         if not stat.S_ISREG(metadata.st_mode) or not os.access(self.command, os.X_OK):
             raise CatalogSigningError("managed signer command must be an executable regular file")
+        if metadata.st_uid not in {0, os.geteuid()}:
+            raise CatalogSigningError("managed signer command must be owner-controlled")
         if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             raise CatalogSigningError("managed signer command must not be group- or world-writable")
         if metadata.st_size <= 0 or metadata.st_size > MAX_MANAGED_SIGNER_BYTES:

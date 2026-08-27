@@ -43,8 +43,14 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
   `Build and unit test` が必要であり、direct push は正規経路にならない。ruleset 自体は
   signed Git commit を要求していない。ただし依頼者の「新規 PR は作成しない」という制約と
   衝突するため、PR を作成せずにこの候補を main へ統合する経路は存在しない。
-- 2026-08-28: existing normal PR #139 を確認した。依頼者は通常の review/CI/main integration を
-  承認しているため、この既存 PR を更新して用いる。新規 PR、direct push、ruleset bypass は行わない。
+- 2026-08-28: existing normal PR #139 を確認した。依頼者は通常の review/CI/main integration と
+  必要な follow-up PR の作成を承認している。direct push、ruleset bypass、CI/review の省略は行わない。
+- 2026-08-28: 1Password `iOS Extensions` Vault の SSH Agent には `Floorp/catalog/root` と
+  `Floorp/catalog/leaf` の公開鍵が存在することを、秘密鍵を閲覧・書出しせずに確認した。root の
+  raw-32-byte SHA-256 は指定済み trust anchor
+  `d69df8b7bda4b1a66636ef421be53b86f99f4cf38cea0f900b63b801e889f6a3` と一致した。leaf の
+  public identity は adapter の公開設定にのみ使用し、catalog signing の key ID、adapter SHA、
+  dual-control/rotation/revocation record は引き続き Security の P0 approval record を要する。
 - 2026-08-27: 初回 signed candidate の構成順序を再確認した。現在の Xcode Cloud workflow は
   main の完全一致 SHA を build するだけで catalog signer を呼ばない。そのため「main 統合後に
   初めて signer を動かす」と、最初の binary に signed `catalog.json` と root public key を
