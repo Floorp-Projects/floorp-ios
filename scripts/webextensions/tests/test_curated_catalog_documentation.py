@@ -12,9 +12,16 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CATALOG_ROOT = REPOSITORY_ROOT / "firefox-ios/Floorp/WebExtensions/CuratedCatalog"
 COMPATIBILITY = REPOSITORY_ROOT / "docs/EXTENSION_COMPATIBILITY.md"
 THIRD_PARTY = REPOSITORY_ROOT / "docs/THIRD_PARTY_EXTENSIONS.md"
+INGESTION = REPOSITORY_ROOT / "docs/EXTENSION_INGESTION.md"
 BETA_REVIEW_DRAFT = (
     REPOSITORY_ROOT
     / "docs/floorp-ios-webextensions-internal-catalog-beta-app-review-draft.md"
+)
+PILOT_CANDIDATES = (
+    REPOSITORY_ROOT / "docs/floorp-ios-webextensions-internal-catalog-pilot-candidates.md"
+)
+RELEASE_EVIDENCE = (
+    REPOSITORY_ROOT / "docs/floorp-ios-webextensions-internal-catalog-release-evidence.md"
 )
 P0_POLICY_APPROVAL = (
     REPOSITORY_ROOT / "docs/floorp-ios-webextensions-curated-catalog-p0-policy-approval.json"
@@ -30,7 +37,10 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         cls.sources = json.loads((CATALOG_ROOT / "catalog-sources.json").read_text())
         cls.compatibility = COMPATIBILITY.read_text(encoding="utf-8")
         cls.third_party = THIRD_PARTY.read_text(encoding="utf-8")
+        cls.ingestion = INGESTION.read_text(encoding="utf-8")
         cls.beta_review_draft = BETA_REVIEW_DRAFT.read_text(encoding="utf-8")
+        cls.pilot_candidates = PILOT_CANDIDATES.read_text(encoding="utf-8")
+        cls.release_evidence = RELEASE_EVIDENCE.read_text(encoding="utf-8")
         cls.what_to_test_en = WHAT_TO_TEST_EN.read_text(encoding="utf-8")
         cls.what_to_test_ja = WHAT_TO_TEST_JA.read_text(encoding="utf-8")
         cls.p0_policy_approval_data = P0_POLICY_APPROVAL.read_bytes()
@@ -115,6 +125,15 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         self.assertIn("承認を表すものではなく", self.beta_review_draft)
         self.assertIn("not an extension store", self.beta_review_draft)
         self.assertIn("no silent update", self.beta_review_draft)
+
+    def test_governance_documents_use_the_sole_maintainer_and_license_basis(self) -> None:
+        for text in (self.ingestion, self.beta_review_draft, self.release_evidence):
+            self.assertIn("maintainer", text)
+            self.assertNotIn("opaque evidence IDs for Legal", text)
+            self.assertNotIn("two approval identities", text)
+            self.assertNotIn("dual approval", text)
+        self.assertIn("license/notice/provenance", self.pilot_candidates)
+        self.assertNotIn("author-approved", self.pilot_candidates)
 
 
 if __name__ == "__main__":

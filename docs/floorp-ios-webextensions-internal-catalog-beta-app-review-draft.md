@@ -1,10 +1,9 @@
 # Floorp iOS: curated WebExtensions Beta App Review draft
 
-Status: **draft only reviewer copy. 2026-08-27 の maintainer 判断により、exact
+Status: **draft only reviewer copy. 2026-08-28 の sole maintainer 判断により、exact
 `main` source SHA、管理署名済み catalog、candidate-bound Xcode Cloud build が
 揃った時点で Beta App Review に提出できる。** `draft only` は承認を表すものではなく、
-App Store Connect で使う前に提出ワークフローが証跡で値を確定する。この文書は Apple、Legal,
-Privacy、Security、または upstream author の承認を表すものではなく、Apple の
+App Store Connect で使う前に提出ワークフローが証跡で値を確定する。この文書は Apple の
 審査結果や external tester availability を先取りして主張してはならない。
 
 ## Release operator completion fields
@@ -17,10 +16,11 @@ submission. Do not invent values or substitute an earlier build.
 | App Store Connect build | Exact `marketing version (build)` and build ID produced from merged `main` SHA |
 | Catalog identity | Catalog ID, sequence, root key ID, leaf key ID, expiry, and signed catalog SHA-256 |
 | IPA identity | IPA SHA-256, archive signing/team evidence, and the 16-artifact inventory SHA-256 list |
-| Product/Apple review decision | Written owner-approved reviewer exercise path for the fixed app-bundled set and Guideline 3.2.2(i)/4.7 rationale |
-| Legal/Privacy decision | Per-artifact redistribution/notice/support/privacy records for the 13 compatibility builds plus retention policy |
-| Security decision | Managed-signer custody, dual approval, audit record, rotation and emergency-revocation exercise |
-| Reviewer contact | Current contact name, email, and phone supplied by the responsible release owner |
+| P0 maintainer record | Fixed 16-package policy receipt plus the exact signed candidate's schema 2 `maintainerApproval` record and protected raw SHA-256 |
+| Redistribution basis | Per-artifact MIT license, local `LICENSE`/`NOTICE`, pinned provenance, and candidate-time archive re-verification for the 13 compatibility builds |
+| Managed signing and revocation | 1Password SSH Agent custody, key IDs/root digest, audit record, rotation, and emergency-revocation exercise |
+| Apple reviewer path | Evidence-backed fixed-bundle reviewer exercise path and Guideline 3.2.2(i)/4.7 rationale; Apple makes the actual review decision after submission |
+| Reviewer contact | Current App Store Connect contact name, email, and phone; the submission workflow checks that the live record is complete |
 | External group | Existing approved group ID; do not create a group as part of submission |
 
 ## Proposed Beta App Review notes
@@ -63,7 +63,7 @@ submitted build.
 
 The final signed catalog must equal this review input. Any name, version,
 generation, digest, permission, host scope, or package-count change requires a
-new review of this draft and the relevant approvals.
+new sole-maintainer P0 decision and candidate-bound approval record.
 
 | Package | Floorp ID | Supported family |
 | --- | --- | --- |
@@ -90,7 +90,7 @@ in [the third-party record](THIRD_PARTY_EXTENSIONS.md) and
 [`catalog-input.json`](../firefox-ios/Floorp/WebExtensions/CuratedCatalog/catalog-input.json).
 The candidate's public signed output must be source-bound to the exact merged
 `main` commit before that commit is archived. Its signing composition must use
-one of the P0-approved paths in the release-gate record: a review-bound
+one of the sole-maintainer-approved paths in the release-gate record: a review-bound
 pre-merge signature whose **public output** is reviewed with the candidate, or
 a separately reviewed second integration of the public signed output. No
 signing private key, source archive, review workspace, or remote endpoint

@@ -15,8 +15,9 @@ URL、CRX/ZIP、共有シート、または upstream の自動更新から取り
   持たないこと。更新は利用者の明示的同意を伴う新 generation とする。
 - 最小 host permission、normal/private profile ごとの同意、無効化・削除・失効時の
   storage/DNR 保持方針を package review で決めること。
-- 作者または権利者の再配布・更新・サポート許可、license/notice、privacy declaration、
-  accessibility、性能、失効演習の証跡をそろえること。
+- 第三者 package は確認済みの再配布ライセンス、local `LICENSE`/`NOTICE`、pinned
+  provenance、candidate-time archive re-verification をそろえること。これを確認できない
+  候補は除外する。upstream author の架空の別承認は要求しない。
 - `managedRemoteSource` の P0 composition、production root key、endpoint allow-list が
   承認済みになるまでは、候補を公開版の remote catalog に載せないこと。
 
@@ -37,12 +38,12 @@ URL、CRX/ZIP、共有シート、または upstream の自動更新から取り
 
 | 候補 | 期待できる価値 | 掲載前に必須の作業 |
 | --- | --- | --- |
-| **Dark Reader を参考にした Floorp-managed appearance variant** | ダークテーマ／サイト別見た目調整の需要を検証できる。 | upstream manifest・ライセンス・notice・作者の再配布承認を確認し、広い host permission、remote asset、未対応 API を除いた Floorp 管理 artifact を別 generation として作る。upstream の成果物をそのまま取り込まない。 |
-| **uBlock Origin を参考にした Floorp-managed blocker variant** | 広く理解されている広告・追跡防止の期待値を把握できる。 | 作者・ライセンス・source 公開義務・更新責任を承認し、固定かつ小規模な block-only DNR corpus に限定する。完全な upstream 機能、filter subscription、scriptlet、redirect/header modification は対象外。 |
+| **Dark Reader を参考にした Floorp-managed appearance variant** | ダークテーマ／サイト別見た目調整の需要を検証できる。 | upstream manifest・互換な再配布ライセンス・notice・pinned provenance を確認し、広い host permission、remote asset、未対応 API を除いた Floorp 管理 artifact を別 generation として作る。upstream の成果物をそのまま取り込まない。 |
+| **uBlock Origin を参考にした Floorp-managed blocker variant** | 広く理解されている広告・追跡防止の期待値を把握できる。 | 再配布ライセンス、source 公開義務、notice、pinned provenance を確認し、固定かつ小規模な block-only DNR corpus に限定する。完全な upstream 機能、filter subscription、scriptlet、redirect/header modification は対象外。 |
 
-これらは「既存プロジェクトを承認なしに再配布する」候補ではない。調査・互換性比較・
-権利処理の出発点であり、author-approved の独立 artifact ができるまで P2/P3 の実機
-パイロットにも使わない。
+これらは「既存プロジェクトを無根拠に再配布する」候補ではない。調査・互換性比較・
+license/notice/provenance 確認の出発点であり、その再配布根拠を確認できない限り
+P2/P3 の実機パイロットにも使わない。
 
 ## 初期カタログから除外する類型
 
@@ -55,7 +56,7 @@ URL、CRX/ZIP、共有シート、または upstream の自動更新から取り
 
 ## 候補を一件選んだ後の順序
 
-1. artifact author と license/privacy の承認を記録する。
+1. license、notice、provenance、データ保持方針を確認し、再配布根拠を記録する。
 2. 閉じた manifest preflight と `FWEA1` builder で immutable artifact を作り、review
    metadata・digest・compatibility profile を固定する。
 3. normal/private profile、site permission、disable/delete/update/revocation、action 有無、

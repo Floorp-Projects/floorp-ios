@@ -128,7 +128,7 @@ The signer must record all of the following with the release candidate:
 - canonical catalog SHA-256 and every artifact/manifest/inventory digest;
 - canonical input SHA-256, exact clean source commit, and the result of each
   archive-to-source-provenance verification;
-- the two approval identities and timestamp;
+- the sole maintainer's candidate-bound P0 approval evidence ID and timestamp;
 - revocation exercise request/result; and
 - the exact merged `main` commit that contains the safe public outputs.
 
@@ -163,6 +163,8 @@ approval file must be canonical, `approved`, bound to the exact catalog/input/
 root/leaf/sequence/version/expiry evidence, and have its raw SHA-256 stored as
 `FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256` in the protected
 `floorp-curated-catalog-external-release` environment. The checked-in
-`pending` template is intentionally a release block. This record contains
-opaque evidence IDs for Legal, Privacy, Security, Product, and Release; it
-does not expose identities, keys, or source archives.
+`pending` template is intentionally a release block. The approved schema 2
+record contains one opaque `maintainerApproval` evidence ID; it does not expose
+identities, keys, or source archives. The separate P0 policy receipt records
+the maintainer's approval of the fixed 16-package scope, managed signer,
+revocation, private-mode/data-retention policy, and closed-install boundary.
