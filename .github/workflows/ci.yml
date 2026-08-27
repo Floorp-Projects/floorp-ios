@@ -95,6 +95,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Catalog signature contract tests use the same Ed25519 verifier as the
+      # release gate.  A wheel-only, pinned dependency keeps normal CI from
+      # silently skipping those fail-closed paths or compiling an unreviewed
+      # native dependency on the hosted runner.
+      - name: Install curated catalog signature test dependency
+        run: |
+          python3 -m pip install --disable-pip-version-check --only-binary=:all: "cryptography==50.0.1"
+          python3 -c 'import cryptography'
+
       - name: Run Floorp release contract tests
         run: |
           env -u GITHUB_API_URL -u GITHUB_SERVER_URL \

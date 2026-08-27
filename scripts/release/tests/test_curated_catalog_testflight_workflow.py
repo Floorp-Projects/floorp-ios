@@ -83,6 +83,8 @@ class CuratedCatalogTestFlightWorkflowTests(unittest.TestCase):
 
     def test_normal_ci_exercises_the_non_secret_catalog_contracts(self) -> None:
         for required in (
+            "Install curated catalog signature test dependency",
+            "cryptography==50.0.1",
             "Run curated WebExtensions catalog contracts",
             "scripts.webextensions.tests.test_build_curated_catalog",
             "scripts.webextensions.tests.test_curated_catalog_source_provenance",
