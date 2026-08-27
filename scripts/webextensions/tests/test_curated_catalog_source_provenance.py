@@ -71,6 +71,22 @@ class CuratedCatalogSourceProvenanceTests(unittest.TestCase):
             result = PROVENANCE.validate_declared_provenance(CATALOG_ROOT, source)
             self.assertEqual(result["path"], source["sourceProvenance"])
 
+    def test_every_adopted_third_party_package_has_a_pinned_mit_notice_and_provenance_basis(self) -> None:
+        compatibility_sources = [
+            source for source in self.sources
+            if source["modificationStatus"] == "compatibility-patched"
+        ]
+        self.assertEqual(len(compatibility_sources), 13)
+        for source in compatibility_sources:
+            self.assertEqual(source["license"], "MIT")
+            package = CATALOG_ROOT / source["package"]
+            license_text = (package / "LICENSE").read_text(encoding="utf-8")
+            notice_text = (package / "NOTICE").read_text(encoding="utf-8")
+            self.assertIn("MIT", license_text.upper())
+            self.assertIn(source["upstreamRevision"], notice_text)
+            self.assertIn(source["originalArtifactSHA256"], notice_text)
+            self.assertIsNotNone(PROVENANCE.validate_declared_provenance(CATALOG_ROOT, source))
+
     def test_compatibility_archive_verifier_binds_reviewed_members_and_local_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "source.tar"

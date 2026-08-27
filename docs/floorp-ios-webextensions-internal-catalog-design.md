@@ -1,8 +1,9 @@
 # Floorp iOS: 署名付き内部 WebExtensions カタログ設計
 
-Status: signed-bundled catalog implementation contract; P0 approvals remain
-required. This document does not authorize a remote package, an App Store
-release, or redistribution of a third-party extension.
+Status: signed-bundled catalog implementation contract; the sole Floorp iOS
+maintainer's candidate-bound P0 approval record remains required. This document
+does not authorize a remote package, an App Store release, or redistribution of
+a third-party extension without recorded license/notice/provenance evidence.
 
 > 2026-08-27 safety clarification — a signed catalog authenticates fixed
 > artifacts but never substitutes for the user's native confirmation. Every
@@ -18,8 +19,8 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 事前検証・署名した不変のパッケージだけである。
 
 これは Chrome ウェブストアをブラウズして任意の拡張機能を導入する機能では
-ない。Chrome ウェブストアは候補の発見、作者・ライセンスの確認、および
-配布許可を得るための外部情報源に留める。カタログに載せる版は、Floorp が
+ない。Chrome ウェブストアは候補の発見と、license・notice・provenance を確認する
+外部情報源に留める。カタログに載せる版は、Floorp が
 審査した成果物のハッシュで固定する。ストアに同じ拡張 ID の新しい版が
 公開されても、Floorp の導入済みパッケージは変化しない。
 
@@ -56,9 +57,11 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 ### 1.2 App Review の前提
 
 リモートで提供するプラグイン／コードの可否、カタログ画面の表示方法、
-年齢区分、通報と削除の運用は App Review と法務の承認が必要である。特に
-一般的な第三者拡張ストアに見える UI は避ける。P0 の承認記録なしに P5 の
-公開配布へ進んではならない。
+年齢区分、通報と削除の運用には実際の App Review と適用されるライセンス・
+プライバシー要件の確認が必要である。この単独 maintainer プロジェクトでは、
+P0 の承認者は Floorp iOS maintainer 一人であり、存在しない部門承認を作らない。
+特に一般的な第三者拡張ストアに見える UI は避ける。candidate-bound P0 record
+なしに P5 の公開配布へ進んではならない。
 
 参考: [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)、
 [Chrome MV3](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)。
@@ -83,8 +86,8 @@ software を対象にするため、FWEA1 が app bundle にあることだけ�
 exact 16-package candidate は、Apple の判断を得る目的に限り、次のすべてを満たした後に
 Beta App Review へ**提出**できる。
 
-1. P0 の Legal、Privacy、Security、Product、Release の candidate-bound approval record と、
-   protected environment の同 record SHA-256 が一致する。
+1. sole Floorp iOS maintainer の candidate-bound P0 approval record と、protected
+   environment の同 record SHA-256 が一致する。
 2. managed signer が clean source commit と 13 本の review-quarantined upstream archive を
    再照合し、公開 signed catalog/root key と provenance evidence を発行する。
 3. public output が通常の review/CI/main integration を通り、現在の `main` と一致する
@@ -94,8 +97,8 @@ Beta App Review へ**提出**できる。
 
 提出は Start Testing、外部 tester への通知、外部利用可能化、または Apple 方針適合の
 主張を許可しない。Apple の結果と P5 実機証跡が揃うまで external availability は
-`pending` のままとする。却下または条件提示時は提出を停止し、Product、Legal、Security
-が変更範囲を再決定する。これは verifier を弱める理由、任意 installer を公開する理由、
+`pending` のままとする。却下または条件提示時は提出を停止し、maintainer が指摘に応じて
+変更範囲を再決定する。これは verifier を弱める理由、任意 installer を公開する理由、
 または `managedRemoteSource` を有効化する理由にはならない。
 
 #### 2026-08-27: release-composition clarification
@@ -126,10 +129,11 @@ GitHub の tag protection / force-update 禁止と、Xcode Cloud の manual tag 
 完了時に外部 TestFlight group / Beta App Review へ自動公開しない設定は repository 外の P0
 release gate である。候補 workflow 自身は外部 group 割当・Beta App Review 提出を行わない。
 それらは、source commit と processed App Store Connect build の readback を再確認した別の
-明示的 release action に限る。この gate は managed-signing approval や Apple/Legal approval の
-代替ではない。3.2.2(i) の書面上の reviewer path が得られない場合、より安全な代替は
-Floorp-managed 3 package に初回 scope を縮小することだが、これは Product/Maintainer の
-明示的な scope change が必要であり、16 package を自動的に置換してはならない。
+明示的 release action に限る。この gate は managed-signing record、candidate-bound P0
+approval、または実際の Apple review の代替ではない。3.2.2(i) の書面上の reviewer path が
+得られない場合でも、approved exact 16-package candidate は Apple の判断を得るために提出
+できる。Apple が具体的な変更を求めた場合だけ maintainer が範囲を再決定し、16 package を
+自動的に置換してはならない。
 
 ## 2. セキュリティ原則
 
@@ -290,11 +294,11 @@ metadata を実行時の権限、URL、コードとして扱ってはならな�
 | `artifactURL` / `artifactBytes` / `artifactSHA256` | 一つの成果物を取得・検証するための不変参照。URL は信頼根拠ではない。 |
 | `manifestSHA256` / `resourceInventorySHA256` | manifest と展開後全リソースの期待値。隠しファイルを含む差し替えを検知する。 |
 | `metadata.disclosure.publisherDisplayName` / `attribution` | Floorp が再配布する package の表示上の publisher と、LICENSE/NOTICE に基づく attribution。個人連絡先や任意 URL を推測・表示しない。 |
-| `metadata.disclosure.reviewedAt` / `reviewEvidenceSHA256` / `sourceReviewSHA256` | artifact、manifest、notice、source lineage、表示 input に束縛された技術 review digest。これは Legal/Privacy/Security の P0 承認そのものではない。 |
+| `metadata.disclosure.reviewedAt` / `reviewEvidenceSHA256` / `sourceReviewSHA256` | artifact、manifest、notice、source lineage、表示 input に束縛された技術 review digest。これは sole maintainer の candidate-bound P0 approval record そのものではない。 |
 | `license` / `noticesDigest` | 再配布許可、ライセンス全文、notice／ソース公開義務への参照。 |
 | `compatibilityProfile` | `content-script`, `dnr`, `action-storage` の対応状況と、拒否される API を示す。 |
 | `requestedPermissions` / `hostPatterns` | ネイティブ同意で提示する、人間が読める最小権限。 |
-| `metadata.disclosure.privacySummary` / `retentionPolicy` | Privacy が承認する表示用のデータ／保持要約。現在の technical disclosure は P0 承認待ちであることを release approval record で別途確認する。 |
+| `metadata.disclosure.privacySummary` / `retentionPolicy` | 表示用のデータ／保持要約。sole maintainer が承認した private mode と data-retention policy を表示し、exact signed candidate への束縛は release approval record で別途確認する。 |
 | `metadata.disclosure.supportRoute` / `reportRoute` | `floorp-github-issues` と `floorp-github-bug-report` だけを許可する fixed first-party route enum。署名 metadata は任意 URL を持たない。 |
 | `reviewEvidence` | 静的検査、実機 OS、テストサイト、性能、レビュー日、承認者。 |
 | `availability` | `available`, `updateAvailable`, `withdrawn`, `revoked`。最低 app version は catalog の `audience` で固定する。 |
@@ -469,12 +473,12 @@ presentation delegate を置き換えない。
 
 | 段階 | 実装・設計成果物 | 完了条件 |
 | --- | --- | --- |
-| P0: 方針と承認 | App Review・法務・プライバシー判断、作者の再配布許可、運用責任、鍵保管、失効責任、公開／beta チャネルの決定記録 | 公開版の対象・非対象、承認者、緊急停止手順、レビュー時の再現手順が文書化される。 |
+| P0: 方針と承認 | sole maintainer の App Review 提出方針、license/notice/provenance による再配布根拠、鍵保管、失効、private mode と data-retention policy、公開／beta チャネルの決定記録 | 公開版の対象・非対象、唯一の承認者、緊急停止手順、レビュー時の再現手順が文書化され、exact candidate は別途 digest-bound record に束縛される。 |
 | P1: 信頼基盤 | `catalog-v1` schema、canonicalization、署名鍵階層、検証器、artifact SHA-256、ロールバック・失効状態、package store への原子的導入 API | 正常・改ざん・期限切れ・ロールバック・鍵失効・ZIP 攻撃のテストベクトルが全て fail closed で通る。 |
-| P2: コンテンツスクリプト | プロファイル A のカタログ表示、サイト同意、導入・無効化・削除、実拡張の author-approved pilot、実機回帰 | 許可サイトだけで固定 content script が実行され、撤回・private mode・世代置換で実行が止まる。 |
+| P2: コンテンツスクリプト | プロファイル A のカタログ表示、サイト同意、導入・無効化・削除、license/notice/provenance-verified 実拡張 pilot、実機回帰 | 許可サイトだけで固定 content script が実行され、撤回・private mode・世代置換で実行が止まる。 |
 | P3: DNR | プロファイル B の static/dynamic/session ルール、ルール上限・性能計測、サイト除外 UI、既存コンテンツポリシーとの合成試験 | 非対応 action を含むパッケージは導入されず、対応ルールはトランザクションで有効／復元される。 |
 | P4: Action・設定・storage | プロファイル C、popup/options host、`storage`／`alarms`、可視の optional permission 同意、action を持たない拡張の空状態 | 再起動・世代更新・無効化・private profile でも状態と権限が境界どおりに動く。 |
-| P5: 外部 TestFlight と公開判断 | カタログ運用監査、失効演習、実機 OS 行列、性能・アクセシビリティ、App Review 用テストアカウントとレビューガイド、段階配布 | P0 の承認、各パッケージの evidence、失効演習、外部テスターの受入結果を満たす。 |
+| P5: 外部 TestFlight と公開判断 | カタログ運用監査、失効演習、実機 OS 行列、性能・アクセシビリティ、App Review 用テストアカウントとレビューガイド、段階配布 | sole maintainer の P0 approval、各パッケージの evidence、失効演習、外部テスターの受入結果を満たす。 |
 
 P2〜P4 は順番に出すが、P1 のスキーマと verifier は共通である。P3 と P4 を
 先に有効化するために、P2 のサイト同意や世代管理を迂回してはならない。
@@ -540,7 +544,7 @@ private profile、ネットワーク遮断、アプリ再起動、カタログ�
 
 | 記録 | 内容 |
 | --- | --- |
-| provenance | 作者、配布許可、取得元、ライセンス、notice、審査日。 |
+| provenance | upstream identity、固定取得元、license、notice、source/archive provenance、審査日。 |
 | integrity | catalog sequence、署名鍵 ID、artifact／manifest／inventory digest。 |
 | compatibility | 利用した MV3 API、拒否された API、実機 OS、テストサイト、既知の制限。 |
 | privacy | ホスト権限、端末内／外部データ、通信先、保持、通報先。 |
@@ -555,28 +559,33 @@ package-specific evidence を持たなければならない。
 
 | 役割 | 責務 |
 | --- | --- |
-| Product | カタログの掲載基準、更新ポリシー、導入 UI、サポート対象の決定。 |
-| Security | 鍵管理、署名生成の監査、静的検査、失効判断、侵害時の演習。 |
-| Legal / Privacy | 再配布許可、ライセンス、notice、データ利用、年齢区分、通報・削除運用。 |
-| Engineering | verifier、package store、権限境界、互換性テスト、性能・クラッシュ回帰。 |
-| Release | App Review の説明、外部 TestFlight、段階配布、失効時の告知と復旧。 |
+| Floorp iOS maintainer | 唯一の P0 承認者として、掲載・更新・失効、鍵運用、private mode と data retention、App Review 提出方針を決定する。exact candidate は canonical approval record と protected environment digest に束縛する。 |
+| Engineering | verifier、package store、権限境界、互換性テスト、性能・クラッシュ回帰を実装・記録する。 |
+| Apple | Beta App Review と外部 TestFlight の実際の審査結果を決定する。 |
 
-カタログの掲載・更新・失効は二人以上の承認を要し、誰がどの artifact digest を
-いつ承認したかを監査ログに残す。秘密鍵、認証トークン、ユーザー閲覧履歴、拡張の
-保存データをカタログ監査ログに含めない。
+この単独 maintainer モデルでは、存在しない別部門や作者の承認を release gate にしない。
+各第三者 package は license、notice、固定 source/archive provenance による再配布根拠を
+持たなければ候補から除外する。通常の PR・CI・レビュー・main 統合、protected catalog
+digest、実機検証、Apple の実審査は代替されない。秘密鍵、認証トークン、ユーザー閲覧履歴、
+拡張の保存データをカタログ監査ログに含めない。maintainer の policy 承認は
+[`floorp-ios-webextensions-curated-catalog-p0-policy-approval.json`](floorp-ios-webextensions-curated-catalog-p0-policy-approval.json)
+に記録し、署名済み候補への承認は別の digest-bound release record に記録する。
 
-## 10. P0 で確定すべき未決事項
+## 10. P0 決定記録と残る実在ゲート
 
-1. 公開版でのリモート成果物提供に対する App Review の承認経路と、必要な
-   reviewer exercise path。
-2. カタログ認証の方式（Floorp account、アプリ証明、地域・年齢制限）と、
-   アカウントを持たない利用者への扱い。
-3. root／leaf 鍵の保管、署名権限、複数承認、緊急失効の責任者。
-4. package format、canonical JSON、署名方式、最大サイズ、最大ルール数、
-   catalog の最大有効期間。
-5. 拡張を無効化・失効したときに `storage.local` と DNR dynamic state を
-   保持するか削除するか。
-6. 最初の author-approved 実拡張候補と、各作者の再配布・更新・サポート許可。
+1. 初回候補は固定・同梱の 16 package とし、`managedRemoteSource` は無効のままにする。
+   Apple の事前許可を仮定せず、正規の Beta App Review に提出して実際の結果を記録する。
+2. 任意 URL、Chrome ウェブストア、CRX/ZIP、共有シートからの導入、remote JavaScript/WASM/
+   DNR list、silent update、権限昇格、fail-open は禁止を継続する。
+3. root/leaf 鍵は 1Password SSH Agent 経由だけで使い、秘密鍵を閲覧・書出ししない。鍵 rotation
+   と緊急失効は maintainer が決定し、immutable generation と署名済み失効で実施する。
+4. package format、canonical JSON、署名方式、最大サイズ、最大ルール数、catalog の最大有効期間は
+   verifier の fail-closed contract として固定する。
+5. disable と revoke は runtime/DNR/page origin を止め、profile-owned data は explicit uninstall
+   まで保持する。private profile は通常 profile の storage/DNR/runtime/package を継承しない。
+6. 第三者 13 package は MIT license、preserved LICENSE/NOTICE、固定 provenance で再配布根拠を
+   記録する。根拠のない、または再検証不能な将来 package は署名前に除外する。
 
-これらが確定するまで、現在の同梱 fixture カタログを公開版の唯一の導入元として
-維持する。
+残る release gate は、exact signed catalog に束縛された maintainer P0 record、protected
+environment digest、通常の PR/CI/review/main 統合、immutable tag、candidate build と実機/P5
+evidence、そして Apple の実際の審査である。

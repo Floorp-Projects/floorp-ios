@@ -1,1 +1,1 @@
-{"notes":"Template only. Replace through normal review after Legal, Privacy, Security, Product, and Release have approved the exact signed catalog; then store this canonical file's SHA-256 in the protected external-release environment.","schema":1,"status":"pending"}
+{"notes":"Template only. The Floorp iOS maintainer is the sole P0 approval authority. Replace through normal review after the exact signed catalog and candidate-bound evidence exist; then store this canonical file's SHA-256 in the protected external-release environment.","schema":2,"status":"pending"}

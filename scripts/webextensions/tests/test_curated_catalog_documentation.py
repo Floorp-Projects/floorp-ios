@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import unittest
@@ -14,6 +15,9 @@ THIRD_PARTY = REPOSITORY_ROOT / "docs/THIRD_PARTY_EXTENSIONS.md"
 BETA_REVIEW_DRAFT = (
     REPOSITORY_ROOT
     / "docs/floorp-ios-webextensions-internal-catalog-beta-app-review-draft.md"
+)
+P0_POLICY_APPROVAL = (
+    REPOSITORY_ROOT / "docs/floorp-ios-webextensions-curated-catalog-p0-policy-approval.json"
 )
 WHAT_TO_TEST_EN = REPOSITORY_ROOT / "firefox-ios/TestFlight/WhatToTest.en-US.txt"
 WHAT_TO_TEST_JA = REPOSITORY_ROOT / "firefox-ios/TestFlight/WhatToTest.ja-JP.txt"
@@ -29,6 +33,43 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         cls.beta_review_draft = BETA_REVIEW_DRAFT.read_text(encoding="utf-8")
         cls.what_to_test_en = WHAT_TO_TEST_EN.read_text(encoding="utf-8")
         cls.what_to_test_ja = WHAT_TO_TEST_JA.read_text(encoding="utf-8")
+        cls.p0_policy_approval_data = P0_POLICY_APPROVAL.read_bytes()
+        cls.p0_policy_approval = json.loads(cls.p0_policy_approval_data)
+
+    def test_sole_maintainer_p0_policy_record_is_canonical_and_binds_the_fixed_input(self) -> None:
+        approval = self.p0_policy_approval
+        self.assertEqual(
+            approval,
+            {
+                "approvalDate": "2026-08-28",
+                "approvalID": "floorp-ios-maintainer-p0-policy-20260828",
+                "catalogInputSHA256": hashlib.sha256(
+                    (CATALOG_ROOT / "catalog-input.json").read_bytes()
+                ).hexdigest(),
+                "keyOperations": "1password-ssh-agent-nonexport",
+                "packageCount": 16,
+                "privateModeAndDataRetention": "profile-isolated-retain-until-explicit-uninstall",
+                "prohibitedCapabilities": [
+                    "arbitrary-url-install",
+                    "chrome-web-store-install",
+                    "crx-zip-shared-sheet-install",
+                    "fail-open",
+                    "permission-escalation",
+                    "remote-dnr-lists",
+                    "remote-javascript-wasm",
+                    "silent-update",
+                ],
+                "revocationOperations": "signed-immediate-revocation-immutable-generation",
+                "schema": 1,
+                "scope": "initial-external-testflight-fixed-bundled-catalog",
+                "status": "approved",
+                "thirdPartyRedistributionBasis": "verified-mit-license-notice-provenance",
+            },
+        )
+        self.assertEqual(
+            self.p0_policy_approval_data,
+            json.dumps(approval, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+        )
 
     def test_exactly_the_fixed_sixteen_are_documented(self) -> None:
         self.assertEqual(len(self.records), 16)

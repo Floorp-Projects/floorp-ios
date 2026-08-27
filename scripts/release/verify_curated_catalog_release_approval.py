@@ -29,9 +29,8 @@ from sign_catalog import CatalogSigningError, parse_timestamp, safe_id  # noqa: 
 
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SEMANTIC_VERSION = re.compile(r"(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){1,3}\Z")
-APPROVAL_ROLES = ("legal", "privacy", "security", "product", "release")
 PENDING_KEYS = {"schema", "status", "notes"}
-APPROVED_KEYS = {
+APPROVED_SOLE_MAINTAINER_KEYS = {
     "schema",
     "status",
     "catalogID",
@@ -45,7 +44,7 @@ APPROVED_KEYS = {
     "packageCount",
     "issuedAt",
     "expiresAt",
-    "approvals",
+    "maintainerApproval",
 }
 CATALOG_EVIDENCE_KEYS = {
     "catalogID",
@@ -116,14 +115,14 @@ def _validate_approval(
     expected_package_count: int,
     now: datetime,
 ) -> dict[str, Any]:
-    _require(approval.get("schema") == 1, "approval record schema is unsupported")
+    _require(approval.get("schema") == 2, "approval record schema is unsupported")
     status = approval.get("status")
     if status == "pending":
         _require(set(approval) == PENDING_KEYS, "pending approval record has unexpected fields")
         _require(isinstance(approval.get("notes"), str) and approval["notes"].strip(), "pending approval record has no notes")
         raise CuratedCatalogReleaseApprovalError("approval record is pending")
     _require(status == "approved", "approval record is not approved")
-    _require(set(approval) == APPROVED_KEYS, "approved approval record has unexpected fields")
+    _require(set(approval) == APPROVED_SOLE_MAINTAINER_KEYS, "approved approval record has unexpected fields")
     _require(catalog_evidence.get("status") == "verified", "catalog evidence is not verified")
     _require(set(catalog_evidence) == CATALOG_EVIDENCE_KEYS, "catalog evidence has unexpected fields")
 
@@ -177,17 +176,15 @@ def _validate_approval(
         and issued_at <= now <= expires_at,
         "approval validity does not match the current verified catalog",
     )
-    approvals = approval["approvals"]
-    _require(isinstance(approvals, dict) and set(approvals) == set(APPROVAL_ROLES), "approval roles are incomplete")
-    evidence_ids: set[str] = set()
-    for role in APPROVAL_ROLES:
-        item = approvals[role]
-        _require(isinstance(item, dict) and set(item) == {"approvalID", "approvedAt"}, f"approval {role} is invalid")
-        evidence_id = _identifier(item["approvalID"], label=f"approval {role} ID")
-        _require(evidence_id not in evidence_ids, "approval evidence IDs must be distinct")
-        evidence_ids.add(evidence_id)
-        approved_at = _timestamp(item["approvedAt"], label=f"approval {role} timestamp")
-        _require(approved_at <= now and approved_at <= expires_at, f"approval {role} is not currently valid")
+    item = approval["maintainerApproval"]
+    _require(
+        isinstance(item, dict) and set(item) == {"approvalID", "approvedAt"},
+        "sole-maintainer approval is invalid",
+    )
+    evidence_id = _identifier(item["approvalID"], label="sole-maintainer approval ID")
+    approved_at = _timestamp(item["approvedAt"], label="sole-maintainer approval timestamp")
+    _require(approved_at <= now and approved_at <= expires_at, "sole-maintainer approval is not currently valid")
+    evidence_ids = {evidence_id}
     return {
         "approvalEvidenceIDs": sorted(evidence_ids),
         "catalogID": approval["catalogID"],

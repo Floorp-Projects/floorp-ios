@@ -41,7 +41,7 @@ def catalog_evidence() -> dict[str, object]:
 def approved_record() -> dict[str, object]:
     evidence = catalog_evidence()
     return {
-        "schema": 1,
+        "schema": 2,
         "status": "approved",
         "catalogID": evidence["catalogID"],
         "catalogInputSHA256": evidence["catalogInputSHA256"],
@@ -54,12 +54,9 @@ def approved_record() -> dict[str, object]:
         "packageCount": evidence["packageCount"],
         "issuedAt": evidence["issuedAt"],
         "expiresAt": evidence["expiresAt"],
-        "approvals": {
-            role: {
-                "approvalID": f"evidence-{role}-20260827",
-                "approvedAt": "2026-08-27T11:00:00Z",
-            }
-            for role in APPROVAL.APPROVAL_ROLES
+        "maintainerApproval": {
+            "approvalID": "floorp-ios-maintainer-p0-20260827",
+            "approvedAt": "2026-08-27T11:00:00Z",
         },
     }
 
@@ -84,13 +81,13 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
             )
             self.assertEqual(result["status"], "approved")
             self.assertEqual(result["sequence"], 9)
-            self.assertEqual(len(result["approvalEvidenceIDs"]), 5)
+            self.assertEqual(result["approvalEvidenceIDs"], ["floorp-ios-maintainer-p0-20260827"])
 
     def test_rejects_pending_or_digest_substituted_records(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             pending = self.write(root, "pending.json", {
-                "schema": 1,
+                "schema": 2,
                 "status": "pending",
                 "notes": "P0 owner records are not complete.",
             })
@@ -108,6 +105,33 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
                 APPROVAL.verify_approval(
                     approval_path=approved,
                     expected_approval_sha256="0" * 64,
+                    catalog_evidence_path=evidence_path,
+                    expected_package_count=16,
+                    now=NOW,
+                )
+
+    def test_rejects_a_schema_one_record_or_legacy_role_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            record = approved_record()
+            record["schema"] = 1
+            approval_path = self.write(root, "schema-one.json", record)
+            evidence_path = self.write(root, "catalog.json", catalog_evidence())
+            with self.assertRaisesRegex(APPROVAL.CuratedCatalogReleaseApprovalError, "schema"):
+                APPROVAL.verify_approval(
+                    approval_path=approval_path,
+                    expected_approval_sha256=hashlib.sha256(approval_path.read_bytes()).hexdigest(),
+                    catalog_evidence_path=evidence_path,
+                    expected_package_count=16,
+                    now=NOW,
+                )
+            record = approved_record()
+            record["approvals"] = record.pop("maintainerApproval")
+            approval_path = self.write(root, "approval.json", record)
+            with self.assertRaisesRegex(APPROVAL.CuratedCatalogReleaseApprovalError, "unexpected fields"):
+                APPROVAL.verify_approval(
+                    approval_path=approval_path,
+                    expected_approval_sha256=hashlib.sha256(approval_path.read_bytes()).hexdigest(),
                     catalog_evidence_path=evidence_path,
                     expected_package_count=16,
                     now=NOW,

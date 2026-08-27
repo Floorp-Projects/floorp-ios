@@ -1,9 +1,10 @@
 # Floorp iOS curated WebExtensions catalog
 
 Status: **implementation inventory; not a publication approval.** The catalog
-cannot be placed in an External TestFlight build until the P0 approvals and the
-managed signing record in [the release gates](floorp-ios-webextensions-internal-catalog-release-gates.md)
-are complete.
+cannot be placed in an External TestFlight build until the sole maintainer's
+candidate-bound P0 approval record and the managed signing record in [the
+release gates](floorp-ios-webextensions-internal-catalog-release-gates.md) are
+complete.
 
 ## What ships in the app
 
@@ -40,8 +41,9 @@ public-only verifier proves all of the following:
 
 - `Artifacts/Signed/catalog.json` and `root-public-key.txt` exist, are
   canonical, have a valid root/leaf Ed25519 chain, and are currently valid;
-- the root public-key SHA-256 matches the protected
-  `floorp-testflight` environment trust-anchor secret;
+- the root public-key SHA-256 matches the protected trust-anchor secret in the
+  relevant `floorp-curated-catalog-candidate` or
+  `floorp-curated-catalog-external-release` environment;
 - the audience is exactly `app.floorp.Floorp` / `testflight`, and its minimum
   version and every package's `minimumFloorpBuild` equal
   `FloorpRelease.xcconfig`'s marketing version;
@@ -150,15 +152,15 @@ the verified input, existing output or evidence files, and non-external/overlapp
 evidence paths. Its review-only archive reader is bounded by compressed bytes,
 member count, declared expanded bytes, target-file size, and duplicate target names.
 It requires a successful, locally supplied archive verification for every declared
-source-provenance record. The signing procedure, exact key IDs,
-sequence, expiry, canonical digest, source-archive evidence, and two-person
-approval are release evidence. See
+source-provenance record. The signing procedure, exact key IDs, sequence, expiry,
+canonical digest, source-archive evidence, and candidate-bound sole-maintainer
+P0 approval are release evidence. See
 [ingestion](EXTENSION_INGESTION.md), [security model](EXTENSION_SECURITY_MODEL.md),
 and [third-party provenance](THIRD_PARTY_EXTENSIONS.md).
 
 The signing sequence itself is a release gate. Because the signer starts from a
-clean exact commit and emits new public files, either Security signs approved
-immutable inputs before the normal integration review, or the reviewed input
-first reaches `main` and the resulting public signed outputs go through a
-second normal review/CI integration. A direct push, a private key in CI, or an
-unsigned TestFlight build is not a substitute for either sequence.
+clean exact commit and emits new public files, either the maintainer's managed
+signer signs reviewed immutable inputs before the normal integration review, or
+the reviewed input first reaches `main` and the resulting public signed outputs
+go through a second normal review/CI integration. A direct push, a private key
+in CI, or an unsigned TestFlight build is not a substitute for either sequence.
