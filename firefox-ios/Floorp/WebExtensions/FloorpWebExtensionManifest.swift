@@ -355,6 +355,42 @@ struct FloorpWebExtensionManifest: Codable, Equatable, Sendable {
         preflight(manifest, packageInventory: nil, ruleResourceData: ruleResourceData)
     }
 
+    /// The externally distributed curated catalog has a deliberately narrower
+    /// advertising/tracking profile than the generic Stage 3 DNR engine. Its
+    /// immutable rule resources may only block requests; a future catalog
+    /// cannot silently introduce an exception, rewrite, or upgrade behavior
+    /// by relying on a generally-supported DNR action.
+    ///
+    /// This is separate from generic manifest preflight because the latter
+    /// still exercises the broader Stage 3 compatibility contract. Callers
+    /// must use this only after proving that the resource map came from a
+    /// verified catalog artifact.
+    static func validateCuratedCatalogDNRRules(
+        manifest: Self,
+        ruleResourceData: [String: Data]
+    ) throws {
+        for resource in manifest.dnrRuleResources {
+            guard let data = ruleResourceData[resource.path.path] else {
+                throw FloorpWebExtensionManifestError.malformed(
+                    "signed catalog DNR resource is missing: \(resource.identifier)"
+                )
+            }
+            let rules: [RawDNRRule]
+            do {
+                rules = try JSONDecoder().decode([RawDNRRule].self, from: data)
+            } catch {
+                throw FloorpWebExtensionManifestError.malformed(
+                    "signed catalog DNR resource is malformed: \(resource.identifier)"
+                )
+            }
+            guard rules.allSatisfy({ $0.action?.type == "block" }) else {
+                throw FloorpWebExtensionManifestError.malformed(
+                    "signed catalog DNR resources only support block actions"
+                )
+            }
+        }
+    }
+
     /// Performs installation-grade manifest preflight against a trusted
     /// package inventory. Every content-script source, background source, and
     /// DNR resource must be a present, bounded regular file before activation.

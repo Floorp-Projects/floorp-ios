@@ -13,7 +13,7 @@ enum FloorpWebExtensionAPIGrant: String, CaseIterable, Codable, Hashable, Sendab
     case tabs
 }
 
-enum FloorpWebExtensionHostAccess: Codable, Equatable, Sendable {
+enum FloorpWebExtensionHostAccess: Codable, Equatable, Hashable, Sendable {
     case denied
     case selectedSites(Set<FloorpWebExtensionMatchPattern>)
     case allRequestedSites

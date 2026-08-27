@@ -1,0 +1,3 @@
+Replaced the MV2 background/options/jQuery package with one fixed, accessible
+scroll button. The compatibility build has no persistent settings, remote
+dependencies, background code, or broad browser API access.

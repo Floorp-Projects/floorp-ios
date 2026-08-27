@@ -1,0 +1,3 @@
+Retains only non-circumvention reading-layout CSS and local article labels.
+The compatibility build removes all paywall-overlay behavior, options storage,
+web-accessible resources, remote assets, and MV2-only metadata.

@@ -1,0 +1,21 @@
+{
+  "archiveRoot": "plibither8-refined-hacker-news-ee7ef6d",
+  "archiveSHA256": "fb0157d83b22eaee14e30c6585e68f3f5d71cfcd578f39855ab538b4c1346b03",
+  "archiveURL": "https://api.github.com/repos/plibither8/refined-hacker-news/tarball/ee7ef6d55ae15f26a5bf4123d738b249883f7798",
+  "licenseMember": "LICENSE",
+  "licenseMemberSHA256": "c6e9d8893202bb33b5a8d0572de5ff1808ea3d2642fc58ed16eac8c9239b352f",
+  "package": "Packages/thirdparty-refined-hacker-news",
+  "packageLicense": "Packages/thirdparty-refined-hacker-news/LICENSE",
+  "packageLicenseSHA256": "fc0e7e11fc25f06105cb0dd79d9d0817d7131c846f51df9ce13f8ba20338a7f1",
+  "packageManifest": "Packages/thirdparty-refined-hacker-news/manifest.json",
+  "packageManifestSHA256": "dbfabca1a0b29d1fc99fb4f243d8e9fab9e36b06bb85f1d945329b2151071fbc",
+  "packageNotice": "Packages/thirdparty-refined-hacker-news/NOTICE",
+  "packageNoticeSHA256": "f182a56edc6022ba645f3e21bd16b7daf073c0fdc7372703b497d542e6397267",
+  "packagePatch": "Packages/thirdparty-refined-hacker-news/PATCH.txt",
+  "packagePatchSHA256": "a5c451b8207285ce0c50818d8c539ca17f005e344b01c22ea53abb197513369f",
+  "reviewedSourceMembers": [
+    { "path": "src/manifest.json", "sha256": "1fa884aa73f6a5b7a8f688cd76b2cd9f321270b067d37165ab493cbc3ddba714" },
+    { "path": "src/background.js", "sha256": "604d2246b09185190af3e53c67ec02cb580ddb9b56f38f422830ecd9b95e0609" }
+  ],
+  "schema": 2
+}

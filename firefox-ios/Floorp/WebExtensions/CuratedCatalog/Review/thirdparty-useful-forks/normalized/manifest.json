@@ -1,0 +1,1 @@
+{"content_scripts":[{"css":["content/forks.css"],"js":["content/forks.js"],"matches":["https://github.com/*/forks"],"run_at":"document_end","world":"ISOLATED"}],"host_permissions":["https://github.com/*/forks"],"manifest_version":3,"name":"Useful Forks — Floorp compatibility build","version":"1.0.0"}

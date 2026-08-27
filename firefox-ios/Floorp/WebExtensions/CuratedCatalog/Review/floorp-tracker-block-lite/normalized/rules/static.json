@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {"type": "block"},
+    "condition": {"urlFilter": "||doubleclick.net^", "resourceTypes": ["script", "image", "xmlhttprequest"]}
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": {"type": "block"},
+    "condition": {"urlFilter": "||googletagmanager.com^", "resourceTypes": ["script"]}
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": {"type": "block"},
+    "condition": {"urlFilter": "||google-analytics.com^", "resourceTypes": ["script", "image", "xmlhttprequest"]}
+  },
+  {
+    "id": 4,
+    "priority": 1,
+    "action": {"type": "block"},
+    "condition": {"urlFilter": "||connect.facebook.net^", "resourceTypes": ["script"]}
+  }
+]

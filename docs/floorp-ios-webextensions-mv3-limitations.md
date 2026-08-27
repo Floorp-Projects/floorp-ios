@@ -39,8 +39,10 @@ evidence; those release gates remain unrecorded here.
 ## Release evidence required separately
 
 Implementing the runtime does not approve a package for release. Before any
-fixture or catalog item ships, product/legal must approve its source,
-redistribution licence and notice/source obligations, the App Review evidence,
-privacy/moderation treatment, supported OS range, and a reviewer exercise path.
-Remote catalogs, document imports, and store-origin packages remain separately
-gated and are not implied by this compatibility matrix.
+fixture or catalog item ships, the sole Floorp iOS maintainer records P0
+approval and verifies its source, redistribution licence, notice/provenance,
+App Review evidence, privacy/moderation treatment, supported OS range, and a
+reviewer exercise path. The ordinary PR, CI, protected-`main`, managed-signing,
+physical-device/P5, and Apple review gates remain separate. Remote catalogs,
+document imports, and store-origin packages remain prohibited by the shipping
+contract and are not implied by this compatibility matrix.

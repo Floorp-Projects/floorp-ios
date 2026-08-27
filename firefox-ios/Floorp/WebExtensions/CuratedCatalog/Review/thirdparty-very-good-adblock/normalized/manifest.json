@@ -1,0 +1,1 @@
+{"declarative_net_request":{"rule_resources":[{"enabled":true,"id":"very-good-adblock-static","path":"rules/static.json"}]},"manifest_version":3,"name":"Very Good AdBlock — Floorp DNR compatibility build","permissions":["declarativeNetRequest"],"version":"1.0.0"}

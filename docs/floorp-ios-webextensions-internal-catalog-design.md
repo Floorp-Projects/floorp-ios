@@ -1,8 +1,16 @@
 # Floorp iOS: 署名付き内部 WebExtensions カタログ設計
 
-Status: P1 implementation contract; P0 approvals remain required. This document
+Status: signed-bundled catalog implementation contract; the sole Floorp iOS
+maintainer's candidate-bound P0 approval record remains required. This document
 does not authorize a remote package, an App Store release, or redistribution of
-a third-party extension.
+a third-party extension without recorded license/notice/provenance evidence.
+
+> 2026-08-27 safety clarification — a signed catalog authenticates fixed
+> artifacts but never substitutes for the user's native confirmation. Every
+> immutable replacement, including a same-or-reduced-authority security fix,
+> stays on the current generation until a product-owned dialog binds the
+> installed generation, replacement generation, artifact digest, and concrete
+> authority delta. This preserves the requested no-silent-update boundary.
 
 ## 1. 目的と決定
 
@@ -11,8 +19,8 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 事前検証・署名した不変のパッケージだけである。
 
 これは Chrome ウェブストアをブラウズして任意の拡張機能を導入する機能では
-ない。Chrome ウェブストアは候補の発見、作者・ライセンスの確認、および
-配布許可を得るための外部情報源に留める。カタログに載せる版は、Floorp が
+ない。Chrome ウェブストアは候補の発見と、license・notice・provenance を確認する
+外部情報源に留める。カタログに載せる版は、Floorp が
 審査した成果物のハッシュで固定する。ストアに同じ拡張 ID の新しい版が
 公開されても、Floorp の導入済みパッケージは変化しない。
 
@@ -22,6 +30,13 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 [MV3 compatibility limitations](floorp-ios-webextensions-mv3-limitations.md) を
 正とする。
 
+> 2026-08-26 実装上の明確化 — 最初の External TestFlight candidate は、**署名済みで
+> アプリに同梱した catalog と FWEA1 だけ**を使う。端末は catalog／artifact をネットワーク
+> から取得せず、アプリ資源中の `catalog.json`、root 公開鍵、固定 `FWEA1` を全て検証する。
+> `managedRemoteSource` は有効化しない。この変更は、任意 URL や remote code を導入する
+> ためではなく、実配布前に catalog の全 trust contract を検証可能にするための、より狭い
+> 導入面である。
+
 ### 1.1 非目標
 
 - Chrome ウェブストア、Firefox Add-ons、または任意 URL をアプリ内に一覧・
@@ -29,7 +44,10 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 - CRX、ZIP、共有シート、ローカルファイルからの公開版への任意導入。
 - カタログを通さない JavaScript、WASM、ルールリスト、CSS、画像の取得または
   更新。
-- 既存拡張のサイレントな置換。更新は新しい不変世代として扱う。
+- network catalog や任意 bytes による既存拡張の置換。更新は必ず新しい不変世代とし、
+  catalog 署名・対象アプリ・期限・連番・失効・artifact/manifest/inventory digest と
+  package preflight をすべて再検証する。権限差分の有無にかかわらず、更新は native
+  confirmation なしに適用しない。
 - MV2、`webRequestBlocking`、DNR リダイレクト／ヘッダー変更、完全な
   Service Worker 互換。
 
@@ -39,12 +57,83 @@ Floorp iOS は、Chrome Manifest V3 (MV3) を入力仕様として利用する
 ### 1.2 App Review の前提
 
 リモートで提供するプラグイン／コードの可否、カタログ画面の表示方法、
-年齢区分、通報と削除の運用は App Review と法務の承認が必要である。特に
-一般的な第三者拡張ストアに見える UI は避ける。P0 の承認記録なしに P5 の
-公開配布へ進んではならない。
+年齢区分、通報と削除の運用には実際の App Review と適用されるライセンス・
+プライバシー要件の確認が必要である。この単独 maintainer プロジェクトでは、
+P0 の承認者は Floorp iOS maintainer 一人であり、存在しない部門承認を作らない。
+特に一般的な第三者拡張ストアに見える UI は避ける。candidate-bound P0 record
+なしに P5 の公開配布へ進んではならない。
 
 参考: [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)、
 [Chrome MV3](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)。
+
+#### 2026-08-26: External TestFlight policy gate
+
+最初の External TestFlight candidate は、catalog が署名済み・同梱済みであることだけを
+理由に提出してはならない。Apple の現行 App Review Guideline 3.2.2(i) は、第三者の
+apps、extensions、plug-ins の一般的 collection を表示する interface を不許可としている。
+また、Guideline 4.7 は binary 外で提供する plug-ins に index、個別の同意、privacy、
+年齢・reporting safeguards を求める。
+
+2026-08-27 に Apple の現行ガイドラインを再確認した結果、3.2.1(ii) は specific approved need
+に向けた第三者 app collection を robust editorial content とともに許容し得る。一方、現在の
+16 本は accessibility だけに限定されない appearance/privacy/productivity/developer-tools を含む
+横断的な collection であり、この条項を自己判断の例外根拠にしてはならない。4.7 は binary 外の
+software を対象にするため、FWEA1 が app bundle にあることだけで 4.7 の適用可否を決めることも
+できない。
+
+従って、署名済み・同梱済みであること**だけ**では、13 本の第三者互換ビルドを含む
+16 本の固定 catalog を外部利用可能にしてはならない。ただし、Maintainer が明示承認した
+exact 16-package candidate は、Apple の判断を得る目的に限り、次のすべてを満たした後に
+Beta App Review へ**提出**できる。
+
+1. sole Floorp iOS maintainer の candidate-bound P0 approval record と、protected
+   environment の同 record SHA-256 が一致する。
+2. managed signer が clean source commit と 13 本の review-quarantined upstream archive を
+   再照合し、公開 signed catalog/root key と provenance evidence を発行する。
+3. public output が通常の review/CI/main integration を通り、現在の `main` と一致する
+   protected annotated tag から candidate build が作られる。
+4. P5 の candidate 前提（実機計画、失効演習手順、アクセシビリティ／性能の測定計画、
+   reviewer details）が release evidence に揃う。
+
+提出は Start Testing、外部 tester への通知、外部利用可能化、または Apple 方針適合の
+主張を許可しない。Apple の結果と P5 実機証跡が揃うまで external availability は
+`pending` のままとする。却下または条件提示時は提出を停止し、maintainer が指摘に応じて
+変更範囲を再決定する。これは verifier を弱める理由、任意 installer を公開する理由、
+または `managedRemoteSource` を有効化する理由にはならない。
+
+#### 2026-08-27: release-composition clarification
+
+署名済み public output をアプリ bundle に入れるため、managed signer は clean な
+reviewed source commit に対して `Artifacts/Signed/catalog.json` と root public key を
+発行し、その出力も通常の review/CI/main integration を通る必要がある。Xcode Cloud は
+source tree を archive するだけなので、main 統合後に signer を初めて実行しても、その
+最初の binary に output は存在しない。したがって pre-merge source-bound signing、または
+input を main に統合した後の public-output 専用の第 2 integration のどちらかを選ぶ。
+private key を CI、Xcode Cloud、アプリ bundle に置くことでこの順序を迂回してはならない。
+
+2026-08-27 の release-source binding 明確化として、catalog candidate は通常の
+`main` TestFlight dispatch に任意の switch を足して起動してはならない。候補専用の
+`Floorp Curated Catalog TestFlight Candidate` workflow は、現在の `origin/main` HEAD と同じ commit を
+指す、保護された annotated `floorp-catalog-<40 lowercase commit SHA>` tag からだけ手動起動する。この
+workflow は tag 名・annotation・tag commit・現在の `main` SHA の完全一致を Apple credential より先に確認し、protected release
+environment の独立 root public-key SHA-256 と canonical signed catalog、固定 16 record、
+bundle ID/channel/marketing version、全 FWEA1 digest/inventory/manifest を fail closed で
+照合する。Xcode Cloud には branch ではなく同じ tag を `sourceBranchOrTag` として渡す。さらに
+source-controlled post-clone gate が `CI_GIT_REF`、`CI_TAG`、`CI_COMMIT`、承認済み manual
+workflow/bundle ID、実 checkout、取得し直した current `origin/main` の全一致を `xcodebuild` 前に
+要求するため、tag move、stale main、auto start、別 workflow は archive 前に停止する。候補は
+非同期完了を許さず、完了した run の `sourceCommit.commitSha` が tag の commit と一致しなければ
+失敗にする。
+
+GitHub の tag protection / force-update 禁止と、Xcode Cloud の manual tag start、および build
+完了時に外部 TestFlight group / Beta App Review へ自動公開しない設定は repository 外の P0
+release gate である。候補 workflow 自身は外部 group 割当・Beta App Review 提出を行わない。
+それらは、source commit と processed App Store Connect build の readback を再確認した別の
+明示的 release action に限る。この gate は managed-signing record、candidate-bound P0
+approval、または実際の Apple review の代替ではない。3.2.2(i) の書面上の reviewer path が
+得られない場合でも、approved exact 16-package candidate は Apple の判断を得るために提出
+できる。Apple が具体的な変更を求めた場合だけ maintainer が範囲を再決定し、16 package を
+自動的に置換してはならない。
 
 ## 2. セキュリティ原則
 
@@ -113,29 +202,39 @@ Floorp account / app attestation
 
 ### 3.2 導入フロー
 
-1. クライアントは、アプリ版・配布チャネル・ロケールを添えてカタログを要求する。
-   認証トークンは短命で、パッケージ署名の代わりにはならない。
-2. verifier は canonical JSON を再構成し、署名鎖、`audience`、`minAppVersion`、
-   `expiresAt`、連番、失効鍵を検証する。失敗時は前回の検証済みカタログだけを
-   表示してよく、新規導入と更新は無効にする。
-3. UI は互換性、権限要約、プライバシー表示、ライセンス、版、審査日を表示する。
-   導入ボタンは、選択した固定 `generation` にだけ紐付く。
-4. downloader は一時ディレクトリへ取得し、最大サイズ、SHA-256、アーカイブ形式、
-   パス安全性を検証する。リダイレクト先や追加リソースの追跡取得はしない。
-5. package store は全ファイルをインベントリ化し、manifest とリソース参照、
-   DNR ルール、許可された API を preflight する。失敗時は一時ディレクトリを
-   消去し、現世代を維持する。
+1. build/review 環境だけが ZIP、XPI、CRX、HTTPS、source checkout、または local
+   input を**未信頼な審査入力**として受け取る。展開、安全検査、互換パッチ、license／notice
+   と provenance の固定を済ませ、非圧縮 `FWEA1` と record digest を生成する。この入力
+   parser は iOS client には存在しない。
+2. managed signer が canonical `catalog.json` と root/leaf 署名鎖を発行する。公開版には
+   root public key、署名済み catalog、`FWEA1` だけを同梱し、private key、input archive、
+   review workspace、remote endpoint は同梱しない。
+3. 起動時の verifier は canonical JSON、署名鎖、`audience`、`minAppVersion`、
+   `expiresAt`、連番、失効を検証し、全ての同梱 artifact の SHA-256、manifest、inventory、
+   manifest preflight まで通してから catalog を可視化する。ひとつでも欠けるか不正なら、
+   catalog package は新規導入・更新・再有効化を fail closed する。
+4. UI は署名済み metadata の互換性、権限要約、プライバシー表示、ライセンス、版、
+   provenance を表示する。導入ボタンは、選択した固定 `generation` にだけ紐付く。
+5. package store は検証済み resource map を profile 専用 staging directory に materialize
+   し、DNR と許可 API を preflight してから atomic rename する。失敗時は staging を破棄し、
+   現世代を維持する。
 6. UI は最終的なサイト・API 権限をネイティブ画面で同意取得する。必要な同意が
-   完了するまで、導入済みでも inactive とする。
+   完了するまで、導入済みでも inactive とする。private browsing は通常 profile のコピー
+   ではなく、別の ephemeral package installation として明示同意を要する。
 7. 同意後にだけ、package store が新世代を原子的に active にし、coordinator が
    古い runtime／content rule を解放して新世代を合成する。
 
 ### 3.3 更新・失効・オフライン動作
 
-- カタログの新しい `generation` は通知できるが、自動ダウンロード・自動有効化は
-  しない。ユーザーが版と変更権限を確認して更新する。
-- 更新で権限が同一または縮小しても、新成果物は別の SHA-256 を持つ。旧世代は
-  新世代の正常な preflight と同意が完了するまで残す。
+- 新しい `generation` は新しい immutable artifact である。任意 URL、任意 bytes、
+  extension-provided update URL、古い generation への自動 rollback は行わない。
+- replacement は署名・audience・期限・sequence・revocation・artifact/manifest/inventory
+  digest・FWEA1・preflight を満たすだけでは適用しない。candidate の semantic version が
+  導入済み version より厳密に大きいこと、old/new version・generation・artifact digest・
+  追加 API・追加 host（なければその旨）を表示する一回限りの native confirmation が成功する
+  ことを必須とする。同値または旧 version を指す後続署名カタログは fail closed する。
+- 更新履歴には generation、version、digest、適用時刻、`userApproved` を残す。catalog の
+  再取得、署名の有効性、権限差分が空であることは confirmation の代替にならない。
 - 緊急失効では該当 generation を無効化し、DNR、content script、background、
   popup／options の package origin を停止する。失効はロールバック先を指定せず、
   古い世代への自動復帰もしない。利用者が後で承認済みの別 generation を明示的に
@@ -183,22 +282,25 @@ CryptoKit を利用できる Ed25519 を第一候補とする。
 
 ### 4.2 パッケージレコードと掲載審査メタデータ
 
-`catalog-v1` の実行可能な wire record は §4.4 に列挙した技術フィールドだけである。
-以下の publisher/privacy/review フィールドは、P0 承認後に artifact ごとの掲載審査
-記録・release evidence として必須にする。未承認のサーバー metadata を実行時の権限、
-URL、コードとして扱ってはならない。
+catalog schema v3 は、従来の技術フィールドに加え `metadata.disclosure` を署名する。
+この display-only object は、publisher、attribution、review date、privacy/retention
+summary、review/source evidence digest、固定 support/report route を含む。未承認の
+metadata を実行時の権限、URL、コードとして扱ってはならない。v2 は既存状態の読取互換
+のためだけに残し、External TestFlight candidate は v3 を必須にする。
 
 | フィールド | 用途 |
 | --- | --- |
 | `extensionID` / `generation` / `version` | Floorp 内の一意な不変世代。Chrome の item ID を実行時 ID として流用しない。 |
 | `artifactURL` / `artifactBytes` / `artifactSHA256` | 一つの成果物を取得・検証するための不変参照。URL は信頼根拠ではない。 |
 | `manifestSHA256` / `resourceInventorySHA256` | manifest と展開後全リソースの期待値。隠しファイルを含む差し替えを検知する。 |
-| `publisher` / `sourceProvenance` | 作者、配布許可、外部ストア item URL、取得日、審査担当を記録する。外部 URL は更新取得に使わない。 |
+| `metadata.disclosure.publisherDisplayName` / `attribution` | Floorp が再配布する package の表示上の publisher と、LICENSE/NOTICE に基づく attribution。個人連絡先や任意 URL を推測・表示しない。 |
+| `metadata.disclosure.reviewedAt` / `reviewEvidenceSHA256` / `sourceReviewSHA256` | artifact、manifest、notice、source lineage、表示 input に束縛された技術 review digest。これは sole maintainer の candidate-bound P0 approval record そのものではない。 |
 | `license` / `noticesDigest` | 再配布許可、ライセンス全文、notice／ソース公開義務への参照。 |
 | `compatibilityProfile` | `content-script`, `dnr`, `action-storage` の対応状況と、拒否される API を示す。 |
 | `requestedPermissions` / `hostPatterns` | ネイティブ同意で提示する、人間が読める最小権限。 |
-| `privacyDeclaration` | データ種別、送信先、保持、作者連絡先、通報先。 |
-| `reviewEvidence` | 静的検査、実機 OS、テストサイト、性能、レビュー日、承認者。 |
+| `metadata.disclosure.privacySummary` / `retentionPolicy` | 表示用のデータ／保持要約。sole maintainer が承認した private mode と data-retention policy を表示し、exact signed candidate への束縛は release approval record で別途確認する。 |
+| `metadata.disclosure.supportRoute` / `reportRoute` | `floorp-github-issues` と `floorp-github-bug-report` だけを許可する fixed first-party route enum。署名 metadata は任意 URL を持たない。 |
+| `reviewEvidence` | 静的検査、実機 OS、テストサイト、性能、レビュー日、sole maintainer の承認記録参照。 |
 | `availability` | `available`, `updateAvailable`, `withdrawn`, `revoked`。最低 app version は catalog の `audience` で固定する。 |
 
 成果物は `manifest.json`、宣言済みリソース、ライセンス・notice、Floorp 審査
@@ -272,6 +374,12 @@ P0 の署名方式と配布運用はまだ承認されていない。このた�
   record が通常の activation retry を通って実行されることを防ぐ。鍵ローテーションは新しい
   immutable generation と明示的 update consent を必要とし、旧 leaf の record を新 leaf として
   再解釈しない。失効した旧 leaf の record は停止する。
+- 期限は catalog 受理時だけでなく authorization property とする。native consent、runtime
+  suspend、actor hop をまたぐ新規導入・更新・再有効化・grant 変更は、現在の Keychain binding を
+  再確認し、同じ signed `expiresAt` を package store の durable write 直前にも検査する。exact
+  expiry timestamp 以降は拒否し、途中で期限を越えた candidate は journal を abort して既存世代を
+  維持する。この設計により、事前に取得した consent token や installation capability を使う
+  time-of-check/time-of-use の fail-open を作らない。
 - `revocations` は catalog の署名対象であり、key または
   `(extensionID, generation)` だけを停止できる。失効は置換や古い世代への自動復帰を
   指示できない。失効時は runtime、DNR、page origin を先に停止し、`storage.local` と
@@ -289,11 +397,11 @@ P0 の署名方式と配布運用はまだ承認されていない。このた�
   再評価、実機失効演習、P0 の再承認を同時に導入しなければならない。運用側は、それまで
   即時有効な失効だけを発行する。
 - 既存 catalog package の更新は、現在の local generation、候補 catalog generation、
-  候補 artifact SHA-256、lifecycle revision に束縛した一回限りの native confirmation が
-  なければ拒否する。既定の confirmation は拒否であり、catalog の再取得や署名の有効性
-  だけから silent update を導かない。`compatibilityProfiles` は表示用ではなく、固定
-  manifest が使う content-script／DNR／action-storage capability family をすべて含む
-  ことを導入時・再起動時に検査する。
+  候補 artifact SHA-256、lifecycle revision に束縛する。権限差分の有無にかかわらず一回限りの
+  native confirmation を必須とし、既定の confirmation は拒否である。catalog の再取得、署名の
+  有効性だけ、または任意の remote bytes から更新を導かない。
+  `compatibilityProfiles` は表示用ではなく、固定 manifest が使う content-script／DNR／
+  action-storage capability family をすべて含むことを導入時・再起動時に検査する。
 
 この下位契約は、当初の「package format が P0 の未決事項」という記述をより狭くした。
 理由は、任意の ZIP/CRX parser を公開版に置かず、artifact の受入形式そのものを
@@ -336,6 +444,15 @@ catalog record と同じ不変性境界に置くためである。P0 はこの�
 コンパイル時間、メモリ、更新頻度をカタログ審査項目に含める。現在の互換契約にない
 ルール action は「一部が無視される」のではなく導入拒否とする。
 
+**2026-08-27 の公開カタログ境界の絞り込み。** 上表は Stage 3 の汎用 DNR engine が
+検証できる互換性上限である。一方、今回 External TestFlight に向けて作成する
+`CuratedCatalog` の広告・追跡防止 artifact は、静的な `block` action だけに固定する。
+package store は署名済み catalog artifact を導入・再起動復元する前にこの制約を再検査し、
+`allow`、`upgradeScheme`、dynamic/session rule を含む artifact を fail closed で拒否する。
+これは Stage 3 の既存 fixture 互換性を削らず、外部配布する狭い profile の安全境界を
+追加する変更である。将来この profile を拡張するには、別の設計・法務/プライバシー・
+性能/誤ブロック審査と署名済み generation を要する。
+
 ### 5.3 プロファイル C: ポップアップ・設定画面・`storage`
 
 | 項目 | 設計 |
@@ -356,12 +473,12 @@ presentation delegate を置き換えない。
 
 | 段階 | 実装・設計成果物 | 完了条件 |
 | --- | --- | --- |
-| P0: 方針と承認 | App Review・法務・プライバシー判断、作者の再配布許可、運用責任、鍵保管、失効責任、公開／beta チャネルの決定記録 | 公開版の対象・非対象、承認者、緊急停止手順、レビュー時の再現手順が文書化される。 |
+| P0: 方針と承認 | sole maintainer の App Review 提出方針、license/notice/provenance による再配布根拠、鍵保管、失効、private mode と data-retention policy、公開／beta チャネルの決定記録 | 公開版の対象・非対象、唯一の承認者、緊急停止手順、レビュー時の再現手順が文書化され、exact candidate は別途 digest-bound record に束縛される。 |
 | P1: 信頼基盤 | `catalog-v1` schema、canonicalization、署名鍵階層、検証器、artifact SHA-256、ロールバック・失効状態、package store への原子的導入 API | 正常・改ざん・期限切れ・ロールバック・鍵失効・ZIP 攻撃のテストベクトルが全て fail closed で通る。 |
-| P2: コンテンツスクリプト | プロファイル A のカタログ表示、サイト同意、導入・無効化・削除、実拡張の author-approved pilot、実機回帰 | 許可サイトだけで固定 content script が実行され、撤回・private mode・世代置換で実行が止まる。 |
+| P2: コンテンツスクリプト | プロファイル A のカタログ表示、サイト同意、導入・無効化・削除、license/notice/provenance-verified 実拡張 pilot、実機回帰 | 許可サイトだけで固定 content script が実行され、撤回・private mode・世代置換で実行が止まる。 |
 | P3: DNR | プロファイル B の static/dynamic/session ルール、ルール上限・性能計測、サイト除外 UI、既存コンテンツポリシーとの合成試験 | 非対応 action を含むパッケージは導入されず、対応ルールはトランザクションで有効／復元される。 |
 | P4: Action・設定・storage | プロファイル C、popup/options host、`storage`／`alarms`、可視の optional permission 同意、action を持たない拡張の空状態 | 再起動・世代更新・無効化・private profile でも状態と権限が境界どおりに動く。 |
-| P5: 外部 TestFlight と公開判断 | カタログ運用監査、失効演習、実機 OS 行列、性能・アクセシビリティ、App Review 用テストアカウントとレビューガイド、段階配布 | P0 の承認、各パッケージの evidence、失効演習、外部テスターの受入結果を満たす。 |
+| P5: 外部 TestFlight と公開判断 | カタログ運用監査、失効演習、実機 OS 行列、性能・アクセシビリティ、App Review 用テストアカウントとレビューガイド、段階配布 | sole maintainer の P0 approval、各パッケージの evidence、失効演習、外部テスターの受入結果を満たす。 |
 
 P2〜P4 は順番に出すが、P1 のスキーマと verifier は共通である。P3 と P4 を
 先に有効化するために、P2 のサイト同意や世代管理を迂回してはならない。
@@ -427,7 +544,7 @@ private profile、ネットワーク遮断、アプリ再起動、カタログ�
 
 | 記録 | 内容 |
 | --- | --- |
-| provenance | 作者、配布許可、取得元、ライセンス、notice、審査日。 |
+| provenance | upstream identity、固定取得元、license、notice、source/archive provenance、審査日。 |
 | integrity | catalog sequence、署名鍵 ID、artifact／manifest／inventory digest。 |
 | compatibility | 利用した MV3 API、拒否された API、実機 OS、テストサイト、既知の制限。 |
 | privacy | ホスト権限、端末内／外部データ、通信先、保持、通報先。 |
@@ -442,28 +559,33 @@ package-specific evidence を持たなければならない。
 
 | 役割 | 責務 |
 | --- | --- |
-| Product | カタログの掲載基準、更新ポリシー、導入 UI、サポート対象の決定。 |
-| Security | 鍵管理、署名生成の監査、静的検査、失効判断、侵害時の演習。 |
-| Legal / Privacy | 再配布許可、ライセンス、notice、データ利用、年齢区分、通報・削除運用。 |
-| Engineering | verifier、package store、権限境界、互換性テスト、性能・クラッシュ回帰。 |
-| Release | App Review の説明、外部 TestFlight、段階配布、失効時の告知と復旧。 |
+| Floorp iOS maintainer | 唯一の P0 承認者として、掲載・更新・失効、鍵運用、private mode と data retention、App Review 提出方針を決定する。exact candidate は canonical approval record と protected environment digest に束縛する。 |
+| Engineering | verifier、package store、権限境界、互換性テスト、性能・クラッシュ回帰を実装・記録する。 |
+| Apple | Beta App Review と外部 TestFlight の実際の審査結果を決定する。 |
 
-カタログの掲載・更新・失効は二人以上の承認を要し、誰がどの artifact digest を
-いつ承認したかを監査ログに残す。秘密鍵、認証トークン、ユーザー閲覧履歴、拡張の
-保存データをカタログ監査ログに含めない。
+この単独 maintainer モデルでは、存在しない別部門や作者の承認を release gate にしない。
+各第三者 package は license、notice、固定 source/archive provenance による再配布根拠を
+持たなければ候補から除外する。通常の PR・CI・レビュー・main 統合、protected catalog
+digest、実機検証、Apple の実審査は代替されない。秘密鍵、認証トークン、ユーザー閲覧履歴、
+拡張の保存データをカタログ監査ログに含めない。maintainer の policy 承認は
+[`floorp-ios-webextensions-curated-catalog-p0-policy-approval.json`](floorp-ios-webextensions-curated-catalog-p0-policy-approval.json)
+に記録し、署名済み候補への承認は別の digest-bound release record に記録する。
 
-## 10. P0 で確定すべき未決事項
+## 10. P0 決定記録と残る実在ゲート
 
-1. 公開版でのリモート成果物提供に対する App Review の承認経路と、必要な
-   reviewer exercise path。
-2. カタログ認証の方式（Floorp account、アプリ証明、地域・年齢制限）と、
-   アカウントを持たない利用者への扱い。
-3. root／leaf 鍵の保管、署名権限、複数承認、緊急失効の責任者。
-4. package format、canonical JSON、署名方式、最大サイズ、最大ルール数、
-   catalog の最大有効期間。
-5. 拡張を無効化・失効したときに `storage.local` と DNR dynamic state を
-   保持するか削除するか。
-6. 最初の author-approved 実拡張候補と、各作者の再配布・更新・サポート許可。
+1. 初回候補は固定・同梱の 16 package とし、`managedRemoteSource` は無効のままにする。
+   Apple の事前許可を仮定せず、正規の Beta App Review に提出して実際の結果を記録する。
+2. 任意 URL、Chrome ウェブストア、CRX/ZIP、共有シートからの導入、remote JavaScript/WASM/
+   DNR list、silent update、権限昇格、fail-open は禁止を継続する。
+3. root/leaf 鍵は 1Password SSH Agent 経由だけで使い、秘密鍵を閲覧・書出ししない。鍵 rotation
+   と緊急失効は maintainer が決定し、immutable generation と署名済み失効で実施する。
+4. package format、canonical JSON、署名方式、最大サイズ、最大ルール数、catalog の最大有効期間は
+   verifier の fail-closed contract として固定する。
+5. disable と revoke は runtime/DNR/page origin を止め、profile-owned data は explicit uninstall
+   まで保持する。private profile は通常 profile の storage/DNR/runtime/package を継承しない。
+6. 第三者 13 package は MIT license、preserved LICENSE/NOTICE、固定 provenance で再配布根拠を
+   記録する。根拠のない、または再検証不能な将来 package は署名前に除外する。
 
-これらが確定するまで、現在の同梱 fixture カタログを公開版の唯一の導入元として
-維持する。
+残る release gate は、exact signed catalog に束縛された maintainer P0 record、protected
+environment digest、通常の PR/CI/review/main 統合、immutable tag、candidate build と実機/P5
+evidence、そして Apple の実際の審査である。

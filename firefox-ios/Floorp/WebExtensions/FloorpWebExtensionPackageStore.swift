@@ -108,6 +108,40 @@ struct FloorpWebExtensionCatalogPackageRevocation: Codable, Equatable, Sendable 
     let catalogGeneration: String
 }
 
+/// The authority delta between two immutable catalog generations.  This is
+/// computed from the replacement manifest and the authority actually granted
+/// to the installed profile, rather than trusting display metadata supplied by
+/// a catalog service. The native update-confirmation UI always displays this
+/// delta, including the empty-delta case.
+struct FloorpWebExtensionCatalogPermissionDelta: Equatable, Sendable {
+    let addedRequiredAPIPermissions: [FloorpWebExtensionAPIGrant]
+    let addedRequiredHostPermissions: [FloorpWebExtensionMatchPattern]
+
+    var addsAuthority: Bool {
+        !addedRequiredAPIPermissions.isEmpty || !addedRequiredHostPermissions.isEmpty
+    }
+}
+
+/// Durable, profile-local evidence of an immutable catalog replacement.  It
+/// gives Settings an audit trail without retaining executable bytes from a
+/// retired generation.  History is removed with the package during uninstall.
+struct FloorpWebExtensionCatalogUpdateHistoryEntry: Codable, Equatable, Hashable, Sendable {
+    enum Method: String, Codable, Hashable, Sendable {
+        /// A product-owned native UI displayed the replacement identity,
+        /// concrete authority delta, and exact replacement digest.
+        case userApproved
+    }
+
+    let extensionID: FloorpWebExtensionID
+    let previousCatalogGeneration: String
+    let replacementCatalogGeneration: String
+    let previousVersion: String
+    let replacementVersion: String
+    let replacementArtifactSHA256: String
+    let method: Method
+    let occurredAt: Date
+}
+
 /// Durable metadata for one active immutable package generation.
 ///
 /// The raw manifest is retained for the future `runtime.getManifest()` bridge,
@@ -338,6 +372,10 @@ actor FloorpWebExtensionPackageStore {
         FloorpWebExtensionScriptSource
     ) throws -> String
     typealias RegistryPersister = @Sendable (Data, URL) throws -> Void
+    /// The clock is injected so a catalog authorization can be enforced at
+    /// the actor-isolated persistence boundary, rather than only before an
+    /// async lifecycle operation starts.
+    typealias Clock = @Sendable () -> Date
 
     struct BundledPackageInstallationTransaction: Sendable {
         let installedPackage: FloorpWebExtensionInstalledPackage
@@ -352,6 +390,42 @@ actor FloorpWebExtensionPackageStore {
     private struct PendingPackageUpdate: Codable, Equatable, Sendable {
         let previousPackage: FloorpWebExtensionInstalledPackage
         let replacementPackage: FloorpWebExtensionInstalledPackage
+        /// Present only for signed-catalog replacements.  Optional decoding
+        /// preserves crash recovery for registries written before update
+        /// history was introduced.
+        let catalogUpdateHistoryEntry: FloorpWebExtensionCatalogUpdateHistoryEntry?
+
+        private enum CodingKeys: String, CodingKey {
+            case previousPackage
+            case replacementPackage
+            case catalogUpdateHistoryEntry
+        }
+
+        init(
+            previousPackage: FloorpWebExtensionInstalledPackage,
+            replacementPackage: FloorpWebExtensionInstalledPackage,
+            catalogUpdateHistoryEntry: FloorpWebExtensionCatalogUpdateHistoryEntry? = nil
+        ) {
+            self.previousPackage = previousPackage
+            self.replacementPackage = replacementPackage
+            self.catalogUpdateHistoryEntry = catalogUpdateHistoryEntry
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            previousPackage = try container.decode(
+                FloorpWebExtensionInstalledPackage.self,
+                forKey: .previousPackage
+            )
+            replacementPackage = try container.decode(
+                FloorpWebExtensionInstalledPackage.self,
+                forKey: .replacementPackage
+            )
+            catalogUpdateHistoryEntry = try container.decodeIfPresent(
+                FloorpWebExtensionCatalogUpdateHistoryEntry.self,
+                forKey: .catalogUpdateHistoryEntry
+            )
+        }
     }
 
     private struct Registry: Codable, Equatable, Sendable {
@@ -369,12 +443,16 @@ actor FloorpWebExtensionPackageStore {
         /// replacement (activating). Startup recovery always chooses the known
         /// good previous generation and discards the unfinalized replacement.
         var pendingPackageUpdates: [FloorpWebExtensionID: PendingPackageUpdate]
+        /// Bounded audit history for committed catalog replacements.  It is
+        /// metadata only; package removal removes these entries too.
+        var catalogUpdateHistory: [FloorpWebExtensionCatalogUpdateHistoryEntry]
 
         init(packages: [FloorpWebExtensionInstalledPackage] = []) {
             schemaVersion = Self.currentSchemaVersion
             self.packages = packages
             pendingDataPurges = []
             pendingPackageUpdates = [:]
+            catalogUpdateHistory = []
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -382,6 +460,7 @@ actor FloorpWebExtensionPackageStore {
             case packages
             case pendingDataPurges
             case pendingPackageUpdates
+            case catalogUpdateHistory
         }
 
         init(from decoder: Decoder) throws {
@@ -396,6 +475,10 @@ actor FloorpWebExtensionPackageStore {
                 [FloorpWebExtensionID: PendingPackageUpdate].self,
                 forKey: .pendingPackageUpdates
             ) ?? [:]
+            catalogUpdateHistory = try container.decodeIfPresent(
+                [FloorpWebExtensionCatalogUpdateHistoryEntry].self,
+                forKey: .catalogUpdateHistory
+            ) ?? []
         }
     }
 
@@ -417,6 +500,7 @@ actor FloorpWebExtensionPackageStore {
     static let maximumDirectoryDepth = 16
     static let maximumPackageByteSize = 64 * 1_024 * 1_024
     static let maximumRegistryByteSize = 2 * 1_024 * 1_024
+    static let maximumCatalogUpdateHistoryEntries = 128
 
     nonisolated let profileKey: FloorpWebExtensionPackageProfileKey
     private let directory: URL
@@ -424,6 +508,7 @@ actor FloorpWebExtensionPackageStore {
     private let stagingDirectory: URL
     nonisolated private let registryURL: URL
     private let registryPersister: RegistryPersister
+    private let clock: Clock
     private let resourceState = FloorpWebExtensionPackageResourceState()
     private let compositionState = FloorpWebExtensionPackageCompositionState()
     nonisolated private let durableSnapshotState = FloorpWebExtensionPackageRegistrySnapshotState()
@@ -441,7 +526,8 @@ actor FloorpWebExtensionPackageStore {
         directory: URL,
         registryPersister: @escaping RegistryPersister = { data, url in
             try data.write(to: url, options: [.atomic])
-        }
+        },
+        clock: @escaping Clock = { Date() }
     ) throws {
         profileKey = .init(
             profileIdentifier: profileIdentifier,
@@ -452,6 +538,7 @@ actor FloorpWebExtensionPackageStore {
         stagingDirectory = self.directory.appendingPathComponent("staging", isDirectory: true)
         registryURL = self.directory.appendingPathComponent("installed-packages.json", isDirectory: false)
         self.registryPersister = registryPersister
+        self.clock = clock
 
         try Self.ensureStoreDirectory(self.directory)
         try Self.ensureStoreDirectory(packagesDirectory)
@@ -570,10 +657,11 @@ actor FloorpWebExtensionPackageStore {
                 $0.extensionID == expectedExtensionID
             }
             if let previousPackage,
-               Self.updateRequiresPermissionConsent(
+               Self.catalogPermissionDelta(
                    from: previousPackage,
-                   to: preflight.manifest
-               ) {
+                   to: preflight.manifest,
+                   isPrivateBrowsing: profileKey.isPrivateBrowsing
+               ).addsAuthority {
                 throw FloorpWebExtensionPackageStoreError
                     .packageUpdateRequiresPermissionConsent(expectedExtensionID)
             }
@@ -689,8 +777,10 @@ actor FloorpWebExtensionPackageStore {
     func installVerifiedCatalogPackageTransaction(
         _ artifact: FloorpWebExtensionVerifiedCatalogArtifact,
         initialGrants: FloorpWebExtensionPermissionSnapshot? = nil,
-        updateConsent: FloorpWebExtensionCatalogUpdateConsent? = nil
+        updateConsent: FloorpWebExtensionCatalogUpdateConsent? = nil,
+        catalogExpiresAt: Date? = nil
     ) throws -> BundledPackageInstallationTransaction {
+        try requireCatalogNotExpired(catalogExpiresAt)
         let record = artifact.record
         guard record.availability == .available || record.availability == .updateAvailable else {
             throw FloorpWebExtensionCatalogError.revoked
@@ -756,6 +846,10 @@ actor FloorpWebExtensionPackageStore {
                   preflight.manifest.version == record.version else {
                 throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
             }
+            try FloorpWebExtensionManifest.validateCuratedCatalogDNRRules(
+                manifest: preflight.manifest,
+                ruleResourceData: resources.dataByPath
+            )
             try Self.validateCatalogCompatibilityProfiles(
                 record.compatibilityProfiles,
                 manifest: preflight.manifest
@@ -767,27 +861,49 @@ actor FloorpWebExtensionPackageStore {
                previousCatalogRecord.generation == record.generation {
                 throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
             }
+            let catalogUpdateHistoryEntry: FloorpWebExtensionCatalogUpdateHistoryEntry?
             if let previousPackage {
-                guard let updateConsent,
-                      previousPackage.catalogRecord != nil,
-                      updateConsent.extensionID == record.extensionID,
-                      updateConsent.installedGeneration == previousPackage.generation,
-                      updateConsent.replacementCatalogGeneration == record.generation,
-                      updateConsent.replacementArtifactSHA256 == record.artifactSHA256 else {
+                // A package from any non-catalog source can never be silently
+                // replaced by a catalog record.  This preserves the origin
+                // boundary even when the replacement itself is validly signed.
+                guard let previousCatalogRecord = previousPackage.catalogRecord else {
                     throw FloorpWebExtensionCatalogError.updateConsentRequired
                 }
+                guard FloorpWebExtensionCatalogVerifier.semanticVersionIsStrictlyGreater(
+                    record.version,
+                    than: previousPackage.version
+                ) else {
+                    throw FloorpWebExtensionCatalogError.artifactRejected(
+                        "catalog replacement version must be strictly newer than the installed version"
+                    )
+                }
+                guard let updateConsent,
+                      Self.matches(
+                          updateConsent,
+                          previousPackage: previousPackage,
+                          replacementRecord: record
+                      ) else {
+                    // The old immutable generation remains committed and
+                    // runnable until the product-owned native consent path
+                    // approves this exact replacement digest.
+                    throw FloorpWebExtensionCatalogError.updateConsentRequired
+                }
+                catalogUpdateHistoryEntry = .init(
+                    extensionID: record.extensionID,
+                    previousCatalogGeneration: previousCatalogRecord.generation,
+                    replacementCatalogGeneration: record.generation,
+                    previousVersion: previousPackage.version,
+                    replacementVersion: record.version,
+                    replacementArtifactSHA256: record.artifactSHA256,
+                    method: .userApproved,
+                    occurredAt: Date()
+                )
+            } else {
+                catalogUpdateHistoryEntry = nil
             }
             if let previousPackage,
                previousPackage.generation == generation {
                 throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
-            }
-            if let previousPackage,
-               Self.updateRequiresPermissionConsent(
-                   from: previousPackage,
-                   to: preflight.manifest
-               ) {
-                throw FloorpWebExtensionPackageStoreError
-                    .packageUpdateRequiresPermissionConsent(record.extensionID)
             }
             let grants = if let previousPackage {
                 try Self.migratedGrants(from: previousPackage, to: preflight.manifest)
@@ -821,6 +937,10 @@ actor FloorpWebExtensionPackageStore {
             guard !FileManager.default.fileExists(atPath: generationDirectory.path) else {
                 throw FloorpWebExtensionPackageStoreError.immutableGenerationConflict(record.extensionID)
             }
+            // Staging is not executable. Recheck before moving it into the
+            // immutable package area, then again immediately before the
+            // registry commit below so a long preflight cannot cross expiry.
+            try requireCatalogNotExpired(catalogExpiresAt)
             try FileManager.default.moveItem(at: stagedPackage, to: generationDirectory)
             let installed = FloorpWebExtensionInstalledPackage(
                 extensionID: record.extensionID,
@@ -844,13 +964,15 @@ actor FloorpWebExtensionPackageStore {
             if let previousPackage {
                 next.pendingPackageUpdates[record.extensionID] = .init(
                     previousPackage: previousPackage,
-                    replacementPackage: installed
+                    replacementPackage: installed,
+                    catalogUpdateHistoryEntry: catalogUpdateHistoryEntry
                 )
             } else {
                 next.packages.append(installed)
                 next.packages.sort { $0.extensionID.rawValue < $1.extensionID.rawValue }
             }
             do {
+                try requireCatalogNotExpired(catalogExpiresAt)
                 try persist(next)
             } catch {
                 try? FileManager.default.removeItem(at: generationDirectory)
@@ -892,6 +1014,48 @@ actor FloorpWebExtensionPackageStore {
         registry.packages.first { $0.extensionID == extensionID }
     }
 
+    /// Returns the concrete authority change a replacement would introduce in
+    /// this profile.  This is a presentation helper only: the transaction
+    /// below repeats the decision after full FWEA1 reconstruction before it
+    /// changes any durable state.
+    func catalogUpdatePermissionDelta(
+        for artifact: FloorpWebExtensionVerifiedCatalogArtifact
+    ) throws -> FloorpWebExtensionCatalogPermissionDelta? {
+        let record = artifact.record
+        guard record.availability == .available || record.availability == .updateAvailable else {
+            throw FloorpWebExtensionCatalogError.revoked
+        }
+        guard let previousPackage = registry.packages.first(where: {
+            $0.extensionID == record.extensionID
+        }) else {
+            return nil
+        }
+        guard previousPackage.catalogRecord != nil else {
+            throw FloorpWebExtensionCatalogError.updateConsentRequired
+        }
+        let manifest = try Self.catalogManifest(from: artifact)
+        return Self.catalogPermissionDelta(
+            from: previousPackage,
+            to: manifest,
+            isPrivateBrowsing: profileKey.isPrivateBrowsing
+        )
+    }
+
+    /// A signed catalog authenticates bytes but never authorizes a replacement
+    /// by itself. Every existing immutable catalog package requires one
+    /// product-owned, digest-bound native confirmation before it can change.
+    func catalogUpdateRequiresExplicitConsent(
+        for artifact: FloorpWebExtensionVerifiedCatalogArtifact
+    ) throws -> Bool {
+        try catalogUpdatePermissionDelta(for: artifact) != nil
+    }
+
+    func catalogUpdateHistory(
+        for extensionID: FloorpWebExtensionID
+    ) -> [FloorpWebExtensionCatalogUpdateHistoryEntry] {
+        registry.catalogUpdateHistory.filter { $0.extensionID == extensionID }
+    }
+
     func preparedPackageResources(
         extensionID: FloorpWebExtensionID,
         replacementGeneration: String
@@ -916,7 +1080,8 @@ actor FloorpWebExtensionPackageStore {
     /// unless both changes reached disk in the same registry write.
     func commitPreparedBundledPackageUpdate(
         extensionID: FloorpWebExtensionID,
-        replacementGeneration: String
+        replacementGeneration: String,
+        catalogExpiresAt: Date? = nil
     ) throws {
         guard let update = registry.pendingPackageUpdates[extensionID],
               update.replacementPackage.generation == replacementGeneration,
@@ -934,6 +1099,15 @@ actor FloorpWebExtensionPackageStore {
         next.packages[index] = update.replacementPackage
         next.packages.sort { $0.extensionID.rawValue < $1.extensionID.rawValue }
         next.pendingPackageUpdates.removeValue(forKey: extensionID)
+        if let historyEntry = update.catalogUpdateHistoryEntry {
+            next.catalogUpdateHistory.append(historyEntry)
+            if next.catalogUpdateHistory.count > Self.maximumCatalogUpdateHistoryEntries {
+                next.catalogUpdateHistory.removeFirst(
+                    next.catalogUpdateHistory.count - Self.maximumCatalogUpdateHistoryEntries
+                )
+            }
+        }
+        try requireCatalogNotExpired(catalogExpiresAt)
         try persist(next)
         registry = next
         refreshResourceState()
@@ -976,7 +1150,11 @@ actor FloorpWebExtensionPackageStore {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    func setEnabled(_ enabled: Bool, for extensionID: FloorpWebExtensionID) throws {
+    func setEnabled(
+        _ enabled: Bool,
+        for extensionID: FloorpWebExtensionID,
+        catalogExpiresAt: Date? = nil
+    ) throws {
         guard registry.pendingPackageUpdates[extensionID] == nil else {
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
         }
@@ -991,6 +1169,9 @@ actor FloorpWebExtensionPackageStore {
         // A user-initiated state change clears a prior failed attempt. A
         // subsequent failed activation records a new failure atomically below.
         next.packages[index].activationError = nil
+        if enabled {
+            try requireCatalogNotExpired(catalogExpiresAt)
+        }
         try persist(next)
         registry = next
         refreshResourceState()
@@ -1052,7 +1233,8 @@ actor FloorpWebExtensionPackageStore {
     func updateGrants(
         _ grants: FloorpWebExtensionPermissionSnapshot,
         for extensionID: FloorpWebExtensionID,
-        expectedGeneration: String
+        expectedGeneration: String,
+        catalogExpiresAt: Date? = nil
     ) throws {
         guard registry.pendingPackageUpdates[extensionID] == nil else {
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
@@ -1070,6 +1252,7 @@ actor FloorpWebExtensionPackageStore {
             for: next.packages[index].preflight.manifest,
             scope: .durablePermissionUpdate
         )
+        try requireCatalogNotExpired(catalogExpiresAt)
         try persist(next)
         registry = next
     }
@@ -1157,6 +1340,7 @@ actor FloorpWebExtensionPackageStore {
         }
         var next = registry
         next.packages.removeAll { $0.extensionID == extensionID }
+        next.catalogUpdateHistory.removeAll { $0.extensionID == extensionID }
         next.pendingDataPurges.insert(extensionID)
         try persist(next)
         registry = next
@@ -1296,29 +1480,59 @@ actor FloorpWebExtensionPackageStore {
         )
     }
 
-    /// A newly required declaration may cross the update boundary only when
-    /// the prior generation already possessed equivalent authority (for
-    /// example, an explicitly approved optional permission becoming required).
-    /// Otherwise the known-good generation remains active pending a future
-    /// trusted consent UI.
-    private static func updateRequiresPermissionConsent(
-        from previousPackage: FloorpWebExtensionInstalledPackage,
-        to manifest: FloorpWebExtensionManifest
-    ) -> Bool {
-        let previousManifest = previousPackage.preflight.manifest
-        let newlyRequiredAPIs = manifest.apiPermissions.subtracting(
-            previousManifest.apiPermissions
-        )
-        if !newlyRequiredAPIs.isSubset(of: previousPackage.grants.apiPermissions) {
-            return true
+    private static func catalogManifest(
+        from artifact: FloorpWebExtensionVerifiedCatalogArtifact
+    ) throws -> FloorpWebExtensionManifest {
+        guard let manifestData = artifact.resources["manifest.json"] else {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
         }
+        let manifest: FloorpWebExtensionManifest
+        do {
+            manifest = try FloorpWebExtensionManifest.decode(manifestData)
+        } catch {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        guard manifest.version == artifact.record.version else {
+            throw FloorpWebExtensionPackageStoreError.invalidCatalogArtifact
+        }
+        return manifest
+    }
+
+    private static func matches(
+        _ consent: FloorpWebExtensionCatalogUpdateConsent,
+        previousPackage: FloorpWebExtensionInstalledPackage,
+        replacementRecord: FloorpWebExtensionCatalogPackageRecord
+    ) -> Bool {
+        consent.extensionID == replacementRecord.extensionID &&
+            consent.installedGeneration == previousPackage.generation &&
+            consent.replacementCatalogGeneration == replacementRecord.generation &&
+            consent.replacementArtifactSHA256 == replacementRecord.artifactSHA256
+    }
+
+    /// Identifies only authority that the replacement would newly require in
+    /// the current profile.  A prior optional permission can become required
+    /// without another prompt if it was already granted; a broad prior host
+    /// grant can likewise cover a narrower new host.  This is deliberately
+    /// semantic containment, not string comparison, so `<all_urls>` and
+    /// wildcard patterns cannot be misclassified as a harmless expansion.
+    private static func catalogPermissionDelta(
+        from previousPackage: FloorpWebExtensionInstalledPackage,
+        to manifest: FloorpWebExtensionManifest,
+        isPrivateBrowsing: Bool
+    ) -> FloorpWebExtensionCatalogPermissionDelta {
+        let previousManifest = previousPackage.preflight.manifest
+        let addedRequiredAPIPermissions = manifest.apiPermissions.subtracting(
+            previousManifest.apiPermissions
+        ).subtracting(previousPackage.grants.apiPermissions)
 
         let priorRequiredHosts = Set(previousManifest.hostPermissions)
         let priorAuthorizedHosts = authorizedHostPatterns(
-            previousPackage.grants.normalHostAccess,
+            isPrivateBrowsing
+                ? previousPackage.grants.privateHostAccess
+                : previousPackage.grants.normalHostAccess,
             requestedHosts: previousPackage.grants.requestedHosts
         )
-        return manifest.hostPermissions.contains { newRequiredHost in
+        let addedRequiredHostPermissions = manifest.hostPermissions.filter { newRequiredHost in
             let wasAlreadyRequired = priorRequiredHosts.contains {
                 $0.covers(newRequiredHost)
             }
@@ -1327,6 +1541,14 @@ actor FloorpWebExtensionPackageStore {
             }
             return !wasAlreadyRequired && !wasAlreadyAuthorized
         }
+        return .init(
+            addedRequiredAPIPermissions: addedRequiredAPIPermissions.sorted {
+                $0.rawValue < $1.rawValue
+            },
+            addedRequiredHostPermissions: addedRequiredHostPermissions.sorted {
+                $0.original < $1.original
+            }
+        )
     }
 
     /// Catalog profiles are a review boundary, not display-only metadata. A
@@ -1614,7 +1836,17 @@ actor FloorpWebExtensionPackageStore {
               Set(decoded.packages.map(\.extensionID)).count == decoded.packages.count,
               decoded.pendingDataPurges.isDisjoint(with: decoded.packages.map(\.extensionID)),
               decoded.pendingDataPurges.isDisjoint(with: decoded.pendingPackageUpdates.keys),
-              Set(decoded.pendingPackageUpdates.keys).isSubset(of: decoded.packages.map(\.extensionID)) else {
+              Set(decoded.pendingPackageUpdates.keys).isSubset(of: decoded.packages.map(\.extensionID)),
+              decoded.catalogUpdateHistory.count <= maximumCatalogUpdateHistoryEntries,
+              decoded.catalogUpdateHistory.allSatisfy({ entry in
+                  decoded.packages.contains(where: { $0.extensionID == entry.extensionID }) &&
+                      isSafeGeneration(entry.previousCatalogGeneration) &&
+                      isSafeGeneration(entry.replacementCatalogGeneration) &&
+                      entry.previousCatalogGeneration != entry.replacementCatalogGeneration &&
+                      entry.replacementArtifactSHA256.count == 64 &&
+                      entry.replacementArtifactSHA256 == entry.replacementArtifactSHA256.lowercased() &&
+                      entry.replacementArtifactSHA256.allSatisfy(\.isHexDigit)
+              }) else {
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
         }
         do {
@@ -1631,6 +1863,15 @@ actor FloorpWebExtensionPackageStore {
                       }),
                       active == update.previousPackage else {
                     throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+                }
+                if let historyEntry = update.catalogUpdateHistoryEntry {
+                    guard historyEntry.extensionID == extensionID,
+                          historyEntry.previousCatalogGeneration == update.previousPackage.catalogRecord?.generation,
+                          historyEntry.replacementCatalogGeneration == update.replacementPackage.catalogRecord?.generation,
+                          historyEntry.replacementArtifactSHA256 ==
+                            update.replacementPackage.catalogRecord?.artifactSHA256 else {
+                        throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+                    }
                 }
                 try validateInstalledPackage(
                     update.previousPackage,
@@ -1676,6 +1917,70 @@ actor FloorpWebExtensionPackageStore {
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
         }
 
+        try validateInstalledPackageOrigin(
+            package,
+            resources: resources,
+            generationDirectory: generationDirectory
+        )
+
+        let preflight = try FloorpWebExtensionManifest.preflight(
+            manifestData: manifestData,
+            packageInventory: resources.inventory,
+            ruleResourceData: resources.dataByPath
+        )
+        guard preflight.isActivationAllowed,
+              preflight == package.preflight,
+              preflight.manifest.name == package.name,
+              preflight.manifest.version == package.version,
+              try validatedGrants(
+                  package.grants,
+                  for: preflight.manifest,
+                  scope: .durablePermissionUpdate
+              ) == package.grants else {
+            throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+        }
+
+        if let catalogRecord = package.catalogRecord {
+            do {
+                try FloorpWebExtensionManifest.validateCuratedCatalogDNRRules(
+                    manifest: preflight.manifest,
+                    ruleResourceData: resources.dataByPath
+                )
+                try validateCatalogCompatibilityProfiles(
+                    catalogRecord.compatibilityProfiles,
+                    manifest: preflight.manifest
+                )
+            } catch {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+        }
+
+        if let catalogRevocation = package.catalogRevocation {
+            guard package.catalogRecord?.generation == catalogRevocation.catalogGeneration,
+                  !package.isEnabled else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+        }
+
+        if let dnrConfiguration = package.dnrConfiguration {
+            let manifestRuleIDs = Set(preflight.manifest.dnrRuleResources.map(\.identifier))
+            guard dnrConfiguration.enabledStaticRuleSetIDs.isSubset(of: manifestRuleIDs) else {
+                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
+            }
+            try validateStoredDNRConfiguration(dnrConfiguration)
+        }
+        try validatePersistentRegisteredScripts(
+            package.registeredPersistentScripts,
+            for: preflight.manifest,
+            resourcePaths: package.resourcePaths
+        )
+    }
+
+    private static func validateInstalledPackageOrigin(
+        _ package: FloorpWebExtensionInstalledPackage,
+        resources: ResourceSnapshot,
+        generationDirectory: URL
+    ) throws {
         switch (package.fixture, package.catalogRecord) {
         case let (.some(fixture), .none):
             guard package.extensionID == fixture.extensionID,
@@ -1723,54 +2028,6 @@ actor FloorpWebExtensionPackageStore {
         case (.some, .some), (.none, .none):
             throw FloorpWebExtensionPackageStoreError.corruptedRegistry
         }
-
-        let preflight = try FloorpWebExtensionManifest.preflight(
-            manifestData: manifestData,
-            packageInventory: resources.inventory,
-            ruleResourceData: resources.dataByPath
-        )
-        guard preflight.isActivationAllowed,
-              preflight == package.preflight,
-              preflight.manifest.name == package.name,
-              preflight.manifest.version == package.version,
-              try validatedGrants(
-                  package.grants,
-                  for: preflight.manifest,
-                  scope: .durablePermissionUpdate
-              ) == package.grants else {
-            throw FloorpWebExtensionPackageStoreError.corruptedRegistry
-        }
-
-        if let catalogRecord = package.catalogRecord {
-            do {
-                try validateCatalogCompatibilityProfiles(
-                    catalogRecord.compatibilityProfiles,
-                    manifest: preflight.manifest
-                )
-            } catch {
-                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
-            }
-        }
-
-        if let catalogRevocation = package.catalogRevocation {
-            guard package.catalogRecord?.generation == catalogRevocation.catalogGeneration,
-                  !package.isEnabled else {
-                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
-            }
-        }
-
-        if let dnrConfiguration = package.dnrConfiguration {
-            let manifestRuleIDs = Set(preflight.manifest.dnrRuleResources.map(\.identifier))
-            guard dnrConfiguration.enabledStaticRuleSetIDs.isSubset(of: manifestRuleIDs) else {
-                throw FloorpWebExtensionPackageStoreError.corruptedRegistry
-            }
-            try validateStoredDNRConfiguration(dnrConfiguration)
-        }
-        try validatePersistentRegisteredScripts(
-            package.registeredPersistentScripts,
-            for: preflight.manifest,
-            resourcePaths: package.resourcePaths
-        )
     }
 
     private static func validatePersistentRegisteredScripts(
@@ -1855,6 +2112,20 @@ actor FloorpWebExtensionPackageStore {
     private static func registrySnapshotData(at registryURL: URL) throws -> Data? {
         guard FileManager.default.fileExists(atPath: registryURL.path) else { return nil }
         return try Data(contentsOf: registryURL, options: [.mappedIfSafe])
+    }
+
+    /// A catalog operation may wait for consent, runtime suspension, or an
+    /// actor hop after its initial signature check. Requiring the signed
+    /// lifetime again at the write boundary prevents that stale authority
+    /// from becoming a durable install, update, revival, or grant change.
+    private func requireCatalogNotExpired(_ catalogExpiresAt: Date?) throws {
+        guard let catalogExpiresAt else { return }
+        // Treat the exact timestamp as expired. This conservative boundary
+        // matches Settings and avoids granting an operation to a timer wake
+        // that races the catalog lifetime endpoint.
+        guard clock() < catalogExpiresAt else {
+            throw FloorpWebExtensionCatalogError.expired
+        }
     }
 
     private func persist(_ registry: Registry) throws {

@@ -1,0 +1,1 @@
+{"content_scripts":[{"css":["content/scroll.css"],"js":["content/scroll.js"],"matches":["https://*/*"],"run_at":"document_end","world":"ISOLATED"}],"host_permissions":["https://*/*"],"manifest_version":3,"name":"Scroll To Top — Floorp compatibility build","version":"1.0.0"}

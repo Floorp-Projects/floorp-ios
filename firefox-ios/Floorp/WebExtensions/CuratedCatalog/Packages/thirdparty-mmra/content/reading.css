@@ -1,0 +1,4 @@
+/* Reviewed readability-only subset inspired by thebaer/MMRA. */
+article { max-width: 44rem !important; margin-inline: auto !important; line-height: 1.7 !important; }
+article p { font-size: 1.08rem !important; }
+article a:focus-visible { outline: 3px solid #0f766e !important; outline-offset: 3px; }

@@ -1,0 +1,1 @@
+{"content_scripts":[{"css":["content/ekill.css"],"js":["content/ekill.js"],"matches":["https://*/*"],"run_at":"document_end","world":"ISOLATED"}],"host_permissions":["https://*/*"],"manifest_version":3,"name":"ekill — Floorp compatibility build","version":"1.9.0"}

@@ -226,6 +226,69 @@ struct FloorpWebExtensionDNRRegexSupport: Hashable, Codable, Sendable {
     let reason: String?
 }
 
+/// A native, product-owned site exemption for a block-only DNR package.
+///
+/// This is deliberately a hostname rather than an extension-supplied DNR
+/// condition.  The Settings UI uses it to construct a narrow WebKit
+/// `unless-top-url` trigger at compile time; it never creates an `allow`
+/// action or changes the immutable artifact's rules.
+enum FloorpWebExtensionDNRExcludedTopLevelDomain {
+    static let maximumCount = 128
+
+    /// Normalizes the deliberately small input grammar accepted by the native
+    /// settings UI. A bare hostname means HTTPS. Paths, credentials, ports,
+    /// query strings, and non-web schemes are rejected rather than silently
+    /// broadening the requested exclusion.
+    static func normalizeUserInput(_ input: String) -> String? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let source = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard let components = URLComponents(string: source),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.path.isEmpty || components.path == "/",
+              let host = components.host?.lowercased(),
+              isCanonicalDomain(host) else {
+            return nil
+        }
+        return host
+    }
+
+    static func isCanonicalDomain(_ value: String) -> Bool {
+        guard !value.isEmpty,
+              value == value.lowercased(),
+              value.count <= 253,
+              !value.hasPrefix("."),
+              !value.hasSuffix(".") else {
+            return false
+        }
+        return value.split(separator: ".").allSatisfy { label in
+            !label.isEmpty && label.count <= 63 &&
+                !label.hasPrefix("-") && !label.hasSuffix("-") &&
+                label.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+        }
+    }
+
+    /// WebKit evaluates `unless-top-url` values as regular expressions.  The
+    /// expression is constrained to a canonical HTTP(S) host boundary, so a
+    /// user entering `example.com` cannot accidentally exempt
+    /// `not-example.com` or inject regular-expression syntax.
+    static func webKitTopURLPattern(for domain: String) -> String {
+        let escapedDomain = NSRegularExpression.escapedPattern(for: domain)
+        // WebKit content-rule filters deliberately do not support regex
+        // disjunction. Every canonical HTTP(S) URL has a path separator,
+        // explicit port, query, or fragment marker after its host, so this
+        // character class supplies the required host boundary without a
+        // disjunction.
+        return "^https?://([a-z0-9-]+\\.)*\(escapedDomain)[:/?#]"
+    }
+}
+
 enum FloorpWebExtensionDNRError: Error, LocalizedError, Sendable {
     case invalidRuleSetIdentifier(String)
     case duplicateRuleSetIdentifier(String)
@@ -267,6 +330,9 @@ struct FloorpWebExtensionDNRPolicySnapshot: Codable, Sendable {
     let enabledStaticRuleSetIDs: Set<String>
     let dynamicRules: [FloorpWebExtensionDNRRule]
     let sessionRules: [FloorpWebExtensionDNRRule]
+    /// Native Settings exclusions, applied only to immutable static block
+    /// rules while compiling the current profile's WebKit content-rule list.
+    let excludedTopLevelDomains: [String]
     let compilation: FloorpWebExtensionDNRCompilation
 }
 
@@ -277,6 +343,49 @@ struct FloorpWebExtensionStoredDNRConfiguration: Codable, Equatable, Sendable {
     let limits: FloorpWebExtensionDNRLimits
     let enabledStaticRuleSetIDs: Set<String>
     let dynamicRules: [FloorpWebExtensionDNRRule]
+    /// Last successfully applied DNR policy generation. It is informational
+    /// in durable state and lets Settings describe the exact policy revision
+    /// it is editing after a later process restore.
+    let policyGeneration: UInt64
+    /// Product-owned top-level-site exemptions for immutable static block
+    /// rules. These are never populated from extension DNR API requests.
+    let excludedTopLevelDomains: [String]
+
+    init(
+        limits: FloorpWebExtensionDNRLimits,
+        enabledStaticRuleSetIDs: Set<String>,
+        dynamicRules: [FloorpWebExtensionDNRRule],
+        policyGeneration: UInt64 = 0,
+        excludedTopLevelDomains: [String] = []
+    ) {
+        self.limits = limits
+        self.enabledStaticRuleSetIDs = enabledStaticRuleSetIDs
+        self.dynamicRules = dynamicRules
+        self.policyGeneration = policyGeneration
+        self.excludedTopLevelDomains = excludedTopLevelDomains
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case limits
+        case enabledStaticRuleSetIDs
+        case dynamicRules
+        case policyGeneration
+        case excludedTopLevelDomains
+    }
+
+    /// Older registries intentionally migrate to a no-exemption state. A
+    /// missing field can never turn off a block rule.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        limits = try container.decode(FloorpWebExtensionDNRLimits.self, forKey: .limits)
+        enabledStaticRuleSetIDs = try container.decode(Set<String>.self, forKey: .enabledStaticRuleSetIDs)
+        dynamicRules = try container.decode([FloorpWebExtensionDNRRule].self, forKey: .dynamicRules)
+        policyGeneration = try container.decodeIfPresent(UInt64.self, forKey: .policyGeneration) ?? 0
+        excludedTopLevelDomains = try container.decodeIfPresent(
+            [String].self,
+            forKey: .excludedTopLevelDomains
+        ) ?? []
+    }
 }
 
 /// A per-profile, per-extension DNR state owner.
@@ -291,6 +400,7 @@ actor FloorpWebExtensionDNRStore {
         var enabledStaticRuleSetIDs: Set<String>
         var dynamicRules: [Int: FloorpWebExtensionDNRRule]
         var sessionRules: [Int: FloorpWebExtensionDNRRule]
+        var excludedTopLevelDomains: [String]
     }
 
     private let limits: FloorpWebExtensionDNRLimits
@@ -303,9 +413,13 @@ actor FloorpWebExtensionDNRStore {
         enabledStaticRuleSetIDs: Set<String> = [],
         dynamicRules: [FloorpWebExtensionDNRRule] = [],
         limits: FloorpWebExtensionDNRLimits = .init(),
-        generation: UInt64 = 1
+        generation: UInt64 = 1,
+        excludedTopLevelDomains: [String] = []
     ) throws {
         try Self.validateLimits(limits)
+        let canonicalExcludedTopLevelDomains = try Self.validatedExcludedTopLevelDomains(
+            excludedTopLevelDomains
+        )
 
         var registeredRuleSets: [String: FloorpWebExtensionDNRStaticRuleSet] = [:]
         var staticRuleCount = 0
@@ -341,7 +455,8 @@ actor FloorpWebExtensionDNRStore {
             staticRuleSets: registeredRuleSets,
             enabledStaticRuleSetIDs: enabledStaticRuleSetIDs,
             dynamicRules: Dictionary(uniqueKeysWithValues: dynamicRules.map { ($0.id, $0) }),
-            sessionRules: [:]
+            sessionRules: [:],
+            excludedTopLevelDomains: canonicalExcludedTopLevelDomains
         )
         // Static rules are only promised as enabled after their complete
         // translation succeeds. Unsupported disabled resources remain
@@ -374,6 +489,9 @@ actor FloorpWebExtensionDNRStore {
         minimumGeneration: UInt64? = nil
     ) throws {
         try Self.validateLimits(limits)
+        let canonicalExcludedTopLevelDomains = try Self.validatedExcludedTopLevelDomains(
+            snapshot.excludedTopLevelDomains
+        )
 
         var staticRuleSets = [String: FloorpWebExtensionDNRStaticRuleSet]()
         var staticRuleCount = 0
@@ -414,7 +532,8 @@ actor FloorpWebExtensionDNRStore {
             staticRuleSets: staticRuleSets,
             enabledStaticRuleSetIDs: snapshot.enabledStaticRuleSetIDs,
             dynamicRules: Dictionary(uniqueKeysWithValues: snapshot.dynamicRules.map { ($0.id, $0) }),
-            sessionRules: Dictionary(uniqueKeysWithValues: snapshot.sessionRules.map { ($0.id, $0) })
+            sessionRules: Dictionary(uniqueKeysWithValues: snapshot.sessionRules.map { ($0.id, $0) }),
+            excludedTopLevelDomains: canonicalExcludedTopLevelDomains
         )
         let restoredGeneration = max(snapshot.generation &+ 1, minimumGeneration ?? 0)
         let restoredCompilation = FloorpWebExtensionDNRCompiler.compile(
@@ -443,6 +562,10 @@ actor FloorpWebExtensionDNRStore {
         state.sessionRules.values.sorted(by: Self.ruleOrder)
     }
 
+    func getExcludedTopLevelDomains() -> [String] {
+        state.excludedTopLevelDomains
+    }
+
     func currentCompilation() -> FloorpWebExtensionDNRCompilation {
         compilation
     }
@@ -454,6 +577,7 @@ actor FloorpWebExtensionDNRStore {
             enabledStaticRuleSetIDs: state.enabledStaticRuleSetIDs,
             dynamicRules: state.dynamicRules.values.sorted(by: Self.ruleOrder),
             sessionRules: state.sessionRules.values.sorted(by: Self.ruleOrder),
+            excludedTopLevelDomains: state.excludedTopLevelDomains,
             compilation: compilation
         )
     }
@@ -533,11 +657,23 @@ actor FloorpWebExtensionDNRStore {
         try commit(candidate: candidate)
     }
 
+    /// Replaces the complete native site-exemption set in one compile-and-swap
+    /// transaction. The caller can persist the returned configuration only
+    /// after the candidate WebKit policy has been accepted.
+    func updateExcludedTopLevelDomains(_ domains: [String]) throws {
+        var candidate = state
+        candidate.excludedTopLevelDomains = try Self.validatedExcludedTopLevelDomains(domains)
+        guard candidate.excludedTopLevelDomains != state.excludedTopLevelDomains else { return }
+        try commit(candidate: candidate)
+    }
+
     func persistedConfiguration() -> FloorpWebExtensionStoredDNRConfiguration {
         FloorpWebExtensionStoredDNRConfiguration(
             limits: limits,
             enabledStaticRuleSetIDs: state.enabledStaticRuleSetIDs,
-            dynamicRules: getDynamicRules()
+            dynamicRules: getDynamicRules(),
+            policyGeneration: generation,
+            excludedTopLevelDomains: state.excludedTopLevelDomains
         )
     }
 
@@ -717,6 +853,25 @@ actor FloorpWebExtensionDNRStore {
         }
     }
 
+    private static func validatedExcludedTopLevelDomains(_ domains: [String]) throws -> [String] {
+        guard domains.count <= FloorpWebExtensionDNRExcludedTopLevelDomain.maximumCount else {
+            throw FloorpWebExtensionDNRError.invalidRule(
+                0,
+                "at most \(FloorpWebExtensionDNRExcludedTopLevelDomain.maximumCount) site exclusions are supported"
+            )
+        }
+        var seen = Set<String>()
+        for domain in domains {
+            guard FloorpWebExtensionDNRExcludedTopLevelDomain.isCanonicalDomain(domain) else {
+                throw FloorpWebExtensionDNRError.invalidRule(0, "invalid excluded top-level domain \(domain)")
+            }
+            guard seen.insert(domain).inserted else {
+                throw FloorpWebExtensionDNRError.invalidRule(0, "excluded top-level domains contain duplicates")
+            }
+        }
+        return seen.sorted()
+    }
+
     private static func ruleOrder(
         _ lhs: FloorpWebExtensionDNRRule,
         _ rhs: FloorpWebExtensionDNRRule
@@ -729,6 +884,10 @@ private enum FloorpWebExtensionDNRCompiler {
     private struct ActiveRule: Sendable {
         let rule: FloorpWebExtensionDNRRule
         let origin: FloorpWebExtensionDNRRuleOrigin
+        /// Only the product-owned static block-rule path can set this. DNR
+        /// API-created dynamic/session rules therefore remain unable to turn
+        /// a top-level-domain condition into a native WebKit exemption.
+        let nativeExcludedTopLevelDomains: [String]
     }
 
     private enum TranslationResult<Value> {
@@ -771,7 +930,7 @@ private enum FloorpWebExtensionDNRCompiler {
                 continue
             }
 
-            switch translate(activeRule.rule) {
+            switch translate(activeRule) {
             case .rejected(let reason):
                 entries.append(
                     .init(
@@ -867,15 +1026,18 @@ private enum FloorpWebExtensionDNRCompiler {
             activeRules += ruleSet.rules.map {
                 ActiveRule(
                     rule: $0,
-                    origin: .init(scope: .staticRules, staticRuleSetID: ruleSet.identifier)
+                    origin: .init(scope: .staticRules, staticRuleSetID: ruleSet.identifier),
+                    nativeExcludedTopLevelDomains: $0.action.type == .block
+                        ? state.excludedTopLevelDomains
+                        : []
                 )
             }
         }
         activeRules += state.dynamicRules.values.map {
-            ActiveRule(rule: $0, origin: .init(scope: .dynamic))
+            ActiveRule(rule: $0, origin: .init(scope: .dynamic), nativeExcludedTopLevelDomains: [])
         }
         activeRules += state.sessionRules.values.map {
-            ActiveRule(rule: $0, origin: .init(scope: .session))
+            ActiveRule(rule: $0, origin: .init(scope: .session), nativeExcludedTopLevelDomains: [])
         }
         return activeRules
     }
@@ -949,9 +1111,11 @@ private enum FloorpWebExtensionDNRCompiler {
         return lhs.rule.id < rhs.rule.id
     }
 
+    // swiftlint:disable:next function_body_length
     private static func translate(
-        _ rule: FloorpWebExtensionDNRRule
+        _ activeRule: ActiveRule
     ) -> TranslationResult<[String: Any]> {
+        let rule = activeRule.rule
         switch rule.action.type {
         case .redirect:
             return .rejected("redirect is not available in the iOS 15 WebKit content-rule subset")
@@ -964,8 +1128,14 @@ private enum FloorpWebExtensionDNRCompiler {
         }
 
         let condition = rule.condition
-        if !condition.initiatorDomains.isEmpty || !condition.excludedInitiatorDomains.isEmpty {
+        if !condition.initiatorDomains.isEmpty {
             return .rejected("initiator domain conditions are not exactly representable by WebKit top-URL conditions")
+        }
+        if !condition.excludedInitiatorDomains.isEmpty {
+            // This remains unsupported for all artifact and WebExtension API
+            // rule inputs. The Settings-owned exemption set is carried
+            // separately on ActiveRule so no extension can manufacture one.
+            return .rejected("extension-supplied excluded initiator domains are not supported")
         }
         if !condition.tabIDs.isEmpty || !condition.excludedTabIDs.isEmpty {
             return .rejected("tab-scoped conditions require per-tab generated content-rule lists")
@@ -1039,6 +1209,14 @@ private enum FloorpWebExtensionDNRCompiler {
                 trigger["unless-domain"] = domains
             }
             transformations += domainTransformations
+        }
+
+        if !activeRule.nativeExcludedTopLevelDomains.isEmpty {
+            let topURLPatterns = activeRule.nativeExcludedTopLevelDomains.map {
+                FloorpWebExtensionDNRExcludedTopLevelDomain.webKitTopURLPattern(for: $0)
+            }
+            trigger["unless-top-url"] = topURLPatterns
+            transformations.append("native top-level site exclusions were applied to this block rule")
         }
 
         if let domainType = condition.domainType {
@@ -1221,11 +1399,22 @@ extension FloorpWebExtensionDNRStore {
             )
         }
 
+        let canonicalExcludedTopLevelDomains = try validatedExcludedTopLevelDomains(
+            configuration.excludedTopLevelDomains
+        )
+        guard canonicalExcludedTopLevelDomains == configuration.excludedTopLevelDomains else {
+            throw FloorpWebExtensionDNRError.invalidRule(
+                0,
+                "excluded top-level domains are not in canonical order"
+            )
+        }
+
         let state = State(
             staticRuleSets: [:],
             enabledStaticRuleSetIDs: [],
             dynamicRules: Dictionary(uniqueKeysWithValues: configuration.dynamicRules.map { ($0.id, $0) }),
-            sessionRules: [:]
+            sessionRules: [:],
+            excludedTopLevelDomains: canonicalExcludedTopLevelDomains
         )
         let compilation = FloorpWebExtensionDNRCompiler.compile(state: state, generation: 1)
         guard !compilation.report.hasRejections else {

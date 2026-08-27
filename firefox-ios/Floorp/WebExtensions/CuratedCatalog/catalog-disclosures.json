@@ -1,0 +1,149 @@
+{
+  "schema": 1,
+  "packages": {
+    "floorp-site-appearance": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Floorp iOS-managed package.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "floorp-tracker-block-lite": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Floorp iOS-managed reviewed DNR corpus.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "floorp-session-timer": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Floorp iOS-managed package.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-utm-stripper": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: jparise/chrome-utm-stripper.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-minimal-twitter": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: typefully/minimal-twitter.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-refined-hacker-news": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: plibither8/refined-hacker-news.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-ekill": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: rhardih/ekill.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-mmra": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: thebaer/MMRA.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-web-search-navigator": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: infokiller/web-search-navigator.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-github-dashboard": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: muan/github-dashboard.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-enhanced-github": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: softvar/enhanced-github.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-useful-forks": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: useful-forks/useful-forks.github.io.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-easy-to-rss": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: idealclover/Easy-to-RSS.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-scrolltotop": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: pratikabu/scrolltotop.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-refined-twitter": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: sindresorhus/refined-twitter.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-very-good-adblock": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: chrisbbreuer/very-good-adblock.",
+      "privacySummary": "Review requested sites and permissions before installation. This reviewed package has no catalog download or remote update channel.",
+      "retentionPolicy": "Extension settings remain only in the selected profile while installed. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
+    }
+  }
+}

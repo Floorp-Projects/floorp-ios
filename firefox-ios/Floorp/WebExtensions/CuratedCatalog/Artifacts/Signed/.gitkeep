@@ -1,0 +1,2 @@
+# The managed signing broker writes only catalog.json and root-public-key.txt
+# here for a source-bound release build.  No private key is ever stored here.

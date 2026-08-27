@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Refined Hacker News — Floorp compatibility build",
+  "version": "1.0.0",
+  "host_permissions": ["https://news.ycombinator.com/*"],
+  "content_scripts": [{
+    "matches": ["https://news.ycombinator.com/*"],
+    "css": ["content/refined.css"],
+    "js": ["content/refined.js"],
+    "run_at": "document_end",
+    "world": "ISOLATED"
+  }]
+}

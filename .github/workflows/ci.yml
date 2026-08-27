@@ -95,12 +95,45 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Catalog signature contract tests use the same Ed25519 verifier as the
+      # release gate.  A wheel-only, pinned dependency keeps normal CI from
+      # silently skipping those fail-closed paths or compiling an unreviewed
+      # native dependency on the hosted runner.
+      - name: Install curated catalog signature test dependency
+        run: |
+          python3 -m pip install --disable-pip-version-check --only-binary=:all: "cryptography==50.0.1"
+          python3 -c 'import cryptography'
+
       - name: Run Floorp release contract tests
         run: |
           env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
             python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
           env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
             python3 -m unittest discover -s scripts/staging/tests -p 'test_*.py'
+
+      - name: Run curated WebExtensions catalog contracts
+        run: |
+          set -euo pipefail
+          env -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+            python3 -m unittest \
+              scripts.webextensions.tests.test_build_curated_catalog \
+              scripts.webextensions.tests.test_curated_catalog_documentation \
+              scripts.webextensions.tests.test_curated_catalog_functional \
+              scripts.webextensions.tests.test_curated_catalog_project_resources \
+              scripts.webextensions.tests.test_curated_catalog_source_provenance \
+              scripts.webextensions.tests.test_floorp_1password_ssh_agent_signer \
+              scripts.webextensions.tests.test_ingest_extension \
+              scripts.webextensions.tests.test_sign_catalog \
+              scripts.webextensions.tests.test_sign_curated_catalog \
+              scripts.webextensions.tests.test_verify_signed_curated_catalog_release \
+              scripts.release.tests.test_curated_catalog_testflight_workflow \
+              scripts.release.tests.test_curated_catalog_external_testflight_workflow \
+              scripts.release.tests.test_curated_catalog_xcode_cloud_post_clone \
+              scripts.release.tests.test_trigger_xcode_cloud \
+              scripts.release.tests.test_verify_curated_catalog_release_approval \
+              scripts.release.tests.test_verify_curated_catalog_testflight_submission
+          node scripts/webextensions/tests/curated_catalog_functional.mjs \
+            firefox-ios/Floorp/WebExtensions/CuratedCatalog
 
       - name: Select Xcode
         run: |

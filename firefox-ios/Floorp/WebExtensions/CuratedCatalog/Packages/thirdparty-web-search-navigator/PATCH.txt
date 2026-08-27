@@ -1,0 +1,3 @@
+Reduced the large upstream search-engine configuration to fixed local Google,
+Bing, and GitHub result navigation. Removed dynamic content-script registration,
+options, background services, remote engine data, and unsupported APIs.

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Tracking Token Stripper — Floorp compatibility build",
+  "version": "2.12.0",
+  "permissions": ["storage"],
+  "host_permissions": ["https://*/*"],
+  "action": {
+    "default_title": "Tracking Token Stripper",
+    "default_popup": "popup/index.html"
+  },
+  "content_scripts": [{
+    "matches": ["https://*/*"],
+    "js": ["content/stripper.js"],
+    "run_at": "document_start",
+    "world": "ISOLATED"
+  }]
+}

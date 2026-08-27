@@ -1,7 +1,7 @@
 # Floorp iOS WebExtensions Stage 3 release evidence
 
-Status: engineering evidence template; not a product, legal, privacy, or App
-Review approval.
+Status: engineering evidence template; not a sole-maintainer P0 decision or
+Apple App Review result.
 
 This document separates the bundled-MV3 runtime's technical verification from
 the independent decisions required before a package is shipped.  A green test
@@ -96,19 +96,20 @@ page-load workload, WebContent or Network process memory, operating-system
 memory pressure, real-device behavior, or iOS 15 behavior. Those remain
 required release evidence; the local record must not be extrapolated to them.
 
-## Release approvals — required before shipping a package
+## Release decisions — required before shipping a package
 
-These rows must be completed by the accountable product/legal/release owners;
-they cannot be inferred from source control.
+For Floorp iOS, the sole maintainer records the P0 decision and candidate-bound
+approval evidence. Apple App Review and technical/device evidence remain
+independent gates; none can be inferred from source control.
 
 | Decision | Owner | Approval / reference |
 | --- | --- | --- |
-| Package provenance, publisher and update policy | Product | Pending |
-| Redistribution licence, notices and source obligations | Legal | Pending |
-| App Review guideline analysis and reviewer exercise path | Release / App Review | Pending |
-| Privacy, moderation and age-rating treatment | Privacy / Product | Pending |
-| Supported OS floor from device evidence | Engineering / Product | Pending |
-| Package-specific kill or block decision | Release | Pending |
+| Package provenance, publisher and update policy | Sole Floorp iOS maintainer | Candidate-bound P0 evidence required |
+| Redistribution licence, notices and source obligations | Sole Floorp iOS maintainer | Verified license/notice/provenance required; exclude if absent |
+| App Review guideline analysis and reviewer exercise path | Sole Floorp iOS maintainer / Apple | Candidate notes required; Apple decision pending submission |
+| Privacy, moderation and age-rating treatment | Sole Floorp iOS maintainer | Approved policy and actual App Store metadata required |
+| Supported OS floor from device evidence | Sole Floorp iOS maintainer | Physical-device evidence required |
+| Package-specific kill or block decision | Sole Floorp iOS maintainer | Signed revocation exercise required |
 
 ## Non-approval statement
 

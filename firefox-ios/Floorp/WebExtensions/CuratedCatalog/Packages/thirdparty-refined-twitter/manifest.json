@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Refined Twitter — Floorp compatibility build",
+  "version": "1.0.0",
+  "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
+  "content_scripts": [{
+    "matches": ["https://x.com/*", "https://twitter.com/*"],
+    "css": ["content/refined.css"],
+    "js": ["content/refined.js"],
+    "run_at": "document_end",
+    "world": "ISOLATED"
+  }]
+}
