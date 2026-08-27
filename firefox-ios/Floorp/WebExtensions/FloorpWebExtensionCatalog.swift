@@ -1411,41 +1411,9 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
            Self.semanticVersionIsAtLeast(currentVersion, minimumVersion) else {
             throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package metadata capability")
         }
-        let disclosure: FloorpWebExtensionCatalogPackageMetadata.Disclosure?
-        if schemaVersion == 3 {
-            let disclosureObject = try exactObject(object["disclosure"], keys: [
-                "publisherDisplayName", "attribution", "privacySummary", "retentionPolicy", "reviewedAt",
-                "reviewEvidenceSHA256", "sourceReviewSHA256", "supportRoute", "reportRoute"
-            ])
-            let reviewedAt = try timestamp(
-                try string(disclosureObject, "reviewedAt", maximumLength: 20)
-            )
-            guard reviewedAt <= issuedAt,
-                  let supportRoute = FloorpWebExtensionCatalogPackageMetadata.Disclosure.SupportRoute(
-                      rawValue: try string(disclosureObject, "supportRoute", maximumLength: 64)
-                  ), let reportRoute = FloorpWebExtensionCatalogPackageMetadata.Disclosure.ReportRoute(
-                      rawValue: try string(disclosureObject, "reportRoute", maximumLength: 64)
-                  ) else {
-                throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package disclosure")
-            }
-            disclosure = .init(
-                publisherDisplayName: try productText(
-                    disclosureObject,
-                    "publisherDisplayName",
-                    maximumLength: 256
-                ),
-                attribution: try productText(disclosureObject, "attribution", maximumLength: 512),
-                privacySummary: try productText(disclosureObject, "privacySummary", maximumLength: 1_024),
-                retentionPolicy: try productText(disclosureObject, "retentionPolicy", maximumLength: 1_024),
-                reviewedAt: try string(disclosureObject, "reviewedAt", maximumLength: 20),
-                reviewEvidenceSHA256: try sha256(disclosureObject, "reviewEvidenceSHA256"),
-                sourceReviewSHA256: try sha256(disclosureObject, "sourceReviewSHA256"),
-                supportRoute: supportRoute,
-                reportRoute: reportRoute
-            )
-        } else {
-            disclosure = nil
-        }
+        let disclosure = try schemaVersion == 3
+            ? parseDisclosure(object["disclosure"], issuedAt: issuedAt)
+            : nil
         return .init(
             displayName: displayName,
             description: description,
@@ -1462,6 +1430,36 @@ struct FloorpWebExtensionCatalogVerifier: Sendable {
             modificationStatus: modificationStatus,
             minimumFloorpBuild: minimumFloorpBuild,
             disclosure: disclosure
+        )
+    }
+
+    private func parseDisclosure(
+        _ value: FloorpWebExtensionCanonicalJSON.Value?,
+        issuedAt: Date
+    ) throws -> FloorpWebExtensionCatalogPackageMetadata.Disclosure {
+        let object = try exactObject(value, keys: [
+            "publisherDisplayName", "attribution", "privacySummary", "retentionPolicy", "reviewedAt",
+            "reviewEvidenceSHA256", "sourceReviewSHA256", "supportRoute", "reportRoute"
+        ])
+        let reviewedAt = try timestamp(try string(object, "reviewedAt", maximumLength: 20))
+        guard reviewedAt <= issuedAt,
+              let supportRoute = FloorpWebExtensionCatalogPackageMetadata.Disclosure.SupportRoute(
+                  rawValue: try string(object, "supportRoute", maximumLength: 64)
+              ), let reportRoute = FloorpWebExtensionCatalogPackageMetadata.Disclosure.ReportRoute(
+                  rawValue: try string(object, "reportRoute", maximumLength: 64)
+              ) else {
+            throw FloorpWebExtensionCatalogError.invalidCatalog("invalid package disclosure")
+        }
+        return .init(
+            publisherDisplayName: try productText(object, "publisherDisplayName", maximumLength: 256),
+            attribution: try productText(object, "attribution", maximumLength: 512),
+            privacySummary: try productText(object, "privacySummary", maximumLength: 1_024),
+            retentionPolicy: try productText(object, "retentionPolicy", maximumLength: 1_024),
+            reviewedAt: try string(object, "reviewedAt", maximumLength: 20),
+            reviewEvidenceSHA256: try sha256(object, "reviewEvidenceSHA256"),
+            sourceReviewSHA256: try sha256(object, "sourceReviewSHA256"),
+            supportRoute: supportRoute,
+            reportRoute: reportRoute
         )
     }
 
