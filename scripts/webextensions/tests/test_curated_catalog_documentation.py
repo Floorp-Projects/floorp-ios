@@ -23,6 +23,7 @@ PILOT_CANDIDATES = (
 RELEASE_EVIDENCE = (
     REPOSITORY_ROOT / "docs/floorp-ios-webextensions-internal-catalog-release-evidence.md"
 )
+MANAGED_SIGNER = REPOSITORY_ROOT / "docs/floorp-ios-webextensions-managed-signer.md"
 P0_POLICY_APPROVAL = (
     REPOSITORY_ROOT / "docs/floorp-ios-webextensions-curated-catalog-p0-policy-approval.json"
 )
@@ -41,6 +42,7 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         cls.beta_review_draft = BETA_REVIEW_DRAFT.read_text(encoding="utf-8")
         cls.pilot_candidates = PILOT_CANDIDATES.read_text(encoding="utf-8")
         cls.release_evidence = RELEASE_EVIDENCE.read_text(encoding="utf-8")
+        cls.managed_signer = MANAGED_SIGNER.read_text(encoding="utf-8")
         cls.what_to_test_en = WHAT_TO_TEST_EN.read_text(encoding="utf-8")
         cls.what_to_test_ja = WHAT_TO_TEST_JA.read_text(encoding="utf-8")
         cls.p0_policy_approval_data = P0_POLICY_APPROVAL.read_bytes()
@@ -127,11 +129,13 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         self.assertIn("no silent update", self.beta_review_draft)
 
     def test_governance_documents_use_the_sole_maintainer_and_license_basis(self) -> None:
-        for text in (self.ingestion, self.beta_review_draft, self.release_evidence):
+        for text in (self.ingestion, self.beta_review_draft, self.release_evidence, self.managed_signer):
             self.assertIn("maintainer", text)
             self.assertNotIn("opaque evidence IDs for Legal", text)
             self.assertNotIn("two approval identities", text)
             self.assertNotIn("dual approval", text)
+        self.assertNotIn("dual-control evidence", self.managed_signer)
+        self.assertNotIn("Before the first operation, Security", self.managed_signer)
         self.assertIn("license/notice/provenance", self.pilot_candidates)
         self.assertNotIn("author-approved", self.pilot_candidates)
 

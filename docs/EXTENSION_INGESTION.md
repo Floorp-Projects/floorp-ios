@@ -105,7 +105,7 @@ source repository and must not become executable app resources.
 `scripts/webextensions/sign_catalog.py` is a low-level cryptographic primitive.
 The production handoff for this catalog is
 `scripts/webextensions/sign_curated_catalog.py`: it accepts the deterministic
-record input and managed paths to root/leaf PKCS#8 Ed25519 keys **only after**
+record input and managed root/leaf Ed25519 signing authorities **only after**
 it has checked a clean, exact source commit and every review-quarantined source
 archive declared by `sourceProvenance` (all thirteen compatibility builds). It binds the catalog root to that same
 Git checkout, parses the verified `catalog-input.json` byte snapshot without

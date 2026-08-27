@@ -136,11 +136,12 @@ writes a public artifact. The SSH Agent must supply any required local user
 confirmation; no secret is read from, copied from, or written to the source
 checkout.
 
-## Required approval record
+## Required operation record
 
-Before the first operation, Security records the root/leaf key IDs, adapter
-SHA-256, HSM or vault custody, dual-control evidence, expiry and rotation
-policy, revocation on-call, and audit-event location. Release records the
-exact source SHA, catalog sequence, root fingerprint, signed catalog digest,
-and provenance evidence location. These records remain outside the app source
-tree and contain no private key material.
+Before the first operation, the sole Floorp iOS maintainer records the
+root/leaf key IDs, adapter SHA-256, 1Password vault custody, expiry and
+rotation policy, revocation operation, and audit-event location. The candidate
+record binds the exact source SHA, catalog sequence, root fingerprint, signed
+catalog digest, and provenance-evidence location. These records remain outside
+the app source tree and contain no private key material. A separate Security or
+Release approver is not required in the sole-maintainer operating model.
