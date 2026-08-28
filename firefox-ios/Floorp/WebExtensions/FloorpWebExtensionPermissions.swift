@@ -8,6 +8,9 @@ enum FloorpWebExtensionAPIGrant: String, CaseIterable, Codable, Hashable, Sendab
     case activeTab
     case alarms
     case declarativeNetRequest
+    /// Declared MV3 packages may use a generic-font fallback. Floorp does not
+    /// expose native iOS font preferences to extension JavaScript.
+    case fontSettings
     case scripting
     case storage
     case tabs

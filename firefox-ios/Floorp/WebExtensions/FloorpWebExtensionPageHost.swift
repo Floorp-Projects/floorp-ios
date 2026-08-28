@@ -440,6 +440,8 @@ final class FloorpWebExtensionPageSchemeHandler: NSObject, WKURLSchemeHandler {
             return "text/css; charset=utf-8"
         case "json":
             return "application/json; charset=utf-8"
+        case "config", "drconf":
+            return "text/plain; charset=utf-8"
         case "png":
             return "image/png"
         case "jpg", "jpeg":

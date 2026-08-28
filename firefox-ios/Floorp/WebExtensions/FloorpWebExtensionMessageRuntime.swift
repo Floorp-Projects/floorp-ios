@@ -461,6 +461,7 @@ final class FloorpWebExtensionMessageRuntime {
             extensionID: extensionID,
             backgroundHost: backgroundHost,
             nativeAPIDispatcher: nativeAPIDispatcher,
+            bootstrap: nativeHost?.javaScriptBootstrap(for: extensionID),
             contentWorld: .world(name: Self.isolatedContentWorldName(for: extensionID)),
             owner: "floorp.webextension.bridge.tab.\(extensionID.rawValue)",
             authorizeDocument: { url, isMainFrame in
@@ -527,8 +528,8 @@ final class FloorpWebExtensionMessageRuntime {
         guard profileKey == page.profileKey else {
             return false
         }
-        if let nativeHost = nativeAPIDispatcher as? FloorpWebExtensionAPIHost,
-           nativeHost.profileKey != page.profileKey {
+        let nativeHost = nativeAPIDispatcher as? FloorpWebExtensionAPIHost
+        if let nativeHost, nativeHost.profileKey != page.profileKey {
             return false
         }
 
@@ -549,6 +550,7 @@ final class FloorpWebExtensionMessageRuntime {
             extensionID: page.extensionID,
             backgroundHost: backgroundHost,
             nativeAPIDispatcher: nativeAPIDispatcher,
+            bootstrap: nativeHost?.javaScriptBootstrap(for: page.extensionID),
             // Popup/options resources run in WebKit's page world.  Their
             // custom-scheme origin is a per-controller random value, and the
             // session revalidates that exact main-frame origin plus immutable
@@ -589,8 +591,8 @@ final class FloorpWebExtensionMessageRuntime {
         guard profileKey == background.profileKey else {
             return false
         }
-        if let nativeHost = nativeAPIDispatcher as? FloorpWebExtensionAPIHost,
-           nativeHost.profileKey != background.profileKey {
+        let nativeHost = nativeAPIDispatcher as? FloorpWebExtensionAPIHost
+        if let nativeHost, nativeHost.profileKey != background.profileKey {
             return false
         }
 
@@ -611,6 +613,7 @@ final class FloorpWebExtensionMessageRuntime {
             extensionID: background.extensionID,
             backgroundHost: backgroundHost,
             nativeAPIDispatcher: nativeAPIDispatcher,
+            bootstrap: nativeHost?.javaScriptBootstrap(for: background.extensionID),
             contentWorld: .page,
             owner: "floorp.webextension.bridge.background.\(background.extensionID.rawValue).\(background.originHost)",
             authorizeDocument: { [weak self] url, isMainFrame in
@@ -747,6 +750,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private let extensionID: FloorpWebExtensionID
     private let backgroundHost: FloorpWebExtensionLazyBackgroundHost
     private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
+    private let bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?
     private let contentPolicyOwner: String
     private let authorizeDocument: @MainActor (URL, Bool) -> Bool
     private let authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)?
@@ -764,6 +768,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         extensionID: FloorpWebExtensionID,
         backgroundHost: FloorpWebExtensionLazyBackgroundHost,
         nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?,
+        bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?,
         contentWorld: WKContentWorld,
         owner: String,
         authorizeDocument: @escaping @MainActor (URL, Bool) -> Bool,
@@ -776,6 +781,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         self.extensionID = extensionID
         self.backgroundHost = backgroundHost
         self.nativeAPIDispatcher = nativeAPIDispatcher
+        self.bootstrap = bootstrap
         contentPolicyOwner = owner
         self.authorizeDocument = authorizeDocument
         self.authorizeFrameScript = authorizeFrameScript
@@ -795,7 +801,8 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             source: Self.bootstrapSource(
                 extensionID: extensionID,
                 nonce: nonce,
-                handlerName: handlerName
+                handlerName: handlerName,
+                bootstrap: bootstrap
             ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false,
@@ -1081,19 +1088,57 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private static func bootstrapSource(
         extensionID: FloorpWebExtensionID,
         nonce: String,
-        handlerName: String
+        handlerName: String,
+        bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?
     ) -> String {
         let extensionLiteral = javaScriptLiteral(extensionID.rawValue)
         let nonceLiteral = javaScriptLiteral(nonce)
         let handlerLiteral = javaScriptLiteral(handlerName)
+        let bootstrapLiteral: String
+        if let bootstrap,
+           let data = try? JSONEncoder().encode(bootstrap),
+           let value = String(data: data, encoding: .utf8) {
+            bootstrapLiteral = javaScriptLiteral(value)
+        } else {
+            bootstrapLiteral = "null"
+        }
         return """
         (() => {
           "use strict";
           const nativeHandler = globalThis.webkit?.messageHandlers?.[\(handlerLiteral)];
           if (!nativeHandler || typeof nativeHandler.postMessage !== "function") return;
+          const floorpBootstrap = \(bootstrapLiteral) == null ? null : JSON.parse(\(bootstrapLiteral));
+          const floorpI18nBootstrap = floorpBootstrap?.i18n ?? null;
+          const floorpManifestBootstrap = floorpBootstrap?.manifest ?? null;
           let nextRequest = 0;
           const runtimeOnMessageListeners = [];
           const alarmListeners = [];
+          const makeEvent = () => {
+            const listeners = [];
+            return {
+              event: Object.freeze({
+                addListener(listener) {
+                  if (typeof listener === "function" && !listeners.includes(listener)) {
+                    listeners.push(listener);
+                  }
+                },
+                removeListener(listener) {
+                  const index = listeners.indexOf(listener);
+                  if (index >= 0) listeners.splice(index, 1);
+                },
+                hasListener(listener) { return listeners.includes(listener); }
+              }),
+              emit(...args) {
+                for (const listener of listeners.slice()) {
+                  try { listener(...args); } catch (_) {}
+                }
+              }
+            };
+          };
+          const runtimeOnInstalled = makeEvent();
+          const runtimeOnStartup = makeEvent();
+          const tabsOnRemoved = makeEvent();
+          const storageOnChanged = makeEvent();
           const serializeResponse = (value) => JSON.stringify(value === undefined ? null : value);
           const request = (operation, payload = {}) => {
             const requestId = `${Date.now()}:${++nextRequest}`;
@@ -1185,29 +1230,99 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             if (Array.isArray(keys) && keys.every((key) => typeof key === "string")) return keys;
             throw new TypeError("Only string and string-array storage keys are supported");
           };
-          const storageArea = (area) => Object.freeze({
-            get(keys = null) { return request(`storage.${area}.get`, {keys: normalizeKeys(keys)}); },
-            set(items) {
-              if (!items || typeof items !== "object" || Array.isArray(items)) {
-                return Promise.reject(new TypeError("storage.set requires an object"));
-              }
-              return request(`storage.${area}.set`, {items});
-            },
-            remove(keys) { return request(`storage.${area}.remove`, {keys: normalizeKeys(keys)}); },
-            clear() { return request(`storage.${area}.clear`); },
-            getBytesInUse(keys = null) {
-              return request(`storage.${area}.getBytesInUse`, {keys: normalizeKeys(keys)})
-                .then((result) => result.value);
+          const storageGetRequest = (keys) => {
+            if (keys && typeof keys === "object" && !Array.isArray(keys)) {
+              return {keys: Object.keys(keys), defaults: keys};
             }
-          });
+            return {keys: normalizeKeys(keys), defaults: null};
+          };
+          const storageArea = (area, quotaBytes = 5 * 1024 * 1024, quotaBytesPerItem = quotaBytes) => {
+            const areaOnChanged = makeEvent();
+            const operation = (name) => `storage.${area}.${name}`;
+            const emitChanges = (changes) => {
+              if (Object.keys(changes).length === 0) return;
+              storageOnChanged.emit(changes, area);
+              areaOnChanged.emit(changes, area);
+            };
+            const changed = (oldValue, newValue) => JSON.stringify(oldValue) !== JSON.stringify(newValue);
+            return Object.freeze({
+              QUOTA_BYTES: quotaBytes,
+              QUOTA_BYTES_PER_ITEM: quotaBytesPerItem,
+              get(keys = null) {
+                const details = storageGetRequest(keys);
+                return request(operation("get"), {keys: details.keys}).then((values) =>
+                  details.defaults ? {...details.defaults, ...values} : values
+                );
+              },
+              set(items) {
+                if (!items || typeof items !== "object" || Array.isArray(items)) {
+                  return Promise.reject(new TypeError("storage.set requires an object"));
+                }
+                const keys = Object.keys(items);
+                return request(operation("get"), {keys}).then((oldValues) =>
+                  request(operation("set"), {items}).then(() => {
+                    const changes = {};
+                    for (const key of keys) {
+                      if (changed(oldValues[key], items[key])) {
+                        changes[key] = {oldValue: oldValues[key], newValue: items[key]};
+                      }
+                    }
+                    emitChanges(changes);
+                  })
+                );
+              },
+              remove(keys) {
+                const normalized = normalizeKeys(keys);
+                return request(operation("get"), {keys: normalized}).then((oldValues) =>
+                  request(operation("remove"), {keys: normalized}).then(() => {
+                    const changes = {};
+                    for (const key of Object.keys(oldValues)) {
+                      changes[key] = {oldValue: oldValues[key]};
+                    }
+                    emitChanges(changes);
+                  })
+                );
+              },
+              clear() {
+                return request(operation("get"), {keys: null}).then((oldValues) =>
+                  request(operation("clear")).then(() => {
+                    const changes = {};
+                    for (const key of Object.keys(oldValues)) {
+                      changes[key] = {oldValue: oldValues[key]};
+                    }
+                    emitChanges(changes);
+                  })
+                );
+              },
+              getBytesInUse(keys = null) {
+                return request(operation("getBytesInUse"), {keys: normalizeKeys(keys)})
+                  .then((result) => result.value);
+              },
+              onChanged: areaOnChanged.event
+            });
+          };
           const runtime = Object.freeze({
             id: \(extensionLiteral),
             sendMessage(message) { return request("runtime.sendMessage", message); },
-            getManifest() { return request("runtime.getManifest"); },
+            getManifest() {
+              return floorpManifestBootstrap ? JSON.parse(JSON.stringify(floorpManifestBootstrap)) : {};
+            },
             getURL(path = "") {
               return request("runtime.getURL", {path: String(path)}).then((result) => result.value);
             },
             reload() { return request("runtime.reload"); },
+            getPlatformInfo() {
+              return Promise.resolve(Object.freeze({os: "ios", arch: "arm", nacl_arch: ""}));
+            },
+            setUninstallURL(url) {
+              if (typeof url !== "string") {
+                return Promise.reject(new TypeError("runtime.setUninstallURL requires a string"));
+              }
+              // iOS has no browser-owned uninstall landing-page flow.
+              return Promise.resolve(undefined);
+            },
+            onInstalled: runtimeOnInstalled.event,
+            onStartup: runtimeOnStartup.event,
             onMessage: Object.freeze({
               addListener(listener) {
                 if (typeof listener === "function" && !runtimeOnMessageListeners.includes(listener)) {
@@ -1297,10 +1412,16 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             reload(tabId, reloadProperties = {}) { return request("tabs.reload", {tabId, reloadProperties}); },
             sendMessage(tabId, message, options = {}) {
               return request("tabs.sendMessage", {tabId, message, options});
-            }
+            },
+            onRemoved: tabsOnRemoved.event
           });
-          const storage = Object.freeze({local: storageArea("local"), session: storageArea("session")});
-          const i18n = Object.freeze({
+          const storage = Object.freeze({
+            local: storageArea("local"),
+            sync: storageArea("sync", 5 * 1024 * 1024, 8 * 1024),
+            session: storageArea("session"),
+            onChanged: storageOnChanged.event
+          });
+          const asynchronousI18n = Object.freeze({
             getMessage(name, substitutions = []) {
               const values = typeof substitutions === "string" ? [substitutions] : substitutions;
               if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) return "";
@@ -1311,6 +1432,87 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
               return request("i18n.getAcceptLanguages").then((result) => result.values);
             }
           });
+          const i18n = floorpI18nBootstrap ? (() => {
+            const messageLimit = 256 * 1024;
+            const language = String(floorpI18nBootstrap.uiLanguage || "en")
+              .split(/[-_]/, 1)[0]
+              .toLowerCase();
+            const rightToLeft = ["ar", "ckb", "dv", "fa", "he", "ku", "ps", "ur", "yi"].includes(language);
+            const normalizeSubstitutions = (substitutions) => {
+              const values = typeof substitutions === "string" ? [substitutions] : substitutions;
+              return Array.isArray(values) && values.every((value) => typeof value === "string")
+                ? values
+                : null;
+            };
+            const specialMessage = (name) => {
+              switch (name.toLowerCase()) {
+                case "@@extension_id": return floorpI18nBootstrap.extensionID;
+                case "@@ui_locale": return String(floorpI18nBootstrap.uiLanguage || "en").replace(/-/g, "_");
+                case "@@bidi_dir": return rightToLeft ? "rtl" : "ltr";
+                case "@@bidi_reversed_dir": return rightToLeft ? "ltr" : "rtl";
+                case "@@bidi_start_edge": return rightToLeft ? "right" : "left";
+                case "@@bidi_end_edge": return rightToLeft ? "left" : "right";
+                default: return null;
+              }
+            };
+            const interpolate = (template, values, placeholders, allowNamedPlaceholders) => {
+              let output = "";
+              for (let index = 0; index < template.length;) {
+                if (template[index] !== "$") {
+                  output += template[index++];
+                } else if (index + 1 >= template.length) {
+                  output += "$";
+                  index += 1;
+                } else if (template[index + 1] === "$") {
+                  output += "$";
+                  index += 2;
+                } else if (template[index + 1] >= "0" && template[index + 1] <= "9") {
+                  let end = index + 1;
+                  while (end < template.length && template[end] >= "0" && template[end] <= "9") end += 1;
+                  const position = Number(template.slice(index + 1, end));
+                  output += position > 0 && position <= values.length ? values[position - 1] : "";
+                  index = end;
+                } else {
+                  const end = template.indexOf("$", index + 1);
+                  if (end < 0) {
+                    output += "$";
+                    index += 1;
+                  } else {
+                    const name = template.slice(index + 1, end).toLowerCase();
+                    const placeholder = allowNamedPlaceholders ? placeholders?.[name] : null;
+                    if (typeof placeholder === "string") {
+                      output += interpolate(placeholder, values, {}, false);
+                      index = end + 1;
+                    } else {
+                      output += "$";
+                      index += 1;
+                    }
+                  }
+                }
+                if (output.length > messageLimit) return "";
+              }
+              return output;
+            };
+            return Object.freeze({
+              getMessage(name, substitutions = []) {
+                if (typeof name !== "string") return "";
+                const values = normalizeSubstitutions(substitutions);
+                if (!values) return "";
+                const special = specialMessage(name);
+                if (special != null) return special;
+                const entry = floorpI18nBootstrap.messages?.[name.toLowerCase()];
+                return entry && typeof entry.message === "string"
+                  ? interpolate(entry.message, values, entry.placeholders || {}, true)
+                  : "";
+              },
+              getUILanguage() { return String(floorpI18nBootstrap.uiLanguage || "en"); },
+              getAcceptLanguages() {
+                return Promise.resolve(Array.isArray(floorpI18nBootstrap.acceptLanguages)
+                  ? floorpI18nBootstrap.acceptLanguages.slice()
+                  : []);
+              }
+            });
+          })() : asynchronousI18n;
           const alarms = Object.freeze({
             create(name, info) { return request("alarms.create", Object.assign({name}, info || {})); },
             get(name) { return request("alarms.get", {name}); },
@@ -1341,6 +1543,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             setBadgeBackgroundColor(details) {
               return request("action.setBadgeBackgroundColor", {value: details?.color ?? null});
             },
+            setIcon(details) { return request("action.setIcon", details || {}); },
             enable() { return request("action.enable"); },
             disable() { return request("action.disable"); }
           });
@@ -1374,6 +1577,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             i18n,
             alarms,
             action,
+            browserAction: action,
             tabs
           })) {
             Object.defineProperty(browserObject, name, {
@@ -1428,6 +1632,31 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             }
             return target;
           };
+          const chromeI18n = floorpI18nBootstrap ? Object.freeze({
+            // Chrome defines these as synchronous. Keep callback spellings
+            // without converting a no-callback result into a Promise.
+            getMessage: i18n.getMessage,
+            getUILanguage(callback) {
+              const language = i18n.getUILanguage();
+              if (typeof callback === "function") {
+                callback(language);
+                return undefined;
+              }
+              return language;
+            },
+            getAcceptLanguages: callbackMethod(i18n.getAcceptLanguages)
+          }) : callbackNamespace(i18n);
+          const chromeExtension = Object.freeze({
+            // iOS has no file:// extension permission. This legacy feature
+            // check never grants filesystem access.
+            isAllowedFileSchemeAccess(callback) {
+              if (typeof callback === "function") {
+                callback(false);
+                return undefined;
+              }
+              return Promise.resolve(false);
+            }
+          });
           const packageRuntimeURL = (path = "") => {
             if (globalThis.location?.protocol !== "floorp-extension:") {
               throw new Error("runtime.getURL is unavailable outside a package origin");
@@ -1439,9 +1668,10 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             }
             return value.href;
           };
-          const chromeRuntime = callbackNamespace(runtime, ["id", "getURL", "onMessage"]);
+          const chromeRuntime = callbackNamespace(runtime, ["id", "getManifest", "getURL", "onMessage"]);
           Object.defineProperties(chromeRuntime, {
             id: {value: \(extensionLiteral), enumerable: true},
+            getManifest: {value: runtime.getManifest, enumerable: true},
             getURL: {value: packageRuntimeURL, enumerable: true},
             onMessage: {value: runtime.onMessage, enumerable: true},
             lastError: {get: () => chromeLastError, enumerable: true}
@@ -1456,12 +1686,16 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             declarativeNetRequest: callbackNamespace(declarativeNetRequest),
             storage: Object.freeze({
               local: callbackNamespace(storage.local),
+              sync: callbackNamespace(storage.sync),
+              onChanged: storage.onChanged,
               session: callbackNamespace(storage.session)
             }),
-            i18n: callbackNamespace(i18n),
+            i18n: chromeI18n,
             alarms: callbackNamespace(alarms, ["onAlarm"]),
             action: callbackNamespace(action),
-            tabs: callbackNamespace(tabs)
+            browserAction: callbackNamespace(action),
+            tabs: callbackNamespace(tabs),
+            extension: chromeExtension
           })) {
             if (name === "alarms") {
               Object.defineProperty(value, "onAlarm", {value: alarms.onAlarm, enumerable: true});

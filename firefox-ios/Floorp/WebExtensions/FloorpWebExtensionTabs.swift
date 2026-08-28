@@ -38,6 +38,9 @@ struct FloorpWebExtensionTab: Codable, Equatable, Sendable {
 }
 
 enum FloorpWebExtensionTabsQuery: Sendable {
+    /// All tabs in this profile. Sensitive fields remain redacted per tab
+    /// unless the extension has the `tabs` grant or matching host access.
+    case all
     /// The selected tab in this iOS profile. iOS has no extension-visible
     /// desktop window collection, so "current" is this profile's active tab.
     case current
@@ -391,6 +394,12 @@ final class FloorpWebExtensionTabsService {
     ) async throws -> [FloorpWebExtensionTab] {
         let tabs = try snapshots()
         switch query {
+        case .all:
+            var result = [FloorpWebExtensionTab]()
+            for tab in tabs {
+                result.append(await publicTab(from: tab, extensionID: extensionID))
+            }
+            return result.sorted { lhs, rhs in lhs.id < rhs.id }
         case .current, .active:
             var result = [FloorpWebExtensionTab]()
             for tab in tabs where tab.isActive {

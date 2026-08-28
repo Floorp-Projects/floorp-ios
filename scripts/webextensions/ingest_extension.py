@@ -44,6 +44,8 @@ FWEA1_MAGIC = b"FWEA1\n"
 
 SAFE_RESOURCE_SUFFIXES = {
     ".css",
+    ".config",
+    ".drconf",
     ".html",
     ".htm",
     ".js",
@@ -51,9 +53,22 @@ SAFE_RESOURCE_SUFFIXES = {
     ".mjs",
     ".png",
     ".svg",
+    ".ttf",
     ".txt",
     ".wasm",
     ".webp",
+}
+TEXT_RESOURCE_SUFFIXES = {
+    ".config",
+    ".css",
+    ".drconf",
+    ".htm",
+    ".html",
+    ".js",
+    ".json",
+    ".mjs",
+    ".svg",
+    ".txt",
 }
 SAFE_MANIFEST_DROP_KEYS = {
     "author",
@@ -87,7 +102,7 @@ FORBIDDEN_PERMISSIONS = {
     "webRequestBlocking",
 }
 REMOTE_EXECUTABLE_PATTERN = re.compile(
-    r"https?://[^\s'\"`<>]+\.(?:js|mjs|wasm)(?:[?#][^\s'\"`<>]*)?",
+    r"https?://[^\s'\"`<>]+\.(?:js|mjs|wasm)(?=$|[/?#\s'\"`<>)\]}])",
     re.IGNORECASE,
 )
 NETWORK_ENDPOINT_PATTERN = re.compile(r"https?://[^\s'\"`<>]+", re.IGNORECASE)
@@ -434,6 +449,31 @@ def apply_patch(entries: list[ArchiveEntry], patch: dict[str, Any]) -> list[Arch
     return [ArchiveEntry(path, data) for path, data in sorted(contents.items(), key=lambda item: item[0].encode("utf-8"))]
 
 
+def normalize_text_line_endings(entries: Iterable[ArchiveEntry]) -> list[ArchiveEntry]:
+    """Canonicalize UTF-8 text resources without changing binary payloads.
+
+    Upstream ZIPs frequently contain CRLF source files.  Leaving those bytes in
+    the artifact makes a logically identical package host-dependent and causes
+    repository whitespace checks to report every CR as a trailing character.
+    Only resources that decode as UTF-8 and have an explicitly text-like
+    suffix are rewritten; fonts, images, WebAssembly, and non-UTF-8 resources
+    remain byte-for-byte intact.
+    """
+
+    normalized: list[ArchiveEntry] = []
+    for entry in entries:
+        if Path(entry.path).suffix.lower() not in TEXT_RESOURCE_SUFFIXES:
+            normalized.append(entry)
+            continue
+        try:
+            text = entry.data.decode("utf-8")
+        except UnicodeDecodeError:
+            normalized.append(entry)
+            continue
+        normalized.append(ArchiveEntry(entry.path, text.replace("\r\n", "\n").encode("utf-8")))
+    return normalized
+
+
 def normalize_manifest(entries: list[ArchiveEntry]) -> tuple[list[ArchiveEntry], dict[str, Any], list[Finding]]:
     contents = {entry.path: entry.data for entry in entries}
     raw_manifest = contents.get("manifest.json")
@@ -553,7 +593,7 @@ def ingest(
 
     raw_entries, source_digest = source_entries(source)
     patch, patch_digest = load_patch(patch_path)
-    patched_entries = apply_patch(raw_entries, patch)
+    patched_entries = normalize_text_line_endings(apply_patch(raw_entries, patch))
     normalized_entries, manifest, normalization_findings = normalize_manifest(patched_entries)
     findings = [*normalization_findings, *inspect(normalized_entries, manifest)]
     rejected = [finding for finding in findings if finding.severity == "reject"]

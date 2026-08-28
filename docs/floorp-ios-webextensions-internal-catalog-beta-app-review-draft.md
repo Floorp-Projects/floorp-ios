@@ -15,9 +15,9 @@ submission. Do not invent values or substitute an earlier build.
 | --- | --- |
 | App Store Connect build | Exact `marketing version (build)` and build ID produced from merged `main` SHA |
 | Catalog identity | Catalog ID, sequence, root key ID, leaf key ID, expiry, and signed catalog SHA-256 |
-| IPA identity | IPA SHA-256, archive signing/team evidence, and the 16-artifact inventory SHA-256 list |
-| P0 maintainer record | Fixed 16-package policy receipt plus the exact signed candidate's schema 2 `maintainerApproval` record and protected raw SHA-256 |
-| Redistribution basis | Per-artifact MIT license, local `LICENSE`/`NOTICE`, pinned provenance, and candidate-time archive re-verification for the 13 compatibility builds |
+| IPA identity | IPA SHA-256, archive signing/team evidence, and the 17-artifact inventory SHA-256 list |
+| P0 maintainer record | Fixed 17-package policy receipt plus the exact signed candidate's schema 2 `maintainerApproval` record and protected raw SHA-256 |
+| Redistribution basis | Per-artifact MIT license, local `LICENSE`/`NOTICE`, pinned provenance, and candidate-time archive re-verification for the 14 compatibility builds |
 | Managed signing and revocation | 1Password SSH Agent custody, key IDs/root digest, audit record, rotation, and emergency-revocation exercise |
 | Apple reviewer path | Evidence-backed fixed-bundle reviewer exercise path and Guideline 3.2.2(i)/4.7 rationale; Apple makes the actual review decision after submission |
 | Reviewer contact | Current App Store Connect contact name, email, and phone; the submission workflow checks that the live record is complete |
@@ -29,7 +29,7 @@ Use only after the fields above are complete and reviewed. Replace bracketed
 values with evidence-backed values; omit any claim that cannot be shown in the
 submitted build.
 
-> Floorp for iOS [version/build] contains a fixed, product-curated set of 16
+> Floorp for iOS [version/build] contains a fixed, product-curated set of 17
 > WebExtensions that are all embedded in the signed application bundle. This is
 > not an extension store or a catalog download client. The app provides no
 > Chrome Web Store, Firefox Add-ons, arbitrary URL, ZIP/XPI/CRX, shared-sheet,
@@ -82,6 +82,7 @@ new sole-maintainer P0 decision and candidate-bound approval record.
 | Easy to RSS | `floorp.thirdparty.easy-to-rss` | content script, popup/storage |
 | Scroll To Top | `floorp.thirdparty.scroll-to-top` | content script |
 | Refined Twitter | `floorp.thirdparty.refined-twitter` | content script |
+| Dark Reader | `floorp.thirdparty.darkreader` | content script, popup/storage/alarms; bundled configuration only |
 | Very Good AdBlock | `floorp.thirdparty.very-good-adblock` | static block-only DNR |
 
 Exact versions, immutable generations, original-input and normalized artifact

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -36,7 +38,7 @@ def catalog_evidence():
         "catalogInputSHA256": "b" * 64,
         "catalogSHA256": "c" * 64,
         "marketingVersion": "0.3.0",
-        "packageCount": 16,
+        "packageCount": 17,
         "rootPublicKeySHA256": "d" * 64,
         "sequence": 1,
         "status": "verified",
@@ -164,6 +166,17 @@ class CuratedCatalogSubmissionTests(unittest.TestCase):
         api.marketing_version = "0.2.0"
         with self.assertRaisesRegex(submission.CuratedCatalogSubmissionError, "marketing version"):
             self.verify(api)
+
+    def test_catalog_evidence_requires_the_fixed_seventeen_package_catalog(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            evidence_path = Path(temporary_directory) / "catalog-evidence.json"
+            evidence_path.write_text(json.dumps(catalog_evidence()), encoding="utf-8")
+            self.assertEqual(submission._catalog_evidence(evidence_path, "0.3.0")["packageCount"], 17)
+            stale = catalog_evidence()
+            stale["packageCount"] = 16
+            evidence_path.write_text(json.dumps(stale), encoding="utf-8")
+            with self.assertRaisesRegex(submission.CuratedCatalogSubmissionError, "fixed 17"):
+                submission._catalog_evidence(evidence_path, "0.3.0")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,239 @@
+{
+    "extension_description": {
+        "message": "Dunkler Modus für jede Website. Schone deine Augen und verwende das dunkle Theme für die Nacht und das tägliche Surfen."
+    },
+    "loading_please_wait": {
+        "message": "Lädt, bitte warten"
+    },
+    "on": {
+        "message": "Ein"
+    },
+    "off": {
+        "message": "Aus"
+    },
+    "toggle_current_site": {
+        "message": "Aktuelle Seite umschalten"
+    },
+    "setup_hotkey_toggle_site": {
+        "message": "Tastenkombination zum Umschalten der\naktuellen Webseite einrichten"
+    },
+    "toggle_extension": {
+        "message": "Erweiterung umschalten"
+    },
+    "setup_hotkey_toggle_extension": {
+        "message": "Tastenkombination zum Umschalten\nder Erweiterung einrichten"
+    },
+    "automation": {
+        "message": "Automatisierung"
+    },
+    "set_active_hours": {
+        "message": "Aktive Zeiten festlegen"
+    },
+    "set_location": {
+        "message": "Nach lokalem Sonnenuntergang aktivieren"
+    },
+    "longitude": {
+        "message": "Längengrad"
+    },
+    "latitude": {
+        "message": "Breitengrad"
+    },
+    "page_protected": {
+        "message": "Diese Seite ist durch\nden Browser geschützt"
+    },
+    "local_files_forbidden": {
+        "message": "Kein Zugriff auf lokale\nDateien erlaubt"
+    },
+    "page_in_dark_list": {
+        "message": "Diese Seite befindet sich auf der\nglobalen Dark List"
+    },
+    "system_dark_mode": {
+        "message": "Systemfarben verwenden"
+    },
+    "system_dark_mode_description": {
+        "message": "Aktivieren, wenn der System-Dunkelmodus eingeschaltet ist"
+    },
+    "system_dark_mode_chromium_warning": {
+        "message": "Diese Option könnte aufgrund eines Fehlers\nin deinem Browser nicht funktionieren"
+    },
+    "filter": {
+        "message": "Filter"
+    },
+    "mode": {
+        "message": "Modus"
+    },
+    "dark": {
+        "message": "Dunkel"
+    },
+    "light": {
+        "message": "Hell"
+    },
+    "brightness": {
+        "message": "Helligkeit"
+    },
+    "contrast": {
+        "message": "Kontrast"
+    },
+    "grayscale": {
+        "message": "Graustufe"
+    },
+    "sepia": {
+        "message": "Sepia"
+    },
+    "only_for": {
+        "message": "Nur für"
+    },
+    "only_for_description": {
+        "message": "Einstellungen nur auf aktuelle Webseite anwenden"
+    },
+    "site_list": {
+        "message": "Seitenliste"
+    },
+    "invert_listed_only": {
+        "message": "Nur gelistete invertieren"
+    },
+    "not_invert_listed": {
+        "message": "Nicht gelistete invertieren"
+    },
+    "add_site_to_list": {
+        "message": "Webseite zur Liste hinzufügen"
+    },
+    "setup_add_site_hotkey": {
+        "message": "Tastenkombination zum Hinzufügen einer Seite festlegen"
+    },
+    "more": {
+        "message": "Mehr"
+    },
+    "select_font": {
+        "message": "Schriftart auswählen"
+    },
+    "text_stroke": {
+        "message": "Textkontur"
+    },
+    "try_experimental_theme_engines": {
+        "message": "**Experimentelle** Theme-Engines ausprobieren:\n**Filter+** erhält die Farbsättigung, nutzt die GPU\n**Statisches Theme** generiert ein einfaches, schnelles Theme\n**Dynamisches Theme** analysiert Farben und Bilder"
+    },
+    "engine_filter": {
+        "message": "Filter"
+    },
+    "engine_filter_plus": {
+        "message": "Filter+"
+    },
+    "engine_static": {
+        "message": "Statisch"
+    },
+    "engine_dynamic": {
+        "message": "Dynamisch"
+    },
+    "theme_generation_mode": {
+        "message": "Theme-Modus"
+    },
+    "custom_browser_theme_on": {
+        "message": "Benutzerdefiniert"
+    },
+    "custom_browser_theme_off": {
+        "message": "Standard"
+    },
+    "change_browser_theme": {
+        "message": "Browser-Theme ändern"
+    },
+    "privacy": {
+        "message": "Datenschutz"
+    },
+    "help": {
+        "message": "Hilfe"
+    },
+    "donate": {
+        "message": "Spenden"
+    },
+    "we_celebrate_10_years": {
+        "message": "Dark Reader feiert 10 Jahre.\nBitte unterstütze unsere Arbeit."
+    },
+    "pay_for_using": {
+        "message": "Für Dark Reader bezahlen"
+    },
+    "news": {
+        "message": "Neuigkeiten"
+    },
+    "read_more": {
+        "message": "Weiterlesen"
+    },
+    "open_dev_tools": {
+        "message": "Entwicklertools"
+    },
+    "mobile": {
+        "message": "Mobile"
+    },
+    "learn_more": {
+        "message": "Mehr erfahren"
+    },
+    "mobile_text": {
+        "message": "Reduziere die Augenbelastung beim Lesen auf deinem Smartphone oder Tablet.\nScanne zur Installation einfach den QR-Code."
+    },
+    "all_settings": {
+        "message": "Alle Einstellungen"
+    },
+    "version": {
+        "message": "Version"
+    },
+    "configure_automation": {
+        "message": "Automatisierung konfigurieren"
+    },
+    "auto_night_time": {
+        "message": "Automatisch (nachts)"
+    },
+    "auto_day_time": {
+        "message": "Automatisch (tagsüber)"
+    },
+    "auto_night_at_location": {
+        "message": "Auto (Nacht am Standort)"
+    },
+    "auto_day_at_location": {
+        "message": "Auto (Tag am Standort)"
+    },
+    "auto_system_is_dark": {
+        "message": "Auto (System ist dunkel)"
+    },
+    "auto_system_is_light": {
+        "message": "Auto (System ist hell)"
+    },
+    "click_to_set_shortcut": {
+        "message": "Klicken, um die Tastenkombination festzulegen"
+    },
+    "extension_toggle_shortcut": {
+        "message": "Tastenkombination zum Ein-/Ausschalten der Erweiterung"
+    },
+    "configure_site_toggle": {
+        "message": "Websiteumschaltung konfigurieren"
+    },
+    "site_toggle": {
+        "message": "Websiteumschaltung"
+    },
+    "enabled_by_default": {
+        "message": "Standardmäßig aktiviert"
+    },
+    "enable_for_all_sites_by_default": {
+        "message": "Standardmäßig für alle Websites aktiviert"
+    },
+    "detect_dark_theme": {
+        "message": "Dunkles Theme erkennen"
+    },
+    "detect_website_dark_theme": {
+        "message": "Dunkles Theme der Website erkennen"
+    },
+    "dark_theme_detected": {
+        "message": "Dunkles Theme erkannt"
+    },
+    "website_toggle_shortcut": {
+        "message": "Tastenkombination zum Umschalten der Website"
+    },
+    "support_out_work": {
+        "message": "Unterstütze unsere Arbeit"
+    },
+    "mobile_link": {
+        "message": "Mobiler Dark Reader ist verfügbar. Mehr erfahren"
+    },
+    "store_listing": {
+        "message": "Zum Schutz der Augen ermöglicht diese Erweiterung das Erstellen dunkler Themes für Webseiten. Dark Reader invertiert helle Farben und macht Webseiten kontrastreich und leicht lesbar.\n\nPasse Helligkeit, Kontrast, Sepia-Filter und Schrifteinstellungen an. Aktiviere den Dunkelmodus auf jeder Webseite oder gib Websites einen Sepiaton. Aktiviere oder deaktiviere Dark Reader für einzelne Websites, synchronisiere automatisch mit dem System-Dunkelmodus oder erkenne bereits dunkle Websites und lasse sie unverändert.\n\nDark Reader Plus bietet gegen Gebühr eine Premium-Oberfläche mit anpassbaren Farbthemen.\n\nDies ist die originale Dark Reader-Erweiterung. Seit 2014 entwickeln wir uns kontinuierlich weiter, um mit modernen Webtechnologien Schritt zu halten und einen schnellen, zuverlässigen Dunkelmodus für lichtempfindliche Nutzer zu bieten.\n\nMit der Installation der Erweiterung stimmst du diesen Nutzungsbedingungen zu: https://darkreader.org/terms/\n\nBitte deaktiviere ähnliche Erweiterungen, um Konflikte zu vermeiden. Viel Spaß beim Surfen!"
+    }
+}

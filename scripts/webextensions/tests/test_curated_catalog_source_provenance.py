@@ -65,7 +65,7 @@ class CuratedCatalogSourceProvenanceTests(unittest.TestCase):
             source for source in self.sources
             if source["modificationStatus"] == "compatibility-patched"
         ]
-        self.assertEqual(len(compatibility_sources), 13)
+        self.assertEqual(len(compatibility_sources), 14)
         for source in compatibility_sources:
             self.assertIn("sourceProvenance", source)
             result = PROVENANCE.validate_declared_provenance(CATALOG_ROOT, source)
@@ -76,7 +76,7 @@ class CuratedCatalogSourceProvenanceTests(unittest.TestCase):
             source for source in self.sources
             if source["modificationStatus"] == "compatibility-patched"
         ]
-        self.assertEqual(len(compatibility_sources), 13)
+        self.assertEqual(len(compatibility_sources), 14)
         for source in compatibility_sources:
             self.assertEqual(source["license"], "MIT")
             package = CATALOG_ROOT / source["package"]

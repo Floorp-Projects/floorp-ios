@@ -2,7 +2,7 @@ Floorp for iOS — curated WebExtensions candidate
 
 This build is eligible for this test only when TestFlight shows the exact
 version and build stated in the release evidence and Extensions shows a signed,
-app-bundled catalog containing 16 fixed packages. If the catalog is missing,
+app-bundled catalog containing 17 fixed packages. If the catalog is missing,
 contains a different count, or its package list changes after launch, stop and
 report it as a release-integrity failure. Do not substitute the older fixture
 catalog or another TestFlight build.
@@ -14,7 +14,7 @@ to bypass those boundaries; report any visible path that appears to do so.
 
 In a normal browsing profile, open Settings > Extensions and confirm the
 signed metadata (name, version, permissions, license, source, generation) for
-the 16 fixed packages. Install one representative from each family: Floorp Site
+the 17 fixed packages. Install one representative from each family: Floorp Site
 Appearance (content script), Floorp Tracker Block Lite or Very Good AdBlock
 (static block-only DNR), and Floorp Session Timer or Easy to RSS (action,
 popup/options, storage, alarms). Grant a site only when prompted and use a
@@ -22,6 +22,12 @@ non-sensitive Floorp QA page or another approved test page. Confirm that the
 declared local behavior works, then disable, re-enable, remove, and reinstall
 each representative. Disable must stop runtime/content rules/actions without
 silently changing the generation; remove must clear extension-owned data.
+
+Also install Dark Reader, grant it a non-sensitive HTTP(S) test page, and use
+its popup to toggle the page appearance. Reload the page and reopen the popup
+to confirm settings remain profile-local. `storage.sync` is intentionally
+device-local in Floorp: do not expect a cloud account or cross-device sync.
+The reviewed build must not fetch remote configuration, news, or updates.
 
 Open an extension with no declared action as well as one with a popup. The
 Extensions menu must remain usable and must not crash. For DNR behavior, use

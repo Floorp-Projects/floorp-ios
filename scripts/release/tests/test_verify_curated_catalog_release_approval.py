@@ -30,7 +30,7 @@ def catalog_evidence() -> dict[str, object]:
         "issuedAt": "2026-08-27T00:00:00Z",
         "leafKeyID": "catalog-leaf-2026-08",
         "marketingVersion": "0.3.0",
-        "packageCount": 16,
+        "packageCount": 17,
         "rootPublicKeySHA256": "c" * 64,
         "schema": 1,
         "sequence": 9,
@@ -76,7 +76,7 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
                 approval_path=approval_path,
                 expected_approval_sha256=hashlib.sha256(approval_path.read_bytes()).hexdigest(),
                 catalog_evidence_path=evidence_path,
-                expected_package_count=16,
+                expected_package_count=17,
                 now=NOW,
             )
             self.assertEqual(result["status"], "approved")
@@ -97,7 +97,7 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
                     approval_path=pending,
                     expected_approval_sha256=hashlib.sha256(pending.read_bytes()).hexdigest(),
                     catalog_evidence_path=evidence_path,
-                    expected_package_count=16,
+                    expected_package_count=17,
                     now=NOW,
                 )
             approved = self.write(root, "approved.json", approved_record())
@@ -106,7 +106,7 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
                     approval_path=approved,
                     expected_approval_sha256="0" * 64,
                     catalog_evidence_path=evidence_path,
-                    expected_package_count=16,
+                    expected_package_count=17,
                     now=NOW,
                 )
 
@@ -122,7 +122,7 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
                     approval_path=approval_path,
                     expected_approval_sha256=hashlib.sha256(approval_path.read_bytes()).hexdigest(),
                     catalog_evidence_path=evidence_path,
-                    expected_package_count=16,
+                    expected_package_count=17,
                     now=NOW,
                 )
             record = approved_record()
@@ -133,7 +133,7 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
                     approval_path=approval_path,
                     expected_approval_sha256=hashlib.sha256(approval_path.read_bytes()).hexdigest(),
                     catalog_evidence_path=evidence_path,
-                    expected_package_count=16,
+                    expected_package_count=17,
                     now=NOW,
                 )
 
@@ -149,7 +149,7 @@ class CuratedCatalogReleaseApprovalTests(unittest.TestCase):
                     approval_path=approval_path,
                     expected_approval_sha256=hashlib.sha256(approval_path.read_bytes()).hexdigest(),
                     catalog_evidence_path=evidence_path,
-                    expected_package_count=16,
+                    expected_package_count=17,
                     now=NOW,
                 )
 

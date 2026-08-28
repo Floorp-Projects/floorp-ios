@@ -35,7 +35,7 @@ class CuratedCatalogBuildTests(unittest.TestCase):
                 generation_prefix="test20260826",
             )
 
-            self.assertEqual(len(records), 16)
+            self.assertEqual(len(records), 17)
             self.assertGreaterEqual(
                 sum(record["extensionID"].startswith("floorp.thirdparty.") for record in records),
                 10,
@@ -59,6 +59,7 @@ class CuratedCatalogBuildTests(unittest.TestCase):
                     "floorp.thirdparty.scroll-to-top",
                     "floorp.thirdparty.refined-twitter",
                     "floorp.thirdparty.very-good-adblock",
+                    "floorp.thirdparty.darkreader",
                 },
             )
             for record in records:

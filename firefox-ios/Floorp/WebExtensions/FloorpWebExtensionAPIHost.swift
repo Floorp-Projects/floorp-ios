@@ -82,6 +82,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         Int
     ) throws -> FloorpWebExtensionLiveScriptingTarget
 
+    private static let maximumJavaScriptManifestBootstrapByteCount = 64 * 1_024
+
     private struct ActiveExtension {
         let authorityRevision: UUID
         var permissions: Set<FloorpWebExtensionAPIGrant>
@@ -98,6 +100,14 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         /// broader dynamic/session contract, but a signed catalog package
         /// cannot create a new DNR policy at runtime.
         let allowsMutableDNR: Bool
+    }
+
+    /// Immutable package data made available before document-start JavaScript
+    /// executes. It provides only package metadata and localized strings, not
+    /// a synchronous native capability.
+    struct JavaScriptBootstrap: Encodable, Sendable {
+        let i18n: FloorpWebExtensionI18n.JavaScriptBootstrap?
+        let manifest: FloorpWebExtensionJSONValue?
     }
 
     private enum PermissionMutationAuthority {
@@ -181,6 +191,47 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
 
     private struct ActionTextRequest: Decodable {
         let value: String?
+    }
+
+    private struct ActionIconPath: Decodable {
+        let preferredPath: String
+
+        init(from decoder: Decoder) throws {
+            if let path = try? decoder.singleValueContainer().decode(String.self) {
+                preferredPath = path
+                return
+            }
+
+            let container = try decoder.container(keyedBy: FloorpWebExtensionDynamicCodingKey.self)
+            guard !container.allKeys.isEmpty else {
+                throw DecodingError.dataCorrupted(.init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "action.setIcon path must not be empty"
+                ))
+            }
+            var candidates = [(size: Int, path: String)]()
+            for key in container.allKeys {
+                guard let size = Int(key.stringValue), (1...4_096).contains(size) else {
+                    throw DecodingError.dataCorrupted(.init(
+                        codingPath: decoder.codingPath + [key],
+                        debugDescription: "action.setIcon path map keys must be pixel sizes"
+                    ))
+                }
+                candidates.append((size, try container.decode(String.self, forKey: key)))
+            }
+            guard let preferred = candidates.max(by: { $0.size < $1.size }) else {
+                throw DecodingError.dataCorrupted(.init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "action.setIcon path must not be empty"
+                ))
+            }
+            preferredPath = preferred.path
+        }
+    }
+
+    private struct ActionIconRequest: Decodable {
+        let path: ActionIconPath?
+        let tabId: Int?
     }
 
     private struct RuntimeGetURLRequest: Decodable {
@@ -732,6 +783,27 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         activeExtensions[extensionID]?.packageGeneration
     }
 
+    /// Returns a package-local bootstrap for synchronous WebExtensions APIs.
+    /// A malformed or oversized optional snapshot simply remains unavailable;
+    /// it cannot broaden authority or prevent the asynchronous bridge from
+    /// installing.
+    func javaScriptBootstrap(for extensionID: FloorpWebExtensionID) -> JavaScriptBootstrap? {
+        guard let active = activeExtensions[extensionID] else { return nil }
+        let localized = try? i18n.javaScriptBootstrap(
+            extensionID: extensionID,
+            defaultLocale: active.defaultLocale
+        )
+        let manifest: FloorpWebExtensionJSONValue?
+        if let rawManifest = active.rawManifest,
+           rawManifest.count <= Self.maximumJavaScriptManifestBootstrapByteCount {
+            manifest = try? JSONDecoder().decode(FloorpWebExtensionJSONValue.self, from: rawManifest)
+        } else {
+            manifest = nil
+        }
+        guard localized != nil || manifest != nil else { return nil }
+        return .init(i18n: localized, manifest: manifest)
+    }
+
     func isActivePackageGeneration(
         _ generation: String,
         for extensionID: FloorpWebExtensionID
@@ -895,6 +967,22 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         case "storage.local.getBytesInUse":
             try require(.storage, in: active)
             return try await storageBytesInUse(payload, area: .local, sender: sender)
+        case "storage.sync.get":
+            try require(.storage, in: active)
+            return try await storageGet(payload, area: .sync, sender: sender)
+        case "storage.sync.set":
+            try require(.storage, in: active)
+            return try await storageSet(payload, area: .sync, sender: sender)
+        case "storage.sync.remove":
+            try require(.storage, in: active)
+            return try await storageRemove(payload, area: .sync, sender: sender)
+        case "storage.sync.clear":
+            try require(.storage, in: active)
+            try await storage.clear(for: sender.extensionID, in: .sync)
+            return try response(EmptyResponse())
+        case "storage.sync.getBytesInUse":
+            try require(.storage, in: active)
+            return try await storageBytesInUse(payload, area: .sync, sender: sender)
         case "storage.session.get":
             try require(.storage, in: active)
             return try await storageGet(payload, area: .session, sender: sender)
@@ -971,11 +1059,11 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             return try await setActionEnabled(true, sender: sender)
         case "action.disable":
             return try await setActionEnabled(false, sender: sender)
+        case "action.setIcon":
+            return try await setActionIcon(payload, active: active, sender: sender)
         case "tabs.query":
-            try require(.tabs, in: active)
             return try await queryTabs(payload, sender: sender)
         case "tabs.get":
-            try require(.tabs, in: active)
             return try await getTab(payload, sender: sender)
         case "tabs.create":
             try require(.tabs, in: active)
@@ -987,7 +1075,6 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             try require(.tabs, in: active)
             return try await reloadTab(payload, sender: sender)
         case "tabs.sendMessage":
-            try require(.tabs, in: active)
             return try await sendTabMessage(payload, sender: sender)
         default:
             throw FloorpWebExtensionMessageError.unsupportedOperation
@@ -1952,11 +2039,17 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         _ payload: FloorpWebExtensionMessagePayload,
         sender: any FloorpWebExtensionMessageSender
     ) async throws -> FloorpWebExtensionMessagePayload {
-        _ = try? decode(TabsQueryRequest.self, from: payload)
+        let request = try decode(TabsQueryRequest.self, from: payload)
         guard let tabs else {
             throw FloorpWebExtensionMessageError.permissionDenied
         }
-        return try response(try await tabs.query(.active, for: sender.extensionID))
+        let queryInfo = request.queryInfo
+        let query: FloorpWebExtensionTabsQuery = (
+            queryInfo?.active == true ||
+            queryInfo?.currentWindow == true ||
+            queryInfo?.current == true
+        ) ? .active : .all
+        return try response(try await tabs.query(query, for: sender.extensionID))
     }
 
     private func getTab(
@@ -2130,6 +2223,71 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         state.isEnabled = enabled
         try await actions.setState(state, for: sender.extensionID)
         return try response(EmptyResponse())
+    }
+
+    private func setActionIcon(
+        _ payload: FloorpWebExtensionMessagePayload,
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        let request = try decode(ActionIconRequest.self, from: payload)
+        guard request.tabId == nil else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+        var state = await actions.state(for: sender.extensionID)
+        if let path = request.path {
+            guard let resourcePath = Self.canonicalActionResourcePath(path.preferredPath),
+                  Self.isActionIconResource(resourcePath),
+                  active.resourcePaths.contains(resourcePath) else {
+                throw FloorpWebExtensionMessageError.unauthorizedDocument
+            }
+            do {
+                state.icon = try FloorpWebExtensionActionResource(resourcePath)
+            } catch {
+                throw FloorpWebExtensionMessageError.malformedEnvelope
+            }
+        } else {
+            state.icon = nil
+        }
+        try await actions.setState(state, for: sender.extensionID)
+        return try response(EmptyResponse())
+    }
+
+    /// `action.setIcon` paths resolve from the extension package root. A
+    /// packaged MV3 bundle can therefore use harmless leading `..` segments
+    /// from a background directory, but never escape the reviewed inventory.
+    private static func canonicalActionResourcePath(_ rawPath: String) -> String? {
+        guard !rawPath.isEmpty,
+              rawPath.utf8.count <= 1_024,
+              !rawPath.hasPrefix("/"),
+              !rawPath.contains("\\"),
+              !rawPath.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
+            return nil
+        }
+        var components = [String]()
+        for component in rawPath.split(separator: "/", omittingEmptySubsequences: false) {
+            switch component {
+            case "", ".":
+                continue
+            case "..":
+                if !components.isEmpty {
+                    components.removeLast()
+                }
+            default:
+                components.append(String(component))
+            }
+        }
+        let path = components.joined(separator: "/")
+        return path.isEmpty ? nil : path
+    }
+
+    private static func isActionIconResource(_ path: String) -> Bool {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "png", "jpg", "jpeg", "gif", "svg", "webp", "ico":
+            return true
+        default:
+            return false
+        }
     }
 
     private func require(

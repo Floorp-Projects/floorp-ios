@@ -18,12 +18,12 @@ artifact SHA-256, manifest/inventory digests, notices digest, and inspection
 result are in `CuratedCatalog/review-index.json` and
 `Review/<id>/inspection.json`.
 
-All 13 third-party compatibility builds carry a review-only
-`SourceProvenance/<id>.json` record. For the twelve generic compatibility
+All 14 third-party compatibility builds carry a review-only
+`SourceProvenance/<id>.json` record. For the thirteen generic compatibility
 builds it pins the GitHub archive URL/root/SHA-256, upstream license member,
 reviewed source-member hashes, and the local `LICENSE`, `NOTICE`,
 `manifest.json`, and `PATCH.txt` derivation hashes. The managed signer must
-receive exactly one real quarantined archive for each of those 13 records,
+receive exactly one real quarantined archive for each of those 14 records,
 re-verify every binding, and preserve a separate provenance-evidence output
 before a candidate can rely on them. For
 `floorp.thirdparty.very-good-adblock`, the specialized record also requires
@@ -49,6 +49,7 @@ author endorses Floorp or creates a third-party privacy or support obligation.
 | `floorp.thirdparty.easy-to-rss` | [idealclover/Easy-to-RSS](https://github.com/idealclover/Easy-to-RSS) `c4f88670a696` | MIT | Announces a page-local RSS/Atom link | MIT + `LICENSE`/`NOTICE` + pinned provenance |
 | `floorp.thirdparty.scroll-to-top` | [pratikabu/scrolltotop](https://github.com/pratikabu/scrolltotop) `ec3db4664765` | MIT | Adds an accessible local scroll-to-top button | MIT + `LICENSE`/`NOTICE` + pinned provenance |
 | `floorp.thirdparty.refined-twitter` | [sindresorhus/refined-twitter](https://github.com/sindresorhus/refined-twitter) `bceb4440811f` | MIT | Applies a fixed local marker/style to rendered tweets | MIT + `LICENSE`/`NOTICE` + pinned provenance |
+| `floorp.thirdparty.darkreader` | [darkreader/darkreader](https://github.com/darkreader/darkreader) `c2a707302a39` | MIT | Applies reviewed local dark-theme transformations to allowed sites | MIT + `LICENSE`/`NOTICE` + pinned provenance |
 | `floorp.thirdparty.very-good-adblock` | [chrisbbreuer/very-good-adblock](https://github.com/chrisbbreuer/very-good-adblock) `828148f94b12` | MIT | Fixed 16-rule, block-only DNR subset for advertising/tracking hosts | MIT + `LICENSE`/`NOTICE` + pinned provenance |
 
 ### Exact immutable compatibility-build records
@@ -74,13 +75,14 @@ list, `update_url`, or a client-side download path.
 | `floorp.thirdparty.easy-to-rss` | `0.2.0` / `g20260826-thirdparty-easy-to-rss` | `4d829b6cc03035e7d23a33037da9d662d0db5de25dce3e60e0589b7c3ab4c2f9` | `ccea21a177196f76e55b2b42d0ffdc8c06a0c3da5993d8cfa5017bb9e03ba38d` | `storage` / `https://*/*` | `PATCH.txt`; retained page-local feed discovery and popup only |
 | `floorp.thirdparty.scroll-to-top` | `1.0.0` / `g20260826-thirdparty-scrolltotop` | `c0953a05d96775d98c69430a830e1690be260d961b6c90efb2d2cf293d48a6dd` | `f4e2c388bf0a03468e1eb1bdf07439f9ce62033c162c896f63aea8524bf83f95` | none / `https://*/*` | `PATCH.txt`; retained one accessible local control only |
 | `floorp.thirdparty.refined-twitter` | `1.0.0` / `g20260826-thirdparty-refined-twitter` | `9db815c188f7ce413e0282774a29c0158775494ca6a08f408056d3831bdd7133` | `c9b7a9ceb57ca727d4887cefdfa7453f401b38d8efd65376db653d37acca3c6f` | none / `https://twitter.com/*`, `https://x.com/*` | `PATCH.txt`; retained fixed local tweet marker/style only |
+| `floorp.thirdparty.darkreader` | `4.9.129` / `g20260826-thirdparty-darkreader` | `b0a1af878da40dbb21544d5f8a19d15ab3120fc5c2a84f6654d795363ee88755` | `ca6b6a61ab5c46a0224919de1da2fc7b50b8904488ad0975afb22245732379d8` | `alarms`, `fontSettings`, `scripting`, `storage` / `*://*/*` | `PATCH.txt`; bundled config only, device-local sync namespace, no remote config/news/update fetch |
 | `floorp.thirdparty.very-good-adblock` | `1.0.0` / `g20260826-thirdparty-very-good-adblock` | `1f7e2a0560a2d5e606893993a470a342d21ed314ae5d94a9ec468259283f3fc4` | `85b77dadf2e4e0faa160a1403696cf2e0d528d649b84227cd4926c85b41c9ffe` | `declarativeNetRequest` / none | `PATCH.txt` + source-provenance record; retained mapped 16 static `block` rules only; removed redirect, dynamic rules, remote refresh, telemetry, reports, and UI |
 
 Floorp-managed Site Appearance, Tracker Block Lite, and Session Timer are in
 [the catalog inventory](EXTENSION_CATALOG.md). The current technical inventory
-therefore has 16 immutable packages: 13 third-party compatibility builds and
-three Floorp-managed packages. It includes 13 content-script packages, two
-static DNR packages, three action-bearing packages, and more than two packages
+therefore has 17 immutable packages: 14 third-party compatibility builds and
+three Floorp-managed packages. It includes 14 content-script packages, two
+static DNR packages, four action-bearing packages, and more than two packages
 with explicit host permissions. The DNR compatibility build and Web Search
 Navigator are the higher-complexity representatives; both remain constrained
 to the closed API contract rather than retaining their upstream breadth.
@@ -106,7 +108,7 @@ feature without a materially broader review.
 | Easy-to-RSS | adopted as constrained build | Page-local feed discovery subset |
 | scrolltotop | adopted as constrained build | Small accessible control |
 | refined-twitter | adopted as constrained build | Fixed local marker/style subset |
-| Dark Reader | deferred | Dynamic style generation and broad page behavior need a separate review |
+| Dark Reader | adopted as Floorp MV3 compatibility build | Pinned MIT MV3 release; bundled configuration, local-only settings, and documented iOS API limitations |
 | ClearURLs | deferred | LGPL-3.0 source plus a large rule maintenance/update model and broad URL rewriting need policy approval; no ClearURLs data is shipped |
 | uBlock Origin Lite | deferred | Large DNR rule corpus and performance/error-reporting evidence are not yet available |
 | Privacy Badger | deferred | Learning/heuristics exceed the fixed static rule model |

@@ -48,7 +48,7 @@ public-only verifier proves all of the following:
   version and every package's `minimumFloorpBuild` equal
   `FloorpRelease.xcconfig`'s marketing version;
 - the signed package records equal the reviewed `catalog-input.json`, contain
-  exactly the fixed 16 packages, and resolve only to the `.invalid` bundled
+  exactly the fixed 17 packages, and resolve only to the `.invalid` bundled
   artifact identity path; and
 - every shipped FWEA1 is the exact signed digest, byte count, canonical
   inventory, manifest, and metadata-permission/host declaration, with no
@@ -100,6 +100,7 @@ patterns, and private-profile capability are signed metadata.
 | `floorp.thirdparty.easy-to-rss` | Easy to RSS | content-script | Announces a page-local RSS/Atom link | HTTPS sites after site grant |
 | `floorp.thirdparty.scroll-to-top` | Scroll To Top | content-script | Accessible local scroll-to-top control | HTTPS sites after site grant |
 | `floorp.thirdparty.refined-twitter` | Refined Twitter | content-script | Marks rendered tweets for fixed local styling | `x.com`, `twitter.com` |
+| `floorp.thirdparty.darkreader` | Dark Reader | content-script, action-storage | Local dark-theme transformation with bundled site configuration | Allowed HTTP(S) sites |
 | `floorp.thirdparty.very-good-adblock` | Very Good AdBlock | DNR | Static, block-only advertising/tracking host rules | Native product-owned per-site exclusion only |
 
 No item has remote JavaScript, WASM, DNR subscription/list, `update_url`,

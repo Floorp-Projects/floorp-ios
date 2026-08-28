@@ -248,5 +248,21 @@
     "sourceProvenance": "SourceProvenance/thirdparty-very-good-adblock.json",
     "upstream": "chrisbbreuer/very-good-adblock",
     "upstreamRevision": "828148f94b12da2ad109c4ed8477947931544bb2"
+  },
+  {
+    "id": "thirdparty-darkreader",
+    "extensionID": "floorp.thirdparty.darkreader",
+    "category": "appearance",
+    "displayName": "Dark Reader — Floorp compatibility build",
+    "description": "Applies Dark Reader's reviewed local appearance treatment to sites you allow.",
+    "license": "MIT",
+    "modificationStatus": "compatibility-patched",
+    "originalArtifactSHA256": "b0a1af878da40dbb21544d5f8a19d15ab3120fc5c2a84f6654d795363ee88755",
+    "sourceProvenance": "SourceProvenance/thirdparty-darkreader.json",
+    "package": "Packages/thirdparty-darkreader",
+    "privateProfileCapability": "opt-in",
+    "sourceURL": "https://github.com/darkreader/darkreader",
+    "upstream": "darkreader/darkreader",
+    "upstreamRevision": "c2a707302a39b8047543712e9c582bac07835d34"
   }
 ]

@@ -84,11 +84,18 @@ signature before writing any public artifact.
    the exact source SHA, dates, sequence, and an evidence path outside the
    checkout. Use `--managed-signer-env NAME` only for named HSM/KMS runtime
    values the adapter requires; values are inherited, never printed.
-4. The tool writes only `Artifacts/Signed/catalog.json` and
-   `Artifacts/Signed/root-public-key.txt` into the checkout, and writes
-   provenance evidence outside it. Commit only the two public app-bound files
-   through a second normal review/CI integration. Do not commit the evidence,
-   source archive, adapter, private key, or adapter configuration.
+4. For an initial output, the tool creates only
+   `Artifacts/Signed/catalog.json` and `Artifacts/Signed/root-public-key.txt`
+   in the checkout, and writes provenance evidence outside it. For an existing
+   root-key-preserving catalog refresh, use `--supersede-signed-catalog` with
+   `--expected-existing-catalog-sha256` and
+   `--expected-existing-root-public-key-file-sha256`. This narrow mode checks
+   both exact current files and a strictly higher sequence, replaces only
+   `catalog.json`, and rejects a generated root key that differs byte-for-byte
+   from the existing root file. A root-key rotation is a separate process.
+   Commit only the changed public app-bound file(s) through a second normal
+   review/CI integration. Do not commit the evidence, source archive, adapter,
+   private key, or adapter configuration.
 5. Put the reported `root_public_key_sha256` into the protected GitHub
    environment secret `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` for both
    `floorp-curated-catalog-candidate` and
@@ -104,6 +111,19 @@ signature before writing any public artifact.
 The production command deliberately has no `--root-private-key` or
 `--leaf-private-key` argument when using this handoff. A local PEM mode remains
 only for isolated automated tests and is not a release authority.
+
+## Existing signed-catalog rotation
+
+The default command never overwrites an output. A catalog refresh is allowed
+only when the maintainer has explicitly reviewed the previous public output and
+supplies both of its SHA-256 digests. The catalog digest is the exact bytes of
+`Artifacts/Signed/catalog.json`; the root-file digest is the exact bytes of
+`Artifacts/Signed/root-public-key.txt`, not the raw 32-byte trust-anchor digest.
+The tool rechecks the clean source checkout, the prior output digests, and the
+unchanged root key after the managed signing request, immediately before the
+atomic catalog replacement. Its sequence must exceed the previous signed
+catalog sequence. Provenance evidence remains a new, external file for every
+signing operation.
 
 ## 1Password SSH Agent adapter
 

@@ -315,7 +315,10 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         await host.activate(
             extensionID: extensionID,
             grants: .init(apiPermissions: [.storage]),
-            defaultLocale: "en"
+            defaultLocale: "en",
+            rawManifest: Data(#"{"manifest_version":3,"name":"WebKit Fixture","version":"1.0"}"#.utf8),
+            packageGeneration: "webkit-bootstrap",
+            resourcePaths: ["icons/darkreader.png"]
         )
         let runtime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: host)
         let configuration = WKWebViewConfiguration()
@@ -344,14 +347,34 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             """
             await browser.storage.local.set({enabled: true});
             const values = await browser.storage.local.get("enabled");
-            const message = await browser.i18n.getMessage("hello");
-            return {enabled: values.enabled, message};
+            await browser.storage.sync.set({theme: "dark"});
+            const sync = await new Promise((resolve) => {
+              chrome.storage.sync.get({theme: "light", firstRun: true}, resolve);
+            });
+            const message = chrome.i18n.getMessage("hello");
+            const language = await new Promise((resolve) => chrome.i18n.getUILanguage(resolve));
+            const manifest = chrome.runtime.getManifest();
+            await chrome.action.setIcon({path: {16: "icons/darkreader.png", 64: "icons/darkreader.png"}});
+            return {
+              enabled: values.enabled,
+              syncTheme: sync.theme,
+              syncFirstRun: sync.firstRun,
+              message,
+              language,
+              manifestName: manifest.name
+            };
             """,
             contentWorld: contentWorld
         ) as? [String: Any]
 
         XCTAssertEqual(result?["enabled"] as? Bool, true)
+        XCTAssertEqual(result?["syncTheme"] as? String, "dark")
+        XCTAssertEqual(result?["syncFirstRun"] as? Bool, true)
         XCTAssertEqual(result?["message"] as? String, "Hello")
+        XCTAssertEqual(result?["language"] as? String, "en")
+        XCTAssertEqual(result?["manifestName"] as? String, "WebKit Fixture")
+        let action = await host.actions.state(for: extensionID)
+        XCTAssertEqual(action.icon?.path, "icons/darkreader.png")
         let pageWorldStorage = try await webView.callAsyncJavaScript(
             "return globalThis.browser?.storage",
             contentWorld: .page

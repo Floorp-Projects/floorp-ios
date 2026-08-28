@@ -1,19 +1,44 @@
 # Floorp iOS: 内部 WebExtensions カタログのリリースゲート
 
-Status: **blocked — the sole maintainer has approved P0 policy and External
-TestFlight submission for the fixed 16-package candidate, and PR #139 has
-merged to `main`. A managed 1Password signer has now produced and locally
-verified the source-bound catalog, root public key, provenance evidence, and
-candidate-bound P0 record. It remains fail-closed until those public outputs
-pass the forthcoming normal PR/CI/`main` integration, then the release
-trust-anchor readback, immutable release tag, and source-to-build readback
-succeed. The current `main` integration CI for PR #139 succeeded on
-2026-08-28.**
+Status: **blocked — the earlier signed 16-package candidate is historical and
+cannot authorize the current 17-package Dark Reader MV3 catalog. The sole
+maintainer has approved the new P0 policy, but this exact input still requires
+a new source-bound managed signature at a higher sequence, a new schema 2
+approval digest, normal PR/CI/`main` integration, protected trust-anchor
+readback, immutable release tag, and source-to-build readback before either
+candidate or external TestFlight workflow may mutate App Store Connect.**
 
 この記録は、`floorp-ios-webextensions-internal-catalog-design.md` の P0 を実行可能な
 リリース条件に変換する。未完了の項目はコードや feature flag で代替してはならない。
 現時点で公開版が許可する導入元は、検証済みのアプリ同梱 catalog だけである。署名済み
 catalog がない candidate では、同梱された FWEA1 であっても導入してはならない。
+
+## 2026-08-28 Dark Reader MV3 supersession
+
+この節は、以下に残る 16-package candidate の記録を履歴として保存しつつ、現在の
+release contract を明確にする。旧 catalog、provenance evidence、schema 2 approval
+record、CI、または TestFlight 証跡を 17-package candidate に流用してはならない。
+
+- Current unsigned input: 17 packages, SHA-256
+  `feb00e6715b9021265460490203dda33ce6eeac4093d80de32211dcc89b67028`.
+  It adds `floorp.thirdparty.darkreader` 4.9.129 as a fixed app-bundled MV3
+  compatibility build; it has no catalog download, remote configuration,
+  news, or extension-update channel.
+- The P0 policy receipt
+  [`floorp-ios-webextensions-curated-catalog-p0-policy-approval.json`](floorp-ios-webextensions-curated-catalog-p0-policy-approval.json)
+  is the maintainer's approved 17-package/1Password-operation policy input.
+  It is not the exact signed-candidate schema 2 approval record.
+- The currently checked-in signed catalog is sequence 1, SHA-256
+  `0c803682309f3677be04e6b9b293441f66ae36402075137ee3c9af07a53ac8cf`;
+  its root-public-key file SHA-256 is
+  `23146d4cb799673205a0372ae6b6e319a0e0e16df744bfa5695ae2508384dee8`.
+  The refresh must use sequence greater than 1 and the managed-signer
+  catalog-only rotation contract, which pins both of these prior bytes and
+  refuses a root-key change.
+- The candidate and external workflows now require 17 packages before Apple
+  credentials are used. Their protected root raw-key digest and the external
+  schema 2 approval digest must be re-registered only after the new signature
+  and normal public-output integration are verified.
 
 ## このタスクで記録した指示
 

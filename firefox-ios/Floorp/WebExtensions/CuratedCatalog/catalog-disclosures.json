@@ -144,6 +144,15 @@
       "reviewedAt": "2026-08-28T00:00:00Z",
       "supportRoute": "floorp-github-issues",
       "reportRoute": "floorp-github-bug-report"
+    },
+    "thirdparty-darkreader": {
+      "publisherDisplayName": "Floorp iOS",
+      "attribution": "Original project: darkreader/darkreader.",
+      "privacySummary": "Dark Reader requests access to sites you allow so it can transform their visible appearance. This reviewed package has no catalog download, remote configuration refresh, news fetch, or extension-update channel.",
+      "retentionPolicy": "Settings remain only on this device in the selected profile while installed; storage.sync is device-local rather than cloud-synchronized. Removing the extension deletes its package data; Private Browsing uses isolated ephemeral data.",
+      "reviewedAt": "2026-08-28T00:00:00Z",
+      "supportRoute": "floorp-github-issues",
+      "reportRoute": "floorp-github-bug-report"
     }
   }
 }
