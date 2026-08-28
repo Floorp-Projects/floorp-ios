@@ -28,6 +28,7 @@ from sign_catalog import (
     build_parser as build_catalog_parser,
     load_catalog_signer,
     load_records_bytes,
+    load_revocations_bytes,
     signed_catalog,
 )
 from verify_curated_source_provenance import SourceProvenanceError, verify_archive
@@ -140,6 +141,46 @@ def _require_catalog_checkout(repository_root: Path, catalog_root: Path) -> None
         raise CuratedCatalogSigningError("catalog root does not belong to the signing checkout")
 
 
+def _checked_in_catalog_input_path(catalog_root: Path, filename: str) -> Path:
+    """Return one regular, direct child of the trusted catalog checkout."""
+
+    path = catalog_root / filename
+    if path.is_symlink() or not path.is_file():
+        raise CuratedCatalogSigningError(f"curated {filename} must be a regular checked-in file")
+    return path
+
+
+def _read_checked_in_catalog_input(
+    *,
+    repository_root: Path,
+    catalog_root: Path,
+    source_commit: str,
+    filename: str,
+) -> tuple[Path, bytes]:
+    """Return bytes that are both on disk and in the exact approved Git tree."""
+
+    if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise CuratedCatalogSigningError("source commit must be a full lowercase Git SHA-1")
+    path = _checked_in_catalog_input_path(catalog_root, filename)
+    relative_path = path.relative_to(repository_root).as_posix()
+    try:
+        committed = subprocess.run(
+            ["git", "-C", str(repository_root), "show", f"{source_commit}:{relative_path}"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        current = path.read_bytes()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise CuratedCatalogSigningError(
+            f"curated {filename} is not present in the approved source commit"
+        ) from error
+    if current != committed:
+        raise CuratedCatalogSigningError(
+            f"curated {filename} does not match the approved source commit"
+        )
+    return path, committed
+
+
 def _require_output_contract(
     *,
     repository_root: Path,
@@ -174,15 +215,36 @@ def _require_output_contract(
 
 def verify_release_inputs(
     *,
+    repository_root: Path,
     catalog_root: Path,
+    source_commit: str,
     records_path: Path,
+    revocations_path: Path,
     source_archives: dict[str, Path],
-) -> tuple[bytes, list[dict[str, Any]]]:
+) -> tuple[bytes, bytes, list[dict[str, Any]]]:
     catalog_root = catalog_root.resolve()
-    expected_records = (catalog_root / "catalog-input.json").resolve()
+    expected_records = _checked_in_catalog_input_path(catalog_root, "catalog-input.json")
     if records_path.resolve() != expected_records:
         raise CuratedCatalogSigningError("curated signing must use this checkout's exact catalog-input.json")
-    records_bytes = expected_records.read_bytes()
+    expected_revocations = _checked_in_catalog_input_path(catalog_root, "revocations.json")
+    if revocations_path.resolve() != expected_revocations:
+        raise CuratedCatalogSigningError("curated signing must use this checkout's exact revocations.json")
+    _, records_bytes = _read_checked_in_catalog_input(
+        repository_root=repository_root,
+        catalog_root=catalog_root,
+        source_commit=source_commit,
+        filename="catalog-input.json",
+    )
+    _, revocations_bytes = _read_checked_in_catalog_input(
+        repository_root=repository_root,
+        catalog_root=catalog_root,
+        source_commit=source_commit,
+        filename="revocations.json",
+    )
+    try:
+        load_revocations_bytes(revocations_bytes)
+    except (CatalogSigningError, ValueError) as error:
+        raise CuratedCatalogSigningError(f"curated revocation input is invalid: {error}") from error
     sources = _load_sources(catalog_root)
     expected_source_ids = {
         source["id"]
@@ -200,7 +262,7 @@ def verify_release_inputs(
         except SourceProvenanceError as error:
             raise CuratedCatalogSigningError(f"source provenance rejected for {source['id']}: {error}") from error
         verification.append({"sourceID": source["id"], **result})
-    return records_bytes, verification
+    return records_bytes, revocations_bytes, verification
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -228,9 +290,13 @@ def main(argv: list[str] | None = None) -> int:
         _require_catalog_checkout(repository_root, catalog_root)
         _require_clean_source_commit(repository_root, arguments.source_commit)
         source_archives = _parse_source_archives(arguments.source_archive)
-        records_bytes, source_verification = verify_release_inputs(
+        revocations_path = arguments.revocations or (catalog_root / "revocations.json")
+        records_bytes, revocations_bytes, source_verification = verify_release_inputs(
+            repository_root=repository_root,
             catalog_root=catalog_root,
+            source_commit=arguments.source_commit,
             records_path=arguments.records,
+            revocations_path=revocations_path,
             source_archives=source_archives,
         )
         _require_output_contract(
@@ -241,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_path=arguments.provenance_evidence_output,
         )
         records = load_records_bytes(records_bytes, schema=arguments.schema)
+        revocations = load_revocations_bytes(revocations_bytes)
         # The catalog bytes and provenance declaration were read from this
         # checkout. Re-check immediately before any signing authority is
         # invoked so a concurrent source-tree modification cannot be signed
@@ -268,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
             leaf_not_before=arguments.leaf_not_before,
             leaf_not_after=arguments.leaf_not_after,
             schema=arguments.schema,
+            revocations=revocations,
         )
     except (CatalogSigningError, CuratedCatalogSigningError, OSError, ValueError) as error:
         print(f"curated catalog signing failed: {error}", file=__import__("sys").stderr)
@@ -283,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         "leafKeyID": arguments.leaf_key_id,
         "rootKeyID": arguments.root_key_id,
         "rootPublicKeySHA256": sha256(root_public),
+        "revocationCount": len(revocations),
+        "revocationsInputSHA256": sha256(revocations_bytes),
         "schema": 1,
         "sequence": arguments.sequence,
         "sourceCommit": arguments.source_commit,
@@ -300,6 +370,8 @@ def main(argv: list[str] | None = None) -> int:
         "catalog_sha256": evidence["catalogSHA256"],
         "catalog_input_sha256": evidence["catalogInputSHA256"],
         "root_public_key_sha256": evidence["rootPublicKeySHA256"],
+        "revocation_count": evidence["revocationCount"],
+        "revocations_input_sha256": evidence["revocationsInputSHA256"],
         "source_commit": evidence["sourceCommit"],
         "source_provenance_count": len(source_verification),
         "status": "signed",

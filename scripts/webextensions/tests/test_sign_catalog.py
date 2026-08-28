@@ -79,6 +79,12 @@ class SignCatalogTests(unittest.TestCase):
     def test_signs_canonical_two_tier_catalog(self) -> None:
         root = Ed25519PrivateKey.generate()
         leaf = Ed25519PrivateKey.generate()
+        revocations = [{
+            "kind": "generation",
+            "extensionID": "example.useful-extension",
+            "generation": "gen0",
+            "effectiveAt": "2026-08-26T11:59:59Z",
+        }]
         catalog, root_raw = SIGN.signed_catalog(
             records=[record()],
             root_key=root,
@@ -94,10 +100,12 @@ class SignCatalogTests(unittest.TestCase):
             expires_at="2026-09-01T12:00:00Z",
             leaf_not_before="2026-08-25T12:00:00Z",
             leaf_not_after="2026-10-01T12:00:00Z",
+            revocations=revocations,
         )
         parsed = json.loads(catalog)
         self.assertEqual(catalog, SIGN.canonical_json(parsed))
         self.assertEqual(parsed["schemaVersion"], 3)
+        self.assertEqual(parsed["revocations"], revocations)
         self.assertEqual(root_raw, root.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw))
 
         signing_key = parsed["signingKey"]
@@ -148,6 +156,49 @@ class SignCatalogTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SIGN.CatalogSigningError, "non-empty JSON array"):
             SIGN.load_records_bytes(b"[]", schema=3)
+
+    def test_revocations_are_signed_only_when_immediately_effective_and_well_formed(self) -> None:
+        immediate = [{
+            "kind": "generation",
+            "extensionID": "example.useful-extension",
+            "generation": "gen0",
+            "effectiveAt": "2026-08-26T11:59:59Z",
+        }]
+        self.assertEqual(
+            SIGN.load_revocations_bytes(json.dumps(immediate, separators=(",", ":")).encode("utf-8")),
+            immediate,
+        )
+
+        duplicate = immediate + [dict(immediate[0])]
+        with self.assertRaisesRegex(SIGN.CatalogSigningError, "duplicate a generation"):
+            SIGN.validate_revocations(duplicate)
+
+        malformed = dict(immediate[0])
+        malformed["replacementURL"] = "https://example.test/replacement"
+        with self.assertRaisesRegex(SIGN.CatalogSigningError, "unexpected fields"):
+            SIGN.validate_revocations([malformed])
+
+        root = Ed25519PrivateKey.generate()
+        leaf = Ed25519PrivateKey.generate()
+        future = [dict(immediate[0], effectiveAt="2026-08-26T12:00:01Z")]
+        with self.assertRaisesRegex(SIGN.CatalogSigningError, "immediately effective"):
+            SIGN.signed_catalog(
+                records=[record()],
+                root_key=root,
+                leaf_key=leaf,
+                root_key_id="root",
+                leaf_key_id="leaf",
+                catalog_id="catalog",
+                app_bundle_id="org.floorp.ios",
+                minimum_app_version="0.2.0",
+                channel="testflight",
+                sequence=1,
+                issued_at="2026-08-26T12:00:00Z",
+                expires_at="2026-08-27T12:00:00Z",
+                leaf_not_before="2026-08-25T12:00:00Z",
+                leaf_not_after="2026-09-01T12:00:00Z",
+                revocations=future,
+            )
 
     def test_managed_signers_are_pinned_and_receive_only_the_protocol_request(self) -> None:
         root = Ed25519PrivateKey.generate()

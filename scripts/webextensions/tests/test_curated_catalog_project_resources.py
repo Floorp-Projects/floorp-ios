@@ -30,6 +30,7 @@ class CuratedCatalogProjectResourceTests(unittest.TestCase):
             "CuratedCatalog/catalog-sources.json",
             "CuratedCatalog/catalog-disclosures.json",
             "CuratedCatalog/catalog-input.json",
+            "CuratedCatalog/revocations.json",
             "CuratedCatalog/review-index.json",
         ):
             self.assertNotIn(review_only_path, project)

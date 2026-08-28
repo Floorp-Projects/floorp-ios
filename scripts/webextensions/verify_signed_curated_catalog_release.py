@@ -32,6 +32,7 @@ from sign_catalog import (
     CatalogSigningError,
     base64url,
     load_records_bytes,
+    load_revocations_bytes,
     parse_timestamp,
     safe_id,
 )
@@ -108,6 +109,18 @@ def _read_root_public_key(path: Path) -> bytes:
         raise SignedCatalogReleaseError(f"cannot read root public key: {error}") from error
     _require(re.fullmatch(rb"[A-Za-z0-9_-]{43}\n", raw) is not None, "root public key is not canonical base64url")
     return _base64url(raw[:-1].decode("ascii"), byte_count=32, label="root public key")
+
+
+def _read_reviewed_catalog_input(catalog_root: Path, filename: str) -> bytes:
+    path = catalog_root / filename
+    _require(
+        path.is_file() and not path.is_symlink(),
+        f"catalog {filename} input is missing or unsafe",
+    )
+    try:
+        return path.read_bytes()
+    except OSError as error:
+        raise SignedCatalogReleaseError(f"cannot read catalog {filename} input: {error}") from error
 
 
 def _verify_signatures(
@@ -363,10 +376,19 @@ def verify_release(
         marketing_version=marketing_version,
         catalog_id=catalog_id,
     )
+    try:
+        revocations_input_bytes = _read_reviewed_catalog_input(catalog_root, "revocations.json")
+        input_revocations = load_revocations_bytes(revocations_input_bytes)
+    except (CatalogSigningError, IngestionError, OSError, ValueError) as error:
+        raise SignedCatalogReleaseError(f"catalog revocation input is invalid: {error}") from error
+    _require(
+        catalog["revocations"] == input_revocations,
+        "signed catalog revocations do not exactly match the reviewed revocation input",
+    )
     _verify_revocations(catalog["revocations"], now=now)
     try:
         catalog_records = load_records_bytes(canonical_json(catalog["packages"]), schema=CURRENT_SCHEMA)
-        input_bytes = (catalog_root / "catalog-input.json").read_bytes()
+        input_bytes = _read_reviewed_catalog_input(catalog_root, "catalog-input.json")
         input_records = load_records_bytes(input_bytes, schema=CURRENT_SCHEMA)
     except (CatalogSigningError, IngestionError, OSError, ValueError) as error:
         raise SignedCatalogReleaseError(f"catalog records are invalid: {error}") from error
@@ -399,6 +421,8 @@ def verify_release(
         "marketingVersion": marketing_version,
         "packageCount": len(catalog_records),
         "rootPublicKeySHA256": sha256(root_public_key),
+        "revocationCount": len(input_revocations),
+        "revocationsInputSHA256": sha256(revocations_input_bytes),
         "schema": 1,
         "sequence": catalog["sequence"],
         "status": "verified",

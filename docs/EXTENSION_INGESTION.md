@@ -96,6 +96,9 @@ catalog-input.json         deterministic schema-v3 unsigned signed-record input
 review-index.json          provenance index
 ```
 
+`revocations.json` is separately authored, reviewed immediate-revocation input;
+the builder never derives it from a package. It is never an app resource.
+
 The application target must include only `Artifacts/` plus the signed catalog
 and root public key. `Packages/` and `Review/` remain review evidence in the
 source repository and must not become executable app resources.
@@ -108,9 +111,13 @@ The production handoff for this catalog is
 record input and managed root/leaf Ed25519 signing authorities **only after**
 it has checked a clean, exact source commit and every review-quarantined source
 archive declared by `sourceProvenance` (all thirteen compatibility builds). It binds the catalog root to that same
-Git checkout, parses the verified `catalog-input.json` byte snapshot without
-reopening it, and rechecks checkout cleanliness immediately before private keys
-are read. It writes only
+Git checkout, parses the verified `catalog-input.json` and exact
+`revocations.json` regular-file byte snapshots from the approved Git commit
+without reopening either, and rechecks
+checkout cleanliness immediately before private keys are read. The revocation
+input can name only a signing-key ID or immutable extension generation,
+must be effective no later than catalog issuance, and cannot name a URL,
+artifact, replacement, or deferred action. It writes only
 `Artifacts/Signed/catalog.json` and `Artifacts/Signed/root-public-key.txt`
 into the app resource folder; it refuses to overwrite either or a pre-existing
 external evidence file. The separate review-only provenance evidence record must
@@ -122,12 +129,18 @@ invocation must come from the approved signing broker or
 protected release environment, not from a shell history, repository file,
 GitHub Actions log, or Xcode project setting.
 
+A revocation may name a historical key or generation that is absent from the
+current 16-record input: the device retains prior accepted bindings precisely
+so a later signed catalog can stop them. It never pre-authorizes a future
+artifact or replacement.
+
 The signer must record all of the following with the release candidate:
 
 - catalog ID, schema, sequence, issued/expiry times, root and leaf key IDs;
 - canonical catalog SHA-256 and every artifact/manifest/inventory digest;
-- canonical input SHA-256, exact clean source commit, and the result of each
-  archive-to-source-provenance verification;
+- canonical input SHA-256, reviewed revocation-input SHA-256/count, exact clean
+  source commit, and the result of each archive-to-source-provenance
+  verification;
 - the sole maintainer's candidate-bound P0 approval evidence ID and timestamp;
 - revocation exercise request/result; and
 - the exact merged `main` commit that contains the safe public outputs.
