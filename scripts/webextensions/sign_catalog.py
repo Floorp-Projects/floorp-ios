@@ -498,6 +498,80 @@ def load_records_bytes(data: bytes, *, schema: int) -> list[dict[str, Any]]:
     return sorted(records, key=lambda record: (record["extensionID"], record["generation"]))
 
 
+def validate_revocations(value: Any) -> list[dict[str, Any]]:
+    """Validate deterministic, immediately-effective catalog revocations.
+
+    A revocation is a small, signed control-plane input.  It deliberately has
+    no URL, artifact, replacement, or scheduling fields: the iOS runtime can
+    only stop a named signing key or immutable extension generation.  Future
+    effective dates are rejected by ``signed_catalog`` once the catalog issue
+    time is known, so the signer cannot produce a delayed fail-open window.
+    """
+
+    if not isinstance(value, list) or len(value) > 256:
+        raise CatalogSigningError("catalog revocations must be a bounded JSON array")
+    key_ids: set[str] = set()
+    generations: set[tuple[str, str]] = set()
+    validated: list[dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, dict) or not isinstance(entry.get("kind"), str):
+            raise CatalogSigningError("catalog revocation is invalid")
+        kind = entry["kind"]
+        if kind == "key":
+            if set(entry) != {"kind", "keyID", "effectiveAt"}:
+                raise CatalogSigningError("key revocation has unexpected fields")
+            key_id = entry["keyID"]
+            if not isinstance(key_id, str):
+                raise CatalogSigningError("revoked key ID is invalid")
+            safe_id(key_id)
+            if key_id in key_ids:
+                raise CatalogSigningError("catalog revocations duplicate a key")
+            key_ids.add(key_id)
+        elif kind == "generation":
+            if set(entry) != {"kind", "extensionID", "generation", "effectiveAt"}:
+                raise CatalogSigningError("generation revocation has unexpected fields")
+            extension_id = entry["extensionID"]
+            generation = entry["generation"]
+            if not isinstance(extension_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,127}", extension_id):
+                raise CatalogSigningError("revoked extension ID is invalid")
+            if not isinstance(generation, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,47}", generation):
+                raise CatalogSigningError("revoked generation is invalid")
+            identity = (extension_id, generation)
+            if identity in generations:
+                raise CatalogSigningError("catalog revocations duplicate a generation")
+            generations.add(identity)
+        else:
+            raise CatalogSigningError("catalog revocation kind is unsupported")
+        effective_at = entry.get("effectiveAt")
+        if not isinstance(effective_at, str):
+            raise CatalogSigningError("revocation effectiveAt is invalid")
+        parse_timestamp(effective_at)
+        validated.append(dict(entry))
+
+    def order(entry: dict[str, Any]) -> tuple[str, str, str, str]:
+        if entry["kind"] == "key":
+            return ("key", entry["keyID"], "", entry["effectiveAt"])
+        return ("generation", entry["extensionID"], entry["generation"], entry["effectiveAt"])
+
+    return sorted(validated, key=order)
+
+
+def load_revocations(path: Path) -> list[dict[str, Any]]:
+    return load_revocations_bytes(path.read_bytes())
+
+
+def load_revocations_bytes(data: bytes) -> list[dict[str, Any]]:
+    """Read one reviewable revocation input snapshot.
+
+    The source bytes themselves are pinned by the clean commit and included in
+    release evidence.  The signed catalog is canonicalized separately, so the
+    source file may retain the single trailing newline customary for reviewed
+    JSON files without changing its security meaning.
+    """
+
+    return validate_revocations(strict_json_loads(data, label="catalog revocations"))
+
+
 def signed_catalog(
     *,
     records: list[dict[str, Any]],
@@ -515,6 +589,7 @@ def signed_catalog(
     leaf_not_before: str,
     leaf_not_after: str,
     schema: int = CURRENT_SCHEMA,
+    revocations: list[dict[str, Any]] | None = None,
 ) -> tuple[bytes, bytes]:
     if schema not in {1, 2, 3}:
         raise CatalogSigningError("unsupported schema")
@@ -537,6 +612,9 @@ def signed_catalog(
         raise CatalogSigningError("leaf key must cover the catalog validity interval")
     if not re.fullmatch(r"(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){1,3}", minimum_app_version):
         raise CatalogSigningError("minimum app version must be semantic")
+    validated_revocations = validate_revocations([] if revocations is None else revocations)
+    if any(parse_timestamp(entry["effectiveAt"]) > issued for entry in validated_revocations):
+        raise CatalogSigningError("catalog revocations must be immediately effective at issue time")
 
     leaf_public = _signer_public_key(leaf_key)
     root_public = _signer_public_key(root_key)
@@ -566,7 +644,7 @@ def signed_catalog(
         "expiresAt": expires_at,
         "issuedAt": issued_at,
         "packages": records,
-        "revocations": [],
+        "revocations": validated_revocations,
         "schemaVersion": schema,
         "sequence": sequence,
         "signingKey": signing_key,
@@ -587,6 +665,11 @@ def signed_catalog(
 def build_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--records", required=True, type=Path)
+    result.add_argument(
+        "--revocations",
+        type=Path,
+        help="canonical local revocation input; production curated signing fixes this to its reviewed checkout path",
+    )
     result.add_argument("--output", required=True, type=Path)
     result.add_argument("--root-public-key-output", required=True, type=Path)
     root_authority = result.add_mutually_exclusive_group(required=True)
@@ -629,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         records = load_records(arguments.records, schema=arguments.schema)
+        revocations = load_revocations(arguments.revocations) if arguments.revocations is not None else []
         catalog, root_public = signed_catalog(
             records=records,
             root_key=load_catalog_signer(arguments, "root"),
@@ -645,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
             leaf_not_before=arguments.leaf_not_before,
             leaf_not_after=arguments.leaf_not_after,
             schema=arguments.schema,
+            revocations=revocations,
         )
     except (CatalogSigningError, OSError) as error:
         print(f"catalog signing failed: {error}", file=sys.stderr)

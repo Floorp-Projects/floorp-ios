@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -39,18 +40,99 @@ class SignCuratedCatalogTests(unittest.TestCase):
 
     def test_signer_requires_one_quarantined_archive_for_each_compatibility_source(self) -> None:
         catalog_root = Path(__file__).parents[3] / "firefox-ios/Floorp/WebExtensions/CuratedCatalog"
+        repository_root = catalog_root.parents[3]
         sources = SIGN._load_sources(catalog_root)
         expected = {
             source["id"] for source in sources
             if source["modificationStatus"] == "compatibility-patched"
         }
         self.assertEqual(len(expected), 13)
-        with self.assertRaisesRegex(SIGN.CuratedCatalogSigningError, "exactly match"):
+        with (
+            mock.patch.object(
+                SIGN,
+                "_read_checked_in_catalog_input",
+                side_effect=[
+                    (catalog_root / "catalog-input.json", b"[]"),
+                    (catalog_root / "revocations.json", b"[]"),
+                ],
+            ),
+            self.assertRaisesRegex(SIGN.CuratedCatalogSigningError, "exactly match"),
+        ):
             SIGN.verify_release_inputs(
+                repository_root=repository_root,
                 catalog_root=catalog_root,
+                source_commit="a" * 40,
                 records_path=catalog_root / "catalog-input.json",
+                revocations_path=catalog_root / "revocations.json",
                 source_archives={},
             )
+
+    def test_signer_refuses_an_arbitrary_revocation_input_path(self) -> None:
+        catalog_root = Path(__file__).parents[3] / "firefox-ios/Floorp/WebExtensions/CuratedCatalog"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            wrong_input = Path(temporary_directory) / "revocations.json"
+            wrong_input.write_text("[]\n", encoding="utf-8")
+            with self.assertRaisesRegex(SIGN.CuratedCatalogSigningError, "exact revocations.json"):
+                SIGN.verify_release_inputs(
+                    repository_root=catalog_root.parents[3],
+                    catalog_root=catalog_root,
+                    source_commit="a" * 40,
+                    records_path=catalog_root / "catalog-input.json",
+                    revocations_path=wrong_input,
+                    source_archives={},
+                )
+
+    def test_signer_refuses_a_symlinked_review_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            catalog_root = temporary_root / "CuratedCatalog"
+            catalog_root.mkdir()
+            target = temporary_root / "external-input.json"
+            target.write_text("[]\n", encoding="utf-8")
+            (catalog_root / "revocations.json").symlink_to(target)
+            with self.assertRaisesRegex(SIGN.CuratedCatalogSigningError, "regular checked-in file"):
+                SIGN._checked_in_catalog_input_path(catalog_root, "revocations.json")
+
+    def test_signer_reads_only_a_blob_present_in_the_approved_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository_root = Path(temporary_directory) / "source-checkout"
+            catalog_root = repository_root / "firefox-ios/Floorp/WebExtensions/CuratedCatalog"
+            catalog_root.mkdir(parents=True)
+            catalog_input = catalog_root / "catalog-input.json"
+            catalog_input.write_bytes(b"[]")
+            subprocess.run(["git", "init", "--quiet", str(repository_root)], check=True)
+            subprocess.run(["git", "-C", str(repository_root), "add", str(catalog_input.relative_to(repository_root))], check=True)
+            subprocess.run(
+                [
+                    "git", "-C", str(repository_root),
+                    "-c", "user.name=Floorp Test", "-c", "user.email=test@example.invalid",
+                    "commit", "--quiet", "-m", "catalog input",
+                ],
+                check=True,
+            )
+            source_commit = subprocess.run(
+                ["git", "-C", str(repository_root), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            _, committed = SIGN._read_checked_in_catalog_input(
+                repository_root=repository_root,
+                catalog_root=catalog_root,
+                source_commit=source_commit,
+                filename="catalog-input.json",
+            )
+            self.assertEqual(committed, b"[]")
+
+            (catalog_root / "revocations.json").write_bytes(b"[]")
+            with self.assertRaisesRegex(SIGN.CuratedCatalogSigningError, "not present"):
+                SIGN._read_checked_in_catalog_input(
+                    repository_root=repository_root,
+                    catalog_root=catalog_root,
+                    source_commit=source_commit,
+                    filename="revocations.json",
+                )
 
     def test_output_contract_rejects_shipped_or_overlapping_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -113,6 +195,8 @@ class SignCuratedCatalogTests(unittest.TestCase):
         repository_root = catalog_root.parents[3]
         records_path = catalog_root / "catalog-input.json"
         records_bytes = records_path.read_bytes()
+        revocations_path = catalog_root / "revocations.json"
+        revocations_bytes = revocations_path.read_bytes()
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
             archive = temporary_root / "source.tar.gz"
@@ -144,9 +228,10 @@ class SignCuratedCatalogTests(unittest.TestCase):
             with (
                 mock.patch.object(SIGN, "_require_catalog_checkout") as checkout,
                 mock.patch.object(SIGN, "_require_clean_source_commit") as clean,
-                mock.patch.object(SIGN, "verify_release_inputs", return_value=(records_bytes, [])),
+                mock.patch.object(SIGN, "verify_release_inputs", return_value=(records_bytes, revocations_bytes, [])),
                 mock.patch.object(SIGN, "_require_output_contract"),
                 mock.patch.object(SIGN, "load_records_bytes", wraps=SIGN.load_records_bytes) as load_snapshot,
+                mock.patch.object(SIGN, "load_revocations_bytes", wraps=SIGN.load_revocations_bytes) as load_revocations,
                 mock.patch.object(SIGN, "load_catalog_signer", side_effect=[object(), object()]),
                 mock.patch.object(SIGN, "signed_catalog", return_value=(b"{}", b"root")),
                 mock.patch.object(SIGN, "_atomic_write"),
@@ -157,6 +242,7 @@ class SignCuratedCatalogTests(unittest.TestCase):
             self.assertEqual(checkout.call_count, 2)
             self.assertEqual(clean.call_count, 2)
             self.assertEqual(load_snapshot.call_args.args[0], records_bytes)
+            self.assertEqual(load_revocations.call_args.args[0], revocations_bytes)
 
 
 if __name__ == "__main__":

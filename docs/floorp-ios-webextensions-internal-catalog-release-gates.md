@@ -138,6 +138,11 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
   を自動選択しない。`storage.local` と dynamic DNR state は明示的 uninstall まで保持する。
 - catalog-v1 は future-dated revocation を受理しない。停止を将来まで延期する durable
   scheduler は未実装のため、catalog service は即時有効の失効だけを発行する。
+- managed signer は同じ clean checkout の review-only `revocations.json` だけを読んで
+  失効を署名する。そこには key または immutable generation と catalog 発行時刻以前の
+  `effectiveAt` だけを記録でき、URL、replacement、artifact、remote list、遅延実行を
+  記録できない。release verifier はその input digest/count と signed catalog の完全一致を
+  再確認する。`revocations.json` は app resource ではない。
 - leaf key の rotation は、artifact bytes が同じ場合も新しい immutable generation を必要とする。
   同じ generation を別 leaf に再承認しないため、mutable registry record の signer 書換えで
   旧 key revocation を回避できない。

@@ -100,6 +100,7 @@ class VerifySignedCuratedCatalogReleaseTests(unittest.TestCase):
             "version": "1.0.0",
         }
         (self.catalog_root / "catalog-input.json").write_bytes(INGEST.canonical_json([self.record]))
+        (self.catalog_root / "revocations.json").write_bytes(INGEST.canonical_json([]))
         self.xcconfig = self.root / "FloorpRelease.xcconfig"
         self.xcconfig.write_text("FLOORP_MARKETING_VERSION = 0.3.0\n", encoding="utf-8")
         self.root_key = Ed25519PrivateKey.generate()
@@ -109,7 +110,12 @@ class VerifySignedCuratedCatalogReleaseTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
 
-    def _sign(self, *, expires_at: str = "2026-08-28T00:00:00Z") -> None:
+    def _sign(
+        self,
+        *,
+        expires_at: str = "2026-08-28T00:00:00Z",
+        revocations: list[dict[str, str]] | None = None,
+    ) -> None:
         catalog, root_raw = SIGN.signed_catalog(
             records=[self.record],
             root_key=self.root_key,
@@ -125,6 +131,7 @@ class VerifySignedCuratedCatalogReleaseTests(unittest.TestCase):
             expires_at=expires_at,
             leaf_not_before="2026-08-26T00:00:00Z",
             leaf_not_after="2026-09-01T00:00:00Z",
+            revocations=revocations,
         )
         (self.signed / "catalog.json").write_bytes(catalog)
         (self.signed / "root-public-key.txt").write_text(SIGN.base64url(root_raw) + "\n", encoding="ascii")
@@ -150,6 +157,7 @@ class VerifySignedCuratedCatalogReleaseTests(unittest.TestCase):
         self.assertEqual(proof["status"], "verified")
         self.assertEqual(proof["packageCount"], 1)
         self.assertEqual(proof["marketingVersion"], "0.3.0")
+        self.assertEqual(proof["revocationCount"], 0)
 
     def test_rejects_catalog_tampering_after_signature(self) -> None:
         catalog_path = self.signed / "catalog.json"
@@ -179,19 +187,41 @@ class VerifySignedCuratedCatalogReleaseTests(unittest.TestCase):
             self.verify()
 
     def test_rejects_a_future_dated_revocation_even_when_the_catalog_is_resigned(self) -> None:
-        catalog_path = self.signed / "catalog.json"
-        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-        catalog["revocations"] = [{
+        revocations = [{
             "kind": "generation",
             "extensionID": "example.useful-extension",
             "generation": "g0",
             "effectiveAt": "2026-08-27T12:00:01Z",
         }]
+        (self.catalog_root / "revocations.json").write_bytes(INGEST.canonical_json(revocations))
+        catalog_path = self.signed / "catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["revocations"] = revocations
         unsigned = dict(catalog)
         unsigned.pop("signature")
         catalog["signature"] = SIGN.base64url(self.leaf_key.sign(INGEST.canonical_json(unsigned)))
         catalog_path.write_bytes(INGEST.canonical_json(catalog))
         with self.assertRaisesRegex(VERIFY.SignedCatalogReleaseError, "future-dated revocation"):
+            self.verify()
+
+    def test_rejects_a_signed_catalog_that_does_not_match_the_reviewed_revocation_input(self) -> None:
+        revocations = [{
+            "kind": "generation",
+            "extensionID": "example.useful-extension",
+            "generation": "g0",
+            "effectiveAt": "2026-08-27T00:00:00Z",
+        }]
+        self._sign(revocations=revocations)
+        with self.assertRaisesRegex(VERIFY.SignedCatalogReleaseError, "exactly match the reviewed revocation input"):
+            self.verify()
+
+    def test_rejects_a_symlinked_reviewed_revocation_input(self) -> None:
+        replacement = self.root / "external-revocations.json"
+        replacement.write_bytes(INGEST.canonical_json([]))
+        revocations = self.catalog_root / "revocations.json"
+        revocations.unlink()
+        revocations.symlink_to(replacement)
+        with self.assertRaisesRegex(VERIFY.SignedCatalogReleaseError, "revocations.json input is missing or unsafe"):
             self.verify()
 
     def test_cli_refuses_to_replace_existing_evidence(self) -> None:
