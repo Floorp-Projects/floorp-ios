@@ -41,6 +41,7 @@ catalog の変化、TestFlight の版／ビルド不一致を報告してくだ�
 この候補で使用しないでください。
 
 既知の制限: この catalog は固定のアプリ同梱セットであり、一般的な plug-in collection では
-ありません。第三者再配布・法務・プライバシー・Apple 審査の未承認事項は tester の承認では
-代替できないリリースゲートです。このテストだけでは、より広い配布に必要な実機性能、memory、
-battery、accessibility、失効演習の証跡は完了しません。
+ありません。sole maintainer の P0 policy は確認済み license/notice/provenance による再配布根拠を
+記録しています。exact signed catalog と candidate-bound approval record は通常の candidate PR merge
+前に検証されますが、実機証跡と Apple 審査は引き続き必要です。このテストだけでは、より広い配布に必要な実機性能、memory、battery、
+accessibility、失効演習の証跡は完了しません。

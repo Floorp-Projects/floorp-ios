@@ -36,7 +36,7 @@
   "export_compliance": {
     "uses_encryption": true,
     "exempt_from_export_compliance": true,
-    "exemption_notes": "Standard TLS plus FxA/Sync over TLS only; no custom non-exempt cryptography",
+    "exemption_notes": "Standard TLS plus FxA/Sync over TLS and OS-provided CryptoKit Ed25519 public-key signature verification; no custom or non-exempt cryptography",
     "itsapp_uses_non_exempt_encryption": false
   },
   "listing": {

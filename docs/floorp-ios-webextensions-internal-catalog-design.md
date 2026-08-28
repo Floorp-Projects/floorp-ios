@@ -326,10 +326,11 @@ catalog ID ごとの ThisDeviceOnly Keychain に保存する。catalog 本文を
 
 ### 4.4 実装で固定する `catalog-v1` の安全な下位契約
 
-P0 の署名方式と配布運用はまだ承認されていない。このため実装は公開版で
+sole Floorp iOS maintainer は P0 の署名方式と固定・同梱配布運用を承認済みである。
+この承認は `managedRemoteSource` を有効化するものではない。公開版は引き続き
 `managedRemoteSource` を有効化せず、次の下位契約をテスト可能な verifier として
-実装する。これは P0 の承認に代わるものではなく、承認時に安全性を下げずに接続する
-ための固定点である。
+実装する。これは exact signed candidate の schema 2 record、技術検証、または Apple の
+実審査に代わるものではなく、承認済み方針へ安全性を下げずに接続するための固定点である。
 
 - canonical JSON は UTF-8、ASCII のフィールド名、重複キーなし、整数以外の数値
   なし、NFC でないキーなしとする。署名対象は最上位の `signature` を除く全フィールド
