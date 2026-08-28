@@ -81,7 +81,7 @@ class FakeAPI:
                     "isDeleted": False,
                 },
             }]}
-        if path == f"/v1/ciBuildRuns/{RUN_ID}":
+        if path == f"/v1/ciBuildRuns/{RUN_ID}?include=workflow,sourceBranchOrTag":
             return {"data": {
                 "type": "ciBuildRuns",
                 "id": RUN_ID,
@@ -131,11 +131,19 @@ class CuratedCatalogSubmissionTests(unittest.TestCase):
         )
 
     def test_accepts_the_single_processed_build_from_the_exact_tag_run(self):
-        result = self.verify(FakeAPI())
+        api = FakeAPI()
+        result = self.verify(api)
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["candidateTag"], TAG)
         self.assertEqual(result["buildID"], BUILD_ID)
         self.assertEqual(result["buildNumber"], "5")
+        self.assertIn(
+            (
+                "GET",
+                f"/v1/ciBuildRuns/{RUN_ID}?include=workflow,sourceBranchOrTag",
+            ),
+            api.calls,
+        )
 
     def test_rejects_a_run_with_a_different_source_commit(self):
         api = FakeAPI()
