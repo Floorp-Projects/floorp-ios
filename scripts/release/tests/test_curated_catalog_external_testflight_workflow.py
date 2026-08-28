@@ -87,6 +87,25 @@ class CuratedCatalogExternalTestFlightWorkflowTests(unittest.TestCase):
             self.workflow.index("- name: Submit the verified build to Beta App Review"),
         )
 
+    def test_resolves_only_the_sole_build_from_the_candidate_xcode_cloud_run(self) -> None:
+        for required in (
+            "- name: Resolve the sole processed App Store build from the candidate Xcode Cloud run",
+            "/v1/ciBuildRuns/$FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID/relationships/builds",
+            '[[ "$FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID" =~ ^[A-Za-z0-9._-]+$ ]]',
+            "Xcode Cloud run must produce exactly one App Store build",
+            "FLOORP_RESOLVED_BUILD_ID",
+            "requested App Store build does not match the Xcode Cloud run output",
+        ):
+            self.assertIn(required, self.workflow)
+        self.assertLess(
+            self.workflow.index("- name: Prepare App Store Connect API key"),
+            self.workflow.index("- name: Resolve the sole processed App Store build from the candidate Xcode Cloud run"),
+        )
+        self.assertLess(
+            self.workflow.index("- name: Resolve the sole processed App Store build from the candidate Xcode Cloud run"),
+            self.workflow.index("- name: Bind the processed App Store build to the exact candidate"),
+        )
+
     def test_submits_only_to_an_existing_external_group_and_keeps_evidence_non_secret(self) -> None:
         for required in (
             "select exactly one existing external TestFlight group",
@@ -113,6 +132,7 @@ class CuratedCatalogExternalTestFlightWorkflowTests(unittest.TestCase):
             "FLOORP_REQUESTED_CANDIDATE_TAG: ${{ inputs.candidate_tag }}",
             "FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID: ${{ inputs.xcode_cloud_run_id }}",
             "FLOORP_REQUESTED_BUILD_ID: ${{ inputs.build_id }}",
+            "FLOORP_REQUESTED_BUILD_ID: ${{ env.FLOORP_RESOLVED_BUILD_ID }}",
         ):
             self.assertIn(required, self.workflow)
 

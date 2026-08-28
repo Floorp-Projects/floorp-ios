@@ -12,8 +12,8 @@ on:
         required: true
         type: string
       build_id:
-        description: Processed App Store Connect build ID produced by that Xcode Cloud run.
-        required: true
+        description: Optional processed App Store Connect build ID. When omitted, resolve the sole build produced by the Xcode Cloud run.
+        required: false
         type: string
       external_group_id:
         description: Existing external TestFlight group ID; leave blank only when exactly one exists.
@@ -163,10 +163,51 @@ jobs:
               handle.write(f"APP_STORE_CONNECT_PRIVATE_KEY_PATH={key_path}\n")
           PY
 
-      - name: Bind the processed App Store build to the exact candidate
+      - name: Resolve the sole processed App Store build from the candidate Xcode Cloud run
         env:
           FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID: ${{ inputs.xcode_cloud_run_id }}
           FLOORP_REQUESTED_BUILD_ID: ${{ inputs.build_id }}
+        run: |
+          set -euo pipefail
+          [[ "$FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID" =~ ^[A-Za-z0-9._-]+$ ]]
+          root="$RUNNER_TEMP/floorp-curated-catalog-submission-binding"
+          mkdir -p "$root"
+          python3 scripts/release/app-store-connect-api.py get \
+            "/v1/ciBuildRuns/$FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID/relationships/builds" \
+            --output "$root/xcode-cloud-builds.json"
+          /usr/bin/python3 - "$root/xcode-cloud-builds.json" \
+            "$FLOORP_REQUESTED_BUILD_ID" "$GITHUB_ENV" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          response_path = Path(sys.argv[1])
+          requested = sys.argv[2].strip()
+          environment_path = Path(sys.argv[3])
+          response = json.loads(response_path.read_text(encoding="utf-8"))
+          rows = response.get("data")
+          if not isinstance(rows, list) or len(rows) != 1:
+              raise SystemExit("Xcode Cloud run must produce exactly one App Store build")
+          build = rows[0]
+          build_id = build.get("id") if isinstance(build, dict) else None
+          if (
+              not isinstance(build, dict)
+              or build.get("type") != "builds"
+              or not isinstance(build_id, str)
+              or re.fullmatch(r"[A-Za-z0-9._-]+", build_id) is None
+          ):
+              raise SystemExit("Xcode Cloud run build relationship is invalid")
+          if requested and requested != build_id:
+              raise SystemExit("requested App Store build does not match the Xcode Cloud run output")
+          with environment_path.open("a", encoding="utf-8") as stream:
+              stream.write(f"FLOORP_RESOLVED_BUILD_ID={build_id}\n")
+          PY
+
+      - name: Bind the processed App Store build to the exact candidate
+        env:
+          FLOORP_REQUESTED_XCODE_CLOUD_RUN_ID: ${{ inputs.xcode_cloud_run_id }}
+          FLOORP_REQUESTED_BUILD_ID: ${{ env.FLOORP_RESOLVED_BUILD_ID }}
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/floorp-curated-catalog-submission-binding.json"
@@ -253,7 +294,7 @@ jobs:
 
       - name: Submit the verified build to Beta App Review
         env:
-          FLOORP_REQUESTED_BUILD_ID: ${{ inputs.build_id }}
+          FLOORP_REQUESTED_BUILD_ID: ${{ env.FLOORP_RESOLVED_BUILD_ID }}
         run: |
           set -euo pipefail
           root="$FLOORP_CURATED_CATALOG_SUBMISSION_ROOT"
