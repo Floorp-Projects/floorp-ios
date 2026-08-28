@@ -1,8 +1,8 @@
 Floorp for iOS — 固定 WebExtensions カタログ候補
 
 このテストは、TestFlight のバージョン／ビルド番号がリリース証跡と完全一致し、Extensions
-画面に署名済み・アプリ同梱の固定16本カタログが表示される候補に限ります。カタログがない、
-本数が16以外、または起動後に一覧が変化した場合は、そこで中止してリリース完全性の不具合
+画面に署名済み・アプリ同梱の固定17本カタログが表示される候補に限ります。カタログがない、
+本数が17以外、または起動後に一覧が変化した場合は、そこで中止してリリース完全性の不具合
 として報告してください。旧 fixture カタログや別の TestFlight ビルドで代替しないでください。
 
 この候補は拡張ストアではありません。Chrome ウェブストア、Firefox Add-ons、任意 URL、ZIP、
@@ -10,7 +10,7 @@ XPI、CRX、共有シート、ローカルファイルから導入する経路�
 DNR リストも取得しません。これらの境界を回避しようとせず、該当する導入経路が見えた場合は
 不具合として報告してください。
 
-通常プロファイルで「設定」>「Extensions」を開き、16本すべてについて署名済み metadata
+通常プロファイルで「設定」>「Extensions」を開き、17本すべてについて署名済み metadata
 （名前、版、権限、ライセンス、source、generation）を確認してください。各機能群から1本ずつ、
 Floorp Site Appearance（content script）、Floorp Tracker Block Lite または Very Good AdBlock
 （static block-only DNR）、Floorp Session Timer または Easy to RSS（action、popup/options、
@@ -18,6 +18,12 @@ storage、alarms）を導入します。サイト権限は表示されたとき�
 Floorp QA ページまたは承認済みのテストページを使ってください。期待されるローカル動作を
 確認した後、各代表を無効化、有効化、削除、再導入してください。無効化は runtime/content rule/
 action を停止し、generation を暗黙に変えてはなりません。削除は拡張機能所有データを消去します。
+
+Dark Reader も導入し、個人情報を含まない HTTP(S) テストページだけを許可して、popup から表示を
+切り替えてください。ページを再読み込みし、popup を開き直して設定が profile-local に残ることを
+確認します。`storage.sync` は Floorp では意図的に端末内だけの保存領域であり、クラウドまたは
+端末間同期は期待しないでください。レビュー済み build は remote configuration、news、update を
+取得してはなりません。
 
 action 未宣言の拡張機能と popup を持つ拡張機能の両方を開いてください。Extensions メニューが
 使用可能なままで、クラッシュしないことを確認します。DNR は、提供された Floorp QA harness

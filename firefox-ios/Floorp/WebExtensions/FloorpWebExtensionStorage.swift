@@ -76,6 +76,9 @@ enum FloorpWebExtensionJSONValue: Codable, Equatable, Sendable {
 
 enum FloorpWebExtensionStorageArea: String, Codable, Sendable {
     case local
+    /// A durable, device-local compatibility namespace. It deliberately does
+    /// not synchronize through a cloud account.
+    case sync
     case session
     case managed
 }
@@ -166,10 +169,11 @@ enum FloorpWebExtensionStorageError: Error, Equatable, LocalizedError, Sendable 
 
 /// Profile-owned implementation of the Stage 2 `storage` contract.
 ///
-/// Normal `local` state is durably committed before it becomes observable.
-/// Private `local` and every `session` namespace are memory-backed, ensuring a
-/// private browsing session cannot leak extension state into the normal
-/// profile. Callers create one service per profile/private lifecycle.
+/// Normal `local` and compatibility `sync` state are durably committed before
+/// they become observable. Private versions of both, and every `session`
+/// namespace, are memory-backed, ensuring a private browsing session cannot
+/// leak extension state into the normal profile. Callers create one service
+/// per profile/private lifecycle.
 actor FloorpWebExtensionStorageService {
     typealias Values = [String: FloorpWebExtensionJSONValue]
 
@@ -204,7 +208,9 @@ actor FloorpWebExtensionStorageService {
     nonisolated let profileKey: FloorpWebExtensionStorageProfileKey
     private let quotas: FloorpWebExtensionStorageQuotas
     private let persistentURL: URL?
+    private let syncPersistentURL: URL?
     private var localValues: [FloorpWebExtensionID: Values]
+    private var syncValues: [FloorpWebExtensionID: Values]
     private var sessionValues = [FloorpWebExtensionID: Values]()
     private var observers = [UUID: Observer]()
     private var revision: UInt64 = 0
@@ -227,19 +233,31 @@ actor FloorpWebExtensionStorageService {
 
         if isPrivateBrowsing {
             // Never inspect or create a caller-provided directory for private
-            // storage. Its entire local view dies with this service instance.
+            // storage. Its entire local and sync views die with this service
+            // instance.
             persistentURL = nil
+            syncPersistentURL = nil
             localValues = [:]
+            syncValues = [:]
         } else {
             guard let directory else {
                 throw FloorpWebExtensionStorageError.persistentDirectoryRequired
             }
             let validatedDirectory = try Self.preparePersistentDirectory(directory)
             let url = validatedDirectory.appendingPathComponent("storage-local.json", isDirectory: false)
+            let syncURL = validatedDirectory.appendingPathComponent("storage-sync.json", isDirectory: false)
             persistentURL = url
+            syncPersistentURL = syncURL
             localValues = try Self.persistenceCoordinator.synchronized {
                 try Self.loadPersistentState(
                     from: url,
+                    profileIdentifier: identifier,
+                    quotas: quotas
+                )
+            }
+            syncValues = try Self.persistenceCoordinator.synchronized {
+                try Self.loadPersistentState(
+                    from: syncURL,
                     profileIdentifier: identifier,
                     quotas: quotas
                 )
@@ -333,10 +351,12 @@ actor FloorpWebExtensionStorageService {
         publish(changes: changes, extensionID: extensionID, area: area)
     }
 
-    /// Removes both areas during uninstall. `storage.local` otherwise survives
-    /// an immutable package-generation update as required by MV3.
+    /// Removes every mutable area during uninstall. `storage.local` and
+    /// device-local `storage.sync` otherwise survive an immutable
+    /// package-generation update as required by MV3.
     func removeAllData(for extensionID: FloorpWebExtensionID) throws {
         try clear(for: extensionID, in: .local)
+        try clear(for: extensionID, in: .sync)
         try clear(for: extensionID, in: .session)
     }
 
@@ -368,6 +388,17 @@ actor FloorpWebExtensionStorageService {
                 }
             }
             return localValues[extensionID] ?? [:]
+        case .sync:
+            if let syncPersistentURL {
+                syncValues = try Self.persistenceCoordinator.synchronized {
+                    try Self.loadPersistentState(
+                        from: syncPersistentURL,
+                        profileIdentifier: profileKey.profileIdentifier,
+                        quotas: quotas
+                    )
+                }
+            }
+            return syncValues[extensionID] ?? [:]
         case .session:
             return sessionValues[extensionID] ?? [:]
         case .managed:
@@ -416,6 +447,43 @@ actor FloorpWebExtensionStorageService {
                 localValues.removeValue(forKey: extensionID)
             } else {
                 localValues[extensionID] = nextNamespace
+            }
+            return NamespaceMutation(old: oldNamespace, new: nextNamespace)
+        case .sync:
+            if let syncPersistentURL {
+                let result = try Self.persistenceCoordinator.synchronized {
+                    var allValues = try Self.loadPersistentState(
+                        from: syncPersistentURL,
+                        profileIdentifier: profileKey.profileIdentifier,
+                        quotas: quotas
+                    )
+                    let oldNamespace = allValues[extensionID] ?? [:]
+                    let nextNamespace = try transform(oldNamespace)
+                    guard nextNamespace != oldNamespace else {
+                        return (NamespaceMutation(old: oldNamespace, new: nextNamespace), allValues)
+                    }
+                    if nextNamespace.isEmpty {
+                        allValues.removeValue(forKey: extensionID)
+                    } else {
+                        allValues[extensionID] = nextNamespace
+                    }
+                    try Self.persist(
+                        allValues,
+                        profileIdentifier: profileKey.profileIdentifier,
+                        to: syncPersistentURL
+                    )
+                    return (NamespaceMutation(old: oldNamespace, new: nextNamespace), allValues)
+                }
+                syncValues = result.1
+                return result.0
+            }
+
+            let oldNamespace = syncValues[extensionID] ?? [:]
+            let nextNamespace = try transform(oldNamespace)
+            if nextNamespace.isEmpty {
+                syncValues.removeValue(forKey: extensionID)
+            } else {
+                syncValues[extensionID] = nextNamespace
             }
             return NamespaceMutation(old: oldNamespace, new: nextNamespace)
         case .session:
@@ -474,7 +542,7 @@ actor FloorpWebExtensionStorageService {
         }
         let byteLimit: Int
         switch area {
-        case .local:
+        case .local, .sync:
             byteLimit = tier == .unlimitedStorage
                 ? quotas.unlimitedLocalByteLimit
                 : quotas.localByteLimit

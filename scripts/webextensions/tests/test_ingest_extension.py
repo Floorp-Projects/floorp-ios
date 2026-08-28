@@ -149,6 +149,42 @@ class IngestExtensionTests(unittest.TestCase):
             with self.assertRaisesRegex(INGEST.IngestionError, "dynamic-code"):
                 self.ingest(dynamic, root / "dynamic-out")
 
+    def test_accepts_packaged_configuration_fonts_and_json_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.zip"
+            source.write_bytes(make_zip({
+                "manifest.json": json.dumps(manifest()).encode(),
+                "content/main.js": b"fetch('https://example.test/posts.json');\n",
+                "config/dark-sites.config": b"example.test\n",
+                "config/color-schemes.drconf": b"[Dark]\n",
+                "ui/fonts/example.ttf": b"\x00\x01\x00\x00",
+            }))
+            result = self.ingest(source, root / "out")
+            self.assertTrue(any(
+                finding.code == "network-endpoint"
+                for finding in result.findings
+            ))
+
+    def test_normalizes_utf8_text_line_endings_without_touching_binary_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.zip"
+            png = b"\x89PNG\r\n\x1a\nnot-text\r\n"
+            source.write_bytes(make_zip({
+                "manifest.json": json.dumps(manifest()).encode(),
+                "content/main.js": b"const enabled = true;\r\n",
+                "config/dark-sites.config": b"example.test\r\n",
+                "icons/icon.png": png,
+            }))
+
+            self.ingest(source, root / "out")
+
+            normalized = root / "out" / "normalized"
+            self.assertEqual((normalized / "content/main.js").read_bytes(), b"const enabled = true;\n")
+            self.assertEqual((normalized / "config/dark-sites.config").read_bytes(), b"example.test\n")
+            self.assertEqual((normalized / "icons/icon.png").read_bytes(), png)
+
     def test_patch_is_recorded_and_unknown_manifest_fields_require_reviewed_patch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

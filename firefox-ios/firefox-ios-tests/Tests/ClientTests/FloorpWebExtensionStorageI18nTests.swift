@@ -46,6 +46,59 @@ final class FloorpWebExtensionStorageI18nTests: XCTestCase {
         ))
     }
 
+    func testSyncStorageIsDeviceLocalAndPrivateSessionsRemainEphemeral() async throws {
+        let directory = temporaryDirectory()
+        let privateSentinel = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: privateSentinel)
+        }
+        let normal = try FloorpWebExtensionStorageService(
+            profileIdentifier: "sync-profile",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        try await normal.set(["enabled": .bool(true)], for: extensionID, in: .sync)
+
+        let restartedNormal = try FloorpWebExtensionStorageService(
+            profileIdentifier: "sync-profile",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let restoredSync = try await restartedNormal.values(for: extensionID, in: .sync)
+        XCTAssertEqual(
+            restoredSync,
+            ["enabled": .bool(true)]
+        )
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("storage-sync.json").path
+        ))
+        let normalLocal = try await restartedNormal.values(for: extensionID, in: .local)
+        XCTAssertTrue(normalLocal.isEmpty)
+
+        let privateStore = try FloorpWebExtensionStorageService(
+            profileIdentifier: "sync-profile",
+            isPrivateBrowsing: true,
+            directory: privateSentinel
+        )
+        try await privateStore.set(["enabled": .bool(false)], for: extensionID, in: .sync)
+        let privateSync = try await privateStore.values(for: extensionID, in: .sync)
+        XCTAssertEqual(
+            privateSync,
+            ["enabled": .bool(false)]
+        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: privateSentinel.appendingPathComponent("storage-sync.json").path
+        ))
+        let restartedPrivate = try FloorpWebExtensionStorageService(
+            profileIdentifier: "sync-profile",
+            isPrivateBrowsing: true,
+            directory: privateSentinel
+        )
+        let restartedPrivateSync = try await restartedPrivate.values(for: extensionID, in: .sync)
+        XCTAssertTrue(restartedPrivateSync.isEmpty)
+    }
+
     func testSessionAndPrivateLocalStorageAreEphemeralAndProfileIsolated() async throws {
         let normalDirectory = temporaryDirectory()
         let privateSentinel = temporaryDirectory()
@@ -273,6 +326,36 @@ final class FloorpWebExtensionStorageI18nTests: XCTestCase {
             try i18n.message("missing", extensionID: extensionID, defaultLocale: "en"),
             ""
         )
+    }
+
+    func testI18nJavaScriptBootstrapMergesDefaultAndPreferredCatalogs() throws {
+        let resources = [
+            "_locales/en/messages.json": """
+            {
+              "fallback": { "message": "Default" },
+              "greeting": { "message": "Hello $1" }
+            }
+            """,
+            "_locales/ja/messages.json": """
+            {
+              "greeting": {
+                "message": "$NAME$ さん",
+                "placeholders": { "name": { "content": "$1" } }
+              }
+            }
+            """
+        ]
+        let i18n = try FloorpWebExtensionI18n(preferredLocales: ["ja-JP", "en-US"]) { _, source in
+            resources[source.path]
+        }
+
+        let bootstrap = try i18n.javaScriptBootstrap(extensionID: extensionID, defaultLocale: "en")
+
+        XCTAssertEqual(bootstrap.extensionID, extensionID.rawValue)
+        XCTAssertEqual(bootstrap.uiLanguage, "ja-JP")
+        XCTAssertEqual(bootstrap.messages["fallback"]?.message, "Default")
+        XCTAssertEqual(bootstrap.messages["greeting"]?.message, "$NAME$ さん")
+        XCTAssertEqual(bootstrap.messages["greeting"]?.placeholders["name"], "$1")
     }
 
     func testI18nProvidesSpecialMessagesAndRejectsMalformedCatalogs() throws {

@@ -1,15 +1,33 @@
 # Floorp iOS: 内部 WebExtensions カタログのリリース証跡
 
-Status: **P1–P4 local implementation checks are recorded below. The current focused
-catalog lifecycle suite passes 67/67 and the deterministic 16-artifact builder now passes
-34/34. A managed signer has produced and locally verified the source-bound signed
-catalog and root public key for the 16-package candidate; it is staged only in the
-normal public-output PR workspace and has not shipped. PR #139 has merged to `main`
-as `ab6235fd7c6694aa97217d1626411ef0af0a3796`; existing TestFlight builds are not
-source-bound to this candidate. No physical-device result exists yet.**
+Status: **P1–P4 local implementation checks are recorded below. The prior
+16-package signature/evidence is historical and cannot verify the current
+17-package Dark Reader MV3 input. A new managed signature, exact schema 2
+approval record, normal public-output integration, and tag-bound candidate build
+are still required; existing TestFlight builds are not source-bound to this
+candidate. No physical-device result exists yet.**
 
 この文書は package-specific evidence の保存形式である。Stage 3 の同梱 fixture 証跡を
 再利用して「内部カタログの実拡張を検証済み」と記載してはならない。
+
+## 2026-08-28 Dark Reader MV3 supersession
+
+All rows that name 16 artifacts/packages, sequence 1, the old catalog digest,
+or its provenance/approval evidence remain historical observations only. They
+do not authorize or verify the current input:
+
+- `catalog-input.json`: 17 packages, SHA-256
+  `feb00e6715b9021265460490203dda33ce6eeac4093d80de32211dcc89b67028`;
+- Dark Reader: `floorp.thirdparty.darkreader` 4.9.129, a local fixed MV3
+  compatibility build with no remote configuration/news/update channel;
+- required next public catalog: a newly generated, source-bound signature at
+  sequence greater than 1, retaining the already pinned root key or using a
+  separately approved root-key rotation process;
+- required external release input: a fresh canonical schema 2 approval record
+  whose protected digest binds that new signature and all 17 packages.
+
+The current source has not yet been signed. This section is intentionally a
+release blocker, not evidence that the previous signature covers Dark Reader.
 
 ## Local implementation verification (not release evidence)
 

@@ -64,7 +64,7 @@ MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 # These limits apply before any archive member is materialized.  They keep the
 # review-only verifier bounded even if a future, otherwise digest-pinned source
 # archive is unexpectedly highly compressed.
-MAX_ARCHIVE_MEMBERS = 1_024
+MAX_ARCHIVE_MEMBERS = 2_048
 MAX_ARCHIVE_EXPANDED_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024
 

@@ -62,7 +62,7 @@ class CuratedCatalogExternalTestFlightWorkflowTests(unittest.TestCase):
             "verify_curated_catalog_release_approval.py",
             "docs/floorp-ios-webextensions-curated-catalog-release-approval.json",
             "--catalog-evidence \"$FLOORP_CURATED_CATALOG_EVIDENCE\"",
-            "--expected-package-count 16",
+            "--expected-package-count 17",
             "floorp-curated-catalog-p0-approval.json",
         ):
             self.assertIn(required, self.workflow)

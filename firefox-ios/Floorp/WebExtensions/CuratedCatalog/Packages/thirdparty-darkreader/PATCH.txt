@@ -1,0 +1,27 @@
+Derived from Dark Reader's official Chrome Manifest V3 release v4.9.129 and
+the exact darkreader/darkreader source archive at the pinned upstream revision.
+
+Source archive SHA-256: b0a1af878da40dbb21544d5f8a19d15ab3120fc5c2a84f6654d795363ee88755
+Source archive URL: https://api.github.com/repos/darkreader/darkreader/tarball/c2a707302a39b8047543712e9c582bac07835d34
+Upstream release SHA-256: 20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64
+
+The package removes optional context-menu permission, desktop keyboard
+commands, the upstream custom content-security policy, and the static action
+icon declaration. Floorp's fixed extension-page policy and native action icon
+bridge apply instead. The main-world proxy is limited to the top-level document
+and no content script is injected into about:blank documents, because Floorp's
+native iOS runtime deliberately fails closed for those contexts.
+
+The upstream remote configuration base is replaced with the bundled config/
+directory. The upstream news URL is replaced with an empty packaged data
+response. Dark Reader cannot download configuration, news, catalog, code, or
+extension updates from the network in this build. User-initiated support and
+project links remain ordinary navigations subject to Floorp navigation policy.
+
+Floorp supplies the reviewed MV3 compatibility surface used by this release:
+profile-scoped storage.local and device-local storage.sync, storage change
+events, synchronous i18n and manifest bootstrap data, action.setIcon, alarms,
+runtime lifecycle/platform helpers, and host-access-gated tab messaging. The
+fontSettings permission is represented by Floorp's generic iOS font fallback;
+native desktop font preference controls, context menus, desktop commands, and
+cloud settings sync are not provided.

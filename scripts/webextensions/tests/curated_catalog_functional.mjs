@@ -9,7 +9,7 @@
 // API or substituting the review source tree for the shipped artifact.
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
@@ -30,7 +30,7 @@ function sha256(data) {
 async function catalogRecords() {
   const records = JSON.parse(await readFile(path.join(catalogRoot, "catalog-input.json"), "utf8"));
   assert.ok(Array.isArray(records), "catalog input must be an array");
-  assert.equal(records.length, 16, "the initial curated candidate has 16 records");
+  assert.equal(records.length, 17, "the curated candidate has 17 records");
   return records;
 }
 
@@ -551,6 +551,141 @@ async function testSessionTimer() {
   assert.equal(savedQuiet, false);
 }
 
+async function testDarkReader() {
+  const resources = await artifactResources("thirdparty-darkreader");
+  const manifest = JSON.parse((await source("thirdparty-darkreader", "manifest.json")));
+  assert.equal(manifest.manifest_version, 3);
+  assert.equal(manifest.background.service_worker, "background/index.js");
+  assert.deepEqual(manifest.permissions, ["alarms", "fontSettings", "scripting", "storage"]);
+  assert.deepEqual(manifest.host_permissions, ["*://*/*"]);
+  assert.equal(manifest.optional_permissions, undefined);
+  assert.equal(manifest.commands, undefined);
+
+  const document = new FakeDocument();
+  await run("thirdparty-darkreader", "inject/fallback.js", sandbox(document, {
+    HTMLHtmlElement: FakeElement,
+    matchMedia: () => ({matches: true}),
+    sessionStorage: {getItem: () => null}
+  }));
+  const fallback = document.documentElement.children.find(child =>
+    child.classList.contains("darkreader--fallback")
+  );
+  assert.ok(fallback, "Dark Reader installs its initial dark fallback");
+  assert.match(fallback.textContent, /background-color: #181a1b/);
+
+  const background = await source("thirdparty-darkreader", "background/index.js");
+  assert.match(background, /const NEWS_URL = "data:application\/json,%5B%5D"/);
+  assert.match(background, /const CONFIG_URL_BASE = "\.\.\/config"/);
+  for (const config of [
+    "color-schemes.drconf",
+    "dark-sites.config",
+    "detector-hints.config",
+    "dynamic-theme-fixes.config",
+    "inversion-fixes.config",
+    "static-themes.config"
+  ]) {
+    assert.ok(resources.has(`config/${config}`), `Dark Reader has local ${config}`);
+  }
+
+  // Boot the shipped service worker with the supported Chrome-compatible API
+  // surface. This catches an unconditional use of an unavailable namespace
+  // before a user installs the curated artifact; it intentionally omits
+  // optional context menus, commands, windows, and remote network access.
+  const stores = {local: {}, sync: {}};
+  const makeEvent = () => ({addListener() {}, removeListener() {}});
+  const storageArea = name => ({
+    QUOTA_BYTES_PER_ITEM: 8 * 1024,
+    get(keys, callback) {
+      const values = stores[name];
+      let result;
+      if (keys == null) result = {...values};
+      else if (Array.isArray(keys)) {
+        result = Object.fromEntries(keys.filter(key => key in values).map(key => [key, values[key]]));
+      } else if (typeof keys === "string") {
+        result = keys in values ? {[keys]: values[key]} : {};
+      } else {
+        result = Object.fromEntries(Object.entries(keys).map(([key, fallback]) => [
+          key,
+          key in values ? values[key] : fallback
+        ]));
+      }
+      callback?.(result);
+    },
+    set(values, callback) { Object.assign(stores[name], values); callback?.(); },
+    remove(keys, callback) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) delete stores[name][key];
+      callback?.();
+    },
+    onChanged: makeEvent()
+  });
+  const fetched = [];
+  const backgroundContext = {
+    URL,
+    URLSearchParams,
+    TextEncoder,
+    TextDecoder,
+    crypto: webcrypto,
+    console: {log() {}, warn() {}, error() {}},
+    setInterval() { return 1; },
+    clearInterval() {},
+    setTimeout,
+    clearTimeout,
+    performance: {now: () => Date.now()},
+    navigator: {language: "en-US", userAgent: "Floorp iOS", platform: "iPhone"},
+    location: {
+      protocol: "floorp-extension:",
+      origin: "floorp-extension://floorp.thirdparty.darkreader"
+    },
+    fetch: async url => {
+      fetched.push(String(url));
+      return {ok: true, text: async () => "", json: async () => []};
+    },
+    chrome: {
+      storage: {local: storageArea("local"), sync: storageArea("sync")},
+      runtime: {
+        id: "floorp.thirdparty.darkreader",
+        getPlatformInfo: () => Promise.resolve({os: "ios"}),
+        getURL: (resource = "") =>
+          `floorp-extension://floorp.thirdparty.darkreader/${String(resource).split("/").filter(Boolean).join("/")}`,
+        getManifest: () => ({version: "4.9.129"}),
+        setUninstallURL() {},
+        onStartup: makeEvent(),
+        onInstalled: makeEvent(),
+        onMessage: makeEvent(),
+        sendMessage() {}
+      },
+      permissions: {contains(_details, callback) { callback(false); }},
+      alarms: {onAlarm: makeEvent(), create() {}, clear() {}},
+      action: {setIcon() {}, setBadgeBackgroundColor() {}, setBadgeText() {}},
+      tabs: {
+        onRemoved: makeEvent(),
+        query(_query, callback) { callback([]); },
+        get() {}, sendMessage() {}, create() {}, update() {}
+      },
+      scripting: {executeScript() {}},
+      i18n: {getMessage: () => "", getUILanguage: () => "en"},
+      extension: {isAllowedFileSchemeAccess(callback) { callback(false); }}
+    }
+  };
+  backgroundContext.globalThis = backgroundContext;
+  const backgroundFailures = [];
+  const captureRejection = reason => backgroundFailures.push(reason);
+  process.on("unhandledRejection", captureRejection);
+  try {
+    await run("thirdparty-darkreader", "background/index.js", backgroundContext);
+    await new Promise(resolve => setTimeout(resolve, 30));
+  } finally {
+    process.removeListener("unhandledRejection", captureRejection);
+  }
+  assert.deepEqual(backgroundFailures, [], "Dark Reader service worker starts with supported MV3 APIs");
+  assert.ok(Object.keys(stores.local).length > 0, "Dark Reader initializes device-local settings");
+  assert.ok(Object.keys(stores.sync).length > 0, "Dark Reader initializes device-local sync compatibility settings");
+  assert.ok(
+    fetched.every(url => url.startsWith("../config/") || url.startsWith("data:")),
+    "Dark Reader service worker fetches only bundled configuration or local data URLs"
+  );
+}
+
 await Promise.all([
   testSiteAppearance(),
   testEasyToRSS(),
@@ -567,8 +702,9 @@ await Promise.all([
   testWebSearchNavigator(),
   testTrackerBlockLite(),
   testVeryGoodAdBlock(),
-  testSessionTimer()
+  testSessionTimer(),
+  testDarkReader()
 ]);
 
-assert.equal(artifacts.size, 16, "every catalog artifact must execute one functional smoke path");
-process.stdout.write(JSON.stringify({ status: "ok", adoptedArtifacts: 16 }) + "\n");
+assert.equal(artifacts.size, 17, "every catalog artifact must execute one functional smoke path");
+process.stdout.write(JSON.stringify({ status: "ok", adoptedArtifacts: 17 }) + "\n");

@@ -10,6 +10,7 @@ enum FloorpWebExtensionI18nError: Error, Equatable, LocalizedError, Sendable {
     case messagesCatalogTooLarge(String)
     case tooManySubstitutions
     case expandedMessageTooLarge
+    case javaScriptBootstrapTooLarge
 
     var errorDescription: String? {
         switch self {
@@ -23,6 +24,8 @@ enum FloorpWebExtensionI18nError: Error, Equatable, LocalizedError, Sendable {
             return "A localized extension message accepts at most nine substitutions."
         case .expandedMessageTooLarge:
             return "The expanded localized extension message is too large."
+        case .javaScriptBootstrapTooLarge:
+            return "The localized JavaScript bootstrap is too large."
         }
     }
 }
@@ -49,11 +52,29 @@ struct FloorpWebExtensionI18n: Sendable {
         let placeholders: [String: Placeholder]?
     }
 
+    /// A bounded, package-derived locale snapshot embedded into the
+    /// document-start bridge. Chrome's `i18n.getMessage` and
+    /// `i18n.getUILanguage` are synchronous APIs, whereas the native message
+    /// bridge is asynchronous. This data grants no filesystem or native API
+    /// access and uses the same validation as the native i18n surface.
+    struct JavaScriptBootstrap: Encodable, Sendable {
+        let extensionID: String
+        let uiLanguage: String
+        let acceptLanguages: [String]
+        let messages: [String: JavaScriptMessage]
+    }
+
+    struct JavaScriptMessage: Encodable, Sendable {
+        let message: String
+        let placeholders: [String: String]
+    }
+
     static let maximumCatalogByteCount = 1 * 1_024 * 1_024
     static let maximumMessageCount = 5_000
     static let maximumMessageByteCount = 16 * 1_024
     static let maximumSubstitutionByteCount = 64 * 1_024
     static let maximumExpandedMessageByteCount = 256 * 1_024
+    static let maximumJavaScriptBootstrapByteCount = 512 * 1_024
 
     let uiLanguage: String
     let acceptLanguages: [String]
@@ -76,6 +97,43 @@ struct FloorpWebExtensionI18n: Sendable {
         uiLanguage = normalized[0]
         acceptLanguages = normalized
         self.resourceLoader = resourceLoader
+    }
+
+    /// Builds the highest-priority locale view for a currently active package.
+    /// Lower-priority catalogs are merged first, so a preferred locale can
+    /// override individual entries while still inheriting its default locale.
+    func javaScriptBootstrap(
+        extensionID: FloorpWebExtensionID,
+        defaultLocale: String
+    ) throws -> JavaScriptBootstrap {
+        let defaultLanguage = try Self.normalizedLanguageTag(defaultLocale)
+        var messages = [String: JavaScriptMessage]()
+        let candidates = Self.localeCandidates(
+            preferred: [uiLanguage],
+            defaultLocale: defaultLanguage
+        )
+        for locale in candidates.reversed() {
+            guard let catalog = try loadCatalog(locale: locale, extensionID: extensionID) else {
+                continue
+            }
+            for (name, entry) in catalog {
+                var placeholders = [String: String]()
+                for (placeholderName, placeholder) in entry.placeholders ?? [:] {
+                    placeholders[Self.asciiLowercased(placeholderName)] = placeholder.content
+                }
+                messages[name] = .init(message: entry.message, placeholders: placeholders)
+            }
+        }
+        let bootstrap = JavaScriptBootstrap(
+            extensionID: extensionID.rawValue,
+            uiLanguage: uiLanguage,
+            acceptLanguages: acceptLanguages,
+            messages: messages
+        )
+        guard try JSONEncoder().encode(bootstrap).count <= Self.maximumJavaScriptBootstrapByteCount else {
+            throw FloorpWebExtensionI18nError.javaScriptBootstrapTooLarge
+        }
+        return bootstrap
     }
 
     /// Implements `i18n.getMessage`. A missing key or unavailable catalog

@@ -262,6 +262,7 @@ final class FloorpWebExtensionNativePermissionConsentPresenter {
             case .activeTab: return "Access the active tab after an explicit action"
             case .alarms: return "Schedule extension alarms"
             case .declarativeNetRequest: return "Apply supported network blocking rules"
+            case .fontSettings: return "Use the iOS-safe generic font fallback"
             case .scripting: return "Run approved package scripts on the selected sites"
             case .storage: return "Store extension settings on this device"
             case .tabs: return "Read tab metadata and open or reload tabs"

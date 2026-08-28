@@ -10,9 +10,9 @@ unsupported API or DNR action rejects the immutable artifact before install.
 
 | Profile | Catalog packages | Supported contract | Isolation / lifecycle |
 | --- | --- | --- | --- |
-| `content-script` | Site Appearance and 12 constrained third-party builds | Fixed manifest-declared JS/CSS, document start/end, bounded isolated-world runtime message path | Native host grant and profile/private checks on every navigation; disable/uninstall/revocation stop execution |
+| `content-script` | Site Appearance and 13 constrained third-party builds, including Dark Reader | Fixed manifest-declared JS/CSS, document start/end, bounded isolated-world runtime message path | Native host grant and profile/private checks on every navigation; disable/uninstall/revocation stop execution |
 | `dnr` | Tracker Block Lite and Very Good AdBlock compatibility build | Static reviewed DNR rules; supported `block` action only | Rules are profile-scoped; runtime replacement/removal is transactional |
-| `action-storage` | Session Timer, Tracking Token Stripper, and Easy to RSS | Manifest action popup, options page where declared, local/session storage, alarms where declared, fixed runtime messages | Package-origin pages only; normal/private storage and alarms do not mix |
+| `action-storage` | Session Timer, Tracking Token Stripper, Easy to RSS, and Dark Reader | Manifest action popup, options page where declared, local/session/device-local sync storage, alarms where declared, fixed runtime messages | Package-origin pages only; normal/private storage and alarms do not mix |
 
 Every catalog record declares all profiles it needs. The app verifies the
 record-to-manifest relationship when installing and restoring, so metadata
@@ -68,10 +68,18 @@ exceptions remain rejected.
   displays a safe empty state rather than constructing a missing page host.
 - `options_ui.page` is similarly package-origin-only. An external URL opens as
   an ordinary browser tab and receives no extension authority.
-- `storage.local`, `storage.session`, `alarms`, and supported runtime messages
-  are profile-scoped. `storage.sync`, unrestricted background pages,
-  `importScripts`, remote module loading, and arbitrary fetch are not part of
-  the supported catalog contract.
+- `storage.local`, `storage.session`, `storage.sync`, `alarms`, and supported
+  runtime messages are profile-scoped. `storage.sync` is a durable device-local
+  compatibility namespace, never an account or cloud synchronization service.
+  Unrestricted background pages, `importScripts`, remote module loading, and
+  arbitrary fetch are not part of the supported catalog contract.
+- Package pages and bundled backgrounds may fetch only their own reviewed
+  package resources under the fixed extension-page policy. Dark Reader uses
+  this for its packaged configuration corpus; remote configuration, news, and
+  update endpoints are not available.
+- `runtime.getManifest`, synchronous Chrome i18n lookup, and package-resource
+  `action.setIcon` are available to the bounded bridge. `fontSettings` maps
+  only to the iOS generic-font fallback; it never exposes device font settings.
 
 ## Per-package verification matrix
 
@@ -99,6 +107,7 @@ content. A real signed-device pass remains a P5 release gate.
 | Easy to RSS | Content script finds an existing page-local feed link; popup displays stored discovery | content script / — / popup + local storage / no network | feed discovery and popup state stay profile-local | digest-bound update confirmation; no subscription service or remote feed fetch |
 | Scroll To Top | Content script adds an accessible button and scrolls the current page to the top | content script / — / no extension page / no network | host grant and private copy are separate | digest-bound update confirmation; no global user-script injection |
 | Refined Twitter | Content script marks rendered tweets for fixed local styling | content script / — / no extension page / no network | X/Twitter grants and private copy are separate | digest-bound update confirmation; no dynamic social API or remote rules |
+| Dark Reader | Bundled MV3 background, popup, and content scripts apply its local appearance transformation after a site grant | content scripts / — / popup + device-local storage + alarms / bundled configuration only | site grants and local/sync settings are profile-local; private data is ephemeral | digest-bound update confirmation; no cloud sync, context menus, desktop commands, remote config/news/update fetch, or native font preferences |
 | Very Good AdBlock | Preflight accepts exactly 16 static block rules; advertising/tracking request matching is blocked | — / static `block` / native per-site exclusion / no network | rules and exclusions are profile-local; private is separate opt-in | digest-bound update confirmation; no redirect, cosmetic remote list, telemetry, report, or dynamic/session rules |
 
 ## Known non-compatible APIs and patterns
@@ -112,8 +121,8 @@ The following are intentionally not adopted by this catalog:
 - `eval`, `Function`, `scripting.executeScript` code/func payloads, remote JS,
   remote WASM, remote DNR/cosmetic-filter subscriptions, and `update_url`;
 - DNR redirect/header modification/allow-all/matched-rule-feedback actions;
-- `storage.sync`, arbitrary background fetch, dynamic imported scripts, and
-  a Chrome Web Store/Firefox Add-ons/URL/ZIP/CRX/shared-sheet install flow.
+- cloud `storage.sync`, arbitrary background fetch, dynamic imported scripts,
+  and a Chrome Web Store/Firefox Add-ons/URL/ZIP/CRX/shared-sheet install flow.
 
 An item needing one of these is deferred or rejected, not weakened into an
 incomplete catalog entry. See [the third-party selection record](THIRD_PARTY_EXTENSIONS.md).

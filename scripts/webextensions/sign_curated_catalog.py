@@ -70,6 +70,50 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
+def _read_regular_output(path: Path, label: str) -> bytes:
+    """Read a managed output without following a symbolic-link replacement."""
+
+    if path.is_symlink() or not path.is_file():
+        raise CuratedCatalogSigningError(f"{label} must be an existing regular file: {path}")
+    try:
+        return path.read_bytes()
+    except OSError as error:
+        raise CuratedCatalogSigningError(f"cannot read {label}: {error}") from error
+
+
+def _require_sha256(value: str | None, label: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise CuratedCatalogSigningError(f"{label} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _atomic_replace_expected(path: Path, data: bytes, expected_existing_sha256: str) -> None:
+    """Replace one checked-in catalog only after its prior bytes still match.
+
+    Catalog rotation is deliberately narrower than the normal first-output
+    flow: it can replace only the signed catalog, never the pinned root file.
+    The final digest recheck makes a concurrent output change fail closed before
+    the same-directory atomic replacement is attempted.
+    """
+
+    current = _read_regular_output(path, "existing signed catalog output")
+    if sha256(current) != expected_existing_sha256:
+        raise CuratedCatalogSigningError("existing signed catalog SHA-256 changed before replacement")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise
+
+
 def _parse_source_archives(values: list[str]) -> dict[str, Path]:
     result: dict[str, Path] = {}
     for value in values:
@@ -147,8 +191,12 @@ def _require_output_contract(
     catalog_output: Path,
     root_public_key_output: Path,
     evidence_path: Path,
+    supersede_signed_catalog: bool,
+    expected_existing_catalog_sha256: str | None,
+    expected_existing_root_public_key_file_sha256: str | None,
+    sequence: int,
 ) -> None:
-    """Accept exactly the two app-bound output paths and external audit evidence."""
+    """Accept the first-output contract or a strictly bounded catalog rotation."""
 
     expected_catalog_output = (catalog_root / "Artifacts/Signed/catalog.json").resolve()
     expected_root_output = (catalog_root / "Artifacts/Signed/root-public-key.txt").resolve()
@@ -161,15 +209,47 @@ def _require_output_contract(
         raise CuratedCatalogSigningError("root public key output must use the curated shipped output path")
     if len({resolved_catalog_output, resolved_root_output, resolved_evidence}) != 3:
         raise CuratedCatalogSigningError("catalog, root public key, and provenance evidence outputs must be distinct")
-    if resolved_catalog_output.exists() or resolved_root_output.exists() or resolved_evidence.exists():
-        raise CuratedCatalogSigningError("managed signing refuses to overwrite an existing output or evidence file")
     if not evidence_path.is_absolute():
         raise CuratedCatalogSigningError("provenance evidence output must be an absolute path outside the source checkout")
     try:
         resolved_evidence.relative_to(repository_root)
     except ValueError:
+        pass
+    else:
+        raise CuratedCatalogSigningError("provenance evidence must be outside the signing checkout")
+    if resolved_evidence.exists() or resolved_evidence.is_symlink():
+        raise CuratedCatalogSigningError("managed signing refuses to overwrite an existing evidence file")
+
+    if not supersede_signed_catalog:
+        if expected_existing_catalog_sha256 is not None or expected_existing_root_public_key_file_sha256 is not None:
+            raise CuratedCatalogSigningError("existing-output digests require --supersede-signed-catalog")
+        if resolved_catalog_output.exists() or resolved_root_output.exists():
+            raise CuratedCatalogSigningError("managed signing refuses to overwrite an existing output or evidence file")
         return
-    raise CuratedCatalogSigningError("provenance evidence must be outside the signing checkout")
+
+    expected_catalog_sha256 = _require_sha256(
+        expected_existing_catalog_sha256,
+        "expected existing signed catalog SHA-256",
+    )
+    expected_root_file_sha256 = _require_sha256(
+        expected_existing_root_public_key_file_sha256,
+        "expected existing root public-key file SHA-256",
+    )
+    existing_catalog = _read_regular_output(expected_catalog_output, "existing signed catalog output")
+    existing_root = _read_regular_output(expected_root_output, "existing root public-key output")
+    if sha256(existing_catalog) != expected_catalog_sha256:
+        raise CuratedCatalogSigningError("existing signed catalog SHA-256 does not match the explicit rotation input")
+    if sha256(existing_root) != expected_root_file_sha256:
+        raise CuratedCatalogSigningError("existing root public-key file SHA-256 does not match the explicit rotation input")
+    try:
+        existing_value = strict_json_loads(existing_catalog, label="existing signed catalog")
+    except ValueError as error:
+        raise CuratedCatalogSigningError(f"existing signed catalog is invalid: {error}") from error
+    existing_sequence = existing_value.get("sequence") if isinstance(existing_value, dict) else None
+    if type(existing_sequence) is not int or existing_sequence < 1:
+        raise CuratedCatalogSigningError("existing signed catalog sequence is invalid")
+    if sequence <= existing_sequence:
+        raise CuratedCatalogSigningError("catalog rotation sequence must be greater than the existing signed catalog sequence")
 
 
 def verify_release_inputs(
@@ -217,6 +297,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="review-quarantined archive for each sourceProvenance-bound source",
     )
     result.add_argument("--provenance-evidence-output", required=True, type=Path)
+    result.add_argument(
+        "--supersede-signed-catalog",
+        action="store_true",
+        help="replace only an explicitly pinned existing catalog; root-key rotation is not supported",
+    )
+    result.add_argument(
+        "--expected-existing-catalog-sha256",
+        help="required with --supersede-signed-catalog; SHA-256 of the current catalog.json bytes",
+    )
+    result.add_argument(
+        "--expected-existing-root-public-key-file-sha256",
+        help="required with --supersede-signed-catalog; SHA-256 of the current root-public-key.txt bytes",
+    )
     return result
 
 
@@ -239,6 +332,10 @@ def main(argv: list[str] | None = None) -> int:
             catalog_output=arguments.output,
             root_public_key_output=arguments.root_public_key_output,
             evidence_path=arguments.provenance_evidence_output,
+            supersede_signed_catalog=arguments.supersede_signed_catalog,
+            expected_existing_catalog_sha256=arguments.expected_existing_catalog_sha256,
+            expected_existing_root_public_key_file_sha256=arguments.expected_existing_root_public_key_file_sha256,
+            sequence=arguments.sequence,
         )
         records = load_records_bytes(records_bytes, schema=arguments.schema)
         # The catalog bytes and provenance declaration were read from this
@@ -290,10 +387,42 @@ def main(argv: list[str] | None = None) -> int:
         "status": "signed",
     }
     try:
-        _atomic_write(arguments.output, catalog)
-        _atomic_write(arguments.root_public_key_output, (base64url(root_public) + "\n").encode("ascii"))
+        # Signing itself is not sufficient authority to rotate a checked-in
+        # catalog. Revalidate the clean checkout and expected prior bytes after
+        # signing, immediately before touching a shipped output.
+        _require_catalog_checkout(repository_root, catalog_root)
+        _require_clean_source_commit(repository_root, arguments.source_commit)
+        _require_output_contract(
+            repository_root=repository_root,
+            catalog_root=catalog_root,
+            catalog_output=arguments.output,
+            root_public_key_output=arguments.root_public_key_output,
+            evidence_path=arguments.provenance_evidence_output,
+            supersede_signed_catalog=arguments.supersede_signed_catalog,
+            expected_existing_catalog_sha256=arguments.expected_existing_catalog_sha256,
+            expected_existing_root_public_key_file_sha256=arguments.expected_existing_root_public_key_file_sha256,
+            sequence=arguments.sequence,
+        )
+        root_public_file = (base64url(root_public) + "\n").encode("ascii")
+        if arguments.supersede_signed_catalog:
+            existing_root = _read_regular_output(arguments.root_public_key_output, "existing root public-key output")
+            if existing_root != root_public_file:
+                raise CuratedCatalogSigningError(
+                    "catalog rotation would change the root public key; use the separate root-key rotation process"
+                )
+            _atomic_replace_expected(
+                arguments.output,
+                catalog,
+                _require_sha256(
+                    arguments.expected_existing_catalog_sha256,
+                    "expected existing signed catalog SHA-256",
+                ),
+            )
+        else:
+            _atomic_write(arguments.output, catalog)
+            _atomic_write(arguments.root_public_key_output, root_public_file)
         _atomic_write(arguments.provenance_evidence_output, canonical_json(evidence))
-    except OSError as error:
+    except (CuratedCatalogSigningError, OSError) as error:
         print(f"curated catalog signing failed: cannot write public output: {error}", file=__import__("sys").stderr)
         return 2
     print(json.dumps({

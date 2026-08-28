@@ -1,0 +1,12 @@
+Upstream: darkreader/darkreader
+Upstream revision: c2a707302a39b8047543712e9c582bac07835d34
+Upstream archive SHA-256: b0a1af878da40dbb21544d5f8a19d15ab3120fc5c2a84f6654d795363ee88755
+Upstream release: darkreader-chrome-mv3.zip v4.9.129
+Upstream release SHA-256: 20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64
+License: MIT
+Source URL: https://github.com/darkreader/darkreader
+
+This Floorp compatibility build retains the reviewed upstream MV3 bundle with
+the constrained, documented changes in PATCH.txt. Its configuration corpus and
+runtime assets are packaged locally; it has no remote configuration refresh,
+news fetch, or extension-update channel.
