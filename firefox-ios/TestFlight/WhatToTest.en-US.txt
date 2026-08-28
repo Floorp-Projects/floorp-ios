@@ -50,7 +50,10 @@ version/build mismatch. Do not use personal credentials or production data for
 this candidate.
 
 Known limitations: the catalog is a fixed app-bundled set, not a general
-plug-in collection; unapproved third-party redistribution/legal/privacy and
-Apple review gates are release gates, not tester approvals. This tester pass
-does not by itself establish the physical-device performance, memory, battery,
-accessibility, or revocation acceptance evidence required for broader release.
+plug-in collection. The sole maintainer's P0 policy records the verified
+license/notice/provenance basis; its exact signed catalog and candidate-bound
+approval record are verified before the normal candidate PR is merged.
+Physical-device evidence and Apple review remain required. This tester pass
+does not by itself establish the physical-device
+performance, memory, battery, accessibility, or revocation acceptance evidence
+required for broader release.

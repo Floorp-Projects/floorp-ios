@@ -1,11 +1,14 @@
 # Floorp iOS: 内部 WebExtensions カタログのリリースゲート
 
 Status: **blocked — the sole maintainer has approved P0 policy and External
-TestFlight submission for the fixed 16-package candidate. It still fails closed
-until a managed signer produces the catalog and root public key; a
-candidate-bound P0 record, source-bound signed candidate, protected release
-trust anchor, immutable release tag, source-to-build readback, and merged main
-SHA remain outstanding.**
+TestFlight submission for the fixed 16-package candidate, and PR #139 has
+merged to `main`. A managed 1Password signer has now produced and locally
+verified the source-bound catalog, root public key, provenance evidence, and
+candidate-bound P0 record. It remains fail-closed until those public outputs
+pass the forthcoming normal PR/CI/`main` integration, then the release
+trust-anchor readback, immutable release tag, and source-to-build readback
+succeed. The current `main` integration CI for PR #139 succeeded on
+2026-08-28.**
 
 この記録は、`floorp-ios-webextensions-internal-catalog-design.md` の P0 を実行可能な
 リリース条件に変換する。未完了の項目はコードや feature flag で代替してはならない。
@@ -104,6 +107,13 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
   は読み取らず、署名済み root と照合するまで trust anchor は完了扱いにしない。両 environment に
   別人の required reviewer を仮定しない。候補／external の secret 分離、manual workflow、
   protected digest の scope は実在する technical control として別途確認する。
+- 2026-08-28: repository ruleset `21688477` `Protect Floorp curated catalog candidate tags` を
+  active にし、`refs/tags/floorp-catalog-*` の deletion と non-fast-forward update を禁止した。
+  bypass actor は空で、現在の administrator も bypass できない。両 curated environment は
+  `floorp-catalog-*` tag だけを受け付ける custom deployment policy に変更し、admin bypass を
+  無効化した（candidate policy `58437683`、external-release policy `58437684`）。これは
+  single-maintainer の責任を別人 approval に置換せず、tag 以外から credential を使わせない
+  technical control である。
 - 2026-08-27: Apple の現行 [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
   を再確認した。3.2.2(i) は第三者 apps/extensions/plug-ins を App Store 類似または general-interest
   collection として表示する UI を明示的に不許可としている。一方 3.2.1(ii) は specific approved need
@@ -140,19 +150,19 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
 | ID | 状態 | 責任者 | 完了に必要な証跡 |
 | --- | --- | --- | --- |
 | `REQUESTER_RELEASE_DIRECTION` | approved — 2026-08-28 | Sole Floorp iOS maintainer | 固定・同梱 16 package、鍵運用、失効、private mode/data retention、通常 PR/CI/review/main 統合と正規 Beta App Review 提出を承認。任意導入、remote code/list、silent update、権限昇格、fail-open、手順迂回は承認していない。 |
-| `MAINTAINER_P0_POLICY` | approved — 2026-08-28 | Sole Floorp iOS maintainer | P0 の組織上の承認責任者は maintainer 一人である。存在しない Legal/Privacy/Security/Product/Release/作者の別承認を要求しない。正確な候補を承認する schema 2 record は署名後に別途生成する。 |
-| `REDISTRIBUTION_BASIS_VERIFIED` | verified locally / candidate signing readback pending | Maintainer / Engineering | 13 third-party package は MIT、preserved `LICENSE`/`NOTICE`、固定 revision/archive digest、`SourceProvenance`、reviewed local derivation を持つ。全 13 archive の実 archive verification は local quarantine で成功済みであり、managed signer は clean checkout から再検証して candidate-bound evidence を新規出力する。根拠が欠ける future package は署名前に除外する。 |
+| `MAINTAINER_P0_POLICY` | approved — 2026-08-28 | Sole Floorp iOS maintainer | P0 の組織上の承認責任者は maintainer 一人である。存在しない Legal/Privacy/Security/Product/Release/作者の別承認を要求しない。exact signed candidate を束縛する canonical schema 2 record も生成済みで、normal PR review と protected digest 登録を待つ。 |
+| `REDISTRIBUTION_BASIS_VERIFIED` | verified / signed candidate evidence generated | Maintainer / Engineering | 13 third-party package は MIT、preserved `LICENSE`/`NOTICE`、固定 revision/archive digest、`SourceProvenance`、reviewed local derivation を持つ。clean `main` checkout で全 13 quarantine archive を再検証し、candidate-bound provenance evidence（SHA-256 `dbc6b0f5701a9c0d96a39347768a5cc28aa11846a373fb57853e47a0946a0213`）を発行した。根拠が欠ける future package は署名前に除外する。 |
 | `EXTERNAL_REVIEW_PENDING` | submission authorized / acceptance pending | Maintainer / Apple | 正規 `main` 統合・管理署名・candidate binding を満たした exact 16-package build は、Apple の事前見解を待たず Beta App Review に提出する。提出 notes は fixed app-bundled catalog、任意導入・remote code/list・silent update が無いこと、署名/digest/audience/expiry/sequence/revocation/explicit consent、各 package の権限・データ挙動を明記する。Apple の受理と external availability は実審査まで pending である。 |
-| `UPSTREAM_ARTIFACT_MISSING` | partially verified / blocked pending candidate evidence | Engineering / QA | 16 constrained FWEA1、artifact/manifest/inventory digest、静的検査、16/16 functional harness は local で記録済み。13 third-party source の provenance と Very Good AdBlock の 16 static-`block` mapping は再検証済み。signed catalog、P2–P4 実機 OS matrix、失効演習、アクセシビリティ、性能/memory/battery 測定、既知 API 非互換一覧は未完了。Stage 3 fixture evidence は代替にならない。 |
-| `MANAGED_SIGNING_EVIDENCE_MISSING` | partially configured / blocked | Maintainer | 1Password SSH Agent adapter と root trust-anchor SHA は確認済み。clean main checkout で実 archive を再検証し、root/leaf key ID、adapter digest、署名済み `catalog.json`/root public key、source-external provenance evidence を発行・記録する。秘密鍵を GitHub、Xcode Cloud、app bundle、ログに置かない。 |
+| `UPSTREAM_ARTIFACT_MISSING` | signed candidate verified / P5 pending | Engineering / QA | 16 constrained FWEA1、artifact/manifest/inventory digest、静的検査、16/16 functional harness と全 artifact を束縛する signed catalog は生成・ローカル検証済み。13 third-party source provenance と Very Good AdBlock の 16 static-`block` mapping も再検証済み。P2–P4 実機 OS matrix、失効演習、アクセシビリティ、性能/memory/battery 測定、既知 API 非互換一覧は候補ビルド後の未完了項目である。Stage 3 fixture evidence は代替にならない。 |
+| `MANAGED_SIGNING_EVIDENCE_MISSING` | complete locally / normal PR integration pending | Maintainer | 1Password SSH Agent adapter（SHA-256 `f1cacd7a4fb2f5916700fd4c9c85ca15cf571df861b114d941e101e8eccdfcea`）で clean main checkout と実 archive を再検証し、root/leaf key ID、署名済み `catalog.json`（SHA-256 `0c803682309f3677be04e6b9b293441f66ae36402075137ee3c9af07a53ac8cf`）、root public key、source-external provenance evidence を発行した。秘密鍵を GitHub、Xcode Cloud、app bundle、ログに置いていない。 |
 | `RELEASE_TRUST_ANCHOR_MISSING` | partially verified / blocked | Maintainer | 両 curated environment に `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` secret 名が存在することを read-only metadata で確認済み。value は読まず、actual signed root の raw SHA-256、key ID、1Password custody、environment secret を照合するまで完了にしない。source tree の root key 自身を信頼根拠にしてはならない。 |
-| `GITHUB_ENVIRONMENT_SCOPE_MISSING` | partially configured / blocked | Maintainer / GitHub | candidate と external-release は別 environment で、external のみ P0 approval digest を要求する。別人 reviewer は単独 maintainer model では要求しない。candidate/external secret の最小 scope、manual dispatch、target ref policy を GitHub metadata と workflow readback で確認して記録する。 |
-| `IMMUTABLE_CANDIDATE_REF_MISSING` | blocked | Maintainer / GitHub | `floorp-catalog-<40 lowercase commit SHA>` annotated tag を通常 merge 後の現在の exact `main` にだけ作成し、force update/delete を防ぐ GitHub tag protection を設定する。workflow と Xcode Cloud post-clone は tag 名・tag commit・checkout・`origin/main` HEAD・manual workflow・bundle ID を credential/archive 前に fail closed で照合する。 |
-| `P0_APPROVAL_RECORD_MISSING` | blocked | Sole Floorp iOS maintainer | `docs/floorp-ios-webextensions-curated-catalog-release-approval.json` は schema 2 の pending template である。exact signed catalog の ID/input SHA/catalog SHA/root SHA/leaf key/sequence/schema/version/expiry と single opaque `maintainerApproval` evidence を含む canonical approved record を通常 review で統合し、その raw SHA-256 を external-release environment に登録する。 |
-| `CATALOG_COMPOSITION_SEQUENCE_MISSING` | blocked | Maintainer / Engineering | Xcode Cloud は main source tree を archive するだけで signer を呼ばない。そこで infrastructure を main に統合後、main に固定された input を maintainer の managed signer で署名し、public signed output を第 2 normal PR/CI/main integration で導入する。private key を CI に追加して解決してはならない。 |
+| `GITHUB_ENVIRONMENT_SCOPE_MISSING` | implemented / release credentials pending | Maintainer / GitHub | candidate と external-release は別 environment で、external のみ P0 approval digest を要求する。両 environment は `floorp-catalog-*` tag の custom policy と admin-bypass disabled を readback 済みで、別人 reviewer は単独 maintainer model では要求しない。root trust-anchor の実値照合、candidate/external の必要 credential、manual dispatch と workflow readback は signed candidate 後に確認する。 |
+| `IMMUTABLE_CANDIDATE_REF_MISSING` | partially configured / tag pending | Maintainer / GitHub | active repository ruleset `21688477` が `floorp-catalog-*` の delete / force update を禁止し bypass actor を持たない。public-output PR の通常 merge 後、`floorp-catalog-<40 lowercase commit SHA>` annotated tag を then-current exact `main` にだけ作成する。workflow と Xcode Cloud post-clone は tag 名・tag commit・checkout・`origin/main` HEAD・manual workflow・bundle ID を credential/archive 前に fail closed で照合する。 |
+| `P0_APPROVAL_RECORD_MISSING` | approved locally / protected digest registration pending | Sole Floorp iOS maintainer | canonical schema 2 record now binds the exact signed catalog ID/input SHA/catalog SHA/root SHA/leaf key/sequence/schema/version/expiry and one opaque `maintainerApproval`; raw SHA-256 is `c279d3cfcb0e2a5e202c76cb5db3bcbb17eb17aadf0a158cd9505fa53c2cb500`. Integrate it by normal review, then register that public digest in the protected external-release environment. |
+| `CATALOG_COMPOSITION_SEQUENCE_MISSING` | signing complete / public-output PR pending | Maintainer / Engineering | Xcode Cloud は main source tree を archive するだけで signer を呼ばない。そこで infrastructure を main に統合後、main に固定された input を maintainer の managed signer で署名し、public signed output を第 2 normal PR/CI/main integration で導入する。private key を CI に追加して解決してはならない。 |
 | `RELEASE_IDENTITY_PENDING` | partially configured / blocked | Maintainer / App Store Connect | `catalog-input.json` の最低 Floorp 版と release configuration は `0.3.0`、build number は `4`。main 統合後に App Store Connect で `0.3.0 (4)` の未使用を確認し、必要なら通常の versioning policy に従って未使用 build number を割り当てる。既存 0.2.0 TestFlight build は再利用しない。 |
 | `EXTERNAL_SUBMISSION_PATH_MISSING` | implemented / blocked pending evidence | Maintainer / App Store Connect | `Floorp Curated Catalog External TestFlight` は processed build を exact Xcode Cloud tag run、catalog evidence、tag SHA、App Store build ID、reviewer details、既存 external group に readback で束縛する。Apple credential 前に canonical P0 record と protected `FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256` を照合し、pending template、digest drift、wrong group は fail closed。実行、group/readback、Beta App Review state は未証跡である。 |
-| `MERGE_REQUIRED` | blocked — normal review pending | Maintainer / GitHub | main ruleset は pull request、解決済み review thread、`Validate workflows`、`Build and unit test` を必須にする（required approval count は 0）。PR #139 と、その後の public-output PR を通常の review/CI と main merge に通す。direct push、ruleset bypass、CI/review の省略は行わない。 |
+| `MERGE_REQUIRED` | partially complete / public-output PR pending | Maintainer / GitHub | PR #139 は `ab6235fd7c6694aa97217d1626411ef0af0a3796` として通常 merge 済みである。main ruleset は pull request、解決済み review thread、`Validate workflows`、`Build and unit test` を必須にする（required approval count は 0）。署名済み public output と schema 2 record の follow-up PR も通常の review/CI と main merge に通す。direct push、ruleset bypass、CI/review の省略は行わない。 |
 
 ### Current non-secret capability observations
 
@@ -168,7 +178,7 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
 
 ## 再開条件と順序
 
-1. PR #139 を通常の review/CI/main merge に通す。main に固定された clean checkout から、
+1. PR #139 は通常の review/CI/main merge を完了した。main に固定された clean checkout から、
    managed signer が 13 upstream archive を再検証し、public signed catalog/root key/provenance
    evidence を生成する。`managedRemoteSource` は false のままにする。
 2. public signed output を第 2 normal PR/CI/main integration に通す。signed catalog の exact
