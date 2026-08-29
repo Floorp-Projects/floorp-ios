@@ -136,7 +136,12 @@ def verify_submission(
     linked = linked_builds[0]
     _require(isinstance(linked, dict) and linked.get("type") == "builds" and linked.get("id") == build_id, "selected App Store build is not the Xcode Cloud run output")
 
-    build = _resource(api("GET", f"/v1/builds/{build_id}"), "builds", build_id, "App Store build")
+    build = _resource(
+        api("GET", f"/v1/builds/{build_id}?include=preReleaseVersion"),
+        "builds",
+        build_id,
+        "App Store build",
+    )
     build_attributes = build.get("attributes")
     _require(isinstance(build_attributes, dict), "App Store build attributes are missing")
     _require(build_attributes.get("processingState") == "VALID", "App Store build has not processed successfully")
