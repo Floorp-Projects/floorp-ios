@@ -9,6 +9,7 @@ made and issues zero requests.
 
 Read allowlist (GET):
   /v1/apps, /v1/apps/{id}/builds, /v1/builds, /v1/builds/{id},
+  /v1/preReleaseVersions/{id},
   /v1/ciProducts, /v1/ciWorkflows, /v1/ciBuildRuns, /v1/ciRuns,
   /v1/ciRuns/{id}/artifacts, /v1/betaGroups, /v1/betaGroups/{id}/builds,
   /v1/betaBuildLocalizations, /v1/betaAppReviewDetails,
@@ -58,7 +59,7 @@ READ_ROUTES = [
     r"^/v1/apps/[^/]+/builds$",
     r"^/v1/builds$",
     r"^/v1/builds/[^/]+$",
-    r"^/v1/builds/[^/]+/preReleaseVersion$",
+    r"^/v1/preReleaseVersions/[^/]+$",
     r"^/v1/ciProducts$",
     r"^/v1/ciProducts/[^/]+/workflows$",
     r"^/v1/ciProducts/[^/]+/buildRuns$",
