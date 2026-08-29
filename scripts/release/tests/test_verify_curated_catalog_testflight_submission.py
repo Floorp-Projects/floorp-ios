@@ -104,7 +104,7 @@ class FakeAPI:
                 "attributes": {"processingState": self.processing_state, "version": "5"},
                 "relationships": {"preReleaseVersion": {"data": {"type": "preReleaseVersions", "id": "pre-1"}}},
             }}
-        if path == f"/v1/builds/{BUILD_ID}/preReleaseVersion?include=app":
+        if path == "/v1/preReleaseVersions/pre-1?include=app":
             return {"data": {
                 "type": "preReleaseVersions",
                 "id": "pre-1",
@@ -149,7 +149,7 @@ class CuratedCatalogSubmissionTests(unittest.TestCase):
             api.calls,
         )
         self.assertIn(
-            ("GET", f"/v1/builds/{BUILD_ID}/preReleaseVersion?include=app"),
+            ("GET", "/v1/preReleaseVersions/pre-1?include=app"),
             api.calls,
         )
 
