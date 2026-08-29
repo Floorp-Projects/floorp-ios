@@ -112,7 +112,15 @@ def verify_submission(
     reference_id = reference.get("id")
     _require(isinstance(reference_id, str) and RESOURCE_ID.fullmatch(reference_id) is not None, "candidate tag has no valid App Store Connect reference")
 
-    run = _resource(api("GET", f"/v1/ciBuildRuns/{xcode_cloud_run_id}"), "ciBuildRuns", xcode_cloud_run_id, "Xcode Cloud run")
+    run = _resource(
+        api(
+            "GET",
+            f"/v1/ciBuildRuns/{xcode_cloud_run_id}?include=workflow,sourceBranchOrTag",
+        ),
+        "ciBuildRuns",
+        xcode_cloud_run_id,
+        "Xcode Cloud run",
+    )
     attributes = run.get("attributes")
     _require(isinstance(attributes, dict), "Xcode Cloud run attributes are missing")
     source_commit = attributes.get("sourceCommit")
