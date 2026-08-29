@@ -149,7 +149,7 @@ def verify_submission(
     _require(isinstance(build_number, str) and re.fullmatch(r"[1-9][0-9]*", build_number) is not None, "App Store build number is invalid")
 
     prerelease = _resource(
-        api("GET", f"/v1/builds/{build_id}/preReleaseVersion"),
+        api("GET", f"/v1/builds/{build_id}/preReleaseVersion?include=app"),
         "preReleaseVersions",
         _relationship_id(build, "preReleaseVersion", "preReleaseVersions", "App Store build"),
         "pre-release version",

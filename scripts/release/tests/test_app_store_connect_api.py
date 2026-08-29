@@ -37,6 +37,7 @@ class AllowlistTests(unittest.TestCase):
             "/v1/scmRepositories/repo-1/gitReferences",
             "/v1/builds",
             "/v1/builds/build-1?include=preReleaseVersion",
+            "/v1/builds/build-1/preReleaseVersion?include=app",
             "/v1/builds/build-1/preReleaseVersion",
             "/v1/betaGroups",
             "/v1/betaAppReviewDetails",
