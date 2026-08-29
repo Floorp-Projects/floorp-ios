@@ -97,7 +97,7 @@ class FakeAPI:
             }}
         if path == f"/v1/ciBuildRuns/{RUN_ID}/relationships/builds":
             return {"data": [{"type": "builds", "id": self.build_link}]}
-        if path == f"/v1/builds/{BUILD_ID}":
+        if path == f"/v1/builds/{BUILD_ID}?include=preReleaseVersion":
             return {"data": {
                 "type": "builds",
                 "id": BUILD_ID,
@@ -142,6 +142,10 @@ class CuratedCatalogSubmissionTests(unittest.TestCase):
                 "GET",
                 f"/v1/ciBuildRuns/{RUN_ID}?include=workflow,sourceBranchOrTag",
             ),
+            api.calls,
+        )
+        self.assertIn(
+            ("GET", f"/v1/builds/{BUILD_ID}?include=preReleaseVersion"),
             api.calls,
         )
 
