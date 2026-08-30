@@ -916,6 +916,352 @@ enum FloorpStrings {
         }
     }
 
+    // MARK: - Web Extensions
+
+    enum WebExtensions {
+        static let title = string(
+            "Floorp.WebExtensions.Title.v1",
+            value: "Extensions",
+            comment: "Navigation title for the extension management screen"
+        )
+        static let introTitle = string(
+            "Floorp.WebExtensions.IntroTitle.v1",
+            value: "Make Floorp yours",
+            comment: "Heading that introduces extension management"
+        )
+        static let introMessage = string(
+            "Floorp.WebExtensions.IntroMessage.v1",
+            value: "Add reviewed extensions, then choose exactly where they can run.",
+            comment: "Introductory explanation on the extension management screen"
+        )
+        static let installedSection = string(
+            "Floorp.WebExtensions.InstalledSection.v1",
+            value: "Installed",
+            comment: "Section heading for installed extensions"
+        )
+        static let availableSection = string(
+            "Floorp.WebExtensions.AvailableSection.v1",
+            value: "Available",
+            comment: "Section heading for extensions available to install"
+        )
+        static let loading = string(
+            "Floorp.WebExtensions.Loading.v1",
+            value: "Loading extensions…",
+            comment: "Status shown while the extension catalog loads"
+        )
+        static let noInstalledTitle = string(
+            "Floorp.WebExtensions.NoInstalledTitle.v1",
+            value: "No extensions installed",
+            comment: "Empty-state title when no extension is installed"
+        )
+        static let noInstalledMessage = string(
+            "Floorp.WebExtensions.NoInstalledMessage.v1",
+            value: "Choose a reviewed extension below to add new browser features.",
+            comment: "Empty-state guidance when no extension is installed"
+        )
+        static let noAvailableTitle = string(
+            "Floorp.WebExtensions.NoAvailableTitle.v1",
+            value: "No extensions available",
+            comment: "Empty-state title when the extension catalog has no available items"
+        )
+        static let noAvailableMessage = string(
+            "Floorp.WebExtensions.NoAvailableMessage.v1",
+            value: "New reviewed extensions will appear here when they are ready.",
+            comment: "Empty-state guidance when the extension catalog has no available items"
+        )
+        static let loadErrorTitle = string(
+            "Floorp.WebExtensions.LoadErrorTitle.v1",
+            value: "Extensions are unavailable",
+            comment: "Error title when the verified extension catalog cannot be loaded"
+        )
+        static let loadErrorMessage = string(
+            "Floorp.WebExtensions.LoadErrorMessage.v1",
+            value: "Floorp couldn’t verify the extension catalog. Your installed extensions were not changed.",
+            comment: "Error guidance when the verified extension catalog cannot be loaded"
+        )
+        static let retry = string(
+            "Floorp.WebExtensions.Retry.v1",
+            value: "Try Again",
+            comment: "Action that retries loading the extension catalog"
+        )
+        static let reviewed = string(
+            "Floorp.WebExtensions.Reviewed.v1",
+            value: "Reviewed by Floorp",
+            comment: "Badge indicating that an extension package has been reviewed by Floorp"
+        )
+        static let add = string(
+            "Floorp.WebExtensions.Add.v1",
+            value: "Add",
+            comment: "Short action that begins extension installation"
+        )
+        static let manage = string(
+            "Floorp.WebExtensions.Manage.v1",
+            value: "Manage",
+            comment: "Action that opens management controls for an installed extension"
+        )
+        private static let versionFormat = string(
+            "Floorp.WebExtensions.Version.v1",
+            value: "Version %1$@",
+            comment: "Extension version label; argument is the version number"
+        )
+        static let enabled = string(
+            "Floorp.WebExtensions.Enabled.v1",
+            value: "Enabled",
+            comment: "Status for an enabled extension"
+        )
+        static let disabled = string(
+            "Floorp.WebExtensions.Disabled.v1",
+            value: "Disabled",
+            comment: "Status for a disabled extension"
+        )
+        static let revoked = string(
+            "Floorp.WebExtensions.Revoked.v1",
+            value: "Disabled for your protection",
+            comment: "Status for an extension revoked by the verified catalog"
+        )
+        static let updateAvailable = string(
+            "Floorp.WebExtensions.UpdateAvailable.v1",
+            value: "Update available",
+            comment: "Badge indicating that an extension update is available"
+        )
+        static let update = string(
+            "Floorp.WebExtensions.Update.v1",
+            value: "Update",
+            comment: "Action that updates an installed extension"
+        )
+        private static let installTitleFormat = string(
+            "Floorp.WebExtensions.InstallTitle.v1",
+            value: "Add %1$@?",
+            comment: "Title of extension installation consent; argument is the extension name"
+        )
+        static let install = string(
+            "Floorp.WebExtensions.Install.v1",
+            value: "Add Extension",
+            comment: "Primary action that confirms extension installation"
+        )
+        static let cancel = string(
+            "Floorp.WebExtensions.Cancel.v1",
+            value: "Cancel",
+            comment: "Action that cancels an extension operation"
+        )
+        static let accessSection = string(
+            "Floorp.WebExtensions.AccessSection.v1",
+            value: "Access",
+            comment: "Section heading for extension access capabilities"
+        )
+        static let privacySection = string(
+            "Floorp.WebExtensions.PrivacySection.v1",
+            value: "Privacy",
+            comment: "Section heading for extension privacy information"
+        )
+        static let profileSection = string(
+            "Floorp.WebExtensions.ProfileSection.v1",
+            value: "Profiles",
+            comment: "Section heading for extension browsing-profile behavior"
+        )
+        static let siteAccessStartsOffTitle = string(
+            "Floorp.WebExtensions.SiteAccessStartsOffTitle.v1",
+            value: "Site access starts off",
+            comment: "Install disclosure title explaining the default site-access state"
+        )
+        static let siteAccessStartsOffMessage = string(
+            "Floorp.WebExtensions.SiteAccessStartsOffMessage.v1",
+            value: "After adding the extension, choose the sites where it may read or change content.",
+            comment: "Install disclosure explaining how to enable extension site access"
+        )
+        static let privateBrowsingOptInTitle = string(
+            "Floorp.WebExtensions.PrivateBrowsingOptInTitle.v1",
+            value: "Private Browsing is optional",
+            comment: "Install disclosure title for private-profile opt-in"
+        )
+        static let privateBrowsingOptInMessage = string(
+            "Floorp.WebExtensions.PrivateBrowsingOptInMessage.v1",
+            value: "You can allow this extension separately in Private Browsing. Its private data stays isolated.",
+            comment: "Install disclosure explaining private-profile opt-in and isolation"
+        )
+        static let notSupported = string(
+            "Floorp.WebExtensions.NotSupported.v1",
+            value: "Not supported on this version of Floorp",
+            comment: "Status for an extension or capability that this Floorp version cannot use"
+        )
+        static let publisherLabel = string(
+            "Floorp.WebExtensions.PublisherLabel.v1",
+            value: "Publisher",
+            comment: "Label for an extension publisher"
+        )
+        static let sourceLabel = string(
+            "Floorp.WebExtensions.SourceLabel.v1",
+            value: "Source",
+            comment: "Label for an extension source project"
+        )
+        static let licenseLabel = string(
+            "Floorp.WebExtensions.LicenseLabel.v1",
+            value: "License",
+            comment: "Label for an extension software license"
+        )
+        private static let publisherFormat = string(
+            "Floorp.WebExtensions.Publisher.v1",
+            value: "Publisher: %1$@",
+            comment: "Extension publisher value; argument is the publisher name"
+        )
+        private static let sourceFormat = string(
+            "Floorp.WebExtensions.Source.v1",
+            value: "Source: %1$@",
+            comment: "Extension source value; argument is the source project or URL"
+        )
+        private static let licenseFormat = string(
+            "Floorp.WebExtensions.License.v1",
+            value: "License: %1$@",
+            comment: "Extension license value; argument is the license name"
+        )
+        static let detailTitle = string(
+            "Floorp.WebExtensions.DetailTitle.v1",
+            value: "Extension Details",
+            comment: "Navigation title for an installed extension detail screen"
+        )
+        static let options = string(
+            "Floorp.WebExtensions.Options.v1",
+            value: "Extension Settings",
+            comment: "Action that opens an extension-provided settings page"
+        )
+        static let siteAccess = string(
+            "Floorp.WebExtensions.SiteAccess.v1",
+            value: "Site Access",
+            comment: "Action and heading for standard-profile extension site access"
+        )
+        static let privateBrowsing = string(
+            "Floorp.WebExtensions.PrivateBrowsing.v1",
+            value: "Private Browsing",
+            comment: "Action and heading for extension Private Browsing access"
+        )
+        static let networkProtection = string(
+            "Floorp.WebExtensions.NetworkProtection.v1",
+            value: "Network Protection",
+            comment: "Action and heading for extension network-rule controls"
+        )
+        static let website = string(
+            "Floorp.WebExtensions.Website.v1",
+            value: "Project Website",
+            comment: "Action that opens an extension project website"
+        )
+        static let updateHistory = string(
+            "Floorp.WebExtensions.UpdateHistory.v1",
+            value: "Update History",
+            comment: "Action and heading for an extension update history"
+        )
+        static let uninstall = string(
+            "Floorp.WebExtensions.Uninstall.v1",
+            value: "Remove Extension",
+            comment: "Destructive action that uninstalls an extension"
+        )
+        static let installing = string(
+            "Floorp.WebExtensions.Installing.v1",
+            value: "Adding…",
+            comment: "Status shown while an extension is being installed"
+        )
+        static let updating = string(
+            "Floorp.WebExtensions.Updating.v1",
+            value: "Updating…",
+            comment: "Status shown while an extension is being updated"
+        )
+        static let removing = string(
+            "Floorp.WebExtensions.Removing.v1",
+            value: "Removing…",
+            comment: "Status shown while an extension is being uninstalled"
+        )
+        private static let installedTitleFormat = string(
+            "Floorp.WebExtensions.InstalledTitle.v1",
+            value: "%1$@ was added",
+            comment: "Post-installation confirmation title; argument is the extension name"
+        )
+        static let postInstallSiteAccessGuidance = string(
+            "Floorp.WebExtensions.PostInstallSiteAccessGuidance.v1",
+            value: "Site access is still off. Open Site Access to choose where this extension can run.",
+            comment: "Guidance shown after installation before any site access is granted"
+        )
+        static let permissionSiteData = string(
+            "Floorp.WebExtensions.Permission.SiteData.v1",
+            value: "Read and change data on selected sites",
+            comment: "Product-level extension permission for site content access"
+        )
+        static let permissionTabs = string(
+            "Floorp.WebExtensions.Permission.Tabs.v1",
+            value: "Read tab details and open or reload tabs",
+            comment: "Product-level extension permission for tab operations"
+        )
+        static let permissionStorage = string(
+            "Floorp.WebExtensions.Permission.Storage.v1",
+            value: "Store extension settings on this device",
+            comment: "Product-level extension permission for local settings storage"
+        )
+        static let permissionNetworkBlocking = string(
+            "Floorp.WebExtensions.Permission.NetworkBlocking.v1",
+            value: "Block supported network requests",
+            comment: "Product-level extension permission for supported network blocking"
+        )
+        static let permissionBrowserAutomation = string(
+            "Floorp.WebExtensions.Permission.BrowserAutomation.v1",
+            value: "Run reviewed page scripts and styles",
+            comment: "Product-level extension permission for reviewed page automation"
+        )
+        static let permissionAlarms = string(
+            "Floorp.WebExtensions.Permission.Alarms.v1",
+            value: "Schedule extension tasks",
+            comment: "Extension permission for scheduled alarms and tasks"
+        )
+        static let permissionFontSettings = string(
+            "Floorp.WebExtensions.Permission.FontSettings.v1",
+            value: "Use Floorp’s safe default font list",
+            comment: "Extension permission for the iOS-safe generic font settings fallback"
+        )
+        static let genericExtensionName = string(
+            "Floorp.WebExtensions.GenericExtensionName.v1",
+            value: "Extension",
+            comment: "Fallback display name when an extension name is unavailable"
+        )
+
+        static func version(_ version: String) -> String {
+            localizedStringWithFormat(versionFormat, version)
+        }
+
+        static func installTitle(name: String) -> String {
+            localizedStringWithFormat(installTitleFormat, name)
+        }
+
+        static func publisher(_ publisher: String) -> String {
+            localizedStringWithFormat(publisherFormat, publisher)
+        }
+
+        static func source(_ source: String) -> String {
+            localizedStringWithFormat(sourceFormat, source)
+        }
+
+        static func license(_ license: String) -> String {
+            localizedStringWithFormat(licenseFormat, license)
+        }
+
+        static func installedTitle(name: String) -> String {
+            localizedStringWithFormat(installedTitleFormat, name)
+        }
+
+        private static func localizedStringWithFormat(
+            _ format: String,
+            _ argument: CVarArg
+        ) -> String {
+            String.localizedStringWithFormat(format, argument)
+        }
+
+        private static func string(_ key: String, value: String, comment: String) -> String {
+            NSLocalizedString(
+                key,
+                tableName: "Floorp",
+                bundle: .main,
+                value: value,
+                comment: comment
+            )
+        }
+    }
+
     // MARK: - Notes
 
     enum Notes {
