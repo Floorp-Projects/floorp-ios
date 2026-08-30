@@ -1,10 +1,11 @@
 # Floorp iOS: 内部 WebExtensions カタログのリリースゲート
 
 Status: **in progress — the current source candidate contains only Dark Reader.
-Its one-record input and policy receipt are complete, but managed sequence-3
-signing, exact-candidate schema-2 approval, normal PR/CI/`main` integration, an
-immutable release tag, and source-to-build readback are pending. The historical
-sequence-2 17-package signature and approval cannot authorize this candidate.**
+Its one-record input, policy receipt, managed sequence-3 signature, source-bound
+provenance evidence, and exact-candidate schema-2 approval are complete. Normal
+public-output PR/CI/`main` integration, an immutable release tag, and
+source-to-build readback remain pending. The historical sequence-2 17-package
+signature and approval cannot authorize this candidate.**
 
 この記録は、`floorp-ios-webextensions-internal-catalog-design.md` の P0 を実行可能な
 リリース条件に変換する。未完了の項目はコードや feature flag で代替してはならない。
@@ -18,8 +19,12 @@ catalog がない candidate では、同梱された FWEA1 であっても導入
 - The current P0 policy receipt approves the one-package, app-bundled scope and
   retains the existing closed-install, profile-isolation, and key-operation
   boundaries.
-- The active release approval is intentionally `pending` until the exact
-  sequence-3 signed catalog exists. The old sequence-2 catalog is historical.
+- The sequence-3 signed catalog has SHA-256
+  `9f34d50e7e57b80815f6bdf63074606a0d8fa5b6ae0b237460c4dd88b7626276`;
+  its canonical schema-2 release approval has SHA-256
+  `026e26cfa6ccb1122060f3d1f023653fc8886b3a9e7c52df0da065ebd4c41c1a`.
+  Both still require normal public-output PR/CI/`main` integration. The old
+  sequence-2 catalog is historical.
 - Omitted installed generations stop immediately after the higher-sequence
   catalog is accepted. Their data remains until explicit uninstall.
 
@@ -186,19 +191,19 @@ record、CI、または TestFlight 証跡を 17-package candidate に流用し�
 | ID | 状態 | 責任者 | 完了に必要な証跡 |
 | --- | --- | --- | --- |
 | `REQUESTER_RELEASE_DIRECTION` | approved — 2026-08-31 | Sole Floorp iOS maintainer | 現行 catalog を固定・同梱 Dark Reader 1件へ縮小する指示。これは新候補の TestFlight/External 提出を自動承認せず、通常 PR/CI/review と release gate を維持する。 |
-| `MAINTAINER_P0_POLICY` | approved — 2026-08-31 | Sole Floorp iOS maintainer | canonical policy receipt が one-package input、1Password key operation、profile isolation、明示 uninstall までの data retention を束縛する。exact signed candidate の schema-2 approval は pending。 |
-| `REDISTRIBUTION_BASIS_VERIFIED` | source verified / candidate evidence pending | Maintainer / Engineering | Dark Reader 1件は MIT、preserved `LICENSE`/`NOTICE`、固定 revision/archive digest、`SourceProvenance` を持つ。candidate signing 時に実 archive を再照合し、source-bound evidence を発行する。 |
-| `EXTERNAL_REVIEW_PENDING` | blocked pending signed build | Maintainer / Apple | sequence-3 signing、exact approval、normal integration、Internal smoke 後に限り、Dark Reader-only build の Beta App Review 提出を判断する。 |
-| `UPSTREAM_ARTIFACT_MISSING` | one artifact verified / signed candidate pending | Engineering / QA | Dark Reader FWEA1 の artifact/manifest/inventory digest、静的検査、1/1 functional harness はローカル検証対象。sequence-3 catalog、source-bound build、実機/P5 evidence は未完了。 |
-| `MANAGED_SIGNING_EVIDENCE_MISSING` | pending | Maintainer | clean source commit と固定 Dark Reader archiveから、同じ root/leaf custodyで sequence 3 を署名し、checkout外に provenance evidence を出す。旧 sequence-2 output は再利用しない。 |
-| `RELEASE_TRUST_ANCHOR_MISSING` | partially verified / blocked | Maintainer | 両 curated environment に `FLOORP_CURATED_CATALOG_ROOT_PUBLIC_KEY_SHA256` secret 名が存在することを read-only metadata で確認済み。value は読まず、actual signed root の raw SHA-256、key ID、1Password custody、environment secret を照合するまで完了にしない。source tree の root key 自身を信頼根拠にしてはならない。 |
-| `GITHUB_ENVIRONMENT_SCOPE_MISSING` | implemented / release credentials pending | Maintainer / GitHub | candidate と external-release は別 environment で、external のみ P0 approval digest を要求する。両 environment は `floorp-catalog-*` tag の custom policy と admin-bypass disabled を readback 済みで、別人 reviewer は単独 maintainer model では要求しない。root trust-anchor の実値照合、candidate/external の必要 credential、manual dispatch と workflow readback は signed candidate 後に確認する。 |
+| `MAINTAINER_P0_POLICY` | approved — 2026-08-31 | Sole Floorp iOS maintainer | canonical policy receipt が one-package input、1Password key operation、profile isolation、明示 uninstall までの data retention を束縛する。exact sequence-3 schema-2 approval も canonical digest `026e26cfa6ccb1122060f3d1f023653fc8886b3a9e7c52df0da065ebd4c41c1a` で固定済み。 |
+| `REDISTRIBUTION_BASIS_VERIFIED` | approved — source-bound archive evidence | Maintainer / Engineering | Dark Reader 1件の MIT、preserved `LICENSE`/`NOTICE`、固定 revision/archive digest、`SourceProvenance` を managed signing 時に再照合した。checkout 外 provenance evidence SHA-256 は `31c5bbdcee8c2511e1a8bb84e13590483e9851477f0844864c4149145e0240c4`。 |
+| `EXTERNAL_REVIEW_PENDING` | blocked pending source-bound build and Internal readback | Maintainer / Apple | sequence-3 signingと exact approval は完了。normal integration、Internal group/build readback 後に Dark Reader-only build を Beta App Review へ提出する。 |
+| `UPSTREAM_ARTIFACT_MISSING` | one artifact verified and signed | Engineering / QA | Dark Reader FWEA1 の artifact/manifest/inventory digest、静的検査、1/1 functional harness、sequence-3 catalog 照合は完了。source-bound build と実機/P5 evidence は未完了。 |
+| `MANAGED_SIGNING_EVIDENCE_MISSING` | complete — sequence 3 | Maintainer | clean source commit `a32eecfa95cb8e97a04ab929bc1c66d6cd180a86` と固定 Dark Reader archiveから、1Password SSH Agent の同じ root/leaf custodyで署名。catalog SHA-256 `9f34d50e7e57b80815f6bdf63074606a0d8fa5b6ae0b237460c4dd88b7626276`、provenance evidence SHA-256 `31c5bbdcee8c2511e1a8bb84e13590483e9851477f0844864c4149145e0240c4`。root-public-key file は byte-identical。 |
+| `RELEASE_TRUST_ANCHOR_MISSING` | signed root verified / protected workflow readback pending | Maintainer | signed root raw SHA-256 `d69df8b7bda4b1a66636ef421be53b86f99f4cf38cea0f900b63b801e889f6a3` と 1Password custody、既存 root-public-key file の不変性を確認済み。両 curated environment の secret 名も存在する。workflow で protected value と actual signed root を照合するまで dispatch gate は未完了。 |
+| `GITHUB_ENVIRONMENT_SCOPE_MISSING` | implemented / protected value checks pending | Maintainer / GitHub | candidate と external-release は別 environment で、external のみ P0 approval digest を要求する。両 environment は `floorp-catalog-*` tag の custom policy と admin-bypass disabled を readback 済み。必要な Apple credential/root digest/approval digest の secret 名は存在するが値は読んでいない。manual dispatch時の protected digest照合とworkflow readbackは未完了。 |
 | `IMMUTABLE_CANDIDATE_REF_MISSING` | partially configured / tag pending | Maintainer / GitHub | active repository ruleset `21688477` が `floorp-catalog-*` の delete / force update を禁止し bypass actor を持たない。public-output PR の通常 merge 後、`floorp-catalog-<40 lowercase commit SHA>` annotated tag を then-current exact `main` にだけ作成する。workflow と Xcode Cloud post-clone は tag 名・tag commit・checkout・`origin/main` HEAD・manual workflow・bundle ID を credential/archive 前に fail closed で照合する。 |
-| `P0_APPROVAL_RECORD_MISSING` | pending exact signature | Sole Floorp iOS maintainer | sequence-3 catalog の ID/input/catalog/root/leaf/sequence/schema/version/expiry を canonical schema-2 record に束縛し、normal review 後にその digest を protected environment へ登録する。 |
-| `CATALOG_COMPOSITION_SEQUENCE_MISSING` | sequence 3 pending | Maintainer / Engineering | clean committed one-package input を managed signer で署名し、public output を normal PR/CI/main integration へ通す。private key を CI に追加しない。 |
+| `P0_APPROVAL_RECORD_MISSING` | complete locally / protected digest registration pending | Sole Floorp iOS maintainer | sequence-3 catalog の ID/input/catalog/root/leaf/sequence/schema/version/expiry を canonical schema-2 recordへ束縛済み。record SHA-256 `026e26cfa6ccb1122060f3d1f023653fc8886b3a9e7c52df0da065ebd4c41c1a` を normal review 後に protected external environment へ登録する。 |
+| `CATALOG_COMPOSITION_SEQUENCE_MISSING` | sequence 3 signed / public integration pending | Maintainer / Engineering | clean committed one-package input の managed signing と local release verification は完了。public output を normal PR/CI/main integration へ通す。private key は CI に追加していない。 |
 | `RELEASE_IDENTITY_PENDING` | blocked | Maintainer / App Store Connect | 新しい source-bound build number を通常 policy で割り当てる。既存 TestFlight build は再利用しない。 |
 | `EXTERNAL_SUBMISSION_PATH_MISSING` | implemented / blocked pending evidence | Maintainer / App Store Connect | `Floorp Curated Catalog External TestFlight` は processed build を exact Xcode Cloud tag run、catalog evidence、tag SHA、App Store build ID、reviewer details、既存 external group に readback で束縛する。Apple credential 前に canonical P0 record と protected `FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256` を照合し、pending template、digest drift、wrong group は fail closed。実行、group/readback、Beta App Review state は未証跡である。 |
-| `MERGE_REQUIRED` | source and public-output PRs pending | Maintainer / GitHub | Dark Reader-only source changeと、その clean commitから生成する署名済み public output/schema-2 recordを通常の review/CI/main mergeに通す。direct push、ruleset bypass、CI/review の省略は行わない。 |
+| `MERGE_REQUIRED` | source PR #151 merged / public-output PR pending | Maintainer / GitHub | Dark Reader-only source changeは required CI 後に `a32eecfa95cb8e97a04ab929bc1c66d6cd180a86` として mainへ通常 merge済み。その clean commitから生成した署名済み public output/schema-2 recordも通常の review/CI/main mergeに通す。direct push、ruleset bypass、CI/review の省略は行わない。 |
 
 ### Current non-secret capability observations
 
@@ -214,11 +219,11 @@ record、CI、または TestFlight 証跡を 17-package candidate に流用し�
 
 ## 再開条件と順序
 
-1. Dark Reader-only inputを通常の review/CI/main merge に通す。main に固定された clean
-   checkout から、managed signer が Dark Reader archive を再検証し、sequence-3 public signed
-   catalog と checkout外の provenance evidence を生成する。
-2. public signed output を第 2 normal PR/CI/main integration に通す。signed catalog の exact
-   fields を schema 2 の maintainer P0 record に転記し、record raw SHA-256 を
+1. Dark Reader-only inputは通常 PR #151/required CIを経て main
+   `a32eecfa95cb8e97a04ab929bc1c66d6cd180a86` へ統合済み。その clean checkout と固定 archiveから
+   sequence-3 public signed catalog、checkout外 provenance evidence、exact schema-2 approvalを生成済み。
+2. public signed output を第 2 normal PR/CI/main integration に通す。schema 2 maintainer P0 record の
+   raw SHA-256 `026e26cfa6ccb1122060f3d1f023653fc8886b3a9e7c52df0da065ebd4c41c1a` を
    `floorp-curated-catalog-external-release` environment に登録する。root trust anchor は両 curated
    environment の secret と実署名済み root public key を照合する。
 3. GitHub の immutable annotated tag と curated environment の scope を設定・readback し、通常 merge 後の

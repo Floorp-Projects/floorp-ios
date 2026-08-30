@@ -23,6 +23,10 @@ PILOT_CANDIDATES = (
 RELEASE_EVIDENCE = (
     REPOSITORY_ROOT / "docs/floorp-ios-webextensions-internal-catalog-release-evidence.md"
 )
+RELEASE_APPROVAL = (
+    REPOSITORY_ROOT / "docs/floorp-ios-webextensions-curated-catalog-release-approval.json"
+)
+SIGNED_CATALOG = CATALOG_ROOT / "Artifacts/Signed/catalog.json"
 MANAGED_SIGNER = REPOSITORY_ROOT / "docs/floorp-ios-webextensions-managed-signer.md"
 SECURITY_MODEL = REPOSITORY_ROOT / "docs/EXTENSION_SECURITY_MODEL.md"
 MV3_LIMITATIONS = REPOSITORY_ROOT / "docs/floorp-ios-webextensions-mv3-limitations.md"
@@ -155,10 +159,14 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         self.assertNotIn("author-approved", self.pilot_candidates)
 
     def test_release_documents_mark_the_old_signature_as_superseded_for_darkreader(self) -> None:
-        catalog_digest = hashlib.sha256((CATALOG_ROOT / "catalog-input.json").read_bytes()).hexdigest()
+        input_digest = hashlib.sha256((CATALOG_ROOT / "catalog-input.json").read_bytes()).hexdigest()
+        catalog_digest = hashlib.sha256(SIGNED_CATALOG.read_bytes()).hexdigest()
+        approval_digest = hashlib.sha256(RELEASE_APPROVAL.read_bytes()).hexdigest()
         self.assertIn("Dark Reader-only catalog supersession", self.release_evidence)
+        self.assertIn(input_digest, self.release_evidence)
         self.assertIn(catalog_digest, self.release_evidence)
-        self.assertIn("managed signing pending", self.release_evidence)
+        self.assertIn(approval_digest, self.release_evidence)
+        self.assertIn("sequence 3 signed and locally verified", self.release_evidence)
         self.assertIn("--supersede-signed-catalog", self.managed_signer)
         self.assertIn("root-key-preserving catalog refresh", self.managed_signer)
 

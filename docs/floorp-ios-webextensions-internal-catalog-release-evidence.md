@@ -1,10 +1,12 @@
 # Floorp iOS: 内部 WebExtensions カタログのリリース証跡
 
 Status: **The current source candidate contains only Dark Reader. Its regenerated
-input and artifact inventory are recorded below; managed signing, exact-candidate
-approval, normal PR/CI integration, and release validation remain pending. All
-17-package signature, build, and TestFlight rows are historical and must not be
-used as evidence for the one-package candidate.**
+input, artifact inventory, managed sequence-3 signature, archive provenance,
+release verification, and exact-candidate approval are recorded below. The
+public signer output still requires normal PR/CI integration, immutable tagging,
+and source-bound TestFlight readback. All 17-package signature, build, and
+TestFlight rows are historical and must not be used as evidence for the
+one-package candidate.**
 
 この文書は package-specific evidence の保存形式である。Stage 3 の同梱 fixture 証跡を
 再利用して「内部カタログの実拡張を検証済み」と記載してはならない。
@@ -22,10 +24,12 @@ Reader. The source candidate has one record:
 - withdrawal behavior: the next accepted higher-sequence catalog stops and
   revokes omitted installed generations. Package-owned data remains retained
   until explicit uninstall under the approved profile-isolation policy;
-- release state: **managed signing pending**. The checked-in sequence-2
-  17-package signature and schema-2 release approval are historical and cannot
-  authorize or ship this input. Sequence 3, a new exact-candidate approval, and
-  a new source-bound build are required.
+- release state: **sequence 3 signed and locally verified**. The catalog SHA-256
+  is `9f34d50e7e57b80815f6bdf63074606a0d8fa5b6ae0b237460c4dd88b7626276`;
+  its exact schema-2 approval SHA-256 is
+  `026e26cfa6ccb1122060f3d1f023653fc8886b3a9e7c52df0da065ebd4c41c1a`.
+  Public-output PR/CI/`main` integration and a new source-bound build remain
+  required. The sequence-2 17-package signature and approval are historical.
 - local contracts: 98 Python catalog/release-contract tests passed, and the
   immutable artifact functional harness passed 1/1.
 - source provenance: the pinned Dark Reader archive SHA-256
@@ -64,7 +68,7 @@ TestFlight binary covers Dark Reader.
 
 | Check | Result | Scope / limitation |
 | --- | --- | --- |
-| Current Dark Reader-only catalog contracts | pass — 98 Python tests; functional 1 / 1 | One input, package, artifact, review tree, provenance record, workflow count, tester copy, and no production fixture resources. This is source evidence; managed sequence-3 signing remains pending. |
+| Current Dark Reader-only catalog contracts | pass — 98 Python tests; functional 1 / 1 | One input, package, artifact, review tree, provenance record, workflow count, tester copy, and no production fixture resources. Required GitHub CI also passed on source PR #151 before merge to `a32eecfa95cb8e97a04ab929bc1c66d6cd180a86`. |
 | Current Dark Reader provenance archive | pass — 10 reviewed members | The digest-pinned upstream archive, MIT license, reviewed source members, package manifest/notice/patch, and local derivation match the schema-2 provenance record. |
 | Current catalog-omission lifecycle XCTest | pass — 1 / 1 | iPhone 17 / iOS 26.5 の `Fennec_Testing` で、higher-sequence catalog から省略された導入済み generation が即時 suspend / catalog-revoked になり、authorization が拒否されることを確認した。package と所有データは明示 uninstall まで保持され、uninstall 後に削除される。Result bundle: `test_sim_2026-08-30T16-37-52-335Z_pid19885_b7f33696.xcresult`. |
 | Current source-phase app-bundle resource audit | pass — one FWEA1, no fixtures | Simulator build の `Client.app/Artifacts` に `thirdparty-darkreader.fwea1` 1件と signed resources だけが存在し、3 test fixture と他の FWEA1 は存在しない。signed `catalog.json` は旧 sequence 2 のため、この source-phase build は release candidate ではない。one-package release verifier が package-count mismatch で拒否することを確認しており、sequence 3 への置換まで fail closed が必須である。 |
@@ -89,6 +93,7 @@ TestFlight binary covers Dark Reader.
 | Historical candidate-source control regression | pass — release 65 / 65; catalog 34 / 34; functional 16 / 16 | 2026-08-27: exact annotated SHA tag / current-main / canonical tag-kind guard、signed-catalog verifier-before-credentials、external submission separation、Xcode Cloud `sourceBranchOrTag` resolution を再実行した。これは local control evidence であり、Xcode Cloud/App Store Connect の実行証跡ではない。 |
 | Historical pre-Dark Reader exact-main non-secret contract rerun | pass — 90 Python tests; functional 16 / 16 | 2026-08-28 に `ab6235fd7c6694aa97217d1626411ef0af0a3796` の clean checkout で実行した、旧 16-package candidate の証跡。後続の 17-package candidate にも現在の one-package candidate にも流用しない。 |
 | Dark Reader source integration CI | pass — PR #142 | `b133ab51243ae829ed24ebdd52f3fa848204ea91` が通常 PR #142 として main に merge され、required `Validate workflows` と `Build and unit test` が成功した。signed public output は別の通常 PR/CI を通す。 |
+| Current Dark Reader-only managed signing, release verification, and P0 record | pass — 1 package / sequence 3 | 2026-08-31、required CIを通過した clean `main` `a32eecfa95cb8e97a04ab929bc1c66d6cd180a86` で、1Password SSH Agent の non-export root/leaf signerを使用。catalog schema 3 / sequence 3、issued/expires `2026-08-30T18:55:20Z` / `2026-09-13T18:55:20Z`、public catalog SHA-256 `9f34d50e7e57b80815f6bdf63074606a0d8fa5b6ae0b237460c4dd88b7626276`、root raw-key SHA-256 `d69df8b7bda4b1a66636ef421be53b86f99f4cf38cea0f900b63b801e889f6a3`。root-public-key file SHA-256 `23146d4cb799673205a0372ae6b6e319a0e0e16df744bfa5695ae2508384dee8` は sequence 2 から不変。Dark Reader archive provenance evidence SHA-256 `31c5bbdcee8c2511e1a8bb84e13590483e9851477f0844864c4149145e0240c4`、release-verifier evidence SHA-256 `bb396e03fa4804f77604884d918217cd5fe0615d7cae65862d4c78ec0f72e835`、canonical schema-2 approval SHA-256 `026e26cfa6ccb1122060f3d1f023653fc8886b3a9e7c52df0da065ebd4c41c1a`、approval-verifier evidence SHA-256 `b58a2989d6e9b6be719152af727141e93b9a08c623baa9b899a7847d67e3e479`。秘密鍵をGitHub、Xcode Cloud、app bundle、ログへ置いていない。 |
 | Actual managed signing, release verification, and P0 record | pass — 17 packages | 2026-08-28、clean `main` `b133ab51243ae829ed24ebdd52f3fa848204ea91` で、1Password SSH Agent の non-export root/leaf signer を使い catalog schema 3 / sequence 2 を署名した。public `catalog.json` SHA-256 は `230b81ba2b5dd7fde5471b05680d3d17c8fcd8e2db4ad483d6a00ee4bfa0bd6a`、root raw-key SHA-256 は pinned `d69df8b7bda4b1a66636ef421be53b86f99f4cf38cea0f900b63b801e889f6a3`、issued/expires は `2026-08-28T16:08:02Z` / `2026-09-11T16:08:02Z`。14 archive provenance evidence SHA-256 は `1f986e56271ca8ab63504c0128fcc261a376873709633ed19a23b8c68bcea8b7`、release verifier evidence SHA-256 は `24ea39e2f77cc07d01327f898e9b34faab86ff2b0144f705326e2e661ace9f35`、P0 approval record SHA-256 は `892c23ad6714458f400d4fc2aae9f213d69a10913de8ab46b323a83fabd58cdf`、approval-verifier evidence SHA-256 は `715199edaa3c72c569b7a528f32eecb3c169e085965d86ba26657697f3be6fa9`。秘密鍵を GitHub、Xcode Cloud、app bundle、ログに置いていない。 |
 | Historical Dark Reader native MV3 regression XCTest | pass — 49 / 49 | storage/i18n、MV3 API host、runtime message の当時の source suites を実行し、0 failures を確認した。これは sequence-2 17-package candidate の記録であり、現在の one-package source candidate の署名・app-bundle・physical-device/P5 evidence を代替しない。 |
 | Historical signed-candidate P1–P4 simulator XCTest | pass — 149 / 149 | iPhone 17 / iOS 26.2 の新規 build (`Fennec_Testing`, FloorpCI)で package-store、content-script/private isolation、DNR、alarms/action、storage/i18n、page host、API host suites を実行し、149 passed / 0 failed / 0 skipped。これは prior signed candidate の証跡であり、現在の one-package app-bundle candidate の代替ではない。 |
@@ -184,8 +189,8 @@ or release evidence required below.
 | current External TestFlight build observation | 2026-08-27 の読み取り確認では、`Floorp TestFlight Deploy (Xcode Cloud)` run `32966424126` が `main` SHA `c7c8490af409cc1ff99bec2f576cd8eea3ff739a` から成功しており、App Store Connect の 0.2.0 (61) は `Floorp External`（4 testers）で `テスト中`。ただしこの build の tester notes は Stage 3 fixture-only と明示し、署名済み curated catalog / 17 artifact を含む候補ではない。従って本リリースの証跡・審査提出・実機テストに再利用しない。 |
 | App Store Connect observation | 2026-08-26: iOS 0.2.0 (59) is `提出準備完了` / ready to submit with zero assigned groups and zero individual testers. It is source-bound to `9898ddb…`, not to the catalog candidate, so it is not release evidence for this change. |
 | prior external build | 0.2.0 (58) is already testing in the existing external group; it is unrelated to this change and is not used as evidence. |
-| current candidate tester / reviewer materials | prepared, not submitted | `WhatToTest.en-US.txt` / `ja-JP.txt` と Beta App Review draft は Dark Reader-only の手順へ更新済み。sequence-3 exact approval、source-bound build、live reviewer contact が揃うまで提出に使わない。 |
-| workflow / Xcode Cloud run for this source | not started — requires the merged exact current main SHA, protected annotated `floorp-catalog-<40 lowercase commit SHA>` tag whose name/tag commit/checkout/current `origin/main` HEAD agree, managed signer output in `Artifacts/Signed/catalog.json` and `Artifacts/Signed/root-public-key.txt`, the candidate-only release-contract success, a pre-archive Cloud check of the actual tag/ref/commit/workflow/bundle/checkout/current-main identity, and a terminal Xcode Cloud `sourceCommit` match. The root-digest secret name has been confirmed in both tag-restricted environments; its value remains unread and must match the actual signed root before dispatch. The Apple API credential required by the existing workflow is not yet present in either environment. |
+| current candidate tester / reviewer materials | prepared, not submitted | `WhatToTest.en-US.txt` / `ja-JP.txt` と Beta App Review draft は Dark Reader-only の手順へ更新済み。sequence-3 exact approvalは完成。source-bound buildとworkflow readback後に提出する。 |
+| workflow / Xcode Cloud run for this source | not started — source PR #151 is merged and sequence-3 public output/approval are locally verified. A normal public-output PR/CI merge and protected annotated `floorp-catalog-<40 lowercase commit SHA>` tag remain required. Candidate and external environment secret names (`APPLE_DEVELOPER_API_KEY_JSON`, root digest, and external approval digest) are present; values remain unread and workflows must compare the protected digests with the actual signed outputs before Apple mutation. |
 | build number / processed build for this source | not available |
 | External TestFlight group for this source | not selected; group assignment and Beta App Review submission require a source-bound build and action-time release confirmation |
 | Beta App Review | not submitted |
