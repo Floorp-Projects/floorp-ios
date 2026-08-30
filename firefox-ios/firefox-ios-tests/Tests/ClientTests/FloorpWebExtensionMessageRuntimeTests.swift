@@ -507,6 +507,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
               callbackError,
               leakedLastError: chrome.runtime.lastError !== null,
               contentGetURLRejected,
+              windowsType: typeof chrome.windows,
               runtimeId: chrome.runtime.id,
               dynamicLimit: browser.declarativeNetRequest.MAX_NUMBER_OF_DYNAMIC_RULES
             };
@@ -519,6 +520,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(result?["callbackError"] as? String, "unsupported_code_execution")
         XCTAssertEqual(result?["leakedLastError"] as? Bool, false)
         XCTAssertEqual(result?["contentGetURLRejected"] as? Bool, true)
+        XCTAssertEqual(result?["windowsType"] as? String, "undefined")
         XCTAssertEqual(result?["runtimeId"] as? String, extensionID.rawValue)
         XCTAssertEqual(result?["dynamicLimit"] as? Int, 5_000)
         XCTAssertEqual(
@@ -786,6 +788,424 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertTrue(pageTransportHost.hasPrefix("page-"))
         XCTAssertTrue(URL(string: backgroundTransportURL)?.host?.hasPrefix("background-") == true)
         XCTAssertNotEqual(URL(string: backgroundTransportURL)?.host, pageTransportHost)
+    }
+
+    func testBackgroundRuntimeMessageBroadcastsOnceToOpenPageAndPreservesPageToBackground() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "background-to-page-profile",
+            isPrivateBrowsing: false
+        )
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: host,
+            profileKey: profileKey
+        )
+        let resources = [
+            "background.js": Data("""
+            let backgroundDeliveryCount = 0;
+            browser.runtime.onMessage.addListener(async (message, sender) => {
+              backgroundDeliveryCount += 1;
+              if (message.type !== "popup-command") return false;
+              const pageReply = await browser.runtime.sendMessage({
+                type: "background-change",
+                value: message.value
+              });
+              return {
+                backgroundDeliveryCount,
+                pageReply,
+                senderURL: sender.url
+              };
+            });
+            """.utf8),
+            "ui/popup/index.html": Data("<html><body>Runtime broadcast popup</body></html>".utf8)
+        ]
+        let installedPackage = try makeBackgroundInstalledPackage(
+            generation: "background-to-page-generation",
+            resources: resources
+        )
+        let resolver = FloorpWebExtensionPageResourceResolver { request in
+            guard let data = resources[request.path] else {
+                throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+            }
+            return data
+        }
+        try runtime.registerPackageBackground(
+            package: installedPackage,
+            packageProfileKey: .init(
+                profileIdentifier: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ),
+            resolver: resolver
+        )
+        let page = try FloorpWebExtensionPageViewController(
+            surface: .actionPopup,
+            package: .init(installedPackage: installedPackage),
+            entryPoint: .init("ui/popup/index.html"),
+            resolver: resolver,
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+        page.loadViewIfNeeded()
+        try await waitForLoad(page.webView)
+
+        let result = try await page.webView.callAsyncJavaScript(
+            """
+            const received = [];
+            browser.runtime.onMessage.addListener((message, sender) => {
+              received.push({
+                message,
+                senderId: sender.id,
+                senderURL: sender.url,
+                senderPrivate: sender.isPrivate,
+                hasTab: Object.prototype.hasOwnProperty.call(sender, "tab")
+              });
+              return {acknowledged: message.type};
+            });
+            const commandReply = await browser.runtime.sendMessage({
+              type: "popup-command",
+              value: 17
+            });
+            return {received, commandReply};
+            """,
+            contentWorld: .page
+        ) as? [String: Any]
+        let received = result?["received"] as? [[String: Any]]
+        let delivery = received?.first
+        let deliveredMessage = delivery?["message"] as? [String: Any]
+        let commandReply = result?["commandReply"] as? [String: Any]
+        let pageReply = commandReply?["pageReply"] as? [String: Any]
+        let pageHost = try XCTUnwrap(page.webView.url?.host)
+
+        XCTAssertEqual(received?.count, 1)
+        XCTAssertEqual(deliveredMessage?["type"] as? String, "background-change")
+        XCTAssertEqual(deliveredMessage?["value"] as? Int, 17)
+        XCTAssertEqual(delivery?["senderId"] as? String, extensionID.rawValue)
+        XCTAssertEqual(delivery?["senderURL"] as? String, "floorp-extension://\(pageHost)/")
+        XCTAssertEqual(delivery?["senderPrivate"] as? Bool, false)
+        XCTAssertEqual(delivery?["hasTab"] as? Bool, false)
+        XCTAssertEqual(pageReply?["acknowledged"] as? String, "background-change")
+        XCTAssertEqual(commandReply?["backgroundDeliveryCount"] as? Int, 1)
+        XCTAssertTrue((commandReply?["senderURL"] as? String)?.hasSuffix("/ui/popup/index.html") == true)
+    }
+
+    func testBackgroundRuntimeMessageWithoutAPageResponseResolvesAsNoPayload() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "background-no-page-response-profile",
+            isPrivateBrowsing: false
+        )
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: .init(),
+            profileKey: profileKey
+        )
+        let package = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "background-no-page-response-generation",
+            resourcePaths: ["ui/popup/index.html"]
+        )
+        let page = try FloorpWebExtensionPageViewController(
+            surface: .actionPopup,
+            package: package,
+            entryPoint: .init("ui/popup/index.html"),
+            resolver: .init { _ in Data("<html><body>No listener</body></html>".utf8) },
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+        page.loadViewIfNeeded()
+        try await waitForLoad(page.webView)
+
+        let background = try FloorpWebExtensionBackgroundBridgeIdentity(
+            profileKey: profileKey,
+            package: package,
+            originHost: "background-\(UUID().uuidString.lowercased())",
+            entryPath: "__floorp_background_no_response.html"
+        )
+        let backgroundConfiguration = WKWebViewConfiguration()
+        XCTAssertTrue(runtime.installBackgroundBridge(
+            background,
+            on: backgroundConfiguration.userContentController
+        ))
+        let sender = FloorpWebExtensionBackgroundRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: profileKey,
+            packageGeneration: package.generation,
+            originHost: background.originHost
+        )
+        let payload = try FloorpWebExtensionMessagePayload(
+            jsonData: Data(#"{"type":"fire-and-forget"}"#.utf8)
+        )
+
+        let response = try await runtime.dispatchRuntimeMessage(payload, sender: sender)
+
+        XCTAssertNil(response)
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testBackgroundToPageDeliveryIsIsolatedByProfileGenerationAndRuntimeLifetime() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "broadcast-isolation-profile",
+            isPrivateBrowsing: false
+        )
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: .init(),
+            profileKey: profileKey
+        )
+        let firstPackage = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "broadcast-generation-one",
+            resourcePaths: ["ui/popup/index.html"]
+        )
+        let resolver = FloorpWebExtensionPageResourceResolver { _ in
+            Data("<html><body>Broadcast isolation</body></html>".utf8)
+        }
+        let firstPage = try FloorpWebExtensionPageViewController(
+            surface: .actionPopup,
+            package: firstPackage,
+            entryPoint: .init("ui/popup/index.html"),
+            resolver: resolver,
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+        firstPage.loadViewIfNeeded()
+        try await waitForLoad(firstPage.webView)
+        _ = try await firstPage.webView.callAsyncJavaScript(
+            """
+            globalThis.deliveryCount = 0;
+            browser.runtime.onMessage.addListener(() => {
+              globalThis.deliveryCount += 1;
+              return {page: "first"};
+            });
+            """,
+            contentWorld: .page
+        )
+        let firstPageHost = try XCTUnwrap(firstPage.webView.url?.host)
+        let firstPageIdentity = try FloorpWebExtensionPageBridgeIdentity(
+            profileKey: profileKey,
+            package: firstPackage,
+            originHost: firstPageHost,
+            surface: .actionPopup
+        )
+        let duplicateReceiver = runtime.registerPageMessageReceiver(
+            firstPageIdentity,
+            webView: firstPage.webView
+        )
+        XCTAssertTrue(
+            duplicateReceiver === runtime.registerPageMessageReceiver(
+                firstPageIdentity,
+                webView: firstPage.webView
+            )
+        )
+        let firstBackground = try FloorpWebExtensionBackgroundBridgeIdentity(
+            profileKey: profileKey,
+            package: firstPackage,
+            originHost: "background-\(UUID().uuidString.lowercased())",
+            entryPath: "__floorp_background_first.html"
+        )
+        let firstBackgroundConfiguration = WKWebViewConfiguration()
+        XCTAssertTrue(runtime.installBackgroundBridge(
+            firstBackground,
+            on: firstBackgroundConfiguration.userContentController
+        ))
+        let payload = try FloorpWebExtensionMessagePayload(
+            jsonData: Data(#"{"type":"generation-change"}"#.utf8)
+        )
+        let firstSender = FloorpWebExtensionBackgroundRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: profileKey,
+            packageGeneration: firstPackage.generation,
+            originHost: firstBackground.originHost
+        )
+
+        let directReply: FloorpWebExtensionMessagePayload?
+        do {
+            directReply = try await XCTUnwrap(duplicateReceiver).deliver(
+                payload,
+                sender: firstSender
+            )
+        } catch {
+            XCTFail("Direct page delivery failed: \(error)")
+            return
+        }
+        XCTAssertEqual(
+            try directReply?.decode([String: String].self),
+            ["page": "first"]
+        )
+        _ = try await firstPage.webView.callAsyncJavaScript(
+            "globalThis.deliveryCount = 0",
+            contentWorld: .page
+        )
+        let firstReply = try await runtime.dispatchRuntimeMessage(payload, sender: firstSender)
+        XCTAssertEqual(
+            try firstReply?.decode([String: String].self),
+            ["page": "first"]
+        )
+        let firstDeliveryCount = try await firstPage.webView.callAsyncJavaScript(
+            "return globalThis.deliveryCount",
+            contentWorld: .page
+        ) as? Int
+        XCTAssertEqual(firstDeliveryCount, 1)
+
+        let foreignSender = FloorpWebExtensionBackgroundRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: .init(profileIdentifier: "foreign-profile", isPrivateBrowsing: false),
+            packageGeneration: firstPackage.generation,
+            originHost: firstBackground.originHost
+        )
+        do {
+            _ = try await runtime.dispatchRuntimeMessage(payload, sender: foreignSender)
+            XCTFail("Expected a foreign profile sender to be rejected")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .authenticationFailed)
+        }
+
+        let secondPackage = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "broadcast-generation-two",
+            resourcePaths: ["ui/popup/index.html"]
+        )
+        let secondPage = try FloorpWebExtensionPageViewController(
+            surface: .options,
+            package: secondPackage,
+            entryPoint: .init("ui/popup/index.html"),
+            resolver: resolver,
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+        secondPage.loadViewIfNeeded()
+        try await waitForLoad(secondPage.webView)
+        _ = try await secondPage.webView.callAsyncJavaScript(
+            """
+            globalThis.deliveryCount = 0;
+            browser.runtime.onMessage.addListener(() => {
+              globalThis.deliveryCount += 1;
+              return {page: "second"};
+            });
+            """,
+            contentWorld: .page
+        )
+        let secondBackground = try FloorpWebExtensionBackgroundBridgeIdentity(
+            profileKey: profileKey,
+            package: secondPackage,
+            originHost: "background-\(UUID().uuidString.lowercased())",
+            entryPath: "__floorp_background_second.html"
+        )
+        let secondBackgroundConfiguration = WKWebViewConfiguration()
+        XCTAssertTrue(runtime.installBackgroundBridge(
+            secondBackground,
+            on: secondBackgroundConfiguration.userContentController
+        ))
+        let secondSender = FloorpWebExtensionBackgroundRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: profileKey,
+            packageGeneration: secondPackage.generation,
+            originHost: secondBackground.originHost
+        )
+
+        let secondReply = try await runtime.dispatchRuntimeMessage(payload, sender: secondSender)
+        XCTAssertEqual(
+            try secondReply?.decode([String: String].self),
+            ["page": "second"]
+        )
+        let replacedPageDeliveryCount = try await firstPage.webView.callAsyncJavaScript(
+            "return globalThis.deliveryCount",
+            contentWorld: .page
+        ) as? Int
+        let secondPageDeliveryCount = try await secondPage.webView.callAsyncJavaScript(
+            "return globalThis.deliveryCount",
+            contentWorld: .page
+        ) as? Int
+        XCTAssertEqual(replacedPageDeliveryCount, 1)
+        XCTAssertEqual(secondPageDeliveryCount, 1)
+        do {
+            _ = try await runtime.dispatchRuntimeMessage(payload, sender: firstSender)
+            XCTFail("Expected the replaced generation sender to be rejected")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .authenticationFailed)
+        }
+
+        runtime.tearDown()
+        do {
+            _ = try await runtime.dispatchRuntimeMessage(payload, sender: secondSender)
+            XCTFail("Expected delivery after runtime teardown to be rejected")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .authenticationFailed)
+        }
+        let deliveryCountAfterTearDown = try await secondPage.webView.callAsyncJavaScript(
+            "return globalThis.deliveryCount",
+            contentWorld: .page
+        ) as? Int
+        XCTAssertEqual(deliveryCountAfterTearDown, 1)
+    }
+
+    func testReleasedExtensionPageStopsReceivingBackgroundMessages() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "released-page-profile",
+            isPrivateBrowsing: false
+        )
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: .init(),
+            profileKey: profileKey
+        )
+        let package = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "released-page-generation",
+            resourcePaths: ["ui/popup/index.html"]
+        )
+        let resolver = FloorpWebExtensionPageResourceResolver { _ in
+            Data("<html><body>Released page</body></html>".utf8)
+        }
+        var page: FloorpWebExtensionPageViewController? = try .init(
+            surface: .actionPopup,
+            package: package,
+            entryPoint: .init("ui/popup/index.html"),
+            resolver: resolver,
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+        page?.loadViewIfNeeded()
+        let orphanedWebView = try XCTUnwrap(page?.webView)
+        try await waitForLoad(orphanedWebView)
+        _ = try await orphanedWebView.callAsyncJavaScript(
+            """
+            globalThis.deliveryCount = 0;
+            browser.runtime.onMessage.addListener(() => {
+              globalThis.deliveryCount += 1;
+            });
+            """,
+            contentWorld: .page
+        )
+        weak var releasedPage = page
+        page = nil
+        XCTAssertNil(releasedPage)
+
+        let background = try FloorpWebExtensionBackgroundBridgeIdentity(
+            profileKey: profileKey,
+            package: package,
+            originHost: "background-\(UUID().uuidString.lowercased())",
+            entryPath: "__floorp_background_released.html"
+        )
+        let backgroundConfiguration = WKWebViewConfiguration()
+        XCTAssertTrue(runtime.installBackgroundBridge(
+            background,
+            on: backgroundConfiguration.userContentController
+        ))
+        let sender = FloorpWebExtensionBackgroundRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: profileKey,
+            packageGeneration: package.generation,
+            originHost: background.originHost
+        )
+        let payload = try FloorpWebExtensionMessagePayload(
+            jsonData: Data(#"{"type":"after-page-release"}"#.utf8)
+        )
+
+        let response = try await runtime.dispatchRuntimeMessage(payload, sender: sender)
+
+        XCTAssertNil(response)
+        let orphanedDeliveryCount = try await orphanedWebView.callAsyncJavaScript(
+            "return globalThis.deliveryCount",
+            contentWorld: .page
+        ) as? Int
+        XCTAssertEqual(orphanedDeliveryCount, 0)
     }
 
     func testRuntimeTearDownInvalidatesBackgroundRegistrations() async throws {

@@ -2060,6 +2060,23 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         for extensionID: FloorpWebExtensionID,
         expectedGeneration: String
     ) async throws -> PermissionMutationAuthorization {
+        try await authorizePermissionMutationWithPackageSnapshot(
+            for: extensionID,
+            expectedGeneration: expectedGeneration
+        ).authorization
+    }
+
+    /// Captures both the one-use mutation authority and the grants shown by a
+    /// product-owned consent prompt while holding the same lifecycle gate.
+    /// Callers must build the prompt and its replacement snapshot from the
+    /// returned package, never from an earlier package listing.
+    func authorizePermissionMutationWithPackageSnapshot(
+        for extensionID: FloorpWebExtensionID,
+        expectedGeneration: String
+    ) async throws -> (
+        authorization: PermissionMutationAuthorization,
+        package: FloorpWebExtensionInstalledPackage
+    ) {
         let gate = lifecycleMutationGate(for: extensionID)
         await gate.acquire()
         defer { Task { await gate.release() } }
@@ -2072,11 +2089,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
         }
         try authorizeCatalogRecord(package)
-        return .init(
+        let authorization = PermissionMutationAuthorization(
             extensionID: extensionID,
             packageGeneration: expectedGeneration,
             lifecycleRevision: lifecycleRevisions[extensionID, default: 0]
         )
+        return (authorization, package)
     }
 
     func updateGrants(

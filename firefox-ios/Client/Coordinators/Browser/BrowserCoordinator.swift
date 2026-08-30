@@ -568,9 +568,16 @@ final class BrowserCoordinator: BaseCoordinator,
 
     func showWebExtensionActions() {
         guard FloorpFlags.isWebExtensionFeatureEnabled(.core) else { return }
-        let isPrivateBrowsing = tabManager.selectedTab?.isPrivate ?? false
+        guard let selectedTab = tabManager.selectedTab else {
+            presentWebExtensionActionsUnavailable()
+            return
+        }
+        let isPrivateBrowsing = selectedTab.isPrivate
         let profileIdentifier = profile.localName()
         guard let store = FloorpWebExtensionPackageStoreRegistry.store(
+            for: profileIdentifier,
+            isPrivateBrowsing: isPrivateBrowsing
+        ), let packageManager = FloorpWebExtensionPackageStoreRegistry.manager(
             for: profileIdentifier,
             isPrivateBrowsing: isPrivateBrowsing
         ), let apiHost = FloorpWebExtensionAPIHostRegistry.host(
@@ -584,10 +591,13 @@ final class BrowserCoordinator: BaseCoordinator,
             return
         }
         let resolver = store.makePageResourceResolver()
-        Task { [weak self, store, apiHost, messageRuntime] in
+        Task { [weak self, store, packageManager, apiHost, messageRuntime, selectedTab] in
             let packages = await store.installedPackages()
             var popups = [FloorpWebExtensionActionPopup]()
             for package in packages where package.isEnabled {
+                if isPrivateBrowsing && !package.grants.privateBrowsingEnabled {
+                    continue
+                }
                 let persistedState = await apiHost.actions.state(for: package.extensionID)
                 if let popup = Self.actionPopup(
                     for: package,
@@ -596,11 +606,16 @@ final class BrowserCoordinator: BaseCoordinator,
                     popups.append(popup)
                 }
             }
-            guard let self, !Task.isCancelled else { return }
+            guard let self,
+                  !Task.isCancelled,
+                  self.tabManager.selectedTab === selectedTab,
+                  selectedTab.isPrivate == isPrivateBrowsing else { return }
             self.presentWebExtensionActions(
                 popups,
                 resolver: resolver,
                 messageRuntime: messageRuntime,
+                packageManager: packageManager,
+                selectedTab: selectedTab,
                 isPrivateBrowsing: isPrivateBrowsing
             )
         }
@@ -616,6 +631,84 @@ final class BrowserCoordinator: BaseCoordinator,
         let package: FloorpWebExtensionInstalledPackage
         let actionState: FloorpWebExtensionActionState
         let title: String
+    }
+
+    enum FloorpWebExtensionActionSiteAccessChoice: Equatable {
+        case currentSite
+        case allRequestedSites
+        case cancel
+    }
+
+    struct FloorpWebExtensionActionSiteAccessPlan: Equatable {
+        let currentSite: FloorpWebExtensionMatchPattern?
+        let currentHost: String?
+        let previouslySelectedSites: Set<FloorpWebExtensionMatchPattern>
+        let requestedSiteCount: Int
+        let requestsEveryWebsite: Bool
+        let isPrivateBrowsing: Bool
+
+        func access(
+            for choice: FloorpWebExtensionActionSiteAccessChoice
+        ) -> FloorpWebExtensionHostAccess? {
+            switch choice {
+            case .currentSite:
+                guard let currentSite else { return nil }
+                return .selectedSites(previouslySelectedSites.union([currentSite]))
+            case .allRequestedSites:
+                return .allRequestedSites
+            case .cancel:
+                return nil
+            }
+        }
+    }
+
+    /// Builds product-owned consent only when the action's current page is
+    /// declared by the package but is not covered by the profile's grant.
+    static func webExtensionActionSiteAccessPlan(
+        currentURL: URL?,
+        requestedHosts: Set<FloorpWebExtensionMatchPattern>,
+        hostAccess: FloorpWebExtensionHostAccess,
+        isPrivateBrowsing: Bool
+    ) -> FloorpWebExtensionActionSiteAccessPlan? {
+        guard !requestedHosts.isEmpty,
+              let currentURL,
+              requestedHosts.contains(where: { $0.matches(currentURL) }) else {
+            return nil
+        }
+        let previouslySelectedSites: Set<FloorpWebExtensionMatchPattern>
+        switch hostAccess {
+        case .denied:
+            previouslySelectedSites = []
+        case .selectedSites(let sites):
+            guard !sites.contains(where: { $0.matches(currentURL) }) else { return nil }
+            previouslySelectedSites = sites
+        case .allRequestedSites:
+            return nil
+        }
+        let currentSite = currentSitePattern(for: currentURL).flatMap { site in
+            requestedHosts.contains(where: { $0.covers(site) }) ? site : nil
+        }
+        return .init(
+            currentSite: currentSite,
+            currentHost: currentSite == nil ? nil : currentURL.host?.lowercased(),
+            previouslySelectedSites: previouslySelectedSites,
+            requestedSiteCount: requestedHosts.count,
+            requestsEveryWebsite: requestedHosts.contains {
+                $0.original == "<all_urls>" || $0.original == "*://*/*"
+            },
+            isPrivateBrowsing: isPrivateBrowsing
+        )
+    }
+
+    private static func currentSitePattern(
+        for url: URL
+    ) -> FloorpWebExtensionMatchPattern? {
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased() else {
+            return nil
+        }
+        return try? FloorpWebExtensionMatchPattern("\(scheme)://\(host)/*")
     }
 
     private static func actionPopup(
@@ -650,6 +743,8 @@ final class BrowserCoordinator: BaseCoordinator,
         _ popups: [FloorpWebExtensionActionPopup],
         resolver: FloorpWebExtensionPageResourceResolver,
         messageRuntime: FloorpWebExtensionMessageRuntime,
+        packageManager: FloorpWebExtensionLivePackageManager,
+        selectedTab: Tab,
         isPrivateBrowsing: Bool
     ) {
         guard !popups.isEmpty else {
@@ -664,6 +759,8 @@ final class BrowserCoordinator: BaseCoordinator,
                 popup,
                 resolver: resolver,
                 messageRuntime: messageRuntime,
+                packageManager: packageManager,
+                selectedTab: selectedTab,
                 isPrivateBrowsing: isPrivateBrowsing
             )
             return
@@ -679,6 +776,8 @@ final class BrowserCoordinator: BaseCoordinator,
                     popup,
                     resolver: resolver,
                     messageRuntime: messageRuntime,
+                    packageManager: packageManager,
+                    selectedTab: selectedTab,
                     isPrivateBrowsing: isPrivateBrowsing
                 )
             })
@@ -692,6 +791,200 @@ final class BrowserCoordinator: BaseCoordinator,
     }
 
     private func presentWebExtensionActionPopup(
+        _ popup: FloorpWebExtensionActionPopup,
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime,
+        packageManager: FloorpWebExtensionLivePackageManager,
+        selectedTab: Tab,
+        isPrivateBrowsing: Bool
+    ) {
+        guard tabManager.selectedTab === selectedTab,
+              selectedTab.isPrivate == isPrivateBrowsing else { return }
+        let consentedURL = selectedTab.url
+        Task { [weak self, weak selectedTab, packageManager] in
+            do {
+                let context = try await packageManager.authorizePermissionMutationWithPackageSnapshot(
+                    for: popup.package.extensionID,
+                    expectedGeneration: popup.package.generation
+                )
+                guard let self,
+                      let selectedTab,
+                      !Task.isCancelled,
+                      self.tabManager.selectedTab === selectedTab,
+                      selectedTab.isPrivate == isPrivateBrowsing,
+                      selectedTab.url == consentedURL else { return }
+                guard !isPrivateBrowsing || context.package.grants.privateBrowsingEnabled else {
+                    self.presentWebExtensionActionsUnavailable()
+                    return
+                }
+                let currentPopup = FloorpWebExtensionActionPopup(
+                    package: context.package,
+                    actionState: popup.actionState,
+                    title: popup.title
+                )
+                let hostAccess = isPrivateBrowsing
+                    ? context.package.grants.privateHostAccess
+                    : context.package.grants.normalHostAccess
+                if let accessPlan = Self.webExtensionActionSiteAccessPlan(
+                    currentURL: consentedURL,
+                    requestedHosts: context.package.grants.requestedHosts,
+                    hostAccess: hostAccess,
+                    isPrivateBrowsing: isPrivateBrowsing
+                ) {
+                    self.presentWebExtensionActionSiteAccess(
+                        accessPlan,
+                        authorization: context.authorization,
+                        consentedURL: consentedURL,
+                        popup: currentPopup,
+                        resolver: resolver,
+                        messageRuntime: messageRuntime,
+                        packageManager: packageManager,
+                        selectedTab: selectedTab,
+                        isPrivateBrowsing: isPrivateBrowsing
+                    )
+                } else {
+                    self.presentWebExtensionActionPage(
+                        currentPopup,
+                        resolver: resolver,
+                        messageRuntime: messageRuntime,
+                        isPrivateBrowsing: isPrivateBrowsing
+                    )
+                }
+            } catch {
+                self?.presentWebExtensionActionsAlert(
+                    title: "Extension action could not open",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func presentWebExtensionActionSiteAccess(
+        _ plan: FloorpWebExtensionActionSiteAccessPlan,
+        authorization: FloorpWebExtensionLivePackageManager.PermissionMutationAuthorization,
+        consentedURL: URL?,
+        popup: FloorpWebExtensionActionPopup,
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime,
+        packageManager: FloorpWebExtensionLivePackageManager,
+        selectedTab: Tab,
+        isPrivateBrowsing: Bool
+    ) {
+        var message = [
+            "This extension cannot read or change the current page until you allow site access.",
+            "The page will reload after access is allowed."
+        ].joined(separator: " ")
+        if plan.requestsEveryWebsite {
+            message += " All requested sites include every HTTP and HTTPS website."
+        } else if plan.requestedSiteCount > 1 {
+            message += " This extension requested access to \(plan.requestedSiteCount) site patterns."
+        }
+        if plan.isPrivateBrowsing {
+            message += " This choice applies only in Private Browsing."
+        }
+        let alert = UIAlertController(
+            title: "Allow site access for \(popup.title)?",
+            message: message,
+            preferredStyle: .actionSheet
+        )
+        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.ActionSiteAccessConsent"
+        if let currentHost = plan.currentHost,
+           let access = plan.access(for: .currentSite) {
+            alert.addAction(UIAlertAction(title: "Allow on \(currentHost)", style: .default) { [weak self] _ in
+                self?.applyWebExtensionActionSiteAccess(
+                    access,
+                    authorization: authorization,
+                    consentedURL: consentedURL,
+                    popup: popup,
+                    resolver: resolver,
+                    messageRuntime: messageRuntime,
+                    packageManager: packageManager,
+                    selectedTab: selectedTab,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            })
+        }
+        if let access = plan.access(for: .allRequestedSites) {
+            alert.addAction(UIAlertAction(title: "Allow on All Requested Sites", style: .default) { [weak self] _ in
+                self?.applyWebExtensionActionSiteAccess(
+                    access,
+                    authorization: authorization,
+                    consentedURL: consentedURL,
+                    popup: popup,
+                    resolver: resolver,
+                    messageRuntime: messageRuntime,
+                    packageManager: packageManager,
+                    selectedTab: selectedTab,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            })
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = browserViewController.view
+            popover.sourceRect = browserViewController.view.bounds
+        }
+        present(alert)
+    }
+
+    private func applyWebExtensionActionSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        authorization: FloorpWebExtensionLivePackageManager.PermissionMutationAuthorization,
+        consentedURL: URL?,
+        popup: FloorpWebExtensionActionPopup,
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime,
+        packageManager: FloorpWebExtensionLivePackageManager,
+        selectedTab: Tab,
+        isPrivateBrowsing: Bool
+    ) {
+        guard tabManager.selectedTab === selectedTab,
+              selectedTab.isPrivate == isPrivateBrowsing,
+              selectedTab.url == consentedURL else { return }
+        Task { [weak self, weak selectedTab, packageManager] in
+            do {
+                let previousGrants = popup.package.grants
+                let replacement = FloorpWebExtensionPermissionSnapshot(
+                    apiPermissions: previousGrants.apiPermissions,
+                    requestedHosts: previousGrants.requestedHosts,
+                    normalHostAccess: isPrivateBrowsing ? previousGrants.normalHostAccess : access,
+                    privateHostAccess: isPrivateBrowsing ? access : previousGrants.privateHostAccess,
+                    privateBrowsingEnabled: previousGrants.privateBrowsingEnabled
+                )
+                try await packageManager.updateGrants(
+                    replacement,
+                    authorization: authorization
+                ) { [weak self, weak selectedTab] in
+                    guard let self, let selectedTab else { return false }
+                    return self.tabManager.selectedTab === selectedTab &&
+                        selectedTab.isPrivate == isPrivateBrowsing &&
+                        selectedTab.url == consentedURL
+                }
+                guard let self,
+                      let selectedTab,
+                      !Task.isCancelled,
+                      self.tabManager.selectedTab === selectedTab,
+                      selectedTab.isPrivate == isPrivateBrowsing,
+                      selectedTab.url == consentedURL else { return }
+                // User-script policy is fixed before a document load. Reload
+                // so this already-open page receives the newly authorized policy.
+                selectedTab.reload()
+                self.presentWebExtensionActionPage(
+                    popup,
+                    resolver: resolver,
+                    messageRuntime: messageRuntime,
+                    isPrivateBrowsing: isPrivateBrowsing
+                )
+            } catch {
+                self?.presentWebExtensionActionsAlert(
+                    title: "Site access could not be changed",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func presentWebExtensionActionPage(
         _ popup: FloorpWebExtensionActionPopup,
         resolver: FloorpWebExtensionPageResourceResolver,
         messageRuntime: FloorpWebExtensionMessageRuntime,

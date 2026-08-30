@@ -1565,6 +1565,103 @@ final class BrowserCoordinatorTests: XCTestCase,
         XCTAssertTrue(subject.childCoordinators.isEmpty)
     }
 
+    // MARK: - Web extension action site access
+
+    func testWebExtensionActionSiteAccessPlanOffersExplicitScopesWhenDenied() throws {
+        let requestedHosts = Set([try FloorpWebExtensionMatchPattern("<all_urls>")])
+
+        let plan = try XCTUnwrap(BrowserCoordinator.webExtensionActionSiteAccessPlan(
+            currentURL: URL(string: "https://www.example.com/article"),
+            requestedHosts: requestedHosts,
+            hostAccess: .denied,
+            isPrivateBrowsing: false
+        ))
+
+        let currentSite = try FloorpWebExtensionMatchPattern("https://www.example.com/*")
+        XCTAssertEqual(plan.currentHost, "www.example.com")
+        XCTAssertEqual(plan.access(for: .currentSite), .selectedSites([currentSite]))
+        XCTAssertEqual(plan.access(for: .allRequestedSites), .allRequestedSites)
+        XCTAssertNil(plan.access(for: .cancel))
+        XCTAssertTrue(plan.requestsEveryWebsite)
+        XCTAssertFalse(plan.isPrivateBrowsing)
+    }
+
+    func testWebExtensionActionSiteAccessPlanDoesNotPromptAfterAccessWasGranted() throws {
+        let requestedHosts = Set([try FloorpWebExtensionMatchPattern("<all_urls>")])
+
+        XCTAssertNil(BrowserCoordinator.webExtensionActionSiteAccessPlan(
+            currentURL: URL(string: "https://www.example.com/"),
+            requestedHosts: requestedHosts,
+            hostAccess: .allRequestedSites,
+            isPrivateBrowsing: false
+        ))
+        XCTAssertNil(BrowserCoordinator.webExtensionActionSiteAccessPlan(
+            currentURL: URL(string: "https://www.example.com/"),
+            requestedHosts: requestedHosts,
+            hostAccess: .selectedSites([
+                try FloorpWebExtensionMatchPattern("https://www.example.com/*")
+            ]),
+            isPrivateBrowsing: false
+        ))
+    }
+
+    func testWebExtensionActionSiteAccessPlanAddsCurrentSiteWithoutDroppingExistingSites() throws {
+        let requestedHosts = Set([try FloorpWebExtensionMatchPattern("<all_urls>")])
+        let existingSite = try FloorpWebExtensionMatchPattern("https://existing.example/*")
+        let currentSite = try FloorpWebExtensionMatchPattern("https://current.example/*")
+
+        let plan = try XCTUnwrap(BrowserCoordinator.webExtensionActionSiteAccessPlan(
+            currentURL: URL(string: "https://current.example/page"),
+            requestedHosts: requestedHosts,
+            hostAccess: .selectedSites([existingSite]),
+            isPrivateBrowsing: false
+        ))
+
+        XCTAssertEqual(
+            plan.access(for: .currentSite),
+            .selectedSites([existingSite, currentSite])
+        )
+        XCTAssertEqual(plan.access(for: .allRequestedSites), .allRequestedSites)
+    }
+
+    func testWebExtensionActionSiteAccessPlanDoesNotPromptForProtectedOrUnrequestedPage() throws {
+        let requestedHosts = Set([
+            try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        ])
+
+        XCTAssertNil(BrowserCoordinator.webExtensionActionSiteAccessPlan(
+            currentURL: URL(string: "about:blank"),
+            requestedHosts: requestedHosts,
+            hostAccess: .denied,
+            isPrivateBrowsing: false
+        ))
+        XCTAssertNil(BrowserCoordinator.webExtensionActionSiteAccessPlan(
+            currentURL: URL(string: "https://not-allowed.example/"),
+            requestedHosts: requestedHosts,
+            hostAccess: .denied,
+            isPrivateBrowsing: false
+        ))
+    }
+
+    func testWebExtensionActionSiteAccessPlanKeepsPrivateAndPathLimitedScopeExplicit() throws {
+        let requestedHosts = Set([
+            try FloorpWebExtensionMatchPattern("https://example.com/private/*")
+        ])
+
+        let plan = try XCTUnwrap(BrowserCoordinator.webExtensionActionSiteAccessPlan(
+            currentURL: URL(string: "https://example.com/private/page"),
+            requestedHosts: requestedHosts,
+            hostAccess: .denied,
+            isPrivateBrowsing: true
+        ))
+
+        XCTAssertNil(plan.currentSite)
+        XCTAssertNil(plan.currentHost)
+        XCTAssertNil(plan.access(for: .currentSite))
+        XCTAssertEqual(plan.access(for: .allRequestedSites), .allRequestedSites)
+        XCTAssertTrue(plan.isPrivateBrowsing)
+    }
+
     // MARK: - Route handling
 
     // MARK: canHandle(route:)

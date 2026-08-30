@@ -415,6 +415,105 @@ final class FloorpWebExtensionLazyBackgroundHost {
     }
 }
 
+@MainActor
+final class FloorpWebExtensionPageMessageReceiver {
+    let identity: FloorpWebExtensionPageBridgeIdentity
+    let controllerIdentifier: ObjectIdentifier
+    private(set) weak var webView: WKWebView?
+    private var isInvalidated = false
+
+    init(identity: FloorpWebExtensionPageBridgeIdentity, webView: WKWebView) {
+        self.identity = identity
+        self.webView = webView
+        controllerIdentifier = ObjectIdentifier(webView.configuration.userContentController)
+    }
+
+    var isAvailable: Bool {
+        guard !isInvalidated, let url = webView?.url else { return false }
+        return identity.authorizesDocument(url, isMainFrame: true)
+    }
+
+    func invalidate() {
+        isInvalidated = true
+        webView = nil
+    }
+
+    func deliver(
+        _ message: FloorpWebExtensionMessagePayload,
+        sender: FloorpWebExtensionBackgroundRuntimeMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        guard sender.extensionID == identity.extensionID,
+              sender.profileKey == identity.profileKey,
+              sender.packageGeneration == identity.packageGeneration,
+              isAvailable,
+              let webView else {
+            throw FloorpWebExtensionMessageError.authenticationFailed
+        }
+        let expectedWebView = webView
+        let messageJSON = try Self.jsonString(from: message.jsonData)
+        let senderJSON = try Self.senderJSON(sender, receiver: identity)
+        let serialized = try await webView.callAsyncJavaScript(
+            """
+            const deliver = globalThis.__floorpWebExtensionDeliverPageRuntimeMessage;
+            if (typeof deliver !== "function") throw new Error("Extension page bridge unavailable");
+            return await deliver(JSON.parse(messageJSON), JSON.parse(senderJSON));
+            """,
+            arguments: ["messageJSON": messageJSON, "senderJSON": senderJSON],
+            in: nil,
+            contentWorld: .page
+        ) as? String
+        guard !isInvalidated,
+              self.webView === expectedWebView,
+              isAvailable else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
+        guard let serialized,
+              let envelopeData = serialized.data(using: .utf8),
+              let envelope = try JSONSerialization.jsonObject(with: envelopeData) as? [String: Any],
+              let hasResponse = envelope["hasResponse"] as? Bool else {
+            throw FloorpWebExtensionMessageError.handlerFailed
+        }
+        guard hasResponse else { return nil }
+        let value = envelope["value"] ?? NSNull()
+        guard JSONSerialization.isValidJSONObject(["value": value]) else {
+            throw FloorpWebExtensionMessageError.handlerFailed
+        }
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+        return try FloorpWebExtensionMessagePayload(jsonData: data)
+    }
+
+    private static func jsonString(from data: Data) throws -> String {
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw FloorpWebExtensionMessageError.malformedEnvelope
+        }
+        return value
+    }
+
+    private static func senderJSON(
+        _ sender: FloorpWebExtensionBackgroundRuntimeMessageSender,
+        receiver: FloorpWebExtensionPageBridgeIdentity
+    ) throws -> String {
+        var components = URLComponents()
+        components.scheme = FloorpWebExtensionPageNavigationPolicy.resourceScheme
+        components.host = receiver.originHost
+        components.path = "/"
+        guard let receiverURL = components.url else {
+            throw FloorpWebExtensionMessageError.malformedEnvelope
+        }
+        let object: [String: Any] = [
+            "id": sender.extensionID.rawValue,
+            "isPrivate": sender.isPrivate,
+            "url": receiverURL.absoluteString
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        guard data.count <= FloorpWebExtensionMessagePayload.maximumByteCount,
+              let serialized = String(data: data, encoding: .utf8) else {
+            throw FloorpWebExtensionMessageError.payloadTooLarge
+        }
+        return serialized
+    }
+}
+
 /// Owns authenticated, per-extension WebKit bridges for one browser profile.
 /// Package/profile composition must reinstall a bridge with the new trusted tab
 /// context before every navigation.
@@ -439,6 +538,7 @@ final class FloorpWebExtensionMessageRuntime {
     private final class ControllerEntry {
         weak var controller: WKUserContentController?
         var sessions = [BridgeSessionKey: FloorpWebExtensionMessageBridgeSession]()
+        var pageIdentities = [FloorpWebExtensionID: FloorpWebExtensionPageBridgeIdentity]()
 
         init(controller: WKUserContentController) {
             self.controller = controller
@@ -456,6 +556,19 @@ final class FloorpWebExtensionMessageRuntime {
         let kind: BridgeSessionKind
     }
 
+    private struct PageReceiverKey: Hashable {
+        let controllerIdentifier: ObjectIdentifier
+        let extensionID: FloorpWebExtensionID
+    }
+
+    private final class WeakPageReceiver {
+        weak var value: FloorpWebExtensionPageMessageReceiver?
+
+        init(_ value: FloorpWebExtensionPageMessageReceiver) {
+            self.value = value
+        }
+    }
+
     let backgroundHost: FloorpWebExtensionLazyBackgroundHost
     let profileKey: FloorpWebExtensionCoordinatorProfileKey?
     private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
@@ -463,8 +576,9 @@ final class FloorpWebExtensionMessageRuntime {
         @escaping @MainActor @Sendable () async -> Void
     ) -> Void
     private var controllers = [ObjectIdentifier: ControllerEntry]()
+    private var pageReceivers = [PageReceiverKey: WeakPageReceiver]()
     private var activePageGenerations = [FloorpWebExtensionID: String]()
-    private var activeBackgroundGenerations = [FloorpWebExtensionID: String]()
+    private var activeBackgroundBridges = [FloorpWebExtensionID: FloorpWebExtensionBackgroundBridgeIdentity]()
 
     init(
         backgroundHost: FloorpWebExtensionLazyBackgroundHost,
@@ -519,10 +633,10 @@ final class FloorpWebExtensionMessageRuntime {
         let expectedPackageGeneration = nativeHost?.activePackageGeneration(for: extensionID)
         let session = FloorpWebExtensionMessageBridgeSession(
             extensionID: extensionID,
-            backgroundHost: backgroundHost,
             nativeAPIDispatcher: nativeAPIDispatcher,
             bootstrap: nativeHost?.javaScriptBootstrap(for: extensionID),
             contentWorld: .world(name: Self.isolatedContentWorldName(for: extensionID)),
+            supportsSameSurfacePageNavigation: false,
             owner: "floorp.webextension.bridge.tab.\(extensionID.rawValue)",
             authorizeDocument: { url, isMainFrame in
                 authorizeDocument(url, isMainFrame, tab)
@@ -538,6 +652,12 @@ final class FloorpWebExtensionMessageRuntime {
                     }
                 }
                 return authorizeFrameScript(scriptID, revisionToken, url, isMainFrame, tab)
+            },
+            dispatchRuntimeMessage: { [weak self] message, sender in
+                guard let self else {
+                    throw FloorpWebExtensionMessageError.backgroundUnavailable
+                }
+                return try await self.dispatchRuntimeMessage(message, sender: sender)
             },
             scheduleRequest: scheduleBridgeRequest,
             makeSender: { url, isMainFrame in
@@ -605,10 +725,14 @@ final class FloorpWebExtensionMessageRuntime {
         controllers[identifier] = entry
         let key = BridgeSessionKey(extensionID: page.extensionID, kind: .page)
         entry.sessions.removeValue(forKey: key)?.detach()
+        invalidatePageReceiver(
+            for: page.extensionID,
+            controllerIdentifier: identifier
+        )
+        entry.pageIdentities[page.extensionID] = page
 
         let session = FloorpWebExtensionMessageBridgeSession(
             extensionID: page.extensionID,
-            backgroundHost: backgroundHost,
             nativeAPIDispatcher: nativeAPIDispatcher,
             bootstrap: nativeHost?.javaScriptBootstrap(for: page.extensionID),
             // Popup/options resources run in WebKit's page world.  Their
@@ -619,10 +743,17 @@ final class FloorpWebExtensionMessageRuntime {
             // package JavaScript can reach its APIs, while web content cannot
             // reuse the bridge after a navigation.
             contentWorld: .page,
+            supportsSameSurfacePageNavigation: true,
             owner: "floorp.webextension.bridge.page.\(page.extensionID.rawValue).\(page.originHost)",
             authorizeDocument: { [weak self] url, isMainFrame in
                 self?.activePageGenerations[page.extensionID] == page.packageGeneration &&
                     page.authorizesDocument(url, isMainFrame: isMainFrame)
+            },
+            dispatchRuntimeMessage: { [weak self] message, sender in
+                guard let self else {
+                    throw FloorpWebExtensionMessageError.backgroundUnavailable
+                }
+                return try await self.dispatchRuntimeMessage(message, sender: sender)
             },
             scheduleRequest: scheduleBridgeRequest,
             makeSender: { url, _ in
@@ -657,11 +788,11 @@ final class FloorpWebExtensionMessageRuntime {
             return false
         }
 
-        if let activeGeneration = activeBackgroundGenerations[background.extensionID],
-           activeGeneration != background.packageGeneration {
+        if let activeBackground = activeBackgroundBridges[background.extensionID],
+           activeBackground != background {
             invalidateBackgroundBridges(for: background.extensionID)
         }
-        activeBackgroundGenerations[background.extensionID] = background.packageGeneration
+        activeBackgroundBridges[background.extensionID] = background
 
         removeReleasedControllers()
         let identifier = ObjectIdentifier(controller)
@@ -672,14 +803,20 @@ final class FloorpWebExtensionMessageRuntime {
 
         let session = FloorpWebExtensionMessageBridgeSession(
             extensionID: background.extensionID,
-            backgroundHost: backgroundHost,
             nativeAPIDispatcher: nativeAPIDispatcher,
             bootstrap: nativeHost?.javaScriptBootstrap(for: background.extensionID),
             contentWorld: .page,
+            supportsSameSurfacePageNavigation: false,
             owner: "floorp.webextension.bridge.background.\(background.extensionID.rawValue).\(background.originHost)",
             authorizeDocument: { [weak self] url, isMainFrame in
-                self?.activeBackgroundGenerations[background.extensionID] == background.packageGeneration &&
+                self?.activeBackgroundBridges[background.extensionID] == background &&
                     background.authorizesDocument(url, isMainFrame: isMainFrame)
+            },
+            dispatchRuntimeMessage: { [weak self] message, sender in
+                guard let self else {
+                    throw FloorpWebExtensionMessageError.backgroundUnavailable
+                }
+                return try await self.dispatchRuntimeMessage(message, sender: sender)
             },
             scheduleRequest: scheduleBridgeRequest,
             makeSender: { _, _ in
@@ -714,13 +851,18 @@ final class FloorpWebExtensionMessageRuntime {
         for extensionID: FloorpWebExtensionID,
         retainingGeneration: String? = nil
     ) {
-        for entry in controllers.values {
+        for (controllerIdentifier, entry) in controllers {
             let pageKeys = entry.sessions.keys.filter {
                 $0.extensionID == extensionID && $0.kind == .page
             }
             for key in pageKeys {
                 entry.sessions.removeValue(forKey: key)?.detach()
             }
+            entry.pageIdentities.removeValue(forKey: extensionID)
+            invalidatePageReceiver(
+                for: extensionID,
+                controllerIdentifier: controllerIdentifier
+            )
         }
         if activePageGenerations[extensionID] != retainingGeneration {
             activePageGenerations.removeValue(forKey: extensionID)
@@ -743,8 +885,8 @@ final class FloorpWebExtensionMessageRuntime {
                 entry.sessions.removeValue(forKey: key)?.detach()
             }
         }
-        if activeBackgroundGenerations[extensionID] != retainingGeneration {
-            activeBackgroundGenerations.removeValue(forKey: extensionID)
+        if activeBackgroundBridges[extensionID]?.packageGeneration != retainingGeneration {
+            activeBackgroundBridges.removeValue(forKey: extensionID)
         }
         removeReleasedControllers()
     }
@@ -753,7 +895,7 @@ final class FloorpWebExtensionMessageRuntime {
         _ background: FloorpWebExtensionBackgroundBridgeIdentity
     ) -> Bool {
         profileKey == background.profileKey &&
-            activeBackgroundGenerations[background.extensionID] == background.packageGeneration
+            activeBackgroundBridges[background.extensionID] == background
     }
 
     func dispatchAlarmEvent(_ event: FloorpWebExtensionAlarmEvent) async throws {
@@ -764,14 +906,19 @@ final class FloorpWebExtensionMessageRuntime {
     }
 
     func removeExtension(_ extensionID: FloorpWebExtensionID) {
-        for entry in controllers.values {
+        for (controllerIdentifier, entry) in controllers {
             let keys = entry.sessions.keys.filter { $0.extensionID == extensionID }
             keys.forEach { key in
                 entry.sessions.removeValue(forKey: key)?.detach()
             }
+            entry.pageIdentities.removeValue(forKey: extensionID)
+            invalidatePageReceiver(
+                for: extensionID,
+                controllerIdentifier: controllerIdentifier
+            )
         }
         activePageGenerations.removeValue(forKey: extensionID)
-        activeBackgroundGenerations.removeValue(forKey: extensionID)
+        activeBackgroundBridges.removeValue(forKey: extensionID)
         backgroundHost.unregister(extensionID: extensionID)
         removeReleasedControllers()
     }
@@ -780,9 +927,11 @@ final class FloorpWebExtensionMessageRuntime {
         for entry in controllers.values {
             entry.sessions.values.forEach { $0.detach() }
         }
+        pageReceivers.values.forEach { $0.value?.invalidate() }
         controllers.removeAll()
+        pageReceivers.removeAll()
         activePageGenerations.removeAll()
-        activeBackgroundGenerations.removeAll()
+        activeBackgroundBridges.removeAll()
         backgroundHost.tearDown()
     }
 
@@ -792,14 +941,128 @@ final class FloorpWebExtensionMessageRuntime {
     /// will install a new authenticated bridge on the next event.
     func releaseBackgroundResources() {
         backgroundHost.releaseActiveHandlers()
-        let extensionIDs = Set(activeBackgroundGenerations.keys)
+        let extensionIDs = Set(activeBackgroundBridges.keys)
         for extensionID in extensionIDs {
             invalidateBackgroundBridges(for: extensionID)
         }
     }
 
     private func removeReleasedControllers() {
+        pageReceivers = pageReceivers.filter { key, weakReceiver in
+            guard let receiver = weakReceiver.value,
+                  let entry = controllers[key.controllerIdentifier],
+                  entry.controller != nil,
+                  entry.pageIdentities[key.extensionID] == receiver.identity else {
+                weakReceiver.value?.invalidate()
+                return false
+            }
+            return true
+        }
         controllers = controllers.filter { _, entry in entry.controller != nil }
+    }
+
+    func registerPageMessageReceiver(
+        _ page: FloorpWebExtensionPageBridgeIdentity,
+        webView: WKWebView
+    ) -> FloorpWebExtensionPageMessageReceiver? {
+        removeReleasedControllers()
+        guard profileKey == page.profileKey,
+              activePageGenerations[page.extensionID] == page.packageGeneration else {
+            return nil
+        }
+        let controllerIdentifier = ObjectIdentifier(webView.configuration.userContentController)
+        guard controllers[controllerIdentifier]?.pageIdentities[page.extensionID] == page else {
+            return nil
+        }
+        let key = PageReceiverKey(
+            controllerIdentifier: controllerIdentifier,
+            extensionID: page.extensionID
+        )
+        if let receiver = pageReceivers[key]?.value,
+           receiver.identity == page,
+           receiver.webView === webView {
+            return receiver
+        }
+        pageReceivers.removeValue(forKey: key)?.value?.invalidate()
+        let receiver = FloorpWebExtensionPageMessageReceiver(
+            identity: page,
+            webView: webView
+        )
+        pageReceivers[key] = WeakPageReceiver(receiver)
+        return receiver
+    }
+
+    func dispatchRuntimeMessage(
+        _ message: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        guard let backgroundSender = sender as? FloorpWebExtensionBackgroundRuntimeMessageSender else {
+            return try await backgroundHost.dispatch(message, sender: sender)
+        }
+        guard isActive(backgroundSender) else {
+            throw FloorpWebExtensionMessageError.authenticationFailed
+        }
+
+        removeReleasedControllers()
+        let receivers = pageReceivers.values.compactMap(\.value).filter {
+            $0.identity.profileKey == backgroundSender.profileKey &&
+                $0.identity.extensionID == backgroundSender.extensionID &&
+                $0.identity.packageGeneration == backgroundSender.packageGeneration &&
+                $0.isAvailable
+        }
+        var firstResponse: FloorpWebExtensionMessagePayload?
+        for receiver in receivers {
+            guard isActive(backgroundSender) else {
+                throw FloorpWebExtensionMessageError.backgroundReplaced
+            }
+            do {
+                let response = try await receiver.deliver(message, sender: backgroundSender)
+                if firstResponse == nil, let response, isRegistered(receiver) {
+                    firstResponse = response
+                }
+            } catch {
+                if !isActive(backgroundSender) {
+                    throw FloorpWebExtensionMessageError.backgroundReplaced
+                }
+            }
+        }
+        guard isActive(backgroundSender) else {
+            throw FloorpWebExtensionMessageError.backgroundReplaced
+        }
+        return firstResponse
+    }
+
+    private func invalidatePageReceiver(
+        for extensionID: FloorpWebExtensionID,
+        controllerIdentifier: ObjectIdentifier
+    ) {
+        let key = PageReceiverKey(
+            controllerIdentifier: controllerIdentifier,
+            extensionID: extensionID
+        )
+        pageReceivers.removeValue(forKey: key)?.value?.invalidate()
+    }
+
+    private func isActive(
+        _ sender: FloorpWebExtensionBackgroundRuntimeMessageSender
+    ) -> Bool {
+        guard profileKey == sender.profileKey,
+              let background = activeBackgroundBridges[sender.extensionID] else {
+            return false
+        }
+        return background.profileKey == sender.profileKey &&
+            background.packageGeneration == sender.packageGeneration &&
+            background.originHost == sender.originHost
+    }
+
+    private func isRegistered(_ receiver: FloorpWebExtensionPageMessageReceiver) -> Bool {
+        let key = PageReceiverKey(
+            controllerIdentifier: receiver.controllerIdentifier,
+            extensionID: receiver.identity.extensionID
+        )
+        return pageReceivers[key]?.value === receiver &&
+            controllers[key.controllerIdentifier]?.pageIdentities[key.extensionID] == receiver.identity &&
+            receiver.isAvailable
     }
 }
 
@@ -809,12 +1072,15 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private static let version = 1
 
     private let extensionID: FloorpWebExtensionID
-    private let backgroundHost: FloorpWebExtensionLazyBackgroundHost
     private let nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?
     private let bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?
     private let contentPolicyOwner: String
     private let authorizeDocument: @MainActor (URL, Bool) -> Bool
     private let authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)?
+    private let dispatchRuntimeMessage: @MainActor (
+        FloorpWebExtensionMessagePayload,
+        any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload?
     private let scheduleRequest: @MainActor (
         @escaping @MainActor @Sendable () async -> Void
     ) -> Void
@@ -822,35 +1088,41 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private let nonce: String
     private let handlerName: String
     private let contentWorld: WKContentWorld
+    private let supportsSameSurfacePageNavigation: Bool
     private weak var controller: WKUserContentController?
     private var attachmentGeneration: UInt64 = 0
 
     init(
         extensionID: FloorpWebExtensionID,
-        backgroundHost: FloorpWebExtensionLazyBackgroundHost,
         nativeAPIDispatcher: (any FloorpWebExtensionNativeAPIDispatching)?,
         bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?,
         contentWorld: WKContentWorld,
+        supportsSameSurfacePageNavigation: Bool,
         owner: String,
         authorizeDocument: @escaping @MainActor (URL, Bool) -> Bool,
         authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)? = nil,
+        dispatchRuntimeMessage: @escaping @MainActor (
+            FloorpWebExtensionMessagePayload,
+            any FloorpWebExtensionMessageSender
+        ) async throws -> FloorpWebExtensionMessagePayload?,
         scheduleRequest: @escaping @MainActor (
             @escaping @MainActor @Sendable () async -> Void
         ) -> Void,
         makeSender: @escaping @MainActor (URL, Bool) -> any FloorpWebExtensionMessageSender
     ) {
         self.extensionID = extensionID
-        self.backgroundHost = backgroundHost
         self.nativeAPIDispatcher = nativeAPIDispatcher
         self.bootstrap = bootstrap
         contentPolicyOwner = owner
         self.authorizeDocument = authorizeDocument
         self.authorizeFrameScript = authorizeFrameScript
+        self.dispatchRuntimeMessage = dispatchRuntimeMessage
         self.scheduleRequest = scheduleRequest
         self.makeSender = makeSender
         nonce = Self.makeNonce()
         handlerName = "floorpRuntime_\(nonce.prefix(24))"
         self.contentWorld = contentWorld
+        self.supportsSameSurfacePageNavigation = supportsSameSurfacePageNavigation
     }
 
     func attach(to controller: WKUserContentController) {
@@ -863,7 +1135,8 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
                 extensionID: extensionID,
                 nonce: nonce,
                 handlerName: handlerName,
-                bootstrap: bootstrap
+                bootstrap: bootstrap,
+                supportsSameSurfacePageNavigation: supportsSameSurfacePageNavigation
             ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false,
@@ -971,7 +1244,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             }
             let response: FloorpWebExtensionMessagePayload?
             if envelope.operation == "runtime.sendMessage" {
-                response = try await backgroundHost.dispatch(envelope.payload, sender: sender)
+                response = try await dispatchRuntimeMessage(envelope.payload, sender)
             } else if let nativeAPIDispatcher {
                 response = try await nativeAPIDispatcher.dispatch(
                     operation: envelope.operation,
@@ -1150,11 +1423,13 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         extensionID: FloorpWebExtensionID,
         nonce: String,
         handlerName: String,
-        bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?
+        bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?,
+        supportsSameSurfacePageNavigation: Bool
     ) -> String {
         let extensionLiteral = javaScriptLiteral(extensionID.rawValue)
         let nonceLiteral = javaScriptLiteral(nonce)
         let handlerLiteral = javaScriptLiteral(handlerName)
+        let sameSurfacePageNavigationLiteral = supportsSameSurfacePageNavigation ? "true" : "false"
         let bootstrapLiteral: String
         if let bootstrap,
            let data = try? JSONEncoder().encode(bootstrap),
@@ -1341,6 +1616,16 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             }
             return serializeResponse(null);
           };
+          const deliverRuntimeMessage = async (message, sender) => {
+            for (const listener of runtimeOnMessageListeners) {
+              if (typeof listener !== "function") continue;
+              const value = await invokeMessageListener(listener, message, sender);
+              if (typeof value !== "undefined") {
+                return JSON.stringify({hasResponse: true, value});
+              }
+            }
+            return JSON.stringify({hasResponse: false});
+          };
           const deliverAlarm = async (alarm) => {
             for (const listener of alarmListeners) {
               if (typeof listener === "function") await listener(alarm);
@@ -1526,10 +1811,48 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             },
             getLimits() { return request("declarativeNetRequest.getLimits"); }
           });
+          // iOS presents popup/options resources inside one authenticated,
+          // package-owned WKWebView.  Some desktop extensions discover or
+          // create another window before opening Settings.  On that page
+          // surface only, translate a same-origin package URL into a
+          // same-WebView navigation.  Tab content and hidden backgrounds never
+          // receive this compatibility capability.
+          const supportsSameSurfacePageNavigation = \(sameSurfacePageNavigationLiteral);
+          const sameSurfacePageNavigationTarget = (value) => {
+            if (!supportsSameSurfacePageNavigation || typeof value !== "string") return null;
+            let current;
+            let target;
+            try {
+              current = new URL(globalThis.location.href);
+              target = new URL(value, current);
+            } catch (_) {
+              return null;
+            }
+            if (current.protocol !== "floorp-extension:" ||
+                target.protocol !== current.protocol ||
+                target.host !== current.host ||
+                current.username || current.password || current.port ||
+                target.username || target.password || target.port ||
+                target.search) {
+              return null;
+            }
+            return target;
+          };
+          const navigateSameSurfacePage = (value) => {
+            const target = sameSurfacePageNavigationTarget(value);
+            if (!target) return null;
+            globalThis.location.assign(target.href);
+            return Object.freeze({active: true, url: target.href});
+          };
           const tabs = Object.freeze({
             query(queryInfo = {}) { return request("tabs.query", {queryInfo}); },
             get(tabId) { return request("tabs.get", {tabId}); },
-            create(createProperties = {}) { return request("tabs.create", {createProperties}); },
+            create(createProperties = {}) {
+              const navigatedTab = navigateSameSurfacePage(createProperties?.url);
+              return navigatedTab
+                ? Promise.resolve(navigatedTab)
+                : request("tabs.create", {createProperties});
+            },
             update(tabId, updateProperties = {}) { return request("tabs.update", {tabId, updateProperties}); },
             reload(tabId, reloadProperties = {}) { return request("tabs.reload", {tabId, reloadProperties}); },
             sendMessage(tabId, message, options = {}) {
@@ -1537,6 +1860,25 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             },
             onRemoved: tabsOnRemoved.event
           });
+          const windows = supportsSameSurfacePageNavigation ? Object.freeze({
+            getAll() {
+              // There are no separately addressable extension popup windows
+              // in this page surface.  Returning an empty list makes the
+              // extension take its create path without inventing tab IDs.
+              return Promise.resolve([]);
+            },
+            create(createData = {}) {
+              const navigatedTab = navigateSameSurfacePage(createData?.url);
+              if (!navigatedTab) {
+                return Promise.reject(new Error("windows.create only supports a same-origin package page"));
+              }
+              return Promise.resolve(Object.freeze({
+                focused: true,
+                type: createData?.type || "popup",
+                tabs: Object.freeze([navigatedTab])
+              }));
+            }
+          }) : null;
           const storage = Object.freeze({
             local: storageArea("local"),
             sync: storageArea("sync", 5 * 1024 * 1024, 8 * 1024),
@@ -1684,13 +2026,19 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             configurable: false,
             writable: false
           });
+          Object.defineProperty(globalThis, "__floorpWebExtensionDeliverPageRuntimeMessage", {
+            value: deliverRuntimeMessage,
+            enumerable: false,
+            configurable: false,
+            writable: false
+          });
           Object.defineProperty(globalThis, "__floorpWebExtensionDeliverAlarm", {
             value: deliverAlarm,
             enumerable: false,
             configurable: false,
             writable: false
           });
-          for (const [name, value] of Object.entries({
+          const browserNamespaces = {
             runtime,
             permissions,
             scripting,
@@ -1701,7 +2049,9 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             action,
             browserAction: action,
             tabs
-          })) {
+          };
+          if (windows) browserNamespaces.windows = windows;
+          for (const [name, value] of Object.entries(browserNamespaces)) {
             Object.defineProperty(browserObject, name, {
               value,
               enumerable: true,
@@ -1804,7 +2154,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
           const chromeObject = globalThis.chrome && typeof globalThis.chrome === "object"
             ? globalThis.chrome
             : {};
-          for (const [name, value] of Object.entries({
+          const chromeNamespaces = {
             runtime: chromeRuntime,
             permissions: callbackNamespace(permissions),
             scripting: callbackNamespace(scripting),
@@ -1821,7 +2171,9 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             browserAction: callbackNamespace(action),
             tabs: callbackNamespace(tabs),
             extension: chromeExtension
-          })) {
+          };
+          if (windows) chromeNamespaces.windows = callbackNamespace(windows);
+          for (const [name, value] of Object.entries(chromeNamespaces)) {
             if (name === "alarms") {
               Object.defineProperty(value, "onAlarm", {value: alarms.onAlarm, enumerable: true});
             }
