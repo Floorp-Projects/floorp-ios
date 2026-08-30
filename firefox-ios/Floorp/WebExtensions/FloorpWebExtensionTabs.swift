@@ -168,7 +168,8 @@ final class FloorpWebExtensionProfileTabsHost: FloorpWebExtensionTabsHostAdaptin
         }
 
         let messageJSON = try jsonLiteral(message)
-        let senderJSON = try jsonLiteral(FloorpWebExtensionTabMessageSenderPayload(sender: sender))
+        let senderPayload = try FloorpWebExtensionTabMessageSenderPayload(sender: sender)
+        let senderJSON = try jsonLiteral(senderPayload)
         let script = "return await globalThis.__floorpWebExtensionDeliverTabsMessage(\(messageJSON), \(senderJSON))"
         let contentWorld = WKContentWorld.world(
             name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: sender.extensionID)
@@ -288,7 +289,7 @@ final class FloorpWebExtensionProfileTabsHost: FloorpWebExtensionTabsHostAdaptin
         let tab: TabPayload?
         let page: PagePayload?
 
-        init(sender: any FloorpWebExtensionMessageSender) {
+        init(sender: any FloorpWebExtensionMessageSender) throws {
             extensionId = sender.extensionID.rawValue
             isPrivate = sender.isPrivate
             if let tabSender = sender as? FloorpWebExtensionRuntimeMessageSender {
@@ -305,7 +306,15 @@ final class FloorpWebExtensionProfileTabsHost: FloorpWebExtensionTabsHostAdaptin
             } else if let pageSender = sender as? FloorpWebExtensionPageRuntimeMessageSender {
                 tabId = nil
                 documentGeneration = nil
-                url = "floorp-extension://\(pageSender.originHost)/"
+                guard let transportURL = pageSender.transportURL,
+                      FloorpWebExtensionPageNavigationPolicy(
+                          originHost: pageSender.originHost
+                      ).isPackageURL(transportURL),
+                      FloorpWebExtensionPageSchemeHandler.packagePath(from: transportURL) != nil,
+                      transportURL.query == nil else {
+                    throw FloorpWebExtensionMessageError.malformedEnvelope
+                }
+                url = transportURL.absoluteString
                 isMainFrame = true
                 tab = nil
                 switch pageSender.surface {
@@ -314,6 +323,13 @@ final class FloorpWebExtensionProfileTabsHost: FloorpWebExtensionTabsHostAdaptin
                 case .options:
                     page = .init(originHost: pageSender.originHost, surface: "options")
                 }
+            } else if let backgroundSender = sender as? FloorpWebExtensionBackgroundRuntimeMessageSender {
+                tabId = nil
+                documentGeneration = nil
+                url = "\(FloorpWebExtensionPageNavigationPolicy.resourceScheme)://\(backgroundSender.originHost)/"
+                isMainFrame = nil
+                tab = nil
+                page = nil
             } else {
                 tabId = nil
                 documentGeneration = nil
@@ -363,6 +379,8 @@ protocol FloorpWebExtensionTabsHostAdapting: AnyObject {
 /// and private-mode escape paths at this API boundary.
 @MainActor
 final class FloorpWebExtensionTabsService {
+    private static let maximumJavaScriptSafeInteger = 9_007_199_254_740_991
+
     private let profileIdentifier: String
     private let isPrivateBrowsing: Bool
     private let host: any FloorpWebExtensionTabsHostAdapting
@@ -475,13 +493,20 @@ final class FloorpWebExtensionTabsService {
         _ message: FloorpWebExtensionJSONValue,
         to tabID: Int,
         for extensionID: FloorpWebExtensionID,
-        sender: any FloorpWebExtensionMessageSender
+        sender: any FloorpWebExtensionMessageSender,
+        frameID: Int? = nil,
+        documentID: String? = nil
     ) async throws -> FloorpWebExtensionJSONValue? {
         guard sender.extensionID == extensionID,
               sender.isPrivate == isPrivateBrowsing else {
             throw FloorpWebExtensionMessageError.unauthorizedDocument
         }
         let tab = try tab(withID: tabID)
+        let currentDocumentID = FloorpWebExtensionDocumentIdentity.mainFrameID(for: tab.context)
+        guard frameID == nil || frameID == 0,
+              documentID == nil || documentID == currentDocumentID else {
+            throw FloorpWebExtensionTabsError.messageDeliveryFailed
+        }
         try await requireContentAccess(to: tab.context, for: extensionID)
         do {
             return try await host.deliverMessage(message, sender: sender, to: tab.context)
@@ -509,7 +534,8 @@ final class FloorpWebExtensionTabsService {
 
     private func validate(_ tab: FloorpWebExtensionHostTab) throws -> FloorpWebExtensionHostTab {
         guard tab.context.isPrivate == isPrivateBrowsing,
-              tab.context.tabID >= 0 else {
+              tab.context.tabID > 0,
+              tab.context.tabID <= Self.maximumJavaScriptSafeInteger else {
             throw FloorpWebExtensionTabsError.hostTabInvariantViolation
         }
         return tab

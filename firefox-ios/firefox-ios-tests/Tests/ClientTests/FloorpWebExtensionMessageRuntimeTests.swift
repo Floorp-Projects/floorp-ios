@@ -10,6 +10,38 @@ import XCTest
 final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
     private let extensionID = FloorpWebExtensionID(rawValue: "message-fixture")!
 
+    func testRuntimeSenderAlwaysExposesOpaqueDocumentIdentityForSubframes() {
+        let main = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: 41,
+            documentGeneration: 9,
+            url: URL(string: "https://allowed.example/main")!,
+            isMainFrame: true,
+            isPrivate: false
+        )
+        let subframe = FloorpWebExtensionRuntimeMessageSender(
+            extensionID: extensionID,
+            tabID: 41,
+            documentGeneration: 9,
+            url: URL(string: "https://allowed.example/frame")!,
+            isMainFrame: false,
+            isPrivate: false
+        )
+
+        XCTAssertEqual(main.frameID, 0)
+        XCTAssertEqual(subframe.frameID, -1)
+        XCTAssertEqual(main.documentID.count, 64)
+        XCTAssertEqual(subframe.documentID.count, 64)
+        XCTAssertNotEqual(subframe.documentID, main.documentID)
+        XCTAssertEqual(
+            subframe.documentID,
+            FloorpWebExtensionDocumentIdentity.unsupportedSubframeID(
+                tabID: 41,
+                documentGeneration: 9
+            )
+        )
+    }
+
     func testLazyBackgroundActivatesOnFirstMessageAndReusesHandler() async throws {
         let host = FloorpWebExtensionLazyBackgroundHost()
         var factoryCalls = 0
@@ -142,7 +174,6 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(firstReply.senderId, extensionID.rawValue)
         XCTAssertEqual(firstReply.tabId, 41)
         XCTAssertEqual(firstReply.runtimeId, extensionID.rawValue)
-        XCTAssertTrue(firstReply.packageURL.hasPrefix("floorp-extension://background-"))
         XCTAssertTrue(firstReply.packageURL.hasSuffix("/dependency.js"))
         XCTAssertEqual(host.snapshot(for: extensionID).activationCount, 1)
         let firstNativeSender = try XCTUnwrap(
@@ -151,6 +182,10 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(firstNativeSender.profileKey, profileKey)
         XCTAssertEqual(firstNativeSender.packageGeneration, "generation-1")
         XCTAssertTrue(firstNativeSender.originHost.hasPrefix("background-"))
+        XCTAssertEqual(
+            firstReply.packageURL,
+            "floorp-extension://\(firstNativeSender.originHost)/dependency.js"
+        )
 
         let secondResources = [
             "background.js": worker,
@@ -263,6 +298,108 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(host.snapshot(for: extensionID).activationCount, 1)
     }
 
+    func testPackageBackgroundWaitsForStartupAPIAndResourceActivityBeforeFirstMessage() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "async-background-startup-profile",
+            isPrivateBrowsing: false
+        )
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let dispatcher = AsyncNativeAPIDispatchGate()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: host,
+            nativeAPIDispatcher: dispatcher,
+            profileKey: profileKey
+        )
+        let resources = [
+            "background.js": Data("""
+            globalThis.startupValue = null;
+            browser.i18n.getUILanguage().then(() => new Promise((resolve, reject) => {
+              const request = new XMLHttpRequest();
+              request.open("GET", "config/startup.config", true);
+              request.onload = () => resolve(request.responseText);
+              request.onerror = () => reject(new Error("startup config failed"));
+              request.send();
+            })).then((value) => { globalThis.startupValue = value; });
+            browser.runtime.onMessage.addListener(() => ({startupValue: globalThis.startupValue}));
+            """.utf8),
+            "config/startup.config": Data("startup-ready".utf8)
+        ]
+        let package = try makeBackgroundInstalledPackage(
+            generation: "async-background-startup-generation",
+            resources: resources
+        )
+        let resolver = FloorpWebExtensionPageResourceResolver { request in
+            guard let data = resources[request.path] else {
+                throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+            }
+            return data
+        }
+        try runtime.registerPackageBackground(
+            package: package,
+            packageProfileKey: .init(
+                profileIdentifier: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ),
+            resolver: resolver
+        )
+
+        let replyTask = Task { @MainActor in
+            try await host.dispatch(
+                FloorpWebExtensionMessagePayload(Ping(type: "ping")),
+                sender: testSender(extensionID: extensionID)
+            )
+        }
+        await dispatcher.waitUntilStarted()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        dispatcher.succeed()
+
+        let replyPayload = try await replyTask.value
+        let reply = try XCTUnwrap(try replyPayload?.decode(StartupBackgroundReply.self))
+        XCTAssertEqual(reply.startupValue, "startup-ready")
+    }
+
+    func testPackageBackgroundStartupRuntimeMessageDoesNotDeadlockReadiness() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "self-message-background-startup-profile",
+            isPrivateBrowsing: false
+        )
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: host,
+            profileKey: profileKey
+        )
+        let resources = [
+            "background.js": Data("""
+            chrome.runtime.onMessage.addListener((message) => ({type: message.type}));
+            void chrome.runtime.sendMessage({type: "startup-self-message"});
+            """.utf8)
+        ]
+        let package = try makeBackgroundInstalledPackage(
+            generation: "self-message-background-startup-generation",
+            resources: resources
+        )
+        try runtime.registerPackageBackground(
+            package: package,
+            packageProfileKey: .init(
+                profileIdentifier: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ),
+            resolver: .init { request in
+                guard let data = resources[request.path] else {
+                    throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+                }
+                return data
+            }
+        )
+
+        let replyPayload = try await host.dispatch(
+            FloorpWebExtensionMessagePayload(Ping(type: "outer-message")),
+            sender: testSender(extensionID: extensionID)
+        )
+        let reply = try XCTUnwrap(try replyPayload?.decode(StartupSelfMessageReply.self))
+        XCTAssertEqual(reply.type, "outer-message")
+    }
+
     func testBackgroundRegistrationIsStrictlyExtensionScoped() async throws {
         let host = FloorpWebExtensionLazyBackgroundHost()
         host.register(extensionID: extensionID) { EchoBackgroundHandler() }
@@ -358,11 +495,18 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
                 resolve(chrome.runtime.lastError?.code || null);
               });
             });
+            let contentGetURLRejected = false;
+            try {
+              chrome.runtime.getURL("package-resource.js");
+            } catch (_) {
+              contentGetURLRejected = true;
+            }
             return {
               permission,
               enabledRulesets,
               callbackError,
               leakedLastError: chrome.runtime.lastError !== null,
+              contentGetURLRejected,
               runtimeId: chrome.runtime.id,
               dynamicLimit: browser.declarativeNetRequest.MAX_NUMBER_OF_DYNAMIC_RULES
             };
@@ -374,6 +518,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(result?["enabledRulesets"] as? [String], ["base"])
         XCTAssertEqual(result?["callbackError"] as? String, "unsupported_code_execution")
         XCTAssertEqual(result?["leakedLastError"] as? Bool, false)
+        XCTAssertEqual(result?["contentGetURLRejected"] as? Bool, true)
         XCTAssertEqual(result?["runtimeId"] as? String, extensionID.rawValue)
         XCTAssertEqual(result?["dynamicLimit"] as? Int, 5_000)
         XCTAssertEqual(
@@ -391,6 +536,47 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         )
         XCTAssertEqual((registeredObject["scripts"] as? [[String: Any]])?.first?["id"] as? String,
                        "registered-from-worker")
+    }
+
+    func testWebKitTabsBridgePreservesJavaScriptSafeTabIdentifier() async throws {
+        let tabID = 5_484_014_516_345_869
+        let dispatcher = SafeTabIdentifierDispatcher(tabID: tabID)
+        let runtime = FloorpWebExtensionMessageRuntime(nativeAPIDispatcher: dispatcher)
+        let configuration = WKWebViewConfiguration()
+        let tab = testTab()
+        runtime.installBridge(
+            for: extensionID,
+            tab: tab,
+            on: configuration.userContentController,
+            authorizeDocument: { _, isMainFrame, trustedTab in
+                isMainFrame && trustedTab == tab
+            }
+        )
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString("<html><body>tabs bridge</body></html>", baseURL: tab.url)
+        try await waitForLoad(webView)
+
+        let result = try await webView.callAsyncJavaScript(
+            """
+            const [queriedTab] = await browser.tabs.query({active: true});
+            const roundTrippedID = JSON.parse(JSON.stringify({id: queriedTab.id})).id;
+            const fetchedTab = await browser.tabs.get(roundTrippedID);
+            const reply = await browser.tabs.sendMessage(roundTrippedID, {type: "ping"});
+            return {
+              id: queriedTab.id,
+              safe: Number.isSafeInteger(queriedTab.id),
+              fetchedID: fetchedTab.id,
+              reply: reply.reply
+            };
+            """,
+            contentWorld: .world(name: FloorpWebExtensionMessageRuntime.isolatedContentWorldName(for: extensionID))
+        ) as? [String: Any]
+
+        XCTAssertEqual(result?["id"] as? Int, tabID)
+        XCTAssertEqual(result?["safe"] as? Bool, true)
+        XCTAssertEqual(result?["fetchedID"] as? Int, tabID)
+        XCTAssertEqual(result?["reply"] as? String, "ok")
+        XCTAssertEqual(dispatcher.receivedTabIDs, [tabID, tabID])
     }
 
     func testDocumentAuthorizationRunsBeforeLazyBackgroundActivation() async throws {
@@ -495,6 +681,7 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         XCTAssertEqual(sender.packageGeneration, package.generation)
         XCTAssertEqual(sender.originHost, originHost)
         XCTAssertEqual(sender.surface, .actionPopup)
+        XCTAssertEqual(sender.transportURL, page.webView.url)
 
         runtime.removeExtension(extensionID)
         XCTAssertTrue(page.webView.configuration.userContentController.userScripts.isEmpty)
@@ -506,6 +693,99 @@ final class FloorpWebExtensionMessageRuntimeTests: XCTestCase {
         ) as? String
         XCTAssertEqual(bridgeType, "undefined")
         XCTAssertEqual(nativeDispatcher.receivedSenders.count, 1)
+    }
+
+    func testExtensionPageMessageNormalizesSenderPathForBackgroundAndFalseListenerDoesNotConsumeIt() async throws {
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "page-to-background-profile",
+            isPrivateBrowsing: false
+        )
+        let host = FloorpWebExtensionLazyBackgroundHost()
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: host,
+            profileKey: profileKey
+        )
+        let resources = [
+            "background.js": Data("""
+            chrome.runtime.onMessage.addListener(() => false);
+            chrome.runtime.onMessage.addListener((message, sender) => ({
+              handledBy: "second-listener",
+              senderURL: sender.url,
+              expectedURL: chrome.runtime.getURL("/ui/popup/index.html"),
+              backgroundTransportURL: chrome.runtime.getURL("/")
+            }));
+            """.utf8),
+            "ui/popup/index.html": Data("<html><body>Popup bridge</body></html>".utf8),
+            "assets/runtime.config": Data("transport-resource-ready".utf8)
+        ]
+        let installedPackage = try makeBackgroundInstalledPackage(
+            generation: "page-to-background-generation",
+            resources: resources
+        )
+        let resolver = FloorpWebExtensionPageResourceResolver { request in
+            guard let data = resources[request.path] else {
+                throw FloorpWebExtensionPackageStoreError.resourceUnavailable(request.path)
+            }
+            return data
+        }
+        try runtime.registerPackageBackground(
+            package: installedPackage,
+            packageProfileKey: .init(
+                profileIdentifier: profileKey.profileIdentifier,
+                isPrivateBrowsing: profileKey.isPrivateBrowsing
+            ),
+            resolver: resolver
+        )
+        let pagePackage = try FloorpWebExtensionPagePackageGeneration(
+            installedPackage: installedPackage
+        )
+        let page = try FloorpWebExtensionPageViewController(
+            surface: .actionPopup,
+            package: pagePackage,
+            entryPoint: .init("ui/popup/index.html"),
+            resolver: resolver,
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+        page.loadViewIfNeeded()
+        try await waitForLoad(page.webView)
+
+        let result = try await page.webView.callAsyncJavaScript(
+            """
+            const resourceURL = chrome.runtime.getURL("/assets/runtime.config");
+            const resourceText = await new Promise((resolve, reject) => {
+              const request = new XMLHttpRequest();
+              request.open("GET", resourceURL, true);
+              request.onload = () => resolve(request.responseText);
+              request.onerror = () => reject(new Error("Package XHR failed"));
+              request.send();
+            });
+            return {
+              reply: await browser.runtime.sendMessage({type: "popup-data"}),
+              resourceURL,
+              resourceText
+            };
+            """,
+            contentWorld: .page
+        ) as? [String: Any]
+        let reply = result?["reply"] as? [String: Any]
+        let pageTransportHost = try XCTUnwrap(page.webView.url?.host)
+        let backgroundTransportURL = try XCTUnwrap(reply?["backgroundTransportURL"] as? String)
+        let expectedSenderURL = try XCTUnwrap(
+            URL(string: backgroundTransportURL)?.appendingPathComponent("ui/popup/index.html")
+        )
+
+        XCTAssertEqual(reply?["handledBy"] as? String, "second-listener")
+        XCTAssertEqual(reply?["senderURL"] as? String, expectedSenderURL.absoluteString)
+        XCTAssertEqual(reply?["expectedURL"] as? String, expectedSenderURL.absoluteString)
+        XCTAssertEqual(result?["resourceText"] as? String, "transport-resource-ready")
+        XCTAssertEqual(
+            result?["resourceURL"] as? String,
+            "floorp-extension://\(pageTransportHost)/assets/runtime.config"
+        )
+        XCTAssertTrue(pageTransportHost.hasPrefix("page-"))
+        XCTAssertTrue(URL(string: backgroundTransportURL)?.host?.hasPrefix("background-") == true)
+        XCTAssertNotEqual(URL(string: backgroundTransportURL)?.host, pageTransportHost)
     }
 
     func testRuntimeTearDownInvalidatesBackgroundRegistrations() async throws {
@@ -979,6 +1259,42 @@ private final class BootstrapSurfaceDispatcher: FloorpWebExtensionNativeAPIDispa
 }
 
 @MainActor
+private final class SafeTabIdentifierDispatcher: FloorpWebExtensionNativeAPIDispatching {
+    let tabID: Int
+    private(set) var receivedTabIDs = [Int]()
+
+    init(tabID: Int) {
+        self.tabID = tabID
+    }
+
+    func dispatch(
+        operation: String,
+        payload: FloorpWebExtensionMessagePayload,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload? {
+        _ = sender
+        let tab = """
+        {"id":\(tabID),"active":true,"isPrivate":false,"url":"https://allowed.example/bridge","title":"Safe"}
+        """
+        switch operation {
+        case "tabs.query":
+            return try .init(jsonData: Data("[\(tab)]".utf8))
+        case "tabs.get", "tabs.sendMessage":
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: payload.jsonData) as? [String: Any]
+            )
+            receivedTabIDs.append(try XCTUnwrap(object["tabId"] as? Int))
+            if operation == "tabs.get" {
+                return try .init(jsonData: Data(tab.utf8))
+            }
+            return try .init(jsonData: Data(#"{"reply":"ok"}"#.utf8))
+        default:
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+    }
+}
+
+@MainActor
 private final class AsyncReplyGate: FloorpWebExtensionBackgroundEventHandling {
     private var startedContinuation: CheckedContinuation<Void, Never>?
     private var releaseContinuation: CheckedContinuation<Void, Never>?
@@ -1178,6 +1494,14 @@ private struct ScriptArrayBackgroundReply: Codable, Equatable {
     let order: [String]
     let alarmName: String?
     let scheduledTime: Double?
+}
+
+private struct StartupBackgroundReply: Codable, Equatable {
+    let startupValue: String?
+}
+
+private struct StartupSelfMessageReply: Codable, Equatable {
+    let type: String
 }
 
 private struct EventRuntimePing: Codable, Equatable {

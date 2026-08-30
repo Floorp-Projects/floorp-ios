@@ -409,7 +409,7 @@ final class FloorpWebExtensionPageSchemeHandler: NSObject, WKURLSchemeHandler {
         return .init(response: response, data: data)
     }
 
-    static func packagePath(from url: URL) -> String? {
+    nonisolated static func packagePath(from url: URL) -> String? {
         guard let encodedPath = URLComponents(
             url: url,
             resolvingAgainstBaseURL: false
@@ -490,6 +490,7 @@ final class FloorpWebExtensionBackgroundSchemeHandler: NSObject, WKURLSchemeHand
 
     private let identity: FloorpWebExtensionBackgroundBridgeIdentity
     private let entryHTML: Data
+    private let activityTrackerPath: String
     private let readinessPath: String
     private let packageHandler: FloorpWebExtensionPageSchemeHandler
 
@@ -504,10 +505,26 @@ final class FloorpWebExtensionBackgroundSchemeHandler: NSObject, WKURLSchemeHand
             navigationPolicy: .init(originHost: identity.originHost),
             resolver: resolver
         )
+        activityTrackerPath = identity.entryPath.replacingOccurrences(
+            of: ".html",
+            with: ".activity.js"
+        )
         readinessPath = identity.entryPath.replacingOccurrences(
             of: ".html",
             with: ".ready.js"
         )
+        guard let activityTrackerURL = Self.resourceURL(
+            originHost: identity.originHost,
+            path: activityTrackerPath
+        ) else {
+            throw FloorpWebExtensionPageHostError.invalidResourceURL
+        }
+        // The bridge bootstrap is installed as a page-world WKUserScript at
+        // document start. The parser encounters this first external script
+        // afterward, so its activity object already exists before wrapping
+        // package XHR/fetch calls.
+        let escapedActivityTrackerURL = Self.escapeHTMLAttribute(activityTrackerURL.absoluteString)
+        let activityTrackerTag = "<script src=\"\(escapedActivityTrackerURL)\"></script>"
         let scriptTags = try background.scripts.map { source -> String in
             guard let url = Self.resourceURL(originHost: identity.originHost, path: source.path) else {
                 throw FloorpWebExtensionPageHostError.invalidResourceURL
@@ -523,7 +540,9 @@ final class FloorpWebExtensionBackgroundSchemeHandler: NSObject, WKURLSchemeHand
         }
         let readinessType = background.loadsAsModule ? " type=\"module\"" : ""
         let readinessTag = "<script\(readinessType) src=\"\(Self.escapeHTMLAttribute(readinessURL.absoluteString))\"></script>"
-        entryHTML = Data("<!doctype html><meta charset=\"utf-8\">\n\(scriptTags)\n\(readinessTag)".utf8)
+        entryHTML = Data(
+            "<!doctype html><meta charset=\"utf-8\">\n\(activityTrackerTag)\n\(scriptTags)\n\(readinessTag)".utf8
+        )
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
@@ -566,7 +585,8 @@ final class FloorpWebExtensionBackgroundSchemeHandler: NSObject, WKURLSchemeHand
            url.user == nil,
            url.password == nil,
            url.port == nil,
-           FloorpWebExtensionPageSchemeHandler.packagePath(from: url) == readinessPath {
+           let path = FloorpWebExtensionPageSchemeHandler.packagePath(from: url),
+           path == activityTrackerPath || path == readinessPath {
             guard let response = HTTPURLResponse(
                 url: url,
                 statusCode: 200,
@@ -580,13 +600,81 @@ final class FloorpWebExtensionBackgroundSchemeHandler: NSObject, WKURLSchemeHand
             ) else {
                 throw FloorpWebExtensionPageHostError.invalidResourceURL
             }
-            return .init(
-                response: response,
-                data: Data("globalThis.__floorpWebExtensionBackgroundScriptsReady = true;".utf8)
-            )
+            let source = path == activityTrackerPath
+                ? Self.activityTrackerJavaScript
+                : """
+                  globalThis.__floorpWebExtensionBackgroundScriptsReady = true;
+                  globalThis.__floorpWebExtensionBackgroundStartupActivity?.scriptsFinished();
+                  """
+            return .init(response: response, data: Data(source.utf8))
         }
         return try packageHandler.response(for: request)
     }
+
+    private static let activityTrackerJavaScript = """
+    (() => {
+      const activity = globalThis.__floorpWebExtensionBackgroundStartupActivity;
+      if (!activity) return;
+
+      const isPackageURL = (value) => {
+        try {
+          return new URL(String(value), globalThis.location.href).protocol === "floorp-extension:";
+        } catch (_) {
+          return false;
+        }
+      };
+
+      if (typeof XMLHttpRequest === "function") {
+        const packageRequests = new WeakSet();
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+          packageRequests.delete(this);
+          if (isPackageURL(url)) packageRequests.add(this);
+          return originalOpen.call(this, method, url, ...args);
+        };
+        const originalSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function(...args) {
+          if (!packageRequests.has(this)) return originalSend.apply(this, args);
+          activity.resourceStarted();
+          let finished = false;
+          const finish = () => {
+            if (finished) return;
+            finished = true;
+            activity.resourceFinished();
+          };
+          for (const event of ["loadend", "error", "abort", "timeout"]) {
+            this.addEventListener(event, finish, {once: true});
+          }
+          try {
+            return originalSend.apply(this, args);
+          } catch (error) {
+            finish();
+            throw error;
+          }
+        };
+      }
+
+      if (typeof globalThis.fetch === "function") {
+        const originalFetch = globalThis.fetch.bind(globalThis);
+        globalThis.fetch = (...args) => {
+          const input = args[0];
+          const requestURL = input && typeof input === "object" && "url" in input
+            ? input.url
+            : input;
+          if (!isPackageURL(requestURL)) return originalFetch(...args);
+          activity.resourceStarted();
+          try {
+            return Promise.resolve(originalFetch(...args)).finally(
+              () => activity.resourceFinished()
+            );
+          } catch (error) {
+            activity.resourceFinished();
+            throw error;
+          }
+        };
+      }
+    })();
+    """
 
     private static func resourceURL(originHost: String, path: String) -> URL? {
         var components = URLComponents()
@@ -702,7 +790,7 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         }
 
         let messageJSON = try Self.jsonString(from: message.jsonData)
-        let senderJSON = try Self.senderJSON(sender)
+        let senderJSON = try senderJSON(sender)
         let rawResult: Any?
         do {
             rawResult = try await callBackgroundJavaScript(
@@ -858,9 +946,13 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
             }
         }
         guard !scriptsReady else { return }
-        for _ in 0..<250 {
+        for _ in 0..<500 {
             let ready = try await callBackgroundJavaScript(
-                "return globalThis.__floorpWebExtensionBackgroundScriptsReady === true"
+                """
+                const scriptsReady = globalThis.__floorpWebExtensionBackgroundScriptsReady === true;
+                const activity = globalThis.__floorpWebExtensionBackgroundStartupActivity;
+                return scriptsReady && activity?.isIdleFor(100) === true;
+                """
             ) as? Bool
             if ready == true {
                 scriptsReady = true
@@ -945,7 +1037,7 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
         return value
     }
 
-    private static func senderJSON(_ sender: any FloorpWebExtensionMessageSender) throws -> String {
+    private func senderJSON(_ sender: any FloorpWebExtensionMessageSender) throws -> String {
         var object: [String: Any] = [
             "id": sender.extensionID.rawValue,
             "isPrivate": sender.isPrivate
@@ -957,16 +1049,33 @@ final class FloorpWebExtensionWKBackgroundEventHandler: NSObject,
                 "url": tab.url.absoluteString,
                 "isPrivate": tab.isPrivate
             ]
-            object["frameId"] = tab.isMainFrame ? 0 : -1
+            object["frameId"] = tab.frameID
+            object["documentId"] = tab.documentID
             object["documentGeneration"] = tab.documentGeneration
         } else if let page = sender as? FloorpWebExtensionPageRuntimeMessageSender {
-            object["url"] = "floorp-extension://\(page.originHost)/"
+            guard let transportURL = page.transportURL,
+                  FloorpWebExtensionPageNavigationPolicy(
+                      originHost: page.originHost
+                  ).isPackageURL(transportURL),
+                  transportURL.query == nil,
+                  let path = FloorpWebExtensionPageSchemeHandler.packagePath(from: transportURL),
+                  let receiverURL = Self.resourceURL(
+                      originHost: identity.originHost,
+                      path: path
+                  ) else {
+                throw FloorpWebExtensionMessageError.malformedEnvelope
+            }
+            // WebKit makes each package WebView a distinct random custom-
+            // scheme origin. Map the authenticated sender path onto this
+            // receiving background's loadable origin so Chrome-style
+            // comparisons with runtime.getURL preserve package identity.
+            object["url"] = receiverURL.absoluteString
             object["page"] = [
                 "originHost": page.originHost,
                 "surface": page.surface == .actionPopup ? "actionPopup" : "options"
             ]
-        } else if let background = sender as? FloorpWebExtensionBackgroundRuntimeMessageSender {
-            object["url"] = "floorp-extension://\(background.originHost)/"
+        } else if sender is FloorpWebExtensionBackgroundRuntimeMessageSender {
+            object["url"] = "\(FloorpWebExtensionPageNavigationPolicy.resourceScheme)://\(identity.originHost)/"
         }
         let data = try JSONSerialization.data(withJSONObject: object)
         guard data.count <= FloorpWebExtensionMessagePayload.maximumByteCount,

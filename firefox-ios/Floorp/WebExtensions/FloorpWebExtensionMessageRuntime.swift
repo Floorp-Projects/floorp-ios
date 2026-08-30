@@ -48,6 +48,46 @@ struct FloorpWebExtensionRuntimeMessageSender: Equatable, Sendable, FloorpWebExt
     let url: URL
     let isMainFrame: Bool
     let isPrivate: Bool
+
+    var frameID: Int {
+        isMainFrame ? 0 : -1
+    }
+
+    var documentID: String {
+        if isMainFrame {
+            return FloorpWebExtensionDocumentIdentity.mainFrameID(
+                tabID: tabID,
+                documentGeneration: documentGeneration
+            )
+        }
+        return FloorpWebExtensionDocumentIdentity.unsupportedSubframeID(
+            tabID: tabID,
+            documentGeneration: documentGeneration
+        )
+    }
+}
+
+/// Stable API-visible identity for the current main-frame document. The
+/// browser-owned tab generation changes on every committed navigation, while
+/// hashing keeps those internal counters out of extension-visible messages.
+enum FloorpWebExtensionDocumentIdentity {
+    static func mainFrameID(tabID: Int, documentGeneration: UInt64) -> String {
+        let source = Data("\(tabID):\(documentGeneration):0".utf8)
+        return SHA256.hash(data: source).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// We do not currently expose a stable native ID for individual
+    /// subframes. Still provide a generation-bound opaque value so extension
+    /// code cannot accidentally turn an unavailable subframe target into an
+    /// unconstrained main-frame tabs.sendMessage call when JSON omits nil.
+    static func unsupportedSubframeID(tabID: Int, documentGeneration: UInt64) -> String {
+        let source = Data("\(tabID):\(documentGeneration):unsupported-subframe".utf8)
+        return SHA256.hash(data: source).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func mainFrameID(for tab: FloorpWebExtensionTabContext) -> String {
+        mainFrameID(tabID: tab.tabID, documentGeneration: tab.documentGeneration)
+    }
 }
 
 /// Sender identity for an action popup or options page.  Its opaque origin and
@@ -59,6 +99,26 @@ struct FloorpWebExtensionPageRuntimeMessageSender: Equatable, Sendable, FloorpWe
     let packageGeneration: String
     let originHost: String
     let surface: FloorpWebExtensionPageSurface
+    /// The authenticated WebKit URL that produced the message. This retains
+    /// the exact package-relative path so a receiving package WebView can map
+    /// it onto its own loadable transport origin.
+    let transportURL: URL?
+
+    init(
+        extensionID: FloorpWebExtensionID,
+        profileKey: FloorpWebExtensionCoordinatorProfileKey,
+        packageGeneration: String,
+        originHost: String,
+        surface: FloorpWebExtensionPageSurface,
+        transportURL: URL? = nil
+    ) {
+        self.extensionID = extensionID
+        self.profileKey = profileKey
+        self.packageGeneration = packageGeneration
+        self.originHost = originHost
+        self.surface = surface
+        self.transportURL = transportURL
+    }
 
     var isPrivate: Bool {
         profileKey.isPrivateBrowsing
@@ -565,13 +625,14 @@ final class FloorpWebExtensionMessageRuntime {
                     page.authorizesDocument(url, isMainFrame: isMainFrame)
             },
             scheduleRequest: scheduleBridgeRequest,
-            makeSender: { _, _ in
+            makeSender: { url, _ in
                 FloorpWebExtensionPageRuntimeMessageSender(
                     extensionID: page.extensionID,
                     profileKey: page.profileKey,
                     packageGeneration: page.packageGeneration,
                     originHost: page.originHost,
-                    surface: page.surface
+                    surface: page.surface,
+                    transportURL: url
                 )
             }
         )
@@ -1140,6 +1201,47 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
           const tabsOnRemoved = makeEvent();
           const storageOnChanged = makeEvent();
           const serializeResponse = (value) => JSON.stringify(value === undefined ? null : value);
+          const backgroundStartupActivity = (() => {
+            let pendingNativeRequests = 0;
+            let pendingResources = 0;
+            let didFinishScripts = false;
+            let lastActivity = performance.now();
+            const touch = () => { lastActivity = performance.now(); };
+            return Object.freeze({
+              nativeRequestStarted() {
+                pendingNativeRequests += 1;
+                touch();
+              },
+              nativeRequestFinished() {
+                pendingNativeRequests = Math.max(0, pendingNativeRequests - 1);
+                touch();
+              },
+              resourceStarted() {
+                pendingResources += 1;
+                touch();
+              },
+              resourceFinished() {
+                pendingResources = Math.max(0, pendingResources - 1);
+                touch();
+              },
+              scriptsFinished() {
+                didFinishScripts = true;
+                touch();
+              },
+              isIdleFor(milliseconds) {
+                return didFinishScripts &&
+                  pendingNativeRequests === 0 &&
+                  pendingResources === 0 &&
+                  performance.now() - lastActivity >= milliseconds;
+              }
+            });
+          })();
+          Object.defineProperty(globalThis, "__floorpWebExtensionBackgroundStartupActivity", {
+            value: backgroundStartupActivity,
+            enumerable: false,
+            configurable: false,
+            writable: false
+          });
           const request = (operation, payload = {}) => {
             const requestId = `${Date.now()}:${++nextRequest}`;
             let serialized;
@@ -1158,7 +1260,21 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
             if (typeof serialized !== "string") {
               return Promise.reject(new Error("WebExtension message is not JSON serializable"));
             }
-            return nativeHandler.postMessage(serialized).then((rawReply) => {
+            // Message delivery can re-enter this same lazy background while
+            // it is starting. Waiting for that request here would make the
+            // inner delivery wait for itself forever. Ordinary initialization
+            // APIs (storage, i18n, permissions, and so on) remain tracked.
+            const tracksStartupActivity = operation !== "runtime.sendMessage" &&
+              operation !== "tabs.sendMessage";
+            if (tracksStartupActivity) backgroundStartupActivity.nativeRequestStarted();
+            let nativeReply;
+            try {
+              nativeReply = nativeHandler.postMessage(serialized);
+            } catch (error) {
+              if (tracksStartupActivity) backgroundStartupActivity.nativeRequestFinished();
+              return Promise.reject(error);
+            }
+            return Promise.resolve(nativeReply).then((rawReply) => {
               const reply = JSON.parse(rawReply);
               if (!reply || reply.requestId !== requestId) {
                 throw new Error("Invalid WebExtension bridge reply");
@@ -1169,6 +1285,8 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
                 throw error;
               }
               return reply.hasPayload ? reply.payload : undefined;
+            }).finally(() => {
+              if (tracksStartupActivity) backgroundStartupActivity.nativeRequestFinished();
             });
           };
           Object.defineProperty(globalThis, \(javaScriptLiteral(FloorpWebExtensionMessageRuntime.frameAuthorizationFunctionName)), {
@@ -1207,6 +1325,10 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
                 new Promise((resolve) => setTimeout(() => resolve(undefined), 5_000))
               ]);
             }
+            // Chrome treats a synchronous false return as "this listener did
+            // not respond". It must not consume the message or become a false
+            // response payload; a later listener may still handle it.
+            if (result === false) return undefined;
             return result;
           };
           const deliverTabsMessage = async (message, sender) => {
@@ -1657,13 +1779,16 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
               return Promise.resolve(false);
             }
           });
+          const packageRuntimeBaseURL = new URL("/", globalThis.location.href);
           const packageRuntimeURL = (path = "") => {
             if (globalThis.location?.protocol !== "floorp-extension:") {
               throw new Error("runtime.getURL is unavailable outside a package origin");
             }
             const normalized = String(path).replace(/^\\/+/, "");
-            const value = new URL(normalized, `${globalThis.location.origin}/`);
-            if (value.origin !== globalThis.location.origin) {
+            const value = new URL(normalized, packageRuntimeBaseURL);
+            if (value.protocol !== packageRuntimeBaseURL.protocol ||
+                value.host !== packageRuntimeBaseURL.host ||
+                value.username || value.password) {
               throw new Error("runtime.getURL rejected a cross-origin path");
             }
             return value.href;

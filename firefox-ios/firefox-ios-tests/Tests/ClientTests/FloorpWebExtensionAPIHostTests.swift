@@ -290,13 +290,31 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
             payload: try payload([
                 "tabId": target.tabID,
                 "message": ["kind": "ping"],
-                "options": [:]
+                "options": [
+                    "frameId": 0,
+                    "documentId": FloorpWebExtensionDocumentIdentity.mainFrameID(for: target)
+                ]
             ]),
             sender: sourceSender
         )
 
         let deliveredSender = try XCTUnwrap(tabsHost.lastSender as? FloorpWebExtensionRuntimeMessageSender)
         XCTAssertEqual(deliveredSender, sourceSender)
+
+        do {
+            _ = try await host.dispatch(
+                operation: "tabs.sendMessage",
+                payload: try payload([
+                    "tabId": target.tabID,
+                    "message": ["kind": "stale"],
+                    "options": ["documentId": "stale-document"]
+                ]),
+                sender: sourceSender
+            )
+            XCTFail("Expected a stale document target to fail closed")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionTabsError, .messageDeliveryFailed)
+        }
     }
 
     func testWebKitBootstrapUsesNativeStorageAndI18nThroughIsolatedWorld() async throws {

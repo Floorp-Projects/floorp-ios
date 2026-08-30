@@ -129,6 +129,11 @@ final class FloorpWebExtensionPageHostTests: XCTestCase {
         let html = try XCTUnwrap(String(data: entry.data, encoding: .utf8))
         XCTAssertTrue(html.contains("type=\"module\""))
         XCTAssertTrue(html.contains("floorp-extension://\(originHost)/background/main.js"))
+        let activityPosition = try XCTUnwrap(html.range(of: "__floorp_background_test.activity.js"))
+        let mainPosition = try XCTUnwrap(html.range(of: "background/main.js"))
+        let readinessPosition = try XCTUnwrap(html.range(of: "__floorp_background_test.ready.js"))
+        XCTAssertLessThan(activityPosition.lowerBound, mainPosition.lowerBound)
+        XCTAssertLessThan(mainPosition.lowerBound, readinessPosition.lowerBound)
         XCTAssertFalse(html.contains("<script>"))
         XCTAssertEqual(
             entry.response.value(forHTTPHeaderField: "Content-Security-Policy"),
@@ -142,6 +147,28 @@ final class FloorpWebExtensionPageHostTests: XCTestCase {
             try handler.response(for: URLRequest(url: scriptURL)).data,
             resources["background/main.js"]
         )
+        let activityURL = try XCTUnwrap(URL(
+            string: "floorp-extension://\(originHost)/__floorp_background_test.activity.js"
+        ))
+        let activityScript = try XCTUnwrap(String(
+            data: handler.response(for: URLRequest(url: activityURL)).data,
+            encoding: .utf8
+        ))
+        XCTAssertTrue(activityScript.contains("XMLHttpRequest.prototype.send"))
+        XCTAssertTrue(activityScript.contains("XMLHttpRequest.prototype.open"))
+        XCTAssertTrue(activityScript.contains("protocol === \"floorp-extension:\""))
+        XCTAssertTrue(activityScript.contains("if (!packageRequests.has(this))"))
+        XCTAssertTrue(activityScript.contains("if (!isPackageURL(requestURL))"))
+        XCTAssertTrue(activityScript.contains("activity.resourceFinished()"))
+
+        let readinessURL = try XCTUnwrap(URL(
+            string: "floorp-extension://\(originHost)/__floorp_background_test.ready.js"
+        ))
+        let readinessScript = try XCTUnwrap(String(
+            data: handler.response(for: URLRequest(url: readinessURL)).data,
+            encoding: .utf8
+        ))
+        XCTAssertTrue(readinessScript.contains("scriptsFinished()"))
         for rejectedValue in [
             "floorp-extension://another-origin/background/main.js",
             "floorp-extension://\(originHost)/background/missing.js",
