@@ -20,6 +20,8 @@ import QuickAnswersKit
 final class BrowserCoordinatorTests: XCTestCase,
                                      FeatureFlaggable,
                                      StoreTestUtility {
+    // XCTest initializes these fixtures in setUp and releases them in tearDown.
+    // swiftlint:disable implicitly_unwrapped_optional
     private var mockRouter: MockRouter!
     private var profile: MockProfile!
     private var overlayModeManager: MockOverlayModeManager!
@@ -32,6 +34,7 @@ final class BrowserCoordinatorTests: XCTestCase,
     private var mockStore: MockStoreForMiddleware<AppState>!
     private var homepageTabStateStore: HomepageTabStateStore!
     private var mockWorldCupStore: MockWorldCupStore!
+    // swiftlint:enable implicitly_unwrapped_optional
     let windowUUID: WindowUUID = .XCTestDefaultUUID
 
     override func setUp() async throws {

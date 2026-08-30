@@ -802,60 +802,79 @@ final class BrowserCoordinator: BaseCoordinator,
               selectedTab.isPrivate == isPrivateBrowsing else { return }
         let consentedURL = selectedTab.url
         Task { [weak self, weak selectedTab, packageManager] in
-            do {
-                let context = try await packageManager.authorizePermissionMutationWithPackageSnapshot(
-                    for: popup.package.extensionID,
-                    expectedGeneration: popup.package.generation
-                )
-                guard let self,
-                      let selectedTab,
-                      !Task.isCancelled,
-                      self.tabManager.selectedTab === selectedTab,
-                      selectedTab.isPrivate == isPrivateBrowsing,
-                      selectedTab.url == consentedURL else { return }
-                guard !isPrivateBrowsing || context.package.grants.privateBrowsingEnabled else {
-                    self.presentWebExtensionActionsUnavailable()
-                    return
-                }
-                let currentPopup = FloorpWebExtensionActionPopup(
-                    package: context.package,
-                    actionState: popup.actionState,
-                    title: popup.title
-                )
-                let hostAccess = isPrivateBrowsing
-                    ? context.package.grants.privateHostAccess
-                    : context.package.grants.normalHostAccess
-                if let accessPlan = Self.webExtensionActionSiteAccessPlan(
-                    currentURL: consentedURL,
-                    requestedHosts: context.package.grants.requestedHosts,
-                    hostAccess: hostAccess,
+            guard let self, let selectedTab else { return }
+            await self.prepareWebExtensionActionPopup(
+                popup,
+                consentedURL: consentedURL,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                packageManager: packageManager,
+                selectedTab: selectedTab,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
+        }
+    }
+
+    private func prepareWebExtensionActionPopup(
+        _ popup: FloorpWebExtensionActionPopup,
+        consentedURL: URL?,
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime,
+        packageManager: FloorpWebExtensionLivePackageManager,
+        selectedTab: Tab,
+        isPrivateBrowsing: Bool
+    ) async {
+        do {
+            let context = try await packageManager.authorizePermissionMutationWithPackageSnapshot(
+                for: popup.package.extensionID,
+                expectedGeneration: popup.package.generation
+            )
+            guard !Task.isCancelled,
+                  tabManager.selectedTab === selectedTab,
+                  selectedTab.isPrivate == isPrivateBrowsing,
+                  selectedTab.url == consentedURL else { return }
+            guard !isPrivateBrowsing || context.package.grants.privateBrowsingEnabled else {
+                presentWebExtensionActionsUnavailable()
+                return
+            }
+            let currentPopup = FloorpWebExtensionActionPopup(
+                package: context.package,
+                actionState: popup.actionState,
+                title: popup.title
+            )
+            let hostAccess = isPrivateBrowsing
+                ? context.package.grants.privateHostAccess
+                : context.package.grants.normalHostAccess
+            if let accessPlan = Self.webExtensionActionSiteAccessPlan(
+                currentURL: consentedURL,
+                requestedHosts: context.package.grants.requestedHosts,
+                hostAccess: hostAccess,
+                isPrivateBrowsing: isPrivateBrowsing
+            ) {
+                presentWebExtensionActionSiteAccess(
+                    accessPlan,
+                    authorization: context.authorization,
+                    consentedURL: consentedURL,
+                    popup: currentPopup,
+                    resolver: resolver,
+                    messageRuntime: messageRuntime,
+                    packageManager: packageManager,
+                    selectedTab: selectedTab,
                     isPrivateBrowsing: isPrivateBrowsing
-                ) {
-                    self.presentWebExtensionActionSiteAccess(
-                        accessPlan,
-                        authorization: context.authorization,
-                        consentedURL: consentedURL,
-                        popup: currentPopup,
-                        resolver: resolver,
-                        messageRuntime: messageRuntime,
-                        packageManager: packageManager,
-                        selectedTab: selectedTab,
-                        isPrivateBrowsing: isPrivateBrowsing
-                    )
-                } else {
-                    self.presentWebExtensionActionPage(
-                        currentPopup,
-                        resolver: resolver,
-                        messageRuntime: messageRuntime,
-                        isPrivateBrowsing: isPrivateBrowsing
-                    )
-                }
-            } catch {
-                self?.presentWebExtensionActionsAlert(
-                    title: "Extension action could not open",
-                    message: error.localizedDescription
+                )
+            } else {
+                presentWebExtensionActionPage(
+                    currentPopup,
+                    resolver: resolver,
+                    messageRuntime: messageRuntime,
+                    isPrivateBrowsing: isPrivateBrowsing
                 )
             }
+        } catch {
+            presentWebExtensionActionsAlert(
+                title: "Extension action could not open",
+                message: error.localizedDescription
+            )
         }
     }
 
@@ -942,45 +961,68 @@ final class BrowserCoordinator: BaseCoordinator,
               selectedTab.isPrivate == isPrivateBrowsing,
               selectedTab.url == consentedURL else { return }
         Task { [weak self, weak selectedTab, packageManager] in
-            do {
-                let previousGrants = popup.package.grants
-                let replacement = FloorpWebExtensionPermissionSnapshot(
-                    apiPermissions: previousGrants.apiPermissions,
-                    requestedHosts: previousGrants.requestedHosts,
-                    normalHostAccess: isPrivateBrowsing ? previousGrants.normalHostAccess : access,
-                    privateHostAccess: isPrivateBrowsing ? access : previousGrants.privateHostAccess,
-                    privateBrowsingEnabled: previousGrants.privateBrowsingEnabled
-                )
-                try await packageManager.updateGrants(
-                    replacement,
-                    authorization: authorization
-                ) { [weak self, weak selectedTab] in
-                    guard let self, let selectedTab else { return false }
-                    return self.tabManager.selectedTab === selectedTab &&
-                        selectedTab.isPrivate == isPrivateBrowsing &&
-                        selectedTab.url == consentedURL
-                }
-                guard let self,
-                      let selectedTab,
-                      !Task.isCancelled,
-                      self.tabManager.selectedTab === selectedTab,
-                      selectedTab.isPrivate == isPrivateBrowsing,
-                      selectedTab.url == consentedURL else { return }
-                // User-script policy is fixed before a document load. Reload
-                // so this already-open page receives the newly authorized policy.
-                selectedTab.reload()
-                self.presentWebExtensionActionPage(
-                    popup,
-                    resolver: resolver,
-                    messageRuntime: messageRuntime,
-                    isPrivateBrowsing: isPrivateBrowsing
-                )
-            } catch {
-                self?.presentWebExtensionActionsAlert(
-                    title: "Site access could not be changed",
-                    message: error.localizedDescription
-                )
+            guard let self, let selectedTab else { return }
+            await self.commitWebExtensionActionSiteAccess(
+                access,
+                authorization: authorization,
+                consentedURL: consentedURL,
+                popup: popup,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                packageManager: packageManager,
+                selectedTab: selectedTab,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
+        }
+    }
+
+    private func commitWebExtensionActionSiteAccess(
+        _ access: FloorpWebExtensionHostAccess,
+        authorization: FloorpWebExtensionLivePackageManager.PermissionMutationAuthorization,
+        consentedURL: URL?,
+        popup: FloorpWebExtensionActionPopup,
+        resolver: FloorpWebExtensionPageResourceResolver,
+        messageRuntime: FloorpWebExtensionMessageRuntime,
+        packageManager: FloorpWebExtensionLivePackageManager,
+        selectedTab: Tab,
+        isPrivateBrowsing: Bool
+    ) async {
+        do {
+            let previousGrants = popup.package.grants
+            let replacement = FloorpWebExtensionPermissionSnapshot(
+                apiPermissions: previousGrants.apiPermissions,
+                requestedHosts: previousGrants.requestedHosts,
+                normalHostAccess: isPrivateBrowsing ? previousGrants.normalHostAccess : access,
+                privateHostAccess: isPrivateBrowsing ? access : previousGrants.privateHostAccess,
+                privateBrowsingEnabled: previousGrants.privateBrowsingEnabled
+            )
+            try await packageManager.updateGrants(
+                replacement,
+                authorization: authorization
+            ) { [weak self, weak selectedTab] in
+                guard let self, let selectedTab else { return false }
+                return self.tabManager.selectedTab === selectedTab &&
+                    selectedTab.isPrivate == isPrivateBrowsing &&
+                    selectedTab.url == consentedURL
             }
+            guard !Task.isCancelled,
+                  tabManager.selectedTab === selectedTab,
+                  selectedTab.isPrivate == isPrivateBrowsing,
+                  selectedTab.url == consentedURL else { return }
+            // User-script policy is fixed before a document load. Reload
+            // so this already-open page receives the newly authorized policy.
+            selectedTab.reload()
+            presentWebExtensionActionPage(
+                popup,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
+        } catch {
+            presentWebExtensionActionsAlert(
+                title: "Site access could not be changed",
+                message: error.localizedDescription
+            )
         }
     }
 
