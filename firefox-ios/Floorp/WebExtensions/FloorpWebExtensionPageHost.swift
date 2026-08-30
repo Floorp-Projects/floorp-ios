@@ -1146,6 +1146,7 @@ final class FloorpWebExtensionPageViewController: UIViewController {
 
     private let navigationControllerDelegate: FloorpWebExtensionPageNavigationDelegate
     private let entryPointURL: URL
+    private var pageMessageReceiver: FloorpWebExtensionPageMessageReceiver?
 
     init(
         surface: FloorpWebExtensionPageSurface,
@@ -1174,6 +1175,7 @@ final class FloorpWebExtensionPageViewController: UIViewController {
         ) else {
             throw FloorpWebExtensionPageHostError.invalidResourceURL
         }
+        let pageBridgeIdentity: FloorpWebExtensionPageBridgeIdentity?
         if let profileKey = messageRuntime?.profileKey {
             let identity = try FloorpWebExtensionPageBridgeIdentity(
                 profileKey: profileKey,
@@ -1181,10 +1183,13 @@ final class FloorpWebExtensionPageViewController: UIViewController {
                 originHost: originHost,
                 surface: surface
             )
-            _ = messageRuntime?.installPageBridge(
+            let installed = messageRuntime?.installPageBridge(
                 identity,
                 on: configuration.userContentController
-            )
+            ) == true
+            pageBridgeIdentity = installed ? identity : nil
+        } else {
+            pageBridgeIdentity = nil
         }
         self.surface = surface
         self.entryPointURL = entryPointURL
@@ -1194,11 +1199,27 @@ final class FloorpWebExtensionPageViewController: UIViewController {
         )
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)
+        if let pageBridgeIdentity, let messageRuntime {
+            pageMessageReceiver = messageRuntime.registerPageMessageReceiver(
+                pageBridgeIdentity,
+                webView: webView
+            )
+        }
         webView.navigationDelegate = navigationControllerDelegate
         webView.uiDelegate = navigationControllerDelegate
         preferredContentSize = surface == .actionPopup
             ? CGSize(width: 360, height: 520)
             : CGSize(width: 640, height: 720)
+    }
+
+    deinit {
+        guard Thread.isMainThread else {
+            assertionFailure("Extension page was not deallocated on the main thread")
+            return
+        }
+        MainActor.assumeIsolated {
+            pageMessageReceiver?.invalidate()
+        }
     }
 
     @available(*, unavailable)

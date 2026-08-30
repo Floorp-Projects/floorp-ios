@@ -314,6 +314,120 @@ final class FloorpWebExtensionPageHostTests: XCTestCase {
         XCTFail("The extension page ES module did not execute.")
     }
 
+    func testPageBridgeMapsDarkReaderWindowAndTabCreationToSafeSameSurfaceNavigation() async throws {
+        let package = try FloorpWebExtensionPagePackageGeneration(
+            extensionID: extensionID,
+            generation: "same-origin-navigation-generation",
+            resourcePaths: ["popup/index.html", "options/index.html", "devtools/index.html"]
+        )
+        let resources = [
+            "popup/index.html": Data("<!doctype html><body>Popup</body>".utf8),
+            "options/index.html": Data("<!doctype html><body>Options</body>".utf8),
+            "devtools/index.html": Data("<!doctype html><body>DevTools</body>".utf8)
+        ]
+        let profileKey = FloorpWebExtensionCoordinatorProfileKey(
+            profileIdentifier: "same-surface-navigation-profile",
+            isPrivateBrowsing: false
+        )
+        let runtime = FloorpWebExtensionMessageRuntime(
+            backgroundHost: .init(),
+            profileKey: profileKey
+        )
+        let controller = try FloorpWebExtensionPageViewController(
+            surface: .actionPopup,
+            package: package,
+            entryPoint: .init("popup/index.html"),
+            resolver: .init { request in resources[request.path] ?? Data() },
+            messageRuntime: runtime,
+            openExternal: { _ in }
+        )
+
+        controller.loadViewIfNeeded()
+        try await waitForLoad(controller.webView)
+        let initialHost = try XCTUnwrap(controller.webView.url?.host)
+        let discovery = try await controller.webView.callAsyncJavaScript(
+            """
+            const windowCount = await new Promise((resolve, reject) => {
+              chrome.windows.getAll({populate: true, windowTypes: ["popup"]}, (items) => {
+                if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                else resolve(items.length);
+              });
+            });
+            const target = chrome.runtime.getURL("/options/index.html");
+            chrome.tabs.create({url: target});
+            window.close();
+            return {windowCount, target, windowsType: typeof chrome.windows};
+            """,
+            contentWorld: .page
+        ) as? [String: Any]
+        XCTAssertEqual(discovery?["windowCount"] as? Int, 0)
+        XCTAssertEqual(discovery?["windowsType"] as? String, "object")
+        XCTAssertEqual(
+            discovery?["target"] as? String,
+            "floorp-extension://\(initialHost)/options/index.html"
+        )
+
+        for _ in 0..<250 {
+            if !controller.webView.isLoading,
+               controller.webView.url?.path == "/options/index.html" {
+                XCTAssertEqual(controller.webView.url?.host, initialHost)
+                let body = try await controller.webView.callAsyncJavaScript(
+                    "return document.body.textContent",
+                    contentWorld: .page
+                ) as? String
+                XCTAssertEqual(body, "Options")
+                break
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(controller.webView.url?.path, "/options/index.html")
+
+        let rejected = try await controller.webView.callAsyncJavaScript(
+            """
+            const candidates = [
+              "https://example.com/",
+              `floorp-extension://different-origin/options/index.html`,
+              `${chrome.runtime.getURL("/devtools/index.html")}?remote=1`
+            ];
+            const results = [];
+            for (const url of candidates) {
+              try {
+                await chrome.windows.create({type: "popup", url});
+                results.push("resolved");
+              } catch (_) {
+                results.push("rejected");
+              }
+            }
+            return {results, href: globalThis.location.href};
+            """,
+            contentWorld: .page
+        ) as? [String: Any]
+        XCTAssertEqual(rejected?["results"] as? [String], ["rejected", "rejected", "rejected"])
+        XCTAssertEqual(
+            rejected?["href"] as? String,
+            "floorp-extension://\(initialHost)/options/index.html"
+        )
+
+        _ = try await controller.webView.callAsyncJavaScript(
+            """
+            const target = chrome.runtime.getURL("/devtools/index.html");
+            chrome.windows.create({type: "popup", url: target, width: 800, height: 600});
+            window.close();
+            return target;
+            """,
+            contentWorld: .page
+        )
+        for _ in 0..<250 {
+            if !controller.webView.isLoading,
+               controller.webView.url?.path == "/devtools/index.html" {
+                break
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(controller.webView.url?.host, initialHost)
+        XCTAssertEqual(controller.webView.url?.path, "/devtools/index.html")
+    }
+
     func testActionPopupFactoryUsesDefaultAndDisabledStatesWithoutOpeningAPage() throws {
         let package = try makeInstalledPackage(resourcePaths: ["popup/index.html"])
         let popup = try FloorpWebExtensionActionResource("popup/index.html")
