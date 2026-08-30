@@ -29,7 +29,7 @@ final class FloorpWebExtensionsSetting: Setting {
     override var status: NSAttributedString? {
         guard let theme else { return nil }
         return NSAttributedString(
-            string: "Install and manage Floorp-reviewed extensions",
+            string: FloorpStrings.WebExtensions.introMessage,
             attributes: [.foregroundColor: theme.colors.textSecondary]
         )
     }
@@ -42,7 +42,7 @@ final class FloorpWebExtensionsSetting: Setting {
         let theme = settings.currentTheme()
         super.init(
             title: NSAttributedString(
-                string: "Extensions",
+                string: FloorpStrings.WebExtensions.title,
                 attributes: [.foregroundColor: theme.colors.textPrimary]
             )
         )

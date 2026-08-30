@@ -56,7 +56,7 @@ enum FloorpWebExtensionIconRegistry {
         switch extensionID.rawValue {
         case "floorp.thirdparty.darkreader":
             return FloorpWebExtensionIconDescriptor(
-                source: .resource(name: "dr_128", extension: "png", subdirectory: nil),
+                source: .system(name: "moon.stars.fill"),
                 fallbackSystemName: "moon.stars.fill",
                 accessibilityLabel: "Dark Reader icon"
             )
@@ -67,6 +67,81 @@ enum FloorpWebExtensionIconRegistry {
                 accessibilityLabel: "Extension icon"
             )
         }
+    }
+}
+
+@MainActor
+final class FloorpWebExtensionOverviewHeaderView: UIView, ThemeApplicable {
+    private let iconBackgroundView: UIView = .build()
+    private let iconView: UIImageView = .build()
+    private let titleLabel: UILabel = .build()
+    private let messageLabel: UILabel = .build()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupView()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(title: String, message: String, theme: Theme) {
+        titleLabel.text = title
+        messageLabel.text = message
+        accessibilityLabel = "\(title). \(message)"
+        applyTheme(theme: theme)
+    }
+
+    func applyTheme(theme: Theme) {
+        backgroundColor = theme.colors.layer1
+        iconBackgroundView.backgroundColor = theme.colors.layerAccentNonOpaque
+        iconView.tintColor = theme.colors.iconAccent
+        titleLabel.textColor = theme.colors.textPrimary
+        messageLabel.textColor = theme.colors.textSecondary
+    }
+
+    private func setupView() {
+        isAccessibilityElement = true
+        accessibilityTraits = .header
+        iconBackgroundView.layer.cornerRadius = 18
+        iconBackgroundView.layer.cornerCurve = .continuous
+        iconView.image = UIImage(systemName: "puzzlepiece.extension.fill")
+        iconView.contentMode = .scaleAspectFit
+        iconView.isAccessibilityElement = false
+
+        titleLabel.font = .preferredFont(forTextStyle: .title2)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.numberOfLines = 0
+        messageLabel.font = .preferredFont(forTextStyle: .body)
+        messageLabel.adjustsFontForContentSizeCategory = true
+        messageLabel.numberOfLines = 0
+
+        let textStack: UIStackView = .build()
+        textStack.axis = .vertical
+        textStack.alignment = .fill
+        textStack.spacing = 5
+        textStack.addArrangedSubview(titleLabel)
+        textStack.addArrangedSubview(messageLabel)
+
+        addSubview(iconBackgroundView)
+        iconBackgroundView.addSubview(iconView)
+        addSubview(textStack)
+        NSLayoutConstraint.activate([
+            iconBackgroundView.topAnchor.constraint(equalTo: topAnchor, constant: 22),
+            iconBackgroundView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            iconBackgroundView.widthAnchor.constraint(equalToConstant: 58),
+            iconBackgroundView.heightAnchor.constraint(equalTo: iconBackgroundView.widthAnchor),
+            iconView.topAnchor.constraint(equalTo: iconBackgroundView.topAnchor, constant: 13),
+            iconView.leadingAnchor.constraint(equalTo: iconBackgroundView.leadingAnchor, constant: 13),
+            iconView.trailingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor, constant: -13),
+            iconView.bottomAnchor.constraint(equalTo: iconBackgroundView.bottomAnchor, constant: -13),
+            textStack.topAnchor.constraint(equalTo: topAnchor, constant: 20),
+            textStack.leadingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor, constant: 16),
+            textStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18),
+            iconBackgroundView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -18)
+        ])
     }
 }
 
@@ -81,12 +156,12 @@ struct FloorpWebExtensionCardPresentation: Hashable, Sendable {
 
         var title: String {
             switch self {
-            case .available: return "Available"
-            case .enabled: return "Enabled"
-            case .disabled: return "Disabled"
-            case .updateAvailable: return "Update"
-            case .revoked: return "Revoked"
-            case .error: return "Needs attention"
+            case .available: return FloorpStrings.WebExtensions.add
+            case .enabled: return FloorpStrings.WebExtensions.enabled
+            case .disabled: return FloorpStrings.WebExtensions.disabled
+            case .updateAvailable: return FloorpStrings.WebExtensions.updateAvailable
+            case .revoked: return FloorpStrings.WebExtensions.revoked
+            case .error: return FloorpStrings.WebExtensions.loadErrorTitle
             }
         }
     }
@@ -138,6 +213,13 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
     private var presentation: FloorpWebExtensionCardPresentation?
     private var currentTheme: Theme?
 
+    var displayedTitle: String? { titleLabel.text }
+    var displayedSummary: String? { summaryLabel.text }
+    var displayedVersion: String? { versionLabel.text }
+    var displayedStatus: String? { statusLabel.text }
+    var displayedIcon: UIImage? { iconView.image }
+    var isShowingActivity: Bool { activityIndicator.isAnimating }
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         setupView()
@@ -170,14 +252,14 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
         iconView.tintColor = descriptor.usesTemplateRendering(in: bundle) ? theme.colors.iconAccent : nil
         titleLabel.text = presentation.title
         summaryLabel.text = presentation.summary
-        versionLabel.text = "Version \(presentation.version)"
+        versionLabel.text = FloorpStrings.WebExtensions.version(presentation.version)
         statusLabel.text = presentation.status.title
         chevronView.isHidden = presentation.isBusy
         statusView.isHidden = presentation.isBusy
         isUserInteractionEnabled = !presentation.isBusy
         if presentation.isBusy {
             activityIndicator.startAnimating()
-            accessibilityValue = "In progress"
+            accessibilityValue = FloorpStrings.WebExtensions.loading
         } else {
             activityIndicator.stopAnimating()
             accessibilityValue = presentation.status.title
@@ -186,7 +268,7 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
         accessibilityLabel = [
             presentation.title,
             presentation.status.title,
-            "Version \(presentation.version)",
+            FloorpStrings.WebExtensions.version(presentation.version),
             presentation.summary
         ].joined(separator: ", ")
         accessibilityHint = presentation.accessibilityHint
@@ -253,6 +335,8 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
         versionLabel.adjustsFontForContentSizeCategory = true
         statusLabel.font = .preferredFont(forTextStyle: .caption1)
         statusLabel.adjustsFontForContentSizeCategory = true
+        statusLabel.numberOfLines = 2
+        statusLabel.textAlignment = .center
         statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         statusView.layer.cornerRadius = 9
         statusView.layer.cornerCurve = .continuous
@@ -303,10 +387,11 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
 
             versionLabel.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 12),
             versionLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            versionLabel.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16),
-            statusView.leadingAnchor.constraint(greaterThanOrEqualTo: versionLabel.trailingAnchor, constant: 12),
-            statusView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-            statusView.centerYAnchor.constraint(equalTo: versionLabel.centerYAnchor),
+            versionLabel.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -16),
+            statusView.topAnchor.constraint(equalTo: versionLabel.bottomAnchor, constant: 8),
+            statusView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            statusView.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -16),
+            statusView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16),
             statusLabel.topAnchor.constraint(equalTo: statusView.topAnchor, constant: 4),
             statusLabel.leadingAnchor.constraint(equalTo: statusView.leadingAnchor, constant: 9),
             statusLabel.trailingAnchor.constraint(equalTo: statusView.trailingAnchor, constant: -9),
@@ -318,6 +403,11 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
 }
 
 struct FloorpWebExtensionInstallPresentation: Sendable {
+    enum Mode: Sendable, Equatable {
+        case install
+        case update
+    }
+
     let extensionID: FloorpWebExtensionID
     let name: String
     let summary: String
@@ -332,6 +422,7 @@ struct FloorpWebExtensionInstallPresentation: Sendable {
     let permissions: [FloorpWebExtensionPermissionCategory]
     let requestedSites: [String]
     let privateProfileCapability: FloorpWebExtensionCatalogPackageMetadata.PrivateProfileCapability?
+    let mode: Mode
 
     init(
         extensionID: FloorpWebExtensionID,
@@ -347,7 +438,8 @@ struct FloorpWebExtensionInstallPresentation: Sendable {
         license: String,
         permissions: [FloorpWebExtensionPermissionCategory],
         requestedSites: [String],
-        privateProfileCapability: FloorpWebExtensionCatalogPackageMetadata.PrivateProfileCapability? = nil
+        privateProfileCapability: FloorpWebExtensionCatalogPackageMetadata.PrivateProfileCapability? = nil,
+        mode: Mode = .install
     ) {
         self.extensionID = extensionID
         self.name = name
@@ -363,6 +455,7 @@ struct FloorpWebExtensionInstallPresentation: Sendable {
         self.permissions = permissions
         self.requestedSites = requestedSites
         self.privateProfileCapability = privateProfileCapability
+        self.mode = mode
     }
 }
 
@@ -370,6 +463,18 @@ struct FloorpWebExtensionInstallPresentation: Sendable {
 final class FloorpWebExtensionInstallConfirmationViewController: UIViewController,
                                                                   Themeable,
                                                                   InjectedThemeUUIDIdentifiable {
+    private struct InfoRow {
+        let symbol: String
+        let title: String
+        let detail: String
+
+        init(_ symbol: String, _ title: String, _ detail: String) {
+            self.symbol = symbol
+            self.title = title
+            self.detail = detail
+        }
+    }
+
     typealias Callback = @MainActor () -> Void
 
     let windowUUID: WindowUUID
@@ -377,19 +482,21 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
     var themeManager: ThemeManager
     var themeListenerCancellable: Any?
 
-    private let presentation: FloorpWebExtensionInstallPresentation
+    let presentation: FloorpWebExtensionInstallPresentation
     private let notificationCenter: NotificationProtocol
     private let onCancel: Callback
     private let onInstall: Callback
     private let scrollView: UIScrollView = .build()
     private let contentStack: UIStackView = .build()
     private let footerView: UIView = .build()
+    private let footerButtonStack: UIStackView = .build()
     private let cancelButton: UIButton = .build()
     private let installButton: UIButton = .build()
     private var themedCards = [UIView]()
     private var primaryLabels = [UILabel]()
     private var secondaryLabels = [UILabel]()
     private var iconViews = [UIImageView]()
+    private var separators = [UIView]()
 
     init(
         presentation: FloorpWebExtensionInstallPresentation,
@@ -433,15 +540,20 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
         primaryLabels.forEach { $0.textColor = theme.colors.textPrimary }
         secondaryLabels.forEach { $0.textColor = theme.colors.textSecondary }
         iconViews.forEach { $0.tintColor = theme.colors.iconAccent }
+        separators.forEach { $0.backgroundColor = theme.colors.borderPrimary }
 
         var cancelConfiguration = UIButton.Configuration.gray()
-        cancelConfiguration.title = "Cancel"
+        cancelConfiguration.title = FloorpStrings.WebExtensions.cancel
         cancelConfiguration.baseForegroundColor = theme.colors.textPrimary
         cancelButton.configuration = cancelConfiguration
 
         var installConfiguration = UIButton.Configuration.filled()
-        installConfiguration.title = "Install extension"
-        installConfiguration.image = UIImage(systemName: "arrow.down.app.fill")
+        installConfiguration.title = presentation.mode == .update
+            ? FloorpStrings.WebExtensions.update
+            : FloorpStrings.WebExtensions.install
+        installConfiguration.image = UIImage(
+            systemName: presentation.mode == .update ? "arrow.down.circle.fill" : "arrow.down.app.fill"
+        )
         installConfiguration.imagePadding = 8
         installConfiguration.baseBackgroundColor = theme.colors.actionPrimary
         installConfiguration.baseForegroundColor = theme.colors.textOnDark
@@ -449,19 +561,24 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
     }
 
     private func setupView() {
-        title = "Review extension"
+        title = presentation.mode == .update
+            ? "\(FloorpStrings.WebExtensions.update) · \(presentation.name)"
+            : FloorpStrings.WebExtensions.installTitle(name: presentation.name)
         contentStack.axis = .vertical
         contentStack.spacing = 20
         contentStack.alignment = .fill
         footerView.layer.shadowOpacity = 0.12
         footerView.layer.shadowRadius = 8
         footerView.layer.shadowOffset = CGSize(width: 0, height: -2)
+        footerButtonStack.spacing = 12
+        footerButtonStack.distribution = .fillEqually
 
         view.addSubview(scrollView)
         scrollView.addSubview(contentStack)
         view.addSubview(footerView)
-        footerView.addSubview(cancelButton)
-        footerView.addSubview(installButton)
+        footerView.addSubview(footerButtonStack)
+        footerButtonStack.addArrangedSubview(cancelButton)
+        footerButtonStack.addArrangedSubview(installButton)
 
         NSLayoutConstraint.activate([
             footerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -475,23 +592,33 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
             contentStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
             contentStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -28),
-            cancelButton.topAnchor.constraint(equalTo: footerView.topAnchor, constant: 14),
-            cancelButton.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 20),
-            cancelButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            footerButtonStack.topAnchor.constraint(equalTo: footerView.topAnchor, constant: 14),
+            footerButtonStack.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 20),
+            footerButtonStack.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -20),
+            footerButtonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
             cancelButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
-            installButton.topAnchor.constraint(equalTo: cancelButton.topAnchor),
-            installButton.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 12),
-            installButton.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -20),
-            installButton.bottomAnchor.constraint(equalTo: cancelButton.bottomAnchor),
-            installButton.widthAnchor.constraint(greaterThanOrEqualTo: cancelButton.widthAnchor, multiplier: 1.5)
+            installButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50)
         ])
+        updateFooterAxis()
 
         cancelButton.accessibilityIdentifier = "Floorp.WebExtensions.InstallConsent.Cancel.\(presentation.extensionID.rawValue)"
-        cancelButton.accessibilityHint = "Closes the installation review without making changes."
+        cancelButton.accessibilityHint = FloorpStrings.WebExtensions.cancel
         installButton.accessibilityIdentifier = "Floorp.WebExtensions.InstallConsent.Install.\(presentation.extensionID.rawValue)"
-        installButton.accessibilityHint = "Installs this reviewed extension with site access disabled."
-        cancelButton.addAction(UIAction { [weak self] _ in self?.onCancel() }, for: .touchUpInside)
-        installButton.addAction(UIAction { [weak self] _ in self?.onInstall() }, for: .touchUpInside)
+        installButton.accessibilityHint = presentation.mode == .update
+            ? FloorpStrings.WebExtensions.update
+            : FloorpStrings.WebExtensions.siteAccessStartsOffMessage
+        cancelButton.addAction(UIAction { [weak self] _ in
+            guard let self, self.cancelButton.isEnabled else { return }
+            self.cancelButton.isEnabled = false
+            self.installButton.isEnabled = false
+            self.onCancel()
+        }, for: .touchUpInside)
+        installButton.addAction(UIAction { [weak self] _ in
+            guard let self, self.installButton.isEnabled else { return }
+            self.cancelButton.isEnabled = false
+            self.installButton.isEnabled = false
+            self.onInstall()
+        }, for: .touchUpInside)
 
         addHero()
         addCapabilityCard()
@@ -528,7 +655,11 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
 
         let titleLabel = makeLabel(text: presentation.name, style: .title2, primary: true)
         titleLabel.textAlignment = .center
-        let versionLabel = makeLabel(text: "Version \(presentation.version)", style: .subheadline, primary: false)
+        let versionLabel = makeLabel(
+            text: FloorpStrings.WebExtensions.version(presentation.version),
+            style: .subheadline,
+            primary: false
+        )
         versionLabel.textAlignment = .center
         let summaryLabel = makeLabel(text: presentation.summary, style: .body, primary: false)
         summaryLabel.textAlignment = .center
@@ -539,32 +670,64 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
         contentStack.addArrangedSubview(container)
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.preferredContentSizeCategory !=
+                traitCollection.preferredContentSizeCategory else {
+            return
+        }
+        updateFooterAxis()
+    }
+
+    private func updateFooterAxis() {
+        footerButtonStack.axis = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+            ? .vertical
+            : .horizontal
+    }
+
     private func addCapabilityCard() {
-        let rows: [(String, String, String)]
+        let rows: [InfoRow]
         if presentation.permissions.isEmpty {
-            rows = [("checkmark.shield.fill", "No additional capabilities", "This extension requests no product-level capabilities.")]
+            rows = [InfoRow(
+                "checkmark.shield.fill",
+                FloorpStrings.WebExtensions.reviewed,
+                FloorpStrings.WebExtensions.introMessage
+            )]
         } else {
             rows = presentation.permissions.map { permission in
-                (permissionSymbol(permission), permission.title, permissionExplanation(permission))
+                InfoRow(
+                    permissionSymbol(permission),
+                    permission.title,
+                    permissionExplanation(permission)
+                )
             }
         }
         contentStack.addArrangedSubview(makeSection(
-            title: "What this extension can do",
+            title: FloorpStrings.WebExtensions.accessSection,
             rows: rows
         ))
     }
 
     private func addSiteAccessCard() {
-        let detail: String
-        if presentation.requestedSites.isEmpty {
-            detail = "No website access is requested."
-        } else {
-            detail = "Access starts off. After installation, you choose which requested sites to allow.\n\n" +
-                presentation.requestedSites.sorted().joined(separator: "\n")
+        guard !presentation.requestedSites.isEmpty else { return }
+        let title: String
+        let message: String
+        switch presentation.mode {
+        case .install:
+            title = FloorpStrings.WebExtensions.siteAccessStartsOffTitle
+            message = FloorpStrings.WebExtensions.siteAccessStartsOffMessage
+        case .update:
+            title = FloorpStrings.WebExtensions.siteAccessPreservedTitle
+            message = FloorpStrings.WebExtensions.siteAccessPreservedMessage
         }
+        let detail = message + "\n\n" + presentation.requestedSites.sorted().joined(separator: "\n")
         contentStack.addArrangedSubview(makeSection(
-            title: "Website access",
-            rows: [("hand.raised.fill", "You stay in control", detail)]
+            title: FloorpStrings.WebExtensions.siteAccess,
+            rows: [InfoRow(
+                "hand.raised.fill",
+                title,
+                detail
+            )]
         ))
     }
 
@@ -572,38 +735,50 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
         let detail: String
         switch presentation.privateProfileCapability {
         case .some(.notSupported):
-            detail = "This extension is not available in private browsing."
+            detail = FloorpStrings.WebExtensions.notSupported
         case .some(.optIn), .some(.supported):
-            detail = "Private browsing is a separate opt-in with separate, ephemeral storage and site access."
+            detail = FloorpStrings.WebExtensions.privateBrowsingOptInMessage
         case .none:
-            detail = "Private browsing availability is not declared for this extension."
+            detail = FloorpStrings.WebExtensions.notSupported
         }
         contentStack.addArrangedSubview(makeSection(
-            title: "Private browsing",
-            rows: [("eye.slash.fill", "Separate by design", detail)]
+            title: FloorpStrings.WebExtensions.profileSection,
+            rows: [InfoRow(
+                "eye.slash.fill",
+                FloorpStrings.WebExtensions.privateBrowsingOptInTitle,
+                detail
+            )]
         ))
     }
 
     private func addPublisherCard() {
-        var rows = [(String, String, String)]()
-        rows.append(("person.crop.circle.badge.checkmark", "Publisher", presentation.catalogPublisher ?? presentation.source))
+        var rows = [InfoRow]()
+        rows.append(InfoRow(
+            "person.crop.circle.badge.checkmark",
+            FloorpStrings.WebExtensions.publisherLabel,
+            presentation.catalogPublisher ?? presentation.source
+        ))
         if let attribution = presentation.catalogAttribution {
-            rows.append(("signature", "Attribution", attribution))
+            rows.append(InfoRow("signature", "Attribution", attribution))
         }
         if let reviewedAt = presentation.catalogReviewedAt {
-            rows.append(("checkmark.seal.fill", "Floorp review", reviewedAt))
+            rows.append(InfoRow("checkmark.seal.fill", FloorpStrings.WebExtensions.reviewed, reviewedAt))
         }
         if let privacySummary = presentation.catalogPrivacySummary {
-            rows.append(("lock.shield.fill", "Privacy", privacySummary))
+            rows.append(InfoRow("lock.shield.fill", FloorpStrings.WebExtensions.privacySection, privacySummary))
         }
         if let retentionPolicy = presentation.catalogRetentionPolicy {
-            rows.append(("internaldrive.fill", "Data retention", retentionPolicy))
+            rows.append(InfoRow("internaldrive.fill", "Data retention", retentionPolicy))
         }
-        rows.append(("doc.text.fill", "Source and license", "\(presentation.source) · \(presentation.license)"))
-        contentStack.addArrangedSubview(makeSection(title: "Trust and transparency", rows: rows))
+        rows.append(InfoRow(
+            "doc.text.fill",
+            "\(FloorpStrings.WebExtensions.sourceLabel) · \(FloorpStrings.WebExtensions.licenseLabel)",
+            "\(presentation.source) · \(presentation.license)"
+        ))
+        contentStack.addArrangedSubview(makeSection(title: FloorpStrings.WebExtensions.reviewed, rows: rows))
     }
 
-    private func makeSection(title: String, rows: [(String, String, String)]) -> UIView {
+    private func makeSection(title: String, rows: [InfoRow]) -> UIView {
         let stack: UIStackView = .build()
         stack.axis = .vertical
         stack.spacing = 0
@@ -626,9 +801,13 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
                 let separator: UIView = .build()
                 separator.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale).isActive = true
                 card.addArrangedSubview(separator)
-                themedCards.append(separator)
+                separators.append(separator)
             }
-            card.addArrangedSubview(makeInfoRow(symbol: row.0, title: row.1, detail: row.2))
+            card.addArrangedSubview(makeInfoRow(
+                symbol: row.symbol,
+                title: row.title,
+                detail: row.detail
+            ))
         }
         stack.addArrangedSubview(card)
         return stack
@@ -730,6 +909,7 @@ struct FloorpWebExtensionInstalledDetailPresentation: Sendable {
     let catalogSource: String?
     let catalogLicense: String?
     let updateVersion: String?
+    let postInstallMessage: String?
 
     init(
         extensionID: FloorpWebExtensionID,
@@ -751,7 +931,8 @@ struct FloorpWebExtensionInstalledDetailPresentation: Sendable {
         catalogReviewedAt: String? = nil,
         catalogSource: String? = nil,
         catalogLicense: String? = nil,
-        updateVersion: String? = nil
+        updateVersion: String? = nil,
+        postInstallMessage: String? = nil
     ) {
         self.extensionID = extensionID
         self.name = name
@@ -773,6 +954,7 @@ struct FloorpWebExtensionInstalledDetailPresentation: Sendable {
         self.catalogSource = catalogSource
         self.catalogLicense = catalogLicense
         self.updateVersion = updateVersion
+        self.postInstallMessage = postInstallMessage
     }
 }
 
@@ -805,9 +987,9 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
         var title: String? {
             switch self {
             case .status: return nil
-            case .access: return "Access"
-            case .controls: return "Manage"
-            case .trust: return "Trust and transparency"
+            case .access: return FloorpStrings.WebExtensions.accessSection
+            case .controls: return FloorpStrings.WebExtensions.manage
+            case .trust: return FloorpStrings.WebExtensions.reviewed
             case .remove: return nil
             }
         }
@@ -825,7 +1007,7 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
     var themeManager: ThemeManager
     var themeListenerCancellable: Any?
 
-    private let presentation: FloorpWebExtensionInstalledDetailPresentation
+    let presentation: FloorpWebExtensionInstalledDetailPresentation
     private let actions: FloorpWebExtensionInstalledDetailActions
     private let notificationCenter: NotificationProtocol
     private let heroView = FloorpWebExtensionInstalledHeroView()
@@ -853,7 +1035,7 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Extension"
+        title = FloorpStrings.WebExtensions.detailTitle
         view.accessibilityIdentifier = "Floorp.WebExtensions.Detail.\(presentation.extensionID.rawValue)"
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "detail")
         tableView.rowHeight = UITableView.automaticDimension
@@ -914,7 +1096,7 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
 
         switch row {
         case .enabled:
-            cell.textLabel?.text = "Enabled"
+            cell.textLabel?.text = FloorpStrings.WebExtensions.enabled
             cell.detailTextLabel?.text = presentation.isCatalogRevoked
                 ? "Disabled because this catalog package was revoked."
                 : "Allow this extension to run in standard browsing."
@@ -922,6 +1104,10 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
             enabledSwitch.isOn = isEnabled
             enabledSwitch.isEnabled = !presentation.isCatalogRevoked
             enabledSwitch.accessibilityIdentifier = "Floorp.WebExtensions.Detail.EnabledSwitch.\(presentation.extensionID.rawValue)"
+            enabledSwitch.accessibilityLabel = presentation.name
+            enabledSwitch.accessibilityHint = presentation.isCatalogRevoked
+                ? FloorpStrings.WebExtensions.revoked
+                : FloorpStrings.WebExtensions.manage
             enabledSwitch.addAction(UIAction { [weak self, weak enabledSwitch] _ in
                 guard let self, let control = enabledSwitch else { return }
                 self.isEnabled = control.isOn
@@ -937,7 +1123,7 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
             cell.accessoryType = .disclosureIndicator
             cell.accessibilityIdentifier = "Floorp.WebExtensions.Detail.\(identifier).\(presentation.extensionID.rawValue)"
         case .destructive:
-            cell.textLabel?.text = "Uninstall extension"
+            cell.textLabel?.text = FloorpStrings.WebExtensions.uninstall
             cell.textLabel?.textColor = theme.colors.textCritical
             cell.imageView?.image = UIImage(systemName: "trash.fill")
             cell.imageView?.tintColor = theme.colors.iconCritical
@@ -958,127 +1144,213 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
     private func rows(in sectionIndex: Int) -> [Row] {
         guard let section = Section(rawValue: sectionIndex) else { return [] }
         switch section {
-        case .status:
-            var rows: [Row] = [.enabled]
-            if presentation.isCatalogRevoked {
-                rows.append(.information(
-                    symbol: "exclamationmark.shield.fill",
-                    title: "Catalog package revoked",
-                    detail: "This extension cannot be enabled or updated. You can uninstall it below."
-                ))
-            } else if let error = presentation.errorDescription {
-                rows.append(.information(
-                    symbol: "exclamationmark.triangle.fill",
-                    title: "Needs attention",
-                    detail: error
-                ))
-            }
-            return rows
-        case .access:
-            var rows: [Row] = [
-                .information(
-                    symbol: "hand.raised.fill",
-                    title: "Website access",
-                    detail: presentation.siteAccessDescription
-                )
-            ]
-            if let action = actions.onManageSiteAccess {
-                rows.append(.action(
-                    symbol: "globe",
-                    title: "Manage website access",
-                    detail: "Choose exactly where this extension can run.",
-                    identifier: "SiteAccess",
-                    handler: action
-                ))
-            }
-            let privateTitle: String
-            switch presentation.privateProfileCapability {
-            case .some(.notSupported): privateTitle = "Private browsing unavailable"
-            case .some(.optIn), .some(.supported):
-                privateTitle = presentation.isPrivateBrowsingEnabled
-                    ? "Allowed in private browsing"
-                    : "Not allowed in private browsing"
-            case .none: privateTitle = "Private browsing not declared"
-            }
-            rows.append(.information(
-                symbol: "eye.slash.fill",
-                title: privateTitle,
-                detail: presentation.privateAccessDescription
-            ))
-            if let action = actions.onTogglePrivateBrowsing,
-               presentation.privateProfileCapability != .notSupported,
-               !presentation.isCatalogRevoked {
-                rows.append(.action(
-                    symbol: presentation.isPrivateBrowsingEnabled ? "eye.slash" : "eye.slash.fill",
-                    title: presentation.isPrivateBrowsingEnabled
-                        ? "Disable in private browsing"
-                        : "Allow in private browsing",
-                    detail: "Uses a separate private-profile installation and storage.",
-                    identifier: "PrivateBrowsing",
-                    handler: { [presentation] in action(!presentation.isPrivateBrowsingEnabled) }
-                ))
-            }
-            if let action = actions.onManagePrivateSiteAccess, presentation.isPrivateBrowsingEnabled {
-                rows.append(.action(
-                    symbol: "lock.shield.fill",
-                    title: "Private website access",
-                    detail: "Manage access separately for private browsing.",
-                    identifier: "PrivateSiteAccess",
-                    handler: action
-                ))
-            }
-            return rows
-        case .controls:
-            var rows = [Row]()
-            appendAction(actions.onOpenOptions, to: &rows, symbol: "gearshape.fill", title: "Extension settings", detail: nil, identifier: "Options")
-            appendAction(actions.onManageNetworkProtection, to: &rows, symbol: "shield.lefthalf.filled", title: "Network protection", detail: "Review active rules and site exclusions.", identifier: "Network")
-            appendAction(actions.onManagePrivateNetworkProtection, to: &rows, symbol: "lock.shield.fill", title: "Private network protection", detail: "Review private rules and site exclusions.", identifier: "PrivateNetwork")
-            appendAction(actions.onOpenWebsite, to: &rows, symbol: "safari.fill", title: "Project website", detail: nil, identifier: "Website")
-            appendAction(actions.onViewUpdateHistory, to: &rows, symbol: "clock.arrow.circlepath", title: "Update history", detail: nil, identifier: "History")
-            if let update = actions.onUpdate, let version = presentation.updateVersion {
-                rows.append(.action(
-                    symbol: "arrow.down.circle.fill",
-                    title: "Update to \(version)",
-                    detail: "Review and install the latest signed catalog version.",
-                    identifier: "Update",
-                    handler: update
-                ))
-            }
-            return rows.isEmpty
-                ? [.information(symbol: "checkmark.circle.fill", title: "No additional controls", detail: "This extension has no configurable actions.")]
-                : rows
-        case .trust:
-            var rows = [Row]()
-            rows.append(.information(
-                symbol: "checkmark.seal.fill",
-                title: presentation.catalogPublisher ?? "Reviewed extension",
-                detail: [presentation.catalogAttribution, presentation.catalogReviewedAt.map { "Reviewed \($0)" }]
-                    .compactMap { $0 }
-                    .joined(separator: "\n")
-            ))
-            if !presentation.permissions.isEmpty {
-                rows.append(.information(
-                    symbol: "list.bullet.clipboard.fill",
-                    title: "Capabilities",
-                    detail: presentation.permissions.map(\.title).joined(separator: "\n")
-                ))
-            }
-            if let privacy = presentation.catalogPrivacySummary {
-                rows.append(.information(symbol: "lock.shield.fill", title: "Privacy", detail: privacy))
-            }
-            if let retention = presentation.catalogRetentionPolicy {
-                rows.append(.information(symbol: "internaldrive.fill", title: "Data retention", detail: retention))
-            }
-            let sourceAndLicense = [presentation.catalogSource, presentation.catalogLicense]
-                .compactMap { $0 }
-                .joined(separator: " · ")
-            if !sourceAndLicense.isEmpty {
-                rows.append(.information(symbol: "doc.text.fill", title: "Source and license", detail: sourceAndLicense))
-            }
-            return rows
-        case .remove:
-            return [.destructive]
+        case .status: return statusRows()
+        case .access: return accessRows()
+        case .controls: return controlRows()
+        case .trust: return trustRows()
+        case .remove: return [.destructive]
         }
+    }
+
+    private func statusRows() -> [Row] {
+        var rows: [Row] = [.enabled]
+        if let postInstallMessage = presentation.postInstallMessage {
+            rows.append(.information(
+                symbol: "hand.raised.fill",
+                title: FloorpStrings.WebExtensions.siteAccessStartsOffTitle,
+                detail: postInstallMessage
+            ))
+        }
+        if presentation.isCatalogRevoked {
+            rows.append(.information(
+                symbol: "exclamationmark.shield.fill",
+                title: FloorpStrings.WebExtensions.revoked,
+                detail: "This extension cannot be enabled or updated. You can uninstall it below."
+            ))
+        } else if let error = presentation.errorDescription {
+            rows.append(.information(
+                symbol: "exclamationmark.triangle.fill",
+                title: FloorpStrings.WebExtensions.loadErrorTitle,
+                detail: error
+            ))
+        }
+        return rows
+    }
+
+    private func accessRows() -> [Row] {
+        var rows: [Row] = [.information(
+            symbol: "hand.raised.fill",
+            title: FloorpStrings.WebExtensions.siteAccess,
+            detail: presentation.siteAccessDescription
+        )]
+        if let action = actions.onManageSiteAccess {
+            rows.append(.action(
+                symbol: "globe",
+                title: FloorpStrings.WebExtensions.siteAccess,
+                detail: FloorpStrings.WebExtensions.siteAccessStartsOffMessage,
+                identifier: "SiteAccess",
+                handler: action
+            ))
+        }
+        rows.append(contentsOf: privateAccessRows())
+        return rows
+    }
+
+    private func privateAccessRows() -> [Row] {
+        let privateTitle = privateBrowsingStatusTitle()
+        var rows: [Row] = [.information(
+            symbol: "eye.slash.fill",
+            title: privateTitle,
+            detail: presentation.privateAccessDescription
+        )]
+        if let action = actions.onTogglePrivateBrowsing,
+           presentation.privateProfileCapability != .notSupported,
+           !presentation.isCatalogRevoked {
+            rows.append(.action(
+                symbol: presentation.isPrivateBrowsingEnabled ? "eye.slash" : "eye.slash.fill",
+                title: FloorpStrings.WebExtensions.privateBrowsing,
+                detail: FloorpStrings.WebExtensions.privateBrowsingOptInMessage,
+                identifier: "PrivateBrowsing",
+                handler: { [presentation] in action(!presentation.isPrivateBrowsingEnabled) }
+            ))
+        }
+        if let action = actions.onManagePrivateSiteAccess,
+           presentation.isPrivateBrowsingEnabled,
+           presentation.privateProfileCapability != .notSupported,
+           !presentation.isCatalogRevoked {
+            rows.append(.action(
+                symbol: "lock.shield.fill",
+                title: FloorpStrings.WebExtensions.privateBrowsing,
+                detail: FloorpStrings.WebExtensions.siteAccess,
+                identifier: "PrivateSiteAccess",
+                handler: action
+            ))
+        }
+        return rows
+    }
+
+    private func privateBrowsingStatusTitle() -> String {
+        let status: String
+        switch presentation.privateProfileCapability {
+        case .some(.notSupported): status = FloorpStrings.WebExtensions.notSupported
+        case .some(.optIn), .some(.supported):
+            status = presentation.isPrivateBrowsingEnabled
+                ? FloorpStrings.WebExtensions.enabled
+                : FloorpStrings.WebExtensions.disabled
+        case .none: return FloorpStrings.WebExtensions.privateBrowsing
+        }
+        return "\(FloorpStrings.WebExtensions.privateBrowsing) · \(status)"
+    }
+
+    private func controlRows() -> [Row] {
+        var rows = [Row]()
+        appendControlActions(to: &rows)
+        if !presentation.isCatalogRevoked,
+           let update = actions.onUpdate,
+           let version = presentation.updateVersion {
+            rows.append(.action(
+                symbol: "arrow.down.circle.fill",
+                title: "\(FloorpStrings.WebExtensions.update) \(version)",
+                detail: FloorpStrings.WebExtensions.reviewed,
+                identifier: "Update",
+                handler: update
+            ))
+        }
+        return rows.isEmpty ? [.information(
+            symbol: "checkmark.circle.fill",
+            title: FloorpStrings.WebExtensions.reviewed,
+            detail: FloorpStrings.WebExtensions.introMessage
+        )] : rows
+    }
+
+    private func appendControlActions(to rows: inout [Row]) {
+        appendAction(
+            actions.onOpenOptions,
+            to: &rows,
+            symbol: "gearshape.fill",
+            title: FloorpStrings.WebExtensions.options,
+            identifier: "Options"
+        )
+        appendAction(
+            actions.onManageNetworkProtection,
+            to: &rows,
+            symbol: "shield.lefthalf.filled",
+            title: FloorpStrings.WebExtensions.networkProtection,
+            identifier: "Network"
+        )
+        appendAction(
+            actions.onManagePrivateNetworkProtection,
+            to: &rows,
+            symbol: "lock.shield.fill",
+            title: "\(FloorpStrings.WebExtensions.privateBrowsing) · " +
+                FloorpStrings.WebExtensions.networkProtection,
+            identifier: "PrivateNetwork"
+        )
+        appendAction(
+            actions.onOpenWebsite,
+            to: &rows,
+            symbol: "safari.fill",
+            title: FloorpStrings.WebExtensions.website,
+            identifier: "Website"
+        )
+        appendAction(
+            actions.onViewUpdateHistory,
+            to: &rows,
+            symbol: "clock.arrow.circlepath",
+            title: FloorpStrings.WebExtensions.updateHistory,
+            identifier: "History"
+        )
+    }
+
+    private func trustRows() -> [Row] {
+        var rows: [Row] = [.information(
+            symbol: "checkmark.seal.fill",
+            title: presentation.catalogPublisher ?? FloorpStrings.WebExtensions.reviewed,
+            detail: trustReviewDetail()
+        )]
+        if !presentation.permissions.isEmpty {
+            rows.append(.information(
+                symbol: "list.bullet.clipboard.fill",
+                title: FloorpStrings.WebExtensions.accessSection,
+                detail: presentation.permissions.map(\.title).joined(separator: "\n")
+            ))
+        }
+        appendPrivacyRows(to: &rows)
+        return rows
+    }
+
+    private func appendPrivacyRows(to rows: inout [Row]) {
+        if let privacy = presentation.catalogPrivacySummary {
+            rows.append(.information(
+                symbol: "lock.shield.fill",
+                title: FloorpStrings.WebExtensions.privacySection,
+                detail: privacy
+            ))
+        }
+        if let retention = presentation.catalogRetentionPolicy {
+            rows.append(.information(
+                symbol: "internaldrive.fill",
+                title: FloorpStrings.WebExtensions.privacySection,
+                detail: retention
+            ))
+        }
+        let sourceAndLicense = [presentation.catalogSource, presentation.catalogLicense]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+        guard !sourceAndLicense.isEmpty else { return }
+        rows.append(.information(
+            symbol: "doc.text.fill",
+            title: "\(FloorpStrings.WebExtensions.sourceLabel) · " +
+                FloorpStrings.WebExtensions.licenseLabel,
+            detail: sourceAndLicense
+        ))
+    }
+
+    private func trustReviewDetail() -> String {
+        [
+            presentation.catalogAttribution,
+            presentation.catalogReviewedAt.map { "\(FloorpStrings.WebExtensions.reviewed) · \($0)" }
+        ].compactMap { $0 }.joined(separator: "\n")
     }
 
     private func appendAction(
@@ -1086,7 +1358,7 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
         to rows: inout [Row],
         symbol: String,
         title: String,
-        detail: String?,
+        detail: String? = nil,
         identifier: String
     ) {
         guard let action else { return }
@@ -1139,14 +1411,16 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
         iconView.image = descriptor?.image()
         iconView.accessibilityLabel = descriptor?.accessibilityLabel
         titleLabel.text = presentation.name
-        versionLabel.text = "Version \(presentation.version)"
+        versionLabel.text = FloorpStrings.WebExtensions.version(presentation.version)
         summaryLabel.text = presentation.summary
         summaryLabel.isHidden = presentation.summary?.isEmpty != false
         isEnabled = presentation.isEnabled
         isRevoked = presentation.isCatalogRevoked
         statusLabel.text = presentation.isCatalogRevoked
-            ? "Revoked"
-            : presentation.isEnabled ? "Enabled" : "Disabled"
+            ? FloorpStrings.WebExtensions.revoked
+            : presentation.isEnabled
+                ? FloorpStrings.WebExtensions.enabled
+                : FloorpStrings.WebExtensions.disabled
     }
 
     func applyTheme(theme: Theme) {

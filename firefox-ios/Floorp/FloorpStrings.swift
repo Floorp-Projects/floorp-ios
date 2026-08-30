@@ -1069,6 +1069,16 @@ enum FloorpStrings {
             value: "After adding the extension, choose the sites where it may read or change content.",
             comment: "Install disclosure explaining how to enable extension site access"
         )
+        static let siteAccessPreservedTitle = string(
+            "Floorp.WebExtensions.SiteAccessPreservedTitle.v1",
+            value: "Site choices stay unchanged",
+            comment: "Update disclosure title explaining that existing site-access choices are preserved"
+        )
+        static let siteAccessPreservedMessage = string(
+            "Floorp.WebExtensions.SiteAccessPreservedMessage.v1",
+            value: "Your existing choices are preserved. Newly requested sites stay off until you allow them.",
+            comment: "Update disclosure explaining preserved and newly requested extension site access"
+        )
         static let privateBrowsingOptInTitle = string(
             "Floorp.WebExtensions.PrivateBrowsingOptInTitle.v1",
             value: "Private Browsing is optional",

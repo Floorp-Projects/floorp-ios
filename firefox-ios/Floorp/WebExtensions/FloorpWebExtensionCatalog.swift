@@ -22,19 +22,19 @@ enum FloorpWebExtensionPermissionCategory: String, CaseIterable, Hashable, Senda
     var title: String {
         switch self {
         case .siteData:
-            return "Read and change data on selected sites"
+            return FloorpStrings.WebExtensions.permissionSiteData
         case .tabs:
-            return "Read tab metadata and open or reload tabs"
+            return FloorpStrings.WebExtensions.permissionTabs
         case .storage:
-            return "Store extension settings on this device"
+            return FloorpStrings.WebExtensions.permissionStorage
         case .alarms:
-            return "Run scheduled extension tasks"
+            return FloorpStrings.WebExtensions.permissionAlarms
         case .fontSettings:
-            return "Use supported browser font settings"
+            return FloorpStrings.WebExtensions.permissionFontSettings
         case .networkBlocking:
-            return "Block supported network requests"
+            return FloorpStrings.WebExtensions.permissionNetworkBlocking
         case .browserAutomation:
-            return "Run approved page scripts and styles"
+            return FloorpStrings.WebExtensions.permissionBrowserAutomation
         }
     }
 }

@@ -1481,7 +1481,6 @@
 		F10A3E00000000000000020C /* FloorpWebExtensionCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010C /* FloorpWebExtensionCatalog.swift */; };
 		F10A3E00000000000000020D /* FloorpWebExtensionSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010D /* FloorpWebExtensionSettingsViewController.swift */; };
 		F10A3E000000000000000222 /* FloorpWebExtensionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000122 /* FloorpWebExtensionPresentation.swift */; };
-		F10A3E000000000000000223 /* dr_128.png in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000123 /* dr_128.png */; };
 		F10A3E00000000000000020E /* FloorpWebExtensionsSetting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010E /* FloorpWebExtensionsSetting.swift */; };
 		F10A3E00000000000000020F /* FloorpWebExtensionAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E00000000000000010F /* FloorpWebExtensionAction.swift */; };
 		F10A3E000000000000000215 /* FloorpWebExtensionAPIHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000115 /* FloorpWebExtensionAPIHost.swift */; };
@@ -11212,7 +11211,6 @@
 		F10A3E00000000000000010C /* FloorpWebExtensionCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionCatalog.swift; sourceTree = "<group>"; };
 		F10A3E00000000000000010D /* FloorpWebExtensionSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionSettingsViewController.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000122 /* FloorpWebExtensionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionPresentation.swift; sourceTree = "<group>"; };
-		F10A3E000000000000000123 /* dr_128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = CuratedCatalog/Packages/thirdparty-darkreader/icons/dr_128.png; sourceTree = "<group>"; };
 		F10A3E00000000000000010E /* FloorpWebExtensionsSetting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionsSetting.swift; sourceTree = "<group>"; };
 		F10A3E00000000000000010F /* FloorpWebExtensionAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionAction.swift; sourceTree = "<group>"; };
 		F10A3E000000000000000115 /* FloorpWebExtensionAPIHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionAPIHost.swift; sourceTree = "<group>"; };
@@ -16570,7 +16568,6 @@
 				F10A3E00000000000000010C /* FloorpWebExtensionCatalog.swift */,
 				F10A3E00000000000000010D /* FloorpWebExtensionSettingsViewController.swift */,
 				F10A3E000000000000000122 /* FloorpWebExtensionPresentation.swift */,
-				F10A3E000000000000000123 /* dr_128.png */,
 				F10A3E00000000000000010E /* FloorpWebExtensionsSetting.swift */,
 				F10A3E00000000000000010F /* FloorpWebExtensionAction.swift */,
 				F10A3E000000000000000115 /* FloorpWebExtensionAPIHost.swift */,
@@ -19147,7 +19144,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F10A3E000000000000000223 /* dr_128.png in Resources */,
 				CEC2F0B12F98000400D67401 /* Floorp.xcstrings in Resources */,
 				EEB971C42FC48C5100D6C232 /* NewYorkMedium-Bold.otf in Resources */,
 				EEB971C52FC48C5100D6C232 /* NewYorkMedium-BoldItalic.otf in Resources */,

@@ -1447,6 +1447,18 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を追加した後、コンテンツの読み取りや変更を許可するサイトを選んでください。" } }
       }
     },
+    "Floorp.WebExtensions.SiteAccessPreservedTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Site choices stay unchanged" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイトの選択は引き継がれます" } }
+      }
+    },
+    "Floorp.WebExtensions.SiteAccessPreservedMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your existing choices are preserved. Newly requested sites stay off until you allow them." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "現在の選択は引き継がれます。新たに要求されたサイトは、許可するまでオフのままです。" } }
+      }
+    },
     "Floorp.WebExtensions.PrivateBrowsingOptInTitle.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Private Browsing is optional" } },

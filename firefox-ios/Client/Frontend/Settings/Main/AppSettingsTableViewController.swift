@@ -472,7 +472,7 @@ class AppSettingsTableViewController: SettingsTableViewController,
         }
         return [
             SettingSection(
-                title: NSAttributedString(string: "Extensions"),
+                title: NSAttributedString(string: FloorpStrings.WebExtensions.title),
                 children: [
                     FloorpWebExtensionsSetting(
                         settings: self,

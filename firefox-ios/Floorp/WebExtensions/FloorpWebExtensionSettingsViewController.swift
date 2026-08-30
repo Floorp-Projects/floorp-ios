@@ -33,45 +33,50 @@ final class FloorpWebExtensionProfileSettingsManager: FloorpWebExtensionSettings
         let normalPackages = await normalManager.settingsPackages()
         let privatePackages = await privateManager.settingsPackages()
         let privateByID = Dictionary(uniqueKeysWithValues: privatePackages.map { ($0.id, $0) })
-        return normalPackages.map { normalPackage in
-            guard let privatePackage = privateByID[normalPackage.id] else {
-                return normalPackage
-            }
-            return .init(
-                id: normalPackage.id,
-                name: normalPackage.name,
-                version: normalPackage.version,
-                catalogGeneration: normalPackage.catalogGeneration,
-                catalogDescription: normalPackage.catalogDescription,
-                catalogSource: normalPackage.catalogSource,
-                catalogLicense: normalPackage.catalogLicense,
-                catalogHomepage: normalPackage.catalogHomepage,
-                catalogCategory: normalPackage.catalogCategory,
-                catalogModificationStatus: normalPackage.catalogModificationStatus,
-                catalogPublisher: normalPackage.catalogPublisher,
-                catalogAttribution: normalPackage.catalogAttribution,
-                catalogPrivacySummary: normalPackage.catalogPrivacySummary,
-                catalogRetentionPolicy: normalPackage.catalogRetentionPolicy,
-                catalogReviewedAt: normalPackage.catalogReviewedAt,
-                privateProfileCapability: normalPackage.privateProfileCapability,
-                isEnabled: normalPackage.isEnabled,
-                isCatalogRevoked: normalPackage.isCatalogRevoked || privatePackage.isCatalogRevoked,
-                permissions: normalPackage.permissions,
-                siteAccessDescription: normalPackage.siteAccessDescription,
-                requestedSites: normalPackage.requestedSites,
-                normalHostAccess: normalPackage.normalHostAccess,
-                privateHostAccess: privatePackage.privateHostAccess,
-                isPrivateBrowsingEnabled: privatePackage.isPrivateBrowsingEnabled,
-                privateAccessDescription: privatePackage.isPrivateBrowsingEnabled
-                    ? privatePackage.privateAccessDescription
-                    : "Not allowed",
-                errorDescription: normalPackage.errorDescription ?? privatePackage.errorDescription,
-                optionsPage: normalPackage.optionsPage,
-                dnrStatus: normalPackage.dnrStatus,
-                privateDNRStatus: privatePackage.dnrStatus,
-                updateHistory: normalPackage.updateHistory
-            )
+        return normalPackages.map { package in
+            mergedPackage(package, privatePackage: privateByID[package.id])
         }
+    }
+
+    private func mergedPackage(
+        _ normalPackage: FloorpWebExtensionSettingsInstalledPackage,
+        privatePackage: FloorpWebExtensionSettingsInstalledPackage?
+    ) -> FloorpWebExtensionSettingsInstalledPackage {
+        guard let privatePackage else { return normalPackage }
+        return .init(
+            id: normalPackage.id,
+            name: normalPackage.name,
+            version: normalPackage.version,
+            catalogGeneration: normalPackage.catalogGeneration,
+            catalogDescription: normalPackage.catalogDescription,
+            catalogSource: normalPackage.catalogSource,
+            catalogLicense: normalPackage.catalogLicense,
+            catalogHomepage: normalPackage.catalogHomepage,
+            catalogCategory: normalPackage.catalogCategory,
+            catalogModificationStatus: normalPackage.catalogModificationStatus,
+            catalogPublisher: normalPackage.catalogPublisher,
+            catalogAttribution: normalPackage.catalogAttribution,
+            catalogPrivacySummary: normalPackage.catalogPrivacySummary,
+            catalogRetentionPolicy: normalPackage.catalogRetentionPolicy,
+            catalogReviewedAt: normalPackage.catalogReviewedAt,
+            privateProfileCapability: normalPackage.privateProfileCapability,
+            isEnabled: normalPackage.isEnabled,
+            isCatalogRevoked: normalPackage.isCatalogRevoked || privatePackage.isCatalogRevoked,
+            permissions: normalPackage.permissions,
+            siteAccessDescription: normalPackage.siteAccessDescription,
+            requestedSites: normalPackage.requestedSites,
+            normalHostAccess: normalPackage.normalHostAccess,
+            privateHostAccess: privatePackage.privateHostAccess,
+            isPrivateBrowsingEnabled: privatePackage.isPrivateBrowsingEnabled,
+            privateAccessDescription: privatePackage.isPrivateBrowsingEnabled
+                ? privatePackage.privateAccessDescription
+                : "Not allowed",
+            errorDescription: normalPackage.errorDescription ?? privatePackage.errorDescription,
+            optionsPage: normalPackage.optionsPage,
+            dnrStatus: normalPackage.dnrStatus,
+            privateDNRStatus: privatePackage.dnrStatus,
+            updateHistory: normalPackage.updateHistory
+        )
     }
 
     func catalogItems() async -> [FloorpWebExtensionBundledCatalogItem] {
@@ -210,14 +215,16 @@ struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     let catalogSource: String?
     let catalogLicense: String?
     let catalogHomepage: URL?
-    private(set) var catalogCategory: String? = nil
-    private(set) var catalogModificationStatus: FloorpWebExtensionCatalogPackageMetadata.ModificationStatus? = nil
-    private(set) var catalogPublisher: String? = nil
-    private(set) var catalogAttribution: String? = nil
-    private(set) var catalogPrivacySummary: String? = nil
-    private(set) var catalogRetentionPolicy: String? = nil
-    private(set) var catalogReviewedAt: String? = nil
-    private(set) var privateProfileCapability: FloorpWebExtensionCatalogPackageMetadata.PrivateProfileCapability? = nil
+    private(set) var catalogCategory: String? = .none
+    private(set) var catalogModificationStatus:
+        FloorpWebExtensionCatalogPackageMetadata.ModificationStatus? = .none
+    private(set) var catalogPublisher: String? = .none
+    private(set) var catalogAttribution: String? = .none
+    private(set) var catalogPrivacySummary: String? = .none
+    private(set) var catalogRetentionPolicy: String? = .none
+    private(set) var catalogReviewedAt: String? = .none
+    private(set) var privateProfileCapability:
+        FloorpWebExtensionCatalogPackageMetadata.PrivateProfileCapability? = .none
     let isEnabled: Bool
     let isCatalogRevoked: Bool
     let permissions: [FloorpWebExtensionPermissionCategory]
@@ -483,8 +490,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 
         var title: String {
             switch self {
-            case .installed: return "Installed"
-            case .available: return "Available"
+            case .installed: return FloorpStrings.WebExtensions.installedSection
+            case .available: return FloorpStrings.WebExtensions.availableSection
             }
         }
     }
@@ -492,6 +499,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private enum Row {
         case installed(FloorpWebExtensionSettingsInstalledPackage)
         case available(FloorpWebExtensionBundledCatalogItem)
+        case installedLoading
         case emptyInstalled
         case catalogLoading
         case catalogUnavailable
@@ -509,9 +517,15 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     // currently accepted signed result; a missing or rejected catalog must
     // remain non-installable from the first rendered frame.
     private var catalogItems = [FloorpWebExtensionBundledCatalogItem]()
+    private var hasLoadedInstalledPackages = false
     private var hasLoadedCatalog = false
     private var isLoading = false
-    private weak var catalogInstallConsentController: UIAlertController?
+    private var needsRefreshAfterCurrentLoad = false
+    private var busyExtensionIDs = Set<FloorpWebExtensionID>()
+    private var pendingInstalledDetail: (id: FloorpWebExtensionID, showsSiteAccessGuidance: Bool)?
+    private weak var catalogInstallConsentController: UIViewController?
+    private weak var installedDetailNavigationController: UINavigationController?
+    private let overviewHeaderView = FloorpWebExtensionOverviewHeaderView()
     private var catalogExpiryTask: Task<Void, Never>?
 
     init(
@@ -547,14 +561,34 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Extensions"
+        title = FloorpStrings.WebExtensions.title
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .refresh,
             target: self,
             action: #selector(refresh)
         )
+        navigationItem.rightBarButtonItem?.accessibilityIdentifier = "Floorp.WebExtensions.Refresh"
         tableView.accessibilityIdentifier = "Floorp.WebExtensions.Settings"
+        tableView.register(
+            FloorpWebExtensionCardCell.self,
+            forCellReuseIdentifier: FloorpWebExtensionCardCell.reuseIdentifier
+        )
+        tableView.rowHeight = UITableView.automaticDimension
+        tableView.estimatedRowHeight = 116
+        tableView.separatorStyle = .none
+        tableView.tableHeaderView = overviewHeaderView
+        configureOverviewHeader()
         refresh()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        resizeOverviewHeaderIfNeeded()
+    }
+
+    override func applyTheme() {
+        super.applyTheme()
+        configureOverviewHeader()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -564,10 +598,16 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 
     @objc
     private func refresh() {
-        guard let packageManager, !isLoading else {
+        guard let packageManager else {
             tableView.reloadData()
             return
         }
+        guard !isLoading else {
+            needsRefreshAfterCurrentLoad = true
+            tableView.reloadData()
+            return
+        }
+        needsRefreshAfterCurrentLoad = false
         catalogExpiryTask?.cancel()
         catalogExpiryTask = nil
         isLoading = true
@@ -586,13 +626,55 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             self.installedPackages = packages.sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
+            self.hasLoadedInstalledPackages = true
             self.catalogItems = catalogItems
             self.hasLoadedCatalog = true
             self.isLoading = false
+            if self.needsRefreshAfterCurrentLoad {
+                self.needsRefreshAfterCurrentLoad = false
+                self.refresh()
+                return
+            }
             self.navigationItem.rightBarButtonItem?.isEnabled = true
             self.scheduleCatalogExpiryInvalidation(for: catalogItems)
             self.tableView.reloadData()
+            if let pending = self.pendingInstalledDetail,
+               let installed = self.installedPackages.first(where: { $0.id == pending.id }) {
+                self.pendingInstalledDetail = nil
+                DispatchQueue.main.async { [weak self] in
+                    self?.showInstalledPackage(
+                        installed,
+                        showsSiteAccessGuidance: pending.showsSiteAccessGuidance
+                    )
+                }
+            }
         }
+    }
+
+    private func configureOverviewHeader() {
+        guard isViewLoaded else { return }
+        overviewHeaderView.configure(
+            title: FloorpStrings.WebExtensions.introTitle,
+            message: FloorpStrings.WebExtensions.introMessage,
+            theme: themeManager.getCurrentTheme(for: windowUUID)
+        )
+        resizeOverviewHeaderIfNeeded()
+    }
+
+    private func resizeOverviewHeaderIfNeeded() {
+        guard tableView.tableHeaderView === overviewHeaderView else { return }
+        let fittingSize = CGSize(
+            width: tableView.bounds.width,
+            height: UIView.layoutFittingCompressedSize.height
+        )
+        let height = overviewHeaderView.systemLayoutSizeFitting(
+            fittingSize,
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        guard height > 0, abs(overviewHeaderView.frame.height - height) > 0.5 else { return }
+        overviewHeaderView.frame.size.height = height
+        tableView.tableHeaderView = overviewHeaderView
     }
 
     private func scheduleCatalogExpiryInvalidation(
@@ -641,7 +723,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        guard packageManager != nil else { return "Extensions" }
+        guard packageManager != nil else { return FloorpStrings.WebExtensions.title }
         return Section(rawValue: section)?.title
     }
 
@@ -653,59 +735,150 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         _ tableView: UITableView,
         cellForRowAt indexPath: IndexPath
     ) -> UITableViewCell {
-        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         let theme = themeManager.getCurrentTheme(for: windowUUID)
+        let row = rows(in: indexPath.section)[indexPath.row]
+
+        switch row {
+        case .installed(let package):
+            return extensionCardCell(
+                in: tableView,
+                at: indexPath,
+                presentation: cardPresentation(for: package),
+                theme: theme
+            )
+        case .available(let item):
+            return extensionCardCell(
+                in: tableView,
+                at: indexPath,
+                presentation: cardPresentation(for: item),
+                theme: theme
+            )
+        case .installedLoading, .emptyInstalled, .catalogLoading, .catalogUnavailable, .unavailable:
+            return stateCell(for: row, theme: theme)
+        }
+    }
+
+    private func stateCell(for row: Row, theme: Theme) -> UITableViewCell {
+        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         cell.backgroundColor = theme.colors.layer2
         cell.textLabel?.textColor = theme.colors.textPrimary
+        cell.textLabel?.font = .preferredFont(forTextStyle: .body)
+        cell.textLabel?.adjustsFontForContentSizeCategory = true
+        cell.textLabel?.numberOfLines = 0
         cell.detailTextLabel?.textColor = theme.colors.textSecondary
+        cell.detailTextLabel?.font = .preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
         cell.detailTextLabel?.numberOfLines = 0
         cell.accessoryType = .none
+        cell.selectionStyle = .none
+        cell.isUserInteractionEnabled = false
+        cell.imageView?.tintColor = theme.colors.iconSecondary
 
-        switch rows(in: indexPath.section)[indexPath.row] {
-        case .installed(let package):
-            cell.textLabel?.text = package.name
-            cell.detailTextLabel?.text = installedDetail(package)
-            cell.accessoryType = .disclosureIndicator
-            cell.accessibilityIdentifier = "Floorp.WebExtensions.Installed.\(package.id.rawValue)"
-        case .available(let item):
-            cell.textLabel?.text = item.name
-            cell.detailTextLabel?.text = availableDetail(item)
-            cell.accessoryType = .disclosureIndicator
-            cell.accessibilityIdentifier = "Floorp.WebExtensions.Available.\(item.id.rawValue)"
+        switch row {
+        case .installedLoading:
+            cell.textLabel?.text = FloorpStrings.WebExtensions.loading
+            cell.imageView?.image = UIImage(systemName: "hourglass")
+            cell.accessoryView = loadingIndicator(theme: theme)
+            cell.accessibilityIdentifier = "Floorp.WebExtensions.Installed.Loading"
         case .emptyInstalled:
-            cell.textLabel?.text = "No extensions installed"
-            cell.detailTextLabel?.text = "Install a bundled extension to enable it for this profile."
-            cell.selectionStyle = .none
-            cell.isUserInteractionEnabled = false
+            cell.textLabel?.text = FloorpStrings.WebExtensions.noInstalledTitle
+            cell.detailTextLabel?.text = FloorpStrings.WebExtensions.noInstalledMessage
+            cell.imageView?.image = UIImage(systemName: "puzzlepiece.extension")
+            cell.accessibilityIdentifier = "Floorp.WebExtensions.Installed.Empty"
         case .catalogLoading:
-            cell.textLabel?.text = "Checking signed catalog…"
-            cell.detailTextLabel?.text = "Extensions become available only after catalog verification succeeds."
-            cell.selectionStyle = .none
-            cell.isUserInteractionEnabled = false
+            cell.textLabel?.text = FloorpStrings.WebExtensions.loading
+            cell.imageView?.image = UIImage(systemName: "checkmark.shield")
+            cell.accessoryView = loadingIndicator(theme: theme)
             cell.accessibilityIdentifier = "Floorp.WebExtensions.CatalogLoading"
         case .catalogUnavailable:
-            cell.textLabel?.text = "No verified extensions available"
-            cell.detailTextLabel?.text = "The signed catalog is unavailable or contains no installable extensions."
-            cell.selectionStyle = .none
-            cell.isUserInteractionEnabled = false
+            cell.textLabel?.text = FloorpStrings.WebExtensions.noAvailableTitle
+            cell.detailTextLabel?.text = FloorpStrings.WebExtensions.noAvailableMessage
+            cell.imageView?.image = UIImage(systemName: "checkmark.shield")
             cell.accessibilityIdentifier = "Floorp.WebExtensions.CatalogUnavailable"
         case .unavailable:
-            cell.textLabel?.text = "Extensions are unavailable"
-            cell.detailTextLabel?.text = "The extension package store is not configured for this profile."
-            cell.selectionStyle = .none
-            cell.isUserInteractionEnabled = false
+            cell.textLabel?.text = FloorpStrings.WebExtensions.loadErrorTitle
+            cell.detailTextLabel?.text = FloorpStrings.WebExtensions.loadErrorMessage
+            cell.imageView?.image = UIImage(systemName: "exclamationmark.triangle")
+            cell.accessibilityIdentifier = "Floorp.WebExtensions.Unavailable"
+        case .installed, .available:
+            preconditionFailure("Card rows return before state-cell configuration")
         }
         return cell
+    }
+
+    private func loadingIndicator(theme: Theme) -> UIActivityIndicatorView {
+        let indicator = UIActivityIndicatorView(style: .medium)
+        indicator.color = theme.colors.iconAccent
+        indicator.startAnimating()
+        return indicator
+    }
+
+    private func extensionCardCell(
+        in tableView: UITableView,
+        at indexPath: IndexPath,
+        presentation: FloorpWebExtensionCardPresentation,
+        theme: Theme
+    ) -> UITableViewCell {
+        guard let cell = tableView.dequeueReusableCell(
+            withIdentifier: FloorpWebExtensionCardCell.reuseIdentifier,
+            for: indexPath
+        ) as? FloorpWebExtensionCardCell else {
+            assertionFailure("Unexpected extension card registration")
+            return UITableViewCell()
+        }
+        cell.configure(with: presentation, theme: theme)
+        return cell
+    }
+
+    private func cardPresentation(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> FloorpWebExtensionCardPresentation {
+        FloorpWebExtensionCardPresentation(
+            extensionID: package.id,
+            title: package.name,
+            summary: package.catalogDescription ?? package.siteAccessDescription,
+            version: package.version,
+            status: cardStatus(for: package),
+            accessibilityIdentifier: "Floorp.WebExtensions.Installed.\(package.id.rawValue)",
+            accessibilityHint: FloorpStrings.WebExtensions.manage,
+            isBusy: busyExtensionIDs.contains(package.id)
+        )
+    }
+
+    private func cardPresentation(
+        for item: FloorpWebExtensionBundledCatalogItem
+    ) -> FloorpWebExtensionCardPresentation {
+        FloorpWebExtensionCardPresentation(
+            extensionID: item.id,
+            title: item.name,
+            summary: item.summary,
+            version: item.version,
+            status: .available,
+            accessibilityIdentifier: "Floorp.WebExtensions.Available.\(item.id.rawValue)",
+            accessibilityHint: FloorpStrings.WebExtensions.add,
+            isBusy: busyExtensionIDs.contains(item.id)
+        )
+    }
+
+    private func cardStatus(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> FloorpWebExtensionCardPresentation.Status {
+        if package.isCatalogRevoked { return .revoked }
+        if package.errorDescription != nil { return .error }
+        if updateItem(for: package) != nil { return .updateAvailable }
+        return package.isEnabled ? .enabled : .disabled
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         switch rows(in: indexPath.section)[indexPath.row] {
         case .installed(let package):
+            guard !busyExtensionIDs.contains(package.id) else { return }
             showInstalledPackage(package)
         case .available(let item):
+            guard !busyExtensionIDs.contains(item.id) else { return }
             confirmInstall(item)
-        case .emptyInstalled, .catalogLoading, .catalogUnavailable, .unavailable:
+        case .installedLoading, .emptyInstalled, .catalogLoading, .catalogUnavailable, .unavailable:
             break
         }
     }
@@ -715,6 +888,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         guard let section = Section(rawValue: section) else { return [] }
         switch section {
         case .installed:
+            guard hasLoadedInstalledPackages else { return [.installedLoading] }
             return installedPackages.isEmpty ? [.emptyInstalled] : installedPackages.map(Row.installed)
         case .available:
             guard hasLoadedCatalog else { return [.catalogLoading] }
@@ -726,198 +900,292 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         }
     }
 
-    private func installedDetail(_ package: FloorpWebExtensionSettingsInstalledPackage) -> String {
-        var details = ["Version \(package.version)", package.isEnabled ? "Enabled" : "Disabled"]
-        details.append(package.siteAccessDescription)
-        if let catalogGeneration = package.catalogGeneration {
-            details.append("Catalog \(catalogGeneration)")
+    private func updateItem(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> FloorpWebExtensionBundledCatalogItem? {
+        catalogItems.first { item in
+            isCurrentCatalogItem(item) &&
+                item.id == package.id &&
+                item.catalogRecord?.generation != package.catalogGeneration
         }
-        if let catalogSource = package.catalogSource {
-            details.append(catalogSource)
-        }
-        if package.isCatalogRevoked {
-            details.append("Revoked")
-        }
-        if let errorDescription = package.errorDescription {
-            details.append(errorDescription)
-        }
-        return details.joined(separator: " · ")
-    }
-
-    private func availableDetail(_ item: FloorpWebExtensionBundledCatalogItem) -> String {
-        let permissions = item.requestedPermissions.isEmpty
-            ? "No additional capabilities"
-            : item.requestedPermissions.map(\.title).joined(separator: ", ")
-        let disclosure = item.catalogRecord?.metadata?.disclosure
-        let privateBrowsing: String
-        switch item.catalogRecord?.metadata?.privateProfileCapability {
-        case .some(.notSupported):
-            privateBrowsing = "Private browsing: unavailable"
-        case .some(.optIn), .some(.supported):
-            privateBrowsing = "Private browsing: separate opt-in"
-        case .none:
-            privateBrowsing = ""
-        }
-        return [
-            item.summary,
-            disclosure.map { "Publisher: \($0.publisherDisplayName)" },
-            disclosure.map { "Attribution: \($0.attribution)" },
-            item.catalogRecord.map { "Floorp review: version \(item.version), generation \($0.generation)" },
-            disclosure.map { "Reviewed: \($0.reviewedAt)" },
-            disclosure.map { "Privacy: \($0.privacySummary)" },
-            disclosure.map { "Data retention: \($0.retentionPolicy)" },
-            disclosure.map { _ in "Support: Floorp GitHub Issues" },
-            disclosure.map { _ in "Report a problem: Floorp GitHub bug report" },
-            "Source: \(item.source)",
-            "License: \(item.license)",
-            "Capabilities: \(permissions)",
-            privateBrowsing
-        ].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     private func confirmInstall(_ item: FloorpWebExtensionBundledCatalogItem) {
+        guard !busyExtensionIDs.contains(item.id) else { return }
         guard isCurrentCatalogItem(item) else {
             invalidateExpiredCatalogItems()
             return
         }
-        let permissions = item.requestedPermissions.map(\.title).joined(separator: "\n• ")
-        let requestedHosts = item.catalogRecord?.metadata?.hostPermissions
-            .sorted { $0.original < $1.original }
-            .map { "• \($0.original)" }
-            .joined(separator: "\n")
-        let siteNotice: String
-        if let requestedHosts, !requestedHosts.isEmpty {
-            siteNotice = "\n\nRequested sites:\n\(requestedHosts)\n\nSite access starts disabled. You can explicitly choose sites after installation."
-        } else {
-            siteNotice = ""
-        }
-        let privateNotice: String
-        switch item.catalogRecord?.metadata?.privateProfileCapability {
-        case .some(.notSupported):
-            privateNotice = "\n\nPrivate browsing: not available for this extension."
-        case .some(.optIn), .some(.supported):
-            privateNotice = "\n\nPrivate browsing: separate opt-in and separate private-profile storage."
-        case .none:
-            privateNotice = ""
-        }
-        let disclosureNotice: String
-        if let disclosure = item.catalogRecord?.metadata?.disclosure,
-           let catalogRecord = item.catalogRecord {
-            disclosureNotice = "\n\nPublisher: \(disclosure.publisherDisplayName)\n\(disclosure.attribution)\nFloorp reviewed version \(item.version), generation \(catalogRecord.generation) on \(disclosure.reviewedAt).\n\nPrivacy: \(disclosure.privacySummary)\nData retention: \(disclosure.retentionPolicy)\nSupport: Floorp GitHub Issues\nReport a problem: Floorp GitHub bug report"
-        } else {
-            disclosureNotice = ""
-        }
-        let message = "From: \(item.source)\nLicense: \(item.license)\n\nThis extension can:\n• \(permissions)\(siteNotice)\(privateNotice)\(disclosureNotice)"
-        let alert = UIAlertController(title: "Install \(item.name)?", message: message, preferredStyle: .alert)
-        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.InstallConsent.\(item.id.rawValue)"
-        catalogInstallConsentController = alert
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
-            self?.catalogInstallConsentController = nil
-        })
-        alert.addAction(UIAlertAction(title: "Install", style: .default) { [weak self] _ in
-            self?.catalogInstallConsentController = nil
-            self?.performInstall(item)
-        })
-        present(alert, animated: true)
+        let metadata = item.catalogRecord?.metadata
+        let disclosure = metadata?.disclosure
+        let isUpdate = installedPackages.contains(where: { $0.id == item.id })
+        let requestedSites = (metadata?.hostPermissions ?? [])
+            .map(\.original)
+            .map(Self.displayName(forRequestedSite:))
+            .sorted()
+        let presentation = FloorpWebExtensionInstallPresentation(
+            extensionID: item.id,
+            name: item.name,
+            summary: item.summary,
+            version: item.version,
+            catalogPublisher: disclosure?.publisherDisplayName,
+            catalogAttribution: disclosure?.attribution,
+            catalogPrivacySummary: disclosure?.privacySummary,
+            catalogRetentionPolicy: disclosure?.retentionPolicy,
+            catalogReviewedAt: disclosure?.reviewedAt,
+            source: item.source,
+            license: item.license,
+            permissions: item.requestedPermissions,
+            requestedSites: requestedSites,
+            privateProfileCapability: metadata?.privateProfileCapability,
+            mode: isUpdate ? .update : .install
+        )
+        let controller = FloorpWebExtensionInstallConfirmationViewController(
+            presentation: presentation,
+            windowUUID: windowUUID,
+            themeManager: themeManager,
+            notificationCenter: notificationCenter,
+            onCancel: { [weak self] in
+                self?.dismiss(animated: true) { [weak self] in
+                    self?.catalogInstallConsentController = nil
+                }
+            },
+            onInstall: { [weak self] in
+                self?.dismiss(animated: true) { [weak self] in
+                    self?.catalogInstallConsentController = nil
+                    self?.performInstall(
+                        item,
+                        showsSiteAccessGuidance: !isUpdate && !requestedSites.isEmpty
+                    )
+                }
+            }
+        )
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        navigationController.sheetPresentationController?.detents = [.large()]
+        navigationController.sheetPresentationController?.prefersGrabberVisible = true
+        catalogInstallConsentController = navigationController
+        present(navigationController, animated: true)
     }
 
-    private func showInstalledPackage(_ package: FloorpWebExtensionSettingsInstalledPackage) {
-        let permissionList = package.permissions.map(\.title).joined(separator: "\n• ")
-        let message = [
-            "Version: \(package.version)",
-            package.catalogDescription,
-            package.catalogGeneration.map { "Signed catalog generation: \($0)" },
-            package.catalogSource.map { "Source: \($0)" },
-            package.catalogLicense.map { "License: \($0)" },
-            package.catalogHomepage.map { "Homepage: \($0.absoluteString)" },
-            "Site access: \(package.siteAccessDescription)",
-            "Private access: \(package.privateAccessDescription)",
-            permissionList.isEmpty ? nil : "Permissions:\n• \(permissionList)",
-            package.errorDescription
-        ].compactMap { $0 }.joined(separator: "\n\n")
-        let alert = UIAlertController(title: package.name, message: message, preferredStyle: .actionSheet)
-        if !package.isCatalogRevoked {
-            alert.addAction(UIAlertAction(
-                title: package.isEnabled ? "Disable" : "Enable",
-                style: .default
-            ) { [weak self] _ in
-                self?.setEnabled(!package.isEnabled, for: package.id)
-            })
+    private static func displayName(forRequestedSite pattern: String) -> String {
+        pattern == "*://*/*" ? "HTTP(S) · All requested websites" : pattern
+    }
+
+    private func showInstalledPackage(
+        _ package: FloorpWebExtensionSettingsInstalledPackage,
+        showsSiteAccessGuidance: Bool = false
+    ) {
+        guard installedDetailNavigationController == nil,
+              !busyExtensionIDs.contains(package.id) else {
+            return
         }
-        if package.optionsPage != nil,
-           pageResourceResolver != nil,
-           pageMessageRuntime != nil {
-            alert.addAction(UIAlertAction(title: "Options", style: .default) { [weak self] _ in
-                self?.openOptionsPage(for: package)
-            })
+        let update = package.isCatalogRevoked ? nil : updateItem(for: package)
+        let controller = FloorpWebExtensionInstalledDetailViewController(
+            presentation: installedDetailPresentation(
+                for: package,
+                update: update,
+                showsSiteAccessGuidance: showsSiteAccessGuidance
+            ),
+            actions: installedDetailActions(for: package, update: update),
+            windowUUID: windowUUID,
+            themeManager: themeManager,
+            notificationCenter: notificationCenter
+        )
+        controller.navigationItem.rightBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .close,
+            target: self,
+            action: #selector(closeInstalledDetail)
+        )
+        controller.navigationItem.rightBarButtonItem?.accessibilityIdentifier =
+            "Floorp.WebExtensions.Detail.Close.\(package.id.rawValue)"
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        navigationController.sheetPresentationController?.detents = [.medium(), .large()]
+        navigationController.sheetPresentationController?.selectedDetentIdentifier = .large
+        navigationController.sheetPresentationController?.prefersGrabberVisible = true
+        installedDetailNavigationController = navigationController
+        present(navigationController, animated: true)
+    }
+
+    private func installedDetailPresentation(
+        for package: FloorpWebExtensionSettingsInstalledPackage,
+        update: FloorpWebExtensionBundledCatalogItem?,
+        showsSiteAccessGuidance: Bool
+    ) -> FloorpWebExtensionInstalledDetailPresentation {
+        FloorpWebExtensionInstalledDetailPresentation(
+            extensionID: package.id,
+            name: package.name,
+            summary: package.catalogDescription,
+            version: package.version,
+            isEnabled: package.isEnabled,
+            isCatalogRevoked: package.isCatalogRevoked,
+            errorDescription: package.errorDescription,
+            permissions: package.permissions,
+            siteAccessDescription: package.siteAccessDescription,
+            privateAccessDescription: package.privateAccessDescription,
+            isPrivateBrowsingEnabled: package.isPrivateBrowsingEnabled,
+            privateProfileCapability: package.privateProfileCapability,
+            catalogPublisher: package.catalogPublisher,
+            catalogAttribution: package.catalogAttribution,
+            catalogPrivacySummary: package.catalogPrivacySummary,
+            catalogRetentionPolicy: package.catalogRetentionPolicy,
+            catalogReviewedAt: package.catalogReviewedAt,
+            catalogSource: package.catalogSource,
+            catalogLicense: package.catalogLicense,
+            updateVersion: update?.version,
+            postInstallMessage: showsSiteAccessGuidance
+                ? FloorpStrings.WebExtensions.postInstallSiteAccessGuidance
+                : nil
+        )
+    }
+
+    private func installedDetailActions(
+        for package: FloorpWebExtensionSettingsInstalledPackage,
+        update: FloorpWebExtensionBundledCatalogItem?
+    ) -> FloorpWebExtensionInstalledDetailActions {
+        FloorpWebExtensionInstalledDetailActions(
+            onEnabledChanged: enabledAction(for: package),
+            onOpenOptions: optionsAction(for: package),
+            onManageSiteAccess: siteAccessAction(for: package),
+            onTogglePrivateBrowsing: privateBrowsingAction(for: package),
+            onManagePrivateSiteAccess: privateSiteAccessAction(for: package),
+            onManageNetworkProtection: networkAction(for: package, isPrivateBrowsing: false),
+            onManagePrivateNetworkProtection: networkAction(for: package, isPrivateBrowsing: true),
+            onOpenWebsite: websiteAction(for: package),
+            onViewUpdateHistory: updateHistoryAction(for: package),
+            onUpdate: catalogUpdateAction(update),
+            onUninstall: uninstallAction(for: package)
+        )
+    }
+
+    private func enabledAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> (Bool) -> Void {
+        { [weak self] isEnabled in
+            self?.dismissInstalledDetail {
+                self?.setEnabled(isEnabled, for: package.id)
+            }
         }
-        if let catalogHomepage = package.catalogHomepage {
-            alert.addAction(UIAlertAction(title: "Project Website", style: .default) { [weak self] _ in
-                self?.openExternalURL(catalogHomepage)
-            })
+    }
+
+    private func optionsAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> (() -> Void)? {
+        guard package.optionsPage != nil,
+              pageResourceResolver != nil,
+              pageMessageRuntime != nil,
+              !package.isCatalogRevoked else {
+            return nil
         }
-        if package.isEnabled, !package.requestedSites.isEmpty, !package.isCatalogRevoked {
-            alert.addAction(UIAlertAction(title: "Site Access", style: .default) { [weak self] _ in
-                self?.showSiteAccess(package)
-            })
+        return { [weak self] in
+            self?.dismissInstalledDetail { self?.openOptionsPage(for: package) }
         }
-        if !package.isCatalogRevoked {
-            alert.addAction(UIAlertAction(
-                title: package.isPrivateBrowsingEnabled
-                    ? "Disable in Private Browsing"
-                    : "Allow in Private Browsing",
-                style: .default
-            ) { [weak self] _ in
-                self?.confirmPrivateBrowsingChange(
-                    enabled: !package.isPrivateBrowsingEnabled,
-                    package: package
-                )
-            })
+    }
+
+    private func siteAccessAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> (() -> Void)? {
+        guard package.isEnabled,
+              !package.requestedSites.isEmpty,
+              !package.isCatalogRevoked else {
+            return nil
         }
-        if package.isPrivateBrowsingEnabled, !package.requestedSites.isEmpty, !package.isCatalogRevoked {
-            alert.addAction(UIAlertAction(title: "Private Site Access", style: .default) { [weak self] _ in
-                self?.showPrivateSiteAccess(package)
-            })
+        return { [weak self] in
+            self?.dismissInstalledDetail { self?.showSiteAccess(package) }
         }
-        if package.isEnabled, package.dnrStatus != nil, !package.isCatalogRevoked {
-            alert.addAction(UIAlertAction(title: "Network Protection", style: .default) { [weak self] _ in
-                self?.showDNRExclusions(package, isPrivateBrowsing: false)
-            })
+    }
+
+    private func privateBrowsingAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> ((Bool) -> Void)? {
+        guard !package.isCatalogRevoked,
+              package.privateProfileCapability.map({ $0 != .notSupported }) == true else {
+            return nil
         }
-        if package.isPrivateBrowsingEnabled, package.privateDNRStatus != nil, !package.isCatalogRevoked {
-            alert.addAction(UIAlertAction(
-                title: "Private Network Protection",
-                style: .default
-            ) { [weak self] _ in
-                self?.showDNRExclusions(package, isPrivateBrowsing: true)
-            })
+        return { [weak self] isEnabled in
+            self?.dismissInstalledDetail {
+                self?.confirmPrivateBrowsingChange(enabled: isEnabled, package: package)
+            }
         }
-        if !package.updateHistory.isEmpty {
-            alert.addAction(UIAlertAction(title: "Update History", style: .default) { [weak self] _ in
-                self?.showUpdateHistory(package)
-            })
+    }
+
+    private func privateSiteAccessAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> (() -> Void)? {
+        guard package.isPrivateBrowsingEnabled,
+              !package.requestedSites.isEmpty,
+              !package.isCatalogRevoked else {
+            return nil
         }
-        if let update = catalogItems.first(where: { item in
-            isCurrentCatalogItem(item) &&
-                item.id == package.id &&
-                item.catalogRecord?.generation != package.catalogGeneration
-        }), !package.isCatalogRevoked {
-            alert.addAction(UIAlertAction(
-                title: "Update to \(update.version)",
-                style: .default
-            ) { [weak self] _ in
-                self?.performInstall(update)
-            })
+        return { [weak self] in
+            self?.dismissInstalledDetail { self?.showPrivateSiteAccess(package) }
         }
-        alert.addAction(UIAlertAction(title: "Uninstall", style: .destructive) { [weak self] _ in
-            self?.confirmUninstall(package)
-        })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = view.bounds
+    }
+
+    private func networkAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage,
+        isPrivateBrowsing: Bool
+    ) -> (() -> Void)? {
+        let isActive = isPrivateBrowsing ? package.isPrivateBrowsingEnabled : package.isEnabled
+        let status = isPrivateBrowsing ? package.privateDNRStatus : package.dnrStatus
+        guard isActive, status != nil, !package.isCatalogRevoked else { return nil }
+        return { [weak self] in
+            self?.dismissInstalledDetail {
+                self?.showDNRExclusions(package, isPrivateBrowsing: isPrivateBrowsing)
+            }
         }
-        present(alert, animated: true)
+    }
+
+    private func websiteAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> (() -> Void)? {
+        guard let homepage = package.catalogHomepage else { return nil }
+        return { [weak self] in
+            self?.dismissInstalledDetail { self?.openExternalURL(homepage) }
+        }
+    }
+
+    private func updateHistoryAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> (() -> Void)? {
+        guard !package.updateHistory.isEmpty else { return nil }
+        return { [weak self] in
+            self?.dismissInstalledDetail { self?.showUpdateHistory(package) }
+        }
+    }
+
+    private func catalogUpdateAction(
+        _ update: FloorpWebExtensionBundledCatalogItem?
+    ) -> (() -> Void)? {
+        guard let update else { return nil }
+        return { [weak self] in
+            self?.dismissInstalledDetail { self?.confirmInstall(update) }
+        }
+    }
+
+    private func uninstallAction(
+        for package: FloorpWebExtensionSettingsInstalledPackage
+    ) -> () -> Void {
+        { [weak self] in
+            self?.dismissInstalledDetail { self?.confirmUninstall(package) }
+        }
+    }
+
+    @objc
+    private func closeInstalledDetail() {
+        dismissInstalledDetail()
+    }
+
+    private func dismissInstalledDetail(then action: (() -> Void)? = nil) {
+        guard let controller = installedDetailNavigationController else {
+            action?()
+            return
+        }
+        controller.dismiss(animated: true) { [weak self] in
+            self?.installedDetailNavigationController = nil
+            action?()
+        }
     }
 
     private func showUpdateHistory(_ package: FloorpWebExtensionSettingsInstalledPackage) {
@@ -1257,18 +1525,25 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         present(alert, animated: true)
     }
 
-    private func performInstall(_ item: FloorpWebExtensionBundledCatalogItem) {
+    private func performInstall(
+        _ item: FloorpWebExtensionBundledCatalogItem,
+        showsSiteAccessGuidance: Bool = false
+    ) {
         guard isCurrentCatalogItem(item) else {
             invalidateExpiredCatalogItems()
             return
         }
-        mutate { manager in
+        pendingInstalledDetail = (item.id, showsSiteAccessGuidance)
+        mutate(for: item.id, onFailure: { [weak self] in
+            guard self?.pendingInstalledDetail?.id == item.id else { return }
+            self?.pendingInstalledDetail = nil
+        }) { manager in
             try await manager.installBundledPackage(item)
         }
     }
 
     private func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) {
-        mutate { manager in
+        mutate(for: extensionID) { manager in
             try await manager.setEnabled(isEnabled, for: extensionID)
         }
     }
@@ -1278,7 +1553,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         for extensionID: FloorpWebExtensionID,
         isPrivateBrowsing: Bool = false
     ) {
-        mutate { manager in
+        mutate(for: extensionID) { manager in
             if isPrivateBrowsing {
                 try await manager.setPrivateSiteAccess(access, for: extensionID)
             } else {
@@ -1288,7 +1563,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     }
 
     private func setPrivateBrowsingEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) {
-        mutate { manager in
+        mutate(for: extensionID) { manager in
             try await manager.setPrivateBrowsingEnabled(isEnabled, for: extensionID)
         }
     }
@@ -1297,7 +1572,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         _ access: FloorpWebExtensionHostAccess,
         for extensionID: FloorpWebExtensionID
     ) {
-        mutate { manager in
+        mutate(for: extensionID) { manager in
             try await manager.setPrivateSiteAccess(access, for: extensionID)
         }
     }
@@ -1307,7 +1582,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         for extensionID: FloorpWebExtensionID,
         isPrivateBrowsing: Bool
     ) {
-        mutate { manager in
+        mutate(for: extensionID) { manager in
             if isPrivateBrowsing {
                 try await manager.setPrivateDNRExcludedTopLevelDomains(domains, for: extensionID)
             } else {
@@ -1317,25 +1592,33 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     }
 
     private func performUninstall(_ extensionID: FloorpWebExtensionID) {
-        mutate { manager in
+        pendingInstalledDetail = nil
+        mutate(for: extensionID) { manager in
             try await manager.uninstall(extensionID)
         }
     }
 
     private func mutate(
+        for extensionID: FloorpWebExtensionID,
+        onFailure: (@MainActor () -> Void)? = nil,
         _ operation: @escaping @Sendable (any FloorpWebExtensionSettingsManaging) async throws -> Void
     ) {
-        guard let packageManager else { return }
+        guard let packageManager, busyExtensionIDs.insert(extensionID).inserted else { return }
         navigationItem.rightBarButtonItem?.isEnabled = false
+        tableView.reloadData()
         Task { [weak self, packageManager] in
             do {
                 try await operation(packageManager)
                 guard let self, !Task.isCancelled else { return }
+                self.busyExtensionIDs.remove(extensionID)
                 self.navigationItem.rightBarButtonItem?.isEnabled = true
                 self.refresh()
             } catch {
                 guard let self, !Task.isCancelled else { return }
+                self.busyExtensionIDs.remove(extensionID)
                 self.navigationItem.rightBarButtonItem?.isEnabled = true
+                onFailure?()
+                self.tableView.reloadData()
                 self.presentError(error)
             }
         }
@@ -1343,10 +1626,11 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 
     private func presentError(_ error: Error) {
         let alert = UIAlertController(
-            title: "Extension could not be changed",
+            title: FloorpStrings.WebExtensions.loadErrorTitle,
             message: error.localizedDescription,
             preferredStyle: .alert
         )
+        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.Error"
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
     }
