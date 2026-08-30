@@ -1,41 +1,43 @@
-Floorp for iOS — Dark Reader カタログ候補
+Floorp for iOS — 拡張機能管理 UI 候補
 
-TestFlight の版／ビルドがリリース証跡と完全一致し、「設定」>「Extensions」に署名済み・
-アプリ同梱の Dark Reader だけが表示される候補をテストしてください。Dark Reader がない、
-別の package が表示される、または起動後に一覧が変わった場合は、リリース完全性の不具合として
-中止・報告してください。別の TestFlight ビルドで代替しないでください。
+この候補に含まれる署名済み・アプリ同梱の拡張機能は Dark Reader 1件です。通常プロファイルで
+「設定」>「拡張機能」を開き、新しい概要が Dynamic Type と VoiceOver でも理解しやすいことを
+確認してください。Dark Reader はアイコン、名前、版、説明、および状態（利用可能／有効／
+無効／アップデートあり／失効）が明確なカードとして表示される必要があります。読み込み中、
+空、エラー、再試行、処理中の状態が操作可能に見えたり、同じ処理を重複実行できたりしては
+なりません。
 
-これは拡張ストアではありません。Chrome ウェブストア、Firefox Add-ons、任意 URL、ZIP、
-XPI、CRX、共有シート、ローカルファイルから導入できてはなりません。Dark Reader は remote
-JavaScript、WASM、設定、news、拡張機能 update、DNR/filter list を取得してはなりません。
-境界を越える導線や通信が見えた場合は報告してください。
+利用可能な Dark Reader カードを押します。導入確認画面に Dark Reader のアイコンと識別情報、
+公開元／入手元／ライセンス、要求機能、プライバシーとプロファイルの説明、およびサイトアクセスが
+未許可から始まる注意が表示されることを確認します。一度キャンセルし、導入されていないことを
+確認してください。再度開いて「インストール」を1回だけ押し、進行状況が見え、1件だけ導入される
+ことを確認します。導入後はサイトアクセスを選ぶ案内付きの管理画面が開き、すべてのサイトへの
+アクセスが暗黙に許可されてはなりません。
 
-通常プロファイルで Dark Reader の署名済み metadata を確認して導入します。1つの browser
-window で、個人情報を含まない Floorp QA page または承認済み HTTP(S) test page だけを
-使用してください。サイトアクセスを未許可にした状態で action popup を開き、現在のサイトと
-要求された全サイトを明示した Floorp の許可 UI が出ることを確認します。「現在のサイト」を
-選び、同じ page が再読み込みされて dark 表示になることを確認してください。
+個人情報を含まない承認済み HTTP(S) ページで browser の Dark Reader action を開き、現在の
+サイトだけを許可します。ページが再読み込みされ dark 表示になることを確認してください。
+popup には `about:` ではなく実 hostname が表示され、通常ページを「browser によって保護」と
+誤表示してはなりません。popup を開いたまま Off／On を切り替え、ページと popup の状態が毎回
+更新されることを確認します。Dark Reader の Settings を押して設定を変更し、再読み込み後も
+認証済み・同梱の設定ページと保存内容が正しく動作することを確認してください。
 
-popup を開き直し、`about:` ではなく実 hostname が表示され、「browser によって保護」と
-誤表示されないことを確認します。popup を開いたまま Off と On を切り替え、page と popup の
-状態表示が毎回一緒に変わることを確認してください。Settings を押し、認証済み・同梱済みの
-Dark Reader 設定 page が開くことも確認します。設定を変更し、test page の reload と popup
-再表示後も profile-local に保持されることを確認してください。
+「設定」>「拡張機能」に戻って導入済み Dark Reader カードを開き、表示される管理操作を確認します。
+無効／有効、オプション、通常サイトアクセス、Private Browsing の opt-in と private
+サイトアクセス、network protection、Web サイト、更新履歴、アップデート（表示時）、削除を
+順に試してください。各操作後にボタンとカード状態が更新され、spinner の停止、sheet の重複、
+crash、古い表示がないことを確認します。無効化時は popup とページ変換が停止し、再有効化時は
+generation を変えずに復元する必要があります。削除して再導入した後は、サイトアクセスが再び
+未許可から始まり、削除した拡張機能所有設定が復元されてはなりません。
 
-Dark Reader を無効化・再有効化してから、削除・再導入します。無効化は generation を変えずに
-runtime、action、page transformation を停止する必要があります。削除は拡張機能所有データを
-消去する必要があります。再導入後はサイトアクセスが未許可から始まり、削除済み設定が復元
-されてはなりません。
-
-既知の制限: Dark Reader の複数 window にまたがる active-tab routing と大容量 DevTools data
-view は今回の合格経路ではありません。主要な popup、page 表示、Settings は単一 window で
-確認してください。`storage.sync` は意図的に端末内だけで、cloud sync は行いません。
-
-Private Browsing でも導入、サイト権限、popup、Settings、有効／無効、削除の経路を繰り返します。
+Private Browsing でも導入、管理、サイトアクセス、popup、Settings、削除を繰り返します。
 Private 利用は opt-in かつ profile-local です。通常側の権限、storage、alarms、runtime state が
-private 側に現れず、private state が通常側へ戻らないことを確認してください。
+private 側へ漏れたり、private 側から通常側へ戻ったりしてはなりません。
 
-通常／private、英語／日本語、VoiceOver で browser の主要 smoke test も行います。crash、
-hang、想定外通信、権限回避、profile 間漏えい、余分な catalog item、版／ビルド不一致を報告
-してください。個人の認証情報や本番データは使わないでください。広い配布には実機性能、
-memory、battery、accessibility、失効証跡、Apple 審査が引き続き必要です。
+リリース完全性: 「設定」>「拡張機能」の catalog package は1件だけである必要があります。
+Chrome ウェブストア、Firefox Add-ons、任意 URL、ZIP、XPI、CRX、共有シート、ローカルファイル
+からの導入経路があってはならず、Dark Reader は remote code、設定、update、filter list を取得
+してはなりません。不一致、余分な項目、権限回避、想定外通信、profile 間漏えい、crash、hang、
+版／ビルド不一致があれば中止・報告してください。
+
+主要経路を英語／日本語、大きな文字、VoiceOver でも確認してください。個人の認証情報や本番
+データは使わず、承認済みの非機密ページだけを使用してください。
