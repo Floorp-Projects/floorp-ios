@@ -1,50 +1,51 @@
-Floorp for iOS — Dark Reader catalog candidate
+Floorp for iOS — Extension management UI candidate
 
-Use this candidate only when TestFlight shows the exact version/build from the
-release evidence and Settings > Extensions shows exactly one signed,
-app-bundled package: Dark Reader. Stop and report a release-integrity failure
-if Dark Reader is missing, another package appears, or the catalog changes
-after launch. Do not substitute another TestFlight build.
+This candidate contains one signed, app-bundled extension: Dark Reader. In a
+normal profile, open Settings > Extensions and verify the new overview is easy
+to understand with Dynamic Type and VoiceOver. Dark Reader must appear as an
+icon-rich card with its name, version, description, and clear Available,
+Enabled, Disabled, Update Available, or Revoked status as applicable. Loading,
+empty, error, retry, and in-progress states must not look tappable or permit a
+duplicate action.
 
-This is not an extension store. There must be no Chrome Web Store installation
-path, Firefox Add-ons installation, arbitrary URL, ZIP, XPI, CRX, share-sheet,
-or local-file installation. Dark Reader must not fetch remote JavaScript,
-WebAssembly, configuration, news, extension updates, or DNR/filter lists.
-Report any visible path or network activity that appears to cross these
-boundaries.
+Tap the available Dark Reader card. The install review must show the Dark
+Reader icon and identity, publisher/source/license information, requested
+capabilities, privacy/profile explanations, and the warning that site access
+starts off. Cancel once and confirm nothing is installed. Open it again, tap
+Install once, and confirm progress is visible and only one copy is installed.
+After installation, verify the management screen opens with guidance to choose
+Site Access; installation must not silently grant access to every website.
 
-In a normal profile, inspect Dark Reader's signed metadata and install it. Use
-only a non-sensitive Floorp QA page or another approved HTTP(S) test page in a
-single browser window. With site access initially denied, open the action popup
-and confirm Floorp offers explicit access for the current site and all
-requested sites. Choose the current site and confirm the same page reloads and
-becomes dark.
+On a non-sensitive approved HTTP(S) page, open Dark Reader from the browser
+action UI and grant access to the current site. Confirm the page reloads and
+becomes dark. The popup must show the real hostname, not `about:`, and must not
+claim an ordinary page is browser-protected. Toggle Off and On while the popup
+stays open; both the page and popup status must update. Tap Dark Reader
+Settings, change an option, reload, and confirm the authenticated bundled
+settings page and saved choice work.
 
-Reopen the popup. It must show the real hostname, not `about:`, and must not
-claim the page is browser-protected. Toggle Off and On while the popup stays
-open; both the page and popup status must update each time. Tap Settings and
-confirm the authenticated, bundled Dark Reader settings page opens. Change a
-setting, reload the test page, and reopen the popup to confirm the choice
-remains profile-local.
+Return to Settings > Extensions, open the installed Dark Reader card, and
+exercise each available management action: disable/enable, options, normal
+site access, Private Browsing opt-in and private site access, network
+protection, website, update history, update (if offered), and uninstall.
+Buttons and status must update after each action without a stuck spinner,
+duplicate sheet, crash, or stale card. Disabling must stop the popup and page
+transformation. Re-enabling must restore them without changing generation.
+After uninstall and reinstall, site access must again start off and removed
+extension-owned settings must not return.
 
-Disable and re-enable Dark Reader, then remove and reinstall it. Disabling must
-stop its runtime, action, and page transformation without changing generation.
-Removal must clear extension-owned data. After reinstalling, site access must
-start denied and removed settings must not return.
-
-Known limits for this candidate: Dark Reader multi-window active-tab routing
-and its large DevTools data view are not release acceptance paths. Test the
-core popup, page appearance, and Settings flow in one browser window.
-`storage.sync` is intentionally device-local; do not expect cloud sync.
-
-Repeat the install, site-permission, popup, Settings, enable/disable, and delete
+Repeat the install, management, site-access, popup, Settings, and uninstall
 paths in Private Browsing. Private use is opt-in and profile-local. Normal
-grants, storage, alarms, and runtime state must not appear in private browsing,
-and private state must not return to normal browsing.
+grants, storage, alarms, and runtime state must not leak into private browsing,
+or back from private to normal browsing.
 
-Repeat core browser smoke tests in normal/private browsing, English/Japanese,
-and with VoiceOver. Report crashes, hangs, unexpected network activity,
-permission bypass, cross-profile leakage, extra catalog items, or
-version/build mismatches. Do not use personal credentials or production data.
-Physical-device performance, memory, battery, accessibility, revocation
-evidence, and Apple review remain required for broader release.
+Release-integrity checks: Settings > Extensions must show exactly one catalog
+package. There must be no Chrome Web Store, Firefox Add-ons, arbitrary URL,
+ZIP, XPI, CRX, share-sheet, or local-file installation path, and Dark Reader
+must not fetch remote code, configuration, updates, or filter lists. Stop and
+report a mismatch, extra item, permission bypass, unexpected network activity,
+cross-profile leak, crash, hang, or version/build mismatch.
+
+Repeat the core checks in English and Japanese, with larger text and VoiceOver.
+Use only approved non-sensitive pages and no personal credentials or
+production data.

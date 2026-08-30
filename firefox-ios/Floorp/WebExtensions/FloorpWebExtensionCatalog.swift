@@ -14,21 +14,27 @@ enum FloorpWebExtensionPermissionCategory: String, CaseIterable, Hashable, Senda
     case siteData
     case tabs
     case storage
+    case alarms
+    case fontSettings
     case networkBlocking
     case browserAutomation
 
     var title: String {
         switch self {
         case .siteData:
-            return "Read and change data on selected sites"
+            return FloorpStrings.WebExtensions.permissionSiteData
         case .tabs:
-            return "Read tab metadata and open or reload tabs"
+            return FloorpStrings.WebExtensions.permissionTabs
         case .storage:
-            return "Store extension settings on this device"
+            return FloorpStrings.WebExtensions.permissionStorage
+        case .alarms:
+            return FloorpStrings.WebExtensions.permissionAlarms
+        case .fontSettings:
+            return FloorpStrings.WebExtensions.permissionFontSettings
         case .networkBlocking:
-            return "Block supported network requests"
+            return FloorpStrings.WebExtensions.permissionNetworkBlocking
         case .browserAutomation:
-            return "Run approved page scripts and styles"
+            return FloorpStrings.WebExtensions.permissionBrowserAutomation
         }
     }
 }
@@ -146,6 +152,12 @@ enum FloorpWebExtensionBundledCatalog {
         }
         if metadata.permissions.contains(.storage) {
             categories.append(.storage)
+        }
+        if metadata.permissions.contains(.alarms) {
+            categories.append(.alarms)
+        }
+        if metadata.permissions.contains(.fontSettings) {
+            categories.append(.fontSettings)
         }
         if metadata.permissions.contains(.declarativeNetRequest) {
             categories.append(.networkBlocking)

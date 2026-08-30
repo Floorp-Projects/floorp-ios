@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import Common
 import UIKit
 
 /// Kept separate from the upstream Settings flow so existing setting delegates
@@ -25,6 +26,14 @@ final class FloorpWebExtensionsSetting: Setting {
         "Floorp.WebExtensions.Settings.Entry"
     }
 
+    override var status: NSAttributedString? {
+        guard let theme else { return nil }
+        return NSAttributedString(
+            string: FloorpStrings.WebExtensions.introMessage,
+            attributes: [.foregroundColor: theme.colors.textSecondary]
+        )
+    }
+
     init(
         settings: SettingsTableViewController,
         settingsDelegate: (any FloorpWebExtensionsSettingsDelegate)?
@@ -33,7 +42,7 @@ final class FloorpWebExtensionsSetting: Setting {
         let theme = settings.currentTheme()
         super.init(
             title: NSAttributedString(
-                string: "Extensions",
+                string: FloorpStrings.WebExtensions.title,
                 attributes: [.foregroundColor: theme.colors.textPrimary]
             )
         )
@@ -41,5 +50,13 @@ final class FloorpWebExtensionsSetting: Setting {
 
     override func onClick(_ navigationController: UINavigationController?) {
         settingsDelegate?.pressedWebExtensions()
+    }
+
+    override func onConfigureCell(_ cell: UITableViewCell, theme: Theme) {
+        super.onConfigureCell(cell, theme: theme)
+        let symbol = UIImage(systemName: "puzzlepiece.extension.fill")
+            ?? UIImage(systemName: "puzzlepiece.fill")
+        cell.imageView?.image = symbol?.withRenderingMode(.alwaysTemplate)
+        cell.imageView?.tintColor = theme.colors.iconAccent
     }
 }

@@ -1266,6 +1266,516 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Untitled" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "無題" } }
       }
+    },
+    "Floorp.WebExtensions.Title.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extensions" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能" } }
+      }
+    },
+    "Floorp.WebExtensions.IntroTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Make Floorp yours" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Floorpを自分らしく" } }
+      }
+    },
+    "Floorp.WebExtensions.IntroMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add reviewed extensions, then choose exactly where they can run." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "レビュー済みの拡張機能を追加し、実行を許可するサイトを選べます。" } }
+      }
+    },
+    "Floorp.WebExtensions.InstalledSection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "インストール済み" } }
+      }
+    },
+    "Floorp.WebExtensions.AvailableSection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Available" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利用可能" } }
+      }
+    },
+    "Floorp.WebExtensions.Loading.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading extensions…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を読み込み中…" } }
+      }
+    },
+    "Floorp.WebExtensions.NoInstalledTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No extensions installed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "インストール済みの拡張機能はありません" } }
+      }
+    },
+    "Floorp.WebExtensions.NoInstalledMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose a reviewed extension below to add new browser features." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "下のレビュー済み拡張機能を選ぶと、ブラウザーに新しい機能を追加できます。" } }
+      }
+    },
+    "Floorp.WebExtensions.NoAvailableTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No extensions available" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利用できる拡張機能はありません" } }
+      }
+    },
+    "Floorp.WebExtensions.NoAvailableMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "New reviewed extensions will appear here when they are ready." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しい拡張機能のレビューが完了すると、ここに表示されます。" } }
+      }
+    },
+    "Floorp.WebExtensions.LoadErrorTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extensions are unavailable" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を利用できません" } }
+      }
+    },
+    "Floorp.WebExtensions.LoadErrorMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Floorp couldn’t verify the extension catalog. Your installed extensions were not changed." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能カタログを検証できませんでした。インストール済みの拡張機能は変更されていません。" } }
+      }
+    },
+    "Floorp.WebExtensions.PackageStoreUnavailableTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extensions are unavailable" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を利用できません" } }
+      }
+    },
+    "Floorp.WebExtensions.PackageStoreUnavailableMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The extension package store is not configured for this profile." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このプロファイルには拡張機能のパッケージストアが設定されていません。" } }
+      }
+    },
+    "Floorp.WebExtensions.Retry.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Try Again" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再試行" } }
+      }
+    },
+    "Floorp.WebExtensions.Reviewed.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reviewed by Floorp" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Floorpレビュー済み" } }
+      }
+    },
+    "Floorp.WebExtensions.Add.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "追加" } }
+      }
+    },
+    "Floorp.WebExtensions.Manage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Manage" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "管理" } }
+      }
+    },
+    "Floorp.WebExtensions.Version.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Version %1$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "バージョン %1$@" } }
+      }
+    },
+    "Floorp.WebExtensions.Enabled.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enabled" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "有効" } }
+      }
+    },
+    "Floorp.WebExtensions.Disabled.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Disabled" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "無効" } }
+      }
+    },
+    "Floorp.WebExtensions.Revoked.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Disabled for your protection" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保護のため無効化" } }
+      }
+    },
+    "Floorp.WebExtensions.UpdateAvailable.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Update available" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデートあり" } }
+      }
+    },
+    "Floorp.WebExtensions.Update.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Update" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデート" } }
+      }
+    },
+    "Floorp.WebExtensions.InstallTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add %1$@?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@を追加しますか？" } }
+      }
+    },
+    "Floorp.WebExtensions.Install.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add Extension" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を追加" } }
+      }
+    },
+    "Floorp.WebExtensions.Cancel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャンセル" } }
+      }
+    },
+    "Floorp.WebExtensions.AccessSection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Access" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクセス" } }
+      }
+    },
+    "Floorp.WebExtensions.PrivacySection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Privacy" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライバシー" } }
+      }
+    },
+    "Floorp.WebExtensions.ProfileSection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Profiles" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プロファイル" } }
+      }
+    },
+    "Floorp.WebExtensions.SiteAccessStartsOffTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Site access starts off" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイトへのアクセスは最初はオフです" } }
+      }
+    },
+    "Floorp.WebExtensions.SiteAccessStartsOffMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "After adding the extension, choose the sites where it may read or change content." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を追加した後、コンテンツの読み取りや変更を許可するサイトを選んでください。" } }
+      }
+    },
+    "Floorp.WebExtensions.SiteAccessPreservedTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Site choices stay unchanged" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイトの選択は引き継がれます" } }
+      }
+    },
+    "Floorp.WebExtensions.SiteAccessPreservedMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your existing choices are preserved. Newly requested sites stay off until you allow them." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "現在の選択は引き継がれます。新たに要求されたサイトは、許可するまでオフのままです。" } }
+      }
+    },
+    "Floorp.WebExtensions.PrivateBrowsingOptInTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Private Browsing is optional" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライベートブラウジングでの利用は任意です" } }
+      }
+    },
+    "Floorp.WebExtensions.PrivateBrowsingOptInMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "You can allow this extension separately in Private Browsing. Its private data stays isolated." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライベートブラウジングでは、この拡張機能を別途許可できます。プライベートデータは分離して保存されます。" } }
+      }
+    },
+    "Floorp.WebExtensions.NotSupported.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not supported on this version of Floorp" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このバージョンのFloorpでは利用できません" } }
+      }
+    },
+    "Floorp.WebExtensions.PublisherLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Publisher" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "提供元" } }
+      }
+    },
+    "Floorp.WebExtensions.SourceLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Source" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ソース" } }
+      }
+    },
+    "Floorp.WebExtensions.LicenseLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "License" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライセンス" } }
+      }
+    },
+    "Floorp.WebExtensions.Publisher.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Publisher: %1$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "提供元：%1$@" } }
+      }
+    },
+    "Floorp.WebExtensions.Source.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Source: %1$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ソース：%1$@" } }
+      }
+    },
+    "Floorp.WebExtensions.License.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "License: %1$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライセンス：%1$@" } }
+      }
+    },
+    "Floorp.WebExtensions.DetailTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extension Details" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能の詳細" } }
+      }
+    },
+    "Floorp.WebExtensions.Options.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extension Settings" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能の設定" } }
+      }
+    },
+    "Floorp.WebExtensions.SiteAccess.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Site Access" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイトへのアクセス" } }
+      }
+    },
+    "Floorp.WebExtensions.PrivateBrowsing.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Private Browsing" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライベートブラウジング" } }
+      }
+    },
+    "Floorp.WebExtensions.NetworkProtection.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Network Protection" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ネットワーク保護" } }
+      }
+    },
+    "Floorp.WebExtensions.Website.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Project Website" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プロジェクトのウェブサイト" } }
+      }
+    },
+    "Floorp.WebExtensions.UpdateHistory.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Update History" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデート履歴" } }
+      }
+    },
+    "Floorp.WebExtensions.Uninstall.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove Extension" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を削除" } }
+      }
+    },
+    "Floorp.WebExtensions.Installing.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Adding…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "追加中…" } }
+      }
+    },
+    "Floorp.WebExtensions.Updating.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Updating…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデート中…" } }
+      }
+    },
+    "Floorp.WebExtensions.Removing.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Removing…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除中…" } }
+      }
+    },
+    "Floorp.WebExtensions.InstalledTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ was added" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@を追加しました" } }
+      }
+    },
+    "Floorp.WebExtensions.PostInstallSiteAccessGuidance.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Site access is still off. Open Site Access to choose where this extension can run." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイトへのアクセスはまだオフです。［サイトへのアクセス］を開き、この拡張機能を実行できるサイトを選んでください。" } }
+      }
+    },
+    "Floorp.WebExtensions.Permission.SiteData.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Read and change data on selected sites" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択したサイトのデータの読み取りと変更" } }
+      }
+    },
+    "Floorp.WebExtensions.Permission.Tabs.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Read tab details and open or reload tabs" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "タブの情報の読み取り、タブを開く、または再読み込み" } }
+      }
+    },
+    "Floorp.WebExtensions.Permission.Storage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Store extension settings on this device" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能の設定をこのデバイスに保存" } }
+      }
+    },
+    "Floorp.WebExtensions.Permission.NetworkBlocking.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Block supported network requests" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "対応するネットワークリクエストをブロック" } }
+      }
+    },
+    "Floorp.WebExtensions.Permission.BrowserAutomation.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Run reviewed page scripts and styles" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "レビュー済みのページ用スクリプトとスタイルを実行" } }
+      }
+    },
+    "Floorp.WebExtensions.Permission.Alarms.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Schedule extension tasks" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能のタスクを予約" } }
+      }
+    },
+    "Floorp.WebExtensions.Permission.FontSettings.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use Floorp’s safe default font list" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Floorpの安全な標準フォント一覧を使用" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.SiteData.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Only on sites you explicitly allow after installation." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "インストール後、明示的に許可したサイトでのみ使用されます。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Tabs.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Works with supported tab information and actions." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "対応しているタブ情報と操作を利用します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Storage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Keeps extension preferences on this device." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能の設定をこのデバイスに保存します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.NetworkBlocking.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Applies reviewed, supported blocking rules." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "レビュー済みで対応しているブロックルールを適用します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.BrowserAutomation.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Runs approved package scripts and styles." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "承認されたパッケージのスクリプトとスタイルを実行します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Alarms.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Schedules local extension work using supported alarms." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "対応しているアラームで拡張機能の処理をスケジュールします。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.FontSettings.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Uses the supported generic font fallback." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "対応している汎用フォントの代替設定を使用します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Generic.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Uses an approved Floorp extension capability." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "承認された Floorp 拡張機能の機能を使用します。" } }
+      }
+    },
+    "Floorp.WebExtensions.AttributionLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Attribution" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "帰属表示" } }
+      }
+    },
+    "Floorp.WebExtensions.DataRetentionLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Data Retention" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "データの保持" } }
+      }
+    },
+    "Floorp.WebExtensions.PrivateAccessNotAllowed.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not allowed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "許可されていません" } }
+      }
+    },
+    "Floorp.WebExtensions.IncompatibleBuildMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This extension is incompatible with the current Floorp build." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この拡張機能は現在の Floorp ビルドと互換性がありません。" } }
+      }
+    },
+    "Floorp.WebExtensions.StandardBrowsingEnabledMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow this extension to run in standard browsing." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この拡張機能を通常のブラウジングで実行できるようにします。" } }
+      }
+    },
+    "Floorp.WebExtensions.CatalogRevokedDisabledMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Disabled because this catalog package was revoked." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カタログ上でこのパッケージが取り消されたため無効になっています。" } }
+      }
+    },
+    "Floorp.WebExtensions.CatalogRevokedGuidance.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This extension cannot be enabled or updated. You can uninstall it below." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この拡張機能は有効化またはアップデートできません。下から削除できます。" } }
+      }
+    },
+    "Floorp.WebExtensions.AllRequestedWebsites.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "HTTP(S) · All requested websites" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "HTTP(S)・要求されたすべてのウェブサイト" } }
+      }
+    },
+    "Floorp.WebExtensions.NoSiteAccess.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No site access" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイトへのアクセスなし" } }
+      }
+    },
+    "Floorp.WebExtensions.AllRequestedSiteSingular.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All %1$d requested site" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$d 件の要求済みサイトすべて" } }
+      }
+    },
+    "Floorp.WebExtensions.AllRequestedSitesPlural.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All %1$d requested sites" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$d 件の要求済みサイトすべて" } }
+      }
+    },
+    "Floorp.WebExtensions.SelectedSiteSingular.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$d selected site" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択したサイト %1$d 件" } }
+      }
+    },
+    "Floorp.WebExtensions.SelectedSitesPlural.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$d selected sites" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択したサイト %1$d 件" } }
+      }
+    },
+    "Floorp.WebExtensions.GenericExtensionName.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extension" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能" } }
+      }
     }
   },
   "version" : "1.0"

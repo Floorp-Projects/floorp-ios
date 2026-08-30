@@ -2462,6 +2462,42 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         }
     }
 
+    func testSettingsPermissionPresentationIncludesEverySupportedDarkReaderCapability() throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let accepted = try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 1,
+                schemaVersion: 3,
+                packageMetadata: signing.v3Metadata(permissions: [
+                    "tabs",
+                    "storage",
+                    "alarms",
+                    "fontSettings",
+                    "declarativeNetRequest",
+                    "scripting"
+                ])
+            ),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(accepted.catalog.packages.first)
+        let item = try XCTUnwrap(FloorpWebExtensionBundledCatalog.signedItem(
+            record: record,
+            catalogExpiresAt: accepted.catalog.expiresAt
+        ))
+
+        XCTAssertEqual(item.requestedPermissions, [
+            .siteData,
+            .tabs,
+            .storage,
+            .alarms,
+            .fontSettings,
+            .networkBlocking,
+            .browserAutomation
+        ])
+    }
+
     func testSignedCatalogSchema3BindsDisplayOnlyDisclosureAndRejectsUnsafeValues() throws {
         let signing = try CatalogSigningFixture()
         let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
@@ -2624,6 +2660,9 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         )
         XCTAssertEqual(settingsPackage.catalogLicense, expectedMetadata.license)
         XCTAssertEqual(settingsPackage.catalogHomepage, expectedMetadata.sourceURL)
+        XCTAssertEqual(settingsPackage.catalogCategory, expectedMetadata.category)
+        XCTAssertEqual(settingsPackage.catalogModificationStatus, expectedMetadata.modificationStatus)
+        XCTAssertEqual(settingsPackage.privateProfileCapability, expectedMetadata.privateProfileCapability)
 
         var staleItem = item
         let staleRecord = FloorpWebExtensionCatalogPackageRecord(
@@ -2890,12 +2929,20 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         await manager.waitUntilCatalogRequested()
 
         XCTAssertEqual(subject.numberOfSections(in: subject.tableView), 2)
+        XCTAssertEqual(subject.tableView(subject.tableView, numberOfRowsInSection: 0), 1)
+        let installedLoading = subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        )
+        XCTAssertEqual(installedLoading.textLabel?.text, FloorpStrings.WebExtensions.loading)
+        XCTAssertFalse(installedLoading.isUserInteractionEnabled)
+        XCTAssertEqual(installedLoading.accessibilityIdentifier, "Floorp.WebExtensions.Installed.Loading")
         XCTAssertEqual(subject.tableView(subject.tableView, numberOfRowsInSection: 1), 1)
         let cell = subject.tableView(
             subject.tableView,
             cellForRowAt: IndexPath(row: 0, section: 1)
         )
-        XCTAssertEqual(cell.textLabel?.text, "Checking signed catalog…")
+        XCTAssertEqual(cell.textLabel?.text, FloorpStrings.WebExtensions.loading)
         XCTAssertFalse(cell.isUserInteractionEnabled)
         XCTAssertEqual(cell.accessibilityIdentifier, "Floorp.WebExtensions.CatalogLoading")
     }
@@ -2939,6 +2986,90 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertFalse(refreshLoading.isUserInteractionEnabled)
     }
 
+    func testSettingsCoalescesRefreshRequestedDuringAnInFlightSnapshot() async throws {
+        let disabledPackage = settingsPackage(isEnabled: false)
+        let enabledPackage = settingsPackage(isEnabled: true)
+        let manager = PausedCatalogSettingsManager(
+            initialPackages: [disabledPackage],
+            pauseOnRequest: 2
+        )
+        defer { manager.resumeCatalogLoad() }
+        let subject = FloorpWebExtensionSettingsViewController(
+            windowUUID: .XCTestDefaultUUID,
+            packageManager: manager,
+            themeManager: MockThemeManager()
+        )
+
+        subject.loadViewIfNeeded()
+        await manager.waitUntilInitialCatalogDelivered()
+        for _ in 0 ..< 10 { await Task.yield() }
+        let initialCell = try XCTUnwrap(subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        ) as? FloorpWebExtensionCardCell)
+        XCTAssertEqual(initialCell.displayedStatus, FloorpStrings.WebExtensions.disabled)
+
+        subject.viewWillAppear(false)
+        await manager.waitUntilCatalogRequested()
+        manager.replacePackages(with: [enabledPackage])
+        subject.viewWillAppear(false)
+        manager.resumeCatalogLoad()
+        for _ in 0 ..< 50 { await Task.yield() }
+
+        let refreshedCell = try XCTUnwrap(subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        ) as? FloorpWebExtensionCardCell)
+        XCTAssertEqual(refreshedCell.displayedStatus, FloorpStrings.WebExtensions.enabled)
+    }
+
+    func testSettingsKeepsMutationBusyUntilAuthoritativeSnapshotCompletes() async throws {
+        let disabledPackage = settingsPackage(isEnabled: false)
+        let enabledPackage = settingsPackage(isEnabled: true)
+        let manager = PausedCatalogSettingsManager(
+            initialPackages: [disabledPackage],
+            pauseOnRequest: 2,
+            allowsEnabledMutation: true
+        )
+        defer { manager.resumeCatalogLoad() }
+        let subject = FloorpWebExtensionSettingsViewController(
+            windowUUID: .XCTestDefaultUUID,
+            packageManager: manager,
+            themeManager: MockThemeManager()
+        )
+
+        subject.loadViewIfNeeded()
+        await manager.waitUntilInitialCatalogDelivered()
+        for _ in 0 ..< 10 { await Task.yield() }
+        manager.replacePackages(with: [enabledPackage])
+        let mutationExtensionID = extensionID
+
+        subject.mutate(for: mutationExtensionID) { manager in
+            try await manager.setEnabled(true, for: mutationExtensionID)
+        }
+        await manager.waitUntilEnabledMutationCompleted()
+        await manager.waitUntilCatalogRequested()
+
+        let busyCell = try XCTUnwrap(subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        ) as? FloorpWebExtensionCardCell)
+        XCTAssertTrue(busyCell.isShowingActivity)
+        XCTAssertFalse(busyCell.isUserInteractionEnabled)
+        XCTAssertEqual(busyCell.displayedStatus, FloorpStrings.WebExtensions.disabled)
+
+        manager.resumeCatalogLoad()
+        for _ in 0 ..< 50 { await Task.yield() }
+
+        let refreshedCell = try XCTUnwrap(subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        ) as? FloorpWebExtensionCardCell)
+        XCTAssertFalse(refreshedCell.isShowingActivity)
+        XCTAssertTrue(refreshedCell.isUserInteractionEnabled)
+        XCTAssertEqual(refreshedCell.displayedStatus, FloorpStrings.WebExtensions.enabled)
+    }
+
     func testSettingsAvailableCatalogRowDisplaysSignedSchema3Disclosure() async throws {
         let signing = try CatalogSigningFixture()
         let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
@@ -2969,22 +3100,305 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             await Task.yield()
         }
 
-        let available = subject.tableView(
+        let available = try XCTUnwrap(subject.tableView(
             subject.tableView,
             cellForRowAt: IndexPath(row: 0, section: 1)
-        )
-        let detail = try XCTUnwrap(available.detailTextLabel?.text)
+        ) as? FloorpWebExtensionCardCell)
         XCTAssertEqual(
             available.accessibilityIdentifier,
             "Floorp.WebExtensions.Available.\(record.extensionID.rawValue)"
         )
-        XCTAssertTrue(detail.contains("Publisher: Floorp iOS"))
-        XCTAssertTrue(detail.contains("Attribution: Original project: Floorp test fixture."))
-        XCTAssertTrue(detail.contains("Floorp review: version 1.0.0, generation catalog-gen-1"))
-        XCTAssertTrue(detail.contains("Privacy: Review requested sites and permissions before installation."))
-        XCTAssertTrue(detail.contains("Data retention: Settings stay in the selected profile until removal."))
-        XCTAssertTrue(detail.contains("Support: Floorp GitHub Issues"))
-        XCTAssertTrue(detail.contains("Report a problem: Floorp GitHub bug report"))
+        XCTAssertEqual(available.displayedTitle, item.name)
+        XCTAssertEqual(available.displayedSummary, item.summary)
+        XCTAssertEqual(available.displayedVersion, FloorpStrings.WebExtensions.version(item.version))
+        XCTAssertEqual(available.displayedStatus, FloorpStrings.WebExtensions.add)
+        XCTAssertNotNil(available.displayedIcon)
+
+        let disclosure = try XCTUnwrap(record.metadata?.disclosure)
+        let installPresentation = FloorpWebExtensionInstallPresentation(
+            extensionID: record.extensionID,
+            name: item.name,
+            summary: item.summary,
+            version: item.version,
+            catalogPublisher: disclosure.publisherDisplayName,
+            catalogAttribution: disclosure.attribution,
+            catalogPrivacySummary: disclosure.privacySummary,
+            catalogRetentionPolicy: disclosure.retentionPolicy,
+            catalogReviewedAt: disclosure.reviewedAt,
+            source: item.source,
+            license: item.license,
+            permissions: item.requestedPermissions,
+            requestedSites: record.metadata?.hostPermissions.map(\.original) ?? [],
+            privateProfileCapability: record.metadata?.privateProfileCapability
+        )
+        var installCount = 0
+        let installController = FloorpWebExtensionInstallConfirmationViewController(
+            presentation: installPresentation,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager(),
+            onCancel: {},
+            onInstall: { installCount += 1 }
+        )
+        installController.loadViewIfNeeded()
+        let allViews = Self.allSubviews(in: installController.view)
+        let visibleText = allViews.compactMap { ($0 as? UILabel)?.text }.joined(separator: "\n")
+        XCTAssertTrue(visibleText.contains(disclosure.publisherDisplayName))
+        XCTAssertTrue(visibleText.contains(disclosure.attribution))
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.attributionLabel))
+        XCTAssertTrue(visibleText.contains(disclosure.reviewedAt))
+        XCTAssertTrue(visibleText.contains(disclosure.privacySummary))
+        XCTAssertTrue(visibleText.contains(disclosure.retentionPolicy))
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.dataRetentionLabel))
+        XCTAssertTrue(visibleText.contains(item.source))
+        XCTAssertTrue(visibleText.contains(item.license))
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.siteAccessStartsOffTitle))
+        for permission in item.requestedPermissions {
+            XCTAssertTrue(visibleText.contains(permission.title))
+        }
+        let installButton = try XCTUnwrap(allViews.first {
+            $0.accessibilityIdentifier ==
+                "Floorp.WebExtensions.InstallConsent.Install.\(record.extensionID.rawValue)"
+        } as? UIButton)
+        installButton.sendActions(for: .touchUpInside)
+        installButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(installCount, 1)
+    }
+
+    func testInstallReviewExplainsSiteAccessOnlyWhenRequestedAndDistinguishesUpdates() {
+        func visibleText(for presentation: FloorpWebExtensionInstallPresentation) -> String {
+            let controller = FloorpWebExtensionInstallConfirmationViewController(
+                presentation: presentation,
+                windowUUID: .XCTestDefaultUUID,
+                themeManager: MockThemeManager(),
+                onCancel: {},
+                onInstall: {}
+            )
+            controller.loadViewIfNeeded()
+            return Self.allSubviews(in: controller.view)
+                .compactMap { ($0 as? UILabel)?.text }
+                .joined(separator: "\n")
+        }
+
+        let base = FloorpWebExtensionInstallPresentation(
+            extensionID: extensionID,
+            name: "Fixture Extension",
+            summary: "Reviewed extension",
+            version: "2.0.0",
+            source: "Fixture source",
+            license: "MPL-2.0",
+            permissions: [],
+            requestedSites: ["https://example.com/*"]
+        )
+        let installText = visibleText(for: base)
+        XCTAssertTrue(installText.contains(FloorpStrings.WebExtensions.siteAccessStartsOffTitle))
+        XCTAssertFalse(installText.contains(FloorpStrings.WebExtensions.siteAccessPreservedTitle))
+
+        let update = FloorpWebExtensionInstallPresentation(
+            extensionID: base.extensionID,
+            name: base.name,
+            summary: base.summary,
+            version: base.version,
+            source: base.source,
+            license: base.license,
+            permissions: base.permissions,
+            requestedSites: base.requestedSites,
+            mode: .update
+        )
+        let updateText = visibleText(for: update)
+        XCTAssertTrue(updateText.contains(FloorpStrings.WebExtensions.siteAccessPreservedTitle))
+        XCTAssertTrue(updateText.contains(FloorpStrings.WebExtensions.siteAccessPreservedMessage))
+        XCTAssertFalse(updateText.contains(FloorpStrings.WebExtensions.siteAccessStartsOffTitle))
+
+        let noHosts = FloorpWebExtensionInstallPresentation(
+            extensionID: base.extensionID,
+            name: base.name,
+            summary: base.summary,
+            version: base.version,
+            source: base.source,
+            license: base.license,
+            permissions: base.permissions,
+            requestedSites: []
+        )
+        let noHostsText = visibleText(for: noHosts)
+        XCTAssertFalse(noHostsText.contains(FloorpStrings.WebExtensions.siteAccessStartsOffTitle))
+        XCTAssertFalse(noHostsText.contains(FloorpStrings.WebExtensions.siteAccessPreservedTitle))
+
+        let allPermissions = FloorpWebExtensionInstallPresentation(
+            extensionID: base.extensionID,
+            name: base.name,
+            summary: base.summary,
+            version: base.version,
+            source: base.source,
+            license: base.license,
+            permissions: FloorpWebExtensionPermissionCategory.allCases,
+            requestedSites: []
+        )
+        let allPermissionsText = visibleText(for: allPermissions)
+        let localizedExplanations = [
+            FloorpStrings.WebExtensions.permissionSiteDataExplanation,
+            FloorpStrings.WebExtensions.permissionTabsExplanation,
+            FloorpStrings.WebExtensions.permissionStorageExplanation,
+            FloorpStrings.WebExtensions.permissionAlarmsExplanation,
+            FloorpStrings.WebExtensions.permissionFontSettingsExplanation,
+            FloorpStrings.WebExtensions.permissionNetworkBlockingExplanation,
+            FloorpStrings.WebExtensions.permissionBrowserAutomationExplanation
+        ]
+        for explanation in localizedExplanations {
+            XCTAssertTrue(allPermissionsText.contains(explanation))
+        }
+    }
+
+    func testExtensionIconRegistryAndCardBusyPresentation() throws {
+        let darkReaderID = try XCTUnwrap(
+            FloorpWebExtensionID(rawValue: "floorp.thirdparty.darkreader")
+        )
+        let descriptor = FloorpWebExtensionIconRegistry.descriptor(for: darkReaderID)
+        XCTAssertEqual(descriptor.source, .system(name: "moon.stars.fill"))
+        XCTAssertNotNil(descriptor.image())
+        XCTAssertTrue(descriptor.usesTemplateRendering())
+
+        let genericDescriptor = FloorpWebExtensionIconRegistry.descriptor(for: extensionID)
+        XCTAssertEqual(genericDescriptor.source, .system(name: "puzzlepiece.extension.fill"))
+        XCTAssertTrue(genericDescriptor.usesTemplateRendering())
+
+        let theme = MockThemeManager().getCurrentTheme(for: .XCTestDefaultUUID)
+        let cell = FloorpWebExtensionCardCell(style: .default, reuseIdentifier: nil)
+        cell.configure(
+            with: FloorpWebExtensionCardPresentation(
+                extensionID: darkReaderID,
+                title: "Dark Reader",
+                summary: "Reviewed appearance extension",
+                version: "4.9.129",
+                status: .updateAvailable,
+                accessibilityIdentifier: "Floorp.WebExtensions.Card.Test",
+                accessibilityHint: FloorpStrings.WebExtensions.manage,
+                isBusy: true
+            ),
+            theme: theme
+        )
+        XCTAssertEqual(cell.displayedTitle, "Dark Reader")
+        XCTAssertEqual(cell.displayedStatus, FloorpStrings.WebExtensions.updateAvailable)
+        XCTAssertNotNil(cell.displayedIcon)
+        XCTAssertTrue(cell.isShowingActivity)
+        XCTAssertFalse(cell.isUserInteractionEnabled)
+        XCTAssertEqual(cell.accessibilityValue, FloorpStrings.WebExtensions.loading)
+
+        cell.configure(
+            with: FloorpWebExtensionCardPresentation(
+                extensionID: darkReaderID,
+                title: "Dark Reader",
+                summary: "Reviewed appearance extension",
+                version: "4.9.129",
+                status: .enabled,
+                accessibilityIdentifier: "Floorp.WebExtensions.Card.Test",
+                accessibilityHint: FloorpStrings.WebExtensions.manage
+            ),
+            theme: theme
+        )
+        XCTAssertFalse(cell.isShowingActivity)
+        XCTAssertTrue(cell.isUserInteractionEnabled)
+        XCTAssertEqual(cell.accessibilityValue, FloorpStrings.WebExtensions.enabled)
+    }
+
+    func testInstalledDetailKeepsRevokedAndUnsupportedActionsFailClosed() throws {
+        let presentation = FloorpWebExtensionInstalledDetailPresentation(
+            extensionID: extensionID,
+            name: "Fixture Extension",
+            version: "1.0.0",
+            isEnabled: false,
+            isCatalogRevoked: true,
+            permissions: [],
+            siteAccessDescription: "No sites allowed",
+            privateAccessDescription: "Not supported",
+            isPrivateBrowsingEnabled: true,
+            privateProfileCapability: .notSupported,
+            updateVersion: "2.0.0"
+        )
+        let actions = FloorpWebExtensionInstalledDetailActions(
+            onEnabledChanged: { _ in XCTFail("Revoked toggle must remain disabled") },
+            onOpenOptions: nil,
+            onManageSiteAccess: nil,
+            onTogglePrivateBrowsing: { _ in XCTFail("Unsupported private action must be hidden") },
+            onManagePrivateSiteAccess: { XCTFail("Unsupported private-site action must be hidden") },
+            onManageNetworkProtection: nil,
+            onManagePrivateNetworkProtection: nil,
+            onOpenWebsite: nil,
+            onViewUpdateHistory: nil,
+            onUpdate: { XCTFail("Revoked update action must be hidden") },
+            onUninstall: {}
+        )
+        let subject = FloorpWebExtensionInstalledDetailViewController(
+            presentation: presentation,
+            actions: actions,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager()
+        )
+        subject.loadViewIfNeeded()
+
+        let statusLabel = try XCTUnwrap(
+            Self.allSubviews(in: subject.view)
+                .compactMap { $0 as? UILabel }
+                .first { $0.text == FloorpStrings.WebExtensions.revoked }
+        )
+        XCTAssertEqual(statusLabel.numberOfLines, 0)
+        XCTAssertTrue(statusLabel.superview?.constraints.contains { constraint in
+            (constraint.firstItem as? UIView) === statusLabel &&
+                constraint.firstAttribute == .trailing &&
+                constraint.relation == .lessThanOrEqual
+        } == true)
+        var identifiers = [String]()
+        var visibleText = [String]()
+        for section in 0 ..< subject.numberOfSections(in: subject.tableView) {
+            for row in 0 ..< subject.tableView(subject.tableView, numberOfRowsInSection: section) {
+                let cell = subject.tableView(
+                    subject.tableView,
+                    cellForRowAt: IndexPath(row: row, section: section)
+                )
+                if let identifier = cell.accessibilityIdentifier { identifiers.append(identifier) }
+                if let text = cell.textLabel?.text { visibleText.append(text) }
+                if let detail = cell.detailTextLabel?.text { visibleText.append(detail) }
+                if let toggle = cell.accessoryView as? UISwitch {
+                    XCTAssertFalse(toggle.isEnabled)
+                    XCTAssertEqual(toggle.accessibilityLabel, "Fixture Extension")
+                }
+            }
+        }
+        XCTAssertFalse(identifiers.contains { $0.contains("PrivateBrowsing") })
+        XCTAssertFalse(identifiers.contains { $0.contains("PrivateSiteAccess") })
+        XCTAssertFalse(identifiers.contains { $0.contains("Update.") })
+        XCTAssertTrue(identifiers.contains {
+            $0 == "Floorp.WebExtensions.Detail.Uninstall.\(extensionID.rawValue)"
+        })
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.catalogRevokedDisabledMessage))
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.catalogRevokedGuidance))
+    }
+
+    func testSettingsReportsMissingPackageStoreWithoutClaimingCatalogFailure() {
+        let subject = FloorpWebExtensionSettingsViewController(
+            windowUUID: .XCTestDefaultUUID,
+            packageManager: nil,
+            themeManager: MockThemeManager()
+        )
+        subject.loadViewIfNeeded()
+
+        let cell = subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        )
+        XCTAssertEqual(cell.textLabel?.text, FloorpStrings.WebExtensions.packageStoreUnavailableTitle)
+        XCTAssertEqual(cell.detailTextLabel?.text, FloorpStrings.WebExtensions.packageStoreUnavailableMessage)
+        XCTAssertNotEqual(cell.detailTextLabel?.text, FloorpStrings.WebExtensions.loadErrorMessage)
+        XCTAssertEqual(cell.accessibilityIdentifier, "Floorp.WebExtensions.Unavailable")
+        XCTAssertFalse(cell.isUserInteractionEnabled)
+    }
+
+    func testPrimaryExtensionAccessSummariesUseLocalizedFormats() {
+        XCTAssertTrue(FloorpStrings.WebExtensions.allRequestedSites(1).contains("1"))
+        XCTAssertTrue(FloorpStrings.WebExtensions.allRequestedSites(2).contains("2"))
+        XCTAssertTrue(FloorpStrings.WebExtensions.selectedSites(1).contains("1"))
+        XCTAssertTrue(FloorpStrings.WebExtensions.selectedSites(2).contains("2"))
+        XCTAssertFalse(FloorpStrings.WebExtensions.allRequestedWebsites.isEmpty)
+        XCTAssertFalse(FloorpStrings.WebExtensions.privateAccessNotAllowed.isEmpty)
     }
 
     func testSettingsHidesCachedCatalogItemsWhenTheirSignedLifetimeEnds() async {
@@ -5258,6 +5672,37 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             // Callers assert the transaction state after the expected failure.
         }
     }
+
+    private static func allSubviews(in view: UIView) -> [UIView] {
+        view.subviews + view.subviews.flatMap { allSubviews(in: $0) }
+    }
+
+    private func settingsPackage(isEnabled: Bool) -> FloorpWebExtensionSettingsInstalledPackage {
+        FloorpWebExtensionSettingsInstalledPackage(
+            id: extensionID,
+            name: "Fixture Extension",
+            version: "1.0.0",
+            catalogGeneration: nil,
+            catalogDescription: "A reviewed extension used to verify Settings refresh behavior.",
+            catalogSource: nil,
+            catalogLicense: nil,
+            catalogHomepage: nil,
+            isEnabled: isEnabled,
+            isCatalogRevoked: false,
+            permissions: [],
+            siteAccessDescription: "No sites allowed",
+            requestedSites: [],
+            normalHostAccess: .denied,
+            privateHostAccess: .denied,
+            isPrivateBrowsingEnabled: false,
+            privateAccessDescription: "Not allowed",
+            errorDescription: nil,
+            optionsPage: nil,
+            dnrStatus: nil,
+            privateDNRStatus: nil,
+            updateHistory: []
+        )
+    }
 }
 
 @MainActor
@@ -5614,26 +6059,34 @@ private final class CatalogMutableClock: @unchecked Sendable {
 private final class PausedCatalogSettingsManager: FloorpWebExtensionSettingsManaging {
     private let initialCatalog: [FloorpWebExtensionBundledCatalogItem]
     private let pauseOnRequest: Int
+    private let allowsEnabledMutation: Bool
+    private var packages: [FloorpWebExtensionSettingsInstalledPackage]
     private var requestCount = 0
     private var initialCatalogDelivered = false
     private var catalogRequested = false
     private var requestWaiter: CheckedContinuation<Void, Never>?
     private var initialCatalogWaiter: CheckedContinuation<Void, Never>?
+    private var enabledMutationWaiter: CheckedContinuation<Void, Never>?
     private var catalogLoadContinuation: CheckedContinuation<[FloorpWebExtensionBundledCatalogItem], Never>?
+    private var enabledMutationCompleted = false
 
     init(
         initialCatalog: [FloorpWebExtensionBundledCatalogItem] = [],
-        pauseOnRequest: Int = 1
+        initialPackages: [FloorpWebExtensionSettingsInstalledPackage] = [],
+        pauseOnRequest: Int = 1,
+        allowsEnabledMutation: Bool = false
     ) {
         self.initialCatalog = initialCatalog
+        self.packages = initialPackages
         self.pauseOnRequest = pauseOnRequest
+        self.allowsEnabledMutation = allowsEnabledMutation
     }
 
-    func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] { [] }
+    func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] { packages }
 
     func catalogItems() async -> [FloorpWebExtensionBundledCatalogItem] {
         requestCount += 1
-        if requestCount < pauseOnRequest {
+        if requestCount != pauseOnRequest {
             initialCatalogDelivered = true
             initialCatalogWaiter?.resume()
             initialCatalogWaiter = nil
@@ -5687,7 +6140,10 @@ private final class PausedCatalogSettingsManager: FloorpWebExtensionSettingsMana
     }
 
     func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) async throws {
-        throw StubError.unexpectedMutation
+        guard allowsEnabledMutation else { throw StubError.unexpectedMutation }
+        enabledMutationCompleted = true
+        enabledMutationWaiter?.resume()
+        enabledMutationWaiter = nil
     }
 
     func uninstall(_ extensionID: FloorpWebExtensionID) async throws {
@@ -5708,9 +6164,20 @@ private final class PausedCatalogSettingsManager: FloorpWebExtensionSettingsMana
         }
     }
 
+    func waitUntilEnabledMutationCompleted() async {
+        if enabledMutationCompleted { return }
+        await withCheckedContinuation { continuation in
+            enabledMutationWaiter = continuation
+        }
+    }
+
     func resumeCatalogLoad() {
-        catalogLoadContinuation?.resume(returning: [])
+        catalogLoadContinuation?.resume(returning: initialCatalog)
         catalogLoadContinuation = nil
+    }
+
+    func replacePackages(with packages: [FloorpWebExtensionSettingsInstalledPackage]) {
+        self.packages = packages
     }
 
     private enum StubError: Error {
