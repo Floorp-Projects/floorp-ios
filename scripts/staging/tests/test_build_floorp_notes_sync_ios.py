@@ -980,7 +980,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         self.assertRegex(manifest["evidence"]["clock_manifest_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             manifest["evidence"]["embedded_digest_sha256"],
-            "20f348e1a932d78a407b08208153450b8e5961e97428a66bb9fd7dcc693a67b3",
+            "5b8647133fb7ee9a7807e1b91c0b6fd9c4595146be668fad765f5686c3005c87",
         )
         self.assertRegex(manifest["endpoint_authority"]["matrix_sha256"], r"^[0-9a-f]{64}$")
         self.assertFalse(str(manifest["contract_inputs"]["xcconfig_path"]).startswith(str(self.repository)))
@@ -1463,7 +1463,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         self.assertEqual(manifest["paths"]["archive"], str(archive.resolve()))
         self.assertEqual(
             manifest["evidence"]["embedded_digest_sha256"],
-            "15c74251e456fda956c70e8d11e420b5e31c5a011531c0d24c05d675c070e55a",
+            "5cb92f3caab88b18a099f971644bb4217d7e83b2c0716fec6b55683307dd9023",
         )
         self.assertEqual(manifest["build"]["xcode_version"], ["Xcode 26.0", "Build version 17A100"])
         self.assertEqual(manifest["build"]["build_number"], EVIDENCE_BUILD_NUMBER)

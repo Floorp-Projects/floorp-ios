@@ -1320,6 +1320,11 @@ enum FloorpStrings {
             value: "Sync enabled",
             comment: "Accessibility and UI notice that Notes Sync is enabled for the signed-in account"
         )
+        static let syncError = string(
+            "Floorp.Notes.SyncError.v1",
+            value: "Notes sync failed",
+            comment: "Accessibility and UI notice that the latest Notes Sync attempt failed"
+        )
         static let syncSettingTitle = string(
             "Floorp.Notes.SyncSettingTitle.v1",
             value: "Sync Notes",

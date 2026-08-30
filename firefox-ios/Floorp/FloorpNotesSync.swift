@@ -32,6 +32,7 @@ enum FloorpNotesSyncError: Error, Equatable, Sendable {
 enum FloorpNotesSyncUIStatus: Equatable, Sendable {
     case localOnly
     case syncEnabled
+    case syncError
 }
 
 final class FloorpNotesSyncStatusCenter: @unchecked Sendable {
@@ -133,7 +134,7 @@ struct FloorpNotesApplicationServicesPrepareInput: Equatable, Sendable {
 }
 
 enum FloorpNotesApplicationServicesAdapter {
-    static let transportContractVersion = "floorp-prefs-sync-v1"
+    static let transportContractVersion = "floorp-prefs-sync-v2-padded-record-id"
 
     static func remoteRecord(
         from input: FloorpNotesApplicationServicesPrepareInput
@@ -575,6 +576,12 @@ final class FloorpNotesSyncEngineProvider: FloorpNotesSyncEngineProviding, @unch
         statusCenter.setStatus(.localOnly)
     }
 
+    func didFinishSync(successful: Bool) {
+        let isRegistered = lock.withLock { applicationServicesStore != nil }
+        guard isRegistered else { return }
+        statusCenter.setStatus(successful ? .syncEnabled : .syncError)
+    }
+
     private func invalidateLocked() {
         delegate?.invalidate()
         applicationServicesStore = nil
@@ -655,20 +662,22 @@ enum FloorpNotesSyncReleaseGate {
     private static let releaseDesktopCommit = "fc244eed70248796fa92ff5821c6046ecd576e7e"
     private static let releaseRuntimeCommit = "3bf9399564e59be32f92dcc1b044094881b4fb6a"
     private static let releaseRuntimeTree = "533f9fdca9bdccb7f3d2a13842be7e2375160ae5"
-    private static let releaseApplicationServicesCommit = "b6d29804c391a573ecc0db6c1c4491b3e07a6693"
-    private static let releaseApplicationServicesTree = "8bfa4a27d5b807b613d577ee49198617aab0e117"
-    private static let releaseApplicationServicesTag = "floorp-ios-155.20260731050244.4"
+    private static let releaseApplicationServicesCommit = "e1c77eb6e333ef667456504100c7b09763b8ad35"
+    private static let releaseApplicationServicesTree = "338e0dc010b48fb63c93892f527ce56905805344"
+    private static let releaseApplicationServicesTag = "floorp-ios-155.20260731050244.5"
     private static let mergeCaseSetSHA256 = "c19ec1a3229b0d09aa424498471941409bc77505862e8aa278aadb3396032802"
     private static let endpointPolicySHA256 = "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca"
-    private static let recordID = "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0"
+    // Gecko's Base64URL encoder preserves padding for the Desktop prefs
+    // application record. The trailing `=` is therefore part of the ID.
+    private static let recordID = "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0="
     private static let notesPrefName = "floorp.browser.note.memos"
     private static let controlPrefName = "services.sync.prefs.sync.floorp.browser.note.memos"
     private static let applicationServicesArtifacts = [
-        "focus_xcframework_sha256": "d996835e76b7b66e516c4b7ddf6c401d815a1ce60466fbbdca73edd2f2ff2b0a",
-        "mozilla_xcframework_sha256": "579b00cd5823a94101145a4deef7df44e1eeb3929cbe849f53a0f6d008e6f268",
-        "release_manifest_sha256": "387beac1bb8d4b204b9c8ebdc3797ea75e2466c507ec944b2b5188fea2d6b0dd",
-        "sha256sums_sha256": "32db0711e7b5cf6d088ef95b290941be9ba22cfceeadfc35978fa97d05506b8c",
-        "swift_components_sha256": "e9cdae3cbcd19c68d6a1eed78917862f2a6420e2b74fb52e6669f0d641f31433",
+        "focus_xcframework_sha256": "e98e02f72db6fb24a0fd4a16872ec721858f68daa418685d3669dea5c726e3ad",
+        "mozilla_xcframework_sha256": "0b4a6ba50df36ed3d942851393e53885eff0fb22d3289d8af005839b3bb7168a",
+        "release_manifest_sha256": "fe2020a0fe91ad5bf335dc1a8cc4af4abffe729babe09737587218bfba6d5da5",
+        "sha256sums_sha256": "dba2d4a679da746fe1d5f949a6fc570f8bd318f1058b52e13e193b71caba7884",
+        "swift_components_sha256": "5a796e1bcd0d299e7882f58364cf4564dd45030aa41b8af88052da8f487e1654",
     ]
     private static let fxaHosts = [
         "accounts.firefox.com",

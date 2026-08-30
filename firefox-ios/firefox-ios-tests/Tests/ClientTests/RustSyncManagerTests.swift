@@ -1255,6 +1255,7 @@ class RustSyncManagerTests: XCTestCase {
             requestSequence: try XCTUnwrap(olderContext.requestSequence)
         )
         XCTAssertTrue(retries.workItems.isEmpty)
+        XCTAssertEqual(provider.syncResults, [true])
 
         let thirdContext = FloorpNotesSyncExecutionContext()
         let fourthContext = FloorpNotesSyncExecutionContext()
@@ -1287,6 +1288,7 @@ class RustSyncManagerTests: XCTestCase {
 
         XCTAssertEqual(retries.workItems.count, 1)
         XCTAssertTrue(retries.workItems[0].isCancelled)
+        XCTAssertEqual(provider.syncResults, [true, false, true])
     }
 
     func testFinalizeAndCancelAccountRemovalResolveExactlyOnce() {
@@ -1372,6 +1374,7 @@ private final class TestFloorpNotesSyncEngineProvider:
     private(set) var prepareForDisconnectCallCount = 0
     private(set) var finalizeDisconnectCallCount = 0
     private(set) var cancelDisconnectCallCount = 0
+    private(set) var syncResults = [Bool]()
     private let disconnectAvailability: FloorpNotesSyncAccountAvailability
     private let cancelDisconnectResult: Bool
     private let finalizeStarted: DispatchSemaphore?
@@ -1432,6 +1435,10 @@ private final class TestFloorpNotesSyncEngineProvider:
     func invalidate() {
         invalidateCallCount += 1
         registeredAccountID = nil
+    }
+
+    func didFinishSync(successful: Bool) {
+        syncResults.append(successful)
     }
 }
 

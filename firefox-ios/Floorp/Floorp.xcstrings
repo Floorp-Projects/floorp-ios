@@ -1141,6 +1141,18 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスに保存" } }
       }
     },
+    "Floorp.Notes.SyncEnabled.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sync enabled" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "同期が有効" } }
+      }
+    },
+    "Floorp.Notes.SyncError.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Notes sync failed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ノートを同期できませんでした" } }
+      }
+    },
     "Floorp.Notes.KeepEditing.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep Editing" } },

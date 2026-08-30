@@ -20,6 +20,33 @@ final class FloorpNotesSyncMergeTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(result.conflicts.isEmpty)
     }
 
+    func testInitialPlannerUnionsDisjointIOSAndDesktopNotesBeforeUpload() throws {
+        let local = [note("ios-local", title: "iPhone")]
+        let remote = [
+            note("desktop-one", title: "Desktop 1"),
+            note("desktop-two", title: "Desktop 2"),
+        ]
+
+        let plan = try FloorpNotesSyncPlanner.makePlan(
+            accountID: "account",
+            baseState: nil,
+            localNotes: local,
+            remoteRecord: try remoteRecord(FloorpNotesDesktopPayload(notes: remote)),
+            now: 100
+        )
+
+        XCTAssertEqual(
+            plan.mergedNotes.map(\.id.rawValue),
+            ["ios-local", "desktop-one", "desktop-two"]
+        )
+        XCTAssertTrue(plan.requiresUpload)
+        let payload = try JSONDecoder().decode(
+            FloorpNotesDesktopPayload.self,
+            from: try XCTUnwrap(plan.uploadPayloadData)
+        )
+        XCTAssertEqual(payload.ids, ["ios-local", "desktop-one", "desktop-two"])
+    }
+
     func testOneSidedEditsAndDeletesMergeWithoutConflicts() throws {
         let base = [
             note("local-edit", content: "base"),
@@ -1499,6 +1526,10 @@ final class FloorpNotesPrefsSyncDelegateTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertEqual(provider.registrationCount, 1)
         XCTAssertTrue(provider.retainsRegisteredStore)
+        XCTAssertEqual(statusCenter.status, .syncEnabled)
+        provider.didFinishSync(successful: false)
+        XCTAssertEqual(statusCenter.status, .syncError)
+        provider.didFinishSync(successful: true)
         XCTAssertEqual(statusCenter.status, .syncEnabled)
         provider.invalidate()
         XCTAssertFalse(provider.retainsRegisteredStore)

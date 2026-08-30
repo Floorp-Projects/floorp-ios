@@ -37,6 +37,7 @@ public protocol FloorpNotesSyncEngineProviding: AnyObject, Sendable {
     ) throws -> FloorpNotesSyncAccountAvailability
     func finalizeDisconnect() throws
     @discardableResult func cancelDisconnect() -> Bool
+    func didFinishSync(successful: Bool)
     func invalidate()
 }
 
@@ -657,11 +658,11 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                 floorpNotesGeneration: floorpNotesGeneration
             )
         }
-        let scheduledRetry = floorpNotesRetryLock.withLock {
-            () -> (TimeInterval, DispatchWorkItem)? in
+        let disposition = floorpNotesRetryLock.withLock {
+            () -> (accepted: Bool, retry: (TimeInterval, DispatchWorkItem)?) in
             guard floorpNotesRetryGeneration == floorpNotesGeneration,
                   requestSequence > floorpNotesLatestResultSequence else {
-                return nil
+                return (false, nil)
             }
             floorpNotesLatestResultSequence = requestSequence
             guard !didSucceed,
@@ -673,14 +674,19 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                     attempt: floorpNotesRetryAttempt
                   ) else {
                 clearFloorpNotesRetryLocked()
-                return nil
+                return (true, nil)
             }
             floorpNotesRetryWorkItem?.cancel()
             floorpNotesRetryWorkItem = workItem
             floorpNotesRetryAttempt += 1
-            return (delay, workItem)
+            return (true, (delay, workItem))
         }
-        guard let scheduledRetry else { return }
+        guard disposition.accepted else { return }
+        let provider = floorpNotesStateLock.withLock {
+            floorpNotesEngineProvider
+        }
+        provider?.didFinishSync(successful: didSucceed)
+        guard let scheduledRetry = disposition.retry else { return }
         floorpNotesRetryScheduler(scheduledRetry.0, scheduledRetry.1)
     }
 

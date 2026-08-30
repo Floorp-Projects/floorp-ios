@@ -3523,6 +3523,8 @@ final class FloorpOverlayDrawerViewController:
             return FloorpStrings.Notes.localOnly
         case .syncEnabled:
             return FloorpStrings.Notes.syncEnabled
+        case .syncError:
+            return FloorpStrings.Notes.syncError
         }
     }
 

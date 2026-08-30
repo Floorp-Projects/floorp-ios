@@ -5107,6 +5107,13 @@ final class FloorpOverlayDrawerPresentationTests: XCTestCase {
             FloorpStrings.Notes.syncEnabled
         )
 
+        status.value = .syncError
+        notificationCenter.post(name: .FloorpNotesSyncStatusDidChange, object: nil)
+        XCTAssertEqual(
+            drawer.notesSyncStatusTextForTesting,
+            FloorpStrings.Notes.syncError
+        )
+
         status.value = .localOnly
         notificationCenter.post(name: .FloorpNotesSyncStatusDidChange, object: nil)
         XCTAssertEqual(

@@ -219,9 +219,9 @@ Network Sync stays disabled until all of the following pass:
 1. `FloorpNotesSyncReleaseGate` has exact evidence for the shared fixture,
    including its pinned SHA-256 digest and complete required case set, either a
    matching current Desktop contract or the coordinated Desktop migration
-   contract, and the linked `floorp-prefs-sync-v1` Application Services
-   artifact. The evidence embedded by this branch deliberately fails this
-   gate.
+   contract, and the linked `floorp-prefs-sync-v2-padded-record-id`
+   Application Services artifact. The evidence embedded by this branch
+   deliberately fails this gate.
 2. Rust engine tests against a fake Sync server, including aggregate-map
    preservation, conditional writes, retry/backoff, reset, and account
    isolation.
