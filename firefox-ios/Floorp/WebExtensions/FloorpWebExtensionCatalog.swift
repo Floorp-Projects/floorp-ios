@@ -14,6 +14,8 @@ enum FloorpWebExtensionPermissionCategory: String, CaseIterable, Hashable, Senda
     case siteData
     case tabs
     case storage
+    case alarms
+    case fontSettings
     case networkBlocking
     case browserAutomation
 
@@ -25,6 +27,10 @@ enum FloorpWebExtensionPermissionCategory: String, CaseIterable, Hashable, Senda
             return "Read tab metadata and open or reload tabs"
         case .storage:
             return "Store extension settings on this device"
+        case .alarms:
+            return "Run scheduled extension tasks"
+        case .fontSettings:
+            return "Use supported browser font settings"
         case .networkBlocking:
             return "Block supported network requests"
         case .browserAutomation:
@@ -146,6 +152,12 @@ enum FloorpWebExtensionBundledCatalog {
         }
         if metadata.permissions.contains(.storage) {
             categories.append(.storage)
+        }
+        if metadata.permissions.contains(.alarms) {
+            categories.append(.alarms)
+        }
+        if metadata.permissions.contains(.fontSettings) {
+            categories.append(.fontSettings)
         }
         if metadata.permissions.contains(.declarativeNetRequest) {
             categories.append(.networkBlocking)

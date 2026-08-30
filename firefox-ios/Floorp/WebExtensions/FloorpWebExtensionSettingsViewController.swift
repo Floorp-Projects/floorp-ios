@@ -46,6 +46,14 @@ final class FloorpWebExtensionProfileSettingsManager: FloorpWebExtensionSettings
                 catalogSource: normalPackage.catalogSource,
                 catalogLicense: normalPackage.catalogLicense,
                 catalogHomepage: normalPackage.catalogHomepage,
+                catalogCategory: normalPackage.catalogCategory,
+                catalogModificationStatus: normalPackage.catalogModificationStatus,
+                catalogPublisher: normalPackage.catalogPublisher,
+                catalogAttribution: normalPackage.catalogAttribution,
+                catalogPrivacySummary: normalPackage.catalogPrivacySummary,
+                catalogRetentionPolicy: normalPackage.catalogRetentionPolicy,
+                catalogReviewedAt: normalPackage.catalogReviewedAt,
+                privateProfileCapability: normalPackage.privateProfileCapability,
                 isEnabled: normalPackage.isEnabled,
                 isCatalogRevoked: normalPackage.isCatalogRevoked || privatePackage.isCatalogRevoked,
                 permissions: normalPackage.permissions,
@@ -202,6 +210,14 @@ struct FloorpWebExtensionSettingsInstalledPackage: Hashable, Sendable {
     let catalogSource: String?
     let catalogLicense: String?
     let catalogHomepage: URL?
+    private(set) var catalogCategory: String? = nil
+    private(set) var catalogModificationStatus: FloorpWebExtensionCatalogPackageMetadata.ModificationStatus? = nil
+    private(set) var catalogPublisher: String? = nil
+    private(set) var catalogAttribution: String? = nil
+    private(set) var catalogPrivacySummary: String? = nil
+    private(set) var catalogRetentionPolicy: String? = nil
+    private(set) var catalogReviewedAt: String? = nil
+    private(set) var privateProfileCapability: FloorpWebExtensionCatalogPackageMetadata.PrivateProfileCapability? = nil
     let isEnabled: Bool
     let isCatalogRevoked: Bool
     let permissions: [FloorpWebExtensionPermissionCategory]
@@ -1539,6 +1555,14 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                 catalogSource: catalogMetadata.map { "\($0.upstream) @ \($0.upstreamRevision)" },
                 catalogLicense: catalogMetadata?.license,
                 catalogHomepage: catalogMetadata?.sourceURL,
+                catalogCategory: catalogMetadata?.category,
+                catalogModificationStatus: catalogMetadata?.modificationStatus,
+                catalogPublisher: catalogMetadata?.disclosure?.publisherDisplayName,
+                catalogAttribution: catalogMetadata?.disclosure?.attribution,
+                catalogPrivacySummary: catalogMetadata?.disclosure?.privacySummary,
+                catalogRetentionPolicy: catalogMetadata?.disclosure?.retentionPolicy,
+                catalogReviewedAt: catalogMetadata?.disclosure?.reviewedAt,
+                privateProfileCapability: catalogMetadata?.privateProfileCapability,
                 isEnabled: package.isEnabled,
                 isCatalogRevoked: package.isCatalogRevoked,
                 permissions: Self.settingsPermissionCategories(for: package.grants),
@@ -2440,6 +2464,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         }
         if grants.apiPermissions.contains(.storage) {
             categories.append(.storage)
+        }
+        if grants.apiPermissions.contains(.alarms) {
+            categories.append(.alarms)
+        }
+        if grants.apiPermissions.contains(.fontSettings) {
+            categories.append(.fontSettings)
         }
         if grants.apiPermissions.contains(.declarativeNetRequest) {
             categories.append(.networkBlocking)

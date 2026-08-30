@@ -2462,6 +2462,42 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         }
     }
 
+    func testSettingsPermissionPresentationIncludesEverySupportedDarkReaderCapability() throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let accepted = try verifier.verify(
+            catalogData: signing.catalog(
+                sequence: 1,
+                schemaVersion: 3,
+                packageMetadata: signing.v3Metadata(permissions: [
+                    "tabs",
+                    "storage",
+                    "alarms",
+                    "fontSettings",
+                    "declarativeNetRequest",
+                    "scripting"
+                ])
+            ),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(accepted.catalog.packages.first)
+        let item = try XCTUnwrap(FloorpWebExtensionBundledCatalog.signedItem(
+            record: record,
+            catalogExpiresAt: accepted.catalog.expiresAt
+        ))
+
+        XCTAssertEqual(item.requestedPermissions, [
+            .siteData,
+            .tabs,
+            .storage,
+            .alarms,
+            .fontSettings,
+            .networkBlocking,
+            .browserAutomation
+        ])
+    }
+
     func testSignedCatalogSchema3BindsDisplayOnlyDisclosureAndRejectsUnsafeValues() throws {
         let signing = try CatalogSigningFixture()
         let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
@@ -2624,6 +2660,9 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         )
         XCTAssertEqual(settingsPackage.catalogLicense, expectedMetadata.license)
         XCTAssertEqual(settingsPackage.catalogHomepage, expectedMetadata.sourceURL)
+        XCTAssertEqual(settingsPackage.catalogCategory, expectedMetadata.category)
+        XCTAssertEqual(settingsPackage.catalogModificationStatus, expectedMetadata.modificationStatus)
+        XCTAssertEqual(settingsPackage.privateProfileCapability, expectedMetadata.privateProfileCapability)
 
         var staleItem = item
         let staleRecord = FloorpWebExtensionCatalogPackageRecord(
