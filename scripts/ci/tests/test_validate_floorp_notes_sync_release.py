@@ -331,7 +331,7 @@ TEST_SOURCE_BYTES = {
                 "revocations_path": "docs/development/floorp-notes-sync/revocations.json",
             },
             "production_environment": {
-                "application_record_id": "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0",
+                "application_record_id": "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0=",
                 "endpoint_policy_sha256": "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca",
                 "fxa_configuration": "FxAConfig.Server.release",
                 "fxa_hosts": [
@@ -786,7 +786,7 @@ def make_evidence(*, mode: str = RELEASE_ENABLED_MODE) -> dict[str, object]:
                 "fixture_sha256": inputs["contract"]["fixture_sha256"],
                 "ios_contract_sha": inputs["ios"]["source_sha"],
                 "notes_pref_name": "floorp.browser.note.memos",
-                "record_id": "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0",
+                "record_id": "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0=",
             },
             "issued_at": "2026-08-01T00:00:00Z",
             "status": "passed",

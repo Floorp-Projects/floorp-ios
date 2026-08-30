@@ -137,7 +137,7 @@ class FloorpNotesSyncTwoClientPreflightTests(unittest.TestCase):
                     "fixture_sha256": inputs["contract"]["fixture_sha256"],
                     "ios_contract_sha": inputs["ios"]["source_sha"],
                     "notes_pref_name": "floorp.browser.note.memos",
-                    "record_id": "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0",
+                    "record_id": "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0=",
                 },
                 "issued_at": "2026-08-12T00:00:00Z",
                 "status": "passed",

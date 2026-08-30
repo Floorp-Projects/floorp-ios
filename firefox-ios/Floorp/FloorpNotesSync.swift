@@ -32,6 +32,7 @@ enum FloorpNotesSyncError: Error, Equatable, Sendable {
 enum FloorpNotesSyncUIStatus: Equatable, Sendable {
     case localOnly
     case syncEnabled
+    case syncError
 }
 
 final class FloorpNotesSyncStatusCenter: @unchecked Sendable {
@@ -133,7 +134,7 @@ struct FloorpNotesApplicationServicesPrepareInput: Equatable, Sendable {
 }
 
 enum FloorpNotesApplicationServicesAdapter {
-    static let transportContractVersion = "floorp-prefs-sync-v1"
+    static let transportContractVersion = "floorp-prefs-sync-v2-padded-record-id"
 
     static func remoteRecord(
         from input: FloorpNotesApplicationServicesPrepareInput
@@ -575,6 +576,12 @@ final class FloorpNotesSyncEngineProvider: FloorpNotesSyncEngineProviding, @unch
         statusCenter.setStatus(.localOnly)
     }
 
+    func didFinishSync(successful: Bool) {
+        let isRegistered = lock.withLock { applicationServicesStore != nil }
+        guard isRegistered else { return }
+        statusCenter.setStatus(successful ? .syncEnabled : .syncError)
+    }
+
     private func invalidateLocked() {
         delegate?.invalidate()
         applicationServicesStore = nil
@@ -660,7 +667,9 @@ enum FloorpNotesSyncReleaseGate {
     private static let releaseApplicationServicesTag = "floorp-ios-155.20260731050244.4"
     private static let mergeCaseSetSHA256 = "c19ec1a3229b0d09aa424498471941409bc77505862e8aa278aadb3396032802"
     private static let endpointPolicySHA256 = "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca"
-    private static let recordID = "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0"
+    // Gecko's Base64URL encoder preserves padding for the Desktop prefs
+    // application record. The trailing `=` is therefore part of the ID.
+    private static let recordID = "e2VjODAzMGY3LWMyMGEtNDY0Zi05YjBlLTEzYTNhOWU5NzM4NH0="
     private static let notesPrefName = "floorp.browser.note.memos"
     private static let controlPrefName = "services.sync.prefs.sync.floorp.browser.note.memos"
     private static let applicationServicesArtifacts = [
