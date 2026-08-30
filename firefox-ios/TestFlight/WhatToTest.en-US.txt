@@ -1,65 +1,54 @@
 Floorp for iOS — curated WebExtensions candidate
 
-This build is eligible for this test only when TestFlight shows the exact
-version and build stated in the release evidence and Extensions shows a signed,
-app-bundled catalog containing 17 fixed packages. If the catalog is missing,
-contains a different count, or its package list changes after launch, stop and
-report it as a release-integrity failure. Do not substitute the older fixture
-catalog or another TestFlight build.
+Use this candidate only when TestFlight shows the exact version/build from the
+release evidence and Settings > Extensions shows the signed, app-bundled
+catalog of 17 fixed packages. Stop and report a release-integrity failure if
+the catalog is missing, has a different count, or changes after launch. Do not
+substitute another TestFlight build.
 
-This candidate is not an extension store. It has no Chrome Web Store, Firefox
-Add-ons, arbitrary URL, ZIP, XPI, CRX, shared-sheet, or local-file installation
-path. It does not fetch JavaScript, WebAssembly, or DNR lists. Do not attempt
-to bypass those boundaries; report any visible path that appears to do so.
+This is not an extension store. There must be no Chrome Web Store installation
+path, Firefox Add-ons installation, arbitrary URL, ZIP, XPI, CRX, share-sheet,
+or local-file installation. The reviewed packages must not fetch remote
+JavaScript, WebAssembly, configuration, updates, or DNR lists. Report any
+visible path or network activity that appears to cross these boundaries.
 
-In a normal browsing profile, open Settings > Extensions and confirm the
-signed metadata (name, version, permissions, license, source, generation) for
-the 17 fixed packages. Install one representative from each family: Floorp Site
-Appearance (content script), Floorp Tracker Block Lite or Very Good AdBlock
-(static block-only DNR), and Floorp Session Timer or Easy to RSS (action,
-popup/options, storage, alarms). Grant a site only when prompted and use a
-non-sensitive Floorp QA page or another approved test page. Confirm that the
-declared local behavior works, then disable, re-enable, remove, and reinstall
-each representative. Disable must stop runtime/content rules/actions without
-silently changing the generation; remove must clear extension-owned data.
+In a normal profile, inspect signed metadata for the 17 packages. Install one
+representative from each family: Floorp Site Appearance; Floorp Tracker Block
+Lite or Very Good AdBlock; and Floorp Session Timer or Easy to RSS. Use only a
+non-sensitive Floorp QA page or another approved test page. Confirm declared
+behavior, then disable, re-enable, remove, and reinstall each representative.
+Disable must stop runtime/content rules/actions without changing generation;
+remove must clear extension-owned data.
 
-Also install Dark Reader, grant it a non-sensitive HTTP(S) test page, and use
-its popup to toggle the page appearance. Reload the page and reopen the popup
-to confirm settings remain profile-local. `storage.sync` is intentionally
-device-local in Floorp: do not expect a cloud account or cross-device sync.
-The reviewed build must not fetch remote configuration, news, or updates.
+Install Dark Reader and open a normal HTTP(S) test page in one browser window.
+Open its action popup with site access initially denied. Confirm Floorp offers
+explicit access for the current site and all requested sites. Choose the
+current site, confirm the same page reloads and becomes dark, then reopen the
+popup. It must show the real hostname, not `about:`, and must not claim the
+page is browser-protected. Toggle Off and On while the popup stays open:
+both the page and the popup status must update each time. Tap Settings and
+confirm the authenticated Dark Reader settings page opens. Reload and reopen
+the popup to confirm the choice remains profile-local.
 
-Open an extension with no declared action as well as one with a popup. The
-Extensions menu must remain usable and must not crash. For DNR behavior, use
-only a supplied Floorp QA harness: verify block-only behavior and per-site
-exclusion. A redirect, header modification, allow-all rule, dynamic/session
-rule, remotely refreshed list, or a rule change after installation is a defect.
+Known limits for this candidate: Dark Reader multi-window active-tab routing
+and its large DevTools data view are not release acceptance paths. Test the
+core popup, page appearance, and Settings flow in a single browser window.
+`storage.sync` is intentionally device-local; do not expect cloud sync.
 
-Repeat the key install, permission, enable/disable, and delete paths in a
-private profile. Private use is opt-in and profile-local: normal-profile grants,
-storage, alarms, rules, and runtime state must not appear in private browsing;
-private state must not reappear in normal browsing. If a private installation
-is not enabled for the chosen package, it must be refused safely.
+Open an extension with no action and one with a popup; the Extensions menu must
+remain usable. For DNR, use only the supplied Floorp QA harness and verify
+block-only behavior plus per-site exclusion. Redirects, header modification,
+allow-all, dynamic/session rules, remote list refresh, or post-install rule
+changes are defects.
 
-There is no silent catalog replacement in this candidate. A future immutable
-generation may be applied only after a native confirmation that identifies the
-old/new version, generation, digest, and any authority delta. If a supplied
-signed test update lacks that confirmation, fails integrity/expiry/rollback or
-revocation validation, or tries to increase authority without consent, it must
-remain inactive and the known-good generation must stay intact. Record the
-result only when a release-approved signed test artifact is supplied.
+Repeat key install, permission, enable/disable, delete, and Dark Reader paths
+in Private Browsing. Private use is opt-in and profile-local. Normal grants,
+storage, alarms, rules, and runtime state must not appear in private browsing,
+and private state must not return to normal browsing.
 
-Repeat core browser smoke tests in normal and private browsing, English and
-Japanese, with VoiceOver. Report any crash, hang, unexpected network activity,
-permission bypass, cross-profile data leak, catalog change, or TestFlight
-version/build mismatch. Do not use personal credentials or production data for
-this candidate.
-
-Known limitations: the catalog is a fixed app-bundled set, not a general
-plug-in collection. The sole maintainer's P0 policy records the verified
-license/notice/provenance basis; its exact signed catalog and candidate-bound
-approval record are verified before the normal candidate PR is merged.
-Physical-device evidence and Apple review remain required. This tester pass
-does not by itself establish the physical-device
-performance, memory, battery, accessibility, or revocation acceptance evidence
-required for broader release.
+Repeat core browser smoke tests in normal/private browsing, English/Japanese,
+and with VoiceOver. Report crashes, hangs, unexpected network activity,
+permission bypass, cross-profile leakage, catalog changes, or version/build
+mismatches. Do not use personal credentials or production data. Physical-
+device performance, memory, battery, accessibility, revocation evidence, and
+Apple review remain required for broader release.
