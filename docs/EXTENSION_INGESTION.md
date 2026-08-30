@@ -46,7 +46,7 @@ reviewer must classify it as user-initiated data, fixed image/CSS/data,
 remote configuration, or a signed/digest-pinned data feed; record endpoint
 origin, purpose, retention/privacy impact, cache/refresh behavior, expected
 content type/size, and failure behavior. A remote executable remains a hard
-reject. The first signed-bundled candidate contains no such runtime endpoint;
+reject. The current signed-bundled catalog contains no such runtime endpoint;
 enabling any future feed requires a separately approved client transport and
 catalog metadata that binds its allow-listed origin, version, digest,
 signature, and rollback policy. It must never turn a URL or discovery result
@@ -80,12 +80,12 @@ python3 scripts/webextensions/build_curated_catalog.py \
   --generation-prefix g20260826
 ```
 
-The builder requires 12–128 source records, unique IDs, a bounded HTTPS source
+The builder requires 1–128 source records, unique IDs, a bounded HTTPS source
 URL, an immutable upstream revision, a license, a private-profile declaration,
 and a package-local `LICENSE` and `NOTICE`. Compatibility-patched packages also
 require `PATCH.txt` and a review-only `SourceProvenance/<id>.json`; the current
-fixed candidate has exactly fourteen such records. It also requires the exact
-17-entry `catalog-disclosures.json`, which produces schema-v3 signed,
+Dark Reader-only catalog has exactly one such record. It also requires the exact
+one-entry `catalog-disclosures.json`, which produces schema-v3 signed,
 display-only publisher/attribution/review/privacy/retention/fixed-route
 metadata. It produces:
 
@@ -107,7 +107,8 @@ The production handoff for this catalog is
 `scripts/webextensions/sign_curated_catalog.py`: it accepts the deterministic
 record input and managed root/leaf Ed25519 signing authorities **only after**
 it has checked a clean, exact source commit and every review-quarantined source
-archive declared by `sourceProvenance` (all fourteen compatibility builds). It binds the catalog root to that same
+archive declared by `sourceProvenance` (Dark Reader is the current single
+record). It binds the catalog root to that same
 Git checkout, parses the verified `catalog-input.json` byte snapshot without
 reopening it, and rechecks checkout cleanliness immediately before private keys
 are read. It writes only
@@ -141,7 +142,7 @@ After the public outputs are normally integrated, the candidate-only
 `verify_signed_curated_catalog_release.py` from a protected annotated
 `floorp-catalog-<40 lowercase commit SHA>` tag whose name, tag commit, checked-out
 commit, and current `origin/main` HEAD all match. The tool uses no private key. It checks the root/leaf signature chain against a root-key
-SHA-256 supplied by the protected release environment, the exact 17-record
+SHA-256 supplied by the protected release environment, the exact one-record
 catalog input, the release app version/audience, and every FWEA1
 envelope/digest/inventory/manifest. The workflow passes that tag to Xcode Cloud.
 Before `xcodebuild`, the source-controlled post-clone gate independently requires
@@ -166,5 +167,5 @@ root/leaf/sequence/version/expiry evidence, and have its raw SHA-256 stored as
 `pending` template is intentionally a release block. The approved schema 2
 record contains one opaque `maintainerApproval` evidence ID; it does not expose
 identities, keys, or source archives. The separate P0 policy receipt records
-the maintainer's approval of the fixed 17-package scope, managed signer,
+the maintainer's approval of the current Dark Reader-only scope, managed signer,
 revocation, private-mode/data-retention policy, and closed-install boundary.

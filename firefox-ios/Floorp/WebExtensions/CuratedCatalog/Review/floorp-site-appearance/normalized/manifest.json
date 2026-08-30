@@ -1,1 +1,0 @@
-{"content_scripts":[{"css":["content/appearance.css"],"js":["content/appearance.js"],"matches":["https://*/*"],"run_at":"document_start","world":"ISOLATED"}],"host_permissions":["https://*/*"],"manifest_version":3,"name":"Floorp Site Appearance","permissions":["storage"],"version":"1.0.0"}

@@ -102,7 +102,7 @@ jobs:
             --bundle-id app.floorp.Floorp \
             --channel testflight \
             --catalog-id floorp-ios-curated-testflight \
-            --expected-package-count 17 \
+            --expected-package-count 1 \
             --artifact-origin https://catalog.floorp.invalid/fwea1/ \
             --output "$evidence"
           printf 'FLOORP_CATALOG_MARKETING_VERSION=%s\n' "$marketing_version" >> "$GITHUB_ENV"
@@ -119,7 +119,7 @@ jobs:
             --approval docs/floorp-ios-webextensions-curated-catalog-release-approval.json \
             --expected-approval-sha256 "$FLOORP_CURATED_CATALOG_RELEASE_APPROVAL_SHA256" \
             --catalog-evidence "$FLOORP_CURATED_CATALOG_EVIDENCE" \
-            --expected-package-count 17 \
+            --expected-package-count 1 \
             --output "$evidence"
           printf 'FLOORP_CURATED_CATALOG_P0_APPROVAL_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
 
@@ -278,9 +278,9 @@ jobs:
           catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
           submission = json.loads(submission_path.read_text(encoding="utf-8"))
           notes = (
-              f"Floorp for iOS {submission['marketingVersion']} (build {submission['buildNumber']}) contains a fixed, app-bundled set of 17 WebExtensions: three Floorp-managed packages and fourteen third-party compatibility builds. This is not an extension store or catalog download client. The app has no Chrome Web Store, Firefox Add-ons, arbitrary URL, ZIP/XPI/CRX, shared-sheet, or local-file installation flow. It does not fetch or execute remote JavaScript, WebAssembly, or DNR/filter lists.\n\n"
+              f"Floorp for iOS {submission['marketingVersion']} (build {submission['buildNumber']}) contains one fixed, app-bundled WebExtension: Dark Reader — Floorp compatibility build. This is not an extension store or catalog download client. The app has no Chrome Web Store, Firefox Add-ons, arbitrary URL, ZIP/XPI/CRX, shared-sheet, or local-file installation flow. Dark Reader's executable code and configuration are bundled with the app; it has no remote extension-update or configuration-refresh channel.\n\n"
               "The submitted binary validates a bundled signed catalog before it exposes any package. It checks the catalog audience, expiry, anti-rollback sequence, revocation state, immutable generation, artifact SHA-256, manifest, and resource inventory. A failed check leaves catalog packages unavailable. Updates require explicit native confirmation and cannot silently increase authority. Private browsing is opt-in and profile-local.\n\n"
-              f"Catalog evidence: ID {catalog['catalogID']}; sequence {catalog['sequence']}; SHA-256 {catalog['catalogSHA256']}; 17 fixed packages. Reviewer path: Settings > Extensions. Test Floorp Site Appearance (content script), Dark Reader (allowed-site appearance transform with bundled configuration and device-local settings), Floorp Tracker Block Lite or Very Good AdBlock (static block-only DNR), and Floorp Session Timer (popup/options/storage/alarms). DNR accepts only static block actions; dynamic/session rules, redirects, headers, and remote refresh are unsupported. Disable and remove packages to confirm runtime/rules/actions stop and package-owned local data is cleared.\n\n"
+              f"Catalog evidence: ID {catalog['catalogID']}; sequence {catalog['sequence']}; SHA-256 {catalog['catalogSHA256']}; one fixed package. Reviewer path: Settings > Extensions. Install and enable Dark Reader, grant access to a normal HTTPS website, and open that website. Open the Dark Reader action popup, switch between On and Off, and confirm the page appearance and popup state both follow the selection. Open Settings and See all options, change an appearance value such as brightness, and confirm it persists on the allowed site. Disable and remove Dark Reader to confirm the appearance treatment and action stop and its device-local settings are cleared.\n\n"
               "No demo account is required. We recognize the scope of Guideline 3.2.2(i) and request concrete feedback if this fixed app-bundled model requires any change."
           )
           payload = {field: attributes[field] for field in contact_fields}

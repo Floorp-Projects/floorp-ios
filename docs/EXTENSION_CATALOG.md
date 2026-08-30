@@ -48,8 +48,8 @@ public-only verifier proves all of the following:
   version and every package's `minimumFloorpBuild` equal
   `FloorpRelease.xcconfig`'s marketing version;
 - the signed package records equal the reviewed `catalog-input.json`, contain
-  exactly the fixed 17 packages, and resolve only to the `.invalid` bundled
-  artifact identity path; and
+  exactly the current single package, and resolve only to the `.invalid`
+  bundled artifact identity path; and
 - every shipped FWEA1 is the exact signed digest, byte count, canonical
   inventory, manifest, and metadata-permission/host declaration, with no
   extra `.fwea1` beside the signed set.
@@ -78,41 +78,21 @@ verified Xcode Cloud run.
 
 All entries are immutable generation `g20260826-*` records produced from
 [`catalog-sources.json`](../firefox-ios/Floorp/WebExtensions/CuratedCatalog/catalog-sources.json).
-Third-party entries are deliberately small Floorp compatibility builds, not
-unmodified upstream binaries. Their exact upstream revision, original input
-digest, license/notice digest, patch status, requested permissions, host
-patterns, and private-profile capability are signed metadata.
+The current catalog contains only the reviewed Floorp compatibility build of
+Dark Reader, not an unmodified upstream binary. Its exact upstream revision,
+original input digest, license/notice digest, patch status, requested
+permissions, host patterns, and private-profile capability are signed metadata.
 
 | ID | User-facing name | Profile | Local function | Site scope |
 | --- | --- | --- | --- | --- |
-| `floorp.site-appearance` | Floorp Site Appearance | content-script | Local readability class and styling | HTTPS sites after site grant |
-| `floorp.tracker-block-lite` | Floorp Tracker Block Lite | DNR | Static `block`-only tracker rules | Native product-owned per-site exclusion only |
-| `floorp.session-timer` | Floorp Session Timer | action-storage | Popup, options, local storage, alarms | No host permission |
-| `floorp.thirdparty.utm-stripper` | Tracking Token Stripper | content-script | Removes fixed tracking parameters from current page and links | HTTPS sites after site grant |
-| `floorp.thirdparty.minimal-twitter` | Minimal Twitter | content-script | Minimal focus/escape interaction | `x.com`, `twitter.com` |
-| `floorp.thirdparty.refined-hacker-news` | Refined Hacker News | content-script | Keyboard story navigation and labels | Hacker News |
-| `floorp.thirdparty.ekill` | ekill | content-script | Temporary element hide/restore keyboard tool | HTTPS sites after site grant |
-| `floorp.thirdparty.medium-reading-layout` | Medium Reading Layout | content-script | Local article readability markers/style | `medium.com` |
-| `floorp.thirdparty.web-search-navigator` | Web Search Navigator | content-script | Keyboard result selection | Google, Bing, GitHub search |
-| `floorp.thirdparty.github-dashboard` | GitHub Dashboard Filter | content-script | Filters already-rendered dashboard content | GitHub dashboard |
-| `floorp.thirdparty.enhanced-github` | Enhanced GitHub | content-script | Adds local file-path labels | GitHub |
-| `floorp.thirdparty.useful-forks` | Useful Forks | content-script | Filters the rendered forks list | GitHub forks pages |
-| `floorp.thirdparty.easy-to-rss` | Easy to RSS | content-script | Announces a page-local RSS/Atom link | HTTPS sites after site grant |
-| `floorp.thirdparty.scroll-to-top` | Scroll To Top | content-script | Accessible local scroll-to-top control | HTTPS sites after site grant |
-| `floorp.thirdparty.refined-twitter` | Refined Twitter | content-script | Marks rendered tweets for fixed local styling | `x.com`, `twitter.com` |
 | `floorp.thirdparty.darkreader` | Dark Reader | content-script, action-storage | Local dark-theme transformation with bundled site configuration | Allowed HTTP(S) sites |
-| `floorp.thirdparty.very-good-adblock` | Very Good AdBlock | DNR | Static, block-only advertising/tracking host rules | Native product-owned per-site exclusion only |
 
-No item has remote JavaScript, WASM, DNR subscription/list, `update_url`,
-`webRequestBlocking`, dynamic code generation, or an arbitrary network fetch.
-Tracker Block Lite and Very Good AdBlock accept only the supported DNR `block`
-action; unsupported actions reject the whole artifact during preflight. The
-native site-exclusion UI compiles a product-owned `unless-top-url` condition
-for a static block rule. It never accepts an extension-provided allow,
-redirect, exception, or dynamic DNR rule. A signed-catalog package also has
-its `updateDynamicRules` and `updateSessionRules` bridge operations disabled at
-runtime, so a locally bundled script cannot create a new DNR policy after
-installation.
+Dark Reader has no remote JavaScript, WASM, DNR subscription/list,
+`update_url`, `webRequestBlocking`, dynamic code generation, or arbitrary
+network fetch. Its configuration corpus is part of the immutable reviewed
+artifact. A future curated extension may be added only after the same source,
+compatibility, privacy, provenance, signing, and release review; changing the
+current set requires a new signed catalog generation and candidate approval.
 
 ## Installation, profiles, and updates
 

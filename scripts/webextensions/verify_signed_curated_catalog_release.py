@@ -426,7 +426,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bundle-id", default="app.floorp.Floorp")
     parser.add_argument("--channel", default="testflight")
     parser.add_argument("--catalog-id", default="floorp-ios-curated-testflight")
-    parser.add_argument("--expected-package-count", default=17, type=int)
+    parser.add_argument("--expected-package-count", default=1, type=int)
     parser.add_argument("--artifact-origin", default="https://catalog.floorp.invalid/fwea1/")
     parser.add_argument("--now")
     parser.add_argument("--output", type=Path)

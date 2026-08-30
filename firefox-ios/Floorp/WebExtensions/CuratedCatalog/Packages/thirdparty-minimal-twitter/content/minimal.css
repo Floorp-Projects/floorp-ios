@@ -1,4 +1,0 @@
-/* Compatibility subset inspired by typefully/minimal-twitter. */
-[data-testid="sidebarColumn"], [aria-label="Timeline: Trending now"] { display: none !important; }
-main { max-width: 760px !important; margin-inline: auto !important; }
-[data-testid="tweet"] { border-radius: 12px !important; margin-block: 8px !important; }

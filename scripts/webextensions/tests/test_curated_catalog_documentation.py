@@ -57,13 +57,13 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         self.assertEqual(
             approval,
             {
-                "approvalDate": "2026-08-28",
-                "approvalID": "floorp-ios-maintainer-p0-policy-20260828-darkreader-mv3",
+                "approvalDate": "2026-08-31",
+                "approvalID": "floorp-ios-maintainer-p0-policy-20260831-darkreader-only",
                 "catalogInputSHA256": hashlib.sha256(
                     (CATALOG_ROOT / "catalog-input.json").read_bytes()
                 ).hexdigest(),
                 "keyOperations": "1password-ssh-agent-nonexport",
-                "packageCount": 17,
+                "packageCount": 1,
                 "privateModeAndDataRetention": "profile-isolated-retain-until-explicit-uninstall",
                 "prohibitedCapabilities": [
                     "arbitrary-url-install",
@@ -77,7 +77,7 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
                 ],
                 "revocationOperations": "signed-immediate-revocation-immutable-generation",
                 "schema": 1,
-                "scope": "darkreader-mv3-fixed-bundled-catalog",
+                "scope": "darkreader-only-fixed-bundled-catalog",
                 "status": "approved",
                 "thirdPartyRedistributionBasis": "verified-mit-license-notice-provenance",
             },
@@ -87,14 +87,14 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
             json.dumps(approval, separators=(",", ":"), sort_keys=True).encode("utf-8"),
         )
 
-    def test_exactly_the_fixed_seventeen_are_documented(self) -> None:
-        self.assertEqual(len(self.records), 17)
+    def test_current_dark_reader_only_catalog_is_documented(self) -> None:
+        self.assertEqual(len(self.records), 1)
         record_ids = {record["extensionID"] for record in self.records}
         source_ids = {source["extensionID"] for source in self.sources}
         self.assertEqual(record_ids, source_ids)
         self.assertEqual(
             sum(identifier.startswith("floorp.thirdparty.") for identifier in record_ids),
-            14,
+            1,
         )
         for record in self.records:
             documented_name = record["metadata"]["displayName"].partition(" — ")[0]
@@ -120,15 +120,15 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
             self.assertNotIn("Floorp Content Messaging Fixture", text)
             self.assertNotIn("Floorp Event Runtime Fixture", text)
             self.assertNotIn("Floorp MV3 Compatibility Fixture", text)
-        self.assertIn("17 fixed packages", self.what_to_test_en)
+        self.assertIn("Dark Reader", self.what_to_test_en)
         self.assertIn("Chrome Web Store", self.what_to_test_en)
-        self.assertIn("17本", self.what_to_test_ja)
+        self.assertIn("Dark Reader", self.what_to_test_ja)
         self.assertIn("Chrome ウェブストア", self.what_to_test_ja)
 
     def test_beta_review_draft_cannot_be_mistaken_for_an_approval(self) -> None:
         self.assertIn("draft only", self.beta_review_draft)
         self.assertIn("App Store Connect", self.beta_review_draft)
-        self.assertIn("承認を表すものではなく", self.beta_review_draft)
+        self.assertIn("does not claim Apple approval", self.beta_review_draft)
         self.assertIn("not an extension store", self.beta_review_draft)
         self.assertIn("no silent update", self.beta_review_draft)
 
@@ -156,9 +156,9 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
 
     def test_release_documents_mark_the_old_signature_as_superseded_for_darkreader(self) -> None:
         catalog_digest = hashlib.sha256((CATALOG_ROOT / "catalog-input.json").read_bytes()).hexdigest()
-        self.assertIn("Dark Reader MV3 supersession", self.release_evidence)
+        self.assertIn("Dark Reader-only catalog supersession", self.release_evidence)
         self.assertIn(catalog_digest, self.release_evidence)
-        self.assertIn("17-package", self.release_evidence)
+        self.assertIn("managed signing pending", self.release_evidence)
         self.assertIn("--supersede-signed-catalog", self.managed_signer)
         self.assertIn("root-key-preserving catalog refresh", self.managed_signer)
 

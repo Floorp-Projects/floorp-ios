@@ -3,8 +3,9 @@
 
 This tool is intentionally for build/review machines only. It consumes a
 locally supplied, digest-pinned upstream archive, never fetches a URL, and
-never forms part of the iOS installation path. The first use binds the reduced
-Very Good AdBlock DNR package to exact upstream static-rule seeds.
+never forms part of the iOS installation path. Schema 2 binds reviewed source
+members for the current Dark Reader package; the legacy schema-1 path remains
+available for constrained DNR provenance fixtures.
 """
 
 from __future__ import annotations
@@ -443,7 +444,7 @@ def verify_archive(catalog_root: Path, source: dict[str, Any], archive: Path) ->
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog-root", type=Path, default=DEFAULT_CATALOG_ROOT)
-    parser.add_argument("--source-id", default="thirdparty-very-good-adblock")
+    parser.add_argument("--source-id", default="thirdparty-darkreader")
     parser.add_argument("--archive", required=True, type=Path)
     arguments = parser.parse_args(argv)
     try:

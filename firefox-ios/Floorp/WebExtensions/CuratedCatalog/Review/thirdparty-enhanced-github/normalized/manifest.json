@@ -1,1 +1,0 @@
-{"content_scripts":[{"css":["content/enhanced.css"],"js":["content/enhanced.js"],"matches":["https://github.com/*"],"run_at":"document_end","world":"ISOLATED"}],"host_permissions":["https://github.com/*"],"manifest_version":3,"name":"Enhanced GitHub — Floorp compatibility build","version":"1.0.0"}

@@ -1,9 +1,0 @@
-Upstream: chrisbbreuer/very-good-adblock
-Upstream revision: 828148f94b12da2ad109c4ed8477947931544bb2
-Upstream archive SHA-256: 1f7e2a0560a2d5e606893993a470a342d21ed314ae5d94a9ec468259283f3fc4
-License: MIT
-Source URL: https://github.com/chrisbbreuer/very-good-adblock
-
-This Floorp compatibility build retains only the reviewed static block-rule
-subset described in PATCH.txt. It does not ship upstream generated filter
-lists, redirects, background code, telemetry, reporting, or update logic.

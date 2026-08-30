@@ -62,7 +62,7 @@ class CuratedCatalogExternalTestFlightWorkflowTests(unittest.TestCase):
             "verify_curated_catalog_release_approval.py",
             "docs/floorp-ios-webextensions-curated-catalog-release-approval.json",
             "--catalog-evidence \"$FLOORP_CURATED_CATALOG_EVIDENCE\"",
-            "--expected-package-count 17",
+            "--expected-package-count 1",
             "floorp-curated-catalog-p0-approval.json",
         ):
             self.assertIn(required, self.workflow)
@@ -120,6 +120,26 @@ class CuratedCatalogExternalTestFlightWorkflowTests(unittest.TestCase):
             self.assertIn(required, self.workflow)
         self.assertNotIn("POST /v1/betaGroups", self.workflow)
         self.assertNotIn("review-details-payload.json\n            ${{ runner.temp }}", self.workflow)
+
+    def test_beta_review_notes_cover_only_the_single_dark_reader_package(self) -> None:
+        for required in (
+            "one fixed, app-bundled WebExtension: Dark Reader",
+            "Install and enable Dark Reader",
+            "switch between On and Off",
+            "Open Settings and See all options",
+            "change an appearance value such as brightness",
+            "Disable and remove Dark Reader",
+        ):
+            self.assertIn(required, self.workflow)
+        for forbidden in (
+            "17 WebExtensions",
+            "Floorp Site Appearance",
+            "Floorp Tracker Block Lite",
+            "Very Good AdBlock",
+            "Floorp Session Timer",
+            "DNR",
+        ):
+            self.assertNotIn(forbidden, self.workflow)
 
     def test_untrusted_dispatch_values_are_passed_through_environment_not_shell_literals(self) -> None:
         for forbidden in (
