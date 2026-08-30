@@ -3,14 +3,14 @@
   "repository": "Floorp-Projects/application-services",
   "artifactVersion": "155.0.20260731050244",
   "release": {
-    "id": 367118816,
-    "tag": "floorp-ios-155.20260731050244.4",
-    "revision": 4,
-    "url": "https://github.com/Floorp-Projects/application-services/releases/tag/floorp-ios-155.20260731050244.4",
+    "id": 379394157,
+    "tag": "floorp-ios-155.20260731050244.5",
+    "revision": 5,
+    "url": "https://github.com/Floorp-Projects/application-services/releases/tag/floorp-ios-155.20260731050244.5",
     "immutable": true,
     "prerelease": true,
-    "sourceCommit": "b6d29804c391a573ecc0db6c1c4491b3e07a6693",
-    "sourceTree": "8bfa4a27d5b807b613d577ee49198617aab0e117",
+    "sourceCommit": "e1c77eb6e333ef667456504100c7b09763b8ad35",
+    "sourceTree": "338e0dc010b48fb63c93892f527ce56905805344",
     "sourceConfiguration": "automation/floorp/ios-xcframework-release-config.json"
   },
   "upstream": {
@@ -20,26 +20,26 @@
   },
   "assets": {
     "FocusRustComponents.xcframework.zip": {
-      "sha256": "d996835e76b7b66e516c4b7ddf6c401d815a1ce60466fbbdca73edd2f2ff2b0a",
-      "size": 43710668,
-      "swiftPMChecksum": "d996835e76b7b66e516c4b7ddf6c401d815a1ce60466fbbdca73edd2f2ff2b0a"
+      "sha256": "e98e02f72db6fb24a0fd4a16872ec721858f68daa418685d3669dea5c726e3ad",
+      "size": 43710301,
+      "swiftPMChecksum": "e98e02f72db6fb24a0fd4a16872ec721858f68daa418685d3669dea5c726e3ad"
     },
     "MozillaRustComponents.xcframework.zip": {
-      "sha256": "579b00cd5823a94101145a4deef7df44e1eeb3929cbe849f53a0f6d008e6f268",
-      "size": 221339553,
-      "swiftPMChecksum": "579b00cd5823a94101145a4deef7df44e1eeb3929cbe849f53a0f6d008e6f268"
+      "sha256": "0b4a6ba50df36ed3d942851393e53885eff0fb22d3289d8af005839b3bb7168a",
+      "size": 221339972,
+      "swiftPMChecksum": "0b4a6ba50df36ed3d942851393e53885eff0fb22d3289d8af005839b3bb7168a"
     },
     "release-manifest.json": {
-      "sha256": "387beac1bb8d4b204b9c8ebdc3797ea75e2466c507ec944b2b5188fea2d6b0dd",
+      "sha256": "fe2020a0fe91ad5bf335dc1a8cc4af4abffe729babe09737587218bfba6d5da5",
       "size": 545674
     },
     "SHA256SUMS": {
-      "sha256": "32db0711e7b5cf6d088ef95b290941be9ba22cfceeadfc35978fa97d05506b8c",
+      "sha256": "dba2d4a679da746fe1d5f949a6fc570f8bd318f1058b52e13e193b71caba7884",
       "size": 384
     },
     "swift-components.tar.xz": {
-      "sha256": "e9cdae3cbcd19c68d6a1eed78917862f2a6420e2b74fb52e6669f0d641f31433",
-      "size": 155784
+      "sha256": "5a796e1bcd0d299e7882f58364cf4564dd45030aa41b8af88052da8f487e1654",
+      "size": 155712
     }
   }
 }

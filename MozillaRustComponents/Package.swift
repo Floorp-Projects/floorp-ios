@@ -1,13 +1,13 @@
 // swift-tools-version: 5.10
 import PackageDescription
 
-let checksum = "579b00cd5823a94101145a4deef7df44e1eeb3929cbe849f53a0f6d008e6f268"
+let checksum = "0b4a6ba50df36ed3d942851393e53885eff0fb22d3289d8af005839b3bb7168a"
 let version = "155.0.20260731050244"
-let url = "https://github.com/Floorp-Projects/application-services/releases/download/floorp-ios-155.20260731050244.4/MozillaRustComponents.xcframework.zip"
+let url = "https://github.com/Floorp-Projects/application-services/releases/download/floorp-ios-155.20260731050244.5/MozillaRustComponents.xcframework.zip"
 
 // Focus xcframework
-let focusChecksum = "d996835e76b7b66e516c4b7ddf6c401d815a1ce60466fbbdca73edd2f2ff2b0a"
-let focusUrl = "https://github.com/Floorp-Projects/application-services/releases/download/floorp-ios-155.20260731050244.4/FocusRustComponents.xcframework.zip"
+let focusChecksum = "e98e02f72db6fb24a0fd4a16872ec721858f68daa418685d3669dea5c726e3ad"
+let focusUrl = "https://github.com/Floorp-Projects/application-services/releases/download/floorp-ios-155.20260731050244.5/FocusRustComponents.xcframework.zip"
 
 let package = Package(
     name: "MozillaRustComponentsSwift",

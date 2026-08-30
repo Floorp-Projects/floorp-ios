@@ -210,7 +210,7 @@ class FloorpNotesSyncTwoClientPreflightTests(unittest.TestCase):
                 "publication_verification": "test fixture metadata only",
                 "release_state": "published_prerelease",
                 "release_tag": self.as_input["release_tag"],
-                "release_url": "https://github.com/Floorp-Projects/application-services/releases/tag/floorp-ios-155.20260731050244.4",
+                "release_url": "https://github.com/Floorp-Projects/application-services/releases/tag/floorp-ios-155.20260731050244.5",
                 "repository": self.as_input["repository"],
                 "schema_version": 1,
                 "todo": 17,
