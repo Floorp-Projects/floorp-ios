@@ -1,1 +1,0 @@
-{"declarative_net_request":{"rule_resources":[{"enabled":true,"id":"tracker-block-lite","path":"rules/static.json"}]},"manifest_version":3,"name":"Floorp Tracker Block Lite","permissions":["declarativeNetRequest"],"version":"1.0.0"}

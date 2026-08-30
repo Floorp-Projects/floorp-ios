@@ -4250,6 +4250,94 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         }
     }
 
+    func testCatalogOmissionStopsInstalledGenerationAndRetainsDataUntilExplicitUninstall() async throws {
+        let signing = try CatalogSigningFixture()
+        let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
+        let initial = try verifier.verify(
+            catalogData: signing.catalog(sequence: 1),
+            previousState: nil,
+            now: signing.now
+        )
+        let record = try XCTUnwrap(initial.catalog.packages.first)
+        let artifactData = try signing.archive()
+        let downloader = try FloorpWebExtensionArtifactDownloader(
+            endpointPolicy: .init(allowedHosts: ["catalog.floorp.test"])
+        )
+        let artifact = try await downloader.download(catalog: initial, record: record) { url in
+            .init(finalURL: url, statusCode: 200, data: artifactData)
+        }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FloorpWebExtensionPackageStore(
+            profileIdentifier: "catalog-omission",
+            isPrivateBrowsing: false,
+            directory: directory
+        )
+        let ownedDataURL = directory.appendingPathComponent("extension-owned-data.marker")
+        var reconciliationOperations = [FloorpWebExtensionLivePackageManager.ReconciliationOperation]()
+        let manager = FloorpWebExtensionLivePackageManager(store: store) { _, _, operation in
+            reconciliationOperations.append(operation)
+            if operation == .uninstall {
+                try FileManager.default.removeItem(at: ownedDataURL)
+            }
+        }
+        let stateStore = InMemoryCatalogStateStore()
+        let coordinator = FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator(
+            verifier: verifier,
+            stateStore: stateStore,
+            clock: { signing.now },
+            packageManagers: { [manager] }
+        )
+        FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.managedRemoteSource, enabled: false) }
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 1),
+            now: signing.now
+        )
+        try await coordinator.installVerifiedCatalogPackage(artifact, packageManager: manager)
+        try Data("retained until uninstall".utf8).write(to: ownedDataURL, options: .atomic)
+        reconciliationOperations.removeAll()
+
+        let installedBeforeOmissionRecord = await store.installedPackage(for: record.extensionID)
+        let installedBeforeOmission = try XCTUnwrap(installedBeforeOmissionRecord)
+        let generationDirectory = directory
+            .appendingPathComponent("packages", isDirectory: true)
+            .appendingPathComponent(record.extensionID.rawValue, isDirectory: true)
+            .appendingPathComponent(installedBeforeOmission.generation, isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: generationDirectory.path))
+
+        _ = try await coordinator.acceptAndApplyRevocations(
+            catalogData: signing.catalog(sequence: 2, includePackage: false),
+            now: signing.now
+        )
+
+        let retainedPackageRecord = await store.installedPackage(for: record.extensionID)
+        let retainedRecord = try XCTUnwrap(retainedPackageRecord)
+        XCTAssertFalse(retainedRecord.isEnabled)
+        XCTAssertTrue(retainedRecord.isCatalogRevoked)
+        XCTAssertEqual(retainedRecord.catalogRecord, record)
+        XCTAssertTrue(stateStore.state?.currentGenerationArtifacts.isEmpty == true)
+        XCTAssertEqual(reconciliationOperations, [.suspend])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: generationDirectory.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ownedDataURL.path))
+        let hasPendingPurgeAfterOmission = await store.hasPendingDataPurge(for: record.extensionID)
+        XCTAssertFalse(hasPendingPurgeAfterOmission)
+        XCTAssertThrowsError(try coordinator.authorizeInstalledCatalogRecord(record)) { error in
+            XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .revoked)
+        }
+
+        try await manager.uninstall(record.extensionID)
+
+        let packageAfterUninstall = await store.installedPackage(for: record.extensionID)
+        let hasPendingPurgeAfterUninstall = await store.hasPendingDataPurge(for: record.extensionID)
+        XCTAssertNil(packageAfterUninstall)
+        XCTAssertFalse(hasPendingPurgeAfterUninstall)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: generationDirectory.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedDataURL.path))
+        XCTAssertEqual(reconciliationOperations, [.suspend, .suspend, .uninstall])
+    }
+
     func testSamePermissionCatalogUpdateRequiresConsentAndRecordsHistory() async throws {
         let signing = try CatalogSigningFixture()
         let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
@@ -5292,7 +5380,8 @@ private struct CatalogSigningFixture {
         corruptCatalogSignature: Bool = false,
         schemaVersion: Int64 = 1,
         packageMetadata: FloorpWebExtensionCanonicalJSON.Value? = nil,
-        availability: String = "available"
+        availability: String = "available",
+        includePackage: Bool = true
     ) throws -> Data {
         let signer = signingKey ?? leaf
         let packageResources = resources ?? self.resources()
@@ -5312,6 +5401,7 @@ private struct CatalogSigningFixture {
         if schemaVersion >= 2 {
             package["metadata"] = packageMetadata ?? (schemaVersion == 3 ? v3Metadata() : v2Metadata())
         }
+        let packages: [FloorpWebExtensionCanonicalJSON.Value] = includePackage ? [.object(package)] : []
         let unsigned = FloorpWebExtensionCanonicalJSON.Value.object([
             "schemaVersion": .integer(schemaVersion),
             "catalogID": .string("floorp-production"),
@@ -5324,7 +5414,7 @@ private struct CatalogSigningFixture {
                 "channel": .string("production")
             ]),
             "signingKey": try signingKeyCertificate(keyID: signingKeyID, publicKey: signer.publicKey),
-            "packages": .array([.object(package)]),
+            "packages": .array(packages),
             "revocations": .array(revocations)
         ])
         let signature = corruptCatalogSignature

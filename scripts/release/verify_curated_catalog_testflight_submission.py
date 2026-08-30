@@ -74,7 +74,10 @@ def _catalog_evidence(path: Path, marketing_version: str) -> dict[str, Any]:
     _require(value.get("status") == "verified", "signed catalog evidence is not verified")
     _require(value.get("catalogID") == "floorp-ios-curated-testflight", "catalog identity is unexpected")
     _require(value.get("marketingVersion") == marketing_version, "catalog evidence marketing version is unexpected")
-    _require(value.get("packageCount") == 17, "catalog evidence does not contain the fixed 17 packages")
+    _require(
+        value.get("packageCount") == 1,
+        "catalog evidence does not contain the current single Dark Reader package",
+    )
     for field in ("catalogSHA256", "catalogInputSHA256", "rootPublicKeySHA256"):
         _require(isinstance(value.get(field), str) and re.fullmatch(r"[0-9a-f]{64}", value[field]) is not None, f"catalog evidence {field} is invalid")
     _require(isinstance(value.get("sequence"), int) and value["sequence"] > 0, "catalog evidence sequence is invalid")

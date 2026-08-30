@@ -45,7 +45,7 @@ class CuratedCatalogTestFlightWorkflowTests(unittest.TestCase):
             "--bundle-id app.floorp.Floorp",
             "--channel testflight",
             "--catalog-id floorp-ios-curated-testflight",
-            "--expected-package-count 17",
+            "--expected-package-count 1",
             "--artifact-origin https://catalog.floorp.invalid/fwea1/",
             "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover",
             "scripts.release.tests.test_curated_catalog_xcode_cloud_post_clone",

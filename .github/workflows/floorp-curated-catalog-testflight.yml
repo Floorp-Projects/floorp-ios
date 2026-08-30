@@ -74,7 +74,7 @@ jobs:
             --bundle-id app.floorp.Floorp \
             --channel testflight \
             --catalog-id floorp-ios-curated-testflight \
-            --expected-package-count 17 \
+            --expected-package-count 1 \
             --artifact-origin https://catalog.floorp.invalid/fwea1/ \
             --output "$evidence"
           printf 'FLOORP_CURATED_CATALOG_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"

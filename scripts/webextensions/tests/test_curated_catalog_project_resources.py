@@ -33,6 +33,12 @@ class CuratedCatalogProjectResourceTests(unittest.TestCase):
             "CuratedCatalog/review-index.json",
         ):
             self.assertNotIn(review_only_path, project)
+        for test_fixture in (
+            "demanding-mv3 in Resources",
+            "content-messaging-mv3 in Resources",
+            "event-runtime-mv3 in Resources",
+        ):
+            self.assertNotIn(test_fixture, project)
 
 
 if __name__ == "__main__":

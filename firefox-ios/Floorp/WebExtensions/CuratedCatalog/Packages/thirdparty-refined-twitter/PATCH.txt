@@ -1,3 +1,0 @@
-Selected a fixed CSS/DOM subset for promoted-content and trend suppression.
-Removed upstream background/options behavior, feature toggles, dynamic imports,
-network behavior, and all browser APIs outside static isolated content scripts.

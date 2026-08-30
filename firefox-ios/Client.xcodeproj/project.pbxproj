@@ -1488,9 +1488,6 @@
 		F10A3E000000000000000212 /* FloorpWebExtensionI18n.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000112 /* FloorpWebExtensionI18n.swift */; };
 		F10A3E000000000000000213 /* FloorpWebExtensionStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000113 /* FloorpWebExtensionStorage.swift */; };
 		F10A3E000000000000000214 /* FloorpWebExtensionTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000114 /* FloorpWebExtensionTabs.swift */; };
-		F10A3E000000000000000210 /* demanding-mv3 in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000110 /* demanding-mv3 */; };
-		F10A3E000000000000000217 /* content-messaging-mv3 in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000117 /* content-messaging-mv3 */; };
-		F10A3E000000000000000218 /* event-runtime-mv3 in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000118 /* event-runtime-mv3 */; };
 		F10A3E000000000000000221 /* Curated FWEA1 Artifacts in Resources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000121 /* Artifacts */; };
 		F10A3E000000000000000219 /* FloorpWebExtensionStage3PerformanceEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000119 /* FloorpWebExtensionStage3PerformanceEvidence.swift */; };
 		F10A3E000000000000000220 /* FloorpWebExtensionStage3SimulatorPerformanceRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3E000000000000000120 /* FloorpWebExtensionStage3SimulatorPerformanceRecord.swift */; };
@@ -19150,9 +19147,6 @@
 				EEB971C62FC48C5100D6C232 /* NewYorkMedium-Regular.otf in Resources */,
 				EEB971C72FC48C5100D6C232 /* NewYorkMedium-RegularItalic.otf in Resources */,
 				EEB971C32FC48C4800D6C232 /* Reader.css in Resources */,
-				F10A3E000000000000000210 /* demanding-mv3 in Resources */,
-				F10A3E000000000000000217 /* content-messaging-mv3 in Resources */,
-				F10A3E000000000000000218 /* event-runtime-mv3 in Resources */,
 				F10A3E000000000000000221 /* Curated FWEA1 Artifacts in Resources */,
 				C2F335372ECE339F0071588A /* TranslationsEngine.html in Resources */,
 				8A94DB962E0F16E80005FE69 /* homepageSearchBarOff.json in Resources */,

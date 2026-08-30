@@ -1,54 +1,50 @@
-Floorp for iOS — curated WebExtensions candidate
+Floorp for iOS — Dark Reader catalog candidate
 
 Use this candidate only when TestFlight shows the exact version/build from the
-release evidence and Settings > Extensions shows the signed, app-bundled
-catalog of 17 fixed packages. Stop and report a release-integrity failure if
-the catalog is missing, has a different count, or changes after launch. Do not
-substitute another TestFlight build.
+release evidence and Settings > Extensions shows exactly one signed,
+app-bundled package: Dark Reader. Stop and report a release-integrity failure
+if Dark Reader is missing, another package appears, or the catalog changes
+after launch. Do not substitute another TestFlight build.
 
 This is not an extension store. There must be no Chrome Web Store installation
 path, Firefox Add-ons installation, arbitrary URL, ZIP, XPI, CRX, share-sheet,
-or local-file installation. The reviewed packages must not fetch remote
-JavaScript, WebAssembly, configuration, updates, or DNR lists. Report any
-visible path or network activity that appears to cross these boundaries.
+or local-file installation. Dark Reader must not fetch remote JavaScript,
+WebAssembly, configuration, news, extension updates, or DNR/filter lists.
+Report any visible path or network activity that appears to cross these
+boundaries.
 
-In a normal profile, inspect signed metadata for the 17 packages. Install one
-representative from each family: Floorp Site Appearance; Floorp Tracker Block
-Lite or Very Good AdBlock; and Floorp Session Timer or Easy to RSS. Use only a
-non-sensitive Floorp QA page or another approved test page. Confirm declared
-behavior, then disable, re-enable, remove, and reinstall each representative.
-Disable must stop runtime/content rules/actions without changing generation;
-remove must clear extension-owned data.
+In a normal profile, inspect Dark Reader's signed metadata and install it. Use
+only a non-sensitive Floorp QA page or another approved HTTP(S) test page in a
+single browser window. With site access initially denied, open the action popup
+and confirm Floorp offers explicit access for the current site and all
+requested sites. Choose the current site and confirm the same page reloads and
+becomes dark.
 
-Install Dark Reader and open a normal HTTP(S) test page in one browser window.
-Open its action popup with site access initially denied. Confirm Floorp offers
-explicit access for the current site and all requested sites. Choose the
-current site, confirm the same page reloads and becomes dark, then reopen the
-popup. It must show the real hostname, not `about:`, and must not claim the
-page is browser-protected. Toggle Off and On while the popup stays open:
-both the page and the popup status must update each time. Tap Settings and
-confirm the authenticated Dark Reader settings page opens. Reload and reopen
-the popup to confirm the choice remains profile-local.
+Reopen the popup. It must show the real hostname, not `about:`, and must not
+claim the page is browser-protected. Toggle Off and On while the popup stays
+open; both the page and popup status must update each time. Tap Settings and
+confirm the authenticated, bundled Dark Reader settings page opens. Change a
+setting, reload the test page, and reopen the popup to confirm the choice
+remains profile-local.
+
+Disable and re-enable Dark Reader, then remove and reinstall it. Disabling must
+stop its runtime, action, and page transformation without changing generation.
+Removal must clear extension-owned data. After reinstalling, site access must
+start denied and removed settings must not return.
 
 Known limits for this candidate: Dark Reader multi-window active-tab routing
 and its large DevTools data view are not release acceptance paths. Test the
-core popup, page appearance, and Settings flow in a single browser window.
+core popup, page appearance, and Settings flow in one browser window.
 `storage.sync` is intentionally device-local; do not expect cloud sync.
 
-Open an extension with no action and one with a popup; the Extensions menu must
-remain usable. For DNR, use only the supplied Floorp QA harness and verify
-block-only behavior plus per-site exclusion. Redirects, header modification,
-allow-all, dynamic/session rules, remote list refresh, or post-install rule
-changes are defects.
-
-Repeat key install, permission, enable/disable, delete, and Dark Reader paths
-in Private Browsing. Private use is opt-in and profile-local. Normal grants,
-storage, alarms, rules, and runtime state must not appear in private browsing,
+Repeat the install, site-permission, popup, Settings, enable/disable, and delete
+paths in Private Browsing. Private use is opt-in and profile-local. Normal
+grants, storage, alarms, and runtime state must not appear in private browsing,
 and private state must not return to normal browsing.
 
 Repeat core browser smoke tests in normal/private browsing, English/Japanese,
 and with VoiceOver. Report crashes, hangs, unexpected network activity,
-permission bypass, cross-profile leakage, catalog changes, or version/build
-mismatches. Do not use personal credentials or production data. Physical-
-device performance, memory, battery, accessibility, revocation evidence, and
-Apple review remain required for broader release.
+permission bypass, cross-profile leakage, extra catalog items, or
+version/build mismatches. Do not use personal credentials or production data.
+Physical-device performance, memory, battery, accessibility, revocation
+evidence, and Apple review remain required for broader release.

@@ -1,3 +1,0 @@
-/* Compatibility subset inspired by sindresorhus/refined-twitter. */
-[data-testid="placementTracking"], [data-testid="trend"], [aria-label="Timeline: Trending now"] { display: none !important; }
-[data-testid="tweet"] { line-height: 1.45 !important; }

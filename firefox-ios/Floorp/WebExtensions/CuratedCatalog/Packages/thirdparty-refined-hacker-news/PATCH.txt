@@ -1,4 +1,0 @@
-Converted the upstream MV2 feature bundle to a static MV3 content-script subset:
-accessible story labels, focused-story keyboard navigation, and readability CSS.
-Removed history, tabs, background fetches, external APIs, popup, and dynamic
-configuration.

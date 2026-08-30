@@ -38,7 +38,7 @@ def catalog_evidence():
         "catalogInputSHA256": "b" * 64,
         "catalogSHA256": "c" * 64,
         "marketingVersion": "0.3.0",
-        "packageCount": 17,
+        "packageCount": 1,
         "rootPublicKeySHA256": "d" * 64,
         "sequence": 1,
         "status": "verified",
@@ -183,15 +183,15 @@ class CuratedCatalogSubmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(submission.CuratedCatalogSubmissionError, "marketing version"):
             self.verify(api)
 
-    def test_catalog_evidence_requires_the_fixed_seventeen_package_catalog(self):
+    def test_catalog_evidence_requires_the_current_single_dark_reader_package(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             evidence_path = Path(temporary_directory) / "catalog-evidence.json"
             evidence_path.write_text(json.dumps(catalog_evidence()), encoding="utf-8")
-            self.assertEqual(submission._catalog_evidence(evidence_path, "0.3.0")["packageCount"], 17)
+            self.assertEqual(submission._catalog_evidence(evidence_path, "0.3.0")["packageCount"], 1)
             stale = catalog_evidence()
-            stale["packageCount"] = 16
+            stale["packageCount"] = 2
             evidence_path.write_text(json.dumps(stale), encoding="utf-8")
-            with self.assertRaisesRegex(submission.CuratedCatalogSubmissionError, "fixed 17"):
+            with self.assertRaisesRegex(submission.CuratedCatalogSubmissionError, "single Dark Reader"):
                 submission._catalog_evidence(evidence_path, "0.3.0")
 
 

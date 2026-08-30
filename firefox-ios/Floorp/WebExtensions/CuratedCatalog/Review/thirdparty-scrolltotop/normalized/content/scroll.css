@@ -1,2 +1,0 @@
-#floorp-scroll-to-top { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; min-width: 44px; min-height: 44px; border: 1px solid #2563eb; border-radius: 22px; background: #fff; color: #1d4ed8; font-size: 20px; }
-#floorp-scroll-to-top[hidden] { display: none; }

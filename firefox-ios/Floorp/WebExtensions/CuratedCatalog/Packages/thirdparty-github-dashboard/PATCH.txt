@@ -1,3 +1,0 @@
-Replaced the MV2 unsafe-eval CSP and GitHub API dependence with an isolated,
-local page filter. The reviewable feature uses only existing dashboard DOM;
-no credentials, network fetch, background service, or dynamic code remains.

@@ -1,3 +1,0 @@
-Adapted the upstream fork-list filtering idea to an isolated local content
-script. Removed website analytics, access tokens, CSV export, build tooling,
-and all network requests. This build filters only visible GitHub fork rows.

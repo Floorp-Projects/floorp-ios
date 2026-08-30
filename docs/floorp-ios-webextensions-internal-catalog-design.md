@@ -66,7 +66,10 @@ P0 の承認者は Floorp iOS maintainer 一人であり、存在しない部門
 参考: [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)、
 [Chrome MV3](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)。
 
-#### 2026-08-26: External TestFlight policy gate
+#### Historical 2026-08-26–28 External TestFlight policy gate
+
+The package counts in this subsection describe the superseded pilot candidate.
+The current catalog composition is the Dark Reader-only decision in section 10.
 
 最初の External TestFlight candidate は、catalog が署名済み・同梱済みであることだけを
 理由に提出してはならない。Apple の現行 App Review Guideline 3.2.2(i) は、第三者の
@@ -75,7 +78,7 @@ apps、extensions、plug-ins の一般的 collection を表示する interface �
 年齢・reporting safeguards を求める。
 
 2026-08-27 に Apple の現行ガイドラインを再確認した結果、3.2.1(ii) は specific approved need
-に向けた第三者 app collection を robust editorial content とともに許容し得る。一方、現在の
+に向けた第三者 app collection を robust editorial content とともに許容し得る。一方、当時の
 16 本は accessibility だけに限定されない appearance/privacy/productivity/developer-tools を含む
 横断的な collection であり、この条項を自己判断の例外根拠にしてはならない。4.7 は binary 外の
 software を対象にするため、FWEA1 が app bundle にあることだけで 4.7 の適用可否を決めることも
@@ -116,7 +119,7 @@ private key を CI、Xcode Cloud、アプリ bundle に置くことでこの順�
 `Floorp Curated Catalog TestFlight Candidate` workflow は、現在の `origin/main` HEAD と同じ commit を
 指す、保護された annotated `floorp-catalog-<40 lowercase commit SHA>` tag からだけ手動起動する。この
 workflow は tag 名・annotation・tag commit・現在の `main` SHA の完全一致を Apple credential より先に確認し、protected release
-environment の独立 root public-key SHA-256 と canonical signed catalog、固定 16 record、
+environment の独立 root public-key SHA-256 と canonical signed catalog、固定 1 record、
 bundle ID/channel/marketing version、全 FWEA1 digest/inventory/manifest を fail closed で
 照合する。Xcode Cloud には branch ではなく同じ tag を `sourceBranchOrTag` として渡す。さらに
 source-controlled post-clone gate が `CI_GIT_REF`、`CI_TAG`、`CI_COMMIT`、承認済み manual
@@ -131,7 +134,7 @@ release gate である。候補 workflow 自身は外部 group 割当・Beta App
 それらは、source commit と processed App Store Connect build の readback を再確認した別の
 明示的 release action に限る。この gate は managed-signing record、candidate-bound P0
 approval、または実際の Apple review の代替ではない。3.2.2(i) の書面上の reviewer path が
-得られない場合でも、approved exact 16-package candidate は Apple の判断を得るために提出
+得られない場合でも、当時 approved だった exact 16-package candidate は Apple の判断を得るために提出
 できる。Apple が具体的な変更を求めた場合だけ maintainer が範囲を再決定し、16 package を
 自動的に置換してはならない。
 
@@ -574,8 +577,9 @@ digest、実機検証、Apple の実審査は代替されない。秘密鍵、�
 
 ## 10. P0 決定記録と残る実在ゲート
 
-1. 初回候補は固定・同梱の 16 package とし、`managedRemoteSource` は無効のままにする。
-   Apple の事前許可を仮定せず、正規の Beta App Review に提出して実際の結果を記録する。
+1. 2026-08-31以降の現行候補は、固定・同梱の Dark Reader 1 package とする。
+   将来追加する場合は、リッチな拡張を優先しつつ package ごとの source review、provenance、
+   managed signing、candidate approval を改めて通す。
 2. 任意 URL、Chrome ウェブストア、CRX/ZIP、共有シートからの導入、remote JavaScript/WASM/
    DNR list、silent update、権限昇格、fail-open は禁止を継続する。
 3. root/leaf 鍵は 1Password SSH Agent 経由だけで使い、秘密鍵を閲覧・書出ししない。鍵 rotation
@@ -584,8 +588,9 @@ digest、実機検証、Apple の実審査は代替されない。秘密鍵、�
    verifier の fail-closed contract として固定する。
 5. disable と revoke は runtime/DNR/page origin を止め、profile-owned data は explicit uninstall
    まで保持する。private profile は通常 profile の storage/DNR/runtime/package を継承しない。
-6. 第三者 13 package は MIT license、preserved LICENSE/NOTICE、固定 provenance で再配布根拠を
-   記録する。根拠のない、または再検証不能な将来 package は署名前に除外する。
+6. 現行の第三者 package は Dark Reader 1件で、MIT license、preserved LICENSE/NOTICE、固定
+   provenance を再配布根拠として記録する。根拠のない、または再検証不能な将来 package は
+   署名前に除外する。
 
 残る release gate は、exact signed catalog に束縛された maintainer P0 record、protected
 environment digest、通常の PR/CI/review/main 統合、immutable tag、candidate build と実機/P5

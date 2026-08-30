@@ -26,7 +26,7 @@ class CuratedCatalogFunctionalTests(unittest.TestCase):
             cwd=REPOSITORY_ROOT,
         )
         result = json.loads(completed.stdout)
-        self.assertEqual(result, {"status": "ok", "adoptedArtifacts": 17})
+        self.assertEqual(result, {"status": "ok", "adoptedArtifacts": 1})
 
 
 if __name__ == "__main__":

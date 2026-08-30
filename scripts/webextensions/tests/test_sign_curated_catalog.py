@@ -25,7 +25,7 @@ SPEC.loader.exec_module(SIGN)
 class SignCuratedCatalogTests(unittest.TestCase):
     def test_source_archives_require_unique_source_id_and_absolute_existing_path(self) -> None:
         with self.assertRaises(SIGN.CuratedCatalogSigningError):
-            SIGN._parse_source_archives(["thirdparty-very-good-adblock=relative.tar.gz"])
+            SIGN._parse_source_archives(["thirdparty-darkreader=relative.tar.gz"])
         with self.assertRaises(SIGN.CuratedCatalogSigningError):
             SIGN._parse_source_archives(["not valid=/tmp/archive.tar.gz"])
 
@@ -44,7 +44,7 @@ class SignCuratedCatalogTests(unittest.TestCase):
             source["id"] for source in sources
             if source["modificationStatus"] == "compatibility-patched"
         }
-        self.assertEqual(len(expected), 14)
+        self.assertEqual(expected, {"thirdparty-darkreader"})
         with self.assertRaisesRegex(SIGN.CuratedCatalogSigningError, "exactly match"):
             SIGN.verify_release_inputs(
                 catalog_root=catalog_root,
@@ -274,7 +274,7 @@ class SignCuratedCatalogTests(unittest.TestCase):
                 "--catalog-root", str(catalog_root),
                 "--repository-root", str(repository_root),
                 "--source-commit", "a" * 40,
-                "--source-archive", f"thirdparty-very-good-adblock={archive}",
+                "--source-archive", f"thirdparty-darkreader={archive}",
                 "--provenance-evidence-output", str(evidence),
             ]
             with (

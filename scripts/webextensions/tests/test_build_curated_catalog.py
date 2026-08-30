@@ -35,30 +35,10 @@ class CuratedCatalogBuildTests(unittest.TestCase):
                 generation_prefix="test20260826",
             )
 
-            self.assertEqual(len(records), 17)
-            self.assertGreaterEqual(
-                sum(record["extensionID"].startswith("floorp.thirdparty.") for record in records),
-                10,
-            )
+            self.assertEqual(len(records), 1)
             self.assertEqual(
                 {record["extensionID"] for record in records},
                 {
-                    "floorp.site-appearance",
-                    "floorp.tracker-block-lite",
-                    "floorp.session-timer",
-                    "floorp.thirdparty.utm-stripper",
-                    "floorp.thirdparty.minimal-twitter",
-                    "floorp.thirdparty.refined-hacker-news",
-                    "floorp.thirdparty.ekill",
-                    "floorp.thirdparty.medium-reading-layout",
-                    "floorp.thirdparty.web-search-navigator",
-                    "floorp.thirdparty.github-dashboard",
-                    "floorp.thirdparty.enhanced-github",
-                    "floorp.thirdparty.useful-forks",
-                    "floorp.thirdparty.easy-to-rss",
-                    "floorp.thirdparty.scroll-to-top",
-                    "floorp.thirdparty.refined-twitter",
-                    "floorp.thirdparty.very-good-adblock",
                     "floorp.thirdparty.darkreader",
                 },
             )
@@ -80,11 +60,12 @@ class CuratedCatalogBuildTests(unittest.TestCase):
             review_index = json.loads((output / "review-index.json").read_bytes())
             self.assertEqual(len(review_index["packages"]), len(records))
 
-    def test_floorp_managed_sources_are_bound_to_immutable_revisions(self) -> None:
+    def test_adopted_source_is_bound_to_an_immutable_revision(self) -> None:
         sources = BUILD.source_entries(CATALOG_ROOT / "catalog-sources.json")
-        managed = [source for source in sources if source["modificationStatus"] == "floorp-managed"]
-        self.assertEqual(len(managed), 3)
-        for source in managed:
+        self.assertEqual(len(sources), 1)
+        for source in sources:
+            self.assertEqual(source["id"], "thirdparty-darkreader")
+            self.assertEqual(source["modificationStatus"], "compatibility-patched")
             self.assertRegex(source["upstreamRevision"], r"^[0-9a-f]{40}$")
 
     def test_disclosures_must_cover_the_exact_catalog_source_set(self) -> None:

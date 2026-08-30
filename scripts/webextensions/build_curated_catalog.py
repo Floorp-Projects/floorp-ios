@@ -78,8 +78,8 @@ def require_string(value: Any, *, field: str, maximum_length: int = 512) -> str:
 
 def source_entries(path: Path) -> list[dict[str, Any]]:
     raw = strict_json_loads(path.read_bytes(), label="curated catalog sources")
-    if not isinstance(raw, list) or len(raw) < 12 or len(raw) > 128:
-        raise CuratedCatalogBuildError("curated catalog needs 12–128 source entries")
+    if not isinstance(raw, list) or len(raw) < 1 or len(raw) > 128:
+        raise CuratedCatalogBuildError("curated catalog needs 1–128 source entries")
     result: list[dict[str, Any]] = []
     identifiers: set[str] = set()
     extension_ids: set[str] = set()

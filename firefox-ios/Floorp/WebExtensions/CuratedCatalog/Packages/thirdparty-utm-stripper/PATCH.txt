@@ -1,6 +1,0 @@
-Converted MV2 background webRequestBlocking behavior to a manifest-v3 isolated
-content script that removes the same reviewed tracking-token categories only
-from the visible URL and page links. A local popup reports only the count and
-origin of local cleanup activity through profile-scoped storage. No request
-interception, remote list, background network access, or page-content logging
-is included.

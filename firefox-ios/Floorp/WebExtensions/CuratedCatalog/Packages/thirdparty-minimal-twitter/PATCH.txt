@@ -1,4 +1,0 @@
-Built a reviewed MV3 subset from the upstream's static layout and navigation
-ideas. Removed its build chain, popup/background components, dynamic options,
-analytics, and all remote behavior. The package contains only fixed CSS and an
-isolated local key handler for X/Twitter pages.

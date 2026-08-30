@@ -1,6 +1,8 @@
 # Floorp iOS: 内部 WebExtensions カタログのパイロット候補
 
-Status: **proposal — catalog への掲載・導入・外部配布を承認するものではない。**
+Status: **historical proposal — 2026-08-31 の「現行 catalog は Dark Reader
+のみとし、今後はよりリッチな拡張を優先する」方針により superseded。以下の候補は
+現在の catalog member ではなく、掲載・導入・外部配布を承認するものでもない。**
 
 この候補表は、`floorp-ios-webextensions-internal-catalog-design.md` の閉じた
 Stage 3 / catalog-v1 境界に合わせて、最初に評価する拡張の形を選ぶためのものである。
@@ -21,7 +23,7 @@ URL、CRX/ZIP、共有シート、または upstream の自動更新から取り
 - `managedRemoteSource` の P0 composition、production root key、endpoint allow-list が
   承認済みになるまでは、候補を公開版の remote catalog に載せないこと。
 
-## 優先順位 A — Floorp 管理の小規模パイロット
+## Historical priority A — Floorp 管理の小規模パイロット
 
 | 候補 | 主な機能 | 使う互換プロファイル | なぜ最初に向くか | 明確な制約 |
 | --- | --- | --- | --- | --- |
@@ -30,11 +32,11 @@ URL、CRX/ZIP、共有シート、または upstream の自動更新から取り
 | **Floorp Reading Highlights** | 許可サイト上の選択テキストをローカルに保存・再表示する孤立 content script。 | P2 content-script + P4 action-storage | `storage.local`、options、削除・更新時のデータ方針、アクセシビリティを実利用に近い形で試せる。 | 通信・同期なし。private は既定 off で、通常 profile とデータを共有しない。 |
 | **Floorp Session Timer** | action popup、options、`storage.local`／`storage.session`、`alarms` による端末内タイマー。 | P4 action-storage | host permission を要さず、popup/options/alarms と action 未宣言の安全な空状態を独立して検証できる。 | ネットワーク・分析送信なし。alarm の wake/lifecycle 制約を超える機能を宣言しない。 |
 
-推奨する最初の二本は **Floorp Site Appearance** と **Floorp Tracker Block Lite** である。
+当時推奨した最初の二本は **Floorp Site Appearance** と **Floorp Tracker Block Lite** だった。
 前者で P2/P4 のユーザー同意・profile 分離を、後者で P3 の DNR fail-closed を、互いに
 依存しない小さな artifact として検証できる。
 
-## 優先順位 B — upstream を出発点にできるが、そのままは載せない候補
+## Historical priority B — upstream を出発点にできるが、そのままは載せない候補
 
 | 候補 | 期待できる価値 | 掲載前に必須の作業 |
 | --- | --- | --- |

@@ -1,3 +1,0 @@
-Preserves one static GitHub file-navigation aid and removes the upstream
-background service, popup, options, GitHub API handling, token use, and
-runtime messaging. No page data leaves the current profile.
