@@ -167,10 +167,27 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let reloadProperties: TabsReloadPropertiesRequest?
     }
 
+    private struct TabsSendMessageOptionsRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case frameId
+            case documentId
+        }
+
+        let frameId: Int?
+        let documentId: String?
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            frameId = try container.decodeIfPresent(Int.self, forKey: .frameId)
+            documentId = try container.decodeIfPresent(String.self, forKey: .documentId)
+        }
+    }
+
     private struct TabsSendMessageRequest: Decodable {
         let tabId: Int
         let message: FloorpWebExtensionJSONValue
-        let options: [String: FloorpWebExtensionJSONValue]?
+        let options: TabsSendMessageOptionsRequest?
     }
 
     private struct AlarmNameRequest: Decodable {
@@ -2125,7 +2142,9 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             request.message,
             to: request.tabId,
             for: sender.extensionID,
-            sender: sender
+            sender: sender,
+            frameID: request.options?.frameId,
+            documentID: request.options?.documentId
         )
         return try reply.map { try response($0) }
     }

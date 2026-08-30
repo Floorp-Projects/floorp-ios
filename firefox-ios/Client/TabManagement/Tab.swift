@@ -951,12 +951,16 @@ class Tab: NSObject,
     private var floorpWebExtensionTabIdentifier: Int {
         // Stable within a restored tab, without exposing the browser's UUID to
         // an extension API. FNV-1a gives a deterministic, process-local ID.
+        // Keep the result within JavaScript's exact integer range because tab
+        // IDs make a JSON Number round trip through extension code.
         var hash: UInt64 = 1_469_598_103_934_665_603
         for byte in tabUUID.utf8 {
             hash ^= UInt64(byte)
             hash &*= 1_099_511_628_211
         }
-        return Int(truncatingIfNeeded: hash & UInt64(Int.max))
+        let maximumJavaScriptSafeInteger = (UInt64(1) << 53) - 1
+        let identifier = hash & maximumJavaScriptSafeInteger
+        return Int(identifier == 0 ? 1 : identifier)
     }
 
     var floorpWebExtensionTabID: Int {

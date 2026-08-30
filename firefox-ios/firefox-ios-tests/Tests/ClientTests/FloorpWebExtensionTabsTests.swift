@@ -118,6 +118,47 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         XCTAssertEqual(deliveredSender.extensionID, extensionID)
         XCTAssertEqual(deliveredSender.tabID, sourceSender.tabID)
         XCTAssertEqual(deliveredSender.documentGeneration, sourceSender.documentGeneration)
+
+        let targetDocumentID = FloorpWebExtensionDocumentIdentity.mainFrameID(
+            tabID: 3,
+            documentGeneration: 30
+        )
+        let targetedReply = try await service.sendMessage(
+            message,
+            to: 3,
+            for: extensionID,
+            sender: sourceSender,
+            frameID: 0,
+            documentID: targetDocumentID
+        )
+        XCTAssertEqual(targetedReply, .object(["ok": .bool(true)]))
+
+        let unsupportedSubframeID = FloorpWebExtensionDocumentIdentity.unsupportedSubframeID(
+            tabID: 3,
+            documentGeneration: 30
+        )
+        let rejectedTargets: [(frameID: Int?, documentID: String?)] = [
+            (1, targetDocumentID),
+            (0, "stale-document"),
+            (nil, unsupportedSubframeID),
+            (-1, nil),
+            (-1, unsupportedSubframeID)
+        ]
+        for (frameID, documentID) in rejectedTargets {
+            do {
+                _ = try await service.sendMessage(
+                    message,
+                    to: 3,
+                    for: extensionID,
+                    sender: sourceSender,
+                    frameID: frameID,
+                    documentID: documentID
+                )
+                XCTFail("Expected an unsupported or stale message target to fail closed")
+            } catch {
+                XCTAssertEqual(error as? FloorpWebExtensionTabsError, .messageDeliveryFailed)
+            }
+        }
     }
 
     func testPrivateTabsRequireExplicitPrivateAccessAndHostInvariantsAreClosed() async throws {
@@ -171,6 +212,37 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? FloorpWebExtensionTabsError, .hostTabInvariantViolation)
         }
+
+        let maximumSafeInteger = 9_007_199_254_740_991
+        let maximumSafeIntegerHost = TabsHost(tabs: [
+            tab(id: maximumSafeInteger, url: "https://safe-integer.example/", title: nil, active: true)
+        ])
+        let maximumSafeIntegerService = try FloorpWebExtensionTabsService(
+            profileIdentifier: "normal",
+            isPrivateBrowsing: false,
+            host: maximumSafeIntegerHost,
+            permissionBroker: broker
+        )
+        let maximumSafeIntegerTab = try await maximumSafeIntegerService.get(maximumSafeInteger, for: extensionID)
+        XCTAssertEqual(maximumSafeIntegerTab.id, maximumSafeInteger)
+
+        for invalidID in [0, maximumSafeInteger + 1] {
+            let invalidIntegerHost = TabsHost(tabs: [
+                tab(id: invalidID, url: "https://invalid-integer.example/", title: nil, active: true)
+            ])
+            let invalidIntegerService = try FloorpWebExtensionTabsService(
+                profileIdentifier: "normal",
+                isPrivateBrowsing: false,
+                host: invalidIntegerHost,
+                permissionBroker: broker
+            )
+            do {
+                _ = try await invalidIntegerService.query(.active, for: extensionID)
+                XCTFail("Expected an invalid JavaScript tab ID to fail closed")
+            } catch {
+                XCTAssertEqual(error as? FloorpWebExtensionTabsError, .hostTabInvariantViolation)
+            }
+        }
     }
 
     @MainActor
@@ -214,6 +286,10 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
             profile: profile,
             windowUUID: manager.windowUUID
         )
+        // This UUID previously produced 3_437_226_930_572_663_821, which a
+        // JavaScript Number rounded before tabs.get/tabs.sendMessage returned
+        // it to native code.
+        originalTab.tabUUID = "28241FDC-A11F-48F2-94B3-2F2B9666957E"
         let originalWebView = MockTabWebView(
             frame: .zero,
             configuration: .init(),
@@ -239,6 +315,13 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         let queried = try await service.query(.active, for: extensionID)
         XCTAssertEqual(queried.first?.url?.host, "start.example")
         XCTAssertEqual(queried.first?.title, "Start")
+        let queriedID = try XCTUnwrap(queried.first?.id)
+        XCTAssertEqual(queriedID, 5_484_014_516_345_869)
+        XCTAssertLessThanOrEqual(queriedID, 9_007_199_254_740_991)
+        let javaScriptRoundTrippedID = Int(Double(queriedID))
+        XCTAssertEqual(javaScriptRoundTrippedID, queriedID)
+        let roundTrippedTab = try await service.get(javaScriptRoundTrippedID, for: extensionID)
+        XCTAssertEqual(roundTrippedTab.url?.host, "start.example")
 
         let createdURL = try XCTUnwrap(URL(string: "https://created.example/new"))
         let created: FloorpWebExtensionTab
@@ -263,7 +346,7 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         do {
             reply = try await service.sendMessage(
                 .object(["type": .string("ping")]),
-                to: created.id,
+                to: javaScriptRoundTrippedID,
                 for: extensionID,
                 sender: sourceSender
             )
@@ -272,6 +355,59 @@ final class FloorpWebExtensionTabsTests: XCTestCase {
         }
         XCTAssertEqual(reply, .object(["reply": .string("ok")]))
         XCTAssertTrue(javaScriptEvaluator.scripts.contains { $0.contains("__floorpWebExtensionDeliverTabsMessage") })
+
+        let pageOriginHost = "page-" + UUID().uuidString.lowercased()
+        let pageTransportURL = try XCTUnwrap(URL(
+            string: "floorp-extension://\(pageOriginHost)/ui/popup/index.html"
+        ))
+        let pageSender = FloorpWebExtensionPageRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: .init(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: false
+            ),
+            packageGeneration: "popup-generation",
+            originHost: pageOriginHost,
+            surface: .actionPopup,
+            transportURL: pageTransportURL
+        )
+        _ = try await service.sendMessage(
+            .object(["type": .string("popup-to-tab")]),
+            to: created.id,
+            for: extensionID,
+            sender: pageSender
+        )
+        let pageDeliveryScript = try XCTUnwrap(javaScriptEvaluator.scripts.last)
+            .replacingOccurrences(of: "\\/", with: "/")
+        XCTAssertTrue(
+            pageDeliveryScript.contains(
+                "\"url\":\"\(pageTransportURL.absoluteString)\""
+            )
+        )
+
+        let backgroundSender = FloorpWebExtensionBackgroundRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: .init(
+                profileIdentifier: profileIdentifier,
+                isPrivateBrowsing: false
+            ),
+            packageGeneration: "background-generation",
+            originHost: "background-" + UUID().uuidString.lowercased()
+        )
+        _ = try await service.sendMessage(
+            .object(["type": .string("background-to-tab")]),
+            to: created.id,
+            for: extensionID,
+            sender: backgroundSender
+        )
+        let backgroundTransportURL = "floorp-extension://\(backgroundSender.originHost)/"
+        let backgroundDeliveryScript = try XCTUnwrap(javaScriptEvaluator.scripts.last)
+            .replacingOccurrences(of: "\\/", with: "/")
+        XCTAssertTrue(
+            backgroundDeliveryScript.contains(
+                "\"url\":\"\(backgroundTransportURL)\""
+            )
+        )
 
         let requestedUpdateURL = try XCTUnwrap(URL(string: "https://updated.example/next"))
         let updateStarted: FloorpWebExtensionTab
