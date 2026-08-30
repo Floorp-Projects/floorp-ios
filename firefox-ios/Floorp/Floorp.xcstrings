@@ -1339,6 +1339,18 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能カタログを検証できませんでした。インストール済みの拡張機能は変更されていません。" } }
       }
     },
+    "Floorp.WebExtensions.PackageStoreUnavailableTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extensions are unavailable" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を利用できません" } }
+      }
+    },
+    "Floorp.WebExtensions.PackageStoreUnavailableMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The extension package store is not configured for this profile." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このプロファイルには拡張機能のパッケージストアが設定されていません。" } }
+      }
+    },
     "Floorp.WebExtensions.Retry.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Try Again" } },
@@ -1631,6 +1643,54 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Use Floorp’s safe default font list" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Floorpの安全な標準フォント一覧を使用" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.SiteData.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Only on sites you explicitly allow after installation." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "インストール後、明示的に許可したサイトでのみ使用されます。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Tabs.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Works with supported tab information and actions." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "対応しているタブ情報と操作を利用します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Storage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Keeps extension preferences on this device." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能の設定をこのデバイスに保存します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.NetworkBlocking.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Applies reviewed, supported blocking rules." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "レビュー済みで対応しているブロックルールを適用します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.BrowserAutomation.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Runs approved package scripts and styles." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "承認されたパッケージのスクリプトとスタイルを実行します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Alarms.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Schedules local extension work using supported alarms." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "対応しているアラームで拡張機能の処理をスケジュールします。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.FontSettings.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Uses the supported generic font fallback." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "対応している汎用フォントの代替設定を使用します。" } }
+      }
+    },
+    "Floorp.WebExtensions.PermissionExplanation.Generic.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Uses an approved Floorp extension capability." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "承認された Floorp 拡張機能の機能を使用します。" } }
       }
     },
     "Floorp.WebExtensions.GenericExtensionName.v1" : {

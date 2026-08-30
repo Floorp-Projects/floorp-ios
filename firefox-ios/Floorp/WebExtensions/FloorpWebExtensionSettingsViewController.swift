@@ -796,8 +796,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             cell.imageView?.image = UIImage(systemName: "checkmark.shield")
             cell.accessibilityIdentifier = "Floorp.WebExtensions.CatalogUnavailable"
         case .unavailable:
-            cell.textLabel?.text = FloorpStrings.WebExtensions.loadErrorTitle
-            cell.detailTextLabel?.text = FloorpStrings.WebExtensions.loadErrorMessage
+            cell.textLabel?.text = FloorpStrings.WebExtensions.packageStoreUnavailableTitle
+            cell.detailTextLabel?.text = FloorpStrings.WebExtensions.packageStoreUnavailableMessage
             cell.imageView?.image = UIImage(systemName: "exclamationmark.triangle")
             cell.accessibilityIdentifier = "Floorp.WebExtensions.Unavailable"
         case .installed, .available:

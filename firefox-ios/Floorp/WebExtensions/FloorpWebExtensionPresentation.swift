@@ -876,14 +876,14 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
 
     private func permissionExplanation(_ permission: FloorpWebExtensionPermissionCategory) -> String {
         switch permission.rawValue {
-        case "siteData": return "Only on sites you explicitly allow after installation."
-        case "tabs": return "Works with supported tab information and actions."
-        case "storage": return "Keeps extension preferences on this device."
-        case "networkBlocking": return "Applies reviewed, supported blocking rules."
-        case "browserAutomation": return "Runs approved package scripts and styles."
-        case "alarms": return "Schedules local extension work using supported alarms."
-        case "fontSettings": return "Uses the supported generic font fallback."
-        default: return "Uses an approved Floorp extension capability."
+        case "siteData": return FloorpStrings.WebExtensions.permissionSiteDataExplanation
+        case "tabs": return FloorpStrings.WebExtensions.permissionTabsExplanation
+        case "storage": return FloorpStrings.WebExtensions.permissionStorageExplanation
+        case "networkBlocking": return FloorpStrings.WebExtensions.permissionNetworkBlockingExplanation
+        case "browserAutomation": return FloorpStrings.WebExtensions.permissionBrowserAutomationExplanation
+        case "alarms": return FloorpStrings.WebExtensions.permissionAlarmsExplanation
+        case "fontSettings": return FloorpStrings.WebExtensions.permissionFontSettingsExplanation
+        default: return FloorpStrings.WebExtensions.permissionGenericExplanation
         }
     }
 }
@@ -1459,6 +1459,8 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
         summaryLabel.numberOfLines = 3
         statusLabel.font = .preferredFont(forTextStyle: .caption1)
         statusLabel.adjustsFontForContentSizeCategory = true
+        statusLabel.numberOfLines = 0
+        statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.layer.cornerRadius = 9
         statusLabel.layer.cornerCurve = .continuous
         statusLabel.clipsToBounds = true
@@ -1492,6 +1494,7 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
             iconView.bottomAnchor.constraint(equalTo: iconBackgroundView.bottomAnchor, constant: -10),
             statusLabel.topAnchor.constraint(equalTo: hero.bottomAnchor, constant: 14),
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
             statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
             statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 74),
             statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 28)

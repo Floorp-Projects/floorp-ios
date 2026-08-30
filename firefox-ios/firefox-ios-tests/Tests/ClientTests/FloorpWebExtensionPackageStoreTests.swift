@@ -3173,6 +3173,30 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let noHostsText = visibleText(for: noHosts)
         XCTAssertFalse(noHostsText.contains(FloorpStrings.WebExtensions.siteAccessStartsOffTitle))
         XCTAssertFalse(noHostsText.contains(FloorpStrings.WebExtensions.siteAccessPreservedTitle))
+
+        let allPermissions = FloorpWebExtensionInstallPresentation(
+            extensionID: base.extensionID,
+            name: base.name,
+            summary: base.summary,
+            version: base.version,
+            source: base.source,
+            license: base.license,
+            permissions: FloorpWebExtensionPermissionCategory.allCases,
+            requestedSites: []
+        )
+        let allPermissionsText = visibleText(for: allPermissions)
+        let localizedExplanations = [
+            FloorpStrings.WebExtensions.permissionSiteDataExplanation,
+            FloorpStrings.WebExtensions.permissionTabsExplanation,
+            FloorpStrings.WebExtensions.permissionStorageExplanation,
+            FloorpStrings.WebExtensions.permissionAlarmsExplanation,
+            FloorpStrings.WebExtensions.permissionFontSettingsExplanation,
+            FloorpStrings.WebExtensions.permissionNetworkBlockingExplanation,
+            FloorpStrings.WebExtensions.permissionBrowserAutomationExplanation
+        ]
+        for explanation in localizedExplanations {
+            XCTAssertTrue(allPermissionsText.contains(explanation))
+        }
     }
 
     func testExtensionIconRegistryAndCardBusyPresentation() throws {
@@ -3262,6 +3286,18 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         )
         subject.loadViewIfNeeded()
 
+        let statusLabel = try XCTUnwrap(
+            Self.allSubviews(in: subject.view)
+                .compactMap { $0 as? UILabel }
+                .first { $0.text == FloorpStrings.WebExtensions.revoked }
+        )
+        XCTAssertEqual(statusLabel.numberOfLines, 0)
+        XCTAssertTrue(statusLabel.superview?.constraints.contains { constraint in
+            (constraint.firstItem as? UIView) === statusLabel &&
+                constraint.firstAttribute == .trailing &&
+                constraint.relation == .lessThanOrEqual
+        } == true)
+
         var identifiers = [String]()
         for section in 0 ..< subject.numberOfSections(in: subject.tableView) {
             for row in 0 ..< subject.tableView(subject.tableView, numberOfRowsInSection: section) {
@@ -3282,6 +3318,25 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertTrue(identifiers.contains {
             $0 == "Floorp.WebExtensions.Detail.Uninstall.\(extensionID.rawValue)"
         })
+    }
+
+    func testSettingsReportsMissingPackageStoreWithoutClaimingCatalogFailure() {
+        let subject = FloorpWebExtensionSettingsViewController(
+            windowUUID: .XCTestDefaultUUID,
+            packageManager: nil,
+            themeManager: MockThemeManager()
+        )
+        subject.loadViewIfNeeded()
+
+        let cell = subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        )
+        XCTAssertEqual(cell.textLabel?.text, FloorpStrings.WebExtensions.packageStoreUnavailableTitle)
+        XCTAssertEqual(cell.detailTextLabel?.text, FloorpStrings.WebExtensions.packageStoreUnavailableMessage)
+        XCTAssertNotEqual(cell.detailTextLabel?.text, FloorpStrings.WebExtensions.loadErrorMessage)
+        XCTAssertEqual(cell.accessibilityIdentifier, "Floorp.WebExtensions.Unavailable")
+        XCTAssertFalse(cell.isUserInteractionEnabled)
     }
 
     func testSettingsHidesCachedCatalogItemsWhenTheirSignedLifetimeEnds() async {

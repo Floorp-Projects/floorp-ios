@@ -979,6 +979,16 @@ enum FloorpStrings {
             value: "Floorp couldn’t verify the extension catalog. Your installed extensions were not changed.",
             comment: "Error guidance when the verified extension catalog cannot be loaded"
         )
+        static let packageStoreUnavailableTitle = string(
+            "Floorp.WebExtensions.PackageStoreUnavailableTitle.v1",
+            value: "Extensions are unavailable",
+            comment: "Error title when the extension package store is not configured"
+        )
+        static let packageStoreUnavailableMessage = string(
+            "Floorp.WebExtensions.PackageStoreUnavailableMessage.v1",
+            value: "The extension package store is not configured for this profile.",
+            comment: "Error guidance when the extension package store is not configured for the profile"
+        )
         static let retry = string(
             "Floorp.WebExtensions.Retry.v1",
             value: "Try Again",
@@ -1223,6 +1233,46 @@ enum FloorpStrings {
             "Floorp.WebExtensions.Permission.FontSettings.v1",
             value: "Use Floorp’s safe default font list",
             comment: "Extension permission for the iOS-safe generic font settings fallback"
+        )
+        static let permissionSiteDataExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.SiteData.v1",
+            value: "Only on sites you explicitly allow after installation.",
+            comment: "Consent explanation for extension access to selected sites"
+        )
+        static let permissionTabsExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.Tabs.v1",
+            value: "Works with supported tab information and actions.",
+            comment: "Consent explanation for supported tab information and actions"
+        )
+        static let permissionStorageExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.Storage.v1",
+            value: "Keeps extension preferences on this device.",
+            comment: "Consent explanation for extension preference storage"
+        )
+        static let permissionNetworkBlockingExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.NetworkBlocking.v1",
+            value: "Applies reviewed, supported blocking rules.",
+            comment: "Consent explanation for supported network blocking"
+        )
+        static let permissionBrowserAutomationExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.BrowserAutomation.v1",
+            value: "Runs approved package scripts and styles.",
+            comment: "Consent explanation for approved extension scripts and styles"
+        )
+        static let permissionAlarmsExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.Alarms.v1",
+            value: "Schedules local extension work using supported alarms.",
+            comment: "Consent explanation for supported extension alarms"
+        )
+        static let permissionFontSettingsExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.FontSettings.v1",
+            value: "Uses the supported generic font fallback.",
+            comment: "Consent explanation for the supported generic font fallback"
+        )
+        static let permissionGenericExplanation = string(
+            "Floorp.WebExtensions.PermissionExplanation.Generic.v1",
+            value: "Uses an approved Floorp extension capability.",
+            comment: "Fallback consent explanation for an approved extension capability"
         )
         static let genericExtensionName = string(
             "Floorp.WebExtensions.GenericExtensionName.v1",
