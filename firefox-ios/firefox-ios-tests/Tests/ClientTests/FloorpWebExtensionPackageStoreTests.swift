@@ -3023,6 +3023,53 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertEqual(refreshedCell.displayedStatus, FloorpStrings.WebExtensions.enabled)
     }
 
+    func testSettingsKeepsMutationBusyUntilAuthoritativeSnapshotCompletes() async throws {
+        let disabledPackage = settingsPackage(isEnabled: false)
+        let enabledPackage = settingsPackage(isEnabled: true)
+        let manager = PausedCatalogSettingsManager(
+            initialPackages: [disabledPackage],
+            pauseOnRequest: 2,
+            allowsEnabledMutation: true
+        )
+        defer { manager.resumeCatalogLoad() }
+        let subject = FloorpWebExtensionSettingsViewController(
+            windowUUID: .XCTestDefaultUUID,
+            packageManager: manager,
+            themeManager: MockThemeManager()
+        )
+
+        subject.loadViewIfNeeded()
+        await manager.waitUntilInitialCatalogDelivered()
+        for _ in 0 ..< 10 { await Task.yield() }
+        manager.replacePackages(with: [enabledPackage])
+        let mutationExtensionID = extensionID
+
+        subject.mutate(for: mutationExtensionID) { manager in
+            try await manager.setEnabled(true, for: mutationExtensionID)
+        }
+        await manager.waitUntilEnabledMutationCompleted()
+        await manager.waitUntilCatalogRequested()
+
+        let busyCell = try XCTUnwrap(subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        ) as? FloorpWebExtensionCardCell)
+        XCTAssertTrue(busyCell.isShowingActivity)
+        XCTAssertFalse(busyCell.isUserInteractionEnabled)
+        XCTAssertEqual(busyCell.displayedStatus, FloorpStrings.WebExtensions.disabled)
+
+        manager.resumeCatalogLoad()
+        for _ in 0 ..< 50 { await Task.yield() }
+
+        let refreshedCell = try XCTUnwrap(subject.tableView(
+            subject.tableView,
+            cellForRowAt: IndexPath(row: 0, section: 0)
+        ) as? FloorpWebExtensionCardCell)
+        XCTAssertFalse(refreshedCell.isShowingActivity)
+        XCTAssertTrue(refreshedCell.isUserInteractionEnabled)
+        XCTAssertEqual(refreshedCell.displayedStatus, FloorpStrings.WebExtensions.enabled)
+    }
+
     func testSettingsAvailableCatalogRowDisplaysSignedSchema3Disclosure() async throws {
         let signing = try CatalogSigningFixture()
         let verifier = try FloorpWebExtensionCatalogVerifier(configuration: signing.configuration)
@@ -3097,9 +3144,11 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let visibleText = allViews.compactMap { ($0 as? UILabel)?.text }.joined(separator: "\n")
         XCTAssertTrue(visibleText.contains(disclosure.publisherDisplayName))
         XCTAssertTrue(visibleText.contains(disclosure.attribution))
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.attributionLabel))
         XCTAssertTrue(visibleText.contains(disclosure.reviewedAt))
         XCTAssertTrue(visibleText.contains(disclosure.privacySummary))
         XCTAssertTrue(visibleText.contains(disclosure.retentionPolicy))
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.dataRetentionLabel))
         XCTAssertTrue(visibleText.contains(item.source))
         XCTAssertTrue(visibleText.contains(item.license))
         XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.siteAccessStartsOffTitle))
@@ -3297,8 +3346,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
                 constraint.firstAttribute == .trailing &&
                 constraint.relation == .lessThanOrEqual
         } == true)
-
         var identifiers = [String]()
+        var visibleText = [String]()
         for section in 0 ..< subject.numberOfSections(in: subject.tableView) {
             for row in 0 ..< subject.tableView(subject.tableView, numberOfRowsInSection: section) {
                 let cell = subject.tableView(
@@ -3306,6 +3355,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
                     cellForRowAt: IndexPath(row: row, section: section)
                 )
                 if let identifier = cell.accessibilityIdentifier { identifiers.append(identifier) }
+                if let text = cell.textLabel?.text { visibleText.append(text) }
+                if let detail = cell.detailTextLabel?.text { visibleText.append(detail) }
                 if let toggle = cell.accessoryView as? UISwitch {
                     XCTAssertFalse(toggle.isEnabled)
                     XCTAssertEqual(toggle.accessibilityLabel, "Fixture Extension")
@@ -3318,6 +3369,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertTrue(identifiers.contains {
             $0 == "Floorp.WebExtensions.Detail.Uninstall.\(extensionID.rawValue)"
         })
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.catalogRevokedDisabledMessage))
+        XCTAssertTrue(visibleText.contains(FloorpStrings.WebExtensions.catalogRevokedGuidance))
     }
 
     func testSettingsReportsMissingPackageStoreWithoutClaimingCatalogFailure() {
@@ -3337,6 +3390,15 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertNotEqual(cell.detailTextLabel?.text, FloorpStrings.WebExtensions.loadErrorMessage)
         XCTAssertEqual(cell.accessibilityIdentifier, "Floorp.WebExtensions.Unavailable")
         XCTAssertFalse(cell.isUserInteractionEnabled)
+    }
+
+    func testPrimaryExtensionAccessSummariesUseLocalizedFormats() {
+        XCTAssertTrue(FloorpStrings.WebExtensions.allRequestedSites(1).contains("1"))
+        XCTAssertTrue(FloorpStrings.WebExtensions.allRequestedSites(2).contains("2"))
+        XCTAssertTrue(FloorpStrings.WebExtensions.selectedSites(1).contains("1"))
+        XCTAssertTrue(FloorpStrings.WebExtensions.selectedSites(2).contains("2"))
+        XCTAssertFalse(FloorpStrings.WebExtensions.allRequestedWebsites.isEmpty)
+        XCTAssertFalse(FloorpStrings.WebExtensions.privateAccessNotAllowed.isEmpty)
     }
 
     func testSettingsHidesCachedCatalogItemsWhenTheirSignedLifetimeEnds() async {
@@ -5997,22 +6059,27 @@ private final class CatalogMutableClock: @unchecked Sendable {
 private final class PausedCatalogSettingsManager: FloorpWebExtensionSettingsManaging {
     private let initialCatalog: [FloorpWebExtensionBundledCatalogItem]
     private let pauseOnRequest: Int
+    private let allowsEnabledMutation: Bool
     private var packages: [FloorpWebExtensionSettingsInstalledPackage]
     private var requestCount = 0
     private var initialCatalogDelivered = false
     private var catalogRequested = false
     private var requestWaiter: CheckedContinuation<Void, Never>?
     private var initialCatalogWaiter: CheckedContinuation<Void, Never>?
+    private var enabledMutationWaiter: CheckedContinuation<Void, Never>?
     private var catalogLoadContinuation: CheckedContinuation<[FloorpWebExtensionBundledCatalogItem], Never>?
+    private var enabledMutationCompleted = false
 
     init(
         initialCatalog: [FloorpWebExtensionBundledCatalogItem] = [],
         initialPackages: [FloorpWebExtensionSettingsInstalledPackage] = [],
-        pauseOnRequest: Int = 1
+        pauseOnRequest: Int = 1,
+        allowsEnabledMutation: Bool = false
     ) {
         self.initialCatalog = initialCatalog
         self.packages = initialPackages
         self.pauseOnRequest = pauseOnRequest
+        self.allowsEnabledMutation = allowsEnabledMutation
     }
 
     func settingsPackages() async -> [FloorpWebExtensionSettingsInstalledPackage] { packages }
@@ -6073,7 +6140,10 @@ private final class PausedCatalogSettingsManager: FloorpWebExtensionSettingsMana
     }
 
     func setEnabled(_ isEnabled: Bool, for extensionID: FloorpWebExtensionID) async throws {
-        throw StubError.unexpectedMutation
+        guard allowsEnabledMutation else { throw StubError.unexpectedMutation }
+        enabledMutationCompleted = true
+        enabledMutationWaiter?.resume()
+        enabledMutationWaiter = nil
     }
 
     func uninstall(_ extensionID: FloorpWebExtensionID) async throws {
@@ -6091,6 +6161,13 @@ private final class PausedCatalogSettingsManager: FloorpWebExtensionSettingsMana
         if initialCatalogDelivered { return }
         await withCheckedContinuation { continuation in
             initialCatalogWaiter = continuation
+        }
+    }
+
+    func waitUntilEnabledMutationCompleted() async {
+        if enabledMutationCompleted { return }
+        await withCheckedContinuation { continuation in
+            enabledMutationWaiter = continuation
         }
     }
 

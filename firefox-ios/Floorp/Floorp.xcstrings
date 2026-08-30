@@ -1693,6 +1693,84 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "承認された Floorp 拡張機能の機能を使用します。" } }
       }
     },
+    "Floorp.WebExtensions.AttributionLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Attribution" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "帰属表示" } }
+      }
+    },
+    "Floorp.WebExtensions.DataRetentionLabel.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Data Retention" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "データの保持" } }
+      }
+    },
+    "Floorp.WebExtensions.PrivateAccessNotAllowed.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not allowed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "許可されていません" } }
+      }
+    },
+    "Floorp.WebExtensions.IncompatibleBuildMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This extension is incompatible with the current Floorp build." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この拡張機能は現在の Floorp ビルドと互換性がありません。" } }
+      }
+    },
+    "Floorp.WebExtensions.StandardBrowsingEnabledMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow this extension to run in standard browsing." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この拡張機能を通常のブラウジングで実行できるようにします。" } }
+      }
+    },
+    "Floorp.WebExtensions.CatalogRevokedDisabledMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Disabled because this catalog package was revoked." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カタログ上でこのパッケージが取り消されたため無効になっています。" } }
+      }
+    },
+    "Floorp.WebExtensions.CatalogRevokedGuidance.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This extension cannot be enabled or updated. You can uninstall it below." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この拡張機能は有効化またはアップデートできません。下から削除できます。" } }
+      }
+    },
+    "Floorp.WebExtensions.AllRequestedWebsites.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "HTTP(S) · All requested websites" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "HTTP(S)・要求されたすべてのウェブサイト" } }
+      }
+    },
+    "Floorp.WebExtensions.NoSiteAccess.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No site access" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイトへのアクセスなし" } }
+      }
+    },
+    "Floorp.WebExtensions.AllRequestedSiteSingular.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All %1$d requested site" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$d 件の要求済みサイトすべて" } }
+      }
+    },
+    "Floorp.WebExtensions.AllRequestedSitesPlural.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All %1$d requested sites" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$d 件の要求済みサイトすべて" } }
+      }
+    },
+    "Floorp.WebExtensions.SelectedSiteSingular.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$d selected site" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択したサイト %1$d 件" } }
+      }
+    },
+    "Floorp.WebExtensions.SelectedSitesPlural.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$d selected sites" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択したサイト %1$d 件" } }
+      }
+    },
     "Floorp.WebExtensions.GenericExtensionName.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Extension" } },

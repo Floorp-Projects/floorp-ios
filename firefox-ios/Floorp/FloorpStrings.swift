@@ -1064,6 +1064,16 @@ enum FloorpStrings {
             value: "Privacy",
             comment: "Section heading for extension privacy information"
         )
+        static let attributionLabel = string(
+            "Floorp.WebExtensions.AttributionLabel.v1",
+            value: "Attribution",
+            comment: "Label for an extension's upstream project attribution"
+        )
+        static let dataRetentionLabel = string(
+            "Floorp.WebExtensions.DataRetentionLabel.v1",
+            value: "Data Retention",
+            comment: "Label for an extension's data-retention disclosure"
+        )
         static let profileSection = string(
             "Floorp.WebExtensions.ProfileSection.v1",
             value: "Profiles",
@@ -1103,6 +1113,31 @@ enum FloorpStrings {
             "Floorp.WebExtensions.NotSupported.v1",
             value: "Not supported on this version of Floorp",
             comment: "Status for an extension or capability that this Floorp version cannot use"
+        )
+        static let privateAccessNotAllowed = string(
+            "Floorp.WebExtensions.PrivateAccessNotAllowed.v1",
+            value: "Not allowed",
+            comment: "Status when an extension has no Private Browsing access"
+        )
+        static let incompatibleBuildMessage = string(
+            "Floorp.WebExtensions.IncompatibleBuildMessage.v1",
+            value: "This extension is incompatible with the current Floorp build.",
+            comment: "Error explaining that an installed extension cannot run on the current build"
+        )
+        static let standardBrowsingEnabledMessage = string(
+            "Floorp.WebExtensions.StandardBrowsingEnabledMessage.v1",
+            value: "Allow this extension to run in standard browsing.",
+            comment: "Detail shown beside the standard-browsing enabled switch"
+        )
+        static let catalogRevokedDisabledMessage = string(
+            "Floorp.WebExtensions.CatalogRevokedDisabledMessage.v1",
+            value: "Disabled because this catalog package was revoked.",
+            comment: "Detail explaining why a revoked extension's enabled switch is disabled"
+        )
+        static let catalogRevokedGuidance = string(
+            "Floorp.WebExtensions.CatalogRevokedGuidance.v1",
+            value: "This extension cannot be enabled or updated. You can uninstall it below.",
+            comment: "Guidance for an extension revoked by the verified catalog"
         )
         static let publisherLabel = string(
             "Floorp.WebExtensions.PublisherLabel.v1",
@@ -1148,6 +1183,36 @@ enum FloorpStrings {
             "Floorp.WebExtensions.SiteAccess.v1",
             value: "Site Access",
             comment: "Action and heading for standard-profile extension site access"
+        )
+        static let allRequestedWebsites = string(
+            "Floorp.WebExtensions.AllRequestedWebsites.v1",
+            value: "HTTP(S) · All requested websites",
+            comment: "Readable display name for the all-HTTP-and-HTTPS-sites match pattern"
+        )
+        static let noSiteAccess = string(
+            "Floorp.WebExtensions.NoSiteAccess.v1",
+            value: "No site access",
+            comment: "Summary when an extension cannot access any site"
+        )
+        private static let allRequestedSiteSingularFormat = string(
+            "Floorp.WebExtensions.AllRequestedSiteSingular.v1",
+            value: "All %1$d requested site",
+            comment: "Summary when an extension can access its one requested site; argument is 1"
+        )
+        private static let allRequestedSitesPluralFormat = string(
+            "Floorp.WebExtensions.AllRequestedSitesPlural.v1",
+            value: "All %1$d requested sites",
+            comment: "Summary when an extension can access multiple requested sites; argument is the count"
+        )
+        private static let selectedSiteSingularFormat = string(
+            "Floorp.WebExtensions.SelectedSiteSingular.v1",
+            value: "%1$d selected site",
+            comment: "Summary when an extension can access one selected site; argument is 1"
+        )
+        private static let selectedSitesPluralFormat = string(
+            "Floorp.WebExtensions.SelectedSitesPlural.v1",
+            value: "%1$d selected sites",
+            comment: "Summary when an extension can access multiple selected sites; argument is the count"
         )
         static let privateBrowsing = string(
             "Floorp.WebExtensions.PrivateBrowsing.v1",
@@ -1298,6 +1363,20 @@ enum FloorpStrings {
 
         static func license(_ license: String) -> String {
             localizedStringWithFormat(licenseFormat, license)
+        }
+
+        static func allRequestedSites(_ count: Int) -> String {
+            localizedStringWithFormat(
+                count == 1 ? allRequestedSiteSingularFormat : allRequestedSitesPluralFormat,
+                count
+            )
+        }
+
+        static func selectedSites(_ count: Int) -> String {
+            localizedStringWithFormat(
+                count == 1 ? selectedSiteSingularFormat : selectedSitesPluralFormat,
+                count
+            )
         }
 
         static func installedTitle(name: String) -> String {

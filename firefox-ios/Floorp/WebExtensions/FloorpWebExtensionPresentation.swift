@@ -13,7 +13,6 @@ struct FloorpWebExtensionIconDescriptor: Hashable, Sendable {
 
     let source: Source
     let fallbackSystemName: String
-    let accessibilityLabel: String
 
     @MainActor
     func image(in bundle: Bundle = .main) -> UIImage? {
@@ -57,14 +56,12 @@ enum FloorpWebExtensionIconRegistry {
         case "floorp.thirdparty.darkreader":
             return FloorpWebExtensionIconDescriptor(
                 source: .system(name: "moon.stars.fill"),
-                fallbackSystemName: "moon.stars.fill",
-                accessibilityLabel: "Dark Reader icon"
+                fallbackSystemName: "moon.stars.fill"
             )
         default:
             return FloorpWebExtensionIconDescriptor(
                 source: .system(name: "puzzlepiece.extension.fill"),
-                fallbackSystemName: "puzzlepiece.extension.fill",
-                accessibilityLabel: "Extension icon"
+                fallbackSystemName: "puzzlepiece.extension.fill"
             )
         }
     }
@@ -759,7 +756,11 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
             presentation.catalogPublisher ?? presentation.source
         ))
         if let attribution = presentation.catalogAttribution {
-            rows.append(InfoRow("signature", "Attribution", attribution))
+            rows.append(InfoRow(
+                "signature",
+                FloorpStrings.WebExtensions.attributionLabel,
+                attribution
+            ))
         }
         if let reviewedAt = presentation.catalogReviewedAt {
             rows.append(InfoRow("checkmark.seal.fill", FloorpStrings.WebExtensions.reviewed, reviewedAt))
@@ -768,7 +769,11 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
             rows.append(InfoRow("lock.shield.fill", FloorpStrings.WebExtensions.privacySection, privacySummary))
         }
         if let retentionPolicy = presentation.catalogRetentionPolicy {
-            rows.append(InfoRow("internaldrive.fill", "Data retention", retentionPolicy))
+            rows.append(InfoRow(
+                "internaldrive.fill",
+                FloorpStrings.WebExtensions.dataRetentionLabel,
+                retentionPolicy
+            ))
         }
         rows.append(InfoRow(
             "doc.text.fill",
@@ -1098,8 +1103,8 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
         case .enabled:
             cell.textLabel?.text = FloorpStrings.WebExtensions.enabled
             cell.detailTextLabel?.text = presentation.isCatalogRevoked
-                ? "Disabled because this catalog package was revoked."
-                : "Allow this extension to run in standard browsing."
+                ? FloorpStrings.WebExtensions.catalogRevokedDisabledMessage
+                : FloorpStrings.WebExtensions.standardBrowsingEnabledMessage
             let enabledSwitch = UISwitch()
             enabledSwitch.isOn = isEnabled
             enabledSwitch.isEnabled = !presentation.isCatalogRevoked
@@ -1165,7 +1170,7 @@ final class FloorpWebExtensionInstalledDetailViewController: UITableViewControll
             rows.append(.information(
                 symbol: "exclamationmark.shield.fill",
                 title: FloorpStrings.WebExtensions.revoked,
-                detail: "This extension cannot be enabled or updated. You can uninstall it below."
+                detail: FloorpStrings.WebExtensions.catalogRevokedGuidance
             ))
         } else if let error = presentation.errorDescription {
             rows.append(.information(
@@ -1409,7 +1414,6 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
     func configure(with presentation: FloorpWebExtensionInstalledDetailPresentation) {
         descriptor = FloorpWebExtensionIconRegistry.descriptor(for: presentation.extensionID)
         iconView.image = descriptor?.image()
-        iconView.accessibilityLabel = descriptor?.accessibilityLabel
         titleLabel.text = presentation.name
         versionLabel.text = FloorpStrings.WebExtensions.version(presentation.version)
         summaryLabel.text = presentation.summary

@@ -70,7 +70,7 @@ final class FloorpWebExtensionProfileSettingsManager: FloorpWebExtensionSettings
             isPrivateBrowsingEnabled: privatePackage.isPrivateBrowsingEnabled,
             privateAccessDescription: privatePackage.isPrivateBrowsingEnabled
                 ? privatePackage.privateAccessDescription
-                : "Not allowed",
+                : FloorpStrings.WebExtensions.privateAccessNotAllowed,
             errorDescription: normalPackage.errorDescription ?? privatePackage.errorDescription,
             optionsPage: normalPackage.optionsPage,
             dnrStatus: normalPackage.dnrStatus,
@@ -522,6 +522,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private var isLoading = false
     private var needsRefreshAfterCurrentLoad = false
     private var busyExtensionIDs = Set<FloorpWebExtensionID>()
+    private var busyExtensionIDsAwaitingSnapshot = Set<FloorpWebExtensionID>()
     private var pendingInstalledDetail: (id: FloorpWebExtensionID, showsSiteAccessGuidance: Bool)?
     private weak var catalogInstallConsentController: UIViewController?
     private weak var installedDetailNavigationController: UINavigationController?
@@ -635,6 +636,9 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
                 self.refresh()
                 return
             }
+            let reconciledBusyIDs = self.busyExtensionIDsAwaitingSnapshot
+            self.busyExtensionIDsAwaitingSnapshot.removeAll()
+            self.busyExtensionIDs.subtract(reconciledBusyIDs)
             self.navigationItem.rightBarButtonItem?.isEnabled = true
             self.scheduleCatalogExpiryInvalidation(for: catalogItems)
             self.tableView.reloadData()
@@ -969,7 +973,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     }
 
     private static func displayName(forRequestedSite pattern: String) -> String {
-        pattern == "*://*/*" ? "HTTP(S) · All requested websites" : pattern
+        pattern == "*://*/*" ? FloorpStrings.WebExtensions.allRequestedWebsites : pattern
     }
 
     private func showInstalledPackage(
@@ -1598,7 +1602,9 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         }
     }
 
-    private func mutate(
+    // Internal so focused UI-state tests can exercise the authoritative
+    // snapshot barrier without depending on modal animation timing.
+    func mutate(
         for extensionID: FloorpWebExtensionID,
         onFailure: (@MainActor () -> Void)? = nil,
         _ operation: @escaping @Sendable (any FloorpWebExtensionSettingsManaging) async throws -> Void
@@ -1610,11 +1616,14 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             do {
                 try await operation(packageManager)
                 guard let self, !Task.isCancelled else { return }
-                self.busyExtensionIDs.remove(extensionID)
-                self.navigationItem.rightBarButtonItem?.isEnabled = true
+                // Keep the old card non-interactive until a complete,
+                // authoritative package/catalog snapshot reflects the
+                // mutation. A coalesced refresh may require another pass.
+                self.busyExtensionIDsAwaitingSnapshot.insert(extensionID)
                 self.refresh()
             } catch {
                 guard let self, !Task.isCancelled else { return }
+                self.busyExtensionIDsAwaitingSnapshot.remove(extensionID)
                 self.busyExtensionIDs.remove(extensionID)
                 self.navigationItem.rightBarButtonItem?.isEnabled = true
                 onFailure?()
@@ -1865,10 +1874,10 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
                         package.grants.privateHostAccess,
                         requestedHosts: package.grants.requestedHosts
                     )
-                    : "Not allowed",
+                    : FloorpStrings.WebExtensions.privateAccessNotAllowed,
                 errorDescription: package.activationError ?? (package.preflight.isActivationAllowed
                     ? nil
-                    : "This extension is incompatible with the current Floorp build."),
+                    : FloorpStrings.WebExtensions.incompatibleBuildMessage),
                 optionsPage: Self.optionsPage(for: package),
                 dnrStatus: Self.settingsDNRStatus(for: package),
                 privateDNRStatus: nil,
@@ -2802,11 +2811,11 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
     ) -> String {
         switch access {
         case .denied:
-            return "No site access"
+            return FloorpStrings.WebExtensions.noSiteAccess
         case .allRequestedSites:
-            return "All \(requestedHosts.count) requested site\(requestedHosts.count == 1 ? "" : "s")"
+            return FloorpStrings.WebExtensions.allRequestedSites(requestedHosts.count)
         case .selectedSites(let sites):
-            return "\(sites.count) selected site\(sites.count == 1 ? "" : "s")"
+            return FloorpStrings.WebExtensions.selectedSites(sites.count)
         }
     }
 }
