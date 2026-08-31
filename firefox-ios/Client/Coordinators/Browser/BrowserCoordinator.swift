@@ -593,6 +593,7 @@ final class BrowserCoordinator: BaseCoordinator,
         let resolver = store.makePageResourceResolver()
         Task { [weak self, store, packageManager, apiHost, messageRuntime, selectedTab] in
             let packages = await store.installedPackages()
+            let catalogItems = await packageManager.catalogItems()
             var popups = [FloorpWebExtensionActionPopup]()
             for package in packages where package.isEnabled {
                 if isPrivateBrowsing && !package.grants.privateBrowsingEnabled {
@@ -601,7 +602,8 @@ final class BrowserCoordinator: BaseCoordinator,
                 let persistedState = await apiHost.actions.state(for: package.extensionID)
                 if let popup = Self.actionPopup(
                     for: package,
-                    persistedState: persistedState
+                    persistedState: persistedState,
+                    iconData: catalogItems.first(where: { $0.id == package.extensionID })?.iconData
                 ) {
                     popups.append(popup)
                 }
@@ -631,6 +633,7 @@ final class BrowserCoordinator: BaseCoordinator,
         let package: FloorpWebExtensionInstalledPackage
         let actionState: FloorpWebExtensionActionState
         let title: String
+        let iconData: Data?
     }
 
     enum FloorpWebExtensionActionSiteAccessChoice: Equatable {
@@ -713,7 +716,8 @@ final class BrowserCoordinator: BaseCoordinator,
 
     private static func actionPopup(
         for package: FloorpWebExtensionInstalledPackage,
-        persistedState: FloorpWebExtensionActionState
+        persistedState: FloorpWebExtensionActionState,
+        iconData: Data?
     ) -> FloorpWebExtensionActionPopup? {
         var actionState = persistedState
         let manifestAction = package.preflight.manifest.action
@@ -728,14 +732,15 @@ final class BrowserCoordinator: BaseCoordinator,
         return .init(
             package: package,
             actionState: actionState,
-            title: actionState.title ?? package.name
+            title: actionState.title ?? package.name,
+            iconData: iconData
         )
     }
 
     private func presentWebExtensionActionsUnavailable() {
         presentWebExtensionActionsAlert(
-            title: "Extensions unavailable",
-            message: "Extension actions are not ready for this browsing profile."
+            title: FloorpStrings.WebExtensions.loadErrorTitle,
+            message: FloorpStrings.WebExtensions.actionsUnavailableMessage
         )
     }
 
@@ -749,8 +754,8 @@ final class BrowserCoordinator: BaseCoordinator,
     ) {
         guard !popups.isEmpty else {
             presentWebExtensionActionsAlert(
-                title: "Extensions",
-                message: "No extension actions are available for this tab."
+                title: FloorpStrings.WebExtensions.actions,
+                message: FloorpStrings.WebExtensions.noActionsAvailableMessage
             )
             return
         }
@@ -765,29 +770,37 @@ final class BrowserCoordinator: BaseCoordinator,
             )
             return
         }
-        let alert = UIAlertController(
-            title: "Extensions",
-            message: "Choose an extension action.",
-            preferredStyle: .actionSheet
-        )
-        for popup in popups {
-            alert.addAction(UIAlertAction(title: popup.title, style: .default) { [weak self] _ in
-                self?.presentWebExtensionActionPopup(
-                    popup,
-                    resolver: resolver,
-                    messageRuntime: messageRuntime,
-                    packageManager: packageManager,
-                    selectedTab: selectedTab,
-                    isPrivateBrowsing: isPrivateBrowsing
+        let choices = popups.map { popup in
+            FloorpWebExtensionPromptPresentation.Choice(
+                identifier: popup.package.extensionID.rawValue,
+                title: popup.title,
+                detail: FloorpStrings.WebExtensions.version(popup.package.version),
+                icon: .extensionIcon(
+                    id: popup.package.extensionID,
+                    data: popup.iconData
                 )
-            })
+            )
         }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = browserViewController.view
-            popover.sourceRect = browserViewController.view.bounds
+        let prompt = FloorpWebExtensionPromptPresentation(
+            title: FloorpStrings.WebExtensions.actions,
+            message: FloorpStrings.WebExtensions.chooseActionMessage,
+            heroIcon: .system("puzzlepiece.extension.fill"),
+            choices: choices,
+            accessibilityIdentifier: "Floorp.WebExtensions.ActionPicker"
+        )
+        presentWebExtensionPrompt(prompt) { [weak self] identifier in
+            guard let popup = popups.first(where: { $0.package.extensionID.rawValue == identifier }) else {
+                return
+            }
+            self?.presentWebExtensionActionPopup(
+                popup,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                packageManager: packageManager,
+                selectedTab: selectedTab,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
         }
-        present(alert)
     }
 
     private func presentWebExtensionActionPopup(
@@ -840,7 +853,8 @@ final class BrowserCoordinator: BaseCoordinator,
             let currentPopup = FloorpWebExtensionActionPopup(
                 package: context.package,
                 actionState: popup.actionState,
-                title: popup.title
+                title: popup.title,
+                iconData: popup.iconData
             )
             let hostAccess = isPrivateBrowsing
                 ? context.package.grants.privateHostAccess
@@ -872,7 +886,7 @@ final class BrowserCoordinator: BaseCoordinator,
             }
         } catch {
             presentWebExtensionActionsAlert(
-                title: "Extension action could not open",
+                title: FloorpStrings.WebExtensions.actionOpenErrorTitle,
                 message: error.localizedDescription
             )
         }
@@ -889,61 +903,68 @@ final class BrowserCoordinator: BaseCoordinator,
         selectedTab: Tab,
         isPrivateBrowsing: Bool
     ) {
-        var message = [
-            "This extension cannot read or change the current page until you allow site access.",
-            "The page will reload after access is allowed."
-        ].joined(separator: " ")
+        var messageParts = [
+            FloorpStrings.WebExtensions.actionSiteAccessMessage,
+            FloorpStrings.WebExtensions.actionSiteAccessReloadMessage
+        ]
         if plan.requestsEveryWebsite {
-            message += " All requested sites include every HTTP and HTTPS website."
+            messageParts.append(FloorpStrings.WebExtensions.actionAllWebsitesMessage)
         } else if plan.requestedSiteCount > 1 {
-            message += " This extension requested access to \(plan.requestedSiteCount) site patterns."
+            messageParts.append(
+                FloorpStrings.WebExtensions.actionRequestedSiteCount(plan.requestedSiteCount)
+            )
         }
         if plan.isPrivateBrowsing {
-            message += " This choice applies only in Private Browsing."
+            messageParts.append(FloorpStrings.WebExtensions.actionPrivateScopeMessage)
         }
-        let alert = UIAlertController(
-            title: "Allow site access for \(popup.title)?",
-            message: message,
-            preferredStyle: .actionSheet
-        )
-        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.ActionSiteAccessConsent"
+        var choices = [FloorpWebExtensionPromptPresentation.Choice]()
+        var accesses = [String: FloorpWebExtensionHostAccess]()
         if let currentHost = plan.currentHost,
            let access = plan.access(for: .currentSite) {
-            alert.addAction(UIAlertAction(title: "Allow on \(currentHost)", style: .default) { [weak self] _ in
-                self?.applyWebExtensionActionSiteAccess(
-                    access,
-                    authorization: authorization,
-                    consentedURL: consentedURL,
-                    popup: popup,
-                    resolver: resolver,
-                    messageRuntime: messageRuntime,
-                    packageManager: packageManager,
-                    selectedTab: selectedTab,
-                    isPrivateBrowsing: isPrivateBrowsing
-                )
-            })
+            let identifier = "currentSite"
+            accesses[identifier] = access
+            choices.append(.init(
+                identifier: identifier,
+                title: FloorpStrings.WebExtensions.allowOnSite(currentHost),
+                detail: FloorpStrings.WebExtensions.onlyThisWebsite,
+                icon: .system("globe")
+            ))
         }
         if let access = plan.access(for: .allRequestedSites) {
-            alert.addAction(UIAlertAction(title: "Allow on All Requested Sites", style: .default) { [weak self] _ in
-                self?.applyWebExtensionActionSiteAccess(
-                    access,
-                    authorization: authorization,
-                    consentedURL: consentedURL,
-                    popup: popup,
-                    resolver: resolver,
-                    messageRuntime: messageRuntime,
-                    packageManager: packageManager,
-                    selectedTab: selectedTab,
-                    isPrivateBrowsing: isPrivateBrowsing
-                )
-            })
+            let identifier = "allRequestedSites"
+            accesses[identifier] = access
+            choices.append(.init(
+                identifier: identifier,
+                title: FloorpStrings.WebExtensions.allowOnAllRequestedSites,
+                detail: FloorpStrings.WebExtensions.allRequestedSites(plan.requestedSiteCount),
+                icon: .system("globe.americas.fill"),
+                role: .preferred
+            ))
         }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = browserViewController.view
-            popover.sourceRect = browserViewController.view.bounds
+        let prompt = FloorpWebExtensionPromptPresentation(
+            title: FloorpStrings.WebExtensions.actionSiteAccessTitle(name: popup.title),
+            message: messageParts.joined(separator: " "),
+            heroIcon: .extensionIcon(
+                id: popup.package.extensionID,
+                data: popup.iconData
+            ),
+            choices: choices,
+            accessibilityIdentifier: "Floorp.WebExtensions.ActionSiteAccessConsent"
+        )
+        presentWebExtensionPrompt(prompt) { [weak self] identifier in
+            guard let access = accesses[identifier] else { return }
+            self?.applyWebExtensionActionSiteAccess(
+                access,
+                authorization: authorization,
+                consentedURL: consentedURL,
+                popup: popup,
+                resolver: resolver,
+                messageRuntime: messageRuntime,
+                packageManager: packageManager,
+                selectedTab: selectedTab,
+                isPrivateBrowsing: isPrivateBrowsing
+            )
         }
-        present(alert)
     }
 
     private func applyWebExtensionActionSiteAccess(
@@ -1020,7 +1041,7 @@ final class BrowserCoordinator: BaseCoordinator,
             )
         } catch {
             presentWebExtensionActionsAlert(
-                title: "Site access could not be changed",
+                title: FloorpStrings.WebExtensions.siteAccessChangeErrorTitle,
                 message: error.localizedDescription
             )
         }
@@ -1053,15 +1074,30 @@ final class BrowserCoordinator: BaseCoordinator,
             present(navigationController)
         } catch {
             presentWebExtensionActionsAlert(
-                title: "Extension action could not open",
+                title: FloorpStrings.WebExtensions.actionOpenErrorTitle,
                 message: error.localizedDescription
             )
         }
     }
 
+    private func presentWebExtensionPrompt(
+        _ presentation: FloorpWebExtensionPromptPresentation,
+        onChoice: @escaping FloorpWebExtensionPromptViewController.ChoiceHandler
+    ) {
+        let controller = FloorpWebExtensionPromptViewController(
+            presentation: presentation,
+            windowUUID: windowUUID,
+            themeManager: themeManager,
+            onChoice: onChoice
+        )
+        controller.sheetPresentationController?.detents = [.medium(), .large()]
+        controller.sheetPresentationController?.prefersGrabberVisible = true
+        present(controller)
+    }
+
     private func presentWebExtensionActionsAlert(title: String, message: String) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        alert.addAction(UIAlertAction(title: FloorpStrings.WebExtensions.done, style: .default))
         present(alert)
     }
 

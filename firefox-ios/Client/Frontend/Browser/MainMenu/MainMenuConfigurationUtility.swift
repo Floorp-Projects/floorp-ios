@@ -26,6 +26,7 @@ struct MainMenuConfigurationUtility: Equatable, FeatureFlaggable {
         static let avatarCircle = StandardImageIdentifiers.Large.avatarCircle
         static let share = StandardImageIdentifiers.Large.shareApple
         static let reportBrokenSite = StandardImageIdentifiers.Large.report
+        static let extensionActions = StandardImageIdentifiers.Large.lightning
     }
 
     private var isReportBrokenSiteOn: Bool {
@@ -227,12 +228,12 @@ struct MainMenuConfigurationUtility: Equatable, FeatureFlaggable {
     private func getWebExtensionsSection(with uuid: WindowUUID, tabInfo: MainMenuTabInfo) -> MenuSection {
         MenuSection(options: [
             MenuElement(
-                title: "Extensions",
-                iconName: Icons.settings,
+                title: FloorpStrings.WebExtensions.actions,
+                iconName: Icons.extensionActions,
                 isEnabled: true,
                 isActive: false,
-                a11yLabel: "Extensions",
-                a11yHint: "Open extension actions",
+                a11yLabel: FloorpStrings.WebExtensions.actions,
+                a11yHint: FloorpStrings.WebExtensions.actionsAccessibilityHint,
                 a11yId: "Floorp.WebExtensions.Browser.Actions",
                 action: {
                     store.dispatch(

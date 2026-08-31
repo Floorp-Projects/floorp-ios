@@ -1205,6 +1205,26 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         }
     }
 
+    private func iconData(for package: FloorpWebExtensionSettingsInstalledPackage) -> Data? {
+        catalogItems.first(where: { $0.id == package.id })?.iconData
+    }
+
+    private func presentExtensionPrompt(
+        _ presentation: FloorpWebExtensionPromptPresentation,
+        onChoice: @escaping FloorpWebExtensionPromptViewController.ChoiceHandler
+    ) {
+        let controller = FloorpWebExtensionPromptViewController(
+            presentation: presentation,
+            windowUUID: windowUUID,
+            themeManager: themeManager,
+            notificationCenter: notificationCenter,
+            onChoice: onChoice
+        )
+        controller.sheetPresentationController?.detents = [.medium(), .large()]
+        controller.sheetPresentationController?.prefersGrabberVisible = true
+        present(controller, animated: true)
+    }
+
     private func showSiteAccess(_ package: FloorpWebExtensionSettingsInstalledPackage) {
         showSiteAccess(package, isPrivateBrowsing: false)
     }
@@ -1214,60 +1234,100 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         isPrivateBrowsing: Bool
     ) {
         let currentAccess = isPrivateBrowsing ? package.privateHostAccess : package.normalHostAccess
-        let profileTitle = isPrivateBrowsing ? "Private site access" : "Site access"
-        let profileMessage = isPrivateBrowsing
-            ? "Choose exactly where this separately installed private extension may read or change page data."
-            : "Choose exactly where this extension may read or change page data."
-        let alert = UIAlertController(
-            title: "\(profileTitle) for \(package.name)",
-            message: profileMessage,
-            preferredStyle: .actionSheet
-        )
-        alert.addAction(UIAlertAction(title: "No sites", style: .destructive) { [weak self] _ in
+        let selectedSites = Self.selectedSites(from: currentAccess)
+        var choices = [FloorpWebExtensionPromptPresentation.Choice]()
+        var choiceActions = [String: () -> Void]()
+
+        let denyIdentifier = "deny"
+        choices.append(.init(
+            identifier: denyIdentifier,
+            title: FloorpStrings.WebExtensions.noSites,
+            detail: FloorpStrings.WebExtensions.noSitesDetail,
+            icon: .system("hand.raised.slash.fill"),
+            role: .destructive,
+            isSelected: currentAccess == .denied
+        ))
+        choiceActions[denyIdentifier] = { [weak self] in
             self?.setSiteAccess(.denied, for: package.id, isPrivateBrowsing: isPrivateBrowsing)
-        })
-        alert.addAction(UIAlertAction(title: "All requested sites", style: .default) { [weak self] _ in
+        }
+
+        let allIdentifier = "allRequestedSites"
+        choices.append(.init(
+            identifier: allIdentifier,
+            title: FloorpStrings.WebExtensions.allRequestedSitesChoice,
+            detail: FloorpStrings.WebExtensions.allRequestedSites(package.requestedSites.count),
+            icon: .system("globe.americas.fill"),
+            role: .preferred,
+            isSelected: currentAccess == .allRequestedSites
+        ))
+        choiceActions[allIdentifier] = { [weak self] in
             self?.setSiteAccess(.allRequestedSites, for: package.id, isPrivateBrowsing: isPrivateBrowsing)
-        })
-        for site in package.requestedSites {
-            alert.addAction(UIAlertAction(title: "Only \(site.original)", style: .default) { [weak self] _ in
+        }
+
+        for (index, site) in package.requestedSites.enumerated() {
+            let identifier = "only.\(index)"
+            choices.append(.init(
+                identifier: identifier,
+                title: FloorpStrings.WebExtensions.onlySite(site.original),
+                detail: FloorpStrings.WebExtensions.onlySiteDetail,
+                icon: .system("link"),
+                isSelected: selectedSites == [site]
+            ))
+            choiceActions[identifier] = { [weak self] in
                 self?.setSiteAccess(
                     .selectedSites([site]),
                     for: package.id,
                     isPrivateBrowsing: isPrivateBrowsing
                 )
-            })
+            }
         }
-        if case .allRequestedSites = currentAccess {
-            // No narrower controls are needed: every declared site is already
-            // authorized. The explicit "No sites" and "Only" actions above
-            // remain available to reduce access.
-        } else {
-            alert.addAction(UIAlertAction(title: "Add a site…", style: .default) { [weak self] _ in
+        if currentAccess != .allRequestedSites {
+            let addIdentifier = "addSite"
+            choices.append(.init(
+                identifier: addIdentifier,
+                title: FloorpStrings.WebExtensions.addSite,
+                detail: FloorpStrings.WebExtensions.addSiteMessage,
+                icon: .system("plus.circle.fill")
+            ))
+            choiceActions[addIdentifier] = { [weak self] in
                 self?.promptForSelectedSite(package, isPrivateBrowsing: isPrivateBrowsing)
-            })
-            for site in Self.selectedSites(from: currentAccess).sorted(by: { $0.original < $1.original }) {
-                alert.addAction(UIAlertAction(
-                    title: "Remove \(site.original)",
-                    style: .destructive
-                ) { [weak self] _ in
+            }
+            for (index, site) in selectedSites.sorted(by: { $0.original < $1.original }).enumerated() {
+                let identifier = "remove.\(index)"
+                choices.append(.init(
+                    identifier: identifier,
+                    title: FloorpStrings.WebExtensions.removeSite(site.original),
+                    detail: FloorpStrings.WebExtensions.noSitesDetail,
+                    icon: .system("minus.circle.fill"),
+                    role: .destructive
+                ))
+                choiceActions[identifier] = { [weak self] in
                     guard let self else { return }
-                    var selectedSites = Self.selectedSites(from: currentAccess)
-                    selectedSites.remove(site)
+                    var replacementSites = selectedSites
+                    replacementSites.remove(site)
                     self.setSiteAccess(
-                        selectedSites.isEmpty ? .denied : .selectedSites(selectedSites),
+                        replacementSites.isEmpty ? .denied : .selectedSites(replacementSites),
                         for: package.id,
                         isPrivateBrowsing: isPrivateBrowsing
                     )
-                })
+                }
             }
         }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = view.bounds
-        }
-        present(alert, animated: true)
+        let prompt = FloorpWebExtensionPromptPresentation(
+            title: FloorpStrings.WebExtensions.siteAccessForTitle(
+                name: package.name,
+                isPrivateBrowsing: isPrivateBrowsing
+            ),
+            message: isPrivateBrowsing
+                ? FloorpStrings.WebExtensions.privateSiteAccessPromptMessage
+                : FloorpStrings.WebExtensions.siteAccessPromptMessage,
+            heroIcon: .extensionIcon(id: package.id, data: iconData(for: package)),
+            choices: choices,
+            accessibilityIdentifier: isPrivateBrowsing
+                ? "Floorp.WebExtensions.PrivateSiteAccess"
+                : "Floorp.WebExtensions.SiteAccess"
+        )
+        presentExtensionPrompt(prompt) { identifier in choiceActions[identifier]?() }
     }
 
     private func confirmPrivateBrowsingChange(
@@ -1278,21 +1338,23 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             setPrivateBrowsingEnabled(false, for: package.id)
             return
         }
-        let privateBrowsingMessage = [
-            "This installs a separate ephemeral copy for private browsing.",
-            "Its site access starts disabled and private data is removed when the private session ends."
-        ].joined(separator: " ")
-        let alert = UIAlertController(
-            title: "Allow \(package.name) in Private Browsing?",
-            message: privateBrowsingMessage,
-            preferredStyle: .alert
+        let prompt = FloorpWebExtensionPromptPresentation(
+            title: FloorpStrings.WebExtensions.privateBrowsingConsentTitle(name: package.name),
+            message: FloorpStrings.WebExtensions.privateBrowsingConsentMessage,
+            heroIcon: .extensionIcon(id: package.id, data: iconData(for: package)),
+            choices: [.init(
+                identifier: "allow",
+                title: FloorpStrings.WebExtensions.allow,
+                detail: FloorpStrings.WebExtensions.privateBrowsingOptInMessage,
+                icon: .system("eye.slash.fill"),
+                role: .preferred
+            )],
+            accessibilityIdentifier: "Floorp.WebExtensions.PrivateBrowsingConsent"
         )
-        alert.view.accessibilityIdentifier = "Floorp.WebExtensions.PrivateBrowsingConsent"
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Allow", style: .default) { [weak self] _ in
+        presentExtensionPrompt(prompt) { [weak self] identifier in
+            guard identifier == "allow" else { return }
             self?.setPrivateBrowsingEnabled(true, for: package.id)
-        })
-        present(alert, animated: true)
+        }
     }
 
     private func showPrivateSiteAccess(_ package: FloorpWebExtensionSettingsInstalledPackage) {
@@ -1304,8 +1366,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
         isPrivateBrowsing: Bool
     ) {
         let alert = UIAlertController(
-            title: "Add a site",
-            message: "Enter a hostname or HTTPS URL. This authorizes only that site, not every requested site.",
+            title: FloorpStrings.WebExtensions.addSite,
+            message: FloorpStrings.WebExtensions.addSiteMessage,
             preferredStyle: .alert
         )
         alert.view.accessibilityIdentifier = "Floorp.WebExtensions.AddSelectedSite"
@@ -1315,8 +1377,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             field.autocorrectionType = .no
             field.keyboardType = .URL
         }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Add", style: .default) { [weak self, weak alert] _ in
+        alert.addAction(UIAlertAction(title: FloorpStrings.WebExtensions.cancel, style: .cancel))
+        alert.addAction(UIAlertAction(title: FloorpStrings.WebExtensions.add, style: .default) { [weak self, weak alert] _ in
             guard let self,
                   let input = alert?.textFields?.first?.text,
                   let selectedSite = Self.selectedSitePattern(from: input) else {

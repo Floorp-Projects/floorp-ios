@@ -3319,6 +3319,60 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertEqual(cell.accessibilityValue, FloorpStrings.WebExtensions.enabled)
     }
 
+    func testRichExtensionPromptShowsArtworkChoicesAndCurrentSelection() throws {
+        let iconData = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        let presentation = FloorpWebExtensionPromptPresentation(
+            title: FloorpStrings.WebExtensions.siteAccessForTitle(
+                name: "Dark Reader",
+                isPrivateBrowsing: false
+            ),
+            message: FloorpStrings.WebExtensions.siteAccessPromptMessage,
+            heroIcon: .extensionIcon(id: extensionID, data: iconData),
+            choices: [
+                .init(
+                    identifier: "deny",
+                    title: FloorpStrings.WebExtensions.noSites,
+                    detail: FloorpStrings.WebExtensions.noSitesDetail,
+                    icon: .system("hand.raised.slash.fill"),
+                    role: .destructive
+                ),
+                .init(
+                    identifier: "all",
+                    title: FloorpStrings.WebExtensions.allRequestedSitesChoice,
+                    detail: FloorpStrings.WebExtensions.allRequestedSites(1),
+                    icon: .system("globe.americas.fill"),
+                    role: .preferred,
+                    isSelected: true
+                )
+            ],
+            accessibilityIdentifier: "Floorp.WebExtensions.Prompt.Test"
+        )
+        let subject = FloorpWebExtensionPromptViewController(
+            presentation: presentation,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager(),
+            onChoice: { _ in }
+        )
+
+        subject.loadViewIfNeeded()
+
+        XCTAssertEqual(subject.view.accessibilityIdentifier, "Floorp.WebExtensions.Prompt.Test")
+        XCTAssertEqual(subject.displayedChoiceTitles, [
+            FloorpStrings.WebExtensions.noSites,
+            FloorpStrings.WebExtensions.allRequestedSitesChoice
+        ])
+        XCTAssertEqual(subject.displayedHeroIcon?.renderingMode, .alwaysOriginal)
+        let selectedButton = try XCTUnwrap(Self.allSubviews(in: subject.view).first {
+            $0.accessibilityIdentifier == "all"
+        } as? UIButton)
+        XCTAssertEqual(selectedButton.accessibilityValue, FloorpStrings.WebExtensions.currentSelection)
+        XCTAssertTrue(selectedButton.configuration?.subtitle?.contains(
+            FloorpStrings.WebExtensions.currentSelection
+        ) == true)
+    }
+
     func testCatalogArchiveSelectsOnlySafeManifestDeclaredIconData() throws {
         let smallIcon = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x10])
         let preferredIcon = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x80])

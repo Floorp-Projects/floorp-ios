@@ -41,6 +41,20 @@ final class MainMenuConfigurationUtilityTests: XCTestCase {
         XCTAssertFalse(sections[0].isHorizontalTabsSection)
     }
 
+    func testGenerateMenuElements_extensionActionUsesLocalizedCopy() {
+        let wasEnabled = FloorpFlags.isWebExtensionFeatureEnabled(.core)
+        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
+        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: wasEnabled) }
+
+        let sections = configUtility.generateMenuElements(with: getTabInfo(), and: windowUUID)
+        let item = sections.flatMap(\.options).first {
+            $0.title == FloorpStrings.WebExtensions.actions
+        }
+
+        XCTAssertEqual(item?.a11yLabel, FloorpStrings.WebExtensions.actions)
+        XCTAssertEqual(item?.a11yHint, FloorpStrings.WebExtensions.actionsAccessibilityHint)
+    }
+
     func testGenerateMenuElements_siteSectionHasMoreOptions_whenIsExpandedFalse() {
         let sections = configUtility.generateMenuElements(with: getTabInfo(), and: windowUUID, isExpanded: false)
 

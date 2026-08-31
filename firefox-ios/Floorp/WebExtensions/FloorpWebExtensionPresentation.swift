@@ -302,6 +302,321 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
     }
 }
 
+struct FloorpWebExtensionPromptPresentation: Hashable, Sendable {
+    struct Choice: Hashable, Sendable {
+        enum Icon: Hashable, Sendable {
+            case system(String)
+            case extensionIcon(id: FloorpWebExtensionID, data: Data?)
+        }
+
+        enum Role: Hashable, Sendable {
+            case standard
+            case preferred
+            case destructive
+        }
+
+        let identifier: String
+        let title: String
+        let detail: String
+        let icon: Icon
+        let role: Role
+        let isSelected: Bool
+
+        init(
+            identifier: String,
+            title: String,
+            detail: String,
+            icon: Icon,
+            role: Role = .standard,
+            isSelected: Bool = false
+        ) {
+            self.identifier = identifier
+            self.title = title
+            self.detail = detail
+            self.icon = icon
+            self.role = role
+            self.isSelected = isSelected
+        }
+    }
+
+    let title: String
+    let message: String
+    let heroIcon: Choice.Icon
+    let choices: [Choice]
+    let cancelTitle: String
+    let accessibilityIdentifier: String
+
+    init(
+        title: String,
+        message: String,
+        heroIcon: Choice.Icon,
+        choices: [Choice],
+        cancelTitle: String = FloorpStrings.WebExtensions.cancel,
+        accessibilityIdentifier: String
+    ) {
+        self.title = title
+        self.message = message
+        self.heroIcon = heroIcon
+        self.choices = choices
+        self.cancelTitle = cancelTitle
+        self.accessibilityIdentifier = accessibilityIdentifier
+    }
+}
+
+@MainActor
+final class FloorpWebExtensionPromptViewController: UIViewController,
+                                                      Themeable,
+                                                      InjectedThemeUUIDIdentifiable {
+    typealias ChoiceHandler = @MainActor (String) -> Void
+    typealias CancelHandler = @MainActor () -> Void
+
+    private final class ChoiceButton: UIButton {
+        let choice: FloorpWebExtensionPromptPresentation.Choice
+        private let image: UIImage?
+
+        init(choice: FloorpWebExtensionPromptPresentation.Choice) {
+            self.choice = choice
+            switch choice.icon {
+            case .system(let name):
+                image = UIImage(systemName: name)?.withRenderingMode(.alwaysTemplate)
+            case .extensionIcon(let id, let data):
+                image = FloorpWebExtensionIconRegistry.descriptor(for: id, iconData: data).image()
+            }
+            super.init(frame: .zero)
+            translatesAutoresizingMaskIntoConstraints = false
+            contentHorizontalAlignment = .leading
+            accessibilityIdentifier = choice.identifier
+            accessibilityLabel = choice.title
+            accessibilityHint = choice.detail
+            accessibilityValue = choice.isSelected ? FloorpStrings.WebExtensions.currentSelection : nil
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        func applyTheme(theme: Theme) {
+            var configuration = UIButton.Configuration.plain()
+            configuration.title = choice.title
+            configuration.subtitle = choice.isSelected
+                ? [choice.detail, FloorpStrings.WebExtensions.currentSelection]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · ")
+                : choice.detail
+            configuration.image = choice.isSelected
+                ? UIImage(systemName: "checkmark.circle.fill")
+                : image
+            configuration.imagePlacement = .leading
+            configuration.imagePadding = 14
+            configuration.titleAlignment = .leading
+            configuration.contentInsets = NSDirectionalEdgeInsets(
+                top: 12,
+                leading: 14,
+                bottom: 12,
+                trailing: 14
+            )
+            configuration.background.backgroundColor = theme.colors.layer2
+            configuration.background.strokeColor = choice.isSelected
+                ? theme.colors.iconAccent
+                : theme.colors.borderPrimary
+            configuration.background.strokeWidth = choice.isSelected ? 2 : 1
+            configuration.background.cornerRadius = 14
+            configuration.baseForegroundColor = switch choice.role {
+            case .standard: theme.colors.textPrimary
+            case .preferred: theme.colors.textAccent
+            case .destructive: theme.colors.textCritical
+            }
+            configuration.titleTextAttributesTransformer = .init { incoming in
+                var outgoing = incoming
+                outgoing.font = .preferredFont(forTextStyle: .headline)
+                return outgoing
+            }
+            configuration.subtitleTextAttributesTransformer = .init { incoming in
+                var outgoing = incoming
+                outgoing.font = .preferredFont(forTextStyle: .subheadline)
+                outgoing.foregroundColor = theme.colors.textSecondary
+                return outgoing
+            }
+            self.configuration = configuration
+        }
+    }
+
+    let windowUUID: WindowUUID
+    var currentWindowUUID: WindowUUID? { windowUUID }
+    var themeManager: ThemeManager
+    var themeListenerCancellable: Any?
+
+    let presentation: FloorpWebExtensionPromptPresentation
+    private let notificationCenter: NotificationProtocol
+    private let onChoice: ChoiceHandler
+    private let onCancel: CancelHandler
+    private let scrollView: UIScrollView = .build()
+    private let contentStack: UIStackView = .build()
+    private let heroCard: UIView = .build()
+    private let heroIconView: UIImageView = .build()
+    private let titleLabel: UILabel = .build()
+    private let messageLabel: UILabel = .build()
+    private let cancelButton: UIButton = .build()
+    private var choiceButtons = [ChoiceButton]()
+    private var didFinish = false
+    private var heroUsesTemplateRendering = true
+
+    var displayedChoiceTitles: [String] { choiceButtons.map(\.choice.title) }
+    var displayedHeroIcon: UIImage? { heroIconView.image }
+
+    init(
+        presentation: FloorpWebExtensionPromptPresentation,
+        windowUUID: WindowUUID,
+        themeManager: ThemeManager = AppContainer.shared.resolve(),
+        notificationCenter: NotificationProtocol = NotificationCenter.default,
+        onChoice: @escaping ChoiceHandler,
+        onCancel: @escaping CancelHandler = {}
+    ) {
+        self.presentation = presentation
+        self.windowUUID = windowUUID
+        self.themeManager = themeManager
+        self.notificationCenter = notificationCenter
+        self.onChoice = onChoice
+        self.onCancel = onCancel
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .pageSheet
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.accessibilityIdentifier = presentation.accessibilityIdentifier
+        setupView()
+        listenForThemeChanges(withNotificationCenter: notificationCenter)
+        applyTheme()
+    }
+
+    func applyTheme() {
+        let theme = themeManager.getCurrentTheme(for: windowUUID)
+        view.backgroundColor = theme.colors.layer1
+        scrollView.backgroundColor = theme.colors.layer1
+        heroCard.backgroundColor = theme.colors.layer2
+        heroCard.layer.borderColor = theme.colors.borderPrimary.cgColor
+        heroIconView.tintColor = heroUsesTemplateRendering ? theme.colors.iconAccent : nil
+        titleLabel.textColor = theme.colors.textPrimary
+        messageLabel.textColor = theme.colors.textSecondary
+        choiceButtons.forEach { $0.applyTheme(theme: theme) }
+
+        var cancelConfiguration = UIButton.Configuration.gray()
+        cancelConfiguration.title = presentation.cancelTitle
+        cancelConfiguration.baseForegroundColor = theme.colors.textPrimary
+        cancelConfiguration.cornerStyle = .large
+        cancelButton.configuration = cancelConfiguration
+    }
+
+    private func setupView() {
+        contentStack.axis = .vertical
+        contentStack.spacing = 12
+        contentStack.alignment = .fill
+        heroCard.layer.cornerRadius = 18
+        heroCard.layer.borderWidth = 1
+
+        configureHero()
+        view.addSubview(scrollView)
+        scrollView.addSubview(contentStack)
+        view.addSubview(cancelButton)
+        contentStack.addArrangedSubview(heroCard)
+        presentation.choices.forEach(addChoice)
+
+        cancelButton.accessibilityIdentifier = "\(presentation.accessibilityIdentifier).Cancel"
+        cancelButton.addAction(UIAction { [weak self] _ in self?.finishWithCancel() }, for: .touchUpInside)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: cancelButton.topAnchor, constant: -12),
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            cancelButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            cancelButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            cancelButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            cancelButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50)
+        ])
+    }
+
+    private func configureHero() {
+        let heroStack: UIStackView = .build()
+        heroStack.axis = .vertical
+        heroStack.alignment = .center
+        heroStack.spacing = 10
+        heroCard.addSubview(heroStack)
+
+        switch presentation.heroIcon {
+        case .system(let name):
+            heroIconView.image = UIImage(systemName: name)?.withRenderingMode(.alwaysTemplate)
+            heroUsesTemplateRendering = true
+        case .extensionIcon(let id, let data):
+            let descriptor = FloorpWebExtensionIconRegistry.descriptor(for: id, iconData: data)
+            heroIconView.image = descriptor.image()
+            heroUsesTemplateRendering = descriptor.usesTemplateRendering()
+        }
+        heroIconView.contentMode = .scaleAspectFit
+        heroIconView.isAccessibilityElement = false
+        titleLabel.text = presentation.title
+        titleLabel.font = .preferredFont(forTextStyle: .title2)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.numberOfLines = 0
+        titleLabel.textAlignment = .center
+        messageLabel.text = presentation.message
+        messageLabel.font = .preferredFont(forTextStyle: .body)
+        messageLabel.adjustsFontForContentSizeCategory = true
+        messageLabel.numberOfLines = 0
+        messageLabel.textAlignment = .center
+
+        heroStack.addArrangedSubview(heroIconView)
+        heroStack.addArrangedSubview(titleLabel)
+        heroStack.addArrangedSubview(messageLabel)
+        NSLayoutConstraint.activate([
+            heroStack.topAnchor.constraint(equalTo: heroCard.topAnchor, constant: 20),
+            heroStack.leadingAnchor.constraint(equalTo: heroCard.leadingAnchor, constant: 18),
+            heroStack.trailingAnchor.constraint(equalTo: heroCard.trailingAnchor, constant: -18),
+            heroStack.bottomAnchor.constraint(equalTo: heroCard.bottomAnchor, constant: -20),
+            heroIconView.widthAnchor.constraint(equalToConstant: 58),
+            heroIconView.heightAnchor.constraint(equalTo: heroIconView.widthAnchor)
+        ])
+    }
+
+    private func addChoice(_ choice: FloorpWebExtensionPromptPresentation.Choice) {
+        let button = ChoiceButton(choice: choice)
+        button.addAction(UIAction { [weak self] _ in
+            self?.finishWithChoice(choice.identifier)
+        }, for: .touchUpInside)
+        choiceButtons.append(button)
+        contentStack.addArrangedSubview(button)
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 68).isActive = true
+    }
+
+    private func finishWithChoice(_ identifier: String) {
+        guard !didFinish else { return }
+        didFinish = true
+        setControlsEnabled(false)
+        dismiss(animated: true) { [onChoice] in onChoice(identifier) }
+    }
+
+    private func finishWithCancel() {
+        guard !didFinish else { return }
+        didFinish = true
+        setControlsEnabled(false)
+        dismiss(animated: true) { [onCancel] in onCancel() }
+    }
+
+    private func setControlsEnabled(_ isEnabled: Bool) {
+        choiceButtons.forEach { $0.isEnabled = isEnabled }
+        cancelButton.isEnabled = isEnabled
+    }
+}
+
 struct FloorpWebExtensionInstallPresentation: Sendable {
     enum Mode: Sendable, Equatable {
         case install

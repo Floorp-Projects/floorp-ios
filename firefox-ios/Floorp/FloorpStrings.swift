@@ -1054,6 +1054,86 @@ enum FloorpStrings {
             value: "Cancel",
             comment: "Action that cancels an extension operation"
         )
+        static let done = string(
+            "Floorp.WebExtensions.Done.v1",
+            value: "Done",
+            comment: "Action that dismisses extension information"
+        )
+        static let allow = string(
+            "Floorp.WebExtensions.Allow.v1",
+            value: "Allow",
+            comment: "Action that grants an extension capability"
+        )
+        static let actions = string(
+            "Floorp.WebExtensions.Actions.v1",
+            value: "Extension Actions",
+            comment: "Browser menu action and heading for extension page actions"
+        )
+        static let actionsAccessibilityHint = string(
+            "Floorp.WebExtensions.ActionsAccessibilityHint.v1",
+            value: "Open actions provided by installed extensions",
+            comment: "Accessibility hint for the browser extension-actions menu item"
+        )
+        static let actionsUnavailableMessage = string(
+            "Floorp.WebExtensions.ActionsUnavailableMessage.v1",
+            value: "Extension actions are not ready for this browsing profile.",
+            comment: "Error shown when extension page actions are unavailable for the active profile"
+        )
+        static let noActionsAvailableMessage = string(
+            "Floorp.WebExtensions.NoActionsAvailableMessage.v1",
+            value: "No extension actions are available for this page.",
+            comment: "Message shown when no installed extension provides an action for the current page"
+        )
+        static let chooseActionMessage = string(
+            "Floorp.WebExtensions.ChooseActionMessage.v1",
+            value: "Choose an extension to open for this page.",
+            comment: "Guidance shown above the extension page-action picker"
+        )
+        private static let actionSiteAccessTitleFormat = string(
+            "Floorp.WebExtensions.ActionSiteAccessTitle.v1",
+            value: "Allow site access for %1$@?",
+            comment: "Title of page-action site-access consent; argument is the extension name"
+        )
+        static let actionSiteAccessMessage = string(
+            "Floorp.WebExtensions.ActionSiteAccessMessage.v1",
+            value: "This extension needs your permission before it can read or change the current page.",
+            comment: "Explanation shown by page-action site-access consent"
+        )
+        static let actionSiteAccessReloadMessage = string(
+            "Floorp.WebExtensions.ActionSiteAccessReloadMessage.v1",
+            value: "The page reloads after access is allowed.",
+            comment: "Page reload disclosure shown by page-action site-access consent"
+        )
+        static let actionAllWebsitesMessage = string(
+            "Floorp.WebExtensions.ActionAllWebsitesMessage.v1",
+            value: "The requested access includes every HTTP and HTTPS website.",
+            comment: "Disclosure when an extension requested every website"
+        )
+        private static let actionRequestedSiteCountFormat = string(
+            "Floorp.WebExtensions.ActionRequestedSiteCount.v1",
+            value: "The extension requested %1$d site patterns.",
+            comment: "Disclosure for the number of requested extension site patterns"
+        )
+        static let actionPrivateScopeMessage = string(
+            "Floorp.WebExtensions.ActionPrivateScopeMessage.v1",
+            value: "This choice applies only in Private Browsing.",
+            comment: "Disclosure that a page-action site-access choice is private-profile only"
+        )
+        private static let allowOnSiteFormat = string(
+            "Floorp.WebExtensions.AllowOnSite.v1",
+            value: "Allow on %1$@",
+            comment: "Action that grants extension access to one host; argument is the hostname"
+        )
+        static let allowOnAllRequestedSites = string(
+            "Floorp.WebExtensions.AllowOnAllRequestedSites.v1",
+            value: "Allow on all requested sites",
+            comment: "Action that grants access to every site declared by an extension"
+        )
+        static let onlyThisWebsite = string(
+            "Floorp.WebExtensions.OnlyThisWebsite.v1",
+            value: "Only this website",
+            comment: "Detail for a current-site-only extension access choice"
+        )
         static let accessSection = string(
             "Floorp.WebExtensions.AccessSection.v1",
             value: "Access",
@@ -1184,6 +1264,71 @@ enum FloorpStrings {
             value: "Site Access",
             comment: "Action and heading for standard-profile extension site access"
         )
+        private static let siteAccessForTitleFormat = string(
+            "Floorp.WebExtensions.SiteAccessForTitle.v1",
+            value: "Site access for %1$@",
+            comment: "Title of standard site-access choices; argument is the extension name"
+        )
+        private static let privateSiteAccessForTitleFormat = string(
+            "Floorp.WebExtensions.PrivateSiteAccessForTitle.v1",
+            value: "Private site access for %1$@",
+            comment: "Title of private site-access choices; argument is the extension name"
+        )
+        static let siteAccessPromptMessage = string(
+            "Floorp.WebExtensions.SiteAccessPromptMessage.v1",
+            value: "Choose where this extension may read or change page data.",
+            comment: "Guidance shown above standard site-access choices"
+        )
+        static let privateSiteAccessPromptMessage = string(
+            "Floorp.WebExtensions.PrivateSiteAccessPromptMessage.v1",
+            value: "Choose where the separate Private Browsing copy may read or change page data.",
+            comment: "Guidance shown above private site-access choices"
+        )
+        static let noSites = string(
+            "Floorp.WebExtensions.NoSites.v1",
+            value: "No sites",
+            comment: "Choice that denies an extension access to every site"
+        )
+        static let noSitesDetail = string(
+            "Floorp.WebExtensions.NoSitesDetail.v1",
+            value: "The extension cannot read or change website content.",
+            comment: "Explanation of the no-sites extension access choice"
+        )
+        static let allRequestedSitesChoice = string(
+            "Floorp.WebExtensions.AllRequestedSitesChoice.v1",
+            value: "All requested sites",
+            comment: "Choice that grants every site declared by an extension"
+        )
+        private static let onlySiteFormat = string(
+            "Floorp.WebExtensions.OnlySite.v1",
+            value: "Only %1$@",
+            comment: "Choice that grants one declared site pattern; argument is the site pattern"
+        )
+        static let onlySiteDetail = string(
+            "Floorp.WebExtensions.OnlySiteDetail.v1",
+            value: "Replace the current selection with this site only.",
+            comment: "Explanation of a single-site extension access choice"
+        )
+        static let addSite = string(
+            "Floorp.WebExtensions.AddSite.v1",
+            value: "Add a site…",
+            comment: "Action that adds a site to selected extension access"
+        )
+        static let addSiteMessage = string(
+            "Floorp.WebExtensions.AddSiteMessage.v1",
+            value: "Enter a hostname or HTTPS URL. Only that site will be added.",
+            comment: "Guidance for entering an extension site-access hostname"
+        )
+        private static let removeSiteFormat = string(
+            "Floorp.WebExtensions.RemoveSite.v1",
+            value: "Remove %1$@",
+            comment: "Action that removes one selected extension site; argument is the site pattern"
+        )
+        static let currentSelection = string(
+            "Floorp.WebExtensions.CurrentSelection.v1",
+            value: "Current selection",
+            comment: "Status identifying the active extension site-access choice"
+        )
         static let allRequestedWebsites = string(
             "Floorp.WebExtensions.AllRequestedWebsites.v1",
             value: "HTTP(S) · All requested websites",
@@ -1218,6 +1363,27 @@ enum FloorpStrings {
             "Floorp.WebExtensions.PrivateBrowsing.v1",
             value: "Private Browsing",
             comment: "Action and heading for extension Private Browsing access"
+        )
+        private static let privateBrowsingConsentTitleFormat = string(
+            "Floorp.WebExtensions.PrivateBrowsingConsentTitle.v1",
+            value: "Allow %1$@ in Private Browsing?",
+            comment: "Title of extension Private Browsing consent; argument is the extension name"
+        )
+        static let privateBrowsingConsentMessage = string(
+            "Floorp.WebExtensions.PrivateBrowsingConsentMessage.v1",
+            value: "Floorp creates a separate private copy. Site access starts off, "
+                + "and its private data is removed when the private session ends.",
+            comment: "Explanation shown before allowing an extension in Private Browsing"
+        )
+        static let actionOpenErrorTitle = string(
+            "Floorp.WebExtensions.ActionOpenErrorTitle.v1",
+            value: "Extension action could not open",
+            comment: "Error title when an extension page action cannot open"
+        )
+        static let siteAccessChangeErrorTitle = string(
+            "Floorp.WebExtensions.SiteAccessChangeErrorTitle.v1",
+            value: "Site access could not be changed",
+            comment: "Error title when an extension site-access change fails"
         )
         static let networkProtection = string(
             "Floorp.WebExtensions.NetworkProtection.v1",
@@ -1351,6 +1517,37 @@ enum FloorpStrings {
 
         static func installTitle(name: String) -> String {
             localizedStringWithFormat(installTitleFormat, name)
+        }
+
+        static func actionSiteAccessTitle(name: String) -> String {
+            localizedStringWithFormat(actionSiteAccessTitleFormat, name)
+        }
+
+        static func actionRequestedSiteCount(_ count: Int) -> String {
+            localizedStringWithFormat(actionRequestedSiteCountFormat, count)
+        }
+
+        static func allowOnSite(_ host: String) -> String {
+            localizedStringWithFormat(allowOnSiteFormat, host)
+        }
+
+        static func siteAccessForTitle(name: String, isPrivateBrowsing: Bool) -> String {
+            localizedStringWithFormat(
+                isPrivateBrowsing ? privateSiteAccessForTitleFormat : siteAccessForTitleFormat,
+                name
+            )
+        }
+
+        static func onlySite(_ site: String) -> String {
+            localizedStringWithFormat(onlySiteFormat, site)
+        }
+
+        static func removeSite(_ site: String) -> String {
+            localizedStringWithFormat(removeSiteFormat, site)
+        }
+
+        static func privateBrowsingConsentTitle(name: String) -> String {
+            localizedStringWithFormat(privateBrowsingConsentTitleFormat, name)
         }
 
         static func publisher(_ publisher: String) -> String {
