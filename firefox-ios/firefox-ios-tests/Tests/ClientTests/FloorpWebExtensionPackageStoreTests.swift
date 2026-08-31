@@ -2584,8 +2584,17 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
 
     func testSignedBundledCatalogRequiresEveryArtifactAndInstallsOnlyAcceptedRecord() async throws {
         let signing = try CatalogSigningFixture()
-        let catalogData = try signing.catalog(sequence: 1, schemaVersion: 2)
-        let artifactData = try signing.archive()
+        let extensionIcon = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        var signedResources = signing.resources()
+        signedResources["icons/extension-128.png"] = extensionIcon
+        let catalogData = try signing.catalog(
+            sequence: 1,
+            resources: signedResources,
+            schemaVersion: 2
+        )
+        let artifactData = try signing.archive(resources: signedResources)
         let stateStore = InMemoryCatalogStateStore()
         let wasEnabled = FloorpFlags.isWebExtensionFeatureEnabled(.bundledCatalog)
         FloorpFlags.setWebExtensionFeature(.bundledCatalog, enabled: true)
@@ -2641,6 +2650,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let item = try XCTUnwrap(runtime.catalogItems().first)
         XCTAssertEqual(item.id, signing.extensionID)
         XCTAssertNotNil(item.catalogRecord)
+        XCTAssertEqual(item.iconData, extensionIcon)
 
         try await runtime.install(item, packageManager: manager)
         let installedRecord = await store.installedPackage(for: signing.extensionID)
@@ -3252,10 +3262,16 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let darkReaderID = try XCTUnwrap(
             FloorpWebExtensionID(rawValue: "floorp.thirdparty.darkreader")
         )
-        let descriptor = FloorpWebExtensionIconRegistry.descriptor(for: darkReaderID)
-        XCTAssertEqual(descriptor.source, .system(name: "moon.stars.fill"))
+        let iconData = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        let descriptor = FloorpWebExtensionIconRegistry.descriptor(
+            for: darkReaderID,
+            iconData: iconData
+        )
+        XCTAssertEqual(descriptor.source, .data(iconData))
         XCTAssertNotNil(descriptor.image())
-        XCTAssertTrue(descriptor.usesTemplateRendering())
+        XCTAssertFalse(descriptor.usesTemplateRendering())
 
         let genericDescriptor = FloorpWebExtensionIconRegistry.descriptor(for: extensionID)
         XCTAssertEqual(genericDescriptor.source, .system(name: "puzzlepiece.extension.fill"))
@@ -3270,6 +3286,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
                 summary: "Reviewed appearance extension",
                 version: "4.9.129",
                 status: .updateAvailable,
+                iconData: iconData,
                 accessibilityIdentifier: "Floorp.WebExtensions.Card.Test",
                 accessibilityHint: FloorpStrings.WebExtensions.manage,
                 isBusy: true
@@ -3279,6 +3296,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertEqual(cell.displayedTitle, "Dark Reader")
         XCTAssertEqual(cell.displayedStatus, FloorpStrings.WebExtensions.updateAvailable)
         XCTAssertNotNil(cell.displayedIcon)
+        XCTAssertEqual(cell.displayedIcon?.renderingMode, .alwaysOriginal)
         XCTAssertTrue(cell.isShowingActivity)
         XCTAssertFalse(cell.isUserInteractionEnabled)
         XCTAssertEqual(cell.accessibilityValue, FloorpStrings.WebExtensions.loading)
@@ -3298,6 +3316,38 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertFalse(cell.isShowingActivity)
         XCTAssertTrue(cell.isUserInteractionEnabled)
         XCTAssertEqual(cell.accessibilityValue, FloorpStrings.WebExtensions.enabled)
+    }
+
+    func testCatalogArchiveSelectsOnlySafeManifestDeclaredIconData() throws {
+        let smallIcon = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x10])
+        let preferredIcon = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x80])
+        let manifest = Data("""
+        {
+          "icons": {
+            "16": "icons/16.png",
+            "128": "icons/128.png",
+            "256": "../outside.png"
+          }
+        }
+        """.utf8)
+        let resources = [
+            "manifest.json": manifest,
+            "icons/16.png": smallIcon,
+            "icons/128.png": preferredIcon,
+            "outside.png": preferredIcon
+        ]
+
+        XCTAssertEqual(
+            FloorpWebExtensionCatalogArchive.preferredIconData(in: resources),
+            preferredIcon
+        )
+
+        var invalidPreferred = resources
+        invalidPreferred["icons/128.png"] = Data("not an image".utf8)
+        XCTAssertEqual(
+            FloorpWebExtensionCatalogArchive.preferredIconData(in: invalidPreferred),
+            smallIcon
+        )
     }
 
     func testInstalledDetailKeepsRevokedAndUnsupportedActionsFailClosed() throws {
