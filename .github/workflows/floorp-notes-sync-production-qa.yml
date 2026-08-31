@@ -475,7 +475,7 @@ jobs:
       - name: Upload immutable guarded-merge metadata
         if: success()
         id: upload-guarded-merge
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: floorp-notes-sync-guarded-merge-${{ github.run_id }}
           path: |
@@ -502,7 +502,7 @@ jobs:
 
       - name: Upload protected artifact identity
         if: success()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: floorp-notes-sync-guarded-merge-metadata-${{ github.run_id }}
           path: ${{ runner.temp }}/floorp-notes-sync-guarded-merge/merge-artifact-metadata.json
@@ -728,7 +728,7 @@ jobs:
 
       - name: Upload waived enablement metadata
         if: success()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: floorp-notes-sync-production-enablement-waived-${{ github.run_id }}
           path: |
@@ -1242,7 +1242,7 @@ jobs:
 
       - name: Upload live QA xcresult
         if: success()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: floorp-notes-sync-two-client-xcresult
           path: |
@@ -1252,7 +1252,7 @@ jobs:
 
       - name: Upload live QA evidence
         if: success()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: floorp-notes-sync-two-client-qa-metadata-${{ github.run_id }}
           path: |
@@ -1433,7 +1433,7 @@ jobs:
 
       - name: Upload enablement metadata
         if: success()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: floorp-notes-sync-production-enablement-${{ github.run_id }}
           path: ${{ runner.temp }}/floorp-notes-sync-phase2/enablement-record.json
