@@ -2582,6 +2582,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     func testSignedBundledCatalogRequiresEveryArtifactAndInstallsOnlyAcceptedRecord() async throws {
         let signing = try CatalogSigningFixture()
         let extensionIcon = try XCTUnwrap(Data(base64Encoded:
