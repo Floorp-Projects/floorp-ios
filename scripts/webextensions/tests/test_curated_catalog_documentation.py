@@ -166,7 +166,7 @@ class CuratedCatalogDocumentationTests(unittest.TestCase):
         self.assertIn(input_digest, self.release_evidence)
         self.assertIn(catalog_digest, self.release_evidence)
         self.assertIn(approval_digest, self.release_evidence)
-        self.assertIn("sequence 3 signed and locally verified", self.release_evidence)
+        self.assertIn("sequence 4 signed and locally verified", self.release_evidence)
         self.assertIn("--supersede-signed-catalog", self.managed_signer)
         self.assertIn("root-key-preserving catalog refresh", self.managed_signer)
 
