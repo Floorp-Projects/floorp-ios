@@ -7,6 +7,7 @@ import UIKit
 
 struct FloorpWebExtensionIconDescriptor: Hashable, Sendable {
     enum Source: Hashable, Sendable {
+        case data(Data)
         case resource(name: String, extension: String, subdirectory: String?)
         case system(name: String)
     }
@@ -16,6 +17,10 @@ struct FloorpWebExtensionIconDescriptor: Hashable, Sendable {
 
     @MainActor
     func image(in bundle: Bundle = .main) -> UIImage? {
+        if case let .data(data) = source,
+           let image = UIImage(data: data) {
+            return image.withRenderingMode(.alwaysOriginal)
+        }
         if case let .resource(name, fileExtension, subdirectory) = source,
            let url = bundle.url(
                forResource: name,
@@ -28,7 +33,7 @@ struct FloorpWebExtensionIconDescriptor: Hashable, Sendable {
 
         let systemName: String
         switch source {
-        case .resource:
+        case .data, .resource:
             systemName = fallbackSystemName
         case .system(let name):
             systemName = name
@@ -36,8 +41,11 @@ struct FloorpWebExtensionIconDescriptor: Hashable, Sendable {
         return UIImage(systemName: systemName)?.withRenderingMode(.alwaysTemplate)
     }
 
+    @MainActor
     func usesTemplateRendering(in bundle: Bundle = .main) -> Bool {
         switch source {
+        case let .data(data):
+            return UIImage(data: data) == nil
         case let .resource(name, fileExtension, subdirectory):
             return bundle.url(
                 forResource: name,
@@ -51,94 +59,20 @@ struct FloorpWebExtensionIconDescriptor: Hashable, Sendable {
 }
 
 enum FloorpWebExtensionIconRegistry {
-    static func descriptor(for extensionID: FloorpWebExtensionID) -> FloorpWebExtensionIconDescriptor {
-        switch extensionID.rawValue {
-        case "floorp.thirdparty.darkreader":
+    static func descriptor(
+        for _: FloorpWebExtensionID,
+        iconData: Data? = nil
+    ) -> FloorpWebExtensionIconDescriptor {
+        if let iconData {
             return FloorpWebExtensionIconDescriptor(
-                source: .system(name: "moon.stars.fill"),
-                fallbackSystemName: "moon.stars.fill"
-            )
-        default:
-            return FloorpWebExtensionIconDescriptor(
-                source: .system(name: "puzzlepiece.extension.fill"),
+                source: .data(iconData),
                 fallbackSystemName: "puzzlepiece.extension.fill"
             )
         }
-    }
-}
-
-@MainActor
-final class FloorpWebExtensionOverviewHeaderView: UIView, ThemeApplicable {
-    private let iconBackgroundView: UIView = .build()
-    private let iconView: UIImageView = .build()
-    private let titleLabel: UILabel = .build()
-    private let messageLabel: UILabel = .build()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupView()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func configure(title: String, message: String, theme: Theme) {
-        titleLabel.text = title
-        messageLabel.text = message
-        accessibilityLabel = "\(title). \(message)"
-        applyTheme(theme: theme)
-    }
-
-    func applyTheme(theme: Theme) {
-        backgroundColor = theme.colors.layer1
-        iconBackgroundView.backgroundColor = theme.colors.layerAccentNonOpaque
-        iconView.tintColor = theme.colors.iconAccent
-        titleLabel.textColor = theme.colors.textPrimary
-        messageLabel.textColor = theme.colors.textSecondary
-    }
-
-    private func setupView() {
-        isAccessibilityElement = true
-        accessibilityTraits = .header
-        iconBackgroundView.layer.cornerRadius = 18
-        iconBackgroundView.layer.cornerCurve = .continuous
-        iconView.image = UIImage(systemName: "puzzlepiece.extension.fill")
-        iconView.contentMode = .scaleAspectFit
-        iconView.isAccessibilityElement = false
-
-        titleLabel.font = .preferredFont(forTextStyle: .title2)
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.numberOfLines = 0
-        messageLabel.font = .preferredFont(forTextStyle: .body)
-        messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.numberOfLines = 0
-
-        let textStack: UIStackView = .build()
-        textStack.axis = .vertical
-        textStack.alignment = .fill
-        textStack.spacing = 5
-        textStack.addArrangedSubview(titleLabel)
-        textStack.addArrangedSubview(messageLabel)
-
-        addSubview(iconBackgroundView)
-        iconBackgroundView.addSubview(iconView)
-        addSubview(textStack)
-        NSLayoutConstraint.activate([
-            iconBackgroundView.topAnchor.constraint(equalTo: topAnchor, constant: 22),
-            iconBackgroundView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            iconBackgroundView.widthAnchor.constraint(equalToConstant: 58),
-            iconBackgroundView.heightAnchor.constraint(equalTo: iconBackgroundView.widthAnchor),
-            iconView.topAnchor.constraint(equalTo: iconBackgroundView.topAnchor, constant: 13),
-            iconView.leadingAnchor.constraint(equalTo: iconBackgroundView.leadingAnchor, constant: 13),
-            iconView.trailingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor, constant: -13),
-            iconView.bottomAnchor.constraint(equalTo: iconBackgroundView.bottomAnchor, constant: -13),
-            textStack.topAnchor.constraint(equalTo: topAnchor, constant: 20),
-            textStack.leadingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor, constant: 16),
-            textStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18),
-            iconBackgroundView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -18)
-        ])
+        return FloorpWebExtensionIconDescriptor(
+            source: .system(name: "puzzlepiece.extension.fill"),
+            fallbackSystemName: "puzzlepiece.extension.fill"
+        )
     }
 }
 
@@ -168,6 +102,7 @@ struct FloorpWebExtensionCardPresentation: Hashable, Sendable {
     let summary: String
     let version: String
     let status: Status
+    let iconData: Data?
     let accessibilityIdentifier: String
     let accessibilityHint: String
     let isBusy: Bool
@@ -178,6 +113,7 @@ struct FloorpWebExtensionCardPresentation: Hashable, Sendable {
         summary: String,
         version: String,
         status: Status,
+        iconData: Data? = nil,
         accessibilityIdentifier: String,
         accessibilityHint: String,
         isBusy: Bool = false
@@ -187,6 +123,7 @@ struct FloorpWebExtensionCardPresentation: Hashable, Sendable {
         self.summary = summary
         self.version = version
         self.status = status
+        self.iconData = iconData
         self.accessibilityIdentifier = accessibilityIdentifier
         self.accessibilityHint = accessibilityHint
         self.isBusy = isBusy
@@ -197,18 +134,15 @@ struct FloorpWebExtensionCardPresentation: Hashable, Sendable {
 final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
     static let reuseIdentifier = "FloorpWebExtensionCardCell"
 
-    private let cardView: UIView = .build()
-    private let iconBackgroundView: UIView = .build()
     private let iconView: UIImageView = .build()
     private let titleLabel: UILabel = .build()
     private let summaryLabel: UILabel = .build()
     private let versionLabel: UILabel = .build()
     private let statusLabel: UILabel = .build()
-    private let statusView: UIView = .build()
-    private let chevronView: UIImageView = .build()
+    private let metadataStack: UIStackView = .build()
+    private let metadataSeparatorLabel: UILabel = .build()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private var presentation: FloorpWebExtensionCardPresentation?
-    private var currentTheme: Theme?
 
     var displayedTitle: String? { titleLabel.text }
     var displayedSummary: String? { summaryLabel.text }
@@ -236,6 +170,8 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
         accessibilityValue = nil
         isUserInteractionEnabled = true
         activityIndicator.stopAnimating()
+        accessoryView = nil
+        accessoryType = .none
     }
 
     func configure(
@@ -244,21 +180,26 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
         bundle: Bundle = .main
     ) {
         self.presentation = presentation
-        let descriptor = FloorpWebExtensionIconRegistry.descriptor(for: presentation.extensionID)
+        let descriptor = FloorpWebExtensionIconRegistry.descriptor(
+            for: presentation.extensionID,
+            iconData: presentation.iconData
+        )
         iconView.image = descriptor.image(in: bundle)
         iconView.tintColor = descriptor.usesTemplateRendering(in: bundle) ? theme.colors.iconAccent : nil
         titleLabel.text = presentation.title
         summaryLabel.text = presentation.summary
         versionLabel.text = FloorpStrings.WebExtensions.version(presentation.version)
         statusLabel.text = presentation.status.title
-        chevronView.isHidden = presentation.isBusy
-        statusView.isHidden = presentation.isBusy
         isUserInteractionEnabled = !presentation.isBusy
         if presentation.isBusy {
             activityIndicator.startAnimating()
+            accessoryView = activityIndicator
+            accessoryType = .none
             accessibilityValue = FloorpStrings.WebExtensions.loading
         } else {
             activityIndicator.stopAnimating()
+            accessoryView = nil
+            accessoryType = .disclosureIndicator
             accessibilityValue = presentation.status.title
         }
         accessibilityIdentifier = presentation.accessibilityIdentifier
@@ -273,52 +214,43 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
     }
 
     func applyTheme(theme: Theme) {
-        currentTheme = theme
-        backgroundColor = .clear
-        contentView.backgroundColor = .clear
-        cardView.backgroundColor = theme.colors.layer2
-        cardView.layer.borderColor = theme.colors.borderPrimary.cgColor
-        iconBackgroundView.backgroundColor = theme.colors.layerAccentNonOpaque
+        backgroundColor = theme.colors.layer2
+        contentView.backgroundColor = theme.colors.layer2
         titleLabel.textColor = theme.colors.textPrimary
         summaryLabel.textColor = theme.colors.textSecondary
         versionLabel.textColor = theme.colors.textSecondary
-        chevronView.tintColor = theme.colors.iconSecondary
+        metadataSeparatorLabel.textColor = theme.colors.textSecondary
         activityIndicator.color = theme.colors.iconAccent
 
         guard let status = presentation?.status else { return }
         switch status {
         case .available, .updateAvailable:
-            statusView.backgroundColor = theme.colors.layerAccentNonOpaque
             statusLabel.textColor = theme.colors.textAccent
         case .enabled:
-            statusView.backgroundColor = theme.colors.layerSuccess
-            statusLabel.textColor = theme.colors.textPrimary
+            statusLabel.textColor = theme.colors.textSecondary
         case .disabled:
-            statusView.backgroundColor = theme.colors.layerSurfaceMedium
             statusLabel.textColor = theme.colors.textSecondary
         case .revoked, .error:
-            statusView.backgroundColor = theme.colors.layerCriticalSubdued
             statusLabel.textColor = theme.colors.textCritical
         }
 
         let descriptor = presentation.map {
-            FloorpWebExtensionIconRegistry.descriptor(for: $0.extensionID)
+            FloorpWebExtensionIconRegistry.descriptor(for: $0.extensionID, iconData: $0.iconData)
         }
-        if descriptor?.usesTemplateRendering() == true {
-            iconView.tintColor = theme.colors.iconAccent
-        }
+        iconView.tintColor = descriptor?.usesTemplateRendering() == true
+            ? theme.colors.iconAccent
+            : nil
+
+        let selectedBackground = UIView()
+        selectedBackground.backgroundColor = theme.colors.layer5Hover
+        selectedBackgroundView = selectedBackground
     }
 
     private func setupView() {
-        selectionStyle = .none
+        selectionStyle = .default
         isAccessibilityElement = true
         accessibilityTraits = .button
 
-        cardView.layer.cornerRadius = 16
-        cardView.layer.cornerCurve = .continuous
-        cardView.layer.borderWidth = 1
-        iconBackgroundView.layer.cornerRadius = 14
-        iconBackgroundView.layer.cornerCurve = .continuous
         iconView.contentMode = .scaleAspectFit
         iconView.isAccessibilityElement = false
 
@@ -327,75 +259,46 @@ final class FloorpWebExtensionCardCell: UITableViewCell, ThemeApplicable {
         titleLabel.numberOfLines = 2
         summaryLabel.font = .preferredFont(forTextStyle: .subheadline)
         summaryLabel.adjustsFontForContentSizeCategory = true
-        summaryLabel.numberOfLines = 3
-        versionLabel.font = .preferredFont(forTextStyle: .caption1)
+        summaryLabel.numberOfLines = 2
+        versionLabel.font = .preferredFont(forTextStyle: .footnote)
         versionLabel.adjustsFontForContentSizeCategory = true
-        statusLabel.font = .preferredFont(forTextStyle: .caption1)
+        statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.adjustsFontForContentSizeCategory = true
-        statusLabel.numberOfLines = 2
-        statusLabel.textAlignment = .center
-        statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        statusView.layer.cornerRadius = 9
-        statusView.layer.cornerCurve = .continuous
-        chevronView.image = UIImage(systemName: "chevron.right")
-        chevronView.contentMode = .scaleAspectFit
-        chevronView.setContentHuggingPriority(.required, for: .horizontal)
-        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.numberOfLines = 1
+        metadataSeparatorLabel.text = "·"
+        metadataSeparatorLabel.font = .preferredFont(forTextStyle: .footnote)
+        metadataSeparatorLabel.adjustsFontForContentSizeCategory = true
+        metadataStack.axis = .horizontal
+        metadataStack.spacing = 5
+        metadataStack.alignment = .firstBaseline
+        metadataStack.addArrangedSubview(statusLabel)
+        metadataStack.addArrangedSubview(metadataSeparatorLabel)
+        metadataStack.addArrangedSubview(versionLabel)
         activityIndicator.hidesWhenStopped = true
 
-        contentView.addSubview(cardView)
-        cardView.addSubview(iconBackgroundView)
-        iconBackgroundView.addSubview(iconView)
-        cardView.addSubview(titleLabel)
-        cardView.addSubview(summaryLabel)
-        cardView.addSubview(versionLabel)
-        cardView.addSubview(statusView)
-        statusView.addSubview(statusLabel)
-        cardView.addSubview(chevronView)
-        cardView.addSubview(activityIndicator)
+        contentView.addSubview(iconView)
+        contentView.addSubview(titleLabel)
+        contentView.addSubview(summaryLabel)
+        contentView.addSubview(metadataStack)
 
         NSLayoutConstraint.activate([
-            cardView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            cardView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            cardView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            cardView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
-
-            iconBackgroundView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 16),
-            iconBackgroundView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
-            iconBackgroundView.widthAnchor.constraint(equalToConstant: 56),
-            iconBackgroundView.heightAnchor.constraint(equalTo: iconBackgroundView.widthAnchor),
-            iconView.topAnchor.constraint(equalTo: iconBackgroundView.topAnchor, constant: 8),
-            iconView.leadingAnchor.constraint(equalTo: iconBackgroundView.leadingAnchor, constant: 8),
-            iconView.trailingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor, constant: -8),
-            iconView.bottomAnchor.constraint(equalTo: iconBackgroundView.bottomAnchor, constant: -8),
-
-            titleLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 16),
-            titleLabel.leadingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevronView.leadingAnchor, constant: -10),
-            chevronView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-            chevronView.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            chevronView.widthAnchor.constraint(equalToConstant: 10),
-            activityIndicator.centerXAnchor.constraint(equalTo: chevronView.centerXAnchor),
-            activityIndicator.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
-
+            iconView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            iconView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 44),
+            iconView.heightAnchor.constraint(equalTo: iconView.widthAnchor),
+            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             summaryLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
             summaryLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            summaryLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-
-            versionLabel.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 12),
-            versionLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            versionLabel.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -16),
-            statusView.topAnchor.constraint(equalTo: versionLabel.bottomAnchor, constant: 8),
-            statusView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            statusView.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -16),
-            statusView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16),
-            statusLabel.topAnchor.constraint(equalTo: statusView.topAnchor, constant: 4),
-            statusLabel.leadingAnchor.constraint(equalTo: statusView.leadingAnchor, constant: 9),
-            statusLabel.trailingAnchor.constraint(equalTo: statusView.trailingAnchor, constant: -9),
-            statusLabel.bottomAnchor.constraint(equalTo: statusView.bottomAnchor, constant: -4),
-
-            iconBackgroundView.bottomAnchor.constraint(lessThanOrEqualTo: cardView.bottomAnchor, constant: -16)
+            summaryLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            metadataStack.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 6),
+            metadataStack.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            metadataStack.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
+            metadataStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 84)
         ])
+        separatorInset = UIEdgeInsets(top: 0, left: 72, bottom: 0, right: 0)
     }
 }
 
@@ -409,6 +312,7 @@ struct FloorpWebExtensionInstallPresentation: Sendable {
     let name: String
     let summary: String
     let version: String
+    let iconData: Data?
     let catalogPublisher: String?
     let catalogAttribution: String?
     let catalogPrivacySummary: String?
@@ -426,6 +330,7 @@ struct FloorpWebExtensionInstallPresentation: Sendable {
         name: String,
         summary: String,
         version: String,
+        iconData: Data? = nil,
         catalogPublisher: String? = nil,
         catalogAttribution: String? = nil,
         catalogPrivacySummary: String? = nil,
@@ -442,6 +347,7 @@ struct FloorpWebExtensionInstallPresentation: Sendable {
         self.name = name
         self.summary = summary
         self.version = version
+        self.iconData = iconData
         self.catalogPublisher = catalogPublisher
         self.catalogAttribution = catalogAttribution
         self.catalogPrivacySummary = catalogPrivacySummary
@@ -631,24 +537,24 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
         container.spacing = 10
 
         let iconContainer: UIView = .build()
-        iconContainer.layer.cornerRadius = 20
-        iconContainer.layer.cornerCurve = .continuous
         let iconView: UIImageView = .build()
-        let descriptor = FloorpWebExtensionIconRegistry.descriptor(for: presentation.extensionID)
+        let descriptor = FloorpWebExtensionIconRegistry.descriptor(
+            for: presentation.extensionID,
+            iconData: presentation.iconData
+        )
         iconView.image = descriptor.image()
         iconView.contentMode = .scaleAspectFit
         iconView.isAccessibilityElement = false
         if descriptor.usesTemplateRendering() { iconViews.append(iconView) }
         iconContainer.addSubview(iconView)
         NSLayoutConstraint.activate([
-            iconContainer.widthAnchor.constraint(equalToConstant: 82),
+            iconContainer.widthAnchor.constraint(equalToConstant: 64),
             iconContainer.heightAnchor.constraint(equalTo: iconContainer.widthAnchor),
-            iconView.topAnchor.constraint(equalTo: iconContainer.topAnchor, constant: 12),
-            iconView.leadingAnchor.constraint(equalTo: iconContainer.leadingAnchor, constant: 12),
-            iconView.trailingAnchor.constraint(equalTo: iconContainer.trailingAnchor, constant: -12),
-            iconView.bottomAnchor.constraint(equalTo: iconContainer.bottomAnchor, constant: -12)
+            iconView.topAnchor.constraint(equalTo: iconContainer.topAnchor),
+            iconView.leadingAnchor.constraint(equalTo: iconContainer.leadingAnchor),
+            iconView.trailingAnchor.constraint(equalTo: iconContainer.trailingAnchor),
+            iconView.bottomAnchor.constraint(equalTo: iconContainer.bottomAnchor)
         ])
-        themedCards.append(iconContainer)
 
         let titleLabel = makeLabel(text: presentation.name, style: .title2, primary: true)
         titleLabel.textAlignment = .center
@@ -787,7 +693,7 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
         let stack: UIStackView = .build()
         stack.axis = .vertical
         stack.spacing = 0
-        let titleLabel = makeLabel(text: title, style: .headline, primary: true)
+        let titleLabel = makeLabel(text: title, style: .footnote, primary: false)
         titleLabel.accessibilityTraits = .header
         stack.addArrangedSubview(titleLabel)
         stack.setCustomSpacing(10, after: titleLabel)
@@ -795,9 +701,8 @@ final class FloorpWebExtensionInstallConfirmationViewController: UIViewControlle
         let card: UIStackView = .build()
         card.axis = .vertical
         card.spacing = 0
-        card.layer.cornerRadius = 16
+        card.layer.cornerRadius = 10
         card.layer.cornerCurve = .continuous
-        card.layer.borderWidth = 1
         card.isLayoutMarginsRelativeArrangement = true
         card.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0)
         themedCards.append(card)
@@ -898,6 +803,7 @@ struct FloorpWebExtensionInstalledDetailPresentation: Sendable {
     let name: String
     let summary: String?
     let version: String
+    let iconData: Data?
     let isEnabled: Bool
     let isCatalogRevoked: Bool
     let errorDescription: String?
@@ -921,6 +827,7 @@ struct FloorpWebExtensionInstalledDetailPresentation: Sendable {
         name: String,
         summary: String? = nil,
         version: String,
+        iconData: Data? = nil,
         isEnabled: Bool,
         isCatalogRevoked: Bool,
         errorDescription: String? = nil,
@@ -943,6 +850,7 @@ struct FloorpWebExtensionInstalledDetailPresentation: Sendable {
         self.name = name
         self.summary = summary
         self.version = version
+        self.iconData = iconData
         self.isEnabled = isEnabled
         self.isCatalogRevoked = isCatalogRevoked
         self.errorDescription = errorDescription
@@ -1412,7 +1320,10 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
     }
 
     func configure(with presentation: FloorpWebExtensionInstalledDetailPresentation) {
-        descriptor = FloorpWebExtensionIconRegistry.descriptor(for: presentation.extensionID)
+        descriptor = FloorpWebExtensionIconRegistry.descriptor(
+            for: presentation.extensionID,
+            iconData: presentation.iconData
+        )
         iconView.image = descriptor?.image()
         titleLabel.text = presentation.name
         versionLabel.text = FloorpStrings.WebExtensions.version(presentation.version)
@@ -1429,7 +1340,7 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
 
     func applyTheme(theme: Theme) {
         backgroundColor = theme.colors.layer1
-        iconBackgroundView.backgroundColor = theme.colors.layerAccentNonOpaque
+        iconBackgroundView.backgroundColor = .clear
         titleLabel.textColor = theme.colors.textPrimary
         versionLabel.textColor = theme.colors.textSecondary
         summaryLabel.textColor = theme.colors.textSecondary
@@ -1438,19 +1349,15 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
         }
         if isRevoked {
             statusLabel.textColor = theme.colors.textCritical
-            statusLabel.backgroundColor = theme.colors.layerCriticalSubdued
         } else if isEnabled {
-            statusLabel.textColor = theme.colors.textPrimary
-            statusLabel.backgroundColor = theme.colors.layerSuccess
+            statusLabel.textColor = theme.colors.textSecondary
         } else {
             statusLabel.textColor = theme.colors.textSecondary
-            statusLabel.backgroundColor = theme.colors.layerSurfaceMedium
         }
+        statusLabel.backgroundColor = .clear
     }
 
     private func setupView() {
-        iconBackgroundView.layer.cornerRadius = 18
-        iconBackgroundView.layer.cornerCurve = .continuous
         iconView.contentMode = .scaleAspectFit
         iconView.isAccessibilityElement = false
         titleLabel.font = .preferredFont(forTextStyle: .title2)
@@ -1465,10 +1372,7 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.numberOfLines = 0
         statusLabel.lineBreakMode = .byWordWrapping
-        statusLabel.layer.cornerRadius = 9
-        statusLabel.layer.cornerCurve = .continuous
-        statusLabel.clipsToBounds = true
-        statusLabel.textAlignment = .center
+        statusLabel.textAlignment = .natural
 
         let textStack: UIStackView = .build()
         textStack.axis = .vertical
@@ -1490,18 +1394,17 @@ private final class FloorpWebExtensionInstalledHeroView: UIView, ThemeApplicable
             hero.topAnchor.constraint(equalTo: topAnchor, constant: 24),
             hero.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
             hero.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
-            iconBackgroundView.widthAnchor.constraint(equalToConstant: 72),
+            iconBackgroundView.widthAnchor.constraint(equalToConstant: 64),
             iconBackgroundView.heightAnchor.constraint(equalTo: iconBackgroundView.widthAnchor),
-            iconView.topAnchor.constraint(equalTo: iconBackgroundView.topAnchor, constant: 10),
-            iconView.leadingAnchor.constraint(equalTo: iconBackgroundView.leadingAnchor, constant: 10),
-            iconView.trailingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor, constant: -10),
-            iconView.bottomAnchor.constraint(equalTo: iconBackgroundView.bottomAnchor, constant: -10),
+            iconView.topAnchor.constraint(equalTo: iconBackgroundView.topAnchor),
+            iconView.leadingAnchor.constraint(equalTo: iconBackgroundView.leadingAnchor),
+            iconView.trailingAnchor.constraint(equalTo: iconBackgroundView.trailingAnchor),
+            iconView.bottomAnchor.constraint(equalTo: iconBackgroundView.bottomAnchor),
             statusLabel.topAnchor.constraint(equalTo: hero.bottomAnchor, constant: 14),
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
             statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
             statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
-            statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 74),
-            statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 28)
+            statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 22)
         ])
     }
 }

@@ -1,14 +1,15 @@
 Floorp for iOS — Extension management UI candidate
 
 This candidate contains one signed, app-bundled extension: Dark Reader. In a
-normal profile, open Settings > Extensions and verify the new overview is easy
-to understand with Dynamic Type and VoiceOver. Dark Reader must appear as an
-icon-rich card with its name, version, description, and clear Available,
-Enabled, Disabled, Update Available, or Revoked status as applicable. Loading,
-empty, error, retry, and in-progress states must not look tappable or permit a
-duplicate action.
+normal profile, open Settings > Extensions and verify the extension screen is
+easy to understand with Dynamic Type and VoiceOver. It must follow Firefox's
+grouped settings style. Dark Reader must appear as a standard disclosure row
+using the icon bundled with the extension, together with its name, version,
+description, and clear Available, Enabled, Disabled, Update Available, or
+Revoked status as applicable. Loading, empty, error, retry, and in-progress
+states must not look tappable or permit a duplicate action.
 
-Tap the available Dark Reader card. The install review must show the Dark
+Tap the available Dark Reader row. The install review must show the Dark
 Reader icon and identity, publisher/source/license information, requested
 capabilities, privacy/profile explanations, and the warning that site access
 starts off. Cancel once and confirm nothing is installed. Open it again, tap
@@ -24,7 +25,7 @@ stays open; both the page and popup status must update. Tap Dark Reader
 Settings, change an option, reload, and confirm the authenticated bundled
 settings page and saved choice work.
 
-Return to Settings > Extensions, open the installed Dark Reader card, and
+Return to Settings > Extensions, open the installed Dark Reader row, and
 exercise each available management action: disable/enable, options, normal
 site access, Private Browsing opt-in and private site access, network
 protection, website, update history, update (if offered), and uninstall.

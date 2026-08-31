@@ -53,6 +53,9 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
     let license: String
     let packageDirectoryName: String
     let requestedPermissions: [FloorpWebExtensionPermissionCategory]
+    /// Original artwork declared by the extension manifest, exposed only
+    /// after the signed artifact and every resource digest have been checked.
+    let iconData: Data?
     /// Present only for a package selected by a signature-verified bundled
     /// catalog. Settings may display this immutable metadata, but cannot use
     /// it to turn an arbitrary file or URL into an installation request.
@@ -71,6 +74,7 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
         license: String,
         packageDirectoryName: String,
         requestedPermissions: [FloorpWebExtensionPermissionCategory],
+        iconData: Data? = nil,
         catalogRecord: FloorpWebExtensionCatalogPackageRecord? = nil,
         catalogExpiresAt: Date? = nil
     ) {
@@ -82,6 +86,7 @@ struct FloorpWebExtensionBundledCatalogItem: Hashable, Sendable, Identifiable {
         self.license = license
         self.packageDirectoryName = packageDirectoryName
         self.requestedPermissions = requestedPermissions
+        self.iconData = iconData
         self.catalogRecord = catalogRecord
         self.catalogExpiresAt = catalogExpiresAt
     }
@@ -140,7 +145,8 @@ enum FloorpWebExtensionBundledCatalog {
 
     static func signedItem(
         record: FloorpWebExtensionCatalogPackageRecord,
-        catalogExpiresAt: Date
+        catalogExpiresAt: Date,
+        iconData: Data? = nil
     ) -> FloorpWebExtensionBundledCatalogItem? {
         guard let metadata = record.metadata else { return nil }
         var categories = [FloorpWebExtensionPermissionCategory]()
@@ -174,6 +180,7 @@ enum FloorpWebExtensionBundledCatalog {
             license: metadata.license,
             packageDirectoryName: record.artifactURL.lastPathComponent,
             requestedPermissions: categories,
+            iconData: iconData,
             catalogRecord: record,
             catalogExpiresAt: catalogExpiresAt
         )
@@ -1871,6 +1878,80 @@ enum FloorpWebExtensionCatalogArchive {
         return resources
     }
 
+    /// Selects display artwork only from the manifest-declared resources in an
+    /// already verified archive. Unsupported or suspicious image data simply
+    /// falls back to the product's generic extension symbol.
+    static func preferredIconData(in resources: [String: Data], targetSize: Int = 128) -> Data? {
+        guard targetSize > 0 else { return nil }
+        let manifest: [String: Any]?
+        if let manifestData = resources["manifest.json"] {
+            manifest = (try? JSONSerialization.jsonObject(with: manifestData)) as? [String: Any]
+        } else {
+            manifest = nil
+        }
+        let declaredIcons = manifest?["icons"] as? [String: Any] ?? [:]
+        let declaredCandidates: [(size: Int, path: String)] = declaredIcons.compactMap { key, value in
+            guard let size = Int(key), size > 0,
+                  let path = value as? String,
+                  (try? FloorpWebExtensionScriptSource(path)) != nil else {
+                return nil
+            }
+            return (size, path)
+        }
+        .sorted { lhs, rhs in
+            let lhsDistance = abs(lhs.size - targetSize)
+            let rhsDistance = abs(rhs.size - targetSize)
+            return lhsDistance == rhsDistance ? lhs.size > rhs.size : lhsDistance < rhsDistance
+        }
+
+        for candidate in declaredCandidates {
+            guard let data = resources[candidate.path], isSupportedIconData(data) else { continue }
+            return data
+        }
+
+        // Curated ingestion strips non-executable manifest fields, including
+        // `icons`, but retains reviewed image resources. Restrict discovery to
+        // the conventional package-root icons directory and select by verified
+        // PNG dimensions so toolbar glyphs do not outrank the main artwork.
+        return resources.compactMap { path, data -> (size: Int, data: Data)? in
+            guard path.hasPrefix("icons/"),
+                  path.lowercased().hasSuffix(".png"),
+                  isSupportedIconData(data),
+                  let dimensions = pngDimensions(data),
+                  dimensions.width == dimensions.height else {
+                return nil
+            }
+            return (dimensions.width, data)
+        }
+        .min { lhs, rhs in
+            let lhsDistance = abs(lhs.size - targetSize)
+            let rhsDistance = abs(rhs.size - targetSize)
+            return lhsDistance == rhsDistance ? lhs.size > rhs.size : lhsDistance < rhsDistance
+        }?.data
+    }
+
+    private static func isSupportedIconData(_ data: Data) -> Bool {
+        let maximumIconBytes = 512 * 1_024
+        guard !data.isEmpty, data.count <= maximumIconBytes else { return false }
+        let bytes = [UInt8](data.prefix(12))
+        let isPNG = bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let isJPEG = bytes.starts(with: [0xFF, 0xD8, 0xFF])
+        return isPNG || isJPEG
+    }
+
+    private static func pngDimensions(_ data: Data) -> (width: Int, height: Int)? {
+        let bytes = [UInt8](data.prefix(24))
+        guard bytes.count == 24,
+              bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+              Array(bytes[12..<16]) == [0x49, 0x48, 0x44, 0x52] else {
+            return nil
+        }
+        let width = bytes[16..<20].reduce(0) { ($0 << 8) | Int($1) }
+        let height = bytes[20..<24].reduce(0) { ($0 << 8) | Int($1) }
+        guard width > 0, height > 0, width <= 1_024, height <= 1_024 else { return nil }
+        return (width, height)
+    }
+
     /// Schema-v2 metadata is not merely a display label.  It must agree with
     /// the staged manifest before the resource map crosses into the package
     /// store, otherwise a correctly signed catalog could misrepresent an
@@ -2350,6 +2431,7 @@ final class FloorpWebExtensionSignedBundledCatalog {
     private let artifactDataProvider: ArtifactDataProvider
     private let packageManagers: FloorpWebExtensionCatalogLifecycleAcceptanceCoordinator.PackageManagerProvider
     private var acceptedCatalog: FloorpWebExtensionCatalogVerificationResult?
+    private var acceptedIconData = [FloorpWebExtensionID: Data]()
     /// Retains the reason a freshly loaded bundled catalog was rejected so an
     /// expired catalog can preserve the documented offline-restore behavior
     /// without treating a missing or malformed catalog as trusted.
@@ -2461,15 +2543,17 @@ final class FloorpWebExtensionSignedBundledCatalog {
                 previousState: previous,
                 now: now
             )
-            try validateLocalArtifacts(in: candidate)
+            let iconData = try validateLocalArtifacts(in: candidate)
             let accepted = try await coordinator.acceptAndApplyRevocations(
                 catalogData: catalogData,
                 now: now
             )
             acceptedCatalog = accepted
+            acceptedIconData = iconData
             return accepted
         } catch {
             acceptedCatalog = nil
+            acceptedIconData.removeAll()
             catalogAcceptanceFailure = error as? FloorpWebExtensionCatalogError
             throw error
         }
@@ -2489,7 +2573,8 @@ final class FloorpWebExtensionSignedBundledCatalog {
             }
             return FloorpWebExtensionBundledCatalog.signedItem(
                 record: record,
-                catalogExpiresAt: acceptedCatalog.catalog.expiresAt
+                catalogExpiresAt: acceptedCatalog.catalog.expiresAt,
+                iconData: acceptedIconData[record.extensionID]
             )
         }
             .sorted { lhs, rhs in
@@ -2602,13 +2687,18 @@ final class FloorpWebExtensionSignedBundledCatalog {
 
     private func validateLocalArtifacts(
         in catalog: FloorpWebExtensionCatalogVerificationResult
-    ) throws {
+    ) throws -> [FloorpWebExtensionID: Data] {
+        var iconData = [FloorpWebExtensionID: Data]()
         for record in catalog.catalog.packages {
             guard record.availability == .available || record.availability == .updateAvailable else {
                 continue
             }
-            _ = try verifiedArtifact(for: record, catalog: catalog)
+            let artifact = try verifiedArtifact(for: record, catalog: catalog)
+            iconData[record.extensionID] = FloorpWebExtensionCatalogArchive.preferredIconData(
+                in: artifact.resources
+            )
         }
+        return iconData
     }
 
     private func verifiedArtifact(

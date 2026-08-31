@@ -526,7 +526,6 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
     private var pendingInstalledDetail: (id: FloorpWebExtensionID, showsSiteAccessGuidance: Bool)?
     private weak var catalogInstallConsentController: UIViewController?
     private weak var installedDetailNavigationController: UINavigationController?
-    private let overviewHeaderView = FloorpWebExtensionOverviewHeaderView()
     private var catalogExpiryTask: Task<Void, Never>?
 
     init(
@@ -575,21 +574,9 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             forCellReuseIdentifier: FloorpWebExtensionCardCell.reuseIdentifier
         )
         tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 116
-        tableView.separatorStyle = .none
-        tableView.tableHeaderView = overviewHeaderView
-        configureOverviewHeader()
+        tableView.estimatedRowHeight = 84
+        tableView.separatorStyle = .singleLine
         refresh()
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        resizeOverviewHeaderIfNeeded()
-    }
-
-    override func applyTheme() {
-        super.applyTheme()
-        configureOverviewHeader()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -653,32 +640,6 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
                 }
             }
         }
-    }
-
-    private func configureOverviewHeader() {
-        guard isViewLoaded else { return }
-        overviewHeaderView.configure(
-            title: FloorpStrings.WebExtensions.introTitle,
-            message: FloorpStrings.WebExtensions.introMessage,
-            theme: themeManager.getCurrentTheme(for: windowUUID)
-        )
-        resizeOverviewHeaderIfNeeded()
-    }
-
-    private func resizeOverviewHeaderIfNeeded() {
-        guard tableView.tableHeaderView === overviewHeaderView else { return }
-        let fittingSize = CGSize(
-            width: tableView.bounds.width,
-            height: UIView.layoutFittingCompressedSize.height
-        )
-        let height = overviewHeaderView.systemLayoutSizeFitting(
-            fittingSize,
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        guard height > 0, abs(overviewHeaderView.frame.height - height) > 0.5 else { return }
-        overviewHeaderView.frame.size.height = height
-        tableView.tableHeaderView = overviewHeaderView
     }
 
     private func scheduleCatalogExpiryInvalidation(
@@ -843,6 +804,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             summary: package.catalogDescription ?? package.siteAccessDescription,
             version: package.version,
             status: cardStatus(for: package),
+            iconData: catalogItems.first(where: { $0.id == package.id })?.iconData,
             accessibilityIdentifier: "Floorp.WebExtensions.Installed.\(package.id.rawValue)",
             accessibilityHint: FloorpStrings.WebExtensions.manage,
             isBusy: busyExtensionIDs.contains(package.id)
@@ -858,6 +820,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             summary: item.summary,
             version: item.version,
             status: .available,
+            iconData: item.iconData,
             accessibilityIdentifier: "Floorp.WebExtensions.Available.\(item.id.rawValue)",
             accessibilityHint: FloorpStrings.WebExtensions.add,
             isBusy: busyExtensionIDs.contains(item.id)
@@ -932,6 +895,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             name: item.name,
             summary: item.summary,
             version: item.version,
+            iconData: item.iconData,
             catalogPublisher: disclosure?.publisherDisplayName,
             catalogAttribution: disclosure?.attribution,
             catalogPrivacySummary: disclosure?.privacySummary,
@@ -1022,6 +986,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             name: package.name,
             summary: package.catalogDescription,
             version: package.version,
+            iconData: update?.iconData ?? catalogItems.first(where: { $0.id == package.id })?.iconData,
             isEnabled: package.isEnabled,
             isCatalogRevoked: package.isCatalogRevoked,
             errorDescription: package.errorDescription,
