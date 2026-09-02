@@ -2641,7 +2641,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let store = try FloorpWebExtensionPackageStore(
             profileIdentifier: "signed-bundled-catalog",
             isPrivateBrowsing: false,
-            directory: directory
+            directory: directory,
+            clock: { signing.now }
         )
         let manager = FloorpWebExtensionLivePackageManager(
             store: store,
