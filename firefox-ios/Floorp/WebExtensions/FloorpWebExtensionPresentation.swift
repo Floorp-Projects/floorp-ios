@@ -369,6 +369,7 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
                                                       InjectedThemeUUIDIdentifiable {
     typealias ChoiceHandler = @MainActor (String) -> Void
     typealias CancelHandler = @MainActor () -> Void
+    typealias DismissHandler = @MainActor () -> Void
 
     private final class ChoiceButton: UIButton {
         let choice: FloorpWebExtensionPromptPresentation.Choice
@@ -450,6 +451,7 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
     private let notificationCenter: NotificationProtocol
     private let onChoice: ChoiceHandler
     private let onCancel: CancelHandler
+    private let onDismiss: DismissHandler
     private let scrollView: UIScrollView = .build()
     private let contentStack: UIStackView = .build()
     private let heroCard: UIView = .build()
@@ -459,6 +461,7 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
     private let cancelButton: UIButton = .build()
     private var choiceButtons = [ChoiceButton]()
     private var didFinish = false
+    private var didReportDismissal = false
     private var heroUsesTemplateRendering = true
 
     var displayedChoiceTitles: [String] { choiceButtons.map(\.choice.title) }
@@ -470,7 +473,8 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default,
         onChoice: @escaping ChoiceHandler,
-        onCancel: @escaping CancelHandler = {}
+        onCancel: @escaping CancelHandler = {},
+        onDismiss: @escaping DismissHandler = {}
     ) {
         self.presentation = presentation
         self.windowUUID = windowUUID
@@ -478,6 +482,7 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
         self.notificationCenter = notificationCenter
         self.onChoice = onChoice
         self.onCancel = onCancel
+        self.onDismiss = onDismiss
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
     }
@@ -492,6 +497,13 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
         setupView()
         listenForThemeChanges(withNotificationCenter: notificationCenter)
         applyTheme()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        guard !didReportDismissal else { return }
+        didReportDismissal = true
+        onDismiss()
     }
 
     func applyTheme() {
@@ -601,14 +613,19 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
         guard !didFinish else { return }
         didFinish = true
         setControlsEnabled(false)
-        dismiss(animated: true) { [onChoice] in onChoice(identifier) }
+        // A permission mutation is a product event, not a presentation
+        // completion. Deliver it before asking UIKit to dismiss so a missing
+        // or interrupted dismissal completion cannot silently drop consent.
+        onChoice(identifier)
+        dismiss(animated: true)
     }
 
     private func finishWithCancel() {
         guard !didFinish else { return }
         didFinish = true
         setControlsEnabled(false)
-        dismiss(animated: true) { [onCancel] in onCancel() }
+        onCancel()
+        dismiss(animated: true)
     }
 
     private func setControlsEnabled(_ isEnabled: Bool) {

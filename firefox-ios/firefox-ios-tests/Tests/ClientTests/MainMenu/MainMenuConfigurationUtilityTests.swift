@@ -11,6 +11,7 @@ import SummarizeKit
 
 @MainActor
 final class MainMenuConfigurationUtilityTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var configUtility: MainMenuConfigurationUtility!
     let windowUUID: WindowUUID = .XCTestDefaultUUID
 
@@ -71,6 +72,17 @@ final class MainMenuConfigurationUtilityTests: XCTestCase {
 
         XCTAssertTrue(titles.contains(String.MainMenu.Submenus.Tools.PageZoom))
         XCTAssertTrue(titles.contains(String.MainMenu.Submenus.Tools.Print))
+    }
+
+    func testGenerateMenuElements_hidesBuiltInWebsiteDarkMode() {
+        let sections = configUtility.generateMenuElements(
+            with: getTabInfo(),
+            and: windowUUID,
+            isExpanded: true
+        )
+        let titles = sections.flatMap(\.options).map(\.title)
+
+        XCTAssertFalse(titles.contains(String.MainMenu.Submenus.Tools.WebsiteDarkMode))
     }
 
     func testGenerateMenuElements_readerViewItem_whenSummarizerLanguageExpansionEnabled() {

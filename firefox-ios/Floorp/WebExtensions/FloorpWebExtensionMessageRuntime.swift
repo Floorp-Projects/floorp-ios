@@ -807,6 +807,7 @@ final class FloorpWebExtensionMessageRuntime {
             bootstrap: nativeHost?.javaScriptBootstrap(for: background.extensionID),
             contentWorld: .page,
             supportsSameSurfacePageNavigation: false,
+            supportsNativeNetworkRequests: true,
             owner: "floorp.webextension.bridge.background.\(background.extensionID.rawValue).\(background.originHost)",
             authorizeDocument: { [weak self] url, isMainFrame in
                 self?.activeBackgroundBridges[background.extensionID] == background &&
@@ -1089,6 +1090,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
     private let handlerName: String
     private let contentWorld: WKContentWorld
     private let supportsSameSurfacePageNavigation: Bool
+    private let supportsNativeNetworkRequests: Bool
     private weak var controller: WKUserContentController?
     private var attachmentGeneration: UInt64 = 0
 
@@ -1098,6 +1100,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?,
         contentWorld: WKContentWorld,
         supportsSameSurfacePageNavigation: Bool,
+        supportsNativeNetworkRequests: Bool = false,
         owner: String,
         authorizeDocument: @escaping @MainActor (URL, Bool) -> Bool,
         authorizeFrameScript: (@MainActor (String, String, URL, Bool) -> Bool)? = nil,
@@ -1123,6 +1126,7 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         handlerName = "floorpRuntime_\(nonce.prefix(24))"
         self.contentWorld = contentWorld
         self.supportsSameSurfacePageNavigation = supportsSameSurfacePageNavigation
+        self.supportsNativeNetworkRequests = supportsNativeNetworkRequests
     }
 
     func attach(to controller: WKUserContentController) {
@@ -1136,7 +1140,8 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
                 nonce: nonce,
                 handlerName: handlerName,
                 bootstrap: bootstrap,
-                supportsSameSurfacePageNavigation: supportsSameSurfacePageNavigation
+                supportsSameSurfacePageNavigation: supportsSameSurfacePageNavigation,
+                supportsNativeNetworkRequests: supportsNativeNetworkRequests
             ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false,
@@ -1424,12 +1429,14 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
         nonce: String,
         handlerName: String,
         bootstrap: FloorpWebExtensionAPIHost.JavaScriptBootstrap?,
-        supportsSameSurfacePageNavigation: Bool
+        supportsSameSurfacePageNavigation: Bool,
+        supportsNativeNetworkRequests: Bool
     ) -> String {
         let extensionLiteral = javaScriptLiteral(extensionID.rawValue)
         let nonceLiteral = javaScriptLiteral(nonce)
         let handlerLiteral = javaScriptLiteral(handlerName)
         let sameSurfacePageNavigationLiteral = supportsSameSurfacePageNavigation ? "true" : "false"
+        let nativeNetworkRequestsLiteral = supportsNativeNetworkRequests ? "true" : "false"
         let bootstrapLiteral: String
         if let bootstrap,
            let data = try? JSONEncoder().encode(bootstrap),
@@ -1564,6 +1571,48 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
               if (tracksStartupActivity) backgroundStartupActivity.nativeRequestFinished();
             });
           };
+          if (\(nativeNetworkRequestsLiteral) &&
+              typeof globalThis.fetch === "function" &&
+              typeof globalThis.Response === "function" &&
+              typeof globalThis.Blob === "function") {
+            const originalFetch = globalThis.fetch.bind(globalThis);
+            const decodeBase64 = (value) => {
+              const binary = atob(value || "");
+              const bytes = new Uint8Array(binary.length);
+              for (let index = 0; index < binary.length; index += 1) {
+                bytes[index] = binary.charCodeAt(index);
+              }
+              return bytes;
+            };
+            globalThis.fetch = async (input, init = {}) => {
+              const inputIsRequest = typeof globalThis.Request === "function" && input instanceof Request;
+              const method = String(init?.method || (inputIsRequest ? input.method : "GET")).toUpperCase();
+              const rawURL = inputIsRequest ? input.url : String(input);
+              let url;
+              try {
+                url = new URL(rawURL, location.href);
+              } catch (_) {
+                return originalFetch(input, init);
+              }
+              if ((url.protocol !== "http:" && url.protocol !== "https:") ||
+                  method !== "GET" || init?.body != null) {
+                return originalFetch(input, init);
+              }
+              const chunks = [];
+              let result = await request("runtime.fetch", {url: url.href, method});
+              const metadata = result;
+              chunks.push(decodeBase64(result.bodyBase64));
+              while (!result.done) {
+                result = await request("runtime.fetch.read", {fetchId: metadata.fetchId});
+                chunks.push(decodeBase64(result.bodyBase64));
+              }
+              return new Response(new Blob(chunks), {
+                status: metadata.status,
+                statusText: metadata.statusText || "",
+                headers: metadata.headers || {}
+              });
+            };
+          }
           Object.defineProperty(globalThis, \(javaScriptLiteral(FloorpWebExtensionMessageRuntime.frameAuthorizationFunctionName)), {
             value: async (scriptId, revisionToken) => {
               if (typeof scriptId !== "string" || scriptId.length < 1 || scriptId.length > 128 ||

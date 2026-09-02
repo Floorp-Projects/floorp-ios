@@ -381,23 +381,24 @@ class Tab: NSObject,
 
             UserScriptManager.shared.injectUserScriptsIntoWebView(
                 webView,
-                nightMode: nightMode,
+                nightMode: effectiveBuiltInNightMode,
                 noImageMode: noImageMode
             )
         }
     }
 
+    private var effectiveBuiltInNightMode: Bool {
+        false
+    }
+
     var nightMode: Bool {
         didSet {
             guard nightMode != oldValue else { return }
-            webView?.isOpaque = !nightMode
-            webView?.evaluateJavascriptInCustomContentWorld(
-                NightModeHelper.jsCallbackBuilder(nightMode),
-                in: .world(name: NightModeHelper.name())
-            )
+            let effectiveNightMode = effectiveBuiltInNightMode
+            webView?.isOpaque = !effectiveNightMode
             UserScriptManager.shared.injectUserScriptsIntoWebView(
                 webView,
-                nightMode: nightMode,
+                nightMode: effectiveNightMode,
                 noImageMode: noImageMode
             )
         }
@@ -572,7 +573,7 @@ class Tab: NSObject,
 
         UserScriptManager.shared.injectUserScriptsIntoWebView(
             webView,
-            nightMode: nightMode,
+            nightMode: effectiveBuiltInNightMode,
             noImageMode: noImageMode
         )
         FloorpWebExtensionRuntime.runtime(
@@ -1078,8 +1079,8 @@ class Tab: NSObject,
         /// Note: Background colors are only visible when `isOpaque` is false — setting them while it's true has no effect.
         webView?.backgroundColor =  theme.colors.layer1
         webView?.scrollView.backgroundColor = theme.colors.layer1
-        webView?.isOpaque = !nightMode
-        webView?.underPageBackgroundColor = nightMode ? .black : nil
+        webView?.isOpaque = !effectiveBuiltInNightMode
+        webView?.underPageBackgroundColor = effectiveBuiltInNightMode ? .black : nil
     }
 
     // MARK: - Static Helpers

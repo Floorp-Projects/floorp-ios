@@ -18,11 +18,6 @@ class UserScriptManager {
         source: "window.__firefox__.NoImageMode.setEnabled(true)",
         injectionTime: .atDocumentStart,
         forMainFrameOnly: true)
-    private let nightModeUserScript = WKUserScript(
-        source: NightModeHelper.jsCallbackBuilder(true),
-        injectionTime: .atDocumentEnd,
-        forMainFrameOnly: true,
-        in: .world(name: NightModeHelper.name()))
     private let printHelperUserScript = WKUserScript.createInPageContentWorld(
         source: "window.print = function () { window.webkit.messageHandlers.printHandler.postMessage({}) }",
         injectionTime: .atDocumentEnd,
@@ -60,18 +55,6 @@ class UserScriptManager {
                 forMainFrameOnly: mainFrameOnly
             )
             scripts[name] = userScript
-        }
-
-        // NightMode scripts
-        let nightModeName = "NightMode\(name)"
-        if let source = UserScriptManager.getScriptSource(nightModeName) {
-            let wrappedSource = "(function() { const APP_ID_TOKEN = '\(UserScriptManager.appIdToken)'; \(source) })()"
-            let userScript = WKUserScript(
-                source: wrappedSource,
-                injectionTime: injectionTime,
-                forMainFrameOnly: mainFrameOnly,
-                in: .world(name: NightModeHelper.name()))
-            scripts[nightModeName] = userScript
         }
 
         // Autofill scripts
@@ -126,11 +109,6 @@ class UserScriptManager {
                 browserScripts.append(autofillScript)
             }
 
-            let nightModeName = "NightMode\(name)"
-            if let nightModeScript = compiledUserScripts[nightModeName] {
-                browserScripts.append(nightModeScript)
-            }
-
             let webcompatName = "Webcompat\(name)"
             if let webcompatUserScript = compiledUserScripts[webcompatName] {
                 browserScripts.append(webcompatUserScript)
@@ -138,11 +116,6 @@ class UserScriptManager {
         }
         // Inject the Print Helper. This needs to be in the `page` content world in order to hook `window.print()`.
         browserScripts.append(printHelperUserScript)
-        // If Night Mode is enabled, inject a small user script to ensure
-        // that it gets enabled immediately when the DOM loads.
-        if nightMode {
-            browserScripts.append(nightModeUserScript)
-        }
         // If No Image Mode is enabled, inject a small user script to ensure
         // that it gets enabled immediately when the DOM loads.
         if noImageMode {

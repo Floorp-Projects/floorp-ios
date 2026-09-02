@@ -1211,6 +1211,7 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
 
     private func presentExtensionPrompt(
         _ presentation: FloorpWebExtensionPromptPresentation,
+        onDismiss: @escaping FloorpWebExtensionPromptViewController.DismissHandler = {},
         onChoice: @escaping FloorpWebExtensionPromptViewController.ChoiceHandler
     ) {
         let controller = FloorpWebExtensionPromptViewController(
@@ -1218,7 +1219,8 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
             windowUUID: windowUUID,
             themeManager: themeManager,
             notificationCenter: notificationCenter,
-            onChoice: onChoice
+            onChoice: onChoice,
+            onDismiss: onDismiss
         )
         controller.sheetPresentationController?.detents = [.medium(), .large()]
         controller.sheetPresentationController?.prefersGrabberVisible = true
@@ -1327,7 +1329,17 @@ final class FloorpWebExtensionSettingsViewController: ThemedTableViewController 
                 ? "Floorp.WebExtensions.PrivateSiteAccess"
                 : "Floorp.WebExtensions.SiteAccess"
         )
-        presentExtensionPrompt(prompt) { identifier in choiceActions[identifier]?() }
+        var deferredChoiceAction: (() -> Void)?
+        presentExtensionPrompt(
+            prompt,
+            onDismiss: { deferredChoiceAction?() }
+        ) { identifier in
+            if identifier == "addSite" {
+                deferredChoiceAction = choiceActions[identifier]
+            } else {
+                choiceActions[identifier]?()
+            }
+        }
     }
 
     private func confirmPrivateBrowsingChange(
@@ -2441,11 +2453,12 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
         return (authorization, package)
     }
 
+    @discardableResult
     func updateGrants(
         _ grants: FloorpWebExtensionPermissionSnapshot,
         authorization: PermissionMutationAuthorization,
         validateSender: @MainActor () -> Bool = { true }
-    ) async throws {
+    ) async throws -> FloorpWebExtensionInstalledPackage {
         let extensionID = authorization.extensionID
         let gate = lifecycleMutationGate(for: extensionID)
         await gate.acquire()
@@ -2500,17 +2513,19 @@ final class FloorpWebExtensionLivePackageManager: FloorpWebExtensionSettingsMana
             }
             throw error
         }
-        if let package = await store.installedPackage(for: extensionID), package.isEnabled {
-            do {
-                try await reconcile(extensionID, package, .suspend)
-            } catch {
-                try? await store.recordActivationFailure(
-                    for: extensionID,
-                    expectedGeneration: package.generation
-                )
-                throw error
-            }
+        guard let package = await store.installedPackage(for: extensionID), package.isEnabled else {
+            throw FloorpWebExtensionPackageStoreError.inactivePackageGeneration(extensionID)
         }
+        do {
+            try await reconcile(extensionID, package, .suspend)
+        } catch {
+            try? await store.recordActivationFailure(
+                for: extensionID,
+                expectedGeneration: package.generation
+            )
+            throw error
+        }
+        return package
     }
 
     /// Keeps the native DNR-exemption mutation on the same lifecycle gate as

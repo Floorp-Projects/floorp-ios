@@ -1665,6 +1665,55 @@ final class BrowserCoordinatorTests: XCTestCase,
         XCTAssertTrue(plan.isPrivateBrowsing)
     }
 
+    func testWebExtensionActionConsentAllowsRequestedRedirectForAllSites() throws {
+        let requestedHosts = Set([try FloorpWebExtensionMatchPattern("<all_urls>")])
+
+        XCTAssertTrue(BrowserCoordinator.webExtensionActionConsentRemainsValid(
+            currentURL: URL(string: "https://m.yahoo.co.jp/?source=redirect#top"),
+            requestedHosts: requestedHosts,
+            access: .allRequestedSites
+        ))
+    }
+
+    func testWebExtensionActionConsentKeepsSelectedSiteScopedToHost() throws {
+        let requestedHosts = Set([try FloorpWebExtensionMatchPattern("<all_urls>")])
+        let selectedSite = try FloorpWebExtensionMatchPattern("https://www.example.com/*")
+        let access = FloorpWebExtensionHostAccess.selectedSites([selectedSite])
+
+        XCTAssertTrue(BrowserCoordinator.webExtensionActionConsentRemainsValid(
+            currentURL: URL(string: "https://www.example.com/changed/path?query=1#section"),
+            requestedHosts: requestedHosts,
+            access: access
+        ))
+        XCTAssertFalse(BrowserCoordinator.webExtensionActionConsentRemainsValid(
+            currentURL: URL(string: "https://m.example.com/"),
+            requestedHosts: requestedHosts,
+            access: access
+        ))
+    }
+
+    func testWebExtensionActionConsentRejectsProtectedAndUnrequestedPages() throws {
+        let requestedHosts = Set([
+            try FloorpWebExtensionMatchPattern("https://allowed.example/*")
+        ])
+
+        XCTAssertFalse(BrowserCoordinator.webExtensionActionConsentRemainsValid(
+            currentURL: URL(string: "about:blank"),
+            requestedHosts: requestedHosts,
+            access: .allRequestedSites
+        ))
+        XCTAssertFalse(BrowserCoordinator.webExtensionActionConsentRemainsValid(
+            currentURL: URL(string: "https://other.example/"),
+            requestedHosts: requestedHosts,
+            access: .allRequestedSites
+        ))
+        XCTAssertFalse(BrowserCoordinator.webExtensionActionConsentRemainsValid(
+            currentURL: URL(string: "https://allowed.example/"),
+            requestedHosts: requestedHosts,
+            access: .denied
+        ))
+    }
+
     // MARK: - Route handling
 
     // MARK: canHandle(route:)

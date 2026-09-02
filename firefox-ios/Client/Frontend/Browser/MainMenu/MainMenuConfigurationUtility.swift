@@ -295,7 +295,6 @@ struct MainMenuConfigurationUtility: Equatable, FeatureFlaggable {
                 options.append(configureReaderViewItem(with: uuid, tabInfo: tabInfo))
             }
             options.append(contentsOf: [
-                configureWebsiteDarkModeItem(with: uuid, and: tabInfo),
                 configureShortcutsItem(with: uuid, and: tabInfo),
                 MenuElement(
                     title: .MainMenu.Submenus.Save.SaveAsPDF,
@@ -643,38 +642,6 @@ struct MainMenuConfigurationUtility: Equatable, FeatureFlaggable {
                         windowUUID: uuid,
                         actionType: MainMenuActionType.tapZoom,
                         telemetryInfo: TelemetryInfo(isHomepage: tabInfo.isHomepage)
-                    )
-                )
-            }
-        )
-    }
-
-    private func configureWebsiteDarkModeItem(
-        with uuid: WindowUUID,
-        and tabInfo: MainMenuTabInfo
-    ) -> MenuElement {
-        typealias A11y = String.MainMenu.Submenus.Tools.AccessibilityLabels
-        typealias Tools = String.MainMenu.Submenus.Tools
-
-        let nightModeIsOn = NightModeHelper.isActivated()
-
-        return MenuElement(
-            title: .MainMenu.Submenus.Tools.WebsiteDarkMode,
-            iconName: "",
-            isEnabled: true,
-            isActive: nightModeIsOn,
-            a11yLabel: .MainMenu.ToolsSection.AccessibilityLabels.WebsiteDarkMode,
-            a11yHint: nightModeIsOn ? Tools.WebsiteDarkModeOn : Tools.WebsiteDarkModeOff,
-            a11yId: AccessibilityIdentifiers.MainMenu.nightMode,
-            isOptional: true,
-            infoTitle: nightModeIsOn ? Tools.WebsiteDarkModeOn : Tools.WebsiteDarkModeOff,
-            action: {
-                store.dispatch(
-                    MainMenuAction(
-                        windowUUID: uuid,
-                        actionType: MainMenuActionType.tapToggleNightMode,
-                        telemetryInfo: TelemetryInfo(isHomepage: tabInfo.isHomepage,
-                                                     isActionOn: nightModeIsOn)
                     )
                 )
             }

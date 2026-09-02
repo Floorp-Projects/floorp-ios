@@ -498,6 +498,103 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         }
     }
 
+    func testBackgroundRuntimeFetchStreamsLargeAuthorizedResponse() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let requestedURL = try XCTUnwrap(URL(string: "https://styles.example/site.css"))
+        let expectedBody = Data((0..<70_000).map { UInt8($0 % 251) })
+        let hostPattern = try FloorpWebExtensionMatchPattern("https://styles.example/*")
+        let host = try FloorpWebExtensionAPIHost(
+            profileIdentifier: "api-runtime-fetch-profile",
+            isPrivateBrowsing: false,
+            directory: directory,
+            preferredLocales: ["en"],
+            packageResourceLoader: { _, _ in nil },
+            alarmEvents: .init(),
+            permissionBroker: .init(),
+            networkFetchTransport: { url in
+                guard url == requestedURL else {
+                    throw FloorpWebExtensionMessageError.handlerFailed
+                }
+                return .init(
+                    url: url,
+                    statusCode: 200,
+                    headers: [
+                        "Content-Type": "text/css; charset=utf-8",
+                        "Set-Cookie": "must-not-cross-the-bridge=true"
+                    ],
+                    body: expectedBody
+                )
+            }
+        )
+        await host.activate(
+            extensionID: extensionID,
+            grants: .init(
+                requestedHosts: [hostPattern],
+                normalHostAccess: .allRequestedSites
+            ),
+            defaultLocale: "en",
+            packageGeneration: "network-fetch-generation"
+        )
+        let sender = FloorpWebExtensionBackgroundRuntimeMessageSender(
+            extensionID: extensionID,
+            profileKey: host.profileKey,
+            packageGeneration: "network-fetch-generation",
+            originHost: "network-fetch-fixture"
+        )
+
+        let initialPayload = try await host.dispatch(
+            operation: "runtime.fetch",
+            payload: try payload(["url": requestedURL.absoluteString, "method": "GET"]),
+            sender: sender
+        )
+        let initial = try XCTUnwrap(initialPayload).decode(RuntimeFetchResponseView.self)
+        XCTAssertEqual(initial.status, 200)
+        XCTAssertEqual(initial.headers["Content-Type"], "text/css; charset=utf-8")
+        XCTAssertNil(initial.headers["Set-Cookie"])
+        XCTAssertFalse(initial.done)
+
+        var reconstructedBody = try XCTUnwrap(Data(base64Encoded: initial.bodyBase64))
+        let fetchID = try XCTUnwrap(initial.fetchId)
+        var done = initial.done
+        while !done {
+            let chunkPayload = try await host.dispatch(
+                operation: "runtime.fetch.read",
+                payload: try payload(["fetchId": fetchID]),
+                sender: sender
+            )
+            let chunk = try XCTUnwrap(chunkPayload).decode(RuntimeFetchChunkResponseView.self)
+            reconstructedBody.append(try XCTUnwrap(Data(base64Encoded: chunk.bodyBase64)))
+            done = chunk.done
+        }
+        XCTAssertEqual(reconstructedBody, expectedBody)
+
+        do {
+            _ = try await host.dispatch(
+                operation: "runtime.fetch",
+                payload: try payload(["url": requestedURL.absoluteString, "method": "GET"]),
+                sender: testSender()
+            )
+            XCTFail("A tab content script must not own native network authority")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .unsupportedOperation)
+        }
+
+        do {
+            _ = try await host.dispatch(
+                operation: "runtime.fetch",
+                payload: try payload([
+                    "url": "https://unauthorized.example/site.css",
+                    "method": "GET"
+                ]),
+                sender: sender
+            )
+            XCTFail("Background fetch must remain within durable host access")
+        } catch {
+            XCTAssertEqual(error as? FloorpWebExtensionMessageError, .permissionDenied)
+        }
+    }
+
     func testPermissionsRequestNeedsTrustedConsentAndPersistsBeforeExposure() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1813,6 +1910,19 @@ private struct RuntimeManifestResponse: Decodable, Equatable {
     let manifest_version: Int
     let name: String
     let version: String
+}
+
+private struct RuntimeFetchResponseView: Decodable {
+    let status: Int
+    let headers: [String: String]
+    let bodyBase64: String
+    let fetchId: String?
+    let done: Bool
+}
+
+private struct RuntimeFetchChunkResponseView: Decodable {
+    let bodyBase64: String
+    let done: Bool
 }
 
 private struct RegisteredScriptView: Decodable {

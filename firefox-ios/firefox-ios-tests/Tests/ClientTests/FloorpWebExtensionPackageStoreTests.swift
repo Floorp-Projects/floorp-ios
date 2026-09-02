@@ -1893,9 +1893,13 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             for: extensionID,
             expectedGeneration: retained.generation
         )
-        try await manager.updateGrants(proposed, authorization: currentAuthorization)
+        let committedResult = try await manager.updateGrants(
+            proposed,
+            authorization: currentAuthorization
+        )
         let committedRecord = await store.installedPackage(for: extensionID)
         let committed = try XCTUnwrap(committedRecord)
+        XCTAssertEqual(committedResult, committed)
         XCTAssertTrue(committed.grants.apiPermissions.contains(.tabs))
         await assertAsyncThrows {
             try await manager.updateGrants(proposed, authorization: currentAuthorization)
@@ -2819,7 +2823,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         // A consent token captured before expiry cannot add an optional API
         // permission after the signed catalog lifetime ends.
         do {
-            try await pendingGrantUpdate.value
+            _ = try await pendingGrantUpdate.value
             XCTFail("Expired catalog must not commit a pending optional permission grant")
         } catch {
             XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
@@ -3371,6 +3375,43 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertTrue(selectedButton.configuration?.subtitle?.contains(
             FloorpStrings.WebExtensions.currentSelection
         ) == true)
+    }
+
+    func testRichExtensionPromptDeliversChoiceBeforeDismissalExactlyOnce() throws {
+        let presentation = FloorpWebExtensionPromptPresentation(
+            title: "Site access",
+            message: "Choose access",
+            heroIcon: .system("puzzlepiece.extension.fill"),
+            choices: [.init(
+                identifier: "all",
+                title: "All requested sites",
+                detail: "Every requested site",
+                icon: .system("globe.americas.fill")
+            )],
+            accessibilityIdentifier: "Floorp.WebExtensions.Prompt.ChoiceTest"
+        )
+        var selectedIdentifiers = [String]()
+        var dismissalCount = 0
+        let subject = FloorpWebExtensionPromptViewController(
+            presentation: presentation,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager(),
+            onChoice: { selectedIdentifiers.append($0) },
+            onDismiss: { dismissalCount += 1 }
+        )
+        subject.loadViewIfNeeded()
+        let choiceButton = try XCTUnwrap(Self.allSubviews(in: subject.view).first {
+            $0.accessibilityIdentifier == "all"
+        } as? UIButton)
+
+        choiceButton.sendActions(for: .touchUpInside)
+        choiceButton.sendActions(for: .touchUpInside)
+
+        XCTAssertEqual(selectedIdentifiers, ["all"])
+        XCTAssertEqual(dismissalCount, 0)
+        subject.viewDidDisappear(false)
+        subject.viewDidDisappear(false)
+        XCTAssertEqual(dismissalCount, 1)
     }
 
     func testCatalogArchiveSelectsOnlySafeManifestDeclaredIconData() throws {

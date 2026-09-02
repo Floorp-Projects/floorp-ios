@@ -4,6 +4,7 @@
 
 import XCTest
 @testable import Common
+@testable import Client
 
 @MainActor
 final class DefaultThemeManagerTests: XCTestCase {
@@ -11,6 +12,7 @@ final class DefaultThemeManagerTests: XCTestCase {
 
     // MARK: - Variables
 
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var userDefaults: MockUserDefaults!
 
     // MARK: - Test lifecycle
@@ -55,6 +57,15 @@ final class DefaultThemeManagerTests: XCTestCase {
 
         XCTAssertEqual(systemResult, expectedSystemResult)
         XCTAssertEqual(nightModeResult, expectedNightModeResult)
+    }
+
+    func testBuiltInNightModeRemainsDisabledAndClearsLegacyPreference() {
+        userDefaults.set(true, forKey: "profile.NightModeStatus")
+
+        XCTAssertFalse(NightModeHelper.isActivated(userDefaults))
+
+        NightModeHelper.cleanNightModeDefaults(userDefaults)
+        XCTAssertNil(userDefaults.object(forKey: "profile.NightModeStatus"))
     }
 
     func testDTM_onInitialization_hasLightTheme() {
