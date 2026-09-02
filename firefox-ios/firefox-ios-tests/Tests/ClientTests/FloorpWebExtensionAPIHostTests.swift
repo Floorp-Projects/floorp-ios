@@ -550,6 +550,7 @@ final class FloorpWebExtensionAPIHostTests: XCTestCase {
         )
         let initial = try XCTUnwrap(initialPayload).decode(RuntimeFetchResponseView.self)
         XCTAssertEqual(initial.status, 200)
+        XCTAssertEqual(initial.statusText, "")
         XCTAssertEqual(initial.headers["Content-Type"], "text/css; charset=utf-8")
         XCTAssertNil(initial.headers["Set-Cookie"])
         XCTAssertFalse(initial.done)
@@ -1914,6 +1915,7 @@ private struct RuntimeManifestResponse: Decodable, Equatable {
 
 private struct RuntimeFetchResponseView: Decodable {
     let status: Int
+    let statusText: String
     let headers: [String: String]
     let bodyBase64: String
     let fetchId: String?

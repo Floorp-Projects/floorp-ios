@@ -1606,7 +1606,10 @@ private final class FloorpWebExtensionMessageBridgeSession: NSObject, WKScriptMe
                 result = await request("runtime.fetch.read", {fetchId: metadata.fetchId});
                 chunks.push(decodeBase64(result.bodyBase64));
               }
-              return new Response(new Blob(chunks), {
+              const responseBody = metadata.status === 204 || metadata.status === 205
+                ? null
+                : new Blob(chunks);
+              return new Response(responseBody, {
                 status: metadata.status,
                 statusText: metadata.statusText || "",
                 headers: metadata.headers || {}

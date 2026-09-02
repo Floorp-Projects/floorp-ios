@@ -15,10 +15,6 @@ func registerTabMenuNavigation(in map: MMScreenGraph<FxUserState>, app: XCUIAppl
         screenState.tap(
             app.tables.cells[AccessibilityIdentifiers.MainMenu.addToShortcuts],
             forAction: Action.PinToTopSitesPAM)
-        // Web Site Dark Mode
-        screenState.tap(
-            app.tables.cells[AccessibilityIdentifiers.MainMenu.nightMode],
-            forAction: Action.ToggleNightMode)
         // Save As PDF (TODO)
         // Print
         screenState.tap(

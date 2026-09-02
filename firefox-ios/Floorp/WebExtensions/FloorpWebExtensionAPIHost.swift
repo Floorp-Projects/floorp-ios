@@ -67,7 +67,42 @@ struct FloorpWebExtensionNetworkFetchResponse: Sendable {
     let body: Data
 }
 
-private final class FloorpWebExtensionNoRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+private final class FloorpWebExtensionNetworkFetchDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let maximumBodyByteCount: Int
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<FloorpWebExtensionNetworkFetchResponse, Error>?
+    private var response: HTTPURLResponse?
+    private var body = Data()
+    private var task: URLSessionDataTask?
+    private var didFinish = false
+
+    init(maximumBodyByteCount: Int) {
+        self.maximumBodyByteCount = maximumBodyByteCount
+    }
+
+    func fetch(
+        _ request: URLRequest,
+        using session: URLSession
+    ) async throws -> FloorpWebExtensionNetworkFetchResponse {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                guard !didFinish else {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                self.continuation = continuation
+                let task = session.dataTask(with: request)
+                self.task = task
+                lock.unlock()
+                task.resume()
+            }
+        } onCancel: {
+            self.finish(.failure(CancellationError()), cancellingTask: true)
+        }
+    }
+
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -76,6 +111,100 @@ private final class FloorpWebExtensionNoRedirectDelegate: NSObject, URLSessionTa
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
         completionHandler(nil)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let response = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            finish(.failure(FloorpWebExtensionMessageError.handlerFailed))
+            return
+        }
+        guard response.expectedContentLength < 0 ||
+                response.expectedContentLength <= Int64(maximumBodyByteCount) else {
+            completionHandler(.cancel)
+            finish(.failure(FloorpWebExtensionMessageError.payloadTooLarge))
+            return
+        }
+        lock.lock()
+        if !didFinish {
+            self.response = response
+        }
+        lock.unlock()
+        completionHandler(.allow)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        var exceedsLimit = false
+        lock.lock()
+        if !didFinish {
+            if data.count > maximumBodyByteCount - body.count {
+                exceedsLimit = true
+            } else {
+                body.append(data)
+            }
+        }
+        lock.unlock()
+        guard exceedsLimit else { return }
+        finish(.failure(FloorpWebExtensionMessageError.payloadTooLarge))
+        dataTask.cancel()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        if let error {
+            finish(.failure(error))
+            return
+        }
+        lock.lock()
+        let response = response
+        let body = body
+        lock.unlock()
+        guard let response,
+              let responseURL = response.url else {
+            finish(.failure(FloorpWebExtensionMessageError.handlerFailed))
+            return
+        }
+        var headers = [String: String]()
+        for (name, value) in response.allHeaderFields {
+            headers[String(describing: name)] = String(describing: value)
+        }
+        finish(.success(FloorpWebExtensionNetworkFetchResponse(
+            url: responseURL,
+            statusCode: response.statusCode,
+            headers: headers,
+            body: body
+        )))
+    }
+
+    private func finish(
+        _ result: Result<FloorpWebExtensionNetworkFetchResponse, Error>,
+        cancellingTask: Bool = false
+    ) {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let continuation = continuation
+        self.continuation = nil
+        let task = cancellingTask ? task : nil
+        self.task = nil
+        lock.unlock()
+        task?.cancel()
+        continuation?.resume(with: result)
     }
 }
 
@@ -103,7 +232,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     typealias NetworkFetchTransport = @Sendable (URL) async throws -> FloorpWebExtensionNetworkFetchResponse
 
     private static let maximumJavaScriptManifestBootstrapByteCount = 64 * 1_024
-    private static let maximumNetworkFetchBodyByteCount = 2 * 1_024 * 1_024
+    nonisolated private static let maximumNetworkFetchBodyByteCount = 2 * 1_024 * 1_024
     private static let networkFetchChunkByteCount = 24 * 1_024
     private static let maximumPendingNetworkFetches = 8
     private static let networkFetchLifetime: TimeInterval = 30
@@ -1371,7 +1500,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         }
         return try response(RuntimeFetchResponse(
             status: fetched.statusCode,
-            statusText: HTTPURLResponse.localizedString(forStatusCode: fetched.statusCode),
+            statusText: "",
             headers: Self.sanitizedNetworkHeaders(fetched.headers),
             bodyBase64: firstChunk.base64EncodedString(),
             fetchId: fetchID,
@@ -1443,28 +1572,16 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.urlCache = nil
-        let redirectDelegate = FloorpWebExtensionNoRedirectDelegate()
-        let session = URLSession(configuration: configuration, delegate: redirectDelegate, delegateQueue: nil)
+        let delegate = FloorpWebExtensionNetworkFetchDelegate(
+            maximumBodyByteCount: maximumNetworkFetchBodyByteCount
+        )
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
         request.setValue("text/css,*/*;q=0.1", forHTTPHeaderField: "Accept")
-        let (body, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse,
-              let responseURL = response.url else {
-            throw FloorpWebExtensionMessageError.handlerFailed
-        }
-        var headers = [String: String]()
-        for (name, value) in response.allHeaderFields {
-            headers[String(describing: name)] = String(describing: value)
-        }
-        return FloorpWebExtensionNetworkFetchResponse(
-            url: responseURL,
-            statusCode: response.statusCode,
-            headers: headers,
-            body: body
-        )
+        return try await delegate.fetch(request, using: session)
     }
 
     private func permissionDetails(

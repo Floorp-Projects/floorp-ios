@@ -462,6 +462,7 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
     private var choiceButtons = [ChoiceButton]()
     private var didFinish = false
     private var didReportDismissal = false
+    private var pendingChoiceIdentifier: String?
     private var heroUsesTemplateRendering = true
 
     var displayedChoiceTitles: [String] { choiceButtons.map(\.choice.title) }
@@ -501,6 +502,10 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        if let pendingChoiceIdentifier {
+            self.pendingChoiceIdentifier = nil
+            onChoice(pendingChoiceIdentifier)
+        }
         guard !didReportDismissal else { return }
         didReportDismissal = true
         onDismiss()
@@ -613,10 +618,7 @@ final class FloorpWebExtensionPromptViewController: UIViewController,
         guard !didFinish else { return }
         didFinish = true
         setControlsEnabled(false)
-        // A permission mutation is a product event, not a presentation
-        // completion. Deliver it before asking UIKit to dismiss so a missing
-        // or interrupted dismissal completion cannot silently drop consent.
-        onChoice(identifier)
+        pendingChoiceIdentifier = identifier
         dismiss(animated: true)
     }
 

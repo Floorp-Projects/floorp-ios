@@ -3378,7 +3378,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         ) == true)
     }
 
-    func testRichExtensionPromptDeliversChoiceBeforeDismissalExactlyOnce() throws {
+    func testRichExtensionPromptDeliversChoiceAfterDismissalExactlyOnce() throws {
         let presentation = FloorpWebExtensionPromptPresentation(
             title: "Site access",
             message: "Choose access",
@@ -3408,10 +3408,11 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         choiceButton.sendActions(for: .touchUpInside)
         choiceButton.sendActions(for: .touchUpInside)
 
-        XCTAssertEqual(selectedIdentifiers, ["all"])
+        XCTAssertTrue(selectedIdentifiers.isEmpty)
         XCTAssertEqual(dismissalCount, 0)
         subject.viewDidDisappear(false)
         subject.viewDidDisappear(false)
+        XCTAssertEqual(selectedIdentifiers, ["all"])
         XCTAssertEqual(dismissalCount, 1)
     }
 

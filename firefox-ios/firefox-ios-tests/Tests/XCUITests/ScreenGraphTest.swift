@@ -9,7 +9,9 @@ import Shared
 
 @MainActor
 class ScreenGraphTest: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     var navigator: MMNavigator<TestUserState>!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     var app: XCUIApplication!
 
     func mozWaitForElementToNotExist(_ element: XCUIElement, timeout: TimeInterval? = TIMEOUT) {
@@ -69,29 +71,6 @@ extension ScreenGraphTest {
         let currentURL = navigator.userState.url as String?
         XCTAssertTrue(currentURL?.starts(with: "mozilla.org") ?? false, "Current url recorded by from the url bar is \(currentURL ?? "nil")")
     }
-
-    func testSimpleToggleAction() {
-        navigator.userState.url = "https://mozilla.org"
-        navigator.performAction(TestActions.LoadURLByTyping)
-        waitUntilPageLoad()
-        // Switch night mode on, by toggling.
-        navigator.performAction(TestActions.ToggleNightMode)
-        XCTAssertTrue(navigator.userState.nightMode)
-
-        navigator.nowAt(BrowserTab)
-        navigator.goto(BrowserTabMenuMore)
-        XCTAssertEqual(navigator.screenState, BrowserTabMenuMore)
-
-        // Nothing should happen here, because night mode is already on.
-        navigator.toggleOn(navigator.userState.nightMode, withAction: TestActions.ToggleNightMode)
-        XCTAssertTrue(navigator.userState.nightMode)
-        XCTAssertEqual(navigator.screenState, BrowserTabMenuMore)
-
-        // Switch night mode off.
-        navigator.toggleOff(navigator.userState.nightMode, withAction: TestActions.ToggleNighModeOff)
-        XCTAssertFalse(navigator.userState.nightMode)
-        XCTAssertEqual(navigator.screenState, BrowserTabMenuMore)
-    }
 }
 
 private let defaultURL = "https://example.com"
@@ -104,7 +83,6 @@ class TestUserState: MMUserState {
     }
 
     var url: String?
-    var nightMode = false
     var passcode: String?
     var newPasscode = "111111"
 }
@@ -112,8 +90,6 @@ class TestUserState: MMUserState {
 let WebPageLoading = "WebPageLoading"
 
 private class TestActions {
-    static let ToggleNightMode = "ToggleNightMode"
-    static let ToggleNighModeOff = "ToggleNightModeOff"
     static let LoadURL = "LoadURL"
     static let LoadURLByTyping = "LoadURLByTyping"
     static let LoadURLByPasting = "LoadURLByPasting"
@@ -159,18 +135,6 @@ private func createTestGraph(for test: XCTestCase, with app: XCUIApplication) ->
             app.tables["Context Menu"].cells[AccessibilityIdentifiers.Photon.pasteAndGoAction].waitAndTap()
         }
     }
-    map.addScreenState(BrowserTabMenuMore) { screenState in
-        // Web Site Dark Mode
-        screenState.gesture(forAction: TestActions.ToggleNightMode) { userState in
-            userState.nightMode = true
-            app.tables.cells[AccessibilityIdentifiers.MainMenu.nightMode].tap()
-        }
-        screenState.gesture(forAction: TestActions.ToggleNighModeOff) { userState in
-            userState.nightMode = false
-            app.tables.cells[AccessibilityIdentifiers.MainMenu.nightMode].tap()
-        }
-    }
-
     map.addScreenState(URLBarOpen) { screenState in
         screenState.gesture(forAction: TestActions.LoadURLByTyping, TestActions.LoadURL) { userState in
             let urlString = userState.url ?? defaultURL

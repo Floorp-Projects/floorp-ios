@@ -82,12 +82,6 @@ class L10nSuite2SnapshotTests: L10nBaseSnapshotTests {
         mozWaitForElementToNotExist(app.staticTexts["XCUITests-Runner pasted from Fennec"])
         navigator.goto(BrowserTabMenu)
         snapshot("MenuOnWebPage-01")
-
-        navigator.toggleOn(userState.nightMode, withAction: Action.ToggleNightMode)
-
-        navigator.nowAt(BrowserTab)
-        navigator.goto(BrowserTabMenu)
-        snapshot("MenuOnWebPage-02")
     }
 
     @MainActor
