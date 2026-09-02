@@ -60,6 +60,154 @@ struct FloorpWebExtensionPermissionRequest: Sendable {
     let origins: Set<FloorpWebExtensionMatchPattern>
 }
 
+struct FloorpWebExtensionNetworkFetchResponse: Sendable {
+    let url: URL
+    let statusCode: Int
+    let headers: [String: String]
+    let body: Data
+}
+
+private final class FloorpWebExtensionNetworkFetchDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let maximumBodyByteCount: Int
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<FloorpWebExtensionNetworkFetchResponse, Error>?
+    private var response: HTTPURLResponse?
+    private var body = Data()
+    private var task: URLSessionDataTask?
+    private var didFinish = false
+
+    init(maximumBodyByteCount: Int) {
+        self.maximumBodyByteCount = maximumBodyByteCount
+    }
+
+    func fetch(
+        _ request: URLRequest,
+        using session: URLSession
+    ) async throws -> FloorpWebExtensionNetworkFetchResponse {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                guard !didFinish else {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                self.continuation = continuation
+                let task = session.dataTask(with: request)
+                self.task = task
+                lock.unlock()
+                task.resume()
+            }
+        } onCancel: {
+            self.finish(.failure(CancellationError()), cancellingTask: true)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let response = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            finish(.failure(FloorpWebExtensionMessageError.handlerFailed))
+            return
+        }
+        guard response.expectedContentLength < 0 ||
+                response.expectedContentLength <= Int64(maximumBodyByteCount) else {
+            completionHandler(.cancel)
+            finish(.failure(FloorpWebExtensionMessageError.payloadTooLarge))
+            return
+        }
+        lock.lock()
+        if !didFinish {
+            self.response = response
+        }
+        lock.unlock()
+        completionHandler(.allow)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        var exceedsLimit = false
+        lock.lock()
+        if !didFinish {
+            if data.count > maximumBodyByteCount - body.count {
+                exceedsLimit = true
+            } else {
+                body.append(data)
+            }
+        }
+        lock.unlock()
+        guard exceedsLimit else { return }
+        finish(.failure(FloorpWebExtensionMessageError.payloadTooLarge))
+        dataTask.cancel()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        if let error {
+            finish(.failure(error))
+            return
+        }
+        lock.lock()
+        let response = response
+        let body = body
+        lock.unlock()
+        guard let response,
+              let responseURL = response.url else {
+            finish(.failure(FloorpWebExtensionMessageError.handlerFailed))
+            return
+        }
+        var headers = [String: String]()
+        for (name, value) in response.allHeaderFields {
+            headers[String(describing: name)] = String(describing: value)
+        }
+        finish(.success(FloorpWebExtensionNetworkFetchResponse(
+            url: responseURL,
+            statusCode: response.statusCode,
+            headers: headers,
+            body: body
+        )))
+    }
+
+    private func finish(
+        _ result: Result<FloorpWebExtensionNetworkFetchResponse, Error>,
+        cancellingTask: Bool = false
+    ) {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let continuation = continuation
+        self.continuation = nil
+        let task = cancellingTask ? task : nil
+        self.task = nil
+        lock.unlock()
+        task?.cancel()
+        continuation?.resume(with: result)
+    }
+}
+
 /// Profile-owned native implementation of the Stage 2 API subset.
 ///
 /// The message bridge authenticates the extension and document before this
@@ -81,8 +229,13 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     typealias LiveScriptingTargetResolver = @MainActor @Sendable (
         Int
     ) throws -> FloorpWebExtensionLiveScriptingTarget
+    typealias NetworkFetchTransport = @Sendable (URL) async throws -> FloorpWebExtensionNetworkFetchResponse
 
     private static let maximumJavaScriptManifestBootstrapByteCount = 64 * 1_024
+    nonisolated private static let maximumNetworkFetchBodyByteCount = 2 * 1_024 * 1_024
+    private static let networkFetchChunkByteCount = 24 * 1_024
+    private static let maximumPendingNetworkFetches = 8
+    private static let networkFetchLifetime: TimeInterval = 30
 
     private struct ActiveExtension {
         let authorityRevision: UUID
@@ -100,6 +253,14 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         /// broader dynamic/session contract, but a signed catalog package
         /// cannot create a new DNR policy at runtime.
         let allowsMutableDNR: Bool
+    }
+
+    private struct PendingNetworkFetch {
+        let extensionID: FloorpWebExtensionID
+        let authorityRevision: UUID
+        let body: Data
+        var offset: Int
+        let expiration: Date
     }
 
     /// Immutable package data made available before document-start JavaScript
@@ -253,6 +414,34 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
 
     private struct RuntimeGetURLRequest: Decodable {
         let path: String
+    }
+
+    private struct RuntimeFetchRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case url
+            case method
+        }
+
+        let url: String
+        let method: String
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            url = try container.decode(String.self, forKey: .url)
+            method = try container.decode(String.self, forKey: .method)
+        }
+    }
+
+    private struct RuntimeFetchReadRequest: Decodable {
+        private enum CodingKeys: String, CodingKey, CaseIterable { case fetchId }
+        let fetchId: String
+
+        init(from decoder: Decoder) throws {
+            try rejectUnknownKeys(in: decoder, allowing: Set(CodingKeys.allCases.map(\.rawValue)))
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            fetchId = try container.decode(String.self, forKey: .fetchId)
+        }
     }
 
     private struct PermissionDetailsRequest: Decodable {
@@ -529,6 +718,18 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private struct IntegerResponse: Encodable { let value: Int }
     private struct StringResponse: Encodable { let value: String }
     private struct StringsResponse: Encodable { let values: [String] }
+    private struct RuntimeFetchResponse: Encodable {
+        let status: Int
+        let statusText: String
+        let headers: [String: String]
+        let bodyBase64: String
+        let fetchId: String?
+        let done: Bool
+    }
+    private struct RuntimeFetchChunkResponse: Encodable {
+        let bodyBase64: String
+        let done: Bool
+    }
     private struct PermissionDetailsResponse: Encodable {
         let permissions: [String]
         let origins: [String]
@@ -639,7 +840,9 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     private let permissionRequestAuthorizer: PermissionRequestAuthorizer?
     private let permissionMutationHandler: PermissionMutationHandler?
     private let liveScriptingTargetResolver: LiveScriptingTargetResolver?
+    private let networkFetchTransport: NetworkFetchTransport
     private var activeExtensions = [FloorpWebExtensionID: ActiveExtension]()
+    private var pendingNetworkFetches = [String: PendingNetworkFetch]()
     private enum RegistryBinding {
         case unmanaged
         case installed
@@ -662,7 +865,8 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         permissionRequestAuthorizer: PermissionRequestAuthorizer? = nil,
         permissionMutationHandler: PermissionMutationHandler? = nil,
         liveScriptingTargetResolver: LiveScriptingTargetResolver? = nil,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        networkFetchTransport: NetworkFetchTransport? = nil
     ) throws {
         profileKey = .init(
             profileIdentifier: profileIdentifier,
@@ -708,6 +912,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         self.permissionMutationHandler = permissionMutationHandler
         self.liveScriptingTargetResolver = liveScriptingTargetResolver
         self.now = now
+        self.networkFetchTransport = networkFetchTransport ?? Self.fetchWithoutRedirects
     }
 
     convenience init(
@@ -763,6 +968,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
         resourcePaths: Set<String> = [],
         allowsMutableDNR: Bool = true
     ) async {
+        pendingNetworkFetches = pendingNetworkFetches.filter { $0.value.extensionID != extensionID }
         activeExtensions[extensionID] = .init(
             authorityRevision: UUID(),
             permissions: grants.apiPermissions,
@@ -834,6 +1040,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     /// uninstall.
     func suspend(_ extensionID: FloorpWebExtensionID) async {
         activeExtensions.removeValue(forKey: extensionID)
+        pendingNetworkFetches = pendingNetworkFetches.filter { $0.value.extensionID != extensionID }
         cssInsertions.removeValue(forKey: extensionID)
         alarmEvents.unregister(extensionID: extensionID)
         await permissionBroker.grant(
@@ -871,6 +1078,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     func suspend() async {
         let identifiers = Array(activeExtensions.keys)
         activeExtensions.removeAll()
+        pendingNetworkFetches.removeAll()
         cssInsertions.removeAll()
         alarmEvents.tearDown()
         for extensionID in identifiers {
@@ -911,6 +1119,10 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             }
             try await runtimeReloader(sender.extensionID)
             return try response(EmptyResponse())
+        case "runtime.fetch":
+            return try await runtimeFetch(payload, active: active, sender: sender)
+        case "runtime.fetch.read":
+            return try runtimeFetchRead(payload, active: active, sender: sender)
         case "permissions.getAll":
             return try await permissionDetails(for: sender.extensionID)
         case "permissions.contains":
@@ -1156,6 +1368,7 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
     fileprivate func invalidateRegistryBinding() {
         registryBinding = .invalidated
         activeExtensions.removeAll()
+        pendingNetworkFetches.removeAll()
     }
 
     private var hasCurrentRegistryBinding: Bool {
@@ -1216,6 +1429,159 @@ final class FloorpWebExtensionAPIHost: FloorpWebExtensionNativeAPIDispatching {
             throw FloorpWebExtensionMessageError.malformedEnvelope
         }
         return try response(StringResponse(value: url.absoluteString))
+    }
+
+    private func runtimeFetch(
+        _ payload: FloorpWebExtensionMessagePayload,
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
+    ) async throws -> FloorpWebExtensionMessagePayload {
+        guard sender is FloorpWebExtensionBackgroundRuntimeMessageSender else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+        let request = try decode(RuntimeFetchRequest.self, from: payload)
+        guard request.method.uppercased() == "GET",
+              (1...4_096).contains(request.url.utf8.count),
+              let url = URL(string: request.url),
+              ["http", "https"].contains(url.scheme?.lowercased()),
+              url.host != nil,
+              url.user == nil,
+              url.password == nil else {
+            throw FloorpWebExtensionMessageError.malformedEnvelope
+        }
+        guard await permissionBroker.allowsHostAccess(
+            for: sender.extensionID,
+            url: url,
+            isPrivate: sender.isPrivate
+        ) else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+
+        let fetched = try await networkFetchTransport(url)
+        try requireCurrentSender(sender, expectedActive: active)
+        guard fetched.statusCode >= 100,
+              fetched.statusCode <= 599,
+              ["http", "https"].contains(fetched.url.scheme?.lowercased()),
+              fetched.url.host != nil,
+              fetched.url.user == nil,
+              fetched.url.password == nil,
+              await permissionBroker.allowsHostAccess(
+                  for: sender.extensionID,
+                  url: fetched.url,
+                  isPrivate: sender.isPrivate
+              ) else {
+            throw FloorpWebExtensionMessageError.permissionDenied
+        }
+        guard !(300..<400).contains(fetched.statusCode) else {
+            throw FloorpWebExtensionMessageError.handlerFailed
+        }
+        guard fetched.body.count <= Self.maximumNetworkFetchBodyByteCount else {
+            throw FloorpWebExtensionMessageError.payloadTooLarge
+        }
+
+        removeExpiredNetworkFetches()
+        let chunkEnd = min(Self.networkFetchChunkByteCount, fetched.body.count)
+        let firstChunk = fetched.body.subdata(in: 0..<chunkEnd)
+        let isComplete = chunkEnd == fetched.body.count
+        var fetchID: String?
+        if !isComplete {
+            guard pendingNetworkFetches.count < Self.maximumPendingNetworkFetches else {
+                throw FloorpWebExtensionMessageError.tooManyPendingMessages
+            }
+            let identifier = UUID().uuidString.lowercased()
+            pendingNetworkFetches[identifier] = PendingNetworkFetch(
+                extensionID: sender.extensionID,
+                authorityRevision: active.authorityRevision,
+                body: fetched.body,
+                offset: chunkEnd,
+                expiration: now().addingTimeInterval(Self.networkFetchLifetime)
+            )
+            fetchID = identifier
+        }
+        return try response(RuntimeFetchResponse(
+            status: fetched.statusCode,
+            statusText: "",
+            headers: Self.sanitizedNetworkHeaders(fetched.headers),
+            bodyBase64: firstChunk.base64EncodedString(),
+            fetchId: fetchID,
+            done: isComplete
+        ))
+    }
+
+    private func runtimeFetchRead(
+        _ payload: FloorpWebExtensionMessagePayload,
+        active: ActiveExtension,
+        sender: any FloorpWebExtensionMessageSender
+    ) throws -> FloorpWebExtensionMessagePayload {
+        guard sender is FloorpWebExtensionBackgroundRuntimeMessageSender else {
+            throw FloorpWebExtensionMessageError.unsupportedOperation
+        }
+        let request = try decode(RuntimeFetchReadRequest.self, from: payload)
+        guard (1...64).contains(request.fetchId.utf8.count) else {
+            throw FloorpWebExtensionMessageError.malformedEnvelope
+        }
+        removeExpiredNetworkFetches()
+        guard var pending = pendingNetworkFetches[request.fetchId],
+              pending.extensionID == sender.extensionID,
+              pending.authorityRevision == active.authorityRevision else {
+            throw FloorpWebExtensionMessageError.unauthorizedDocument
+        }
+        let chunkEnd = min(pending.offset + Self.networkFetchChunkByteCount, pending.body.count)
+        let chunk = pending.body.subdata(in: pending.offset..<chunkEnd)
+        pending.offset = chunkEnd
+        let isComplete = chunkEnd == pending.body.count
+        if isComplete {
+            pendingNetworkFetches.removeValue(forKey: request.fetchId)
+        } else {
+            pendingNetworkFetches[request.fetchId] = pending
+        }
+        return try response(RuntimeFetchChunkResponse(
+            bodyBase64: chunk.base64EncodedString(),
+            done: isComplete
+        ))
+    }
+
+    private func removeExpiredNetworkFetches() {
+        let currentDate = now()
+        pendingNetworkFetches = pendingNetworkFetches.filter { $0.value.expiration > currentDate }
+    }
+
+    nonisolated private static func sanitizedNetworkHeaders(_ headers: [String: String]) -> [String: String] {
+        var sanitized = [String: String]()
+        var byteCount = 0
+        for (name, value) in headers.sorted(by: { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }) {
+            let lowercaseName = name.lowercased()
+            guard lowercaseName != "set-cookie",
+                  lowercaseName != "set-cookie2",
+                  sanitized.count < 64,
+                  (1...256).contains(name.utf8.count),
+                  value.utf8.count <= 4_096 else {
+                continue
+            }
+            let nextByteCount = byteCount + name.utf8.count + value.utf8.count
+            guard nextByteCount <= 16 * 1_024 else { break }
+            sanitized[name] = value
+            byteCount = nextByteCount
+        }
+        return sanitized
+    }
+
+    nonisolated private static func fetchWithoutRedirects(
+        _ url: URL
+    ) async throws -> FloorpWebExtensionNetworkFetchResponse {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.urlCache = nil
+        let delegate = FloorpWebExtensionNetworkFetchDelegate(
+            maximumBodyByteCount: maximumNetworkFetchBodyByteCount
+        )
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue("text/css,*/*;q=0.1", forHTTPHeaderField: "Accept")
+        return try await delegate.fetch(request, using: session)
     }
 
     private func permissionDetails(

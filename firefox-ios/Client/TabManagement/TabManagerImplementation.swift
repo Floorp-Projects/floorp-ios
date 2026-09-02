@@ -708,7 +708,7 @@ final class TabManagerImplementation: NSObject,
         // Setting those here since `configureTab` applies those on the legacy path. Inlined here because the
         // deeplink-optimization path intentionally bypasses `addTab` / `configureTab`.
         tab.navigationDelegate = navigationDelegate
-        tab.nightMode = NightModeHelper.isActivated()
+        tab.nightMode = false
         tab.noImageMode = NoImageModeHelper.isActivated(profile.prefs)
         return tab
     }
@@ -1273,7 +1273,7 @@ final class TabManagerImplementation: NSObject,
             }
         }
 
-        tab.nightMode = NightModeHelper.isActivated()
+        tab.nightMode = false
         tab.noImageMode = NoImageModeHelper.isActivated(profile.prefs)
 
         if flushToDisk {

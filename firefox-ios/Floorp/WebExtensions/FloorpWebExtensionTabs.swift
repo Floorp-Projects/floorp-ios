@@ -155,6 +155,18 @@ final class FloorpWebExtensionProfileTabsHost: FloorpWebExtensionTabsHostAdaptin
         sender: any FloorpWebExtensionMessageSender,
         to tab: FloorpWebExtensionTabContext
     ) async throws -> FloorpWebExtensionJSONValue? {
+        // A content script commonly connects to its background and the
+        // background immediately answers with tabs.sendMessage (Dark Reader
+        // does this for its initial theme). Let the inbound WebKit reply
+        // unwind before evaluating back into the same WKWebView; otherwise
+        // WebKit can drop the re-entrant delivery even though both bridges are
+        // already installed. Re-resolve the exact document after the turn so
+        // a navigation during this barrier still fails closed.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
         let liveTab = try liveTab(for: tab.tabID)
         guard let activeDocument = liveTab.floorpWebExtensionActiveDocumentContext,
               activeDocument.documentGeneration == tab.documentGeneration,

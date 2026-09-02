@@ -161,6 +161,22 @@ actor FloorpWebExtensionPermissionBroker {
         return activeTabGrants[extensionID]?.allows(tab, now: now()) ?? false
     }
 
+    /// Checks durable host authority for a background-owned network request.
+    /// Active-tab grants are intentionally excluded because a hidden
+    /// background document is not bound to one live tab generation.
+    func allowsHostAccess(
+        for extensionID: FloorpWebExtensionID,
+        url: URL,
+        isPrivate: Bool
+    ) -> Bool {
+        let snapshot = snapshot(for: extensionID)
+        if isPrivate && !snapshot.privateBrowsingEnabled {
+            return false
+        }
+        let access = isPrivate ? snapshot.privateHostAccess : snapshot.normalHostAccess
+        return access.allows(url, requested: snapshot.requestedHosts)
+    }
+
     func invalidate(tab: FloorpWebExtensionTabContext) {
         activeTabGrants = activeTabGrants.filter { _, grant in
             !(grant.tabID == tab.tabID && grant.documentGeneration == tab.documentGeneration)

@@ -18,29 +18,26 @@ class NightModeHelper: TabContentScript {
     }
 
     func scriptMessageHandlerNames() -> [String]? {
-        return ["NightMode"]
-    }
-
-    static func jsCallbackBuilder(_ enabled: Bool) -> String {
-        return "window.__firefox__.NightMode.setEnabled(\(enabled))"
+        return []
     }
 
     func userContentController(
         _ userContentController: WKUserContentController,
         didReceiveScriptMessage message: WKScriptMessage
     ) {
-        guard let webView = message.frameInfo.webView else { return }
-        webView.evaluateJavascriptInCustomContentWorld(
-            NightModeHelper.jsCallbackBuilder(NightModeHelper.isActivated()),
-            in: .world(name: NightModeHelper.name())
-        )
+        // Retained as a no-op for source compatibility. Floorp uses the
+        // curated Dark Reader extension for website darkening.
+    }
+
+    static func jsCallbackBuilder(_ enabled: Bool) -> String {
+        return "window.__firefox__.NightMode.setEnabled(\(enabled))"
     }
 
     @MainActor
     static func toggle(
         _ userDefaults: UserDefaultsInterface = UserDefaults.standard
     ) {
-        setNightMode(userDefaults, enabled: !NightModeHelper.isActivated())
+        setNightMode(userDefaults, enabled: false)
     }
 
     @MainActor
@@ -48,18 +45,20 @@ class NightModeHelper: TabContentScript {
         _ userDefaults: UserDefaultsInterface = UserDefaults.standard,
         enabled: Bool
     ) {
-        userDefaults.set(enabled, forKey: NightModeKeys.Status)
+        _ = enabled
+        userDefaults.set(false, forKey: NightModeKeys.Status)
         let windowManager: WindowManager = AppContainer.shared.resolve()
         for tabManager in windowManager.allWindowTabManagers() {
             for tab in tabManager.tabs {
-                tab.nightMode = enabled
-                tab.webView?.scrollView.indicatorStyle = enabled ? .white : .default
+                tab.nightMode = false
+                tab.webView?.scrollView.indicatorStyle = .default
             }
         }
     }
 
     static func isActivated(_ userDefaults: UserDefaultsInterface = UserDefaults.standard) -> Bool {
-        return userDefaults.bool(forKey: NightModeKeys.Status)
+        _ = userDefaults
+        return false
     }
 
     // MARK: - Temporary functions
@@ -71,13 +70,13 @@ class NightModeHelper: TabContentScript {
     static func turnOff(
         _ userDefaults: UserDefaultsInterface = UserDefaults.standard
     ) {
-        guard isActivated() else { return }
         setNightMode(userDefaults, enabled: false)
     }
 
     static func cleanNightModeDefaults(
         _ userDefaults: UserDefaultsInterface = UserDefaults.standard
     ) {
+        userDefaults.removeObject(forKey: NightModeKeys.Status)
         userDefaults.removeObject(forKey: NightModeKeys.DarkThemeEnabled)
     }
 }

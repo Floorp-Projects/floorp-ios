@@ -1893,9 +1893,13 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
             for: extensionID,
             expectedGeneration: retained.generation
         )
-        try await manager.updateGrants(proposed, authorization: currentAuthorization)
+        let committedResult = try await manager.updateGrants(
+            proposed,
+            authorization: currentAuthorization
+        )
         let committedRecord = await store.installedPackage(for: extensionID)
         let committed = try XCTUnwrap(committedRecord)
+        XCTAssertEqual(committedResult, committed)
         XCTAssertTrue(committed.grants.apiPermissions.contains(.tabs))
         await assertAsyncThrows {
             try await manager.updateGrants(proposed, authorization: currentAuthorization)
@@ -2637,7 +2641,8 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         let store = try FloorpWebExtensionPackageStore(
             profileIdentifier: "signed-bundled-catalog",
             isPrivateBrowsing: false,
-            directory: directory
+            directory: directory,
+            clock: { signing.now }
         )
         let manager = FloorpWebExtensionLivePackageManager(
             store: store,
@@ -2819,7 +2824,7 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         // A consent token captured before expiry cannot add an optional API
         // permission after the signed catalog lifetime ends.
         do {
-            try await pendingGrantUpdate.value
+            _ = try await pendingGrantUpdate.value
             XCTFail("Expired catalog must not commit a pending optional permission grant")
         } catch {
             XCTAssertEqual(error as? FloorpWebExtensionCatalogError, .expired)
@@ -3317,6 +3322,98 @@ final class FloorpWebExtensionPackageStoreTests: XCTestCase {
         XCTAssertFalse(cell.isShowingActivity)
         XCTAssertTrue(cell.isUserInteractionEnabled)
         XCTAssertEqual(cell.accessibilityValue, FloorpStrings.WebExtensions.enabled)
+    }
+
+    func testRichExtensionPromptShowsArtworkChoicesAndCurrentSelection() throws {
+        let iconData = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        let presentation = FloorpWebExtensionPromptPresentation(
+            title: FloorpStrings.WebExtensions.siteAccessForTitle(
+                name: "Dark Reader",
+                isPrivateBrowsing: false
+            ),
+            message: FloorpStrings.WebExtensions.siteAccessPromptMessage,
+            heroIcon: .extensionIcon(id: extensionID, data: iconData),
+            choices: [
+                .init(
+                    identifier: "deny",
+                    title: FloorpStrings.WebExtensions.noSites,
+                    detail: FloorpStrings.WebExtensions.noSitesDetail,
+                    icon: .system("hand.raised.slash.fill"),
+                    role: .destructive
+                ),
+                .init(
+                    identifier: "all",
+                    title: FloorpStrings.WebExtensions.allRequestedSitesChoice,
+                    detail: FloorpStrings.WebExtensions.allRequestedSites(1),
+                    icon: .system("globe.americas.fill"),
+                    role: .preferred,
+                    isSelected: true
+                )
+            ],
+            accessibilityIdentifier: "Floorp.WebExtensions.Prompt.Test"
+        )
+        let subject = FloorpWebExtensionPromptViewController(
+            presentation: presentation,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager(),
+            onChoice: { _ in }
+        )
+
+        subject.loadViewIfNeeded()
+
+        XCTAssertEqual(subject.view.accessibilityIdentifier, "Floorp.WebExtensions.Prompt.Test")
+        XCTAssertEqual(subject.displayedChoiceTitles, [
+            FloorpStrings.WebExtensions.noSites,
+            FloorpStrings.WebExtensions.allRequestedSitesChoice
+        ])
+        XCTAssertEqual(subject.displayedHeroIcon?.renderingMode, .alwaysOriginal)
+        let selectedButton = try XCTUnwrap(Self.allSubviews(in: subject.view).first {
+            $0.accessibilityIdentifier == "all"
+        } as? UIButton)
+        XCTAssertEqual(selectedButton.accessibilityValue, FloorpStrings.WebExtensions.currentSelection)
+        XCTAssertTrue(selectedButton.configuration?.subtitle?.contains(
+            FloorpStrings.WebExtensions.currentSelection
+        ) == true)
+    }
+
+    func testRichExtensionPromptDeliversChoiceAfterDismissalExactlyOnce() throws {
+        let presentation = FloorpWebExtensionPromptPresentation(
+            title: "Site access",
+            message: "Choose access",
+            heroIcon: .system("puzzlepiece.extension.fill"),
+            choices: [.init(
+                identifier: "all",
+                title: "All requested sites",
+                detail: "Every requested site",
+                icon: .system("globe.americas.fill")
+            )],
+            accessibilityIdentifier: "Floorp.WebExtensions.Prompt.ChoiceTest"
+        )
+        var selectedIdentifiers = [String]()
+        var dismissalCount = 0
+        let subject = FloorpWebExtensionPromptViewController(
+            presentation: presentation,
+            windowUUID: .XCTestDefaultUUID,
+            themeManager: MockThemeManager(),
+            onChoice: { selectedIdentifiers.append($0) },
+            onDismiss: { dismissalCount += 1 }
+        )
+        subject.loadViewIfNeeded()
+        let choiceButton = try XCTUnwrap(Self.allSubviews(in: subject.view).first {
+            $0.accessibilityIdentifier == "all"
+        } as? UIButton)
+
+        choiceButton.sendActions(for: .touchUpInside)
+        choiceButton.sendActions(for: .touchUpInside)
+
+        XCTAssertTrue(selectedIdentifiers.isEmpty)
+        XCTAssertEqual(dismissalCount, 0)
+        subject.viewDidDisappear(false)
+        subject.viewDidDisappear(false)
+        XCTAssertEqual(selectedIdentifiers, ["all"])
+        XCTAssertEqual(dismissalCount, 1)
     }
 
     func testCatalogArchiveSelectsOnlySafeManifestDeclaredIconData() throws {

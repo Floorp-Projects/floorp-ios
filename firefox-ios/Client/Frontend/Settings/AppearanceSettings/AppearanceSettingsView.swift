@@ -56,9 +56,6 @@ struct AppearanceSettingsView: View {
                     cornerRadius: UX.cornerRadius
                 )
 
-                // Section for toggling website appearance (e.g., dark mode).
-                WebsiteAppearanceSection(theme: currentTheme, onChange: setWebsiteDarkMode, cornerRadius: UX.cornerRadius)
-
                 PageZoomSection(theme: currentTheme, cornerRadius: UX.cornerRadius) {
                     delegate?.pressedPageZoom()
                 }
@@ -100,28 +97,6 @@ struct AppearanceSettingsView: View {
         }
     }
 
-    private struct WebsiteAppearanceSection: View {
-        let theme: Theme?
-        let onChange: (Bool) -> Void
-        let cornerRadius: CGFloat
-
-        var body: some View {
-            GenericSectionView(
-                theme: theme,
-                title: String.WebsiteAppearanceSectionHeader,
-                description: String.WebsiteDarkModeDescription,
-                identifier: AccessibilityIdentifiers.Settings.Appearance.websiteAppearanceSectionTitle
-            ) {
-                DarkModeToggleView(
-                    theme: theme,
-                    isEnabled: NightModeHelper.isActivated(),
-                    onChange: onChange
-                )
-                .modifier(SectionStyle(theme: theme, cornerRadius: cornerRadius))
-            }
-        }
-    }
-
     private struct PageZoomSection: View {
         let theme: Theme?
         let cornerRadius: CGFloat
@@ -152,17 +127,6 @@ struct AppearanceSettingsView: View {
         themeManager.setSystemTheme(isOn: isAutomatic)
         if !isAutomatic {
             themeManager.setManualTheme(to: selectedOption == .light ? .light : .dark)
-        }
-    }
-
-    /// Toggles the website dark mode.
-    /// - Parameter isOn: A Boolean indicating whether dark mode is enabled for websites.
-    private func setWebsiteDarkMode(_ isOn: Bool) {
-        NightModeHelper.toggle()
-        if NightModeHelper.isActivated() {
-            // TODO(FXIOS-11584): Add telemetry here
-        } else {
-            // TODO(FXIOS-11584): Add telemetry here
         }
     }
 }
