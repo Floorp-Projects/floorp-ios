@@ -541,6 +541,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 @MainActor
 private final class FloorpContentBlockerTestTab: ContentBlockerTab {
     let webView: WKWebView
+    let isPrivate = false
 
     init(webView: WKWebView) {
         self.webView = webView
