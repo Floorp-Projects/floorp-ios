@@ -46,8 +46,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertTrue(context.isLoaded)
         XCTAssertNotNil(context.optionsPageURL)
         let action = try XCTUnwrap(context.action(for: nil))
+        // Materializing an unpresented popup view controller makes WebKit tear down its
+        // process pool asynchronously and can crash the next WebKit test on iOS 26.2.
         XCTAssertTrue(action.presentsPopup)
-        XCTAssertNotNil(action.popupViewController)
         XCTAssertTrue(webExtension.hasBackgroundContent)
         XCTAssertTrue(webExtension.hasInjectedContent)
         XCTAssertTrue(webExtension.requestedPermissions.contains(.storage))
@@ -348,8 +349,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
         XCTAssertTrue(context.isLoaded)
         let action = try XCTUnwrap(context.action(for: nil))
+        // Popup presentation itself is exercised by the host and action-picker tests.
         XCTAssertTrue(action.presentsPopup)
-        XCTAssertNotNil(action.popupViewController)
         XCTAssertNotNil(context.optionsPageURL)
     }
 
