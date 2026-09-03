@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import GCDWebServers
 import UIKit
@@ -88,6 +88,38 @@ final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
 }
 
 @MainActor
+private struct FloorpUBOLReleaseBrowserEnvironment {
+    let normalWebView: WKWebView
+    let privateWebView: WKWebView
+    let normalTab: FloorpUBOLDiagnosticTab
+    let privateTab: FloorpUBOLDiagnosticTab
+    let normalWindow: FloorpUBOLDiagnosticWindow
+    let privateWindow: FloorpUBOLDiagnosticWindow
+    let hostController: UIViewController
+    let hostWindow: UIWindow
+    let delegate: FloorpUBOLDiagnosticControllerDelegate
+
+    func open(using controller: WKWebExtensionController) {
+        controller.delegate = delegate
+        controller.didOpenWindow(normalWindow)
+        controller.didOpenTab(normalTab)
+        controller.didOpenWindow(privateWindow)
+        controller.didOpenTab(privateTab)
+        controller.didFocusWindow(normalWindow)
+        controller.didActivateTab(normalTab, previousActiveTab: nil)
+    }
+
+    func close(using controller: WKWebExtensionController) {
+        controller.didCloseTab(normalTab, windowIsClosing: true)
+        controller.didCloseWindow(normalWindow)
+        controller.didCloseTab(privateTab, windowIsClosing: true)
+        controller.didCloseWindow(privateWindow)
+        controller.delegate = nil
+        hostWindow.isHidden = true
+    }
+}
+
+@MainActor
 private final class FloorpUBOLReleaseAcceptanceSession {
     private static let defaultRulesets = ["ublock-filters", "easylist", "easyprivacy"]
     private static let japaneseRuleset = "jpn-1"
@@ -166,63 +198,15 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let server = try Self.makeServer()
         defer { server.stop() }
 
-        let normalConfiguration = WKWebViewConfiguration()
-        normalConfiguration.websiteDataStore = websiteDataStore
-        normalConfiguration.webExtensionController = controller
-        let normalWebView = WKWebView(frame: .zero, configuration: normalConfiguration)
-        let normalTab = FloorpUBOLDiagnosticTab(webView: normalWebView)
-        let normalWindow = FloorpUBOLDiagnosticWindow(tab: normalTab, isPrivateBrowsing: false)
-        normalTab.diagnosticWindow = normalWindow
-
-        let privateConfiguration = WKWebViewConfiguration()
-        privateConfiguration.websiteDataStore = .nonPersistent()
-        privateConfiguration.webExtensionController = controller
-        let privateWebView = WKWebView(frame: .zero, configuration: privateConfiguration)
-        let privateTab = FloorpUBOLDiagnosticTab(webView: privateWebView)
-        let privateWindow = FloorpUBOLDiagnosticWindow(tab: privateTab, isPrivateBrowsing: true)
-        privateTab.diagnosticWindow = privateWindow
-
-        let webViewHostController = UIViewController()
-        let hostFrame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        webViewHostController.view.frame = hostFrame
-        normalWebView.frame = webViewHostController.view.bounds
-        normalWebView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        privateWebView.frame = webViewHostController.view.bounds
-        privateWebView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        privateWebView.isHidden = true
-        webViewHostController.view.addSubview(normalWebView)
-        webViewHostController.view.addSubview(privateWebView)
-        let webViewHostWindow: UIWindow
-        if let windowScene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first {
-            webViewHostWindow = UIWindow(windowScene: windowScene)
-            webViewHostWindow.frame = hostFrame
-        } else {
-            webViewHostWindow = UIWindow(frame: hostFrame)
-        }
-        webViewHostWindow.rootViewController = webViewHostController
-        webViewHostWindow.makeKeyAndVisible()
-
-        let delegate = FloorpUBOLDiagnosticControllerDelegate(
-            windows: [normalWindow, privateWindow],
-            focusedWindow: normalWindow
-        )
-        controller.delegate = delegate
-        for (window, tab) in [(normalWindow, normalTab), (privateWindow, privateTab)] {
-            controller.didOpenWindow(window)
-            controller.didOpenTab(tab)
-        }
-        controller.didFocusWindow(normalWindow)
-        controller.didActivateTab(normalTab, previousActiveTab: nil)
-
-        defer {
-            controller.didCloseTab(normalTab, windowIsClosing: true)
-            controller.didCloseWindow(normalWindow)
-            controller.didCloseTab(privateTab, windowIsClosing: true)
-            controller.didCloseWindow(privateWindow)
-            controller.delegate = nil
-            webViewHostWindow.isHidden = true
-        }
+        let browser = makeBrowserEnvironment()
+        browser.open(using: controller)
+        defer { browser.close(using: controller) }
+        let normalWebView = browser.normalWebView
+        let privateWebView = browser.privateWebView
+        let normalTab = browser.normalTab
+        let privateTab = browser.privateTab
+        let normalWindow = browser.normalWindow
+        let privateWindow = browser.privateWindow
 
         print("FLOORP_UBOL_RELEASE_GATE optimal-config")
         let optimalLevel = try await configureOptimalMode()
@@ -274,7 +258,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let reload = try await verifyUnloadReloadPreservesState()
         print("FLOORP_UBOL_RELEASE_GATE report")
 
-        withExtendedLifetime((delegate, webViewHostController, webViewHostWindow)) {}
+        withExtendedLifetime(browser) {}
         return FloorpUBOLReleaseAcceptanceReport(
             schemaVersion: 1,
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
@@ -304,6 +288,60 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             privateBrowsing: privateBrowsing,
             unloadReload: reload,
             contextErrors: context.errors.map(FloorpUBOLDNRErrorRecord.init)
+        )
+    }
+
+    private func makeBrowserEnvironment() -> FloorpUBOLReleaseBrowserEnvironment {
+        let normalConfiguration = WKWebViewConfiguration()
+        normalConfiguration.websiteDataStore = websiteDataStore
+        normalConfiguration.webExtensionController = controller
+        let normalWebView = WKWebView(frame: .zero, configuration: normalConfiguration)
+        let normalTab = FloorpUBOLDiagnosticTab(webView: normalWebView)
+        let normalWindow = FloorpUBOLDiagnosticWindow(tab: normalTab, isPrivateBrowsing: false)
+        normalTab.diagnosticWindow = normalWindow
+
+        let privateConfiguration = WKWebViewConfiguration()
+        privateConfiguration.websiteDataStore = .nonPersistent()
+        privateConfiguration.webExtensionController = controller
+        let privateWebView = WKWebView(frame: .zero, configuration: privateConfiguration)
+        let privateTab = FloorpUBOLDiagnosticTab(webView: privateWebView)
+        let privateWindow = FloorpUBOLDiagnosticWindow(tab: privateTab, isPrivateBrowsing: true)
+        privateTab.diagnosticWindow = privateWindow
+
+        let hostController = UIViewController()
+        let hostFrame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        hostController.view.frame = hostFrame
+        for webView in [normalWebView, privateWebView] {
+            webView.frame = hostController.view.bounds
+            webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            hostController.view.addSubview(webView)
+        }
+        privateWebView.isHidden = true
+
+        let hostWindow: UIWindow
+        if let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first {
+            hostWindow = UIWindow(windowScene: windowScene)
+            hostWindow.frame = hostFrame
+        } else {
+            hostWindow = UIWindow(frame: hostFrame)
+        }
+        hostWindow.rootViewController = hostController
+        hostWindow.makeKeyAndVisible()
+
+        return FloorpUBOLReleaseBrowserEnvironment(
+            normalWebView: normalWebView,
+            privateWebView: privateWebView,
+            normalTab: normalTab,
+            privateTab: privateTab,
+            normalWindow: normalWindow,
+            privateWindow: privateWindow,
+            hostController: hostController,
+            hostWindow: hostWindow,
+            delegate: FloorpUBOLDiagnosticControllerDelegate(
+                windows: [normalWindow, privateWindow],
+                focusedWindow: normalWindow
+            )
         )
     }
 
@@ -1789,8 +1827,7 @@ private extension WKWebView {
         contentWorld: WKContentWorld,
         timeoutNanoseconds: UInt64 = 60_000_000_000
     ) async throws -> Any? {
-        let boxed: FloorpUBOLJavaScriptValue = try await withCheckedThrowingContinuation {
-            continuation in
+        let boxed: FloorpUBOLJavaScriptValue = try await withCheckedThrowingContinuation { continuation in
             let gate = FloorpUBOLJavaScriptCallGate(continuation: continuation)
             callAsyncJavaScript(
                 functionBody,

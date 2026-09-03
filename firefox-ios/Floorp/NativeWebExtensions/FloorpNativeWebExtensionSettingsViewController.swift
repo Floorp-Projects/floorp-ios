@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
 import UIKit
@@ -201,7 +201,8 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
             sections.append("Optional access will be requested only when the extension needs it.")
         }
         sections.append(
-            "Private browsing remains off until you explicitly enable it. Extension settings and storage remain in this profile."
+            "Private browsing remains off until you explicitly enable it. "
+                + "Extension settings and storage remain in this profile."
         )
         let verb = preview.isUpdate ? "Update" : "Install"
         let alert = UIAlertController(

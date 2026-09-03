@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import GCDWebServers
 import WebKit
@@ -287,63 +287,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         try FileManager.default.createDirectory(at: extensionRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
-        let manifest: [String: Any] = [
-            "manifest_version": 3,
-            "name": "Floorp DNR Acceptance",
-            "description": "Exercises native declarative network request handling.",
-            "version": "1.0",
-            "permissions": [
-                "declarativeNetRequest",
-                "declarativeNetRequestWithHostAccess"
-            ],
-            "host_permissions": ["<all_urls>"],
-            "declarative_net_request": [
-                "rule_resources": [[
-                    "id": "floorp-smoke",
-                    "enabled": true,
-                    "path": "rules.json"
-                ]]
-            ],
-            "web_accessible_resources": [[
-                "resources": ["one.svg"],
-                "matches": ["<all_urls>"]
-            ]]
-        ]
-        let rules: [[String: Any]] = [
-            [
-                "id": 1,
-                "priority": 1,
-                "action": ["type": "block"],
-                "condition": [
-                    "urlFilter": "/floorp-blocked.js",
-                    "resourceTypes": ["script"]
-                ]
-            ],
-            [
-                "id": 2,
-                "priority": 1,
-                "action": [
-                    "type": "redirect",
-                    "redirect": ["extensionPath": "/one.svg"]
-                ],
-                "condition": [
-                    "urlFilter": "/floorp-redirected.svg",
-                    "resourceTypes": ["image"]
-                ]
-            ]
-        ]
-        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
-            .write(to: extensionRoot.appendingPathComponent("manifest.json"), options: .atomic)
-        try JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])
-            .write(to: extensionRoot.appendingPathComponent("rules.json"), options: .atomic)
-        try Data("<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>".utf8)
-            .write(to: extensionRoot.appendingPathComponent("one.svg"), options: .atomic)
-
-        let webExtension = try await WKWebExtension(resourceBaseURL: extensionRoot)
-        XCTAssertTrue(
-            webExtension.errors.isEmpty,
-            webExtension.errors.map(\.localizedDescription).joined(separator: "\n")
-        )
+        let webExtension = try await makeDNRTestExtension(at: extensionRoot)
         let context = WKWebExtensionContext(for: webExtension)
         context.uniqueIdentifier = "app.floorp.dnr-acceptance.\(UUID().uuidString)"
         context.baseURL = URL(string: "webkit-extension://dnr-acceptance.floorp.internal/")!
@@ -406,6 +350,67 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
         withExtendedLifetime(testDelegate) {}
+    }
+
+    private func makeDNRTestExtension(at extensionRoot: URL) async throws -> WKWebExtension {
+        let manifest: [String: Any] = [
+            "manifest_version": 3,
+            "name": "Floorp DNR Acceptance",
+            "description": "Exercises native declarative network request handling.",
+            "version": "1.0",
+            "permissions": [
+                "declarativeNetRequest",
+                "declarativeNetRequestWithHostAccess"
+            ],
+            "host_permissions": ["<all_urls>"],
+            "declarative_net_request": [
+                "rule_resources": [[
+                    "id": "floorp-smoke",
+                    "enabled": true,
+                    "path": "rules.json"
+                ]]
+            ],
+            "web_accessible_resources": [[
+                "resources": ["one.svg"],
+                "matches": ["<all_urls>"]
+            ]]
+        ]
+        let rules: [[String: Any]] = [
+            [
+                "id": 1,
+                "priority": 1,
+                "action": ["type": "block"],
+                "condition": [
+                    "urlFilter": "/floorp-blocked.js",
+                    "resourceTypes": ["script"]
+                ]
+            ],
+            [
+                "id": 2,
+                "priority": 1,
+                "action": [
+                    "type": "redirect",
+                    "redirect": ["extensionPath": "/one.svg"]
+                ],
+                "condition": [
+                    "urlFilter": "/floorp-redirected.svg",
+                    "resourceTypes": ["image"]
+                ]
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+            .write(to: extensionRoot.appendingPathComponent("manifest.json"), options: .atomic)
+        try JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])
+            .write(to: extensionRoot.appendingPathComponent("rules.json"), options: .atomic)
+        try Data("<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>".utf8)
+            .write(to: extensionRoot.appendingPathComponent("one.svg"), options: .atomic)
+
+        let webExtension = try await WKWebExtension(resourceBaseURL: extensionRoot)
+        XCTAssertTrue(
+            webExtension.errors.isEmpty,
+            webExtension.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        return webExtension
     }
 
     private func compileContentRuleList(

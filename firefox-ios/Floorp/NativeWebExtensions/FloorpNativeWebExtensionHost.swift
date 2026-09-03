@@ -1,6 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Common
 import Foundation
@@ -803,15 +803,15 @@ final class FloorpNativeWebExtensionHost: NSObject {
             uniqueKeysWithValues: record.grantedPermissions
                 .filter { $0.expiration > Date() }
                 .map {
-                (WKWebExtension.Permission(rawValue: $0.value), $0.expiration)
-            }
+                    (WKWebExtension.Permission(rawValue: $0.value), $0.expiration)
+                }
         )
         context.deniedPermissions = Dictionary(
             uniqueKeysWithValues: record.deniedPermissions
                 .filter { $0.expiration > Date() }
                 .map {
-                (WKWebExtension.Permission(rawValue: $0.value), $0.expiration)
-            }
+                    (WKWebExtension.Permission(rawValue: $0.value), $0.expiration)
+                }
         )
         context.grantedPermissionMatchPatterns = Dictionary(
             uniqueKeysWithValues: record.grantedMatchPatterns.compactMap { decision in
