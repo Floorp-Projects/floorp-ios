@@ -1,52 +1,27 @@
-Floorp for iOS — Extension management UI candidate
+Floorp 0.3.0 — Native WebExtensions release candidate
 
-This candidate contains one signed, app-bundled extension: Dark Reader. In a
-normal profile, open Settings > Extensions and verify the extension screen is
-easy to understand with Dynamic Type and VoiceOver. It must follow Firefox's
-grouped settings style. Dark Reader must appear as a standard disclosure row
-using the icon bundled with the extension, together with its name, version,
-description, and clear Available, Enabled, Disabled, Update Available, or
-Revoked status as applicable. Loading, empty, error, retry, and in-progress
-states must not look tappable or permit a duplicate action.
+This build replaces Floorp's experimental extension runtime with Apple's public
+WKWebExtension APIs. It contains two optional, app-bundled extensions: Dark
+Reader 4.9.129 and uBlock Origin Lite 2026.825.1619. No sign-in is required.
 
-Tap the available Dark Reader row. The install review must show the Dark
-Reader icon and identity, publisher/source/license information, requested
-capabilities, privacy/profile explanations, and the warning that site access
-starts off. Cancel once and confirm nothing is installed. Open it again, tap
-Install once, and confirm progress is visible and only one copy is installed.
-After installation, verify the management screen opens with guidance to choose
-Site Access; installation must not silently grant access to every website.
+In Settings > Extensions, install Dark Reader. Confirm that page appearance,
+its action popup and options work; disabling or uninstalling it immediately
+restores open pages; enabling or reinstalling works; and its state persists
+after restarting Floorp.
 
-On a non-sensitive approved HTTP(S) page, open Dark Reader from the browser
-action UI and grant access to the current site. Confirm the page reloads and
-becomes dark. The popup must show the real hostname, not `about:`, and must not
-claim an ordinary page is browser-protected. Toggle Off and On while the popup
-stays open; both the page and popup status must update. Tap Dark Reader
-Settings, change an option, reload, and confirm the authenticated bundled
-settings page and saved choice work.
+On iOS 18.6 or later, install uBlock Origin Lite. On non-sensitive test sites,
+confirm that ad/tracker requests and cosmetic elements covered by its official
+rules are removed. Test its popup and dashboard, Japanese filter-list
+selection, disable/enable, uninstall/reinstall, and persistence after restart.
+The upstream Safari package intentionally does not show its strict-block
+interstitial; ordinary request blocking and cosmetic filtering should still
+work. On iOS 18.4 or 18.5, uBlock Origin Lite must be shown as requiring iOS
+18.6 while Dark Reader remains available.
 
-Return to Settings > Extensions, open the installed Dark Reader row, and
-exercise each available management action: disable/enable, options, normal
-site access, Private Browsing opt-in and private site access, network
-protection, website, update history, update (if offered), and uninstall.
-Buttons and status must update after each action without a stuck spinner,
-duplicate sheet, crash, or stale card. Disabling must stop the popup and page
-transformation. Re-enabling must restore them without changing generation.
-After uninstall and reinstall, site access must again start off and removed
-extension-owned settings must not return.
+Private Browsing access must remain off until separately enabled. Before
+opt-in, confirm neither extension affects private tabs. After opt-in, test both
+without leaking private tabs, grants, or extension state into normal browsing.
 
-Repeat the install, management, site-access, popup, Settings, and uninstall
-paths in Private Browsing. Private use is opt-in and profile-local. Normal
-grants, storage, alarms, and runtime state must not leak into private browsing,
-or back from private to normal browsing.
-
-Release-integrity checks: Settings > Extensions must show exactly one catalog
-package. There must be no Chrome Web Store, Firefox Add-ons, arbitrary URL,
-ZIP, XPI, CRX, share-sheet, or local-file installation path, and Dark Reader
-must not fetch remote code, configuration, updates, or filter lists. Stop and
-report a mismatch, extra item, permission bypass, unexpected network activity,
-cross-profile leak, crash, hang, or version/build mismatch.
-
-Repeat the core checks in English and Japanese, with larger text and VoiceOver.
-Use only approved non-sensitive pages and no personal credentials or
-production data.
+There must be no arbitrary ZIP, XPI, CRX, URL, or extension-store installation
+path. Please also report regressions in tabs, navigation history, downloads,
+Reader Mode, tracking protection, Notes, or Notes Sync.
