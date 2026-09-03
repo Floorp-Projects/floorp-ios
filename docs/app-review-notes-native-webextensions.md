@@ -30,80 +30,70 @@ Replace the bracketed build-specific values before submission.
 
 ```text
 Floorp [VERSION] ([BUILD]) includes two optional, user-installed WebExtensions: Dark Reader
-and uBlock Origin Lite. They are not downloaded after review: the reviewed extension ZIPs,
-their JavaScript/CSS, filter rules, license notices, and provenance records are all
-self-contained in this app bundle. Floorp does not provide arbitrary ZIP import or a remote
-extension catalog.
+and uBlock Origin Lite. Floorp does not download WebExtension code, accept arbitrary ZIPs,
+or provide a remote extension catalog. The reviewed ZIPs, JavaScript/CSS, rules, license
+notices, and provenance records are self-contained in this app bundle.
 
 Implementation:
-- Floorp uses only Apple's public WKWebExtension, WKWebExtensionContext, and
-  WKWebExtensionController APIs.
-- Each extension is disabled until the user chooses Settings > Extensions > the extension >
-  Install and confirms the displayed source, license, permissions, and website access.
-- Private Browsing access is off by default and requires a separate explicit user action.
-- Dark Reader's <all_urls> access is used to apply the user's selected dark appearance to
-  visited pages. uBlock Origin Lite's <all_urls> access is used so WebKit can apply
-  declarative network rules, cosmetic CSS, and content-filtering scripts. Processing is
-  performed locally by WebKit.
+- Floorp uses only Apple's public WKWebExtension APIs.
+- Extensions remain disabled until the user opens Settings > Extensions, selects one, taps
+  Install, and confirms its source, license, permissions, and website access.
+- Private Browsing access is off by default and requires a separate user action.
+- Website access lets Dark Reader apply the selected appearance and lets WebKit locally apply
+  uBlock Origin Lite's declarative rules, cosmetic CSS, and content-filtering scripts.
 
 Bundled third-party open-source components:
-- Name: Dark Reader
-- Publisher: Dark Reader Ltd. and contributors
-- Version/release: 4.9.129 / v4.9.129
-- License: MIT
-- Distribution: the unmodified official Chrome MV3 release asset
-- Asset: darkreader-chrome-mv3-4.9.129.zip
-- SHA-256: 20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64
-- Upstream release and asset:
-  https://github.com/darkreader/darkreader/releases/tag/v4.9.129
-- Upstream corresponding source commit:
-  https://github.com/darkreader/darkreader/tree/c2a707302a39b8047543712e9c582bac07835d34
-
-- Name: uBlock Origin Lite
-- Author: Raymond Hill and contributors
-- Version/release: 2026.825.1619
-- License: GNU General Public License v3.0 or later (GPL-3.0-or-later)
-- Distribution: the unmodified official Safari release asset
-- Asset: uBOLite_2026.825.1619.safari.zip
-- SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
-- Upstream release and asset:
-  https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.825.1619
-- Upstream corresponding source commit:
-  https://github.com/uBlockOrigin/uBOL-home/tree/080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
+- Dark Reader 4.9.129, MIT, unmodified official Chrome MV3 asset.
+  SHA-256: 20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64
+  Release: https://github.com/darkreader/darkreader/releases/tag/v4.9.129
+  Source: https://github.com/darkreader/darkreader/tree/c2a707302a39b8047543712e9c582bac07835d34
+- uBlock Origin Lite 2026.825.1619, GNU GPL v3.0 or later, unmodified official
+  Safari asset.
+  SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
+  Release: https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.825.1619
+  Source: https://github.com/uBlockOrigin/uBOL-home/tree/080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
 - Floorp source for this submitted binary:
   https://github.com/Floorp-Projects/floorp-ios/tree/[RELEASE_TAG_OR_FULL_COMMIT]
-- The Dark Reader MIT notice and complete uBlock Origin Lite GPL text are separate resources
-  in the app bundle and retained in Floorp's public source tree beside their assets. The
-  official uBlock Origin Lite ZIP also contains its complete LICENSE.txt.
+- The MIT notice and complete GPL text are app resources and public beside the assets above.
+  uBlock Origin Lite's official ZIP also contains LICENSE.txt. Floorp publishes the complete
+  corresponding source for this binary at the Floorp URL above.
 
 Compatibility and known limitation:
-- The app's native extension host and Dark Reader are available from iOS 18.4. This uBlock
-  Origin Lite package declares Safari/iOS 18.6 as its strict minimum and Floorp enforces
-  that value.
-- Standard network blocking, dynamic/session rules, cosmetic filtering, Japanese rules,
-  action popup, options, normal browsing, and explicitly authorized Private Browsing were
-  tested with the bundled asset.
-- uBlock Origin Lite's strict-block interstitial is disabled by its official Safari build
-  because of an upstream WebKit limitation. Normal request blocking and cosmetic filtering
-  remain active. Floorp has not modified the GPL package to bypass this limitation.
+- Floorp and Dark Reader require iOS 18.4. This uBlock Origin Lite package requires iOS 18.6,
+  which Floorp enforces.
+- Its official Safari build disables only the strict-block interstitial due to an upstream
+  WebKit limitation. Request blocking and cosmetic filtering remain active. Floorp has not
+  modified the GPL package to bypass that limitation.
 
 No account or sign-in is required for review.
 
 Review steps on iOS 18.6 or later:
 1. Launch Floorp and open Settings > Extensions.
-2. Under "Available from Floorp", select "uBlock Origin Lite".
-3. Review the source/license/permission sheet and tap Install.
-4. Browse a normal web page, then open the Floorp menu > Extensions > uBlock Origin Lite
-   to inspect its action popup.
-5. Return to Settings > Extensions > uBlock Origin Lite > Options to inspect its dashboard
-   and filter-list controls.
-6. Private Browsing remains unavailable to the extension unless "Allow in Private
-   Browsing" is explicitly selected from the installed-extension actions.
-7. Dark Reader can be independently installed from Settings > Extensions and inspected from
-   the same Floorp menu without an account.
+2. Select uBlock Origin Lite, review the sheet, and tap Install.
+3. Browse a page, then open Floorp menu > Extensions > uBlock Origin Lite for its popup.
+4. Open Settings > Extensions > uBlock Origin Lite > Options for its dashboard.
+5. Private Browsing remains unavailable until "Allow in Private Browsing" is selected.
+6. Dark Reader can be installed and inspected through the same menus.
 
-Please contact us through App Store Connect if you need a source archive, test details, or
-additional licensing information for this build.
+Please contact us through App Store Connect for additional source or license information.
+```
+
+## Paste into TestFlight — What to Test
+
+```text
+Floorp 0.3.0 replaces its experimental extension runtime with Apple's native WKWebExtension
+engine. In Settings > Extensions, install Dark Reader and confirm page appearance, popup,
+options, disable/enable, uninstall/reinstall, and persistence after restarting Floorp.
+
+On iOS 18.6 or later, install uBlock Origin Lite and test ordinary ad/tracker blocking,
+cosmetic filtering, its popup and dashboard, Japanese filter-list selection, and state after
+restart. On iOS 18.4/18.5, uBlock Origin Lite should be shown as requiring iOS 18.6 while Dark
+Reader remains available.
+
+Private Browsing access must remain off until separately enabled. Confirm extensions do not
+affect private tabs before opt-in, then test them after opt-in without leaking private tabs or
+site access into normal browsing. Please also report regressions in tabs, downloads, Reader
+Mode, tracking protection, Notes, or Notes Sync. No sign-in is required for extension testing.
 ```
 
 ## Release evidence retained in the repository

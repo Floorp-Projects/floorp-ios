@@ -17,7 +17,7 @@ context load、content script による通常ページの暗色化、native acti
 復元を確認した。最小 DNR 拡張による block/redirect、registry/rollback/history、Firefox
 追跡防止と WebExtension 所有 content rule の共存も integration test で確認している。
 
-公式 uBOL Safari ZIP 2026.825.1619 は無変更のまま production catalog に掲載した。
+公式 uBOL Safari ZIP 2026.825.1619 は無変更のまま app-bundled catalog に掲載した。
 SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
 upstream source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。package の宣言どおり iOS 18.6 未満では利用不可にする。
@@ -78,7 +78,7 @@ test host、UI test target は 18.4 に揃える。
 | permissions / host access | WebKit context + Floorp UI | 同意取得、保存、復元 |
 | tabs / windows | Floorp adapter | 実タブ操作と lifecycle 通知 |
 | action popup / options | WebKit + Floorp presentation | Floorp UI から表示 |
-| package trust / catalog | Floorp | 署名済み metadata、digest、配布方針 |
+| package trust / bundled catalog | Floorp | app code signature、固定 digest、provenance、配布方針 |
 | install/update/uninstall transaction | Floorp | ZIP の staging と registry commit |
 
 `WKWebExtension` は WebExtension ストアや Floorp の配布署名サービスではない。
@@ -88,7 +88,7 @@ ZIP を実行可能な WebExtension として解釈する部分は WebKit が担
 ## 3. 目標構成
 
 ```text
-Floorp catalog / package ZIP
+Floorp app-bundled catalog / package ZIP
            |
            v
 FloorpWebExtensionInstaller ---- FloorpWebExtensionRegistry
@@ -337,13 +337,13 @@ enabled state を表示する。ユーザーが押したら `context.performActi
 
 | source | v1 | 信頼根拠 |
 | --- | --- | --- |
-| app bundle の reviewed ZIP | 有効 | app code signature + catalog の SHA-256 |
-| Floorp の署名済み remote catalog | 実装点のみ確保、既定無効 | catalog signature + ZIP digest + review policy |
+| app bundle の reviewed ZIP | 有効 | app code signature + catalog の固定 SHA-256 |
+| remote catalog | 未提供 | v1 binary に download、更新、install 経路を持たせない |
 | ユーザーが任意 ZIP を import | 無効 | 配布・App Review・安全審査を別途設計するまで不可 |
 
 Floorp は ZIP を自前で展開して manifest を実行しない。
 `WKWebExtension(resourceBaseURL:)` へ ZIP の file URL を直接渡す。
-Floorp 側の事前処理は source、署名付き metadata、digest、総サイズ、ファイル形式の
+Floorp 側の事前処理は app-bundled source、固定 metadata、digest、総サイズ、ファイル形式の
 上限確認に限定する。
 
 ### 8.2 install transaction
@@ -840,7 +840,7 @@ FloorpWebContentPolicyCoordinator
 | uBOL minimum OS | package 宣言どおり iOS 18.6 |
 | legacy fallback | なし |
 | arbitrary ZIP import | v1 では無効 |
-| remote catalog | code path のみ設計し、承認まで無効 |
+| remote catalog | v1 では未提供 |
 | Dark Reader default install | なし、catalog から明示 install |
 | native messaging | 無効 |
 
