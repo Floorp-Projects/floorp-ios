@@ -1199,25 +1199,27 @@ enum FloorpStrings {
             value: "Profiles",
             comment: "Section heading for extension browsing-profile behavior"
         )
-        static let siteAccessStartsOffTitle = string(
-            "Floorp.WebExtensions.SiteAccessStartsOffTitle.v1",
-            value: "Site access starts off",
-            comment: "Install disclosure title explaining the default site-access state"
+        static let siteAccessGrantedTitle = string(
+            "Floorp.WebExtensions.SiteAccessGrantedTitle.v1",
+            value: "Required website access",
+            comment: "Install disclosure title explaining that required website access is granted"
         )
-        static let siteAccessStartsOffMessage = string(
-            "Floorp.WebExtensions.SiteAccessStartsOffMessage.v1",
-            value: "After adding the extension, choose the sites where it may read or change content.",
-            comment: "Install disclosure explaining how to enable extension site access"
+        static let siteAccessGrantedMessage = string(
+            "Floorp.WebExtensions.SiteAccessGrantedMessage.v1",
+            value: "Adding this extension grants access to the required websites listed below. "
+                + "You can review or change access later.",
+            comment: "Install disclosure explaining required website access"
         )
-        static let siteAccessPreservedTitle = string(
-            "Floorp.WebExtensions.SiteAccessPreservedTitle.v1",
-            value: "Site choices stay unchanged",
-            comment: "Update disclosure title explaining that existing site-access choices are preserved"
+        static let siteAccessUpdateTitle = string(
+            "Floorp.WebExtensions.SiteAccessUpdateTitle.v1",
+            value: "Website access after update",
+            comment: "Update disclosure title explaining required website access"
         )
-        static let siteAccessPreservedMessage = string(
-            "Floorp.WebExtensions.SiteAccessPreservedMessage.v1",
-            value: "Your existing choices are preserved. Newly requested sites stay off until you allow them.",
-            comment: "Update disclosure explaining preserved and newly requested extension site access"
+        static let siteAccessUpdateMessage = string(
+            "Floorp.WebExtensions.SiteAccessUpdateMessage.v1",
+            value: "Updating preserves existing website access and grants access to any newly required websites "
+                + "listed below. You can review or change access later.",
+            comment: "Update disclosure explaining preserved and newly required website access"
         )
         static let privateBrowsingOptInTitle = string(
             "Floorp.WebExtensions.PrivateBrowsingOptInTitle.v1",
@@ -1234,6 +1236,11 @@ enum FloorpStrings {
             value: "Not supported on this version of Floorp",
             comment: "Status for an extension or capability that this Floorp version cannot use"
         )
+        private static let requiresOperatingSystemFormat = string(
+            "Floorp.WebExtensions.RequiresOperatingSystem.v1",
+            value: "Requires %1$@ or later",
+            comment: "Unavailable extension status; argument is the minimum operating-system version"
+        )
         static let privateAccessNotAllowed = string(
             "Floorp.WebExtensions.PrivateAccessNotAllowed.v1",
             value: "Not allowed",
@@ -1248,6 +1255,16 @@ enum FloorpStrings {
             "Floorp.WebExtensions.StandardBrowsingEnabledMessage.v1",
             value: "Allow this extension to run in standard browsing.",
             comment: "Detail shown beside the standard-browsing enabled switch"
+        )
+        static let standardBrowsingDisableMessage = string(
+            "Floorp.WebExtensions.StandardBrowsingDisableMessage.v1",
+            value: "Stop this extension from running in standard browsing.",
+            comment: "Detail shown beside the action that disables an extension in standard browsing"
+        )
+        static let diagnostics = string(
+            "Floorp.WebExtensions.Diagnostics.v1",
+            value: "Diagnostics",
+            comment: "Heading for extension package, runtime, and host diagnostics"
         )
         static let catalogRevokedDisabledMessage = string(
             "Floorp.WebExtensions.CatalogRevokedDisabledMessage.v1",
@@ -1492,8 +1509,8 @@ enum FloorpStrings {
         )
         static let postInstallSiteAccessGuidance = string(
             "Floorp.WebExtensions.PostInstallSiteAccessGuidance.v1",
-            value: "Site access is still off. Open Site Access to choose where this extension can run.",
-            comment: "Guidance shown after installation before any site access is granted"
+            value: "Required website access is enabled. Open Site Access to review or change where this extension can run.",
+            comment: "Guidance shown after installation about required website access"
         )
         static let permissionSiteData = string(
             "Floorp.WebExtensions.Permission.SiteData.v1",
@@ -1578,6 +1595,10 @@ enum FloorpStrings {
 
         static func version(_ version: String) -> String {
             localizedStringWithFormat(versionFormat, version)
+        }
+
+        static func requiresOperatingSystem(_ version: String) -> String {
+            localizedStringWithFormat(requiresOperatingSystemFormat, version)
         }
 
         static func installTitle(name: String) -> String {

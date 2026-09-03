@@ -74,9 +74,11 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             )
         ]
         var selections = [String]()
+        var dismissalCompletion: (() -> Void)?
         let picker = FloorpNativeWebExtensionActionPickerViewController(
             actions: actions,
             windowUUID: UUID(),
+            dismissalHandler: { dismissalCompletion = $0 },
             onSelection: { selections.append($0.contextIdentifier) }
         )
 
@@ -87,8 +89,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         picker.selectChoice(identifier: "ubol")
         XCTAssertTrue(selections.isEmpty)
 
-        picker.viewDidDisappear(false)
-        picker.viewDidDisappear(false)
+        dismissalCompletion?()
+        dismissalCompletion?()
 
         XCTAssertEqual(selections, ["ubol"])
     }

@@ -338,6 +338,7 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
     let presentation: FloorpNativeWebExtensionPromptPresentation
     private let notificationCenter: NotificationProtocol
     private let onChoice: @MainActor (FloorpNativeWebExtensionPromptPresentation.Choice) -> Void
+    private let dismissalHandler: ((@escaping () -> Void) -> Void)?
     private let scrollView: UIScrollView = .build()
     private let contentStack: UIStackView = .build()
     private let heroCard: UIView = .build()
@@ -366,12 +367,14 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
         windowUUID: WindowUUID,
         themeManager: ThemeManager = AppContainer.shared.resolve(),
         notificationCenter: NotificationProtocol = NotificationCenter.default,
+        dismissalHandler: ((@escaping () -> Void) -> Void)? = nil,
         onChoice: @escaping @MainActor (FloorpNativeWebExtensionPromptPresentation.Choice) -> Void
     ) {
         self.presentation = presentation
         self.windowUUID = windowUUID
         self.themeManager = themeManager
         self.notificationCenter = notificationCenter
+        self.dismissalHandler = dismissalHandler
         self.onChoice = onChoice
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
@@ -388,13 +391,6 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
         listenForThemeChanges(withNotificationCenter: notificationCenter)
         applyTheme()
         sheetPresentationController?.prefersGrabberVisible = true
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        guard let pendingChoice else { return }
-        self.pendingChoice = nil
-        onChoice(pendingChoice)
     }
 
     func applyTheme() {
@@ -578,7 +574,16 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
         didFinish = true
         pendingChoice = choice
         setControlsEnabled(false)
-        dismiss(animated: true)
+        let completion = { [weak self] in
+            guard let self, let pendingChoice = self.pendingChoice else { return }
+            self.pendingChoice = nil
+            self.onChoice(pendingChoice)
+        }
+        if let dismissalHandler {
+            dismissalHandler(completion)
+        } else {
+            dismiss(animated: true, completion: completion)
+        }
     }
 
     private func finishWithCancel() {
@@ -600,6 +605,7 @@ final class FloorpNativeWebExtensionActionPickerViewController:
     init(
         actions: [FloorpNativeWebExtensionActionItem],
         windowUUID: WindowUUID,
+        dismissalHandler: ((@escaping () -> Void) -> Void)? = nil,
         onSelection: @escaping @MainActor (FloorpNativeWebExtensionActionItem) -> Void
     ) {
         let actionsByIdentifier = Dictionary(
@@ -625,6 +631,7 @@ final class FloorpNativeWebExtensionActionPickerViewController:
                 accessibilityIdentifier: "Floorp.NativeWebExtensions.ActionPicker"
             ),
             windowUUID: windowUUID,
+            dismissalHandler: dismissalHandler,
             onChoice: { choice in
                 guard let action = actionsByIdentifier[choice.identifier] else { return }
                 onSelection(action)
@@ -776,7 +783,7 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
                 version: item.expectedVersion,
                 status: item.isAvailableOnCurrentOS
                     ? FloorpStrings.WebExtensions.add
-                    : FloorpStrings.WebExtensions.notSupported,
+                    : FloorpStrings.WebExtensions.requiresOperatingSystem(item.minimumOS.description),
                 statusStyle: item.isAvailableOnCurrentOS ? .accent : .critical,
                 icon: nil,
                 fallbackSymbol: "puzzlepiece.extension.fill",
@@ -918,11 +925,11 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
             infoRows.append(.init(
                 symbol: "hand.raised.fill",
                 title: preview.isUpdate
-                    ? FloorpStrings.WebExtensions.siteAccessPreservedTitle
-                    : FloorpStrings.WebExtensions.siteAccessStartsOffTitle,
+                    ? FloorpStrings.WebExtensions.siteAccessUpdateTitle
+                    : FloorpStrings.WebExtensions.siteAccessGrantedTitle,
                 detail: (preview.isUpdate
-                    ? FloorpStrings.WebExtensions.siteAccessPreservedMessage
-                    : FloorpStrings.WebExtensions.siteAccessStartsOffMessage)
+                    ? FloorpStrings.WebExtensions.siteAccessUpdateMessage
+                    : FloorpStrings.WebExtensions.siteAccessGrantedMessage)
                     + "\n\n• " + preview.requiredMatchPatterns.joined(separator: "\n• ")
             ))
         }
@@ -953,8 +960,8 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
                 ? FloorpStrings.WebExtensions.update
                 : FloorpStrings.WebExtensions.install,
             detail: preview.isUpdate
-                ? FloorpStrings.WebExtensions.siteAccessPreservedMessage
-                : FloorpStrings.WebExtensions.siteAccessStartsOffMessage,
+                ? FloorpStrings.WebExtensions.siteAccessUpdateMessage
+                : FloorpStrings.WebExtensions.siteAccessGrantedMessage,
             icon: UIImage(systemName: preview.isUpdate ? "arrow.down.circle.fill" : "arrow.down.app.fill"),
             usesTemplateIcon: true,
             role: .preferred
@@ -987,6 +994,27 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
     }
 
     private func showActions(for item: FloorpNativeWebExtensionSettingsItem) {
+        let sheet = FloorpNativeWebExtensionPromptViewController(
+            presentation: .init(
+                title: item.name,
+                message: item.summary ?? FloorpStrings.WebExtensions.detailTitle,
+                heroImage: item.iconData.flatMap(UIImage.init(data:)),
+                heroUsesTemplateImage: item.iconData == nil,
+                infoRows: managementInfoRows(for: item),
+                choices: managementChoices(for: item),
+                accessibilityIdentifier: "Floorp.NativeWebExtensions.Manage.\(item.identifier)"
+            ),
+            windowUUID: windowUUID,
+            onChoice: { [weak self] choice in
+                self?.handleManagementChoice(choice.identifier, for: item)
+            }
+        )
+        present(sheet, animated: true)
+    }
+
+    private func managementInfoRows(
+        for item: FloorpNativeWebExtensionSettingsItem
+    ) -> [FloorpNativeWebExtensionPromptPresentation.InfoRow] {
         var infoRows = [
             FloorpNativeWebExtensionPromptPresentation.InfoRow(
                 symbol: "number",
@@ -1015,20 +1043,52 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
                 detail: "• " + item.matchPatterns.joined(separator: "\n• ")
             ))
         }
-        if let error = item.errorDescription {
+        let optionalAccess = Set(item.optionalPermissions + item.optionalMatchPatterns).sorted()
+        if !optionalAccess.isEmpty {
+            infoRows.append(.init(
+                symbol: "hand.tap.fill",
+                title: FloorpStrings.WebExtensions.optionalAccess,
+                detail: FloorpStrings.WebExtensions.optionalAccessMessage
+                    + "\n\n• " + optionalAccess.joined(separator: "\n• ")
+            ))
+        }
+        let diagnosticDetails = item.diagnostics.map {
+            "[\($0.phase.rawValue)] \($0.domain) (\($0.code)): \($0.message)"
+        }
+        let uniqueDiagnosticDetails = diagnosticDetails.reduce(into: [String]()) { details, detail in
+            guard !details.contains(detail) else { return }
+            details.append(detail)
+        }
+        if !uniqueDiagnosticDetails.isEmpty {
+            infoRows.append(.init(
+                symbol: "stethoscope",
+                title: FloorpStrings.WebExtensions.diagnostics,
+                detail: "• " + uniqueDiagnosticDetails.joined(separator: "\n• ")
+            ))
+        }
+        if let error = item.errorDescription,
+           !item.diagnostics.contains(where: { $0.message == error }) {
             infoRows.append(.init(
                 symbol: "exclamationmark.triangle.fill",
                 title: FloorpStrings.WebExtensions.loadErrorTitle,
                 detail: error
             ))
         }
+        return infoRows
+    }
+
+    private func managementChoices(
+        for item: FloorpNativeWebExtensionSettingsItem
+    ) -> [FloorpNativeWebExtensionPromptPresentation.Choice] {
         var choices = [
             FloorpNativeWebExtensionPromptPresentation.Choice(
                 identifier: "toggle-enabled",
                 title: item.isEnabled
                     ? FloorpStrings.WebExtensions.disableAction
                     : FloorpStrings.WebExtensions.enableAction,
-                detail: FloorpStrings.WebExtensions.standardBrowsingEnabledMessage,
+                detail: item.isEnabled
+                    ? FloorpStrings.WebExtensions.standardBrowsingDisableMessage
+                    : FloorpStrings.WebExtensions.standardBrowsingEnabledMessage,
                 icon: UIImage(systemName: item.isEnabled ? "pause.circle.fill" : "play.circle.fill"),
                 usesTemplateIcon: true
             ),
@@ -1072,22 +1132,7 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
             usesTemplateIcon: true,
             role: .destructive
         ))
-        let sheet = FloorpNativeWebExtensionPromptViewController(
-            presentation: .init(
-                title: item.name,
-                message: item.summary ?? FloorpStrings.WebExtensions.detailTitle,
-                heroImage: item.iconData.flatMap(UIImage.init(data:)),
-                heroUsesTemplateImage: item.iconData == nil,
-                infoRows: infoRows,
-                choices: choices,
-                accessibilityIdentifier: "Floorp.NativeWebExtensions.Manage.\(item.identifier)"
-            ),
-            windowUUID: windowUUID,
-            onChoice: { [weak self] choice in
-                self?.handleManagementChoice(choice.identifier, for: item)
-            }
-        )
-        present(sheet, animated: true)
+        return choices
     }
 
     private func handleManagementChoice(

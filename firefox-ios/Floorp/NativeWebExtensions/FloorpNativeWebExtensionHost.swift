@@ -287,7 +287,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     WKWebExtension.Permission(rawValue: $0.value).floorpDisplayName
                 }).sorted(),
                 optionalPermissions: context?.webExtension.optionalPermissions
-                    .map(\.rawValue).sorted() ?? [],
+                    .map(\.floorpDisplayName).sorted() ?? [],
                 matchPatterns: record.grantedMatchPatterns.map(\.value).sorted(),
                 optionalMatchPatterns: context?.webExtension.optionalPermissionMatchPatterns
                     .map(\.string).sorted() ?? [],
@@ -1091,6 +1091,17 @@ final class FloorpNativeWebExtensionHost: NSObject {
         let tabViewController = (tab as? FloorpNativeWebExtensionTab)?.tab?.webView?.window?.rootViewController
         if let tabViewController {
             return Self.topViewController(from: tabViewController)
+        }
+        if let focused = lastFocusedWindow,
+           let manager = tabManager(for: focused.windowUUID) {
+            let focusedTabs = focused.isPrivate ? manager.privateTabs : manager.normalTabs
+            let selectedTab = manager.selectedTab.flatMap { $0.isPrivate == focused.isPrivate ? $0 : nil }
+            let candidates = [selectedTab].compactMap { $0 } + focusedTabs
+            if let focusedRoot = candidates.lazy.compactMap({
+                $0.webView?.window?.rootViewController
+            }).first {
+                return Self.topViewController(from: focusedRoot)
+            }
         }
         let root = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
