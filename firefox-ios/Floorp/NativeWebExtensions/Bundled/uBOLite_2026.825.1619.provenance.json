@@ -1,0 +1,10 @@
+{
+  "asset": "uBOLite_2026.825.1619.safari.zip",
+  "downloadURL": "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip",
+  "license": "GPL-3.0-or-later",
+  "release": "2026.825.1619",
+  "sha256": "89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94",
+  "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
+  "strictMinimumSafariVersion": "18.6",
+  "unmodifiedUpstreamAsset": true
+}

@@ -81,7 +81,7 @@ struct MainMenuConfigurationUtility: Equatable, FeatureFlaggable {
             menuSections.append(getHorizontalTabsSection(with: uuid, tabInfo: tabInfo))
             menuSections.append(getAccountSection(with: uuid, tabInfo: tabInfo, profileImage: profileImage))
         }
-        if FloorpFlags.isWebExtensionFeatureEnabled(.core) {
+        if FloorpFlags.isNativeWebExtensionsEnabled {
             menuSections.append(getWebExtensionsSection(with: uuid, tabInfo: tabInfo))
         }
 

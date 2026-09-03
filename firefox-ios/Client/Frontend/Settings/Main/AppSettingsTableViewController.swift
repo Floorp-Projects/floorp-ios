@@ -466,8 +466,7 @@ class AppSettingsTableViewController: SettingsTableViewController,
     }
 
     private func getFloorpWebExtensionSettings() -> [SettingSection] {
-        guard FloorpFlags.isWebExtensionFeatureEnabled(.core),
-              FloorpFlags.isWebExtensionFeatureEnabled(.bundledCatalog) else {
+        guard FloorpFlags.isNativeWebExtensionsEnabled else {
             return []
         }
         return [

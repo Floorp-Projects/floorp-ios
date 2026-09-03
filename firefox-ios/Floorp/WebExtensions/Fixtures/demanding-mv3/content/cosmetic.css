@@ -1,9 +1,0 @@
-[data-fixture-sponsored],
-.fixture-sponsored,
-.fixture-ad-slot {
-  display: none !important;
-}
-
-:root[data-floorp-mv3-document-start="true"] .fixture-cosmetic-marker {
-  outline: 2px solid transparent;
-}

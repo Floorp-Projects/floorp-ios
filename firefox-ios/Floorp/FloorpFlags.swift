@@ -39,7 +39,7 @@ public final class FloorpFlags: Sendable {
     nonisolated(unsafe) private static var _isSponsoredShortcutsDisabled = false
     nonisolated(unsafe) private static var _isAdAttributionDisabled = false
     nonisolated(unsafe) private static var _isOverlayDrawerEnabled = false
-    nonisolated(unsafe) private static var _webExtensionFeatures = Set<FloorpWebExtensionFeature>()
+    nonisolated(unsafe) private static var _isNativeWebExtensionsEnabled = false
 
     /// When `true`, all telemetry (Glean, MetricKit, Sentry) is disabled.
     /// Set by `FloorpBootstrapper.disableTelemetry()`.
@@ -84,34 +84,12 @@ public final class FloorpFlags: Sendable {
         _lock.withLock { _isOverlayDrawerEnabled = value }
     }
 
-    public static func isWebExtensionFeatureEnabled(_ feature: FloorpWebExtensionFeature) -> Bool {
-        _lock.withLock { _webExtensionFeatures.contains(feature) }
+    /// Enables the system WebExtension engine introduced in iOS 18.4.
+    public static var isNativeWebExtensionsEnabled: Bool {
+        _lock.withLock { _isNativeWebExtensionsEnabled }
     }
 
-    public static func setWebExtensionFeature(_ feature: FloorpWebExtensionFeature, enabled: Bool) {
-        var shouldClearLiveWebExtensionPolicies = false
-        _lock.withLock {
-            if enabled {
-                _webExtensionFeatures.insert(feature)
-            } else {
-                _webExtensionFeatures.remove(feature)
-                shouldClearLiveWebExtensionPolicies = feature == .core
-            }
-        }
-        if shouldClearLiveWebExtensionPolicies {
-            Task { @MainActor in
-                FloorpWebExtensionRuntime.clearAllPoliciesForDisabledCoreFeature()
-            }
-        }
+    public static func setNativeWebExtensionsEnabled(_ enabled: Bool) {
+        _lock.withLock { _isNativeWebExtensionsEnabled = enabled }
     }
-}
-
-public enum FloorpWebExtensionFeature: String, CaseIterable, Sendable {
-    case core
-    case bundledCatalog
-    case compatibilityHarness
-    case managedRemoteSource
-    case documentImport
-    case storeSources
-    case mv2Adapter
 }

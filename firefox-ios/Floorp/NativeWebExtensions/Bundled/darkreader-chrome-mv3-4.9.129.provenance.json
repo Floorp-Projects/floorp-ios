@@ -1,0 +1,8 @@
+{
+  "asset": "darkreader-chrome-mv3.zip",
+  "downloadURL": "https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip",
+  "license": "MIT",
+  "release": "v4.9.129",
+  "sha256": "20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64",
+  "sourceCommit": "c2a707302a39b8047543712e9c582bac07835d34"
+}

@@ -87,9 +87,19 @@ class UserScriptManager {
         return try? NSString(contentsOfFile: path, encoding: String.Encoding.utf8.rawValue) as String
     }
 
-    public func injectUserScriptsIntoWebView(_ webView: WKWebView?, nightMode: Bool, noImageMode: Bool) {
-        guard let controller = webView?.configuration.userContentController else { return }
-        var browserScripts = [WKUserScript]()
+    /// Registers Floorp-owned scripts before a `WKWebView` is created.
+    ///
+    /// A configuration with a `WKWebExtensionController` lets WebKit install
+    /// extension content scripts while the web view is initialized. Calling
+    /// `removeAllUserScripts()` after that point also removes those scripts,
+    /// so this method deliberately accepts the pre-initialization content
+    /// controller instead of a live web view.
+    public func prepareUserScripts(
+        in userContentController: WKUserContentController,
+        nightMode: Bool,
+        noImageMode: Bool
+    ) {
+        userContentController.removeAllUserScripts()
 
         // Inject all pre-compiled user scripts.
         [(WKUserScriptInjectionTime.atDocumentStart, mainFrameOnly: false),
@@ -101,28 +111,25 @@ class UserScriptManager {
             let injectionString = injectionTime == .atDocumentStart ? "Start" : "End"
             let name = mainframeString + "AtDocument" + injectionString
             if let userScript = compiledUserScripts[name] {
-                browserScripts.append(userScript)
+                userContentController.addUserScript(userScript)
             }
 
             let autofillName = "Autofill\(name)"
             if let autofillScript = compiledUserScripts[autofillName] {
-                browserScripts.append(autofillScript)
+                userContentController.addUserScript(autofillScript)
             }
 
             let webcompatName = "Webcompat\(name)"
             if let webcompatUserScript = compiledUserScripts[webcompatName] {
-                browserScripts.append(webcompatUserScript)
+                userContentController.addUserScript(webcompatUserScript)
             }
         }
         // Inject the Print Helper. This needs to be in the `page` content world in order to hook `window.print()`.
-        browserScripts.append(printHelperUserScript)
+        userContentController.addUserScript(printHelperUserScript)
         // If No Image Mode is enabled, inject a small user script to ensure
         // that it gets enabled immediately when the DOM loads.
         if noImageMode {
-            browserScripts.append(noImageModeUserScript)
+            userContentController.addUserScript(noImageModeUserScript)
         }
-
-        FloorpWebContentPolicyCoordinator.coordinator(for: controller)
-            .replaceUserScripts(browserScripts, ownedBy: "firefox.browser")
     }
 }

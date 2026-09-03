@@ -11,12 +11,6 @@ import Photos
 import SafariServices
 import WebEngine
 
-enum FloorpWebExtensionNavigationResponseDisposition {
-    case allow
-    case cancel
-    case download
-}
-
 // MARK: - WKUIDelegate
 extension BrowserViewController: WKUIDelegate {
     func webView(
@@ -531,6 +525,10 @@ extension BrowserViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
+        if let tab = tabManager[webView] {
+            FloorpNativeWebExtensionHost.host(for: profile.localName())?
+                .tabPropertiesDidChange([.loading], for: tab)
+        }
         if tabManager.selectedTab?.webView !== webView { return }
 
         // Note the main frame JSContext (i.e. document, window) is not available yet.
@@ -566,18 +564,18 @@ extension BrowserViewController: WKNavigationDelegate {
             return
         }
 
-        // `WKUserScript` has no URL-match predicate. A first document and
-        // non-network schemes prepare immediately. An HTTP(S) navigation with
-        // a visible document records the target and keeps that document
-        // authoritative until the final response is known to be displayable.
-        // The request is never cancelled/reissued, avoiding duplicate form
-        // submissions and redirect loops.
+        // Extension-origin pages require the context-specific configuration
+        // supplied by WKWebExtensionContext. Crossing that trust boundary
+        // rebuilds the surface before the main-frame navigation begins.
         if isMainFrameNavigation(navigationAction),
-           shouldPrepareFloorpWebExtensionPolicy(for: url) {
-            tab.prepareFloorpWebExtensionPolicyForNavigationAction(
-                for: webView,
-                navigationURL: url
-            )
+           FloorpNativeWebExtensionHost.host(for: profile.localName())?
+            .routeNavigationIfNeeded(
+                tab: tab,
+                url: url,
+                navigationType: navigationAction.navigationType
+            ) == true {
+            decisionHandler(.cancel)
+            return
         }
 
         if tab == tabManager.selectedTab,
@@ -674,17 +672,6 @@ extension BrowserViewController: WKNavigationDelegate {
         }
 
         decisionHandler(.cancel)
-    }
-
-    /// These are the schemes WebKit may retain as a document navigation in
-    /// this delegate. External-app routes never create a WebKit document, so
-    /// they must not consume a tab's active-document grant.
-    private func shouldPrepareFloorpWebExtensionPolicy(for url: URL) -> Bool {
-        if InternalURL.isValid(url: url) {
-            return true
-        }
-        let documentSchemes = ["about", "blob", "data", "file", "http", "https"]
-        return url.scheme.map { documentSchemes.contains($0.lowercased()) } ?? false
     }
 
     private func handleAdsTelemetryForNavigation(url: URL, tab: Tab) {
@@ -898,12 +885,6 @@ extension BrowserViewController: WKNavigationDelegate {
             await passBookHelper.open(response: response, cookieStore: cookieStore)
 
             // Cancel this response from the webview.
-            completeFloorpWebExtensionNavigationResponse(
-                for: webView,
-                responseURL: responseURL,
-                isForMainFrame: navigationResponse.isForMainFrame,
-                disposition: .cancel
-            )
             return .cancel
         }
 
@@ -923,12 +904,6 @@ extension BrowserViewController: WKNavigationDelegate {
                     // and let the temporary document be deleted
                     tab.quickLookPreviewHelper = nil
                 }
-                completeFloorpWebExtensionNavigationResponse(
-                    for: webView,
-                    responseURL: responseURL,
-                    isForMainFrame: navigationResponse.isForMainFrame,
-                    disposition: .cancel
-                )
                 return .cancel
             }
 
@@ -951,12 +926,6 @@ extension BrowserViewController: WKNavigationDelegate {
             /// FXIOS-12201: Need to hold reference to downloadHelper,
             /// so we can use this later in `webView(_:navigationResponse:didBecome:)`
             self.downloadHelper = downloadHelper
-            completeFloorpWebExtensionNavigationResponse(
-                for: webView,
-                responseURL: responseURL,
-                isForMainFrame: navigationResponse.isForMainFrame,
-                disposition: .download
-            )
             return .download
         }
 
@@ -968,21 +937,9 @@ extension BrowserViewController: WKNavigationDelegate {
         if navigationResponse.isForMainFrame, let tab = tabManager[webView] {
             if response.mimeType == MIMEType.PDF, let request {
                 if !tab.shouldDownloadDocument(request) {
-                    completeFloorpWebExtensionNavigationResponse(
-                        for: webView,
-                        responseURL: responseURL,
-                        isForMainFrame: navigationResponse.isForMainFrame,
-                        disposition: .allow
-                    )
                     return .allow
                 }
                 handlePDFDownloadRequest(request: request, tab: tab, filename: response.suggestedFilename)
-                completeFloorpWebExtensionNavigationResponse(
-                    for: webView,
-                    responseURL: responseURL,
-                    isForMainFrame: navigationResponse.isForMainFrame,
-                    disposition: .cancel
-                )
                 return .cancel
             }
             if response.mimeType != MIMEType.HTML, let request {
@@ -996,12 +953,6 @@ extension BrowserViewController: WKNavigationDelegate {
 
         // If none of our helpers are responsible for handling this response,
         // just let the webview handle it as normal.
-        completeFloorpWebExtensionNavigationResponse(
-            for: webView,
-            responseURL: responseURL,
-            isForMainFrame: navigationResponse.isForMainFrame,
-            disposition: .allow
-        )
         return .allow
     }
 
@@ -1042,41 +993,7 @@ extension BrowserViewController: WKNavigationDelegate {
             self.present(safariVC, animated: true, completion: nil)
         }))
         present(alert, animated: true)
-        completeFloorpWebExtensionNavigationResponse(
-            for: webView,
-            responseURL: responseURL,
-            isForMainFrame: navigationResponse.isForMainFrame,
-            disposition: .cancel
-        )
         return true
-    }
-
-    /// Completes policy handling only after the response's final disposition
-    /// is known. A redirect may still be downloaded or cancelled, so neither
-    /// outcome may replace the document whose contents remain visible.
-    func completeFloorpWebExtensionNavigationResponse(
-        for webView: WKWebView,
-        responseURL: URL?,
-        isForMainFrame: Bool,
-        disposition: FloorpWebExtensionNavigationResponseDisposition
-    ) {
-        guard isForMainFrame, let tab = tabManager[webView] else { return }
-
-        switch disposition {
-        case .cancel, .download:
-            tab.discardFloorpWebExtensionPreparedNavigation()
-        case .allow:
-            guard let responseURL,
-                  shouldPrepareFloorpWebExtensionPolicy(for: responseURL)
-            else {
-                tab.discardFloorpWebExtensionPreparedNavigation()
-                return
-            }
-            tab.reconcileFloorpWebExtensionPolicyForAllowedNavigationResponse(
-                for: webView,
-                responseURL: responseURL
-            )
-        }
     }
 
     /// Handle a PDF download request by forwarding it to the provided `Tab`.
@@ -1360,6 +1277,12 @@ extension BrowserViewController: WKNavigationDelegate {
         } else {
             tab.translationConfiguration = nil
         }
+        if let host = FloorpNativeWebExtensionHost.host(for: profile.localName()) {
+            if let url = webView.url {
+                host.recordCommittedNavigation(in: tab, url: url)
+            }
+            host.tabPropertiesDidChange([.URL, .title, .loading], for: tab)
+        }
 
         if !tab.adsTelemetryRedirectUrlList.isEmpty,
            !tab.adsProviderName.isEmpty,
@@ -1411,6 +1334,8 @@ extension BrowserViewController: WKNavigationDelegate {
         navigationHandler?.removeDocumentLoading()
 
         if let tab = tabManager[webView] {
+            FloorpNativeWebExtensionHost.host(for: profile.localName())?
+                .tabPropertiesDidChange([.URL, .title, .loading], for: tab)
             if tab == tabManager.selectedTab {
                 screenshotHelper.takeScreenshot(
                     tab,
