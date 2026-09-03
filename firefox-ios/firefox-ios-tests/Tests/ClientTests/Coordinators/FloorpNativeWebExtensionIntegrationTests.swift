@@ -45,11 +45,51 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
         XCTAssertTrue(context.isLoaded)
         XCTAssertNotNil(context.optionsPageURL)
+        let action = try XCTUnwrap(context.action(for: nil))
+        XCTAssertTrue(action.presentsPopup)
+        XCTAssertNotNil(action.popupViewController)
         XCTAssertTrue(webExtension.hasBackgroundContent)
         XCTAssertTrue(webExtension.hasInjectedContent)
         XCTAssertTrue(webExtension.requestedPermissions.contains(.storage))
         XCTAssertTrue(webExtension.requestedPermissions.contains(.scripting))
         XCTAssertFalse(webExtension.requestedPermissions.contains(.nativeMessaging))
+    }
+
+    func testActionPickerListsEveryActionAndDefersSelectionUntilDismissal() {
+        let actions = [
+            FloorpNativeWebExtensionActionItem(
+                contextIdentifier: "dark-reader",
+                label: "Dark Reader",
+                version: "4.9.129",
+                icon: nil,
+                isEnabled: true
+            ),
+            FloorpNativeWebExtensionActionItem(
+                contextIdentifier: "ubol",
+                label: "uBlock Origin Lite",
+                version: "2026.825.1619",
+                icon: nil,
+                isEnabled: true
+            )
+        ]
+        var selections = [String]()
+        let picker = FloorpNativeWebExtensionActionPickerViewController(
+            actions: actions,
+            windowUUID: UUID(),
+            onSelection: { selections.append($0.contextIdentifier) }
+        )
+
+        picker.loadViewIfNeeded()
+
+        XCTAssertEqual(picker.displayedChoiceTitles, ["Dark Reader", "uBlock Origin Lite"])
+        XCTAssertEqual(picker.view.accessibilityIdentifier, "Floorp.NativeWebExtensions.ActionPicker")
+        picker.selectChoice(identifier: "ubol")
+        XCTAssertTrue(selections.isEmpty)
+
+        picker.viewDidDisappear(false)
+        picker.viewDidDisappear(false)
+
+        XCTAssertEqual(selections, ["ubol"])
     }
 
     func testNativeRegistryV2RoundTripsIdentityPermissionsAndTransactionState() throws {
@@ -307,7 +347,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 500_000_000)
 
         XCTAssertTrue(context.isLoaded)
-        XCTAssertNotNil(context.action(for: nil))
+        let action = try XCTUnwrap(context.action(for: nil))
+        XCTAssertTrue(action.presentsPopup)
+        XCTAssertNotNil(action.popupViewController)
         XCTAssertNotNil(context.optionsPageURL)
     }
 

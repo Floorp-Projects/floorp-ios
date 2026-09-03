@@ -586,27 +586,15 @@ final class BrowserCoordinator: BaseCoordinator,
             return
         }
 
-        let alert = UIAlertController(
-            title: FloorpStrings.WebExtensions.actions,
-            message: FloorpStrings.WebExtensions.chooseActionMessage,
-            preferredStyle: .actionSheet
-        )
-        actions.forEach { action in
-            alert.addAction(UIAlertAction(title: action.label, style: .default) { [weak self, weak host, weak tab] _ in
+        let picker = FloorpNativeWebExtensionActionPickerViewController(
+            actions: actions,
+            windowUUID: windowUUID,
+            onSelection: { [weak self, weak host, weak tab] action in
                 guard let self, let host, let tab else { return }
                 self.performWebExtensionAction(action, host: host, tab: tab)
-            })
-        }
-        alert.addAction(UIAlertAction(title: FloorpStrings.WebExtensions.cancel, style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = browserViewController.view
-            popover.sourceRect = browserViewController.view.bounds
-        }
-        // `DefaultRouter` assigns itself as the presentation controller
-        // delegate. UIKit forbids changing that delegate for
-        // `UIAlertController`, so alerts and action sheets are presented by
-        // their owning view controller directly.
-        browserViewController.present(alert, animated: true)
+            }
+        )
+        browserViewController.present(picker, animated: true)
     }
 
     func openURLInNewTab(_ url: URL?) {
@@ -630,8 +618,7 @@ final class BrowserCoordinator: BaseCoordinator,
         do {
             try host.performAction(
                 contextIdentifier: action.contextIdentifier,
-                for: tab,
-                present: { [weak self] popup in self?.present(popup) }
+                for: tab
             )
         } catch {
             presentWebExtensionActionsAlert(

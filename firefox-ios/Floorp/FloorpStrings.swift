@@ -934,6 +934,16 @@ enum FloorpStrings {
             value: "Add reviewed extensions, then choose exactly where they can run.",
             comment: "Introductory explanation on the extension management screen"
         )
+        static let darkReaderSummary = string(
+            "Floorp.WebExtensions.DarkReaderSummary.v1",
+            value: "Dark mode for every website, powered by WebKit’s native extension engine.",
+            comment: "Catalog summary for Dark Reader"
+        )
+        static let uBlockOriginLiteSummary = string(
+            "Floorp.WebExtensions.UBlockOriginLiteSummary.v1",
+            value: "Efficient content blocking through WebKit’s native declarative rule engine.",
+            comment: "Catalog summary for uBlock Origin Lite"
+        )
         static let installedSection = string(
             "Floorp.WebExtensions.InstalledSection.v1",
             value: "Installed",
@@ -1024,6 +1034,16 @@ enum FloorpStrings {
             value: "Disabled",
             comment: "Status for a disabled extension"
         )
+        static let enableAction = string(
+            "Floorp.WebExtensions.EnableAction.v1",
+            value: "Enable Extension",
+            comment: "Action that enables an installed extension"
+        )
+        static let disableAction = string(
+            "Floorp.WebExtensions.DisableAction.v1",
+            value: "Disable Extension",
+            comment: "Action that disables an installed extension"
+        )
         static let revoked = string(
             "Floorp.WebExtensions.Revoked.v1",
             value: "Disabled for your protection",
@@ -1063,6 +1083,26 @@ enum FloorpStrings {
             "Floorp.WebExtensions.Allow.v1",
             value: "Allow",
             comment: "Action that grants an extension capability"
+        )
+        static let optionalAccess = string(
+            "Floorp.WebExtensions.OptionalAccess.v1",
+            value: "Optional Access",
+            comment: "Heading for optional extension permissions"
+        )
+        static let optionalAccessMessage = string(
+            "Floorp.WebExtensions.OptionalAccessMessage.v1",
+            value: "Floorp asks before the extension receives any optional access.",
+            comment: "Explanation for optional extension permissions"
+        )
+        static let permissionRequestTitle = string(
+            "Floorp.WebExtensions.PermissionRequestTitle.v1",
+            value: "Allow Extension Access?",
+            comment: "Title shown when an extension requests an additional permission"
+        )
+        static let websiteAccessRequestTitle = string(
+            "Floorp.WebExtensions.WebsiteAccessRequestTitle.v1",
+            value: "Allow Website Access?",
+            comment: "Title shown when an extension requests access to websites"
         )
         static let actions = string(
             "Floorp.WebExtensions.Actions.v1",
@@ -1364,6 +1404,16 @@ enum FloorpStrings {
             value: "Private Browsing",
             comment: "Action and heading for extension Private Browsing access"
         )
+        static let allowPrivateBrowsingAction = string(
+            "Floorp.WebExtensions.AllowPrivateBrowsingAction.v1",
+            value: "Allow in Private Browsing",
+            comment: "Action that allows an extension in Private Browsing"
+        )
+        static let disallowPrivateBrowsingAction = string(
+            "Floorp.WebExtensions.DisallowPrivateBrowsingAction.v1",
+            value: "Turn Off in Private Browsing",
+            comment: "Action that removes an extension's Private Browsing access"
+        )
         private static let privateBrowsingConsentTitleFormat = string(
             "Floorp.WebExtensions.PrivateBrowsingConsentTitle.v1",
             value: "Allow %1$@ in Private Browsing?",
@@ -1404,6 +1454,21 @@ enum FloorpStrings {
             "Floorp.WebExtensions.Uninstall.v1",
             value: "Remove Extension",
             comment: "Destructive action that uninstalls an extension"
+        )
+        private static let uninstallTitleFormat = string(
+            "Floorp.WebExtensions.UninstallTitle.v1",
+            value: "Remove %1$@?",
+            comment: "Confirmation title for uninstalling an extension; argument is the extension name"
+        )
+        static let uninstallMessage = string(
+            "Floorp.WebExtensions.UninstallMessage.v1",
+            value: "The extension and its WebKit-managed data will be removed from this profile.",
+            comment: "Explanation shown before uninstalling an extension"
+        )
+        static let changeErrorTitle = string(
+            "Floorp.WebExtensions.ChangeErrorTitle.v1",
+            value: "Extension could not be changed",
+            comment: "Error title when an extension management operation fails"
         )
         static let installing = string(
             "Floorp.WebExtensions.Installing.v1",
@@ -1517,6 +1582,10 @@ enum FloorpStrings {
 
         static func installTitle(name: String) -> String {
             localizedStringWithFormat(installTitleFormat, name)
+        }
+
+        static func uninstallTitle(name: String) -> String {
+            localizedStringWithFormat(uninstallTitleFormat, name)
         }
 
         static func actionSiteAccessTitle(name: String) -> String {
