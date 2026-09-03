@@ -81,19 +81,33 @@ Please contact us through App Store Connect for additional source or license inf
 ## Paste into TestFlight — What to Test
 
 ```text
-Floorp 0.3.0 replaces its experimental extension runtime with Apple's native WKWebExtension
-engine. In Settings > Extensions, install Dark Reader and confirm page appearance, popup,
-options, disable/enable, uninstall/reinstall, and persistence after restarting Floorp.
+Floorp 0.3.0 — Native WebExtensions release candidate
 
-On iOS 18.6 or later, install uBlock Origin Lite and test ordinary ad/tracker blocking,
-cosmetic filtering, its popup and dashboard, Japanese filter-list selection, and state after
-restart. On iOS 18.4/18.5, uBlock Origin Lite should be shown as requiring iOS 18.6 while Dark
-Reader remains available.
+This build replaces Floorp's experimental extension runtime with Apple's public
+WKWebExtension APIs. It contains two optional, app-bundled extensions: Dark
+Reader 4.9.129 and uBlock Origin Lite 2026.825.1619. No sign-in is required.
 
-Private Browsing access must remain off until separately enabled. Confirm extensions do not
-affect private tabs before opt-in, then test them after opt-in without leaking private tabs or
-site access into normal browsing. Please also report regressions in tabs, downloads, Reader
-Mode, tracking protection, Notes, or Notes Sync. No sign-in is required for extension testing.
+In Settings > Extensions, install Dark Reader. Confirm that page appearance,
+its action popup and options work; disabling or uninstalling it immediately
+restores open pages; enabling or reinstalling works; and its state persists
+after restarting Floorp.
+
+On iOS 18.6 or later, install uBlock Origin Lite. On non-sensitive test sites,
+confirm that ad/tracker requests and cosmetic elements covered by its official
+rules are removed. Test its popup and dashboard, Japanese filter-list
+selection, disable/enable, uninstall/reinstall, and persistence after restart.
+The upstream Safari package intentionally does not show its strict-block
+interstitial; ordinary request blocking and cosmetic filtering should still
+work. On iOS 18.4 or 18.5, uBlock Origin Lite must be shown as requiring iOS
+18.6 while Dark Reader remains available.
+
+Private Browsing access must remain off until separately enabled. Before
+opt-in, confirm neither extension affects private tabs. After opt-in, test both
+without leaking private tabs, grants, or extension state into normal browsing.
+
+There must be no arbitrary ZIP, XPI, CRX, URL, or extension-store installation
+path. Please also report regressions in tabs, navigation history, downloads,
+Reader Mode, tracking protection, Notes, or Notes Sync.
 ```
 
 ## Release evidence retained in the repository

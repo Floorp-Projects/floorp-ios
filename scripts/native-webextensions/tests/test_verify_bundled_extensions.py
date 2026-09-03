@@ -29,6 +29,15 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         review_notes_destination.parent.mkdir(parents=True)
         shutil.copy2(review_notes_source, review_notes_destination)
         self.review_notes = review_notes_destination
+        testflight_source = REPOSITORY_ROOT / "firefox-ios/TestFlight"
+        testflight_destination = self.root / "firefox-ios/TestFlight"
+        testflight_destination.mkdir(parents=True)
+        for locale in ("en-US", "ja-JP"):
+            shutil.copy2(
+                testflight_source / f"WhatToTest.{locale}.txt",
+                testflight_destination / f"WhatToTest.{locale}.txt",
+            )
+        self.testflight_root = testflight_destination
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -69,6 +78,26 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "4,000-byte limit"):
+            VERIFIER.verify_repository(self.root)
+
+    def test_rejects_stale_testflight_metadata(self) -> None:
+        metadata = self.testflight_root / "WhatToTest.en-US.txt"
+        metadata.write_text(
+            metadata.read_text(encoding="utf-8").replace("uBlock Origin Lite", "legacy extension"),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required values"):
+            VERIFIER.verify_repository(self.root)
+
+    def test_rejects_testflight_metadata_different_from_reviewed_template(self) -> None:
+        metadata = self.testflight_root / "WhatToTest.en-US.txt"
+        metadata.write_text(
+            metadata.read_text(encoding="utf-8").replace("release candidate", "release test"),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "differs from the reviewed"):
             VERIFIER.verify_repository(self.root)
 
 

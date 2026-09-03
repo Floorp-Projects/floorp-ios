@@ -162,6 +162,40 @@ def verify_review_notes(repository_root: Path) -> None:
         fail(f"App Review notes omit required disclosure values: {missing}")
 
 
+def verify_testflight_metadata(repository_root: Path) -> None:
+    metadata = {
+        "en-US": repository_root / "firefox-ios/TestFlight/WhatToTest.en-US.txt",
+        "ja-JP": repository_root / "firefox-ios/TestFlight/WhatToTest.ja-JP.txt",
+    }
+    required_values = {"Dark Reader", "uBlock Origin Lite", "WKWebExtension"}
+    forbidden_values = {"one signed, app-bundled extension", "exactly one catalog package"}
+    documents = {}
+    for locale, path in metadata.items():
+        try:
+            document = path.read_text(encoding="utf-8")
+        except OSError as error:
+            fail(f"cannot read TestFlight metadata for {locale}: {error}")
+        if len(document.encode("utf-8")) > 4_000:
+            fail(f"TestFlight metadata for {locale} exceeds the 4,000-byte limit")
+        missing = sorted(value for value in required_values if value not in document)
+        if missing:
+            fail(f"TestFlight metadata for {locale} omits required values: {missing}")
+        forbidden = sorted(value for value in forbidden_values if value in document)
+        if forbidden:
+            fail(f"TestFlight metadata for {locale} retains legacy claims: {forbidden}")
+        documents[locale] = document.strip()
+
+    try:
+        review_document = (
+            repository_root / "docs/app-review-notes-native-webextensions.md"
+        ).read_text(encoding="utf-8")
+        expected_english = review_document.split("```text\n")[2].split("\n```", 1)[0].strip()
+    except (OSError, IndexError) as error:
+        fail(f"cannot compare TestFlight metadata with App Review notes: {error}")
+    if documents["en-US"] != expected_english:
+        fail("English TestFlight metadata differs from the reviewed What to Test template")
+
+
 def verify_repository(repository_root: Path) -> None:
     repository_root = repository_root.resolve()
     bundle_root = repository_root / "firefox-ios/Floorp/NativeWebExtensions/Bundled"
@@ -191,6 +225,7 @@ def verify_repository(repository_root: Path) -> None:
     for entry in EXPECTED:
         verify_archive(entry, bundle_root, repository_root)
     verify_review_notes(repository_root)
+    verify_testflight_metadata(repository_root)
 
 
 def main() -> int:
@@ -198,7 +233,7 @@ def main() -> int:
     if len(sys.argv) > 2:
         fail("usage: verify_bundled_extensions.py [repository-root]")
     verify_repository(repository_root)
-    print("Verified bundled native WebExtensions, provenance, licenses, and App Review notes.")
+    print("Verified bundled native WebExtensions, provenance, licenses, and release metadata.")
     return 0
 
 
