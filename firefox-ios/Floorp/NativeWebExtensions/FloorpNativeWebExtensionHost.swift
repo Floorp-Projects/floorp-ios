@@ -43,9 +43,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
         if let host = hosts[profileIdentifier] {
             return host
         }
-        let host = try FloorpNativeWebExtensionHost(profile: profile)
-        hosts[profileIdentifier] = host
-        return host
+        do {
+            let host = try FloorpNativeWebExtensionHost(profile: profile)
+            hosts[profileIdentifier] = host
+            return host
+        } catch {
+            guard UIApplication.shared.isProtectedDataAvailable else {
+                throw FloorpNativeWebExtensionError.protectedDataUnavailable
+            }
+            throw error
+        }
     }
 
     static func host(for profileIdentifier: String) -> FloorpNativeWebExtensionHost? {
@@ -79,6 +86,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
         self.profile = profile
         self.profileIdentifier = profile.localName()
         self.logger = logger
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            throw FloorpNativeWebExtensionError.protectedDataUnavailable
+        }
 
         let directoryPath = try profile.files.getAndEnsureDirectory("WebExtensionsV2")
         let rootDirectory = URL(fileURLWithPath: directoryPath, isDirectory: true)
@@ -93,6 +103,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
         do {
             self.registry = try registryStore.load()
         } catch {
+            guard UIApplication.shared.isProtectedDataAvailable else {
+                throw FloorpNativeWebExtensionError.protectedDataUnavailable
+            }
             registryStore.quarantineCorruptRegistry()
             self.registry = FloorpNativeWebExtensionRegistry()
             self.hostDiagnostics = [FloorpNativeWebExtensionDiagnostic(
@@ -109,7 +122,14 @@ final class FloorpNativeWebExtensionHost: NSObject {
 
         super.init()
         controller.delegate = self
-        try persistRegistry()
+        do {
+            try persistRegistry()
+        } catch {
+            guard UIApplication.shared.isProtectedDataAvailable else {
+                throw FloorpNativeWebExtensionError.protectedDataUnavailable
+            }
+            throw error
+        }
     }
 
     func restoreInstalledExtensions() async {
@@ -418,6 +438,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
         record.rollback = record.rollbackSnapshot
         record.transactionState = .switching
         replaceRecord(record)
+        let affectedTabs = isEnabled ? [] : tabsAffectedByRemoval(
+            of: context,
+            identifier: identifier
+        )
 
         do {
             try persistRegistry()
@@ -433,6 +457,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             replaceRecord(record)
             try persistRegistry()
             if !isEnabled {
+                reloadAfterRemovingExtension(from: affectedTabs, identifier: identifier)
                 clearSurfaceHistory(for: identifier)
             }
         } catch {
@@ -484,11 +509,21 @@ final class FloorpNativeWebExtensionHost: NSObject {
         guard var record = registry.extensions.first(where: { $0.id == identifier }) else {
             throw FloorpNativeWebExtensionError.extensionNotInstalled(identifier)
         }
+        let affectedTabs = contexts[identifier].map {
+            tabsAffectedByRemoval(of: $0, identifier: identifier)
+        } ?? []
         record.transactionState = .pendingPurge
         record.rollback = nil
         replaceRecord(record)
         try persistRegistry()
-        try await completePendingPurge(record)
+        do {
+            try await completePendingPurge(record)
+        } catch {
+            reloadAfterRemovingExtension(from: affectedTabs, identifier: identifier)
+            clearSurfaceHistory(for: identifier)
+            throw error
+        }
+        reloadAfterRemovingExtension(from: affectedTabs, identifier: identifier)
         clearSurfaceHistory(for: identifier)
     }
 
@@ -629,7 +664,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
         _ = tab.moveFloorpNativeSurfaceHistoryBack()
         tab.preserveFloorpNativeForwardHistoryForNextNavigation()
-        switchSurface(in: tab, to: context, loading: target.url)
+        switchSurface(in: tab, to: context, loading: target.url, forceRebuild: true)
         return true
     }
 
@@ -642,7 +677,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
         _ = tab.moveFloorpNativeSurfaceHistoryForward()
         tab.preserveFloorpNativeForwardHistoryForNextNavigation()
-        switchSurface(in: tab, to: context, loading: target.url)
+        switchSurface(in: tab, to: context, loading: target.url, forceRebuild: true)
         return true
     }
 
@@ -671,7 +706,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private func switchSurface(
         in tab: Tab,
         to context: WKWebExtensionContext?,
-        loading url: URL
+        loading url: URL,
+        forceRebuild: Bool = false
     ) {
         if let context,
            let identifier = identifier(for: context),
@@ -680,13 +716,15 @@ final class FloorpNativeWebExtensionHost: NSObject {
             tab.replaceWebViewForNativeWebExtension(
                 contextIdentifier: identifier,
                 configuration: configuration,
-                url: url
+                url: url,
+                forceRebuild: forceRebuild
             )
         } else {
             tab.replaceWebViewForNativeWebExtension(
                 contextIdentifier: nil,
                 configuration: nil,
-                url: url
+                url: url,
+                forceRebuild: forceRebuild
             )
         }
     }
@@ -704,6 +742,31 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private func clearSurfaceHistory(for identifier: String) {
         for adapter in tabAdapters.values where adapter.tab != nil {
             adapter.tab?.clearFloorpNativeSurfaceHistory()
+        }
+    }
+
+    private func tabsAffectedByRemoval(
+        of context: WKWebExtensionContext,
+        identifier: String
+    ) -> [Tab] {
+        tabManagers.values.compactMap(\.value).flatMap(\.tabs).filter { tab in
+            if tab.floorpNativeWebExtensionContextIdentifier == identifier {
+                return true
+            }
+            guard canExpose(tab: tab, to: context),
+                  let url = tab.webView?.url ?? tab.url else { return false }
+            return context.hasAccess(to: url, in: tabAdapter(for: tab))
+        }
+    }
+
+    private func reloadAfterRemovingExtension(from tabs: [Tab], identifier: String) {
+        for tab in tabs {
+            if tab.floorpNativeWebExtensionContextIdentifier == identifier,
+               let blankURL = URL(string: "about:blank") {
+                switchSurface(in: tab, to: nil, loading: blankURL)
+            } else {
+                tab.reload()
+            }
         }
     }
 
@@ -920,22 +983,20 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private func recoverInterruptedTransactions() {
         var recovered = [FloorpNativeWebExtensionRecord]()
         for var record in registry.extensions {
-            switch record.transactionState {
-            case .stable, .pendingPurge:
-                recovered.append(record)
-            case .preparing, .switching:
-                guard let rollback = record.rollback else {
-                    logger.log(
-                        "Floorp: discarded interrupted WebExtension install \(record.id)",
-                        level: .warning,
-                        category: .setup
-                    )
-                    continue
-                }
-                record.restore(rollback)
-                recovered.append(record)
+            let outcome = record.recoverInterruptedTransaction()
+            recovered.append(record)
+            switch outcome {
+            case .unchanged:
+                break
+            case .rolledBack:
                 logger.log(
                     "Floorp: rolled back interrupted WebExtension transaction \(record.id)",
+                    level: .warning,
+                    category: .setup
+                )
+            case .pendingPurge:
+                logger.log(
+                    "Floorp: queued interrupted WebExtension install \(record.id) for data purge",
                     level: .warning,
                     category: .setup
                 )

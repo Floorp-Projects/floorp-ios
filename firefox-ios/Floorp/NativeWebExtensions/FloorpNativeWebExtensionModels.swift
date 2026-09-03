@@ -121,6 +121,12 @@ enum FloorpNativeWebExtensionTransactionState: String, Codable, Sendable {
     case pendingPurge
 }
 
+enum FloorpNativeWebExtensionRecoveryOutcome: Equatable, Sendable {
+    case unchanged
+    case rolledBack
+    case pendingPurge
+}
+
 struct FloorpNativeWebExtensionPermissionDecision: Codable, Equatable, Hashable, Sendable {
     let value: String
     let expiration: Date
@@ -298,6 +304,23 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
         rollback = nil
         lastError = nil
     }
+
+    mutating func recoverInterruptedTransaction() -> FloorpNativeWebExtensionRecoveryOutcome {
+        switch transactionState {
+        case .stable, .pendingPurge:
+            return .unchanged
+        case .preparing, .switching:
+            guard let rollback else {
+                isEnabled = false
+                transactionState = .pendingPurge
+                self.rollback = nil
+                lastError = nil
+                return .pendingPurge
+            }
+            restore(rollback)
+            return .rolledBack
+        }
+    }
 }
 
 struct FloorpNativeWebExtensionInstallationPreview: Sendable {
@@ -342,6 +365,7 @@ struct FloorpNativeWebExtensionActionItem {
 
 enum FloorpNativeWebExtensionError: LocalizedError {
     case hostUnavailable
+    case protectedDataUnavailable
     case catalogResourceMissing(String)
     case extensionNotInstalled(String)
     case extensionDisabled(String)
@@ -360,6 +384,8 @@ enum FloorpNativeWebExtensionError: LocalizedError {
         switch self {
         case .hostUnavailable:
             return "The native WebExtension host is not available."
+        case .protectedDataUnavailable:
+            return "The native WebExtension registry is unavailable until protected data is unlocked."
         case .catalogResourceMissing(let name):
             return "The bundled extension resource is missing: \(name)."
         case .extensionNotInstalled(let identifier):

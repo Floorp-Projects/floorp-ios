@@ -16,6 +16,8 @@ public final class FloorpBootstrapper {
     private static var readyProfiles = Set<String>()
     @MainActor
     private static var readinessWaiters = [String: [CheckedContinuation<Void, Never>]]()
+    @MainActor
+    private static var deferredWebExtensionProfiles = Set<String>()
 
     @MainActor
     public static func configure() {
@@ -81,6 +83,9 @@ public final class FloorpBootstrapper {
         readinessTimeoutTasks.removeValue(forKey: profileIdentifier)?.cancel()
         do {
             let host = try FloorpNativeWebExtensionHost.install(for: profile)
+            deferredWebExtensionProfiles.remove(profileIdentifier)
+            let windowManager: WindowManager = AppContainer.shared.resolve()
+            windowManager.allWindowTabManagers().forEach { host.register(tabManager: $0) }
             logger.log(
                 "Floorp: native WebExtension host installed for profile \(profileIdentifier)",
                 level: .info,
@@ -111,11 +116,22 @@ public final class FloorpBootstrapper {
                 markWebExtensionRuntimeReady(for: profileIdentifier, logger: logger)
             }
         } catch {
-            logger.log(
-                "Floorp: native WebExtension host setup failed: \(error)",
-                level: .warning,
-                category: .setup
-            )
+            if let nativeError = error as? FloorpNativeWebExtensionError,
+               case .protectedDataUnavailable = nativeError {
+                deferredWebExtensionProfiles.insert(profileIdentifier)
+                logger.log(
+                    "Floorp: native WebExtension setup deferred until protected data is available",
+                    level: .info,
+                    category: .setup
+                )
+            } else {
+                deferredWebExtensionProfiles.remove(profileIdentifier)
+                logger.log(
+                    "Floorp: native WebExtension host setup failed: \(error)",
+                    level: .warning,
+                    category: .setup
+                )
+            }
             markWebExtensionRuntimeReady(for: profileIdentifier, logger: logger)
         }
     }
@@ -138,6 +154,7 @@ public final class FloorpBootstrapper {
         let profileIdentifier = profile.localName()
         restoreTasks.removeValue(forKey: profileIdentifier)?.cancel()
         readinessTimeoutTasks.removeValue(forKey: profileIdentifier)?.cancel()
+        deferredWebExtensionProfiles.remove(profileIdentifier)
         markWebExtensionRuntimeReady(for: profileIdentifier, logger: DefaultLogger.shared)
         FloorpNativeWebExtensionHost.remove(for: profileIdentifier)
     }
@@ -154,7 +171,11 @@ public final class FloorpBootstrapper {
         for profile: Profile,
         logger: Logger = DefaultLogger.shared
     ) async {
-        if let restoreTask = restoreTasks[profile.localName()] {
+        let profileIdentifier = profile.localName()
+        if deferredWebExtensionProfiles.contains(profileIdentifier) {
+            configureWebExtensionRuntime(for: profile, logger: logger)
+        }
+        if let restoreTask = restoreTasks[profileIdentifier] {
             await restoreTask.value
         }
     }

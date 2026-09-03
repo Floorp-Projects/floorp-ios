@@ -666,9 +666,10 @@ class Tab: NSObject,
     func replaceWebViewForNativeWebExtension(
         contextIdentifier: String?,
         configuration requestedConfiguration: WKWebViewConfiguration?,
-        url: URL
+        url: URL,
+        forceRebuild: Bool = false
     ) {
-        guard floorpNativeWebExtensionContextIdentifier != contextIdentifier else {
+        guard forceRebuild || floorpNativeWebExtensionContextIdentifier != contextIdentifier else {
             loadRequest(URLRequest(url: url))
             return
         }
@@ -713,15 +714,21 @@ class Tab: NSObject,
         toContextIdentifier contextIdentifier: String?,
         url destinationURL: URL
     ) {
-        let sourceURL = webView?.url ?? self.url
-        let source = sourceURL.map {
+        let currentContextIdentifier = floorpNativeWebExtensionContextIdentifier
+        var sourceHistory = webView?.backForwardList.backList.map {
             FloorpNativeWebExtensionSurfaceHistory.Entry(
-                contextIdentifier: floorpNativeWebExtensionContextIdentifier,
-                url: $0
+                contextIdentifier: currentContextIdentifier,
+                url: $0.url
             )
+        } ?? []
+        if let sourceURL = webView?.url ?? self.url {
+            sourceHistory.append(FloorpNativeWebExtensionSurfaceHistory.Entry(
+                contextIdentifier: floorpNativeWebExtensionContextIdentifier,
+                url: sourceURL
+            ))
         }
         floorpNativeSurfaceHistory.transition(
-            from: source,
+            from: sourceHistory,
             to: FloorpNativeWebExtensionSurfaceHistory.Entry(
                 contextIdentifier: contextIdentifier,
                 url: destinationURL

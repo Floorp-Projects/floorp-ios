@@ -54,17 +54,42 @@ struct FloorpNativeWebExtensionSurfaceHistory: Equatable {
         from source: Entry?,
         to destination: Entry
     ) {
-        if entries.isEmpty, let source {
-            entries.append(source)
-            currentIndex = entries.startIndex
-        } else if let source, let currentIndex, entries.indices.contains(currentIndex) {
-            entries[currentIndex] = source
-        }
+        transition(from: source.map { [$0] } ?? [], to: destination)
+    }
+
+    mutating func transition(
+        from currentSurfaceHistory: [Entry],
+        to destination: Entry
+    ) {
+        mergeCurrentSurfaceHistory(currentSurfaceHistory)
 
         discardForward()
         if currentEntry == destination { return }
         entries.append(destination)
         currentIndex = entries.index(before: entries.endIndex)
+    }
+
+    private mutating func mergeCurrentSurfaceHistory(_ history: [Entry]) {
+        guard !history.isEmpty else { return }
+        guard let currentIndex, entries.indices.contains(currentIndex) else {
+            entries = history
+            self.currentIndex = entries.index(before: entries.endIndex)
+            return
+        }
+
+        guard let currentEntry = history.last else { return }
+        entries[currentIndex] = currentEntry
+        let existingPrefix = Array(entries[...currentIndex])
+        let maximumOverlap = min(existingPrefix.count, history.count)
+        let overlap = stride(from: maximumOverlap, through: 1, by: -1).first { count in
+            existingPrefix.suffix(count).elementsEqual(history.suffix(count))
+        } ?? 0
+        let missingHistory = history.dropLast(overlap)
+        guard !missingHistory.isEmpty else { return }
+
+        let insertionIndex = currentIndex - overlap + 1
+        entries.insert(contentsOf: missingHistory, at: insertionIndex)
+        self.currentIndex = currentIndex + missingHistory.count
     }
 
     @discardableResult

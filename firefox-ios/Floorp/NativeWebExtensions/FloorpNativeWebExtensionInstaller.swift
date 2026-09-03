@@ -294,7 +294,9 @@ struct FloorpNativeWebExtensionRegistryStore {
     private static func isValid(_ record: FloorpNativeWebExtensionRecord) -> Bool {
         let lowercaseHex = CharacterSet(charactersIn: "0123456789abcdef")
         let grantedPermissionValues = record.grantedPermissions.map(\.value)
+        let deniedPermissionValues = record.deniedPermissions.map(\.value)
         let grantedMatchPatternValues = record.grantedMatchPatterns.map(\.value)
+        let deniedMatchPatternValues = record.deniedMatchPatterns.map(\.value)
         guard !record.id.isEmpty,
               !record.contextIdentifier.isEmpty,
               !record.baseURLHost.isEmpty,
@@ -302,9 +304,13 @@ struct FloorpNativeWebExtensionRegistryStore {
               record.sha256.count == 64,
               record.sha256.rangeOfCharacter(from: lowercaseHex.inverted) == nil,
               grantedPermissionValues.allSatisfy({ !$0.isEmpty }),
+              deniedPermissionValues.allSatisfy({ !$0.isEmpty }),
               grantedMatchPatternValues.allSatisfy({ !$0.isEmpty }),
+              deniedMatchPatternValues.allSatisfy({ !$0.isEmpty }),
               Set(grantedPermissionValues).count == grantedPermissionValues.count,
+              Set(deniedPermissionValues).count == deniedPermissionValues.count,
               Set(grantedMatchPatternValues).count == grantedMatchPatternValues.count,
+              Set(deniedMatchPatternValues).count == deniedMatchPatternValues.count,
               URL(string: "webkit-extension://\(record.baseURLHost)/")?.host == record.baseURLHost else {
             return false
         }

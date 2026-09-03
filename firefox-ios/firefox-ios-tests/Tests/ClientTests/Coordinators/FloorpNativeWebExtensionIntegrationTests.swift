@@ -104,13 +104,64 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         record.transactionState = .switching
         record.rollback = rollback
 
-        record.restore(try XCTUnwrap(record.rollback))
+        let outcome = record.recoverInterruptedTransaction()
 
+        XCTAssertEqual(outcome, .rolledBack)
         XCTAssertEqual(record.packageReference, FloorpNativeWebExtensionCatalog.darkReader.packageReference)
         XCTAssertEqual(record.installedVersion, "4.9.129")
         XCTAssertTrue(record.isEnabled)
         XCTAssertEqual(record.transactionState, .stable)
         XCTAssertNil(record.rollback)
+    }
+
+    func testInterruptedFirstInstallIsRetainedAsPurgeTombstone() {
+        var record = makeRecord()
+        record.transactionState = .switching
+        record.rollback = nil
+
+        let outcome = record.recoverInterruptedTransaction()
+
+        XCTAssertEqual(outcome, .pendingPurge)
+        XCTAssertEqual(record.transactionState, .pendingPurge)
+        XCTAssertFalse(record.isEnabled)
+        XCTAssertNil(record.rollback)
+        XCTAssertEqual(record.recoverInterruptedTransaction(), .unchanged)
+    }
+
+    func testRegistryRejectsDuplicateDeniedPermissionsAndMatchPatterns() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FloorpNativeWebExtensionRegistryStore(
+            url: root.appendingPathComponent("registry-v2.json")
+        )
+
+        var duplicatePermissions = makeRecord()
+        let permission = FloorpNativeWebExtensionPermissionDecision(value: "nativeMessaging")
+        duplicatePermissions.deniedPermissions = [permission, permission]
+        XCTAssertThrowsError(
+            try store.save(FloorpNativeWebExtensionRegistry(extensions: [duplicatePermissions]))
+        )
+
+        var duplicatePatterns = makeRecord()
+        let pattern = FloorpNativeWebExtensionPermissionDecision(value: "https://example.com/*")
+        duplicatePatterns.deniedMatchPatterns = [pattern, pattern]
+        XCTAssertThrowsError(
+            try store.save(FloorpNativeWebExtensionRegistry(extensions: [duplicatePatterns]))
+        )
+
+        var emptyDeniedPermission = makeRecord()
+        emptyDeniedPermission.deniedPermissions = [.init(value: "")]
+        XCTAssertThrowsError(
+            try store.save(FloorpNativeWebExtensionRegistry(extensions: [emptyDeniedPermission]))
+        )
+
+        var emptyDeniedPattern = makeRecord()
+        emptyDeniedPattern.deniedMatchPatterns = [.init(value: "")]
+        XCTAssertThrowsError(
+            try store.save(FloorpNativeWebExtensionRegistry(extensions: [emptyDeniedPattern]))
+        )
     }
 
     func testSurfaceHistoryPreservesCrossOriginBackForwardAndDropsForwardBranch() throws {
@@ -137,6 +188,29 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
         XCTAssertFalse(history.canGoForward)
         XCTAssertEqual(history.currentEntry?.url, replacement)
+    }
+
+    func testSurfaceHistoryMergesWebViewBackListBeforeCrossingBoundary() throws {
+        let firstWebsite = try XCTUnwrap(URL(string: "https://example.com/first"))
+        let secondWebsite = try XCTUnwrap(URL(string: "https://example.com/second"))
+        let extensionPage = try XCTUnwrap(
+            URL(string: "webkit-extension://ubol.floorp.internal/dashboard.html")
+        )
+        let normalContext: String? = nil
+        var history = FloorpNativeWebExtensionSurfaceHistory()
+
+        history.transition(
+            from: [
+                .init(contextIdentifier: normalContext, url: firstWebsite),
+                .init(contextIdentifier: normalContext, url: secondWebsite)
+            ],
+            to: .init(contextIdentifier: "ubol", url: extensionPage)
+        )
+
+        XCTAssertEqual(history.moveBack()?.url, secondWebsite)
+        XCTAssertEqual(history.moveBack()?.url, firstWebsite)
+        XCTAssertEqual(history.moveForward()?.url, secondWebsite)
+        XCTAssertEqual(history.moveForward()?.url, extensionPage)
     }
 
     func testBundledPackageRejectsDigestNotApprovedByCatalog() async throws {
