@@ -43,9 +43,9 @@ final class MainMenuConfigurationUtilityTests: XCTestCase {
     }
 
     func testGenerateMenuElements_extensionActionUsesLocalizedCopy() {
-        let wasEnabled = FloorpFlags.isWebExtensionFeatureEnabled(.core)
-        FloorpFlags.setWebExtensionFeature(.core, enabled: true)
-        defer { FloorpFlags.setWebExtensionFeature(.core, enabled: wasEnabled) }
+        let wasEnabled = FloorpFlags.isNativeWebExtensionsEnabled
+        FloorpFlags.setNativeWebExtensionsEnabled(true)
+        defer { FloorpFlags.setNativeWebExtensionsEnabled(wasEnabled) }
 
         let sections = configUtility.generateMenuElements(with: getTabInfo(), and: windowUUID)
         let item = sections.flatMap(\.options).first {

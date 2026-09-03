@@ -132,6 +132,7 @@ final class TabManagerImplementation: NSObject,
         super.init()
 
         synchronizePrivateBrowsingSessionOwnership()
+        FloorpNativeWebExtensionHost.host(for: profile.localName())?.register(tabManager: self)
 
         GlobalTabEventHandlers.configure(with: profile, windowManager: windowManager)
 

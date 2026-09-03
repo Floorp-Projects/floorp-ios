@@ -1,0 +1,317 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/
+
+import Common
+import Foundation
+import UIKit
+import WebKit
+
+/// Stable identity wrapper used by WebKit for the lifetime of a Firefox/Floorp tab.
+/// The browser remains the owner of the tab and its WKWebView.
+@MainActor
+final class FloorpNativeWebExtensionTab: NSObject, WKWebExtensionTab {
+    weak var tab: Tab?
+    weak var host: FloorpNativeWebExtensionHost?
+
+    init(tab: Tab, host: FloorpNativeWebExtensionHost) {
+        self.tab = tab
+        self.host = host
+        super.init()
+    }
+
+    func window(for context: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return nil }
+        return host.windowAdapter(for: tab.windowUUID, isPrivate: tab.isPrivate)
+    }
+
+    func indexInWindow(for context: WKWebExtensionContext) -> Int {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return NSNotFound }
+        return host.tabs(for: tab.windowUUID, isPrivate: tab.isPrivate)
+            .firstIndex(where: { $0 === tab }) ?? NSNotFound
+    }
+
+    func parentTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? {
+        guard let tab, let parent = tab.parent, let host,
+              host.canExpose(tab: parent, to: context) else { return nil }
+        return host.tabAdapter(for: parent)
+    }
+
+    func setParentTab(
+        _ parentTab: (any WKWebExtensionTab)?,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        guard parentTab == nil || parentTab is FloorpNativeWebExtensionTab else {
+            completionHandler(FloorpNativeWebExtensionError.unsupportedOperation("setParentTab"))
+            return
+        }
+        tab.parent = (parentTab as? FloorpNativeWebExtensionTab)?.tab
+        completionHandler(nil)
+    }
+
+    func webView(for context: WKWebExtensionContext) -> WKWebView? {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return nil }
+        return tab.webView
+    }
+
+    func title(for context: WKWebExtensionContext) -> String? {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return nil }
+        return tab.displayTitle
+    }
+
+    func isReaderModeAvailable(for context: WKWebExtensionContext) -> Bool {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return false }
+        return tab.readerModeAvailableOrActive
+    }
+
+    func isReaderModeActive(for context: WKWebExtensionContext) -> Bool {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return false }
+        return tab.readerModeState == .active
+    }
+
+    func size(for context: WKWebExtensionContext) -> CGSize {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return .zero }
+        return tab.webView?.bounds.size ?? .zero
+    }
+
+    func zoomFactor(for context: WKWebExtensionContext) -> Double {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return 1 }
+        return Double(tab.pageZoom)
+    }
+
+    func setZoomFactor(
+        _ zoomFactor: Double,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context),
+              zoomFactor.isFinite, zoomFactor > 0 else {
+            completionHandler(FloorpNativeWebExtensionError.unsupportedOperation("setZoomFactor"))
+            return
+        }
+        tab.pageZoom = CGFloat(zoomFactor)
+        completionHandler(nil)
+    }
+
+    func url(for context: WKWebExtensionContext) -> URL? {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return nil }
+        return tab.webView?.url ?? tab.url
+    }
+
+    func pendingURL(for context: WKWebExtensionContext) -> URL? {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return nil }
+        return tab.url
+    }
+
+    func isLoadingComplete(for context: WKWebExtensionContext) -> Bool {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else { return true }
+        return !tab.isLoading
+    }
+
+    func takeSnapshot(
+        using configuration: WKSnapshotConfiguration,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping (UIImage?, (any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context), let webView = tab.webView else {
+            completionHandler(nil, FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        webView.takeSnapshot(with: configuration) { image, error in
+            completionHandler(image, error)
+        }
+    }
+
+    func loadURL(
+        _ url: URL,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        host.load(url: url, in: tab, requestedBy: context)
+        completionHandler(nil)
+    }
+
+    func reload(
+        fromOrigin: Bool,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        tab.reload(bypassCache: fromOrigin)
+        completionHandler(nil)
+    }
+
+    func goBack(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        tab.goBack()
+        completionHandler(nil)
+    }
+
+    func goForward(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context) else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        tab.goForward()
+        completionHandler(nil)
+    }
+
+    func activate(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context),
+              let manager = host.tabManager(for: tab.windowUUID) else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        manager.selectTab(tab)
+        completionHandler(nil)
+    }
+
+    func isSelected(for context: WKWebExtensionContext) -> Bool {
+        guard let tab, let host, host.canExpose(tab: tab, to: context),
+              let manager = host.tabManager(for: tab.windowUUID) else { return false }
+        return manager.selectedTab === tab
+    }
+
+    func setSelected(
+        _ selected: Bool,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard selected else {
+            completionHandler(nil)
+            return
+        }
+        activate(for: context, completionHandler: completionHandler)
+    }
+
+    func duplicate(
+        using configuration: WKWebExtension.TabConfiguration,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context),
+              let manager = host.tabManager(for: tab.windowUUID) else {
+            completionHandler(nil, FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        let request: URLRequest?
+        if let url = configuration.url ?? tab.webView?.url ?? tab.url {
+            request = URLRequest(url: url)
+        } else {
+            request = nil
+        }
+        let duplicate = manager.addTab(
+            request,
+            afterTab: tab,
+            zombie: false,
+            isPrivate: tab.isPrivate
+        )
+        if configuration.shouldBeActive {
+            manager.selectTab(duplicate)
+        }
+        completionHandler(host.tabAdapter(for: duplicate), nil)
+    }
+
+    func close(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let tab, let host, host.canExpose(tab: tab, to: context),
+              let manager = host.tabManager(for: tab.windowUUID) else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        manager.removeTab(tab.tabUUID)
+        completionHandler(nil)
+    }
+
+    func shouldGrantPermissionsOnUserGesture(for context: WKWebExtensionContext) -> Bool {
+        guard let tab, let host else { return false }
+        return host.canExpose(tab: tab, to: context)
+    }
+
+    func shouldBypassPermissions(for context: WKWebExtensionContext) -> Bool {
+        false
+    }
+}
+
+/// WebKit treats private state as a property of a window. Floorp therefore
+/// exposes one logical window per (UIScene window, privacy mode) pair.
+@MainActor
+final class FloorpNativeWebExtensionWindow: NSObject, WKWebExtensionWindow {
+    let windowUUID: WindowUUID
+    let isPrivateBrowsing: Bool
+    weak var host: FloorpNativeWebExtensionHost?
+
+    init(windowUUID: WindowUUID, isPrivateBrowsing: Bool, host: FloorpNativeWebExtensionHost) {
+        self.windowUUID = windowUUID
+        self.isPrivateBrowsing = isPrivateBrowsing
+        self.host = host
+        super.init()
+    }
+
+    func tabs(for context: WKWebExtensionContext) -> [any WKWebExtensionTab] {
+        guard let host, !isPrivateBrowsing || context.hasAccessToPrivateData else { return [] }
+        return host.tabs(for: windowUUID, isPrivate: isPrivateBrowsing).map { host.tabAdapter(for: $0) }
+    }
+
+    func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? {
+        guard let host, !isPrivateBrowsing || context.hasAccessToPrivateData,
+              let tab = host.tabManager(for: windowUUID)?.selectedTab,
+              tab.isPrivate == isPrivateBrowsing else { return nil }
+        return host.tabAdapter(for: tab)
+    }
+
+    func windowType(for context: WKWebExtensionContext) -> WKWebExtension.WindowType {
+        .normal
+    }
+
+    func windowState(for context: WKWebExtensionContext) -> WKWebExtension.WindowState {
+        .normal
+    }
+
+    func isPrivate(for context: WKWebExtensionContext) -> Bool {
+        isPrivateBrowsing
+    }
+
+    func frame(for context: WKWebExtensionContext) -> CGRect {
+        guard let host else { return UIScreen.main.bounds }
+        return host.tabManager(for: windowUUID)?.selectedTab?.webView?.window?.frame ?? UIScreen.main.bounds
+    }
+
+    func focus(
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let host, !isPrivateBrowsing || context.hasAccessToPrivateData else {
+            completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
+            return
+        }
+        host.focus(windowUUID: windowUUID, isPrivate: isPrivateBrowsing)
+        completionHandler(nil)
+    }
+}

@@ -2,7 +2,7 @@
 
 [![Xcode](https://img.shields.io/badge/Xcode-26.3-blue?logo=Xcode&logoColor=white)]()
 [![Swift](https://img.shields.io/badge/Swift-6.2-red?logo=Swift&logoColor=white)]()
-[![iOS](https://img.shields.io/badge/iOS-15.0+-green?logo=apple&logoColor=white)]()
+[![iOS](https://img.shields.io/badge/iOS-18.4+-green?logo=apple&logoColor=white)]()
 
 A privacy-focused browser for iOS, based on [Firefox for iOS](https://github.com/mozilla-mobile/firefox-ios) by Mozilla.
 
@@ -61,6 +61,12 @@ Execution work uses disposable task worktrees at the recorded dependency SHA; mi
 Product work proceeds through small, testable milestones beginning with
 Floorp Notes Local v1. See [docs/roadmap.md](docs/roadmap.md) for scope,
 ordering, and exit criteria.
+
+Floorp uses WebKit's native WebExtension engine on iOS 18.4 and later. The
+replacement architecture is documented in
+[docs/floorp-ios-wkwebextension-native-replacement-design.md](docs/floorp-ios-wkwebextension-native-replacement-design.md).
+Release submissions that include bundled native extensions must also use the
+[App Review notes and open-source disclosure checklist](docs/app-review-notes-native-webextensions.md).
 
 ## Upstream Sync
 

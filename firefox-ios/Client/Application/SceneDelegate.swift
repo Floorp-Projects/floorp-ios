@@ -61,8 +61,15 @@ class SceneDelegate: UIResponder,
         let sceneCoordinator = SceneCoordinator(scene: scene, introManager: introScreenManager)
         self.sceneCoordinator = sceneCoordinator
         self.window = sceneCoordinator.window
-        AppEventQueue.wait(for: .floorpWebExtensionsReady) { [weak self, sceneCoordinator] in
-            guard let self, self.sceneCoordinator === sceneCoordinator else { return }
+        Task { @MainActor [weak self, sceneCoordinator] in
+            guard let self else { return }
+            await FloorpBootstrapper.waitForWebExtensionRuntime(for: self.profile)
+            guard self.sceneCoordinator === sceneCoordinator else { return }
+            self.logger.log(
+                "SceneDelegate: native WebExtension startup completed; starting scene",
+                level: .info,
+                category: .lifecycle
+            )
             sceneCoordinator.start()
             self.handle(connectionOptions: connectionOptions)
             if !self.sessionManager.launchSessionProvider.openedFromExternalSource {
@@ -81,6 +88,9 @@ class SceneDelegate: UIResponder,
         // On iPhone this will happen during app termination, for iPad it will
         // occur on termination or when a window is disconnected/closed by iPadOS
         downloadQueue.cancelAll(for: sceneCoordinator.windowUUID)
+
+        FloorpNativeWebExtensionHost.host(for: profile.localName())?
+            .unregister(windowUUID: sceneCoordinator.windowUUID)
 
         // Notify WindowManager that window is closing
         windowManager.windowWillClose(uuid: sceneCoordinator.windowUUID)
@@ -102,6 +112,13 @@ class SceneDelegate: UIResponder,
         // Resume previously stopped downloads for, and on, THIS scene only.
         if let uuid = sceneCoordinator?.windowUUID {
             downloadQueue.resumeAll(for: uuid)
+            if let selectedTab = (AppContainer.shared.resolve() as WindowManager)
+                .allWindowTabManagers()
+                .first(where: { $0.windowUUID == uuid })?
+                .selectedTab {
+                FloorpNativeWebExtensionHost.host(for: profile.localName())?
+                    .focus(windowUUID: uuid, isPrivate: selectedTab.isPrivate)
+            }
             AppEventQueue.wait(for: .tabRestoration(uuid)) {
                 self.tabErrorTelemetryHelper.validateTabCountForForegroundedScene(uuid)
             }

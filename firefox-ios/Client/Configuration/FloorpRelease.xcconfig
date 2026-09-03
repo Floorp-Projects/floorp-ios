@@ -9,9 +9,7 @@
 // Floorp release identity. Xcode and Xcode Cloud use automatic signing for
 // this team; certificates and provisioning profiles are never stored here.
 FLOORP_DEVELOPMENT_TEAM = DV2U35YBHT
-// The curated catalog records are release-bound to 0.3.0.  Keep the app
-// marketing version aligned so the signed-catalog verifier rejects neither
-// the candidate nor a future accidental downgrade.
+// Release identity for the first native WKWebExtension build.
 FLOORP_MARKETING_VERSION = 0.3.0
 FLOORP_BUILD_NUMBER = 4
 // Keep empty until the public listing is live; otherwise Settings exposes a dead rating link.

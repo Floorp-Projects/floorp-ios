@@ -73,6 +73,8 @@ class TabConfigurationProvider {
                 )
             }
         }
+        FloorpNativeWebExtensionHost.host(for: profile.localName())?
+            .attach(to: engineConfiguration.webViewConfiguration)
         return engineConfiguration
     }
 }

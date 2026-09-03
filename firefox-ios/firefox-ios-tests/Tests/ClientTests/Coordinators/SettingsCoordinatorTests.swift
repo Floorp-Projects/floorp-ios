@@ -558,7 +558,7 @@ final class SettingsCoordinatorTests: XCTestCase {
         subject.pressedWebExtensions()
 
         XCTAssertEqual(mockRouter.pushCalled, 1)
-        XCTAssertTrue(mockRouter.pushedViewController is FloorpWebExtensionSettingsViewController)
+        XCTAssertTrue(mockRouter.pushedViewController is FloorpNativeWebExtensionSettingsViewController)
     }
 
     func testPrivacySettingsDelegate_handlePasswordRoute() {
