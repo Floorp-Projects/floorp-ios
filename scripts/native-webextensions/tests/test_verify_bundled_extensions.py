@@ -90,6 +90,46 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "omits required values"):
             VERIFIER.verify_repository(self.root)
 
+    def test_rejects_stale_japanese_testflight_claims(self) -> None:
+        metadata = self.testflight_root / "WhatToTest.ja-JP.txt"
+        metadata.write_text(
+            metadata.read_text(encoding="utf-8")
+            + "\n\n署名済み・アプリ同梱の拡張機能は Dark Reader 1件です。\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "retains legacy claims"):
+            VERIFIER.verify_repository(self.root)
+
+    def test_rejects_stale_testflight_extension_versions(self) -> None:
+        replacements = {
+            "4.9.129": "4.9.128",
+            "2026.825.1619": "2026.825.1618",
+        }
+        for locale in ("en-US", "ja-JP"):
+            metadata = self.testflight_root / f"WhatToTest.{locale}.txt"
+            document = metadata.read_text(encoding="utf-8")
+            for current, stale in replacements.items():
+                document = document.replace(current, stale)
+            metadata.write_text(
+                document,
+                encoding="utf-8",
+            )
+        document = self.review_notes.read_text(encoding="utf-8")
+        heading = "## Paste into TestFlight — What to Test"
+        before, testflight_section = document.split(heading, 1)
+        for current, stale in replacements.items():
+            testflight_section = testflight_section.replace(current, stale, 1)
+        self.review_notes.write_text(
+            before + heading + testflight_section,
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required values") as context:
+            VERIFIER.verify_repository(self.root)
+        self.assertIn("Dark Reader 4.9.129", str(context.exception))
+        self.assertIn("uBlock Origin Lite 2026.825.1619", str(context.exception))
+
     def test_rejects_testflight_metadata_different_from_reviewed_template(self) -> None:
         metadata = self.testflight_root / "WhatToTest.en-US.txt"
         metadata.write_text(

@@ -15,6 +15,7 @@ DEFAULT_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 EXPECTED = (
     {
+        "display_name": "Dark Reader",
         "archive": "darkreader-chrome-mv3-4.9.129.zip",
         "license_file": "darkreader-chrome-mv3-4.9.129.LICENSE",
         "license_marker": "MIT License",
@@ -35,6 +36,7 @@ EXPECTED = (
         },
     },
     {
+        "display_name": "uBlock Origin Lite",
         "archive": "uBOLite_2026.825.1619.safari.zip",
         "license_file": "uBOLite_2026.825.1619.LICENSE",
         "license_marker": "GNU GENERAL PUBLIC LICENSE",
@@ -149,9 +151,12 @@ def verify_review_notes(repository_root: Path) -> None:
     }
     for entry in EXPECTED:
         provenance = entry["provenance"]
+        manifest = entry["manifest"]
         assert isinstance(provenance, dict)
+        assert isinstance(manifest, dict)
         required_values.update(
             {
+                f'{entry["display_name"]} {manifest["version"]}',
                 str(provenance["sha256"]),
                 str(provenance["sourceCommit"]),
                 str(entry["review_license_marker"]),
@@ -168,7 +173,20 @@ def verify_testflight_metadata(repository_root: Path) -> None:
         "ja-JP": repository_root / "firefox-ios/TestFlight/WhatToTest.ja-JP.txt",
     }
     required_values = {"Dark Reader", "uBlock Origin Lite", "WKWebExtension"}
-    forbidden_values = {"one signed, app-bundled extension", "exactly one catalog package"}
+    for entry in EXPECTED:
+        manifest = entry["manifest"]
+        assert isinstance(manifest, dict)
+        required_values.add(f'{entry["display_name"]} {manifest["version"]}')
+    forbidden_values = {
+        "en-US": {
+            "one signed, app-bundled extension",
+            "exactly one catalog package",
+        },
+        "ja-JP": {
+            "拡張機能は Dark Reader 1件",
+            "catalog package は1件だけ",
+        },
+    }
     documents = {}
     for locale, path in metadata.items():
         try:
@@ -177,10 +195,13 @@ def verify_testflight_metadata(repository_root: Path) -> None:
             fail(f"cannot read TestFlight metadata for {locale}: {error}")
         if len(document.encode("utf-8")) > 4_000:
             fail(f"TestFlight metadata for {locale} exceeds the 4,000-byte limit")
-        missing = sorted(value for value in required_values if value not in document)
+        normalized_document = " ".join(document.split())
+        missing = sorted(value for value in required_values if value not in normalized_document)
         if missing:
             fail(f"TestFlight metadata for {locale} omits required values: {missing}")
-        forbidden = sorted(value for value in forbidden_values if value in document)
+        forbidden = sorted(
+            value for value in forbidden_values[locale] if value in normalized_document
+        )
         if forbidden:
             fail(f"TestFlight metadata for {locale} retains legacy claims: {forbidden}")
         documents[locale] = document.strip()
