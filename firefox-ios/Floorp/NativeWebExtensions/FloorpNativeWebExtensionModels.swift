@@ -67,7 +67,7 @@ enum FloorpNativeWebExtensionCatalog {
         baseURLHost: "darkreader.floorp.internal",
         minimumOS: FloorpOperatingSystemVersion(18, 4),
         name: "Dark Reader",
-        summary: "Dark mode for every website. Runs through WebKit's native WebExtension engine.",
+        summary: FloorpStrings.WebExtensions.darkReaderSummary,
         source: "https://github.com/darkreader/darkreader/releases/tag/v4.9.129",
         sourceRevision: "c2a707302a39b8047543712e9c582bac07835d34",
         license: "MIT",
@@ -91,7 +91,7 @@ enum FloorpNativeWebExtensionCatalog {
         baseURLHost: "ubol.floorp.internal",
         minimumOS: FloorpOperatingSystemVersion(18, 6),
         name: "uBlock Origin Lite",
-        summary: "Efficient content blocking through WebKit's native Declarative Net Request engine.",
+        summary: FloorpStrings.WebExtensions.uBlockOriginLiteSummary,
         source: "https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.825.1619",
         sourceRevision: "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
         license: "GPL-3.0-or-later",
@@ -327,6 +327,7 @@ struct FloorpNativeWebExtensionInstallationPreview: Sendable {
     let identifier: String
     let name: String
     let version: String
+    let iconData: Data?
     let requiredPermissions: [String]
     let optionalPermissions: [String]
     let requiredMatchPatterns: [String]
@@ -341,7 +342,9 @@ struct FloorpNativeWebExtensionInstallationPreview: Sendable {
 struct FloorpNativeWebExtensionSettingsItem: Hashable, Sendable {
     let identifier: String
     let name: String
+    let summary: String?
     let version: String
+    let iconData: Data?
     let source: String
     let license: String
     let isEnabled: Bool
@@ -359,6 +362,7 @@ struct FloorpNativeWebExtensionSettingsItem: Hashable, Sendable {
 struct FloorpNativeWebExtensionActionItem {
     let contextIdentifier: String
     let label: String
+    let version: String
     let icon: UIImage?
     let isEnabled: Bool
 }
@@ -420,22 +424,25 @@ enum FloorpNativeWebExtensionError: LocalizedError {
 extension WKWebExtension.Permission {
     var floorpDisplayName: String {
         switch self {
-        case .activeTab: return "Access the current tab after a user action"
-        case .alarms: return "Run scheduled extension work"
-        case .clipboardWrite: return "Write to the clipboard"
-        case .contextMenus, .menus: return "Add items to browser menus"
-        case .cookies: return "Read and change cookies"
+        case .activeTab, .tabs: return FloorpStrings.WebExtensions.permissionTabs
+        case .alarms: return FloorpStrings.WebExtensions.permissionAlarms
+        case .clipboardWrite,
+             .contextMenus,
+             .menus,
+             .scripting:
+            return FloorpStrings.WebExtensions.permissionBrowserAutomation
+        case .cookies,
+             .webNavigation,
+             .webRequest:
+            return FloorpStrings.WebExtensions.permissionSiteData
         case .declarativeNetRequest,
              .declarativeNetRequestFeedback,
              .declarativeNetRequestWithHostAccess:
-            return "Block or redirect network requests"
-        case .nativeMessaging: return "Communicate with native applications"
-        case .scripting: return "Run scripts on permitted websites"
-        case .storage: return "Store extension settings"
-        case .tabs: return "Read permitted tab information"
-        case .unlimitedStorage: return "Use additional extension storage"
-        case .webNavigation: return "Observe page navigation"
-        case .webRequest: return "Observe network requests"
+            return FloorpStrings.WebExtensions.permissionNetworkBlocking
+        case .storage, .unlimitedStorage:
+            return FloorpStrings.WebExtensions.permissionStorage
+        case .nativeMessaging:
+            return FloorpStrings.WebExtensions.permissionGenericExplanation
         default: return rawValue
         }
     }

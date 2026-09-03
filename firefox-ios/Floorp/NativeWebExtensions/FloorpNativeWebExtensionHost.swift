@@ -80,7 +80,6 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private var announcedTabs = Set<ObjectIdentifier>()
     private var announcedWindows = Set<WindowKey>()
     private var lastFocusedWindow: WindowKey?
-    private var popupPresenters = [String: (UIViewController) -> Void]()
 
     private init(profile: Profile, logger: Logger = DefaultLogger.shared) throws {
         self.profile = profile
@@ -277,14 +276,18 @@ final class FloorpNativeWebExtensionHost: NSObject {
             return FloorpNativeWebExtensionSettingsItem(
                 identifier: record.id,
                 name: record.displayName,
+                summary: item?.summary,
                 version: record.installedVersion,
+                iconData: context?.webExtension.icon(for: CGSize(width: 64, height: 64))?.pngData(),
                 source: item?.source ?? "Managed Floorp catalog",
                 license: item?.license ?? "See package metadata",
                 isEnabled: record.isEnabled,
                 hasPrivateAccess: record.hasPrivateAccess,
-                permissions: record.grantedPermissions.map(\.value).sorted(),
+                permissions: Set(record.grantedPermissions.map {
+                    WKWebExtension.Permission(rawValue: $0.value).floorpDisplayName
+                }).sorted(),
                 optionalPermissions: context?.webExtension.optionalPermissions
-                    .map(\.rawValue).sorted() ?? [],
+                    .map(\.floorpDisplayName).sorted() ?? [],
                 matchPatterns: record.grantedMatchPatterns.map(\.value).sorted(),
                 optionalMatchPatterns: context?.webExtension.optionalPermissionMatchPatterns
                     .map(\.string).sorted() ?? [],
@@ -305,10 +308,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
             identifier: identifier,
             name: webExtension.displayName ?? prepared.item.name,
             version: webExtension.version ?? "0",
-            requiredPermissions: webExtension.requestedPermissions
-                .map(\.floorpDisplayName).sorted(),
-            optionalPermissions: webExtension.optionalPermissions
-                .map(\.floorpDisplayName).sorted(),
+            iconData: webExtension.icon(for: CGSize(width: 64, height: 64))?.pngData(),
+            requiredPermissions: Set(webExtension.requestedPermissions.map(\.floorpDisplayName)).sorted(),
+            optionalPermissions: Set(webExtension.optionalPermissions.map(\.floorpDisplayName)).sorted(),
             requiredMatchPatterns: webExtension.requestedPermissionMatchPatterns
                 .map(\.string).sorted(),
             optionalMatchPatterns: webExtension.optionalPermissionMatchPatterns
@@ -545,7 +547,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
         configuration.websiteDataStore = isPrivate ? .nonPersistent() : .default()
         let page = FloorpNativeWebExtensionPageViewController(
-            title: "\(context.webExtension.displayName ?? "Extension") Options",
+            title: "\(context.webExtension.displayName ?? FloorpStrings.WebExtensions.genericExtensionName)"
+                + " · \(FloorpStrings.WebExtensions.options)",
             url: url,
             configuration: configuration
         )
@@ -564,6 +567,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             return FloorpNativeWebExtensionActionItem(
                 contextIdentifier: record.id,
                 label: action.label.isEmpty ? record.displayName : action.label,
+                version: record.installedVersion,
                 icon: action.icon(for: CGSize(width: 32, height: 32)),
                 isEnabled: action.isEnabled
             )
@@ -572,8 +576,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
 
     func performAction(
         contextIdentifier: String,
-        for tab: Tab,
-        present: @escaping (UIViewController) -> Void
+        for tab: Tab
     ) throws {
         guard let context = contexts[contextIdentifier], context.isLoaded else {
             throw FloorpNativeWebExtensionError.extensionDisabled(contextIdentifier)
@@ -582,12 +585,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             throw FloorpNativeWebExtensionError.privateAccessDenied
         }
         let adapter = tabAdapter(for: tab)
-        popupPresenters[contextIdentifier] = present
-        context.userGesturePerformed(in: adapter)
         context.performAction(for: adapter)
-        if context.action(for: adapter)?.presentsPopup != true {
-            popupPresenters.removeValue(forKey: contextIdentifier)
-        }
     }
 
     /// Returns true when the caller must cancel the current navigation because
@@ -1094,12 +1092,79 @@ final class FloorpNativeWebExtensionHost: NSObject {
         if let tabViewController {
             return Self.topViewController(from: tabViewController)
         }
+        if let focused = lastFocusedWindow,
+           let manager = tabManager(for: focused.windowUUID) {
+            let focusedTabs = focused.isPrivate ? manager.privateTabs : manager.normalTabs
+            let selectedTab = manager.selectedTab.flatMap { $0.isPrivate == focused.isPrivate ? $0 : nil }
+            let candidates = [selectedTab].compactMap { $0 } + focusedTabs
+            if let focusedRoot = candidates.lazy.compactMap({
+                $0.webView?.window?.rootViewController
+            }).first {
+                return Self.topViewController(from: focusedRoot)
+            }
+        }
         let root = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }?
             .windows.first { $0.isKeyWindow }?
             .rootViewController
         return root.flatMap(Self.topViewController(from:))
+    }
+
+    private func presentActionPopup(
+        _ popup: UIViewController,
+        for tab: (any WKWebExtensionTab)?,
+        remainingTransitionRetries: Int = 4,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let presenter = presenter(for: tab), presenter.viewIfLoaded?.window != nil else {
+            completionHandler(FloorpNativeWebExtensionError.hostUnavailable)
+            return
+        }
+
+        let isTransitioning = presenter.isBeingDismissed
+            || presenter.isBeingPresented
+            || presenter.presentingViewController?.isBeingDismissed == true
+        if isTransitioning {
+            guard remainingTransitionRetries > 0 else {
+                completionHandler(FloorpNativeWebExtensionError.unsupportedOperation("action popup presentation"))
+                return
+            }
+            let retry = { [weak self] in
+                guard let self else {
+                    completionHandler(FloorpNativeWebExtensionError.hostUnavailable)
+                    return
+                }
+                self.presentActionPopup(
+                    popup,
+                    for: tab,
+                    remainingTransitionRetries: remainingTransitionRetries - 1,
+                    completionHandler: completionHandler
+                )
+            }
+            if let transitionCoordinator = presenter.transitionCoordinator {
+                transitionCoordinator.animate(alongsideTransition: nil) { _ in retry() }
+            } else {
+                DispatchQueue.main.async(execute: retry)
+            }
+            return
+        }
+
+        if let popover = popup.popoverPresentationController,
+           popover.barButtonItem == nil,
+           popover.sourceView == nil {
+            popover.sourceView = presenter.view
+            popover.sourceRect = CGRect(
+                x: presenter.view.bounds.midX,
+                y: presenter.view.bounds.midY,
+                width: 1,
+                height: 1
+            )
+            popover.permittedArrowDirections = []
+        }
+        presenter.present(popup, animated: true) {
+            completionHandler(nil)
+        }
     }
 
     private static func topViewController(from root: UIViewController) -> UIViewController {
@@ -1126,8 +1191,12 @@ final class FloorpNativeWebExtensionHost: NSObject {
             return
         }
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Don't Allow", style: .cancel) { _ in completion(false) })
-        alert.addAction(UIAlertAction(title: "Allow", style: .default) { _ in completion(true) })
+        alert.addAction(UIAlertAction(title: FloorpStrings.WebExtensions.cancel, style: .cancel) { _ in
+            completion(false)
+        })
+        alert.addAction(UIAlertAction(title: FloorpStrings.WebExtensions.allow, style: .default) { _ in
+            completion(true)
+        })
         presenter.present(alert, animated: true)
     }
 }
@@ -1283,9 +1352,12 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
         completionHandler: @escaping (Set<WKWebExtension.Permission>, Date?) -> Void
     ) {
         let eligible = permissions.filter { $0 != .nativeMessaging }
-        let detail = eligible.map(\.floorpDisplayName).sorted().map { "• \($0)" }.joined(separator: "\n")
+        let detail = Set(eligible.map(\.floorpDisplayName))
+            .sorted()
+            .map { "• \($0)" }
+            .joined(separator: "\n")
         prompt(
-            title: "Allow Extension Permission?",
+            title: FloorpStrings.WebExtensions.permissionRequestTitle,
             message: detail,
             in: tab
         ) { [weak self, weak extensionContext] allowed in
@@ -1303,7 +1375,11 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
         completionHandler: @escaping (Set<URL>, Date?) -> Void
     ) {
         let detail = urls.map(\.absoluteString).sorted().prefix(8).map { "• \($0)" }.joined(separator: "\n")
-        prompt(title: "Allow Website Access?", message: detail, in: tab) { [weak self, weak extensionContext] allowed in
+        prompt(
+            title: FloorpStrings.WebExtensions.websiteAccessRequestTitle,
+            message: detail,
+            in: tab
+        ) { [weak self, weak extensionContext] allowed in
             completionHandler(allowed ? urls : [], allowed ? .distantFuture : nil)
             guard let self, let extensionContext else { return }
             DispatchQueue.main.async { self.persistPermissionState(for: extensionContext) }
@@ -1318,7 +1394,11 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
         completionHandler: @escaping (Set<WKWebExtension.MatchPattern>, Date?) -> Void
     ) {
         let detail = matchPatterns.map(\.string).sorted().prefix(8).map { "• \($0)" }.joined(separator: "\n")
-        prompt(title: "Allow Website Access?", message: detail, in: tab) { [weak self, weak extensionContext] allowed in
+        prompt(
+            title: FloorpStrings.WebExtensions.websiteAccessRequestTitle,
+            message: detail,
+            in: tab
+        ) { [weak self, weak extensionContext] allowed in
             completionHandler(allowed ? matchPatterns : [], allowed ? .distantFuture : nil)
             guard let self, let extensionContext else { return }
             DispatchQueue.main.async { self.persistPermissionState(for: extensionContext) }
@@ -1339,15 +1419,16 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
         for context: WKWebExtensionContext,
         completionHandler: @escaping ((any Error)?) -> Void
     ) {
-        guard let identifier = identifier(for: context),
-              let presenter = popupPresenters.removeValue(forKey: identifier),
+        guard identifier(for: context) != nil,
               let popup = action.popupViewController else {
             completionHandler(FloorpNativeWebExtensionError.unsupportedOperation("action popup"))
             return
         }
-        popup.modalPresentationStyle = .formSheet
-        presenter(popup)
-        completionHandler(nil)
+        presentActionPopup(
+            popup,
+            for: action.associatedTab,
+            completionHandler: completionHandler
+        )
     }
 
     func webExtensionController(
