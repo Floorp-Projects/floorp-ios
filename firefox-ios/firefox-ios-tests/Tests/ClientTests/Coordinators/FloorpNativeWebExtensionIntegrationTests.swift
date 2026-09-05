@@ -372,6 +372,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 #endif
     }
 
+    // swiftlint:disable:next function_body_length
     func testInFlightCloseQuarantinePreservesDurablePermissionsAndRejectsLateSave()
         async throws {
 #if DEBUG || TESTING
@@ -511,10 +512,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         var probeInvocationCount = 0
         var heldReadinessWebView: WKWebView?
-        fixture.host.backgroundReadinessJavaScriptOverrideForTesting = {
-            hookIdentifier,
-            _,
-            webView in
+        fixture.host.backgroundReadinessJavaScriptOverrideForTesting = { hookIdentifier, _, webView in
             guard hookIdentifier == item.identifier else { return nil }
             probeInvocationCount += 1
             guard probeInvocationCount == 1 else {

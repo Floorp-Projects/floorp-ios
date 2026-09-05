@@ -387,7 +387,6 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 completeJavaScript(.failure(error), token: token)
             }
         }
-
     }
 
     /// Keeps an unsafe-to-release extension page and probe alive until process
@@ -3183,40 +3182,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 guard let self, let tab, let preservedWebView,
                       self.isManagedTab(tab),
                       tab.webView === preservedWebView else { return }
-                let currentDestination = self.controller.extensionContext(for: url)
-                let currentDestinationIdentifier = currentDestination.flatMap(self.identifier(for:))
-                if let currentDestination,
-                   self.currentReadyIdentifier(for: currentDestination) == nil {
-                    if let blankURL = URL(string: "about:blank") {
-                        self.switchSurface(
-                            in: tab,
-                            to: nil,
-                            loading: blankURL,
-                            forceRebuild: true
-                        )
-                    }
-                    return
-                }
-                if let currentDestination,
-                   tab.isPrivate,
-                   !currentDestination.hasAccessToPrivateData {
-                    return
-                }
-                if tab.floorpNativeWebExtensionContextIdentifier
-                    != currentDestinationIdentifier {
-                    tab.recordFloorpNativeSurfaceTransition(
-                        toContextIdentifier: currentDestinationIdentifier,
-                        url: url
-                    )
-                } else {
-                    tab.discardFloorpNativeSurfaceForwardHistory()
-                }
-                self.switchSurface(
-                    in: tab,
-                    to: currentDestination,
-                    loading: url,
-                    forceRebuild: true
-                )
+                self.routePreservedNavigation(in: tab, to: url)
             }
             return true
         }
@@ -3258,6 +3224,39 @@ final class FloorpNativeWebExtensionHost: NSObject {
             self.switchSurface(in: tab, to: currentDestination, loading: url)
         }
         return true
+    }
+
+    private func routePreservedNavigation(in tab: Tab, to url: URL) {
+        let destination = controller.extensionContext(for: url)
+        let destinationIdentifier = destination.flatMap(identifier(for:))
+        if let destination, currentReadyIdentifier(for: destination) == nil {
+            if let blankURL = URL(string: "about:blank") {
+                switchSurface(
+                    in: tab,
+                    to: nil,
+                    loading: blankURL,
+                    forceRebuild: true
+                )
+            }
+            return
+        }
+        if let destination, tab.isPrivate, !destination.hasAccessToPrivateData {
+            return
+        }
+        if tab.floorpNativeWebExtensionContextIdentifier != destinationIdentifier {
+            tab.recordFloorpNativeSurfaceTransition(
+                toContextIdentifier: destinationIdentifier,
+                url: url
+            )
+        } else {
+            tab.discardFloorpNativeSurfaceForwardHistory()
+        }
+        switchSurface(
+            in: tab,
+            to: destination,
+            loading: url,
+            forceRebuild: true
+        )
     }
 
     func load(
