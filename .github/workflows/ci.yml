@@ -290,6 +290,50 @@ jobs:
             exit 1
           fi
 
+      - name: Reject unsafe WebKit lifecycle diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          violations=0
+
+          check_webkit_lifecycle_signature() {
+            local log="$1"
+            local signature="$2"
+            local message="$3"
+            local grep_status
+
+            if grep -Fq -- "$signature" "$log"; then
+              echo "::error::$(basename "$log") $message"
+              violations=1
+            else
+              grep_status=$?
+              if [[ "$grep_status" -ne 1 ]]; then
+                echo "::error::$(basename "$log") could not be scanned for unsafe WebKit diagnostics (grep exited $grep_status)"
+                violations=1
+              fi
+            fi
+          }
+
+          check_webkit_lifecycle_log() {
+            local log="$1"
+            [[ -f "$log" ]] || return 0
+
+            check_webkit_lifecycle_signature \
+              "$log" \
+              "Completion handler for function call is no longer reachable" \
+              "abandoned a WebKit JavaScript callback"
+            check_webkit_lifecycle_signature \
+              "$log" \
+              "InvalidTransition" \
+              "hit an invalid WebKit lifecycle transition"
+          }
+
+          check_webkit_lifecycle_log "$RUNNER_TEMP/test.log"
+          check_webkit_lifecycle_log "$RUNNER_TEMP/ubol-production-host.log"
+          check_webkit_lifecycle_log "$RUNNER_TEMP/ubol-release-acceptance.log"
+
+          exit "$violations"
+
       - name: Upload Notes Sync G3 result
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:

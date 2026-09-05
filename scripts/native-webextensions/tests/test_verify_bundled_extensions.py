@@ -602,6 +602,160 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
+    def test_rejects_ubol_popup_initialization_without_numeric_tab_id(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "Number.isInteger(tab.id) === false",
+                "tab.id === undefined",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_without_numeric_window_id(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "Number.isInteger(tab.windowId) === false",
+                "tab.windowId === undefined",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_without_privacy_schema(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "typeof tab.incognito !== 'boolean'",
+                "tab.incognito === undefined",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_without_blocking_level_bounds(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "response.level > BLOCKING_MODE_MAX",
+                "false",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_without_boolean_panel_schema(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "typeof response.hasOmnipotence !== 'boolean'",
+                "response.hasOmnipotence === undefined",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_without_custom_filter_count_schema(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "Number.isInteger(response.hasCustomFilters) === false",
+                "typeof response.hasCustomFilters !== 'boolean'",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_that_accepts_negative_custom_filter_count(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "response.hasCustomFilters < 0",
+                "false",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_that_normalizes_null_admin_data(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "response.disabledFeatures === undefined",
+                "response.disabledFeatures == null",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_without_array_panel_schema(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "Array.isArray(disabledFeatures) === false",
+                "disabledFeatures === undefined",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_popup_initialization_that_accepts_invalid_panel_data(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "throw new Error('Invalid popup panel data');",
+                "return false;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_unbounded_popup_initialization_retry(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/popup.js",
+                "if ( attempt >= 20 ) { throw reason; }",
+                "if ( false ) { throw reason; }",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
     def test_rejects_ubol_missing_matched_rules_window_target(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",

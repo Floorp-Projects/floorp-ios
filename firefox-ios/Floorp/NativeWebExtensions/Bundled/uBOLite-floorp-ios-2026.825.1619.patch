@@ -4505,16 +4505,66 @@ index 89cd69f..ec5fd17 100644
      self.close();
  });
  
-@@ -300,7 +483,7 @@ async function init() {
+@@ -300,7 +483,16 @@ async function init() {
          active: true,
          currentWindow: true,
      });
 -    if ( tab instanceof Object === false ) { return true; }
-+    if ( tab instanceof Object === false ) { return false; }
++    if ( tab instanceof Object === false ) {
++        throw new Error('Active tab is unavailable');
++    }
++    if (
++        Number.isInteger(tab.id) === false ||
++        Number.isInteger(tab.windowId) === false ||
++        typeof tab.incognito !== 'boolean'
++    ) {
++        throw new Error('Active tab routing data is unavailable');
++    }
      Object.assign(currentTab, tab);
  
      let url;
-@@ -347,17 +530,22 @@ async function init() {
+@@ -311,6 +503,6 @@ async function init() {
+             url = new URL(url.hash.slice(1));
+         }
+         tabURL.href = url.href || '';
+     } catch {
+-        return false;
++        throw new Error('Active tab URL is unavailable');
+     }
+@@ -318,10 +510,28 @@ async function init() {
+     if ( url !== undefined ) {
+-        const response = await sendMessage({
++        const response = assertSuccessfulMessageResponse(await sendMessage({
+             what: 'popupPanelData',
+             origin: url.origin,
+             hostname: tabURL.hostname,
+-        });
+-        if ( response instanceof Object ) {
+-            Object.assign(popupPanelData, response);
++        }));
++        const disabledFeatures = response instanceof Object &&
++            response.disabledFeatures === undefined
++            ? []
++            : response?.disabledFeatures;
++        if (
++            response instanceof Object === false ||
++            Number.isInteger(response.level) === false ||
++            response.level < 0 ||
++            response.level > BLOCKING_MODE_MAX ||
++            typeof response.hasOmnipotence !== 'boolean' ||
++            typeof response.autoReload !== 'boolean' ||
++            typeof response.isSideloaded !== 'boolean' ||
++            typeof response.developerMode !== 'boolean' ||
++            Array.isArray(disabledFeatures) === false ||
++            disabledFeatures.some(feature => typeof feature !== 'string') ||
++            Number.isInteger(response.hasCustomFilters) === false ||
++            response.hasCustomFilters < 0
++        ) {
++            throw new Error('Invalid popup panel data');
+         }
++        Object.assign(popupPanelData, response, { disabledFeatures });
+     }
+@@ -347,17 +557,22 @@ async function init() {
      return true;
  }
  

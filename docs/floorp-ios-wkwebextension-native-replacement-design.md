@@ -41,7 +41,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d`、
+派生 SHA-256 は `402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -49,6 +49,10 @@ rules 導線を有効にし、popup の active tab にある数値の `windowId`
 `browser.tabs.create` へ伝えて、同じ通常／プライベート window に明示的に開く。さらに、
 Report 導線も source の window ID／incognito を渡し、同一 URL の検索・再利用・新規 tab を
 同じ window／realm に限定して、作成結果の privacy realm を検証する。
+Page Action の初期化では active tab の整数 ID／window ID と incognito、popup panel の boolean、
+disabled-features 配列、非負整数の custom-filter count、0〜3 の blocking level を検証する。初回 admin cache 未構築による
+`disabledFeatures` の未提供だけは空配列へ正規化し、null、非配列、非文字列要素を含む応答は
+引き続き拒否して bounded retry する。
 起動時の DNR・content script・設定・session storage・managed policy を待ち、起動中に届いた
 Safari realm 更新を完了後に直列化する。起動中の失敗は readiness まで保持しつつ、後続の成功で
 一時的な realm error を回復できる。閉鎖済み window の stale focus event を無害化してから、
@@ -516,7 +520,8 @@ build script は上流 digest を検証してから patch を適用し、timesta
 2. 読み込み済み extension context に public `loadBackgroundContent` を呼ぶ。
 3. Dark Reader は毎回3秒を上限に待ち、失敗を diagnostic log に残して navigation を許可する。
    uBO Lite は context lifecycle 内の通常／private 各 realm の初回だけ strict readiness を最大90秒待ち、
-   一過性の WebKit probe は15秒以内の単位で再試行し、
+   完了済みの一過性 WebKit error だけを同じ固定 deadline 内で再試行する。未完了の
+   JavaScript callback は再試行せず、その callback と WebView を process lifetime まで保持し、
    失敗時は navigation を止めて次回に再試行し、成功した realm は以降の navigation で待機しない。
 4. action identity を prepared set に入れ、同じ policy chain を一度だけ再評価して navigation を許可する。
 
@@ -992,7 +997,7 @@ uBOL の GPL code 同梱は、Floorp の該当 release source を公開し、版
 revision を同じ notes に明記し、無変更の upstream asset とは表現しない。
 また、idle 後の background wake を host navigation preflight の `loadBackgroundContent` で同期し、
 Dark Reader は毎 navigation を3秒 fail-open、uBO Lite は context ごとの通常／private 初回を
-90秒 fail-closed（15秒以内の probe 単位で再試行）として成功後に cache することを
+90秒 fail-closed（完了済みの一過性 error だけを固定 deadline 内で再試行）として成功後に cache することを
 review notes と試験手順に明記する。
 Dark Reader と uBOL はそれぞれの license notice と provenance JSON も ZIP とは別の
 app bundle resource として同梱する。

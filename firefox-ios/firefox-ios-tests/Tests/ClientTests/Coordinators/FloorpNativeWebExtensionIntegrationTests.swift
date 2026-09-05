@@ -337,6 +337,276 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 #endif
     }
 
+    func testLatePermissionSaveCannotOverwriteCleanlyUnloadedContext() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: true)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+
+        try await fixture.host.setEnabled(false, identifier: identifier)
+        XCTAssertFalse(fixture.context.isLoaded)
+        let durable = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: identifier)
+        )
+
+        fixture.context.hasRequestedOptionalAccessToAllHosts.toggle()
+        fixture.context.grantedPermissions = [:]
+        fixture.context.deniedPermissions = [:]
+        fixture.context.grantedPermissionMatchPatterns = [:]
+        fixture.context.deniedPermissionMatchPatterns = [:]
+        fixture.host.persistPermissionStateForTesting(fixture.context)
+
+        let afterLateSave = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: identifier)
+        )
+        XCTAssertEqual(afterLateSave.grantedPermissions, durable.grantedPermissions)
+        XCTAssertEqual(afterLateSave.deniedPermissions, durable.deniedPermissions)
+        XCTAssertEqual(afterLateSave.grantedMatchPatterns, durable.grantedMatchPatterns)
+        XCTAssertEqual(afterLateSave.deniedMatchPatterns, durable.deniedMatchPatterns)
+        XCTAssertEqual(
+            afterLateSave.hasRequestedOptionalAccessToAllHosts,
+            durable.hasRequestedOptionalAccessToAllHosts
+        )
+#else
+        throw XCTSkip("The permission persistence seam is available only in test builds")
+#endif
+    }
+
+    func testInFlightCloseQuarantinePreservesDurablePermissionsAndRejectsLateSave()
+        async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: true)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let grantedExpiration = Date(timeIntervalSince1970: 1_900_000_000)
+        let deniedExpiration = Date(timeIntervalSince1970: 2_000_000_000)
+        fixture.context.setPermissionStatus(
+            .grantedExplicitly,
+            for: .contextMenus,
+            expirationDate: grantedExpiration
+        )
+        fixture.host.persistPermissionStateForTesting(fixture.context)
+        let before = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: identifier)
+        )
+        XCTAssertEqual(
+            before.grantedPermissions.first { $0.value == "contextMenus" }?.expiration,
+            grantedExpiration
+        )
+        let options = try await fixture.host.optionsViewController(identifier: identifier)
+        let navigation = try XCTUnwrap(options as? UINavigationController)
+        let page = try XCTUnwrap(
+            navigation.viewControllers.first as? FloorpNativeWebExtensionPageViewController
+        )
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        root.present(navigation, animated: false)
+        defer {
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        page.loadViewIfNeeded()
+        let webView = try XCTUnwrap(
+            page.view.subviews.first { $0 is WKWebView } as? WKWebView
+        )
+        try await waitForDocumentCommit(
+            in: webView,
+            expectedOrigin: fixture.context.baseURL
+        )
+        let closeGate = FloorpClosePreparationTestGate()
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, candidate in
+            guard hookIdentifier == identifier, candidate === webView else { return false }
+            return await closeGate.waitUntilReleased()
+        }
+        defer {
+            closeGate.mayFinish = true
+            fixture.host.extensionSurfaceClosePreparationHookForTesting = nil
+        }
+
+        page.requestCloseForTesting()
+        for _ in 0..<80 where !closeGate.didBegin {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(closeGate.didBegin)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
+        )
+
+        fixture.context.setPermissionStatus(
+            .deniedExplicitly,
+            for: .contextMenus,
+            expirationDate: deniedExpiration
+        )
+        fixture.host.persistPermissionStateForTesting(fixture.context)
+        let duringClose = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: identifier)
+        )
+        XCTAssertNil(duringClose.grantedPermissions.first { $0.value == "contextMenus" })
+        XCTAssertEqual(
+            duringClose.deniedPermissions.first { $0.value == "contextMenus" }?.expiration,
+            deniedExpiration
+        )
+
+        try await fixture.host.setEnabled(false, identifier: identifier)
+        XCTAssertTrue(fixture.context.isLoaded)
+        XCTAssertFalse(fixture.context.hasAccessToPrivateData)
+        XCTAssertTrue(fixture.context.grantedPermissions.isEmpty)
+        XCTAssertTrue(fixture.context.grantedPermissionMatchPatterns.isEmpty)
+        let quarantined = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: identifier)
+        )
+        XCTAssertNil(
+            quarantined.grantedPermissions.first { $0.value == "contextMenus" }
+        )
+        XCTAssertEqual(
+            quarantined.deniedPermissions.first { $0.value == "contextMenus" }?.expiration,
+            deniedExpiration
+        )
+        XCTAssertEqual(quarantined.grantedMatchPatterns, before.grantedMatchPatterns)
+        XCTAssertEqual(quarantined.deniedMatchPatterns, before.deniedMatchPatterns)
+        XCTAssertEqual(
+            quarantined.hasRequestedOptionalAccessToAllHosts,
+            before.hasRequestedOptionalAccessToAllHosts
+        )
+
+        fixture.context.hasRequestedOptionalAccessToAllHosts.toggle()
+        fixture.host.persistPermissionStateForTesting(fixture.context)
+        let afterLateSave = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: identifier)
+        )
+        XCTAssertEqual(afterLateSave.grantedPermissions, quarantined.grantedPermissions)
+        XCTAssertEqual(afterLateSave.deniedPermissions, quarantined.deniedPermissions)
+        XCTAssertEqual(afterLateSave.grantedMatchPatterns, quarantined.grantedMatchPatterns)
+        XCTAssertEqual(afterLateSave.deniedMatchPatterns, quarantined.deniedMatchPatterns)
+        XCTAssertEqual(
+            afterLateSave.hasRequestedOptionalAccessToAllHosts,
+            quarantined.hasRequestedOptionalAccessToAllHosts
+        )
+
+        closeGate.mayFinish = true
+        for _ in 0..<80 where
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
+        )
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    func testActiveSemanticReadinessProbeQuarantinesConcurrentDisableAndCompletesCallback()
+        async throws {
+#if DEBUG || TESTING
+        executionTimeAllowance = 120
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let before = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: item.identifier)
+        )
+        var probeInvocationCount = 0
+        var heldReadinessWebView: WKWebView?
+        fixture.host.backgroundReadinessJavaScriptOverrideForTesting = {
+            hookIdentifier,
+            _,
+            webView in
+            guard hookIdentifier == item.identifier else { return nil }
+            probeInvocationCount += 1
+            guard probeInvocationCount == 1 else {
+                return "return { ready: true, version: '\(item.expectedVersion)' };"
+            }
+            heldReadinessWebView = webView
+            return """
+            await new Promise(resolve => {
+                globalThis.floorpReleaseHeldReadinessProbe = resolve;
+                setTimeout(resolve, 15000);
+            });
+            delete globalThis.floorpReleaseHeldReadinessProbe;
+            return { ready: true, version: '\(item.expectedVersion)' };
+            """
+        }
+        defer {
+            fixture.host.backgroundReadinessJavaScriptOverrideForTesting = nil
+        }
+
+        let optionsTask = Task { @MainActor in
+            do {
+                _ = try await fixture.host.optionsViewController(identifier: item.identifier)
+                return true
+            } catch {
+                return false
+            }
+        }
+
+        var didStartNativePromise = false
+        for _ in 0..<200 {
+            if let webView = heldReadinessWebView {
+                let didInstallRelease = (try? await webView.evaluateJavaScript(
+                    "typeof globalThis.floorpReleaseHeldReadinessProbe === 'function'"
+                ) as? Bool) ?? false
+                if didInstallRelease {
+                    didStartNativePromise = true
+                    break
+                }
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(didStartNativePromise)
+        XCTAssertTrue(
+            fixture.host.hasUnfinishedWebKitOperationForTesting(fixture.context)
+        )
+
+        try await fixture.host.setEnabled(false, identifier: item.identifier)
+
+        XCTAssertTrue(fixture.context.isLoaded)
+        XCTAssertTrue(fixture.context.grantedPermissions.isEmpty)
+        XCTAssertTrue(fixture.context.grantedPermissionMatchPatterns.isEmpty)
+        let disabled = try XCTUnwrap(
+            fixture.host.registryRecordForTesting(identifier: item.identifier)
+        )
+        XCTAssertFalse(disabled.isEnabled)
+        XCTAssertEqual(disabled.grantedPermissions, before.grantedPermissions)
+        XCTAssertEqual(disabled.deniedPermissions, before.deniedPermissions)
+        XCTAssertEqual(disabled.grantedMatchPatterns, before.grantedMatchPatterns)
+        XCTAssertEqual(disabled.deniedMatchPatterns, before.deniedMatchPatterns)
+        XCTAssertEqual(
+            disabled.hasRequestedOptionalAccessToAllHosts,
+            before.hasRequestedOptionalAccessToAllHosts
+        )
+        XCTAssertTrue(
+            fixture.host.hasUnfinishedWebKitOperationForTesting(fixture.context)
+        )
+
+        let readinessWebView = try XCTUnwrap(heldReadinessWebView)
+        _ = try await readinessWebView.evaluateJavaScript(
+            "globalThis.floorpReleaseHeldReadinessProbe?.(); true"
+        )
+        let didOpenOptions = await optionsTask.value
+        XCTAssertFalse(didOpenOptions)
+        for _ in 0..<80 where
+            fixture.host.hasUnfinishedWebKitOperationForTesting(fixture.context) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(
+            fixture.host.hasUnfinishedWebKitOperationForTesting(fixture.context)
+        )
+        let runtimeErrors = fixture.context.errors.map(\.localizedDescription).joined(separator: "\n")
+        XCTAssertFalse(runtimeErrors.localizedCaseInsensitiveContains("InvalidTransition"))
+        XCTAssertFalse(
+            runtimeErrors.localizedCaseInsensitiveContains(
+                "Completion handler for function call is no longer reachable"
+            )
+        )
+#else
+        throw XCTSkip("The semantic-readiness JavaScript seam is available only in test builds")
+#endif
+    }
+
     func testDisableRemainsDurableWhenFinalDiagnosticsWriteFails() async throws {
 #if DEBUG || TESTING
         let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
@@ -730,6 +1000,43 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertTrue(fixture.context.openWindows.isEmpty)
         XCTAssertNil(fixture.context.focusedWindow)
         withExtendedLifetime((focusedTab, backgroundTab)) {}
+    }
+
+    func testHostTeardownDuringDisableReadinessCannotPersistStaleFinalRecord() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { try? FileManager.default.removeItem(at: fixture.rootDirectory) }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        var didRemoveHost = false
+        fixture.host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == identifier else { return nil }
+            if !didRemoveHost {
+                didRemoveHost = true
+                FloorpNativeWebExtensionHost.remove(for: fixture.profile.localName())
+            }
+            return [
+                "ready": true,
+                "version": FloorpNativeWebExtensionCatalog.darkReader.expectedVersion
+            ]
+        }
+        defer { fixture.host.backgroundReadinessResponseHookForTesting = nil }
+
+        do {
+            try await fixture.host.setEnabled(false, identifier: identifier)
+            XCTFail("Host teardown during readiness must cancel the disable transition")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)")
+        }
+
+        XCTAssertTrue(didRemoveHost)
+        let persisted = try XCTUnwrap(
+            registryStore(for: fixture.profile).load().extensions.first { $0.id == identifier }
+        )
+        XCTAssertFalse(persisted.isEnabled)
+        XCTAssertNil(persisted.unloadState)
+#else
+        throw XCTSkip("The background readiness hook is available only in test builds")
+#endif
     }
 
     func testColdRestorePopulatesStartupTabsWithoutSyntheticCreatedEvents() async throws {
@@ -1616,6 +1923,15 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
+        var prePopupInitializationRetryRecord = legacyRecord
+        prePopupInitializationRetryRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .prePopupInitializationRetryUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                prePopupInitializationRetryRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
         let originalContextIdentifier = legacyRecord.contextIdentifier
         let originalBaseURLHost = legacyRecord.baseURLHost
         try store.save(FloorpNativeWebExtensionRegistry(extensions: [legacyRecord]))
@@ -1818,19 +2134,13 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
 
-        do {
-            try await host.uninstall(identifier: identifier)
-            XCTFail("An extension with retired WebKit readiness surfaces must not purge in-process")
-        } catch {
-            guard let extensionError = error as? FloorpNativeWebExtensionError,
-                  case .restartRequired = extensionError else {
-                XCTFail("Expected restart-required purge deferral, got \(error)")
-                return
-            }
-        }
-        XCTAssertTrue(host.installedContext(identifier: identifier) === context)
-        XCTAssertTrue(context.isLoaded)
-        XCTAssertTrue(host.settingsItems().contains { $0.identifier == identifier })
+        // A retryable error delivered through WebKit has completed its native
+        // callback. Those failed attempts must be released instead of being
+        // mistaken for timed-out callbacks and retained until process exit.
+        try await host.uninstall(identifier: identifier)
+        XCTAssertNil(host.installedContext(identifier: identifier))
+        XCTAssertFalse(context.isLoaded)
+        XCTAssertFalse(host.settingsItems().contains { $0.identifier == identifier })
 #else
         throw XCTSkip("The background readiness hooks are available only in test builds")
 #endif
@@ -2844,6 +3154,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         try await host.installBundledExtension(identifier: identifier)
         let context = try XCTUnwrap(host.installedContext(identifier: identifier))
         try await host.setPrivateAccess(true, identifier: identifier)
+        let enabled = try XCTUnwrap(
+            host.settingsItems().first { $0.identifier == identifier }
+        )
         try await host.setEnabled(false, identifier: identifier)
 
 #if DEBUG || TESTING
@@ -2893,7 +3206,20 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         XCTAssertFalse(queued.isEnabled)
         XCTAssertTrue(queued.requiresRestartToEnable)
-        XCTAssertFalse(context.isLoaded)
+        XCTAssertEqual(queued.permissions, enabled.permissions)
+        XCTAssertEqual(queued.matchPatterns, enabled.matchPatterns)
+        XCTAssertEqual(queued.hasPrivateAccess, enabled.hasPrivateAccess)
+        // A readiness timeout deliberately keeps the loaded WebKit context
+        // quarantined until process exit. Whether unload completed first or
+        // quarantine won the race, the disabled context must be inert.
+        if context.isLoaded {
+            XCTAssertFalse(context.hasAccessToPrivateData)
+            XCTAssertTrue(context.grantedPermissions.isEmpty)
+            XCTAssertTrue(context.grantedPermissionMatchPatterns.isEmpty)
+            XCTAssertTrue(queued.errorDescription?.contains("Restart Floorp") == true)
+        }
+        XCTAssertFalse(host.canMutate(tab: normalTab, in: context))
+        XCTAssertFalse(host.canMutate(tab: privateTab, in: context))
         XCTAssertTrue(host.actionItems(for: normalTab).isEmpty)
         XCTAssertTrue(host.actionItems(for: privateTab).isEmpty)
         if queued.requiresRestartToEnable {
@@ -2903,7 +3229,11 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             )
             XCTAssertFalse(cancelled.isEnabled)
             XCTAssertFalse(cancelled.requiresRestartToEnable)
-            XCTAssertFalse(context.isLoaded)
+            XCTAssertEqual(cancelled.permissions, enabled.permissions)
+            XCTAssertEqual(cancelled.matchPatterns, enabled.matchPatterns)
+            XCTAssertEqual(cancelled.hasPrivateAccess, enabled.hasPrivateAccess)
+            XCTAssertFalse(host.canMutate(tab: normalTab, in: context))
+            XCTAssertFalse(host.canMutate(tab: privateTab, in: context))
             return
         }
 #if DEBUG || TESTING
@@ -3882,6 +4212,11 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ["alarms", "fontSettings", "scripting", "storage"]
         )
         XCTAssertEqual(actual.extensions.first?.transactionState, .switching)
+        XCTAssertEqual(actual.extensions.first?.hasRequestedOptionalAccessToAllHosts, true)
+        XCTAssertEqual(
+            actual.extensions.first?.rollback?.hasRequestedOptionalAccessToAllHosts,
+            true
+        )
 
         var corruptRecord = record
         corruptRecord.grantedPermissions.append(
@@ -4000,6 +4335,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         record.sha256 = String(repeating: "b", count: 64)
         record.installedVersion = "5.0.0"
         record.isEnabled = false
+        record.hasRequestedOptionalAccessToAllHosts = false
         record.transactionState = .switching
         record.rollback = rollback
 
@@ -4009,8 +4345,25 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(record.packageReference, FloorpNativeWebExtensionCatalog.darkReader.packageReference)
         XCTAssertEqual(record.installedVersion, "4.9.129")
         XCTAssertTrue(record.isEnabled)
+        XCTAssertTrue(record.hasRequestedOptionalAccessToAllHosts)
         XCTAssertEqual(record.transactionState, .stable)
         XCTAssertNil(record.rollback)
+    }
+
+    func testLegacyRollbackWithoutOptionalAllHostsStateDecodesFailClosed() throws {
+        let encoded = try JSONEncoder().encode(makeRecord().rollbackSnapshot)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "hasRequestedOptionalAccessToAllHosts")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(
+            FloorpNativeWebExtensionRollback.self,
+            from: legacy
+        )
+
+        XCTAssertNil(decoded.hasRequestedOptionalAccessToAllHosts)
     }
 
     func testInterruptedFirstInstallIsRetainedAsPurgeTombstone() {
@@ -4225,7 +4578,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d"
+            "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(18, 6))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
@@ -6779,7 +7132,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
     }
 
-    private func makeHostContextFixture(hasPrivateAccess: Bool) async throws -> HostContextFixture {
+    private func makeHostContextFixture(
+        hasPrivateAccess: Bool
+    ) async throws -> HostContextFixture {
         let profileFixture = try makeIsolatedHostProfile(prefix: "context")
         let profile = profileFixture.profile
         let host = try FloorpNativeWebExtensionHost.install(for: profile)
@@ -6793,7 +7148,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             )
         }
         let context = try XCTUnwrap(
-            host.installedContext(identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier)
+            host.installedContext(
+                identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier
+            )
         )
         return HostContextFixture(
             profile: profile,
@@ -6838,11 +7195,31 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
     }
 
-    private func waitForDocumentCommit(in webView: WKWebView) async throws {
+    private func waitForDocumentCommit(
+        in webView: WKWebView,
+        expectedOrigin: URL? = nil
+    ) async throws {
         for _ in 0..<100 {
+            if let expectedOrigin {
+                guard let currentURL = webView.url,
+                      currentURL.absoluteString != "about:blank",
+                      currentURL.scheme == expectedOrigin.scheme,
+                      currentURL.host == expectedOrigin.host else {
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                    continue
+                }
+            }
             if let ready = try? await webView.evaluateJavaScript(
                 "document.readyState === 'complete'"
             ) as? Bool, ready {
+                if expectedOrigin != nil {
+                    // The JavaScript completion can resume just before WebKit
+                    // delivers its didFinish delegate callback on MainActor.
+                    // Let that real callback run before a close is requested;
+                    // tests without an expected origin retain the legacy
+                    // about:blank-ready behavior and timing.
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                }
                 return
             }
             try await Task.sleep(nanoseconds: 50_000_000)
@@ -7144,11 +7521,17 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             popupState = try? await popup.floorpCallAsyncJavaScript(
                 """
                 const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+                const config = await browser.runtime.sendMessage({ what: 'getCurrentConfig' });
+                const manifest = browser.runtime.getManifest();
                 return {
                     ready: document.readyState === 'complete' &&
                         !document.body.classList.contains('loading'),
                     enabled: document.querySelector('#gotoMatchedRules')
                         ?.classList.contains('enabled') === true,
+                    developerMode: config?.developerMode === true,
+                    hasFeedbackPermission:
+                        manifest.permissions?.includes('declarativeNetRequestFeedback') === true,
+                    runtimeError: document.querySelector('#runtimeError')?.textContent || '',
                     tabId: tab?.id,
                     incognito: tab?.incognito === true,
                     runtimeId: browser.runtime.id,
@@ -7165,7 +7548,11 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertEqual(popupState?["ready"] as? Bool, true)
-        XCTAssertEqual(popupState?["enabled"] as? Bool, true)
+        XCTAssertEqual(
+            popupState?["enabled"] as? Bool,
+            true,
+            "uBO Matched rules state: \(String(describing: popupState))"
+        )
         XCTAssertEqual(popupState?["incognito"] as? Bool, isPrivate)
         XCTAssertEqual((popupState?["tabId"] as? NSNumber)?.intValue, expectedSourceTabID)
         XCTAssertFalse((popupState?["runtimeId"] as? String)?.isEmpty ?? true)
@@ -7761,6 +8148,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             grantedMatchPatterns: [
                 FloorpNativeWebExtensionPermissionDecision(value: "*://*/*")
             ],
+            hasRequestedOptionalAccessToAllHosts: true,
             installedAt: fixedDate,
             updatedAt: fixedDate
         )

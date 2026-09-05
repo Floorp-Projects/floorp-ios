@@ -645,7 +645,10 @@ class Tab: NSObject,
     func close() async {
         await webView?.pauseAllMediaPlayback()
 
-        webView?.stopLoading()
+        if let webView,
+           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+            webView.stopLoading()
+        }
 
         contentScriptManager.uninstall(tab: self)
         if let webView = webView {
@@ -678,7 +681,12 @@ class Tab: NSObject,
         url: URL,
         forceRebuild: Bool = false
     ) {
-        guard forceRebuild || floorpNativeWebExtensionContextIdentifier != contextIdentifier else {
+        let mustReplacePreservedDocument = webView.map {
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve($0)
+        } ?? false
+        guard forceRebuild
+                || mustReplacePreservedDocument
+                || floorpNativeWebExtensionContextIdentifier != contextIdentifier else {
             loadRequest(URLRequest(url: url))
             return
         }
@@ -696,7 +704,9 @@ class Tab: NSObject,
         floorpNativeHasCommittedDocument = false
         contentScriptManager.uninstall(tab: self)
         if let webView {
-            webView.stopLoading()
+            if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+                webView.stopLoading()
+            }
             tabDelegate?.tab(self, willDeleteWebView: webView)
             webView.navigationDelegate = nil
             webView.removeFromSuperview()
@@ -841,7 +851,10 @@ class Tab: NSObject,
     }
 
     func stop() {
-        webView?.stopLoading()
+        if let webView,
+           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+            webView.stopLoading()
+        }
         cancelTemporaryDocumentDownload()
     }
 

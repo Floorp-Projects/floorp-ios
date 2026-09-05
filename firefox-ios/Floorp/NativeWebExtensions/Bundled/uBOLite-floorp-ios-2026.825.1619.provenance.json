@@ -59,7 +59,7 @@
       ]
     },
     {
-      "description": "Expose host-awaited dashboard and popup close handshakes that drain in-flight mutations, reconcile/read back protection, preserve harmless immediate no-edit popup close, begin host-permission requests in the original Page Action user-gesture stack before awaiting serialized mutations, avoid host-permission requests for pages without hostnames, never derive an empty ruleset selection from the dashboard's deferred unrendered Filter lists pane, normalize DOM collections before selection readback, keep failed surfaces open for retry or explicit native escape, roll controls back without reloading on error, and present accessible runtime errors.",
+      "description": "Expose host-awaited dashboard and popup close handshakes that drain in-flight mutations, reconcile/read back protection, preserve harmless immediate no-edit popup close, begin host-permission requests in the original Page Action user-gesture stack before awaiting serialized mutations, avoid host-permission requests for pages without hostnames, never derive an empty ruleset selection from the dashboard's deferred unrendered Filter lists pane, normalize DOM collections before selection readback, keep failed surfaces open for retry or explicit native escape, roll controls back without reloading on error, present accessible runtime errors, and use bounded retries when Page Action initialization receives missing or schema-invalid active-tab or popup-panel data, including route identifiers, privacy state, booleans, arrays, a nonnegative custom-filter count, and the blocking-level range; normalize only an omitted initial disabled-features value to an empty array while rejecting every other malformed value.",
       "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
       "paths": [
         "css/popup.css",
@@ -78,7 +78,7 @@
   ],
   "license": "GPL-3.0-or-later",
   "release": "2026.825.1619",
-  "sha256": "0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d",
+  "sha256": "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2",
   "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
   "strictMinimumSafariVersion": "18.6",
   "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",

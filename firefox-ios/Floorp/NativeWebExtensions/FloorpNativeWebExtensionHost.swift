@@ -14,8 +14,50 @@ extension Notification.Name {
     )
 }
 
+/// Marks a WebView whose document must remain alive because WebKit still owns
+/// an asynchronous JavaScript callback. UI owners may detach the view, but
+/// must not stop its document before process exit.
+@MainActor
+enum FloorpNativeWebExtensionProcessLifetimeWebViewRegistry {
+    private static var retained = [ObjectIdentifier: WKWebView]()
+    private static var inFlight = [ObjectIdentifier: (webView: WKWebView, count: Int)]()
+
+    static func beginOperation(in webView: WKWebView) {
+        let identifier = ObjectIdentifier(webView)
+        if let entry = inFlight[identifier] {
+            inFlight[identifier] = (entry.webView, entry.count + 1)
+        } else {
+            inFlight[identifier] = (webView, 1)
+        }
+    }
+
+    static func endOperation(in webView: WKWebView) {
+        let identifier = ObjectIdentifier(webView)
+        guard let entry = inFlight[identifier] else { return }
+        if entry.count == 1 {
+            inFlight.removeValue(forKey: identifier)
+        } else {
+            inFlight[identifier] = (entry.webView, entry.count - 1)
+        }
+    }
+
+    static func retain(_ webView: WKWebView) {
+        retained[ObjectIdentifier(webView)] = webView
+    }
+
+    static func mustPreserve(_ webView: WKWebView) -> Bool {
+        let identifier = ObjectIdentifier(webView)
+        return retained[identifier] != nil || inFlight[identifier] != nil
+    }
+}
+
 @MainActor
 final class FloorpNativeWebExtensionHost: NSObject {
+    private enum BackgroundContentLoadCompletion {
+        case succeeded
+        case failed(any Error)
+    }
+
     @MainActor
     private final class BackgroundContentLoadGate {
         private var continuation: CheckedContinuation<Void, any Error>?
@@ -90,6 +132,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private final class ExtensionTabSurfaceCloseRequest {
         let token = UUID()
         let identifier: String
+        let context: WKWebExtensionContext
         let tabIdentifier: ObjectIdentifier
         let webViewIdentifier: ObjectIdentifier
         let forceOnFailure: Bool
@@ -104,12 +147,14 @@ final class FloorpNativeWebExtensionHost: NSObject {
 
         init(
             identifier: String,
+            context: WKWebExtensionContext,
             tab: Tab,
             webView: WKWebView,
             forceOnFailure: Bool,
             completion: @escaping (Bool) -> Void
         ) {
             self.identifier = identifier
+            self.context = context
             self.tabIdentifier = ObjectIdentifier(tab)
             self.webViewIdentifier = ObjectIdentifier(webView)
             self.forceOnFailure = forceOnFailure
@@ -205,6 +250,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
 
         func invalidate() {
+            // A timeout/cancellation means WebKit still owns a callback. Once
+            // promoted to process-lifetime retention, invalidation is unsafe.
+            guard !requiresProcessLifetimeRetention else { return }
             timeoutTask?.cancel()
             timeoutTask = nil
             operationToken = nil
@@ -242,6 +290,11 @@ final class FloorpNativeWebExtensionHost: NSObject {
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             guard webView === self.webView, let token = operationToken else { return }
+            if javaScriptContinuation != nil {
+                // The delegate notification can precede the native
+                // callAsyncJavaScript completion.
+                requiresProcessLifetimeRetention = true
+            }
             failCurrentOperation(FloorpNativeWebExtensionError.hostUnavailable, token: token)
         }
 
@@ -298,7 +351,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
             // WebContent callback is still pending can trip the iOS 26 Gestures
             // `idle -> failed(deinit)` transition.
             requiresProcessLifetimeRetention = true
-            stopWebView()
+            // Do not stop or detach the page. WebKit still owns the native
+            // callback and must be allowed to finish against the retained page.
             if let continuation = navigationContinuation {
                 navigationContinuation = nil
                 operationToken = nil
@@ -320,7 +374,6 @@ final class FloorpNativeWebExtensionHost: NSObject {
             // Task cancellation has the same ownership boundary as a timeout:
             // the native WebKit operation may outlive its Swift continuation.
             requiresProcessLifetimeRetention = true
-            stopWebView()
             navigationContinuation?.resume(throwing: CancellationError())
             navigationContinuation = nil
             javaScriptContinuation?.resume(throwing: CancellationError())
@@ -335,10 +388,6 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
         }
 
-        private func stopWebView() {
-            webView?.stopLoading()
-            webView?.navigationDelegate = nil
-        }
     }
 
     /// Keeps an unsafe-to-release extension page and probe alive until process
@@ -347,12 +396,23 @@ final class FloorpNativeWebExtensionHost: NSObject {
     @MainActor
     private final class BackgroundReadinessSurface {
         let context: WKWebExtensionContext
-        let probe = BackgroundReadinessProbe()
+        let probe: BackgroundReadinessProbe
         let webView: WKWebView
 
         init(context: WKWebExtensionContext, configuration: WKWebViewConfiguration) {
             self.context = context
+            probe = BackgroundReadinessProbe()
             webView = WKWebView(frame: .zero, configuration: configuration)
+        }
+
+        init(
+            context: WKWebExtensionContext,
+            probe: BackgroundReadinessProbe,
+            webView: WKWebView
+        ) {
+            self.context = context
+            self.probe = probe
+            self.webView = webView
         }
     }
 
@@ -531,6 +591,11 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private var lifecycleQuiescedContextIdentifiers = Set<String>()
     private var quarantinedContextIdentifiers = Set<String>()
     private var backgroundLoadGates = [UUID: BackgroundContentLoadGate]()
+    private var pendingBackgroundLoadCallbacks = [UUID: WKWebExtensionContext]()
+    private var backgroundLoadFollowerCounts = [UUID: Int]()
+    private var backgroundLoadCompletionResults = [UUID: BackgroundContentLoadCompletion]()
+    private var activeBackgroundReadinessOperations = [UUID: WKWebExtensionContext]()
+    private var activeSurfaceCloseOperations = [UUID: WKWebExtensionContext]()
     private var retiredBackgroundReadinessSurfaces = [BackgroundReadinessSurface]()
     private var actionOrigins = [String: [ActionOrigin]]()
     private var presentedExtensionSurfaces = [String: [PresentedExtensionSurface]]()
@@ -567,6 +632,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
         ((String, Int) -> (any Error)?)?
     var backgroundReadinessResponseHookForTesting:
         ((String, Int) -> [String: Any]?)?
+    var backgroundReadinessJavaScriptOverrideForTesting:
+        ((String, Int, WKWebView) -> String?)?
     var startupRestoreReadinessHookForTesting:
         ((String) async -> Void)?
     var navigationCandidateReadinessCompletedHookForTesting:
@@ -597,6 +664,22 @@ final class FloorpNativeWebExtensionHost: NSObject {
         isPrivate: Bool
     ) -> Bool {
         verifiedNavigationReadinessRealms[identifier]?.contains(isPrivate) == true
+    }
+
+    func persistPermissionStateForTesting(_ context: WKWebExtensionContext) {
+        persistPermissionState(for: context)
+    }
+
+    func registryRecordForTesting(
+        identifier: String
+    ) -> FloorpNativeWebExtensionRecord? {
+        registry.extensions.first { $0.id == identifier }
+    }
+
+    func hasUnfinishedWebKitOperationForTesting(
+        _ context: WKWebExtensionContext
+    ) -> Bool {
+        hasUnfinishedWebKitOperation(for: context)
     }
 #endif
 
@@ -1561,8 +1644,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
             deniedPermissions: permissionDecisions.denied,
             grantedMatchPatterns: patternDecisions.granted,
             deniedMatchPatterns: patternDecisions.denied,
-            hasRequestedOptionalAccessToAllHosts: webExtension.optionalPermissionMatchPatterns
-                .contains { $0.string == "<all_urls>" },
+            hasRequestedOptionalAccessToAllHosts: declaredPatternValues.contains("<all_urls>")
+                ? previousRecord?.hasRequestedOptionalAccessToAllHosts ?? false
+                : false,
             packageDiagnostics: prepared.diagnostics,
             runtimeDiagnostics: [],
             installedAt: previousRecord?.installedAt ?? Date(),
@@ -1572,9 +1656,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
             lastError: nil
         )
         if let previousContext,
-           hasRetiredBackgroundReadinessSurface(for: previousContext) {
+           hasUnfinishedWebKitOperation(for: previousContext) {
             throw FloorpNativeWebExtensionError.restartRequired(
-                "Updating an extension with an unfinished WebKit readiness probe"
+                "Updating an extension with an unfinished WebKit operation"
             )
         }
         let previousContextWasReady = readyContextIdentifiers.contains(identifier)
@@ -1588,9 +1672,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     identifier: identifier
                 )
                 try validateTransition(for: identifier, generation: generation)
-                guard !hasRetiredBackgroundReadinessSurface(for: previousContext) else {
+                guard !hasUnfinishedWebKitOperation(for: previousContext) else {
                     throw FloorpNativeWebExtensionError.restartRequired(
-                        "Updating an extension with an unfinished WebKit readiness probe"
+                        "Updating an extension with an unfinished WebKit operation"
                     )
                 }
                 setContextLifecycleQuiesced(true, identifier: identifier)
@@ -1613,6 +1697,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         } ?? []
         var newContextAffectedTabs = [Tab]()
         var didAttemptNewContextLoad = false
+        var didStopObservingPreviousContext = false
 
         do {
             replaceRecord(record)
@@ -1622,10 +1707,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
             replaceRecord(record)
             try persistRegistry()
 
-            if previousContext?.isLoaded == true {
-                try controller.unload(previousContext!)
+            if let previousContext, previousContext.isLoaded {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: nil,
+                    object: previousContext
+                )
+                didStopObservingPreviousContext = true
+                try controller.unload(previousContext)
                 cleanSurfaceConfigurationTemplates.removeValue(
-                    forKey: ObjectIdentifier(previousContext!)
+                    forKey: ObjectIdentifier(previousContext)
                 )
             }
             let newContext = makeContext(webExtension: webExtension, record: record)
@@ -1727,6 +1818,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 var restoredPreviousContext = false
                 var didFailClosedRestoration = false
                 if let previousContext {
+                    if didStopObservingPreviousContext {
+                        observeContextChanges(in: previousContext)
+                    }
                     if didAttemptNewContextLoad {
                         newContextAffectedTabs = mergingTabs(
                             previousContextAffectedTabs,
@@ -1924,15 +2018,45 @@ final class FloorpNativeWebExtensionHost: NSObject {
 #endif
             try validateTransition(for: identifier, generation: generation)
             if context.isLoaded {
-                do {
-                    try await waitForBackgroundReadinessIfRequired(
-                        in: context,
-                        identifier: identifier,
-                        timeoutNanoseconds: 2_000_000_000
+                if hasUnfinishedWebKitOperation(for: context) {
+                    // Do not stack a shutdown readiness request behind an
+                    // already-delivered WebKit call. In particular, WebKit can
+                    // serialize extension-page JavaScript, causing this second
+                    // request to outlive the disable deadline and race DNR
+                    // teardown. The active operation below forces quarantine.
+                    shutdownError = FloorpNativeWebExtensionError.restartRequired(
+                        "Disabling an extension with an unfinished WebKit operation"
                     )
-                } catch {
-                    shutdownError = error
+                } else {
+                    do {
+                        try await waitForBackgroundReadinessIfRequired(
+                            in: context,
+                            identifier: identifier,
+                            timeoutNanoseconds: 2_000_000_000
+                        )
+                    } catch {
+                        shutdownError = error
+                    }
                 }
+            }
+            // Caller cancellation still requires fail-closed containment, but
+            // a host teardown/generation change must not mutate or persist a
+            // runtime that no longer belongs to this lifecycle.
+            guard transitionBelongsToCurrentLifecycle(
+                for: identifier,
+                generation: generation
+            ), contexts[identifier] === context,
+                  var latestRecord = registry.extensions.first(where: { $0.id == identifier }) else {
+                throw CancellationError()
+            }
+            // Close the durable permission snapshot before unload. WebKit can
+            // synchronously clear live permissions while unloading; those are
+            // runtime teardown events, not user decisions.
+            if context.isLoaded {
+                Self.synchronizePermissionState(from: context, to: &latestRecord)
+            }
+            record = latestRecord
+            if context.isLoaded {
                 shutdownAffectedTabs = mergingTabs(
                     affectedTabs,
                     tabsAffectedByRemoval(of: context, identifier: identifier)
@@ -1948,8 +2072,6 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 identifier: identifier
             )
             clearSurfaceHistory(for: identifier)
-
-            Self.synchronizePermissionState(from: context, to: &record)
             record.isEnabled = false
             record.unloadState = FloorpNativeWebExtensionUnloadState(
                 processIdentifier: Self.processLifecycleIdentifier,
@@ -2359,6 +2481,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 }
                 return await self.prepareExtensionSurfaceForClose(
                     webView,
+                    context: context,
                     identifier: identifier,
                     timeoutNanoseconds: self.backgroundReadinessTimeout(for: identifier)
                 )
@@ -2397,16 +2520,28 @@ final class FloorpNativeWebExtensionHost: NSObject {
 
     private func prepareExtensionSurfaceForClose(
         _ webView: WKWebView,
+        context: WKWebExtensionContext,
         identifier: String,
         timeoutNanoseconds: UInt64
     ) async -> Bool {
+        guard !Task.isCancelled,
+              contexts[identifier] === context,
+              currentReadyIdentifier(for: context) == identifier,
+              !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) else {
+            return false
+        }
+        let closeOperationID = UUID()
+        activeSurfaceCloseOperations[closeOperationID] = context
+        FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.beginOperation(in: webView)
 #if DEBUG || TESTING
         if let hook = extensionSurfaceClosePreparationHookForTesting {
-            return await hook(identifier, webView)
+            let result = await hook(identifier, webView)
+            activeSurfaceCloseOperations.removeValue(forKey: closeOperationID)
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
+            return result
         }
 #endif
         let probe = BackgroundReadinessProbe()
-        defer { probe.invalidate() }
         do {
             let raw = try await probe.callAsyncJavaScript(
                 """
@@ -2419,6 +2554,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 identifier: identifier,
                 timeoutNanoseconds: timeoutNanoseconds
             )
+            activeSurfaceCloseOperations.removeValue(forKey: closeOperationID)
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
+            probe.invalidate()
             guard let response = raw as? [String: Any],
                   response["ready"] as? Bool == true else {
                 let detail = (raw as? [String: Any])?["error"] as? String
@@ -2432,6 +2570,22 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
             return true
         } catch {
+            activeSurfaceCloseOperations.removeValue(forKey: closeOperationID)
+            if probe.requiresProcessLifetimeRetention {
+                // The caller may explicitly close this page after a timeout,
+                // while WebKit still owns its JavaScript callback. Retain the
+                // complete page/probe pair so that callback remains reachable.
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
+                retiredBackgroundReadinessSurfaces.append(BackgroundReadinessSurface(
+                    context: context,
+                    probe: probe,
+                    webView: webView
+                ))
+            } else {
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
+                probe.invalidate()
+            }
             logger.log(
                 "Floorp: native WebExtension \(identifier) options close preparation failed: \(error)",
                 level: .warning,
@@ -2476,6 +2630,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
         let request = ExtensionTabSurfaceCloseRequest(
             identifier: identifier,
+            context: context,
             tab: tab,
             webView: expectedWebView,
             forceOnFailure: forceOnFailure,
@@ -2506,7 +2661,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         request.task?.cancel()
         // swiftlint:disable:next closure_body_length
         request.task = Task { @MainActor [weak self, request] in
-            guard let self else {
+            guard !Task.isCancelled, let self else {
                 if !request.forceOnFailure,
                    request.tab?.webView === request.webView {
                     request.webView?.isUserInteractionEnabled = true
@@ -2514,8 +2669,23 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 request.takeCompletion()?(request.forceOnFailure)
                 return
             }
+            guard self.extensionTabSurfaceCloseRequests[request.tabIdentifier]?.token
+                    == request.token,
+                  self.extensionTabSurfaceCloseRequestIsCurrent(
+                      request,
+                      tab: tab,
+                      webView: webView
+                  ) else {
+                self.resolveExtensionTabSurfaceCloseRequest(
+                    request,
+                    shouldProceed: request.forceOnFailure,
+                    dismissAlert: true
+                )
+                return
+            }
             let prepared = await self.prepareExtensionSurfaceForClose(
                 webView,
+                context: request.context,
                 identifier: request.identifier,
                 timeoutNanoseconds: self.backgroundReadinessTimeout(
                     for: request.identifier
@@ -2567,8 +2737,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
               tab.floorpNativeHasCommittedDocument,
               tab.floorpNativeWebExtensionContextIdentifier == request.identifier,
               isManagedTab(tab),
-              let context = contexts[request.identifier] else { return false }
-        return currentReadyIdentifier(for: context) == request.identifier
+              contexts[request.identifier] === request.context else { return false }
+        return currentReadyIdentifier(for: request.context) == request.identifier
     }
 
     private func presentExtensionTabSurfaceCloseFailure(
@@ -3000,6 +3170,57 @@ final class FloorpNativeWebExtensionHost: NSObject {
         let currentIdentifier = tab.floorpNativeWebExtensionContextIdentifier
         let destinationIdentifier = destination.flatMap(identifier(for:))
 
+        if let destination, tab.isPrivate, !destination.hasAccessToPrivateData {
+            return true
+        }
+
+        // A close-preparation callback can outlive its UI timeout. Cancel the
+        // policy decision on that document and perform the destination load in
+        // a fresh WebView, leaving the old page retained and untouched.
+        if let preservedWebView = tab.webView,
+           FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(preservedWebView) {
+            DispatchQueue.main.async { [weak self, weak tab, weak preservedWebView] in
+                guard let self, let tab, let preservedWebView,
+                      self.isManagedTab(tab),
+                      tab.webView === preservedWebView else { return }
+                let currentDestination = self.controller.extensionContext(for: url)
+                let currentDestinationIdentifier = currentDestination.flatMap(self.identifier(for:))
+                if let currentDestination,
+                   self.currentReadyIdentifier(for: currentDestination) == nil {
+                    if let blankURL = URL(string: "about:blank") {
+                        self.switchSurface(
+                            in: tab,
+                            to: nil,
+                            loading: blankURL,
+                            forceRebuild: true
+                        )
+                    }
+                    return
+                }
+                if let currentDestination,
+                   tab.isPrivate,
+                   !currentDestination.hasAccessToPrivateData {
+                    return
+                }
+                if tab.floorpNativeWebExtensionContextIdentifier
+                    != currentDestinationIdentifier {
+                    tab.recordFloorpNativeSurfaceTransition(
+                        toContextIdentifier: currentDestinationIdentifier,
+                        url: url
+                    )
+                } else {
+                    tab.discardFloorpNativeSurfaceForwardHistory()
+                }
+                self.switchSurface(
+                    in: tab,
+                    to: currentDestination,
+                    loading: url,
+                    forceRebuild: true
+                )
+            }
+            return true
+        }
+
         guard currentIdentifier != destinationIdentifier else {
             if tab.consumeFloorpNativePreserveForwardNavigation() {
                 return false
@@ -3010,10 +3231,6 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
             return false
         }
-        if let destination, tab.isPrivate, !destination.hasAccessToPrivateData {
-            return true
-        }
-
         DispatchQueue.main.async { [weak self, weak tab] in
             guard let self, let tab, self.isManagedTab(tab) else { return }
             let currentDestination = self.controller.extensionContext(for: url)
@@ -3405,11 +3622,31 @@ final class FloorpNativeWebExtensionHost: NSObject {
         identifier: String,
         timeoutNanoseconds: UInt64
     ) async throws {
+        if let pendingID = pendingBackgroundLoadCallbacks.first(where: {
+            $0.value === context
+        })?.key {
+            backgroundLoadFollowerCounts[pendingID, default: 0] += 1
+            defer { releaseBackgroundLoadFollower(id: pendingID) }
+            try await waitForPendingBackgroundLoadCallback(
+                id: pendingID,
+                identifier: identifier,
+                timeoutNanoseconds: timeoutNanoseconds
+            )
+            return
+        }
         let gateID = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let gate = BackgroundContentLoadGate(continuation: continuation)
                 backgroundLoadGates[gateID] = gate
+                guard !Task.isCancelled else {
+                    resolveBackgroundLoadGate(id: gateID, error: CancellationError())
+                    return
+                }
+                // The Swift timeout resolves only our waiter. WebKit retains
+                // its completion handler until the native load actually ends,
+                // so keep the context non-unloadable until that callback fires.
+                pendingBackgroundLoadCallbacks[gateID] = context
                 gate.startTimeout(
                     id: gateID,
                     identifier: identifier,
@@ -3419,7 +3656,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 }
                 context.loadBackgroundContent { [weak self] error in
                     Task { @MainActor in
-                        self?.resolveBackgroundLoadGate(id: gateID, error: error)
+                        self?.completeBackgroundLoadCallback(id: gateID, error: error)
                     }
                 }
             }
@@ -3474,6 +3711,59 @@ final class FloorpNativeWebExtensionHost: NSObject {
         backgroundLoadGates.removeValue(forKey: id)?.resolve(error)
     }
 
+    private func completeBackgroundLoadCallback(id: UUID, error: (any Error)?) {
+        if backgroundLoadFollowerCounts[id, default: 0] > 0 {
+            backgroundLoadCompletionResults[id] = error.map {
+                BackgroundContentLoadCompletion.failed($0)
+            } ?? .succeeded
+        }
+        pendingBackgroundLoadCallbacks.removeValue(forKey: id)
+        resolveBackgroundLoadGate(id: id, error: error)
+    }
+
+    private func releaseBackgroundLoadFollower(id: UUID) {
+        guard let count = backgroundLoadFollowerCounts[id] else { return }
+        if count == 1 {
+            backgroundLoadFollowerCounts.removeValue(forKey: id)
+            backgroundLoadCompletionResults.removeValue(forKey: id)
+        } else {
+            backgroundLoadFollowerCounts[id] = count - 1
+        }
+    }
+
+    private func hasPendingBackgroundLoadCallback(
+        for context: WKWebExtensionContext
+    ) -> Bool {
+        pendingBackgroundLoadCallbacks.values.contains { $0 === context }
+    }
+
+    private func waitForPendingBackgroundLoadCallback(
+        id: UUID,
+        identifier: String,
+        timeoutNanoseconds: UInt64
+    ) async throws {
+        let start = DispatchTime.now().uptimeNanoseconds
+        let addition = start.addingReportingOverflow(timeoutNanoseconds)
+        let deadline = addition.overflow ? UInt64.max : addition.partialValue
+        while pendingBackgroundLoadCallbacks[id] != nil {
+            try Task.checkCancellation()
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else {
+                throw FloorpNativeWebExtensionError.backgroundContentStartupTimedOut(identifier)
+            }
+            try await Task.sleep(nanoseconds: min(25_000_000, deadline - now))
+        }
+        guard let result = backgroundLoadCompletionResults[id] else {
+            throw FloorpNativeWebExtensionError.hostUnavailable
+        }
+        switch result {
+        case .succeeded:
+            return
+        case .failed(let error):
+            throw error
+        }
+    }
+
     // swiftlint:disable:next function_body_length
     private func waitForBundledExtensionInitialization(
         in context: WKWebExtensionContext,
@@ -3521,6 +3811,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
 
         var attempt = 0
+        var didLoadBackgroundContent = false
         while true {
             try Task.checkCancellation()
             guard context.isLoaded,
@@ -3529,7 +3820,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
             attempt += 1
             let attemptStart = DispatchTime.now().uptimeNanoseconds
-            let attemptBudget = min(try remainingTimeout(), 15_000_000_000)
+            let remainingBudget = try remainingTimeout()
+            // uBO Lite can legitimately spend longer than 15 seconds compiling
+            // and enabling its DNR rulesets on a cold launch. A timed-out
+            // callAsyncJavaScript callback cannot be abandoned or retried
+            // safely, so give its fail-closed probe the full bounded deadline.
+            // Delivered WebKit errors still retry below without extending it.
+            let attemptBudget = identifier
+                == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+                ? remainingBudget
+                : min(remainingBudget, 15_000_000_000)
             let attemptAddition = attemptStart.addingReportingOverflow(attemptBudget)
             let attemptDeadline = attemptAddition.overflow
                 ? UInt64.max
@@ -3551,6 +3851,12 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 configuration: configuration
             )
             let probe = readinessSurface.probe
+            let readinessOperationID = UUID()
+            // A semantic probe can run outside a lifecycle transition (for
+            // example, navigation preflight or action presentation). Register
+            // it before the first WebKit await so a concurrent disable/update
+            // cannot unload its context out from under the native callback.
+            activeBackgroundReadinessOperations[readinessOperationID] = context
             let result: Any?
             do {
                 try await probe.load(
@@ -3562,11 +3868,14 @@ final class FloorpNativeWebExtensionHost: NSObject {
                         5_000_000_000
                     )
                 )
-                try await loadBackgroundContent(
-                    in: context,
-                    identifier: identifier,
-                    timeoutNanoseconds: try remainingAttemptTimeout()
-                )
+                if !didLoadBackgroundContent {
+                    try await loadBackgroundContent(
+                        in: context,
+                        identifier: identifier,
+                        timeoutNanoseconds: try remainingTimeout()
+                    )
+                    didLoadBackgroundContent = true
+                }
 #if DEBUG || TESTING
                 if let injectedError = backgroundReadinessTransientFailureHookForTesting?(
                     identifier,
@@ -3586,9 +3895,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     ) {
                         return injectedResponse
                     }
+                    let functionBody = backgroundReadinessJavaScriptOverrideForTesting?(
+                        identifier,
+                        attempt,
+                        readinessSurface.webView
+                    ) ?? readinessScript
+#else
+                    let functionBody = readinessScript
 #endif
                     return try await probe.callAsyncJavaScript(
-                        readinessScript,
+                        functionBody,
                         in: readinessSurface.webView,
                         identifier: identifier,
                         timeoutNanoseconds: try remainingAttemptTimeout()
@@ -3596,13 +3912,24 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 }()
             } catch {
                 let shouldRetry = shouldRetryBundledExtensionReadinessProbe(after: error)
-                probe.invalidate()
-                if probe.requiresProcessLifetimeRetention || shouldRetry {
+                if probe.requiresProcessLifetimeRetention {
+                    // A timed-out or cancelled WebKit operation still owns a
+                    // native callback. Keep the complete page/probe pair alive
+                    // and untouched until process exit.
                     retiredBackgroundReadinessSurfaces.append(readinessSurface)
+                } else {
+                    // A delivered WebKit error has completed its callback. It
+                    // may be retryable, but retaining that completed attempt
+                    // would exhaust WebContent resources across later retries.
+                    probe.invalidate()
                 }
+                activeBackgroundReadinessOperations.removeValue(
+                    forKey: readinessOperationID
+                )
                 await Task.yield()
                 await Task.yield()
                 guard shouldRetry,
+                      !hasUnfinishedWebKitOperation(for: context),
                       (try? remainingTimeout()) != nil else {
                     throw error
                 }
@@ -3611,6 +3938,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
 
             probe.invalidate()
+            activeBackgroundReadinessOperations.removeValue(forKey: readinessOperationID)
             await Task.yield()
             await Task.yield()
             try await Task.sleep(nanoseconds: min(try remainingTimeout(), 100_000_000))
@@ -3686,6 +4014,15 @@ final class FloorpNativeWebExtensionHost: NSObject {
         for context: WKWebExtensionContext
     ) -> Bool {
         retiredBackgroundReadinessSurfaces.contains { $0.context === context }
+    }
+
+    private func hasUnfinishedWebKitOperation(
+        for context: WKWebExtensionContext
+    ) -> Bool {
+        hasRetiredBackgroundReadinessSurface(for: context)
+            || hasPendingBackgroundLoadCallback(for: context)
+            || activeBackgroundReadinessOperations.values.contains { $0 === context }
+            || activeSurfaceCloseOperations.values.contains { $0 === context }
     }
 
     private func setContextReady(_ isReady: Bool, identifier: String) {
@@ -4042,34 +4379,45 @@ final class FloorpNativeWebExtensionHost: NSObject {
         identifier: String
     ) -> Bool {
         setContextLifecycleQuiesced(true, identifier: identifier)
+        if hasUnfinishedWebKitOperation(for: context) {
+            logger.log(
+                "Floorp: deferred native WebExtension \(identifier) unload because a WebKit "
+                    + "operation is still finishing; restart required",
+                level: .warning,
+                category: .setup
+            )
+            quarantinedContextIdentifiers.insert(identifier)
+            setContextReady(false, identifier: identifier)
+            NotificationCenter.default.removeObserver(self, name: nil, object: context)
+            if context.isLoaded {
+                context.hasAccessToPrivateData = false
+                context.grantedPermissions = [:]
+                context.grantedPermissionMatchPatterns = [:]
+            }
+            return false
+        }
+        // Permission notifications emitted synchronously by unload belong to
+        // the retiring runtime and must not replace the durable pre-unload
+        // snapshot. Queued direct saves are rejected by persistPermissionState.
+        NotificationCenter.default.removeObserver(self, name: nil, object: context)
         guard context.isLoaded else {
             quarantinedContextIdentifiers.remove(identifier)
             cleanSurfaceConfigurationTemplates.removeValue(forKey: ObjectIdentifier(context))
             return true
         }
-        if hasRetiredBackgroundReadinessSurface(for: context) {
+        do {
+            try controller.unload(context)
+        } catch {
             logger.log(
-                "Floorp: deferred native WebExtension \(identifier) unload because a WebKit "
-                    + "readiness operation is still finishing; restart required",
+                "Floorp: failed to unload native WebExtension \(identifier); "
+                    + "restart required: \(error)",
                 level: .warning,
                 category: .setup
             )
-        } else {
-            do {
-                try controller.unload(context)
-            } catch {
-                logger.log(
-                    "Floorp: failed to unload native WebExtension \(identifier); "
-                        + "restart required: \(error)",
-                    level: .warning,
-                    category: .setup
-                )
-            }
         }
         guard !context.isLoaded else {
             quarantinedContextIdentifiers.insert(identifier)
             setContextReady(false, identifier: identifier)
-            NotificationCenter.default.removeObserver(self, name: nil, object: context)
             context.hasAccessToPrivateData = false
             context.grantedPermissions = [:]
             context.grantedPermissionMatchPatterns = [:]
@@ -4338,6 +4686,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
             ?? "webkit-extension"
         context.baseURL = URL(string: "\(baseURLScheme)://\(record.baseURLHost)/")!
         context.hasAccessToPrivateData = record.hasPrivateAccess
+        context.hasRequestedOptionalAccessToAllHosts =
+            record.hasRequestedOptionalAccessToAllHosts
         context.unsupportedAPIs = FloorpNativeWebExtensionCatalog.item(identifier: record.id)?
             .disabledAPIs ?? [
                 "browser.runtime.connectNative",
@@ -4411,7 +4761,14 @@ final class FloorpNativeWebExtensionHost: NSObject {
     }
 
     private func persistPermissionState(for context: WKWebExtensionContext) {
-        guard let identifier = identifier(for: context) else { return }
+        guard !isTornDown,
+              context.isLoaded,
+              let identifier = identifier(for: context),
+              contexts[identifier] === context,
+              !quarantinedContextIdentifiers.contains(identifier),
+              let record = registry.extensions.first(where: { $0.id == identifier }),
+              record.transactionState != .pendingPurge,
+              record.isEnabled || activeTransitions.contains(identifier) else { return }
         updateRecord(identifier) { record in
             Self.synchronizePermissionState(from: context, to: &record)
         }
@@ -4434,6 +4791,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
         record.deniedMatchPatterns = context.deniedPermissionMatchPatterns.map {
             FloorpNativeWebExtensionPermissionDecision(value: $0.key.string, expiration: $0.value)
         }.sorted { $0.value < $1.value }
+        record.hasRequestedOptionalAccessToAllHosts =
+            context.hasRequestedOptionalAccessToAllHosts
     }
 
     private func persistRuntimeDiagnostics(for context: WKWebExtensionContext) {
@@ -4508,11 +4867,12 @@ final class FloorpNativeWebExtensionHost: NSObject {
         setContextReady(false, identifier: record.id)
         setContextLifecycleQuiesced(true, identifier: record.id)
         if let context = contexts[record.id] {
-            guard !hasRetiredBackgroundReadinessSurface(for: context) else {
+            guard !hasUnfinishedWebKitOperation(for: context) else {
                 throw FloorpNativeWebExtensionError.restartRequired(
-                    "Purging an extension with an unfinished WebKit readiness probe"
+                    "Purging an extension with an unfinished WebKit operation"
                 )
             }
+            NotificationCenter.default.removeObserver(self, name: nil, object: context)
             if context.isLoaded {
                 try controller.unload(context)
             }
@@ -4523,7 +4883,6 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
             cleanSurfaceConfigurationTemplates.removeValue(forKey: ObjectIdentifier(context))
             contexts.removeValue(forKey: record.id)
-            NotificationCenter.default.removeObserver(self, name: nil, object: context)
         }
 
         // Unloading invalidates WebKit's in-memory session store. Asking for it
@@ -4790,6 +5149,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 }
                 return await self.prepareExtensionSurfaceForClose(
                     webView,
+                    context: context,
                     identifier: identifier,
                     timeoutNanoseconds: self.backgroundReadinessTimeout(for: identifier)
                 )

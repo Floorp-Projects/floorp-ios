@@ -51,13 +51,14 @@ Bundled open-source components:
   Source commit: c2a707302a39b8047543712e9c582bac07835d34
 - uBlock Origin Lite 2026.825.1619, GNU GPL v3.0 or later, Floorp-derived. Its patch adds public
   declarativeNetRequestFeedback; `incognito`/numeric windowId keep Matched rules and Report in the
-  source realm. It adds deterministic startup, serialized Safari storage, durable DNR/script reconciliation, and a visible
+  source realm. Page Action treats only an omitted initial disabledFeatures value as empty and rejects
+  malformed tab/panel data. It adds deterministic startup, serialized Safari storage, durable DNR/script reconciliation, and a visible
   page fallback for WebKit background static-DNR failures. Popup/Dashboard Done await mutation
   readback; an unvisited Filter lists pane preserves the installed selection. Failure offers Keep
   Editing, Try Again, or explicit Close Anyway with an incomplete-state warning.
   Upstream: https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip
   Upstream SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
-  Derived SHA-256: 0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d
+  Derived SHA-256: 402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch
   Build: scripts/package-ubol-ios.sh
   Source commit: 080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
@@ -72,7 +73,7 @@ Account services process account/operational data; Sync is E2EE and user-control
 
 Review on iOS 18.6+: install both in Settings > Extensions. Dark Reader checks readiness for 3
 seconds per navigation and fails open; uBO checks the first normal/private navigation per context
-for up to 90 seconds (transient WebKit probes retry in bounded 15-second attempts) and fails closed,
+for up to 90 seconds (completed transient WebKit errors retry within that fixed deadline) and fails closed,
 including after the 8-second scene UI budget. Verify popups,
 Options, uBO request/cosmetic blocking, and explicit Private access separation. Enable uBO
 Developer mode and open Matched rules in both modes. After Dark Reader idles 35 seconds, verify a
@@ -129,7 +130,7 @@ Reader Mode, tracking protection, Notes, or Notes Sync.
 | Extension | Catalog identifier | Version | SHA-256 | Source commit | License | Package policy | Minimum |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
-| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe routing, serialized storage, durable DNR/script reconciliation, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, and host-awaited UI close; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 18.6 |
+| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe routing, serialized storage, durable DNR/script reconciliation, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 18.6 |
 
 The canonical local evidence is:
 

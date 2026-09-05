@@ -92,6 +92,8 @@ enum FloorpNativeWebExtensionCatalog {
         "cc8ce47cb1957a3bde40492b1c2fcba6f9a38e873b08e5d9348796cd63f31e1c"
     static let preDurableProtectionReconciliationUBlockOriginLiteSHA256 =
         "87c01f8c8e71ab2f65a14225ddaf284198c19417ea77d3d3e70497bfeeec4fcd"
+    static let prePopupInitializationRetryUBlockOriginLiteSHA256 =
+        "0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d"
 
     static let darkReader = FloorpNativeWebExtensionCatalogItem(
         identifier: "floorp.bundled.darkreader",
@@ -128,7 +130,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.ublock-origin-lite",
         resourceName: "uBOLite-floorp-ios-2026.825.1619",
         resourceExtension: "zip",
-        expectedSHA256: "0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d",
+        expectedSHA256: "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2",
         expectedVersion: "2026.825.1619",
         contextIdentifier: "org.ublockorigin.lite.floorp-ios",
         baseURLScheme: "safari-web-extension",
@@ -196,7 +198,8 @@ enum FloorpNativeWebExtensionCatalog {
                     preContentScriptSentinelUBlockOriginLiteSHA256,
                     preLocalStorageSentinelUBlockOriginLiteSHA256,
                     preWakeContentScriptReconciliationUBlockOriginLiteSHA256,
-                    preDurableProtectionReconciliationUBlockOriginLiteSHA256
+                    preDurableProtectionReconciliationUBlockOriginLiteSHA256,
+                    prePopupInitializationRetryUBlockOriginLiteSHA256
                 ].contains(record.sha256)
             return isOfficialPackage || isPreviousFloorpPackage ? uBlockOriginLite : nil
         }
@@ -303,6 +306,9 @@ struct FloorpNativeWebExtensionRollback: Codable, Equatable, Sendable {
     let deniedPermissions: [FloorpNativeWebExtensionPermissionDecision]
     let grantedMatchPatterns: [FloorpNativeWebExtensionPermissionDecision]
     let deniedMatchPatterns: [FloorpNativeWebExtensionPermissionDecision]
+    /// Optional for backward-compatible decoding of an interrupted transaction
+    /// written before this WebKit-owned state was included in rollback data.
+    let hasRequestedOptionalAccessToAllHosts: Bool?
     let packageDiagnostics: [FloorpNativeWebExtensionDiagnostic]
     let runtimeDiagnostics: [FloorpNativeWebExtensionDiagnostic]
     let updatedAt: Date
@@ -420,6 +426,7 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
             deniedPermissions: deniedPermissions,
             grantedMatchPatterns: grantedMatchPatterns,
             deniedMatchPatterns: deniedMatchPatterns,
+            hasRequestedOptionalAccessToAllHosts: hasRequestedOptionalAccessToAllHosts,
             packageDiagnostics: packageDiagnostics,
             runtimeDiagnostics: runtimeDiagnostics,
             updatedAt: updatedAt
@@ -439,6 +446,8 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
         deniedPermissions = snapshot.deniedPermissions
         grantedMatchPatterns = snapshot.grantedMatchPatterns
         deniedMatchPatterns = snapshot.deniedMatchPatterns
+        hasRequestedOptionalAccessToAllHosts =
+            snapshot.hasRequestedOptionalAccessToAllHosts ?? false
         packageDiagnostics = snapshot.packageDiagnostics
         runtimeDiagnostics = snapshot.runtimeDiagnostics
         updatedAt = snapshot.updatedAt
