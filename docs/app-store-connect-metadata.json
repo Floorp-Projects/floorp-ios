@@ -8,35 +8,174 @@
     "name": "Floorp",
     "primary_locales": ["en-US", "ja-JP"],
     "marketing_version_source": "firefox-ios/Client/Configuration/FloorpRelease.xcconfig (FLOORP_MARKETING_VERSION)",
-    "build_number_source": "Xcode Cloud monotonic distribution build numbers (single authority)",
-    "app_store_id": "unset until the public listing is live (FLOORP_APP_STORE_ID empty)"
+    "build_number_source": "Xcode Cloud owns monotonically increasing distribution build numbers; the source-bound Xcode Cloud receipt binds the exact App Store Connect build ID and build number to the reviewed main commit",
+    "app_store_id": "6796708699"
   },
   "privacy": {
     "privacy_policy_url": "https://floorp.app/privacy",
+    "tracking": false,
     "data_types": [
+      {
+        "category": "Contact Info",
+        "data_type": "Name",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Optional Mozilla Account display name and names saved in synchronized address or payment-method records"
+      },
       {
         "category": "Contact Info",
         "data_type": "Email Address",
         "collected": true,
         "linked_to_user_identity": true,
+        "used_for_tracking": false,
         "purpose": ["App Functionality"],
-        "note": "FxA account email"
+        "note": "Mozilla Account email and email values saved in synchronized address records"
+      },
+      {
+        "category": "Contact Info",
+        "data_type": "Phone Number",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Phone values saved in optional synchronized address records"
+      },
+      {
+        "category": "Contact Info",
+        "data_type": "Physical Address",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Street, locality, region, postal-code, and country values saved in optional synchronized address records"
+      },
+      {
+        "category": "Financial Info",
+        "data_type": "Payment Info",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Optional synchronized credit or debit card autofill records"
+      },
+      {
+        "category": "Location",
+        "data_type": "Coarse Location",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account services infer country, city, or region from the connection IP for service operation, security, and improvement"
+      },
+      {
+        "category": "User Content",
+        "data_type": "Photos or Videos",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Optional Mozilla Account profile image managed through the in-app account settings web flow"
+      },
+      {
+        "category": "User Content",
+        "data_type": "Other User Content",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Mozilla Account authentication data plus optional synchronized notes, saved website usernames/passwords, and bookmark metadata; Apple provides no password-specific data type"
+      },
+      {
+        "category": "Browsing History",
+        "data_type": "Browsing History",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Optional synchronized browsing history, bookmark URLs, and open-tab URLs"
+      },
+      {
+        "category": "Search History",
+        "data_type": "Search History",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality"],
+        "note": "Searches represented in browsing-history records that can be synchronized with the user's Mozilla Account"
       },
       {
         "category": "Identifiers",
         "data_type": "User ID",
         "collected": true,
         "linked_to_user_identity": true,
-        "purpose": ["App Functionality"],
-        "note": "FxA user id for Sync"
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account user ID used for authentication and Sync"
+      },
+      {
+        "category": "Identifiers",
+        "data_type": "Device ID",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account device and Sync client identifiers used to connect and name the user's devices"
+      },
+      {
+        "category": "Usage Data",
+        "data_type": "Product Interaction",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account service interactions such as connected-service use, menu preferences, and last-sync activity; Floorp Glean remains disabled"
+      },
+      {
+        "category": "Diagnostics",
+        "data_type": "Crash Data",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account connected-service failures may be sent to its third-party error service; Floorp Sentry crash reporting remains disabled"
+      },
+      {
+        "category": "Diagnostics",
+        "data_type": "Performance Data",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account and Sync service timestamps, submission success or failure, and operational performance"
+      },
+      {
+        "category": "Diagnostics",
+        "data_type": "Other Diagnostic Data",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account and Sync error messages, device information, and service state used to diagnose operational issues"
+      },
+      {
+        "category": "Other Data",
+        "data_type": "Other Data Types",
+        "collected": true,
+        "linked_to_user_identity": true,
+        "used_for_tracking": false,
+        "purpose": ["App Functionality", "Analytics"],
+        "note": "Mozilla Account age eligibility, authorization data, language preference, account settings, and technical service data not represented by another Apple type"
       }
     ],
-    "collected_data_notes": "Notes remain local-only in the iOS app; no note content is collected. Analytics/other third-party data collection categories intentionally omitted."
+    "collected_data_notes": "Mozilla Account sign-in and Sync are optional and user-controlled. After sign-in, bookmarks, browsing history, open tabs, saved website usernames/passwords, payment methods, region-eligible addresses, and Floorp notes are enabled for Sync by default and can be disabled individually. Sync records are end-to-end encrypted on device before transmission; Mozilla Sync stores account-associated ciphertext and cannot decrypt the content. The declaration conservatively treats the corresponding content categories as collected and linked because Sync stores them off-device on an ongoing, account-associated basis. Other User Content covers account authentication data, saved logins, notes, and bookmark metadata; Sensitive Info is not used as a password category. Floorp disables its inherited Glean, MetricKit, Sentry, sponsored-content, and advertising-attribution upload paths. The Usage Data and Diagnostics rows instead cover the integrated Mozilla Account service's disclosed operational, interaction, performance, and error processing, including its third-party error service. Search History is declared because normal browsing-history records can contain searches and can be synchronized. Search-suggestion requests sent in real time to the user's selected search provider are governed by that provider and are not retained by Floorp; open-web page traffic is outside this declaration. No declared data is used for tracking.",
+    "live_verification": "Before external submission, publish the policy changes required by docs/floorp-ios-app-privacy.md, then confirm both the live privacy policy and App Store Connect match this exact tracking answer and disclosure set."
   },
   "export_compliance": {
     "uses_encryption": true,
     "exempt_from_export_compliance": true,
-    "exemption_notes": "Standard TLS plus FxA/Sync over TLS and OS-provided CryptoKit Ed25519 public-key signature verification; no custom or non-exempt cryptography",
+    "exemption_notes": "Industry-standard AES-256-CBC and HMAC-SHA256 implemented by bundled Mozilla Application Services provide Firefox Sync end-to-end encryption; TLS protects transport; CryptoKit SHA-256 verifies fixed digests for the app-bundled WebExtension packages, whose bundle integrity is also covered by Apple code signing. No proprietary or non-standard cryptographic algorithm is used. The exemption and ITSAppUsesNonExemptEncryption=false must match the App Store Connect export-compliance determination.",
     "itsapp_uses_non_exempt_encryption": false
   },
   "listing": {

@@ -200,15 +200,17 @@ extension BrowserViewController: PhotonActionSheetProtocol {
                                      iconString: StandardImageIdentifiers.Large.cross,
                                      iconType: .Image) { _ in
             if let tab = self.tabManager.selectedTab {
-                self.tabsPanelTelemetry.tabClosed(mode: tab.isPrivate ? .private : .normal)
-                self.tabManager.removeTab(tab.tabUUID)
-                store.dispatch(
-                    GeneralBrowserAction(
-                        windowUUID: self.windowUUID,
-                        actionType: GeneralBrowserActionType.didCloseTabFromToolbar
+                self.tabManager.removeTab(tab.tabUUID) { [weak self] didRemove in
+                    guard didRemove, let self else { return }
+                    self.tabsPanelTelemetry.tabClosed(mode: tab.isPrivate ? .private : .normal)
+                    store.dispatch(
+                        GeneralBrowserAction(
+                            windowUUID: self.windowUUID,
+                            actionType: GeneralBrowserActionType.didCloseTabFromToolbar
+                        )
                     )
-                )
-                self.updateTabCountUsingTabManager(self.tabManager)
+                    self.updateTabCountUsingTabManager(self.tabManager)
+                }
             }
         }.items
     }

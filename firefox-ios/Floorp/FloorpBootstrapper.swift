@@ -124,6 +124,7 @@ public final class FloorpBootstrapper {
                     level: .info,
                     category: .setup
                 )
+                return
             } else {
                 deferredWebExtensionProfiles.remove(profileIdentifier)
                 logger.log(

@@ -136,13 +136,17 @@ import plistlib
 import sys
 from pathlib import Path
 
-app, archive, source_sha, build_number, evidence_sha, manifest = map(Path, sys.argv[1:])
+app = Path(sys.argv[1])
+archive = Path(sys.argv[2])
+source_sha, build_number, evidence_sha = sys.argv[3:6]
+manifest = Path(sys.argv[6])
 with (app / "Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 expected = {
     "CFBundleIdentifier": "app.floorp.Floorp",
-    "CFBundleShortVersionString": "0.2.0",
+    "CFBundleShortVersionString": "0.3.0",
     "CFBundleVersion": build_number,
+    "ITSAppUsesNonExemptEncryption": False,
     "MozFloorpNotesSyncBuildMode": "public-beta",
     "MozFloorpNotesSyncSourceSHA": source_sha,
     "MozAllowFloorpNotesSync": "YES",
@@ -153,9 +157,12 @@ expected = {
     "MozFloorpNotesSyncEvidenceResourceSHA256": evidence_sha,
 }
 for key, value in expected.items():
-    if str(info.get(key, "")) != value:
+    actual = info.get(key, "")
+    if (isinstance(value, bool) and actual is not value) or (
+        not isinstance(value, bool) and str(actual) != value
+    ):
         raise SystemExit(f"archived Info.plist mismatch for {key}: {info.get(key)!r}")
-Path(manifest).write_text(json.dumps({
+manifest.write_text(json.dumps({
     "archive": str(archive),
     "bundle_id": info["CFBundleIdentifier"],
     "build_number": str(info["CFBundleVersion"]),

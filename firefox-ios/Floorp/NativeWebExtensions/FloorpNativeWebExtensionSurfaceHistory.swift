@@ -118,4 +118,35 @@ struct FloorpNativeWebExtensionSurfaceHistory: Equatable {
         entries.removeAll()
         currentIndex = nil
     }
+
+    mutating func removeEntries(contextIdentifier: String) {
+        guard entries.contains(where: { $0.contextIdentifier == contextIdentifier }) else {
+            return
+        }
+
+        let indexedEntries = entries.enumerated().filter {
+            $0.element.contextIdentifier != contextIdentifier
+        }
+        guard !indexedEntries.isEmpty else {
+            removeAll()
+            return
+        }
+
+        let selectedOriginalIndex: Int?
+        if let currentIndex, entries.indices.contains(currentIndex) {
+            if entries[currentIndex].contextIdentifier != contextIdentifier {
+                selectedOriginalIndex = currentIndex
+            } else {
+                selectedOriginalIndex = indexedEntries.last(where: { $0.offset < currentIndex })?.offset
+                    ?? indexedEntries.first(where: { $0.offset > currentIndex })?.offset
+            }
+        } else {
+            selectedOriginalIndex = nil
+        }
+
+        entries = indexedEntries.map(\.element)
+        currentIndex = selectedOriginalIndex.flatMap { selectedIndex in
+            indexedEntries.firstIndex(where: { $0.offset == selectedIndex })
+        }
+    }
 }

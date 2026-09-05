@@ -212,6 +212,13 @@ final class SettingsCoordinator: BaseCoordinator,
             contentBlockerVC.tabManager = tabManager
             return contentBlockerVC
 
+        case .webExtensions:
+            return FloorpNativeWebExtensionSettingsViewController(
+                windowUUID: windowUUID,
+                host: FloorpNativeWebExtensionHost.host(for: profile.localName()),
+                tabManager: tabManager
+            )
+
         case .browser:
             let viewController = BrowsingSettingsViewController(profile: profile, windowUUID: windowUUID)
             viewController.parentCoordinator = self

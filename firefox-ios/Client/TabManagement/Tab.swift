@@ -450,6 +450,9 @@ class Tab: NSObject,
     private var configuration: WKWebViewConfiguration?
     private var floorpNativeBaseConfiguration: WKWebViewConfiguration?
     private(set) var floorpNativeWebExtensionContextIdentifier: String?
+    /// True only after the current surface's main document committed. This
+    /// distinguishes a live extension page from a newly rebuilt, empty WebView.
+    private(set) var floorpNativeHasCommittedDocument = false
     private var floorpNativeSurfaceHistory = FloorpNativeWebExtensionSurfaceHistory()
     private var floorpNativePreservesForwardNavigation = false
 
@@ -525,7 +528,12 @@ class Tab: NSObject,
     func createWebview(with restoreSessionData: Data? = nil, configuration: WKWebViewConfiguration) {
         guard webView == nil else { return }
 
-        let requiredConfiguration = requiredPopupConfiguration ?? configuration
+        let savedExtensionConfiguration = floorpNativeWebExtensionContextIdentifier == nil
+            ? nil
+            : self.configuration?.copy() as? WKWebViewConfiguration
+        let requiredConfiguration = requiredPopupConfiguration
+            ?? savedExtensionConfiguration
+            ?? configuration
         if floorpNativeWebExtensionContextIdentifier == nil {
             floorpNativeBaseConfiguration = configuration.copy() as? WKWebViewConfiguration
             // App-owned scripts use a fresh controller for every normal browsing surface.
@@ -650,6 +658,7 @@ class Tab: NSObject,
 
         webViewLoadingObserver?.invalidate()
         webViewLoadingObserver = nil
+        floorpNativeHasCommittedDocument = false
         webView = nil
 
         deleteDownloadedDocuments(docsURL: temporaryDocumentsSession)
@@ -684,6 +693,7 @@ class Tab: NSObject,
 
         webViewLoadingObserver?.invalidate()
         webViewLoadingObserver = nil
+        floorpNativeHasCommittedDocument = false
         contentScriptManager.uninstall(tab: self)
         if let webView {
             webView.stopLoading()
@@ -738,6 +748,7 @@ class Tab: NSObject,
     }
 
     func commitFloorpNativeSurfaceNavigation(url: URL) {
+        floorpNativeHasCommittedDocument = true
         floorpNativeSurfaceHistory.commit(
             contextIdentifier: floorpNativeWebExtensionContextIdentifier,
             url: url
@@ -769,6 +780,11 @@ class Tab: NSObject,
 
     func clearFloorpNativeSurfaceHistory() {
         floorpNativeSurfaceHistory.removeAll()
+        floorpNativePreservesForwardNavigation = false
+    }
+
+    func removeFloorpNativeSurfaceHistoryEntries(contextIdentifier: String) {
+        floorpNativeSurfaceHistory.removeEntries(contextIdentifier: contextIdentifier)
         floorpNativePreservesForwardNavigation = false
     }
 

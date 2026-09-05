@@ -6,13 +6,26 @@ Reader 4.9.129 and uBlock Origin Lite 2026.825.1619. No sign-in is required.
 
 In Settings > Extensions, install Dark Reader. Confirm that page appearance,
 its action popup and options work; disabling or uninstalling it immediately
-restores open pages; enabling or reinstalling works; and its state persists
-after restarting Floorp.
+restores open pages. After disabling, enabling must show “Will enable after restart”
+and remain inactive until Floorp is restarted. After uninstalling, restart Floorp before
+reinstalling; installation then works. Confirm that
+closing its popup does not reveal a disabled
+Extensions picker underneath it.
+After leaving Floorp/Dark Reader idle for at least 35 seconds, navigate to a fresh
+HTTP(S) page and confirm that its first load is dark without a popup or reload.
 
 On iOS 18.6 or later, install uBlock Origin Lite. On non-sensitive test sites,
 confirm that ad/tracker requests and cosmetic elements covered by its official
-rules are removed. Test its popup and dashboard, Japanese filter-list
-selection, disable/enable, uninstall/reinstall, and persistence after restart.
+rules are removed. Test its popup and dashboard; enable the Japanese filter list
+(if already enabled, turn it off and back on) and tap Done
+immediately, then confirm the selection and blocking persist. Also test disable/deferred-enable
+across restart, uninstall/restart/reinstall, and persistence after restart.
+If an update is offered, confirm it requires restart and completes on the next cold launch.
+Enable Developer mode in the dashboard, then open Matched rules from both normal
+and explicitly allowed Private Browsing and confirm each page stays in its originating
+browsing mode.
+Confirm links from its dashboard open in a Floorp tab and retain the current
+normal/private browsing mode.
 The upstream Safari package intentionally does not show its strict-block
 interstitial; ordinary request blocking and cosmetic filtering should still
 work. On iOS 18.4 or 18.5, uBlock Origin Lite must be shown as requiring iOS

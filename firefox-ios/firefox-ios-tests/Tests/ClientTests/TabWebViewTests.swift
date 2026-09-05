@@ -10,8 +10,8 @@ import WebKit
 
 class TabWebViewTests: XCTestCaseRootViewController, UIGestureRecognizerDelegate {
     private var configuration = WKWebViewConfiguration()
-    private var navigationDelegate: MockNavigationDelegate!
-    private var tabWebViewDelegate: MockTabWebViewDelegate!
+    private var navigationDelegate: MockNavigationDelegate?
+    private var tabWebViewDelegate: MockTabWebViewDelegate?
     private let sleepTime: UInt64 = 1 * NSEC_PER_SEC
     let windowUUID: WindowUUID = .XCTestDefaultUUID
 
@@ -102,6 +102,76 @@ class TabWebViewTests: XCTestCaseRootViewController, UIGestureRecognizerDelegate
         XCTAssertTrue(tabWebView.hasOnlySecureContent)
     }
 
+    func testOffloadedNativeWebExtensionSurfaceRestoresItsExtensionConfiguration() async throws {
+        let profile = MockProfile()
+        let tab = Tab(profile: profile, windowUUID: windowUUID)
+        let baseConfiguration = WKWebViewConfiguration()
+        baseConfiguration.applicationNameForUserAgent = "Floorp-Base-Configuration"
+        let extensionConfiguration = WKWebViewConfiguration()
+        extensionConfiguration.applicationNameForUserAgent = "Floorp-Extension-Configuration"
+        tab.createWebview(configuration: baseConfiguration)
+        tab.replaceWebViewForNativeWebExtension(
+            contextIdentifier: "org.example.floorp-extension",
+            configuration: extensionConfiguration,
+            url: try XCTUnwrap(URL(string: "webkit-extension://example.floorp.internal/options.html"))
+        )
+        XCTAssertEqual(
+            tab.webView?.configuration.applicationNameForUserAgent,
+            "Floorp-Extension-Configuration"
+        )
+
+        await tab.offloadWebView()
+        XCTAssertNil(tab.webView)
+        tab.createWebview(configuration: baseConfiguration)
+
+        XCTAssertEqual(
+            tab.webView?.configuration.applicationNameForUserAgent,
+            "Floorp-Extension-Configuration"
+        )
+        XCTAssertEqual(
+            tab.floorpNativeWebExtensionContextIdentifier,
+            "org.example.floorp-extension"
+        )
+    }
+
+    @MainActor
+    func testContentScriptManagerUninstallsHandlersFromTheirRegisteredContentWorlds() throws {
+        let tab = Tab(profile: MockProfile(), windowUUID: windowUUID)
+        let configuration = WKWebViewConfiguration()
+        tab.createWebview(configuration: configuration)
+        let manager = TabContentScriptManager()
+
+        func installHelpers() {
+            manager.addContentScript(
+                ContentWorldTestScript(handlerName: "floorp-default-client-handler"),
+                name: "floorp-default-client-script",
+                forTab: tab
+            )
+            manager.addContentScriptToPage(
+                ContentWorldTestScript(handlerName: "floorp-page-handler"),
+                name: "floorp-page-script",
+                forTab: tab
+            )
+            manager.addContentScriptToCustomWorld(
+                ContentWorldTestScript(handlerName: "floorp-custom-handler"),
+                name: "floorp-custom-script",
+                forTab: tab
+            )
+        }
+
+        installHelpers()
+        manager.uninstall(tab: tab)
+
+        // WKUserContentController raises an Objective-C exception if a handler
+        // remains registered in any of these worlds. Reinstalling against the
+        // exact same controller therefore exercises the real replacement path.
+        installHelpers()
+        XCTAssertNotNil(manager.getContentScript("floorp-default-client-script"))
+        XCTAssertNotNil(manager.getContentScript("floorp-page-script"))
+        XCTAssertNotNil(manager.getContentScript("floorp-custom-script"))
+        manager.uninstall(tab: tab)
+    }
+
     // MARK: - Helper methods
 
     func createSubject(file: StaticString = #filePath,
@@ -111,7 +181,10 @@ class TabWebViewTests: XCTestCaseRootViewController, UIGestureRecognizerDelegate
                                  windowUUID: windowUUID,
                                  certStore: MockProfile().certStore)
         try await Task.sleep(nanoseconds: sleepTime)
-        subject.configure(delegate: tabWebViewDelegate, navigationDelegate: navigationDelegate)
+        subject.configure(
+            delegate: try XCTUnwrap(tabWebViewDelegate, file: file, line: line),
+            navigationDelegate: try XCTUnwrap(navigationDelegate, file: file, line: line)
+        )
         trackForMemoryLeaks(subject)
         return subject
     }
@@ -132,3 +205,25 @@ class MockTabWebViewDelegate: TabWebViewDelegate {
 
 // MARK: - MockNavigationDelegate
 class MockNavigationDelegate: NSObject, WKNavigationDelegate {}
+
+@MainActor
+private final class ContentWorldTestScript: TabContentScript {
+    private let handlerName: String
+
+    init(handlerName: String) {
+        self.handlerName = handlerName
+    }
+
+    static func name() -> String {
+        "ContentWorldTestScript"
+    }
+
+    func scriptMessageHandlerNames() -> [String]? {
+        [handlerName]
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceiveScriptMessage message: WKScriptMessage
+    ) {}
+}

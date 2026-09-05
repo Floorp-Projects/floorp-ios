@@ -145,6 +145,18 @@ final class SettingsCoordinatorTests: XCTestCase {
         XCTAssertTrue(mockRouter.pushedViewController is ContentBlockerSettingViewController)
     }
 
+    func testWebExtensionsSettingsRoute_showsExtensionsSettingsPage() throws {
+        let subject = createSubject()
+
+        subject.start(with: .webExtensions)
+
+        XCTAssertEqual(mockRouter.pushCalled, 1)
+        XCTAssertTrue(
+            mockRouter.pushedViewController
+                is FloorpNativeWebExtensionSettingsViewController
+        )
+    }
+
     func testTabsSettingsRoute_showsTabsSettingsPage() throws {
         let subject = createSubject()
 

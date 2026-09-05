@@ -7,6 +7,117 @@ import UIKit
 import WebKit
 
 @MainActor
+private func floorpNavigationReplacesDocument(
+    _ navigationAction: WKNavigationAction,
+    currentURL: URL?
+) -> Bool {
+    guard navigationAction.targetFrame?.isMainFrame != false,
+          let currentURL,
+          let destinationURL = navigationAction.request.url else { return false }
+    var current = URLComponents(url: currentURL, resolvingAgainstBaseURL: false)
+    var destination = URLComponents(url: destinationURL, resolvingAgainstBaseURL: false)
+    let changesOnlyFragment = current?.fragment != destination?.fragment
+    current?.fragment = nil
+    destination?.fragment = nil
+    return !(changesOnlyFragment && current == destination)
+}
+
+/// WebKit 26.5 can invalidate a popup page asynchronously after UIKit has
+/// already released its last WKWebView reference, tripping a WKProcessPool
+/// use-after-release assertion. Keep closed extension surfaces alive only for
+/// the short asynchronous close window; repeated teardown extends the grace.
+@MainActor
+private enum FloorpNativeWebExtensionDeferredWebViewRelease {
+    private static var retained = [ObjectIdentifier: (token: UUID, webView: WKWebView)]()
+
+    static func retain(_ webView: WKWebView) {
+        let key = ObjectIdentifier(webView)
+        let token = UUID()
+        retained[key] = (token, webView)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard retained[key]?.token == token else { return }
+            retained.removeValue(forKey: key)
+        }
+    }
+}
+
+/// Bridges `window.close()` for a top-level WKWebView that was not created by
+/// JavaScript. WebKit does not call `webViewDidClose` for that case. The random
+/// handler is scoped to one main-frame extension origin and removed as soon as
+/// the managed surface closes.
+@MainActor
+private final class FloorpNativeWebExtensionCloseBridge: NSObject, WKScriptMessageHandler {
+    let handlerName = "floorpExtensionClose_"
+        + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    var onClose: (() -> Void)?
+
+    private let expectedScheme: String?
+    private let expectedHost: String?
+    private weak var webView: WKWebView?
+    private var isInstalled = false
+
+    init(expectedURL: URL) {
+        expectedScheme = expectedURL.scheme
+        expectedHost = expectedURL.host
+    }
+
+    func install(in configuration: WKWebViewConfiguration) {
+        guard !isInstalled else { return }
+        isInstalled = true
+        let controller = configuration.userContentController
+        controller.add(self, contentWorld: .page, name: handlerName)
+        controller.addUserScript(WKUserScript(
+            source: """
+            (() => {
+                const close = () => window.webkit.messageHandlers['\(handlerName)'].postMessage(null);
+                Object.defineProperty(window, 'close', { configurable: true, value: close });
+                if (typeof globalThis.floorpPrepareToClose !== 'function') {
+                    globalThis.floorpPrepareToClose = () => ({
+                        ready: true,
+                        noMutation: true,
+                        provisional: true
+                    });
+                }
+            })();
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: .page
+        ))
+    }
+
+    func attach(to webView: WKWebView) {
+        self.webView = webView
+    }
+
+    func invalidate(in configuration: WKWebViewConfiguration) {
+        guard isInstalled else { return }
+        isInstalled = false
+        configuration.userContentController.removeScriptMessageHandler(
+            forName: handlerName,
+            contentWorld: .page
+        )
+        webView = nil
+        onClose = nil
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard isInstalled,
+              message.name == handlerName,
+              message.frameInfo.isMainFrame,
+              message.webView === webView,
+              message.webView?.url?.scheme == expectedScheme,
+              message.webView?.url?.host == expectedHost else {
+            return
+        }
+        onClose?()
+    }
+}
+
+@MainActor
 private final class FloorpNativeWebExtensionHeroHeaderView: UIView, ThemeApplicable {
     private let cardView: UIView = .build()
     private let iconView: UIImageView = .build()
@@ -393,6 +504,12 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
         sheetPresentationController?.prefersGrabberVisible = true
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        guard dismissalHandler == nil else { return }
+        deliverPendingChoice(deferred: true)
+    }
+
     func applyTheme() {
         let theme = themeManager.getCurrentTheme(for: windowUUID)
         view.backgroundColor = theme.colors.layer1
@@ -574,15 +691,21 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
         didFinish = true
         pendingChoice = choice
         setControlsEnabled(false)
-        let completion = { [weak self] in
-            guard let self, let pendingChoice = self.pendingChoice else { return }
-            self.pendingChoice = nil
-            self.onChoice(pendingChoice)
-        }
         if let dismissalHandler {
-            dismissalHandler(completion)
+            dismissalHandler { [weak self] in self?.deliverPendingChoice() }
         } else {
-            dismiss(animated: true, completion: completion)
+            dismiss(animated: true)
+        }
+    }
+
+    private func deliverPendingChoice(deferred: Bool = false) {
+        guard let pendingChoice else { return }
+        self.pendingChoice = nil
+        let delivery = { [onChoice] in onChoice(pendingChoice) }
+        if deferred {
+            DispatchQueue.main.async(execute: delivery)
+        } else {
+            delivery()
         }
     }
 
@@ -605,6 +728,7 @@ final class FloorpNativeWebExtensionActionPickerViewController:
     init(
         actions: [FloorpNativeWebExtensionActionItem],
         windowUUID: WindowUUID,
+        themeManager: ThemeManager = AppContainer.shared.resolve(),
         dismissalHandler: ((@escaping () -> Void) -> Void)? = nil,
         onSelection: @escaping @MainActor (FloorpNativeWebExtensionActionItem) -> Void
     ) {
@@ -631,6 +755,7 @@ final class FloorpNativeWebExtensionActionPickerViewController:
                 accessibilityIdentifier: "Floorp.NativeWebExtensions.ActionPicker"
             ),
             windowUUID: windowUUID,
+            themeManager: themeManager,
             dismissalHandler: dismissalHandler,
             onChoice: { choice in
                 guard let action = actionsByIdentifier[choice.identifier] else { return }
@@ -757,11 +882,18 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
 
         switch rows(in: indexPath.section)[indexPath.row] {
         case .installed(let item):
-            let status = item.hasUpdate
-                ? FloorpStrings.WebExtensions.updateAvailable
-                : (item.isEnabled ? FloorpStrings.WebExtensions.enabled : FloorpStrings.WebExtensions.disabled)
+            let status: String
+            if item.requiresRestartToEnable {
+                status = FloorpStrings.WebExtensions.enableAfterRestartStatus
+            } else if item.hasUpdate {
+                status = FloorpStrings.WebExtensions.updateAvailable
+            } else {
+                status = item.isEnabled
+                    ? FloorpStrings.WebExtensions.enabled
+                    : FloorpStrings.WebExtensions.disabled
+            }
             let statusStyle: FloorpNativeWebExtensionCardCell.StatusStyle = item.errorDescription == nil
-                ? (item.hasUpdate ? .accent : .secondary)
+                ? (item.hasUpdate || item.requiresRestartToEnable ? .accent : .secondary)
                 : .critical
             cell.configure(
                 title: item.name,
@@ -1019,9 +1151,11 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
             FloorpNativeWebExtensionPromptPresentation.InfoRow(
                 symbol: "number",
                 title: FloorpStrings.WebExtensions.version(item.version),
-                detail: item.isEnabled
-                    ? FloorpStrings.WebExtensions.enabled
-                    : FloorpStrings.WebExtensions.disabled
+                detail: item.requiresRestartToEnable
+                    ? FloorpStrings.WebExtensions.enableAfterRestartStatus
+                    : (item.isEnabled
+                        ? FloorpStrings.WebExtensions.enabled
+                        : FloorpStrings.WebExtensions.disabled)
             ),
             .init(
                 symbol: "doc.text.fill",
@@ -1029,6 +1163,13 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
                 detail: "\(item.source) · \(item.license)"
             )
         ]
+        if item.requiresRestartToEnable {
+            infoRows.append(.init(
+                symbol: "arrow.clockwise.circle.fill",
+                title: FloorpStrings.WebExtensions.enableAfterRestartStatus,
+                detail: FloorpStrings.WebExtensions.enableAfterRestartMessage
+            ))
+        }
         if !item.permissions.isEmpty {
             infoRows.append(.init(
                 symbol: "checkmark.shield.fill",
@@ -1083,13 +1224,19 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
         var choices = [
             FloorpNativeWebExtensionPromptPresentation.Choice(
                 identifier: "toggle-enabled",
-                title: item.isEnabled
-                    ? FloorpStrings.WebExtensions.disableAction
-                    : FloorpStrings.WebExtensions.enableAction,
-                detail: item.isEnabled
-                    ? FloorpStrings.WebExtensions.standardBrowsingDisableMessage
-                    : FloorpStrings.WebExtensions.standardBrowsingEnabledMessage,
-                icon: UIImage(systemName: item.isEnabled ? "pause.circle.fill" : "play.circle.fill"),
+                title: item.requiresRestartToEnable
+                    ? FloorpStrings.WebExtensions.cancel
+                    : (item.isEnabled
+                        ? FloorpStrings.WebExtensions.disableAction
+                        : FloorpStrings.WebExtensions.enableAction),
+                detail: item.requiresRestartToEnable
+                    ? FloorpStrings.WebExtensions.cancelEnableAfterRestartMessage
+                    : (item.isEnabled
+                        ? FloorpStrings.WebExtensions.standardBrowsingDisableMessage
+                        : FloorpStrings.WebExtensions.standardBrowsingEnabledMessage),
+                icon: UIImage(systemName: item.requiresRestartToEnable
+                    ? "xmark.circle.fill"
+                    : (item.isEnabled ? "pause.circle.fill" : "play.circle.fill")),
                 usesTemplateIcon: true
             ),
             .init(
@@ -1104,7 +1251,7 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
                 usesTemplateIcon: true
             )
         ]
-        if item.hasOptionsPage {
+        if item.isEnabled, item.hasOptionsPage {
             choices.append(.init(
                 identifier: "options",
                 title: FloorpStrings.WebExtensions.options,
@@ -1142,19 +1289,48 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
         switch identifier {
         case "toggle-enabled":
             mutate(identifier: item.identifier, progress: FloorpStrings.WebExtensions.loading) {
-                try await $0.setEnabled(!item.isEnabled, identifier: item.identifier)
+                try await $0.setEnabled(
+                    item.requiresRestartToEnable ? false : !item.isEnabled,
+                    identifier: item.identifier
+                )
             }
         case "toggle-private":
             mutate(identifier: item.identifier, progress: FloorpStrings.WebExtensions.loading) {
-                try $0.setPrivateAccess(!item.hasPrivateAccess, identifier: item.identifier)
+                try await $0.setPrivateAccess(!item.hasPrivateAccess, identifier: item.identifier)
             }
         case "options":
-            guard let host else { return }
-            do {
-                let options = try host.optionsViewController(identifier: item.identifier)
-                present(options, animated: true)
-            } catch {
-                presentError(error)
+            guard let host, !isMutating else { return }
+            let selectedTab = tabManager?.selectedTab
+            let isPrivate = (selectedTab?.isPrivate ?? false) && item.hasPrivateAccess
+            let sourceTab = selectedTab?.isPrivate == isPrivate ? selectedTab : nil
+            isMutating = true
+            busyIdentifier = item.identifier
+            tableView.isUserInteractionEnabled = false
+            navigationItem.prompt = FloorpStrings.WebExtensions.loading
+            tableView.reloadData()
+            Task { [weak self, host, sourceTab] in
+                do {
+                    let options = try await host.optionsViewController(
+                        identifier: item.identifier,
+                        sourceTab: sourceTab,
+                        isPrivate: isPrivate
+                    )
+                    guard let self else { return }
+                    isMutating = false
+                    busyIdentifier = nil
+                    tableView.isUserInteractionEnabled = true
+                    navigationItem.prompt = nil
+                    tableView.reloadData()
+                    present(options, animated: true)
+                } catch {
+                    guard let self else { return }
+                    isMutating = false
+                    busyIdentifier = nil
+                    tableView.isUserInteractionEnabled = true
+                    navigationItem.prompt = nil
+                    tableView.reloadData()
+                    presentError(error)
+                }
             }
         case "update":
             if let catalogItem = FloorpNativeWebExtensionCatalog.item(identifier: item.identifier) {
@@ -1242,17 +1418,78 @@ final class FloorpNativeWebExtensionSettingsViewController: ThemedTableViewContr
 }
 
 @MainActor
-final class FloorpNativeWebExtensionPageViewController: UIViewController {
+final class FloorpNativeWebExtensionPageViewController: UIViewController,
+                                                        WKNavigationDelegate,
+                                                        WKUIDelegate,
+                                                        UIAdaptivePresentationControllerDelegate {
+    private struct CloseRequest {
+        let animated: Bool
+        let completion: (() -> Void)?
+    }
+
+    @MainActor
+    private final class NavigationRequest {
+        let action: WKNavigationAction
+        let decisionHandler: @MainActor (WKNavigationActionPolicy) -> Void
+        weak var alert: UIAlertController?
+        private var isResolved = false
+
+        init(
+            action: WKNavigationAction,
+            decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+        ) {
+            self.action = action
+            self.decisionHandler = decisionHandler
+        }
+
+        func resolve(_ policy: WKNavigationActionPolicy) {
+            guard !isResolved else { return }
+            isResolved = true
+            decisionHandler(policy)
+        }
+    }
+
+    private enum CloseFailureResolution {
+        case keepEditing
+        case retry
+        case closeAnyway
+    }
+
     private let pageTitle: String
     private let url: URL
     private let configuration: WKWebViewConfiguration
+    private let openURLInBrowser: (URL) -> Void
+    private let prepareToClose: (@MainActor (WKWebView) async -> Bool)?
+    private let onClose: () -> Void
+    private let closeBridge: FloorpNativeWebExtensionCloseBridge
     private var webView: WKWebView?
+    private var lastRoutedNewWindowRequest: URLRequest?
+    private var closePreparationTask: Task<Void, Never>?
+    private var failedCloseRequest: CloseRequest?
+    private var navigationPreparationTask: Task<Void, Never>?
+    private var navigationRequest: NavigationRequest?
+    private var hasCommittedDocument = false
+    private var didClose = false
 
-    init(title: String, url: URL, configuration: WKWebViewConfiguration) {
+    init(
+        title: String,
+        url: URL,
+        configuration: WKWebViewConfiguration,
+        openURLInBrowser: @escaping (URL) -> Void = { _ in },
+        prepareToClose: (@MainActor (WKWebView) async -> Bool)? = nil,
+        onClose: @escaping () -> Void = {}
+    ) {
         self.pageTitle = title
         self.url = url
         self.configuration = configuration
+        self.openURLInBrowser = openURLInBrowser
+        self.prepareToClose = prepareToClose
+        self.onClose = onClose
+        self.closeBridge = FloorpNativeWebExtensionCloseBridge(expectedURL: url)
         super.init(nibName: nil, bundle: nil)
+        closeBridge.onClose = { [weak self] in
+            self?.closePage()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -1266,12 +1503,16 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController {
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .done,
             target: self,
-            action: #selector(close)
+            action: #selector(closePage)
         )
 
+        closeBridge.install(in: configuration)
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        closeBridge.attach(to: webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.allowsBackForwardNavigationGestures = true
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
         view.addSubview(webView)
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -1284,7 +1525,1065 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController {
     }
 
     @objc
-    private func close() {
-        dismiss(animated: true)
+    private func closePage() {
+        close(animated: true)
+    }
+
+    private func close(
+        animated: Bool,
+        completion: (() -> Void)? = nil,
+        preparationAlreadyCompleted: Bool = false
+    ) {
+        guard !didClose, closePreparationTask == nil else { return }
+        cancelNavigationPreparation(dismissAlert: true)
+        let request = failedCloseRequest ?? CloseRequest(
+            animated: animated,
+            completion: completion
+        )
+        failedCloseRequest = nil
+        guard !preparationAlreadyCompleted,
+              hasCommittedDocument,
+              let webView,
+              let prepareToClose else {
+            finishClosing()
+            dismiss(animated: request.animated, completion: request.completion)
+            return
+        }
+
+        navigationItem.rightBarButtonItem?.isEnabled = false
+        navigationItem.prompt = FloorpStrings.WebExtensions.finishingOptionsChanges
+        webView.isUserInteractionEnabled = false
+        closePreparationTask = Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView, self.webView === webView else { return }
+            let isReadyToClose = await prepareToClose(webView)
+            guard !Task.isCancelled,
+                  !self.didClose,
+                  self.webView === webView else { return }
+            self.closePreparationTask = nil
+            self.navigationItem.rightBarButtonItem?.isEnabled = true
+            self.navigationItem.prompt = nil
+            guard isReadyToClose else {
+                webView.isUserInteractionEnabled = true
+                self.failedCloseRequest = request
+                self.presentClosePreparationFailure()
+                return
+            }
+            self.finishClosing()
+            self.dismiss(animated: request.animated, completion: request.completion)
+        }
+    }
+
+    private func presentClosePreparationFailure() {
+        guard !didClose, failedCloseRequest != nil else { return }
+        guard presentedViewController == nil,
+              viewIfLoaded?.window != nil else {
+            failedCloseRequest = nil
+            return
+        }
+        let alert = UIAlertController(
+            title: FloorpStrings.WebExtensions.optionsCloseFailureTitle,
+            message: FloorpStrings.WebExtensions.optionsCloseFailureMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.continueEditing,
+            style: .cancel
+        ) { [weak self] _ in
+            self?.resolveClosePreparationFailure(.keepEditing)
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.retry,
+            style: .default
+        ) { [weak self] _ in
+            self?.resolveClosePreparationFailure(.retry)
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.closeAnyway,
+            style: .destructive
+        ) { [weak self] _ in
+            self?.resolveClosePreparationFailure(.closeAnyway)
+        })
+        present(alert, animated: true)
+    }
+
+    private func resolveClosePreparationFailure(_ resolution: CloseFailureResolution) {
+        guard let request = failedCloseRequest else { return }
+        failedCloseRequest = nil
+        let applyResolution: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.applyClosePreparationFailureResolution(resolution, request: request)
+        }
+        if let alert = presentedViewController as? UIAlertController,
+           alert.presentingViewController != nil {
+            alert.dismiss(animated: true, completion: applyResolution)
+        } else {
+            applyResolution()
+        }
+    }
+
+    private func applyClosePreparationFailureResolution(
+        _ resolution: CloseFailureResolution,
+        request: CloseRequest
+    ) {
+        switch resolution {
+        case .keepEditing:
+            break
+        case .retry:
+            close(animated: request.animated, completion: request.completion)
+        case .closeAnyway:
+            finishClosing()
+            dismiss(animated: request.animated, completion: request.completion)
+        }
+    }
+
+#if DEBUG || TESTING
+    func requestCloseForTesting(completion: (() -> Void)? = nil) {
+        close(animated: false, completion: completion)
+    }
+
+    func retryCloseAfterPreparationFailureForTesting() {
+        resolveClosePreparationFailure(.retry)
+    }
+
+    func closeAfterPreparationFailureForTesting() {
+        resolveClosePreparationFailure(.closeAnyway)
+    }
+#endif
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        navigationController?.isModalInPresentation = prepareToClose != nil
+        (navigationController?.presentationController ?? presentationController)?.delegate = self
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        closePage()
+    }
+
+    func prepareForHostTeardown() {
+        cancelNavigationPreparation(dismissAlert: true)
+        closePreparationTask?.cancel()
+        closePreparationTask = nil
+        finishClosing()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || navigationController?.isBeingDismissed == true {
+            finishClosing()
+        }
+    }
+
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        finishClosing()
+    }
+
+    func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+        prepareToClose == nil
+    }
+
+    func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+        closePage()
+    }
+
+    private func finishClosing() {
+        guard !didClose else { return }
+        didClose = true
+        cancelNavigationPreparation(dismissAlert: true)
+        closePreparationTask?.cancel()
+        closePreparationTask = nil
+        failedCloseRequest = nil
+        navigationItem.prompt = nil
+        tearDownWebView()
+        onClose()
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        guard !didClose else {
+            decisionHandler(.cancel)
+            return
+        }
+        if let prepareToClose,
+           hasCommittedDocument,
+           floorpNavigationReplacesDocument(navigationAction, currentURL: webView.url) {
+            prepareNavigation(
+                navigationAction,
+                in: webView,
+                prepareToClose: prepareToClose,
+                decisionHandler: decisionHandler
+            )
+            return
+        }
+        decideNavigation(
+            navigationAction,
+            in: webView,
+            preparationAlreadyCompleted: false,
+            decisionHandler: decisionHandler
+        )
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
+        hasCommittedDocument = true
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        // The navigation-policy callback owns any document-replacing request
+        // once a live page needs asynchronous close preparation.
+        if prepareToClose != nil,
+           hasCommittedDocument,
+           floorpNavigationReplacesDocument(navigationAction, currentURL: webView.url) {
+            return nil
+        }
+        _ = routeNewWindowNavigation(navigationAction, in: webView)
+        return nil
+    }
+
+    @discardableResult
+    private func routeNewWindowNavigation(
+        _ navigationAction: WKNavigationAction,
+        in webView: WKWebView,
+        preparationAlreadyCompleted: Bool = false
+    ) -> Bool {
+        guard let destination = navigationAction.request.url else { return false }
+        let isSameExtensionOrigin = destination.scheme == url.scheme && destination.host == url.host
+        let opensNewFrame = navigationAction.targetFrame == nil
+        guard opensNewFrame || !isSameExtensionOrigin else { return false }
+        guard opensNewFrame || ["http", "https"].contains(destination.scheme?.lowercased()) else {
+            return false
+        }
+        guard lastRoutedNewWindowRequest != navigationAction.request else { return true }
+        lastRoutedNewWindowRequest = navigationAction.request
+        DispatchQueue.main.async { [weak self, request = navigationAction.request] in
+            guard self?.lastRoutedNewWindowRequest == request else { return }
+            self?.lastRoutedNewWindowRequest = nil
+        }
+        if isSameExtensionOrigin {
+            webView.load(navigationAction.request)
+        } else if ["http", "https"].contains(destination.scheme?.lowercased()) {
+            close(
+                animated: true,
+                completion: { [openURLInBrowser] in
+                    openURLInBrowser(destination)
+                },
+                preparationAlreadyCompleted: preparationAlreadyCompleted
+            )
+        }
+        return true
+    }
+
+    private func prepareNavigation(
+        _ navigationAction: WKNavigationAction,
+        in webView: WKWebView,
+        prepareToClose: @escaping @MainActor (WKWebView) async -> Bool,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        guard closePreparationTask == nil, failedCloseRequest == nil else {
+            decisionHandler(.cancel)
+            return
+        }
+        cancelNavigationPreparation(dismissAlert: true)
+        let request = NavigationRequest(
+            action: navigationAction,
+            decisionHandler: decisionHandler
+        )
+        navigationRequest = request
+        webView.isUserInteractionEnabled = false
+        runNavigationPreparation(request, in: webView, prepareToClose: prepareToClose)
+    }
+
+    private func runNavigationPreparation(
+        _ request: NavigationRequest,
+        in webView: WKWebView,
+        prepareToClose: @escaping @MainActor (WKWebView) async -> Bool
+    ) {
+        guard navigationRequest === request, !didClose, self.webView === webView else {
+            cancelNavigationPreparation(dismissAlert: true)
+            return
+        }
+        navigationPreparationTask?.cancel()
+        navigationPreparationTask = Task { @MainActor [weak self, weak webView, request] in
+            guard let self, let webView, self.webView === webView else {
+                request.resolve(.cancel)
+                return
+            }
+            let prepared = await prepareToClose(webView)
+            guard !Task.isCancelled,
+                  !self.didClose,
+                  self.navigationRequest === request,
+                  self.webView === webView else { return }
+            self.navigationPreparationTask = nil
+            if prepared {
+                self.finishPreparedNavigation(request, in: webView)
+            } else {
+                self.presentNavigationPreparationFailure(
+                    request,
+                    in: webView,
+                    prepareToClose: prepareToClose
+                )
+            }
+        }
+    }
+
+    private func finishPreparedNavigation(
+        _ request: NavigationRequest,
+        in webView: WKWebView
+    ) {
+        guard navigationRequest === request, self.webView === webView else {
+            request.resolve(.cancel)
+            return
+        }
+        navigationRequest = nil
+        navigationPreparationTask = nil
+        request.alert = nil
+        webView.isUserInteractionEnabled = true
+        decideNavigation(
+            request.action,
+            in: webView,
+            preparationAlreadyCompleted: true,
+            decisionHandler: { policy in request.resolve(policy) }
+        )
+    }
+
+    private func decideNavigation(
+        _ navigationAction: WKNavigationAction,
+        in webView: WKWebView,
+        preparationAlreadyCompleted: Bool,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        decisionHandler(
+            routeNewWindowNavigation(
+                navigationAction,
+                in: webView,
+                preparationAlreadyCompleted: preparationAlreadyCompleted
+            ) ? .cancel : .allow
+        )
+    }
+
+    private func presentNavigationPreparationFailure(
+        _ request: NavigationRequest,
+        in webView: WKWebView,
+        prepareToClose: @escaping @MainActor (WKWebView) async -> Bool
+    ) {
+        guard navigationRequest === request,
+              self.webView === webView,
+              presentedViewController == nil,
+              viewIfLoaded?.window != nil else {
+            cancelNavigationPreparation(dismissAlert: true)
+            return
+        }
+        let alert = UIAlertController(
+            title: FloorpStrings.WebExtensions.optionsCloseFailureTitle,
+            message: FloorpStrings.WebExtensions.optionsCloseFailureMessage,
+            preferredStyle: .alert
+        )
+        request.alert = alert
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.continueEditing,
+            style: .cancel
+        ) { [weak self] _ in
+            self?.cancelNavigationPreparation(dismissAlert: false)
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.retry,
+            style: .default
+        ) { [weak self, weak webView, request] _ in
+            guard let self, let webView, self.navigationRequest === request else { return }
+            request.alert = nil
+            DispatchQueue.main.async { [weak self, weak webView, request] in
+                guard let self, let webView else {
+                    request.resolve(.cancel)
+                    return
+                }
+                self.runNavigationPreparation(
+                    request,
+                    in: webView,
+                    prepareToClose: prepareToClose
+                )
+            }
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.closeAnyway,
+            style: .destructive
+        ) { [weak self, weak webView, request] _ in
+            guard let self, let webView else {
+                request.resolve(.cancel)
+                return
+            }
+            self.finishPreparedNavigation(request, in: webView)
+        })
+        present(alert, animated: true)
+    }
+
+    private func cancelNavigationPreparation(dismissAlert: Bool) {
+        guard let request = navigationRequest else { return }
+        navigationRequest = nil
+        navigationPreparationTask?.cancel()
+        navigationPreparationTask = nil
+        let alert = request.alert
+        request.alert = nil
+        if dismissAlert,
+           alert?.presentingViewController != nil || alert?.viewIfLoaded?.window != nil {
+            alert?.dismiss(animated: false)
+        }
+        webView?.isUserInteractionEnabled = true
+        request.resolve(.cancel)
+    }
+
+    private func tearDownWebView() {
+        guard let webView else { return }
+        closeBridge.invalidate(in: configuration)
+        hasCommittedDocument = false
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        self.webView = nil
+        FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
+    }
+}
+
+/// A bundled action popup backed by a tab-scoped WebExtension configuration.
+///
+/// `WKWebExtension.Action.popupWebView` always inherits the controller's
+/// persistent default data store. That is not suitable when an action was
+/// invoked from a private tab. The host therefore presents the digest-pinned
+/// bundled popup page itself, while retaining WebKit's extension controller and
+/// swapping only the source tab's data store and a per-surface content controller.
+@MainActor
+final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
+                                                               WKNavigationDelegate,
+                                                               WKUIDelegate,
+                                                               UIAdaptivePresentationControllerDelegate {
+    private struct CloseRequest {
+        let animated: Bool
+        let completion: (() -> Void)?
+        let outcomeCompletion: ((Bool) -> Void)?
+    }
+
+    @MainActor
+    private final class CloseOutcomeWaiter: @unchecked Sendable {
+        private var continuation: CheckedContinuation<Bool, Never>?
+        private var resolvedOutcome: Bool?
+
+        func wait() async -> Bool {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if let resolvedOutcome {
+                        continuation.resume(returning: resolvedOutcome)
+                    } else if Task.isCancelled {
+                        continuation.resume(returning: false)
+                    } else {
+                        self.continuation = continuation
+                    }
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in
+                    self?.resolve(false)
+                }
+            }
+        }
+
+        func resolve(_ outcome: Bool) {
+            guard resolvedOutcome == nil else { return }
+            resolvedOutcome = outcome
+            continuation?.resume(returning: outcome)
+            continuation = nil
+        }
+    }
+
+    @MainActor
+    private final class NavigationRequest {
+        let action: WKNavigationAction
+        let decisionHandler: @MainActor (WKNavigationActionPolicy) -> Void
+        weak var alert: UIAlertController?
+        private var isResolved = false
+
+        init(
+            action: WKNavigationAction,
+            decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+        ) {
+            self.action = action
+            self.decisionHandler = decisionHandler
+        }
+
+        func resolve(_ policy: WKNavigationActionPolicy) {
+            guard !isResolved else { return }
+            isResolved = true
+            decisionHandler(policy)
+        }
+    }
+
+    private enum CloseFailureResolution {
+        case keepOpen
+        case retry
+        case closeAnyway
+    }
+
+    let webView: WKWebView
+
+    private let popupURL: URL
+    private let openURLInBrowser: (URL) -> Void
+    private let prepareToClose: (@MainActor (WKWebView) async -> Bool)?
+    private let onClose: () -> Void
+    private let closeBridge: FloorpNativeWebExtensionCloseBridge
+    private var didClose = false
+    private var lastRoutedNewWindowRequest: URLRequest?
+    private var closePreparationTask: Task<Void, Never>?
+    private var activeCloseRequest: CloseRequest?
+    private var failedCloseRequest: CloseRequest?
+    private var closeOutcomeWaiters = [UUID: CloseOutcomeWaiter]()
+    private var navigationPreparationTask: Task<Void, Never>?
+    private var navigationRequest: NavigationRequest?
+    private var hasCommittedDocument = false
+
+    init(
+        url: URL,
+        configuration: WKWebViewConfiguration,
+        openURLInBrowser: @escaping (URL) -> Void,
+        prepareToClose: (@MainActor (WKWebView) async -> Bool)? = nil,
+        onClose: @escaping () -> Void
+    ) {
+        self.popupURL = url
+        self.webView = WKWebView(frame: .zero, configuration: configuration)
+        self.openURLInBrowser = openURLInBrowser
+        self.prepareToClose = prepareToClose
+        self.onClose = onClose
+        self.closeBridge = FloorpNativeWebExtensionCloseBridge(expectedURL: url)
+        super.init(nibName: nil, bundle: nil)
+        closeBridge.onClose = { [weak self] in
+            self?.closePopup(animated: true)
+        }
+        modalPresentationStyle = .popover
+        isModalInPresentation = prepareToClose != nil
+        preferredContentSize = CGSize(width: 360, height: 600)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        view.accessibilityLabel = FloorpStrings.WebExtensions.genericExtensionName
+
+        closeBridge.install(in: webView.configuration)
+        closeBridge.attach(to: webView)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        view.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: view.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        webView.load(URLRequest(url: popupURL))
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        isModalInPresentation = prepareToClose != nil
+        presentationController?.delegate = self
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || navigationController?.isBeingDismissed == true {
+            invalidatePopup()
+        }
+    }
+
+    func closePopup(animated: Bool, completion: (() -> Void)? = nil) {
+        requestClose(
+            animated: animated,
+            completion: completion,
+            outcomeCompletion: nil
+        )
+    }
+
+    func closePopupAfterPreparing(animated: Bool) async -> Bool {
+        if didClose { return true }
+        let token = UUID()
+        let waiter = CloseOutcomeWaiter()
+        closeOutcomeWaiters[token] = waiter
+        // `window.close()` can reach WKUIDelegate while the WebExtension
+        // delegate is concurrently waiting to open a new tab. Both callers
+        // observe the same in-flight preparation instead of racing and
+        // treating the second request as a failure.
+        if closePreparationTask == nil, failedCloseRequest == nil {
+            requestClose(
+                animated: animated,
+                completion: nil,
+                outcomeCompletion: nil
+            )
+        }
+        let outcome = await waiter.wait()
+        closeOutcomeWaiters.removeValue(forKey: token)
+        return outcome
+    }
+
+    private func requestClose(
+        animated: Bool,
+        completion: (() -> Void)?,
+        outcomeCompletion: ((Bool) -> Void)?,
+        preparationAlreadyCompleted: Bool = false
+    ) {
+        guard !didClose else {
+            completion?()
+            outcomeCompletion?(true)
+            return
+        }
+        guard closePreparationTask == nil else {
+            outcomeCompletion?(false)
+            return
+        }
+        cancelNavigationPreparation(dismissAlert: true)
+        let request = failedCloseRequest ?? CloseRequest(
+            animated: animated,
+            completion: completion,
+            outcomeCompletion: outcomeCompletion
+        )
+        failedCloseRequest = nil
+        guard !preparationAlreadyCompleted,
+              hasCommittedDocument,
+              let prepareToClose else {
+            finishClosing(request)
+            return
+        }
+
+        view.isUserInteractionEnabled = false
+        activeCloseRequest = request
+        closePreparationTask = Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView, self.webView === webView else {
+                request.outcomeCompletion?(false)
+                return
+            }
+            let isReadyToClose = await prepareToClose(webView)
+            guard !Task.isCancelled,
+                  !self.didClose,
+                  self.webView === webView else { return }
+            self.closePreparationTask = nil
+            self.activeCloseRequest = nil
+            self.view.isUserInteractionEnabled = true
+            guard isReadyToClose else {
+                self.failedCloseRequest = request
+                self.presentClosePreparationFailure()
+                return
+            }
+            self.finishClosing(request)
+        }
+    }
+
+    private func finishClosing(_ request: CloseRequest) {
+        activeCloseRequest = nil
+        failedCloseRequest = nil
+        invalidatePopup(closeOutcome: true)
+        guard presentingViewController != nil else {
+            request.completion?()
+            request.outcomeCompletion?(true)
+            return
+        }
+        dismiss(animated: request.animated) {
+            request.completion?()
+            request.outcomeCompletion?(true)
+        }
+    }
+
+    func closePopupImmediately(animated: Bool, completion: (() -> Void)? = nil) {
+        invalidatePopup(closeOutcome: false)
+        guard presentingViewController != nil else {
+            completion?()
+            return
+        }
+        dismiss(animated: animated, completion: completion)
+    }
+
+#if DEBUG || TESTING
+    func requestCloseForTesting(completion: (() -> Void)? = nil) {
+        closePopup(animated: false, completion: completion)
+    }
+
+    func retryCloseAfterPreparationFailureForTesting() {
+        resolveClosePreparationFailure(.retry)
+    }
+
+    func closeAfterPreparationFailureForTesting() {
+        resolveClosePreparationFailure(.closeAnyway)
+    }
+#endif
+
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        invalidatePopup()
+    }
+
+    func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+        prepareToClose == nil
+    }
+
+    func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+        closePopup(animated: true)
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        closePopup(animated: true)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
+        hasCommittedDocument = true
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        webView.evaluateJavaScript(
+            "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]"
+        ) { [weak self] result, _ in
+            guard let self, let dimensions = result as? [NSNumber], dimensions.count == 2 else {
+                return
+            }
+            preferredContentSize = CGSize(
+                width: min(max(CGFloat(truncating: dimensions[0]), 280), 420),
+                height: min(max(CGFloat(truncating: dimensions[1]), 240), 700)
+            )
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        guard !didClose else {
+            decisionHandler(.cancel)
+            return
+        }
+        if let prepareToClose,
+           hasCommittedDocument,
+           floorpNavigationReplacesDocument(navigationAction, currentURL: webView.url) {
+            prepareNavigation(
+                navigationAction,
+                in: webView,
+                prepareToClose: prepareToClose,
+                decisionHandler: decisionHandler
+            )
+            return
+        }
+        decideNavigation(
+            navigationAction,
+            in: webView,
+            preparationAlreadyCompleted: false,
+            decisionHandler: decisionHandler
+        )
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        // The navigation-policy callback owns any document-replacing request
+        // once a live popup needs asynchronous close preparation.
+        if prepareToClose != nil,
+           hasCommittedDocument,
+           floorpNavigationReplacesDocument(navigationAction, currentURL: webView.url) {
+            return nil
+        }
+        _ = routeNewWindowNavigation(navigationAction, in: webView)
+        return nil
+    }
+
+    @discardableResult
+    private func routeNewWindowNavigation(
+        _ navigationAction: WKNavigationAction,
+        in webView: WKWebView,
+        preparationAlreadyCompleted: Bool = false
+    ) -> Bool {
+        guard let destination = navigationAction.request.url else { return false }
+        let isSameExtensionOrigin = destination.scheme == popupURL.scheme
+            && destination.host == popupURL.host
+        let opensNewFrame = navigationAction.targetFrame == nil
+        guard opensNewFrame || !isSameExtensionOrigin else { return false }
+        guard lastRoutedNewWindowRequest != navigationAction.request else { return true }
+        lastRoutedNewWindowRequest = navigationAction.request
+        DispatchQueue.main.async { [weak self, request = navigationAction.request] in
+            guard self?.lastRoutedNewWindowRequest == request else { return }
+            self?.lastRoutedNewWindowRequest = nil
+        }
+        if isSameExtensionOrigin {
+            webView.load(navigationAction.request)
+        } else if ["http", "https"].contains(destination.scheme?.lowercased()) {
+            requestClose(
+                animated: true,
+                completion: { [openURLInBrowser] in
+                    openURLInBrowser(destination)
+                },
+                outcomeCompletion: nil,
+                preparationAlreadyCompleted: preparationAlreadyCompleted
+            )
+        }
+        return true
+    }
+
+    private func prepareNavigation(
+        _ navigationAction: WKNavigationAction,
+        in webView: WKWebView,
+        prepareToClose: @escaping @MainActor (WKWebView) async -> Bool,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        guard closePreparationTask == nil, failedCloseRequest == nil else {
+            decisionHandler(.cancel)
+            return
+        }
+        cancelNavigationPreparation(dismissAlert: true)
+        let request = NavigationRequest(
+            action: navigationAction,
+            decisionHandler: decisionHandler
+        )
+        navigationRequest = request
+        view.isUserInteractionEnabled = false
+        runNavigationPreparation(request, in: webView, prepareToClose: prepareToClose)
+    }
+
+    private func runNavigationPreparation(
+        _ request: NavigationRequest,
+        in webView: WKWebView,
+        prepareToClose: @escaping @MainActor (WKWebView) async -> Bool
+    ) {
+        guard navigationRequest === request, !didClose, self.webView === webView else {
+            cancelNavigationPreparation(dismissAlert: true)
+            return
+        }
+        navigationPreparationTask?.cancel()
+        navigationPreparationTask = Task { @MainActor [weak self, weak webView, request] in
+            guard let self, let webView, self.webView === webView else {
+                request.resolve(.cancel)
+                return
+            }
+            let prepared = await prepareToClose(webView)
+            guard !Task.isCancelled,
+                  !self.didClose,
+                  self.navigationRequest === request,
+                  self.webView === webView else { return }
+            self.navigationPreparationTask = nil
+            if prepared {
+                self.finishPreparedNavigation(request, in: webView)
+            } else {
+                self.presentNavigationPreparationFailure(
+                    request,
+                    in: webView,
+                    prepareToClose: prepareToClose
+                )
+            }
+        }
+    }
+
+    private func finishPreparedNavigation(
+        _ request: NavigationRequest,
+        in webView: WKWebView
+    ) {
+        guard navigationRequest === request, self.webView === webView else {
+            request.resolve(.cancel)
+            return
+        }
+        navigationRequest = nil
+        navigationPreparationTask = nil
+        request.alert = nil
+        view.isUserInteractionEnabled = true
+        decideNavigation(
+            request.action,
+            in: webView,
+            preparationAlreadyCompleted: true,
+            decisionHandler: { policy in request.resolve(policy) }
+        )
+    }
+
+    private func decideNavigation(
+        _ navigationAction: WKNavigationAction,
+        in webView: WKWebView,
+        preparationAlreadyCompleted: Bool,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        decisionHandler(
+            routeNewWindowNavigation(
+                navigationAction,
+                in: webView,
+                preparationAlreadyCompleted: preparationAlreadyCompleted
+            ) ? .cancel : .allow
+        )
+    }
+
+    private func presentNavigationPreparationFailure(
+        _ request: NavigationRequest,
+        in webView: WKWebView,
+        prepareToClose: @escaping @MainActor (WKWebView) async -> Bool
+    ) {
+        guard navigationRequest === request,
+              self.webView === webView,
+              presentedViewController == nil,
+              viewIfLoaded?.window != nil else {
+            cancelNavigationPreparation(dismissAlert: true)
+            return
+        }
+        let alert = UIAlertController(
+            title: FloorpStrings.WebExtensions.optionsCloseFailureTitle,
+            message: FloorpStrings.WebExtensions.optionsCloseFailureMessage,
+            preferredStyle: .alert
+        )
+        request.alert = alert
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.continueEditing,
+            style: .cancel
+        ) { [weak self] _ in
+            self?.cancelNavigationPreparation(dismissAlert: false)
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.retry,
+            style: .default
+        ) { [weak self, weak webView, request] _ in
+            guard let self, let webView, self.navigationRequest === request else { return }
+            request.alert = nil
+            DispatchQueue.main.async { [weak self, weak webView, request] in
+                guard let self, let webView else {
+                    request.resolve(.cancel)
+                    return
+                }
+                self.runNavigationPreparation(
+                    request,
+                    in: webView,
+                    prepareToClose: prepareToClose
+                )
+            }
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.closeAnyway,
+            style: .destructive
+        ) { [weak self, weak webView, request] _ in
+            guard let self, let webView else {
+                request.resolve(.cancel)
+                return
+            }
+            self.finishPreparedNavigation(request, in: webView)
+        })
+        present(alert, animated: true)
+    }
+
+    private func cancelNavigationPreparation(dismissAlert: Bool) {
+        guard let request = navigationRequest else { return }
+        navigationRequest = nil
+        navigationPreparationTask?.cancel()
+        navigationPreparationTask = nil
+        let alert = request.alert
+        request.alert = nil
+        if dismissAlert,
+           alert?.presentingViewController != nil || alert?.viewIfLoaded?.window != nil {
+            alert?.dismiss(animated: false)
+        }
+        view.isUserInteractionEnabled = true
+        request.resolve(.cancel)
+    }
+
+    private func invalidatePopup(closeOutcome: Bool = false) {
+        guard !didClose else { return }
+        cancelNavigationPreparation(dismissAlert: true)
+        let abandonedRequest = activeCloseRequest ?? failedCloseRequest
+        didClose = true
+        closePreparationTask?.cancel()
+        closePreparationTask = nil
+        activeCloseRequest = nil
+        failedCloseRequest = nil
+        view.isUserInteractionEnabled = true
+        closeBridge.invalidate(in: webView.configuration)
+        hasCommittedDocument = false
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
+        onClose()
+        abandonedRequest?.outcomeCompletion?(false)
+        resolveCloseOutcomeObservers(closeOutcome)
+    }
+
+    private func presentClosePreparationFailure() {
+        guard !didClose, let request = failedCloseRequest else { return }
+        guard presentedViewController == nil,
+              viewIfLoaded?.window != nil else {
+            failedCloseRequest = nil
+            request.outcomeCompletion?(false)
+            resolveCloseOutcomeObservers(false)
+            return
+        }
+        let alert = UIAlertController(
+            title: FloorpStrings.WebExtensions.optionsCloseFailureTitle,
+            message: FloorpStrings.WebExtensions.optionsCloseFailureMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.continueEditing,
+            style: .cancel
+        ) { [weak self] _ in
+            self?.resolveClosePreparationFailure(.keepOpen)
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.retry,
+            style: .default
+        ) { [weak self] _ in
+            self?.resolveClosePreparationFailure(.retry)
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.closeAnyway,
+            style: .destructive
+        ) { [weak self] _ in
+            self?.resolveClosePreparationFailure(.closeAnyway)
+        })
+        present(alert, animated: true)
+    }
+
+    private func resolveClosePreparationFailure(_ resolution: CloseFailureResolution) {
+        guard let request = failedCloseRequest else { return }
+        failedCloseRequest = nil
+        let applyResolution: () -> Void = { [weak self] in
+            self?.applyClosePreparationFailureResolution(resolution, request: request)
+        }
+        if let alert = presentedViewController as? UIAlertController,
+           alert.presentingViewController != nil {
+            alert.dismiss(animated: true, completion: applyResolution)
+        } else {
+            applyResolution()
+        }
+    }
+
+    private func applyClosePreparationFailureResolution(
+        _ resolution: CloseFailureResolution,
+        request: CloseRequest
+    ) {
+        switch resolution {
+        case .keepOpen:
+            request.outcomeCompletion?(false)
+            resolveCloseOutcomeObservers(false)
+        case .retry:
+            failedCloseRequest = request
+            requestClose(
+                animated: request.animated,
+                completion: request.completion,
+                outcomeCompletion: request.outcomeCompletion
+            )
+        case .closeAnyway:
+            finishClosing(request)
+        }
+    }
+
+    private func resolveCloseOutcomeObservers(_ didClose: Bool) {
+        let waiters = closeOutcomeWaiters.values
+        closeOutcomeWaiters.removeAll()
+        waiters.forEach { $0.resolve(didClose) }
     }
 }

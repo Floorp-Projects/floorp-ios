@@ -44,6 +44,48 @@ class BrowserViewController: UIViewController,
                              BrowserStatusBarScrollDelegate,
                              LegacyTabScrollController.Delegate,
                              SearchEngineDelegate {
+    final class NavigationProtectionFailureAlertState {
+        weak var host: FloorpNativeWebExtensionHost?
+        weak var tab: Tab?
+        weak var webView: WKWebView?
+        let generation: Int
+        let failure: FloorpNativeWebExtensionHost.NavigationProtectionFailure
+        var alert: UIAlertController?
+        var presentationTask: Task<Void, Never>?
+        var presentationRetryCount = 0
+        var didCompletePresentation = false
+        var isAcknowledged = false
+#if DEBUG || TESTING
+        var openSettingsActionHandlerForTesting: ((UIAlertAction) -> Void)?
+#endif
+
+        init(
+            host: FloorpNativeWebExtensionHost,
+            tab: Tab,
+            webView: WKWebView,
+            generation: Int,
+            failure: FloorpNativeWebExtensionHost.NavigationProtectionFailure
+        ) {
+            self.host = host
+            self.tab = tab
+            self.webView = webView
+            self.generation = generation
+            self.failure = failure
+        }
+
+        func matches(
+            host: FloorpNativeWebExtensionHost,
+            tab: Tab,
+            webView: WKWebView,
+            generation: Int
+        ) -> Bool {
+            return self.host === host
+                && self.tab === tab
+                && self.webView === webView
+                && self.generation == generation
+        }
+    }
+
     enum UX {
         static let showHeaderTapAreaHeight: CGFloat = 32
         static let downloadToastDelay = DispatchTimeInterval.milliseconds(500)
@@ -135,6 +177,12 @@ class BrowserViewController: UIViewController,
     // popover rotation handling
     var displayedPopoverController: UIViewController?
     var updateDisplayedPopoverProperties: (() -> Void)?
+    var navigationProtectionFailureAlertState: NavigationProtectionFailureAlertState?
+#if DEBUG || TESTING
+    var navigationProtectionFailureSceneForegroundOverrideForTesting: Bool?
+    var navigationProtectionFailureRecordedFailureOverrideForTesting:
+        FloorpNativeWebExtensionHost.NavigationProtectionFailure?
+#endif
     lazy var screenshotHelper = ScreenshotHelper(controller: self)
 
     // MARK: Lazy loading UI elements
@@ -812,6 +860,7 @@ class BrowserViewController: UIViewController,
     }
 
     func appDidEnterBackgroundNotification() {
+        dismissNavigationProtectionFailureAlert(animated: false)
         displayedPopoverController?.dismiss(animated: false) {
             self.updateDisplayedPopoverProperties = nil
             self.displayedPopoverController = nil
@@ -841,6 +890,7 @@ class BrowserViewController: UIViewController,
         guard let currentWindowScene = view.window?.windowScene,
               let windowScene,
               currentWindowScene === windowScene else { return }
+        dismissNavigationProtectionFailureAlert(animated: false)
         guard canShowPrivacyWindow else { return }
 
         privacyWindowHelper.showWindow(windowScene: currentWindowScene, withThemedColor: currentTheme().colors.layer3)
@@ -851,6 +901,7 @@ class BrowserViewController: UIViewController,
     }
 
     func appWillResignActiveNotification() {
+        dismissNavigationProtectionFailureAlert(animated: false)
         // Dismiss any popovers that might be visible
         displayedPopoverController?.dismiss(animated: false) {
             self.updateDisplayedPopoverProperties = nil
@@ -4564,6 +4615,13 @@ extension BrowserViewController: LegacyTabDelegate {
         tab.addContentScript(blocker, name: FirefoxTabContentBlocker.name())
 
         tab.addContentScript(FocusHelper(tab: tab), name: FocusHelper.name())
+
+        // A native WebExtension navigation can replace the WKWebView without
+        // changing the selected Tab object. Refresh the embedded controller so
+        // it never keeps displaying the removed browsing surface.
+        if tabManager.selectedTab === tab {
+            showEmbeddedWebview()
+        }
     }
 
     private func filterLoginsForCurrentTab(logins: [Login],
@@ -4845,6 +4903,7 @@ extension BrowserViewController: SearchViewControllerDelegate {
 
 extension BrowserViewController: TabManagerDelegate {
     func tabManager(_ tabManager: TabManager, didSelectedTabChange selectedTab: Tab, previousTab: Tab?, isRestoring: Bool) {
+        dismissNavigationProtectionFailureAlertIfStale()
         // Failing to have a non-nil webView by this point will cause the toolbar scrolling behaviour to regress,
         // back/forward buttons never to become enabled, etc. on tab restore after launch. [FXIOS-9785, FXIOS-9781]
         assert(selectedTab.webView != nil, "Setup will fail if the webView is not initialized for selectedTab")
@@ -4993,6 +5052,7 @@ extension BrowserViewController: TabManagerDelegate {
     }
 
     func tabManager(_ tabManager: TabManager, didRemoveTab tab: Tab, isRestoring: Bool) {
+        dismissNavigationProtectionFailureAlert(for: tab, animated: false)
         if let url = tab.lastKnownUrl, !(InternalURL(url)?.isAboutURL ?? false), !tab.isPrivate {
             profile.recentlyClosedTabs.addTab(url as URL,
                                               title: tab.lastTitle,

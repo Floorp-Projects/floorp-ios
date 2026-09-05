@@ -1,0 +1,87 @@
+{
+  "asset": "uBOLite-floorp-ios-2026.825.1619.zip",
+  "buildScript": "scripts/package-ubol-ios.sh",
+  "changes": [
+    {
+      "description": "Declare WebKit's public declarativeNetRequestFeedback permission so uBO Lite's upstream Developer mode can expose its Matched rules diagnostics.",
+      "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
+      "path": "manifest.json"
+    },
+    {
+      "description": "Propagate the active tab's numeric logical window ID and incognito state when opening Matched rules and Report; adapt upstream Matched rules windows.create to an awaited active tabs.create in the source window; scope Report lookup, reuse, and creation to the same window and privacy realm; verify the created realm; and return explicit opened/error responses so WebKit does not strand popup message ports.",
+      "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
+      "paths": [
+        "js/background.js",
+        "js/ext-utils.js",
+        "js/popup.js"
+      ]
+    },
+    {
+      "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; create and retain a hidden local-storage sentinel before reads; make local configuration authoritative with revisioned exact readback; preserve caller DNR rule objects while cloning and converting Safari aliases; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
+      "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
+      "paths": [
+        "js/alarms.js",
+        "js/config.js",
+        "js/ext-compat.js",
+        "js/ext.js"
+      ]
+    },
+    {
+      "description": "Make startup, wake, permission, filtering-mode, static/derived/user DNR, imported-list, content-script, and user-script reconciliation durable and fail closed: use an immutable registered-content sentinel, case-normalize WebKit registration readback, and apply bounded ID-diff convergence; validate resources before mutation; use atomic or rollback-verified DNR updates; reconcile all protection surfaces from durable state before ready; and request a visible extension-page foreground reconciliation when WebKit rejects static ruleset updates from an MV3 background page.",
+      "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
+      "paths": [
+        "js/admin.js",
+        "js/background.js",
+        "js/compiled-filters.js",
+        "js/fetch.js",
+        "js/floorp-reconcile.js",
+        "js/imported-lists.js",
+        "js/mode-manager.js",
+        "js/ruleset-manager.js",
+        "js/safari-registration-sentinel.js",
+        "js/scripting-manager.js"
+      ]
+    },
+    {
+      "description": "Protect settings restore/reset and custom-filter edits with snapshots, durable recovery journals, strict mutation responses, foreground-completed Safari static-ruleset rollback/readback, authoritative state rebroadcast across concurrent dashboards, and retryable queues; track delayed FileReader, editor, filter-list, and dashboard writes to a fixed point so a failed or interrupted operation cannot be reported as saved.",
+      "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
+      "paths": [
+        "js/background.js",
+        "js/backup-restore.js",
+        "js/compiled-filters.js",
+        "js/develop.js",
+        "js/filter-lists.js",
+        "js/filter-manager-ui.js",
+        "js/filter-manager.js",
+        "js/imported-lists.js",
+        "js/rw-dnr-editor.js",
+        "js/settings.js"
+      ]
+    },
+    {
+      "description": "Expose host-awaited dashboard and popup close handshakes that drain in-flight mutations, reconcile/read back protection, preserve harmless immediate no-edit popup close, begin host-permission requests in the original Page Action user-gesture stack before awaiting serialized mutations, avoid host-permission requests for pages without hostnames, never derive an empty ruleset selection from the dashboard's deferred unrendered Filter lists pane, normalize DOM collections before selection readback, keep failed surfaces open for retry or explicit native escape, roll controls back without reloading on error, and present accessible runtime errors.",
+      "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
+      "paths": [
+        "css/popup.css",
+        "css/settings.css",
+        "dashboard.html",
+        "js/dashboard.js",
+        "js/develop.js",
+        "js/ext.js",
+        "js/filter-lists.js",
+        "js/filter-manager-ui.js",
+        "js/popup.js",
+        "js/settings.js",
+        "popup.html"
+      ]
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "release": "2026.825.1619",
+  "sha256": "0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d",
+  "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
+  "strictMinimumSafariVersion": "18.6",
+  "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
+  "upstreamDownloadURL": "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip",
+  "upstreamSHA256": "89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94"
+}

@@ -1393,6 +1393,24 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "無効" } }
       }
     },
+    "Floorp.WebExtensions.EnableAfterRestartStatus.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Will enable after restart" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再起動後に有効" } }
+      }
+    },
+    "Floorp.WebExtensions.EnableAfterRestartMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restart Floorp to finish enabling this extension. It remains inactive until then." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この拡張機能を有効にするには Floorp を再起動してください。それまでは動作しません。" } }
+      }
+    },
+    "Floorp.WebExtensions.CancelEnableAfterRestartMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep this extension disabled after restarting Floorp." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Floorp の再起動後も、この拡張機能を無効のままにします。" } }
+      }
+    },
     "Floorp.WebExtensions.Revoked.v1" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Disabled for your protection" } },
@@ -1433,6 +1451,36 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "完了" } }
+      }
+    },
+    "Floorp.WebExtensions.OptionsCloseFailureTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extension changes aren’t confirmed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能の変更を確認できません" } }
+      }
+    },
+    "Floorp.WebExtensions.OptionsCloseFailureMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Some changes may still be applying or may have failed. You can keep editing, try again, or close with the extension’s current state." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一部の変更は適用中か、失敗している可能性があります。編集を続けるか再試行できます。現在の拡張機能の状態のまま閉じることもできます。" } }
+      }
+    },
+    "Floorp.WebExtensions.ContinueEditing.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep Editing" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "編集を続ける" } }
+      }
+    },
+    "Floorp.WebExtensions.CloseAnyway.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close Anyway" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このまま閉じる" } }
+      }
+    },
+    "Floorp.WebExtensions.FinishingOptionsChanges.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Finishing extension changes…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能の変更を完了しています…" } }
       }
     },
     "Floorp.WebExtensions.Allow.v1" : {
@@ -1619,6 +1667,24 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Extension action could not open" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能のアクションを開けませんでした" } }
+      }
+    },
+    "Floorp.WebExtensions.NavigationProtectionFailureTitle.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Page loading was stopped" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ページの読み込みを停止しました" } }
+      }
+    },
+    "Floorp.WebExtensions.NavigationProtectionFailureMessage.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ could not finish preparing protection, so Floorp stopped the page before it loaded. Review or disable the extension, then try again." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ の保護を準備できなかったため、ページを読み込む前に停止しました。拡張機能を確認または無効にしてから、もう一度お試しください。" } }
+      }
+    },
+    "Floorp.WebExtensions.OpenSettings.v1" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Extensions" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拡張機能を開く" } }
       }
     },
     "Floorp.WebExtensions.SiteAccessChangeErrorTitle.v1" : {

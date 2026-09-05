@@ -7,6 +7,411 @@ import UIKit
 import WebKit
 import XCTest
 
+@testable import Client
+
+@MainActor
+final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
+    // swiftlint:disable:next function_body_length
+    func testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup() async throws {
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let packageURL = try ProcessInfo.processInfo.environment["FLOORP_DARKREADER_TEST_PACKAGE_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? XCTUnwrap(item.bundledResourceURL)
+        let webExtension = try await WKWebExtension(resourceBaseURL: packageURL)
+        XCTAssertTrue(
+            webExtension.errors.isEmpty,
+            webExtension.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        let context = WKWebExtensionContext(for: webExtension)
+        context.uniqueIdentifier = "org.darkreader.floorp-acceptance.\(UUID().uuidString.lowercased())"
+        context.baseURL = URL(string: "webkit-extension://darkreader-acceptance.floorp.internal/")!
+        context.grantedPermissions = Dictionary(
+            uniqueKeysWithValues: webExtension.requestedPermissions.map { ($0, Date.distantFuture) }
+        )
+        context.grantedPermissionMatchPatterns = Dictionary(
+            uniqueKeysWithValues: webExtension.requestedPermissionMatchPatterns.map {
+                ($0, Date.distantFuture)
+            }
+        )
+        context.unsupportedAPIs = item.disabledAPIs
+
+        // Match the shipping profile host. WebKit can report false-negative extension
+        // behavior when a controller itself uses a non-persistent default data store.
+        let websiteDataStore = WKWebsiteDataStore.default()
+        let controllerConfiguration = WKWebExtensionController.Configuration(identifier: UUID())
+        controllerConfiguration.defaultWebsiteDataStore = websiteDataStore
+        let controller = WKWebExtensionController(configuration: controllerConfiguration)
+
+        let browsingConfiguration = WKWebViewConfiguration()
+        browsingConfiguration.websiteDataStore = websiteDataStore
+        browsingConfiguration.webExtensionController = controller
+        let browsingWebView = WKWebView(frame: .zero, configuration: browsingConfiguration)
+        let tab = FloorpUBOLDiagnosticTab(webView: browsingWebView)
+        let extensionWindow = FloorpUBOLDiagnosticWindow(tab: tab)
+        tab.diagnosticWindow = extensionWindow
+        let hostController = UIViewController()
+        let hostFrame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        hostController.view.frame = hostFrame
+        browsingWebView.frame = hostController.view.bounds
+        browsingWebView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        hostController.view.addSubview(browsingWebView)
+        let hostWindow: UIWindow
+        if let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first {
+            hostWindow = UIWindow(windowScene: windowScene)
+            hostWindow.frame = hostFrame
+        } else {
+            hostWindow = UIWindow(frame: hostFrame)
+        }
+        hostWindow.rootViewController = hostController
+        hostWindow.makeKeyAndVisible()
+
+        let delegate = FloorpUBOLDiagnosticControllerDelegate(window: extensionWindow)
+        controller.delegate = delegate
+        controller.didOpenWindow(extensionWindow)
+        controller.didOpenTab(tab)
+        controller.didFocusWindow(extensionWindow)
+        controller.didActivateTab(tab, previousActiveTab: nil)
+        defer {
+            FloorpWebExtensionTestRuntimeRetainer.retain(
+                controller: controller,
+                context: context,
+                objects: [webExtension, websiteDataStore],
+                resourceRoot: packageURL
+            )
+        }
+        try controller.load(context)
+        try await waitForBackgroundContent(in: context)
+        print("FLOORP_DARKREADER_RELEASE_GATE background")
+        var presentedPopup: UIViewController?
+        var presentedPopupWebView: WKWebView?
+        defer {
+            presentedPopup?.dismiss(animated: false)
+            presentedPopupWebView?.stopLoading()
+            presentedPopupWebView?.navigationDelegate = nil
+            browsingWebView.stopLoading()
+            browsingWebView.navigationDelegate = nil
+            controller.didCloseTab(tab, windowIsClosing: true)
+            controller.didCloseWindow(extensionWindow)
+            controller.delegate = nil
+            hostWindow.isHidden = true
+            var retainedObjects: [AnyObject] = [
+                webExtension,
+                browsingWebView,
+                tab,
+                extensionWindow,
+                delegate,
+                hostController,
+                hostWindow
+            ]
+            if let presentedPopup {
+                retainedObjects.append(presentedPopup)
+            }
+            if let presentedPopupWebView {
+                retainedObjects.append(presentedPopupWebView)
+            }
+            FloorpWebExtensionTestRuntimeRetainer.retain(
+                controller: controller,
+                context: context,
+                objects: retainedObjects,
+                resourceRoot: packageURL
+            )
+        }
+
+        let server = try Self.makeServer()
+        defer { server.stop() }
+        let pageURL = try XCTUnwrap(URL(string: "http://localhost:\(server.port)/"))
+        let navigation = FloorpUBOLNavigationWaiter()
+        do {
+            try await navigation.load(pageURL, in: browsingWebView)
+        } catch {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "Dark Reader page navigation failed: \(error)"
+            )
+        }
+        print("FLOORP_DARKREADER_RELEASE_GATE navigation")
+        try await waitForJavaScriptCondition(
+            in: browsingWebView,
+            """
+            return document.documentElement.dataset.darkreaderMode === 'dynamic' &&
+                document.documentElement.dataset.darkreaderScheme === 'dark' &&
+                document.querySelectorAll('style.darkreader').length > 0;
+            """
+        )
+        print("FLOORP_DARKREADER_RELEASE_GATE theme")
+
+        let popupPresented = expectation(description: "Dark Reader popup presented")
+        delegate.actionPopupHandler = { action in
+            guard let popup = action.popupViewController else {
+                XCTFail("Dark Reader action did not provide a popup view controller")
+                return
+            }
+            presentedPopup = popup
+            hostController.present(popup, animated: false) {
+                popupPresented.fulfill()
+            }
+        }
+        context.performAction(for: tab)
+        await fulfillment(of: [popupPresented], timeout: 5)
+        let popup = try XCTUnwrap(presentedPopup)
+        let popupWebView = try await waitForWebView(in: popup)
+        presentedPopupWebView = popupWebView
+        try await waitForJavaScriptCondition(
+            in: popupWebView,
+            """
+            return Boolean(document.querySelector('.app-switch__control')) &&
+                Boolean(document.querySelector('.app-switch__control .multi-switch__option--selected')) &&
+                Boolean(document.querySelector('.site-toggle.site-toggle--active')) &&
+                document.querySelector('.site-toggle__url')?.textContent.includes('localhost');
+            """
+        )
+        print("FLOORP_DARKREADER_RELEASE_GATE popup")
+
+        try await performJavaScriptAction(
+            in: popupWebView,
+            """
+            const toggle = document.querySelector('.site-toggle');
+            if (!toggle) { throw new Error('Missing Dark Reader site toggle'); }
+            toggle.click();
+            return true;
+            """,
+        )
+        try await waitForJavaScriptCondition(
+            in: browsingWebView,
+            "return !document.documentElement.hasAttribute('data-darkreader-mode');"
+        )
+        try await performJavaScriptAction(
+            in: popupWebView,
+            """
+            const toggle = document.querySelector('.site-toggle');
+            if (!toggle) { throw new Error('Missing Dark Reader site toggle'); }
+            toggle.click();
+            return true;
+            """,
+        )
+        try await waitForJavaScriptCondition(
+            in: browsingWebView,
+            "return document.documentElement.dataset.darkreaderMode === 'dynamic';"
+        )
+
+        try await performJavaScriptAction(
+            in: popupWebView,
+            """
+            const options = document.querySelectorAll('.app-switch__control .multi-switch__option');
+            if (options.length !== 3) { throw new Error('Missing Dark Reader app switch'); }
+            options[2].click();
+            return true;
+            """,
+        )
+        try await waitForJavaScriptCondition(
+            in: browsingWebView,
+            "return !document.documentElement.hasAttribute('data-darkreader-mode');"
+        )
+        try await performJavaScriptAction(
+            in: popupWebView,
+            """
+            const options = document.querySelectorAll('.app-switch__control .multi-switch__option');
+            if (options.length !== 3) { throw new Error('Missing Dark Reader app switch'); }
+            options[0].click();
+            return true;
+            """,
+        )
+        try await waitForJavaScriptCondition(
+            in: browsingWebView,
+            "return document.documentElement.dataset.darkreaderMode === 'dynamic';"
+        )
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        popup.dismiss(animated: false)
+        presentedPopup = nil
+
+        // WebKit normally suspends a nonpersistent MV3 background page after about
+        // 30 seconds. Floorp explicitly wakes it before allowing a fresh main-frame
+        // navigation so the first content-script message reaches registered listeners.
+        try await Task.sleep(nanoseconds: 35_000_000_000)
+        try await waitForBackgroundContent(in: context)
+        print("FLOORP_DARKREADER_RELEASE_GATE cold-preflight")
+        let coldNavigation = FloorpUBOLNavigationWaiter()
+        try await coldNavigation.load(
+            try XCTUnwrap(URL(string: "http://localhost:\(server.port)/?cold-wake=1")),
+            in: browsingWebView
+        )
+        try await waitForJavaScriptCondition(
+            in: browsingWebView,
+            "return document.documentElement.dataset.darkreaderMode === 'dynamic';"
+        )
+        print("FLOORP_DARKREADER_RELEASE_GATE cold-wake")
+
+        // Re-open the Page Action after WebKit has suspended and Floorp has
+        // explicitly woken the background. A real disable/re-enable is deferred
+        // until the next process; exercising unload -> load here would recreate
+        // the iOS 26.5 WebKit lifecycle defect that production intentionally avoids.
+        let resumedPopupPresented = expectation(description: "Dark Reader resumed popup presented")
+        delegate.actionPopupHandler = { action in
+            guard let resumedPopup = action.popupViewController else {
+                XCTFail("Dark Reader resumed action did not provide a popup view controller")
+                return
+            }
+            presentedPopup = resumedPopup
+            hostController.present(resumedPopup, animated: false) {
+                resumedPopupPresented.fulfill()
+            }
+        }
+        context.performAction(for: tab)
+        await fulfillment(of: [resumedPopupPresented], timeout: 5)
+        let resumedPopup = try XCTUnwrap(presentedPopup)
+        let resumedPopupWebView = try await waitForWebView(in: resumedPopup)
+        try await waitForJavaScriptCondition(
+            in: resumedPopupWebView,
+            """
+            return Boolean(document.querySelector('.app-switch__control')) &&
+                Boolean(document.querySelector('.site-toggle.site-toggle--active')) &&
+                document.querySelector('.site-toggle__url')?.textContent.includes('localhost');
+            """
+        )
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        resumedPopup.dismiss(animated: false)
+        presentedPopup = nil
+        print("FLOORP_DARKREADER_RELEASE_GATE background-resume-popup")
+        withExtendedLifetime((navigation, coldNavigation)) {}
+    }
+
+    private func performJavaScriptAction(
+        in webView: WKWebView,
+        _ source: String
+    ) async throws {
+        var lastError: (any Error)?
+        for _ in 0..<12 {
+            do {
+                _ = try await webView.evaluateJavaScript("(() => { \(source) })()")
+                return
+            } catch {
+                lastError = error
+                try await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+        throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+            "Dark Reader popup action failed: \(lastError?.localizedDescription ?? "none")"
+        )
+    }
+
+    private func waitForBackgroundContent(in context: WKWebExtensionContext) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = FloorpUBOLBackgroundLoadGate(continuation: continuation)
+            context.loadBackgroundContent { error in
+                gate.resolve(error)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                gate.timeout()
+            }
+        }
+    }
+
+    private func waitForJavaScriptCondition(
+        in webView: WKWebView,
+        _ source: String
+    ) async throws {
+        var lastError: (any Error)?
+        for attempt in 0..<60 {
+            do {
+                let result = try await webView.evaluateJavaScript("(() => { \(source) })()")
+                    as? Bool
+                if result == true {
+                    return
+                }
+                if attempt == 0 {
+                    print("FLOORP_DARKREADER_CONDITION_FIRST_RESULT \(String(describing: result))")
+                }
+            } catch {
+                lastError = error
+                if attempt == 0 {
+                    print("FLOORP_DARKREADER_CONDITION_FIRST_ERROR \(error)")
+                }
+            }
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                    "Dark Reader condition wait was interrupted: \(error)"
+                )
+            }
+        }
+        throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+            "Dark Reader condition did not become true: \(source); last error: "
+                + "\(lastError?.localizedDescription ?? "none")"
+        )
+    }
+
+    private func waitForWebView(in viewController: UIViewController) async throws -> WKWebView {
+        for _ in 0..<40 {
+            viewController.loadViewIfNeeded()
+            if let webView = Self.firstWebView(in: viewController.view) {
+                return webView
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+            "Dark Reader popup did not create a WKWebView"
+        )
+    }
+
+    private static func firstWebView(in view: UIView) -> WKWebView? {
+        if let webView = view as? WKWebView { return webView }
+        return view.subviews.lazy.compactMap { firstWebView(in: $0) }.first
+    }
+
+    nonisolated private static func makeServer() throws -> GCDWebServer {
+        let server = GCDWebServer()
+        server.addHandler(
+            forMethod: "GET",
+            path: "/",
+            request: GCDWebServerRequest.self
+        ) { _ in
+            GCDWebServerDataResponse(html: """
+            <!doctype html>
+            <meta charset="utf-8">
+            <style>html, body { background: white; color: black; }</style>
+            <main><h1>Floorp Dark Reader acceptance</h1><p>Light page fixture.</p></main>
+            """)
+        }
+        guard server.start(withPort: 0, bonjourName: nil) else {
+            throw FloorpUBOLDNRDiagnosticError.runtimeServerUnavailable
+        }
+        return server
+    }
+}
+
+@MainActor
+private final class FloorpUBOLBackgroundLoadGate {
+    private var continuation: CheckedContinuation<Void, any Error>?
+
+    init(continuation: CheckedContinuation<Void, any Error>) {
+        self.continuation = continuation
+    }
+
+    func resolve(_ error: (any Error)?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
+        }
+    }
+
+    func timeout() {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(throwing: FloorpUBOLDNRDiagnosticError.javaScriptTimedOut)
+    }
+}
+
 @MainActor
 final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
     private static let optInEnvironmentKey = "FLOORP_RUN_UBOL_DNR_DIAGNOSTICS"
@@ -18,12 +423,14 @@ final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
             )
         }
 
-        let fixtureURL = try XCTUnwrap(
-            Bundle(for: Self.self).url(
-                forResource: "uBOLite_2026.825.1619.safari",
-                withExtension: "zip"
+        let fixtureURL = try ProcessInfo.processInfo.environment["FLOORP_UBOL_TEST_PACKAGE_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? XCTUnwrap(
+                Bundle(for: Self.self).url(
+                    forResource: "uBOLite-floorp-ios-2026.825.1619",
+                    withExtension: "zip"
+                )
             )
-        )
         let session = try await FloorpUBOLDNRDiagnosticSession(fixtureURL: fixtureURL)
         defer { session.close() }
 
@@ -45,7 +452,7 @@ final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
         print(reportJSON)
         print("FLOORP_UBOL_DNR_DIAGNOSTIC_END")
 
-        XCTAssertEqual(report.staticProbes.count, 7)
+        XCTAssertEqual(report.staticProbes.count, 10)
         XCTAssertTrue(report.baselineEnabledRulesets.isEmpty)
         XCTAssertTrue(
             report.runtimeVerification.succeeded,
@@ -60,12 +467,14 @@ final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
             )
         }
 
-        let packageURL = try XCTUnwrap(
-            Bundle(for: Self.self).url(
-                forResource: "uBOLite_2026.825.1619.safari",
-                withExtension: "zip"
+        let packageURL = try ProcessInfo.processInfo.environment["FLOORP_UBOL_TEST_PACKAGE_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? XCTUnwrap(
+                Bundle(for: Self.self).url(
+                    forResource: "uBOLite-floorp-ios-2026.825.1619",
+                    withExtension: "zip"
+                )
             )
-        )
         let session = try await FloorpUBOLReleaseAcceptanceSession(packageURL: packageURL)
         defer { session.close() }
 
@@ -110,6 +519,10 @@ private struct FloorpUBOLReleaseBrowserEnvironment {
     }
 
     func close(using controller: WKWebExtensionController) {
+        normalWebView.stopLoading()
+        normalWebView.navigationDelegate = nil
+        privateWebView.stopLoading()
+        privateWebView.navigationDelegate = nil
         controller.didCloseTab(normalTab, windowIsClosing: true)
         controller.didCloseWindow(normalWindow)
         controller.didCloseTab(privateTab, windowIsClosing: true)
@@ -128,19 +541,24 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     private static let dynamicRuleID = 2_000_000_001
     private static let sessionRuleID = 2_000_000_002
 
-    private let packageURL: URL
     private let webExtension: WKWebExtension
     private let context: WKWebExtensionContext
     private let controller: WKWebExtensionController
     private let websiteDataStore: WKWebsiteDataStore
-    private let contextIdentifier: String
-    private let baseURL: URL
-    private let extensionWebView: WKWebView
-    private let extensionNavigationWaiter: FloorpUBOLNavigationWaiter
-    private var replacementContext: WKWebExtensionContext?
+    private let resourceRoot: URL
+    private var retainedExtensionWebView: WKWebView?
+    private var extensionNavigationWaiter: FloorpUBOLNavigationWaiter?
+    private var retainedRuntimeObjects = [AnyObject]()
+
+    private var extensionWebView: WKWebView {
+        guard let retainedExtensionWebView else {
+            preconditionFailure("The uBO Lite extension page has already been retired")
+        }
+        return retainedExtensionWebView
+    }
 
     init(packageURL: URL) async throws {
-        self.packageURL = packageURL
+        self.resourceRoot = packageURL
         let webExtension = try await WKWebExtension(resourceBaseURL: packageURL)
         guard webExtension.errors.isEmpty else {
             throw FloorpUBOLDNRDiagnosticError.packageErrors(
@@ -151,12 +569,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
 
         let token = UUID().uuidString.lowercased()
         let contextIdentifier = "org.ublockorigin.lite.floorp-release-acceptance.\(token)"
+        FloorpNativeWebExtensionCatalog.registerBaseURLSchemes()
         let baseURL = URL(
-            string: "webkit-extension://ubol-release-\(token).floorp.internal/"
+            string: "safari-web-extension://ubol-release-\(token).floorp.internal/"
         )!
-        self.contextIdentifier = contextIdentifier
-        self.baseURL = baseURL
-
         let context = Self.makeContext(
             webExtension: webExtension,
             identifier: contextIdentifier,
@@ -171,32 +587,58 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         configuration.defaultWebsiteDataStore = websiteDataStore
         let controller = WKWebExtensionController(configuration: configuration)
         self.controller = controller
-        try controller.load(context)
-
-        let readyPage = try await Self.makeReadyExtensionPage(
-            context: context,
-            baseURL: baseURL
-        )
-        self.extensionWebView = readyPage.webView
-        self.extensionNavigationWaiter = readyPage.waiter
     }
 
     func close() {
-        extensionWebView.stopLoading()
-        if let replacementContext, replacementContext.isLoaded {
-            try? controller.unload(replacementContext)
-        }
-        if context.isLoaded {
-            try? controller.unload(context)
-        }
+        retainedExtensionWebView?.stopLoading()
+        retainedExtensionWebView?.navigationDelegate = nil
         controller.delegate = nil
-        withExtendedLifetime(extensionNavigationWaiter) {}
+        var objects: [AnyObject] = [webExtension, websiteDataStore]
+        objects.append(contentsOf: retainedRuntimeObjects)
+        if let retainedExtensionWebView {
+            objects.append(retainedExtensionWebView)
+        }
+        if let extensionNavigationWaiter {
+            objects.append(extensionNavigationWaiter)
+        }
+        FloorpWebExtensionTestRuntimeRetainer.retain(
+            controller: controller,
+            context: context,
+            objects: objects,
+            resourceRoot: resourceRoot
+        )
+        retainedExtensionWebView = nil
+        extensionNavigationWaiter = nil
+        retainedRuntimeObjects.removeAll()
     }
 
     func run() async throws -> FloorpUBOLReleaseAcceptanceReport {
         print("FLOORP_UBOL_RELEASE_GATE server")
         let server = try Self.makeServer()
         defer { server.stop() }
+
+        // Floorp restores enabled contexts before a scene publishes ordinary
+        // browsing WebViews. On iOS 26, opening those tabs before loading the
+        // context can make WebKit fail an extension-page navigation through its
+        // private Gestures state machine (`failed(deinit)`). Keep this gate on
+        // the same lifecycle order as the production host.
+        try controller.load(context)
+        // Create the release gate's extension-page driver from the clean
+        // post-load configuration before explicitly waking the nonpersistent
+        // MV3 background. The page's readiness request performs the first wake;
+        // constructing the first detached extension page after that wake hits
+        // an iOS 26 WebKit Gestures invalid transition. Real Floorp surfaces are
+        // attached to a window and are covered by the production-host tests.
+        print("FLOORP_UBOL_RELEASE_GATE context-loaded")
+        let readyPage = try await Self.makeReadyExtensionPage(
+            context: context,
+            baseURL: context.baseURL
+        )
+        print("FLOORP_UBOL_RELEASE_GATE extension-page-ready")
+        retainedExtensionWebView = readyPage.webView
+        extensionNavigationWaiter = readyPage.waiter
+        try await Self.loadBackgroundContent(in: context)
+        print("FLOORP_UBOL_RELEASE_GATE background-loaded")
 
         let browser = makeBrowserEnvironment()
         browser.open(using: controller)
@@ -214,6 +656,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let normalURL = URL(string: "http://localhost:\(server.port)/")!
         print("FLOORP_UBOL_RELEASE_GATE optimal-page")
         let optimal = try await loadAndInspect(normalURL, in: normalWebView)
+        print("FLOORP_UBOL_RELEASE_GATE popup")
+        let popup = try await inspectActionPopup(pageURL: normalURL, in: browser)
 
         print("FLOORP_UBOL_RELEASE_GATE dynamic-session")
         let dnrRuleCounts = try await addDynamicAndSessionRules()
@@ -253,9 +697,9 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         controller.didFocusWindow(normalWindow)
         controller.didActivateTab(normalTab, previousActiveTab: nil)
 
-        print("FLOORP_UBOL_RELEASE_GATE unload-reload")
+        print("FLOORP_UBOL_RELEASE_GATE background-wake")
         try await removeAcceptanceDNRRules()
-        let reload = try await verifyUnloadReloadPreservesState()
+        let backgroundWake = try await verifyBackgroundWakePreservesState()
         print("FLOORP_UBOL_RELEASE_GATE report")
 
         withExtendedLifetime(browser) {}
@@ -281,14 +725,232 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             sessionRuleCountAfterRulesetUpdate: ruleCountsAfterRulesetUpdate.session,
             restoredSessionRuleCount: restoredSessionRuleCount,
             strictBlock: strictBlock,
+            popup: popup,
             optimal: optimal,
             dynamicAndSession: dynamicAndSession,
             complete: complete,
             japanese: japanese,
             privateBrowsing: privateBrowsing,
-            unloadReload: reload,
+            backgroundWake: backgroundWake,
             contextErrors: context.errors.map(FloorpUBOLDNRErrorRecord.init)
         )
+    }
+
+    private func inspectActionPopup(
+        pageURL: URL,
+        in browser: FloorpUBOLReleaseBrowserEnvironment
+    ) async throws -> FloorpUBOLPopupAcceptance {
+        _ = try await loadAndInspect(pageURL, in: browser.privateWebView)
+        browser.normalWebView.isHidden = false
+        browser.privateWebView.isHidden = true
+        let normal = try await inspectActionPopup(
+            for: browser.normalTab,
+            in: browser.normalWindow,
+            browser: browser
+        )
+        browser.normalWebView.isHidden = true
+        browser.privateWebView.isHidden = false
+        let privateBrowsing = try await inspectActionPopup(
+            for: browser.privateTab,
+            in: browser.privateWindow,
+            browser: browser
+        )
+        browser.privateWebView.isHidden = true
+        browser.normalWebView.isHidden = false
+        browser.delegate.focusedWindow = browser.normalWindow
+        controller.didFocusWindow(browser.normalWindow)
+        controller.didActivateTab(browser.normalTab, previousActiveTab: nil)
+        let matchedRulesRouting = try await inspectMatchedRulesRouting(in: browser)
+        return FloorpUBOLPopupAcceptance(
+            loadingCleared: true,
+            hostname: normal.hostname,
+            filteringLevel: normal.filteringLevel,
+            matchedRulesEnabled: normal.matchedRulesEnabled,
+            privateLoadingCleared: true,
+            privateHostname: privateBrowsing.hostname,
+            privateFilteringLevel: privateBrowsing.filteringLevel,
+            privateMatchedRulesEnabled: privateBrowsing.matchedRulesEnabled,
+            matchedRulesRouting: matchedRulesRouting
+        )
+    }
+
+    private func inspectActionPopup(
+        for tab: FloorpUBOLDiagnosticTab,
+        in window: FloorpUBOLDiagnosticWindow,
+        browser: FloorpUBOLReleaseBrowserEnvironment
+    ) async throws -> FloorpUBOLPopupWindowAcceptance {
+        var popupViewController: UIViewController?
+        var popupWebView: WKWebView?
+        browser.delegate.actionPopupHandler = { action in
+            guard let popup = action.popupViewController else { return }
+            popupViewController = popup
+            browser.hostController.present(popup, animated: false)
+        }
+        defer {
+            popupViewController?.dismiss(animated: false)
+            popupWebView?.stopLoading()
+            popupWebView?.navigationDelegate = nil
+            browser.delegate.actionPopupHandler = nil
+            if let popupViewController {
+                retainedRuntimeObjects.append(popupViewController)
+            }
+            if let popupWebView {
+                retainedRuntimeObjects.append(popupWebView)
+            }
+        }
+        browser.delegate.focusedWindow = window
+        controller.didFocusWindow(window)
+        controller.didActivateTab(tab, previousActiveTab: nil)
+        context.performAction(for: tab)
+
+        for _ in 0..<40 {
+            if let popupViewController {
+                popupViewController.loadViewIfNeeded()
+                popupWebView = Self.firstWebView(in: popupViewController.view)
+            }
+            if popupWebView != nil { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard let popupWebView else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "uBO Lite action did not present a popup WKWebView"
+            )
+        }
+
+        for _ in 0..<60 {
+            let raw = try? await popupWebView.floorpCallAsyncJavaScript(
+                """
+                return {
+                    loading: document.body.classList.contains('loading'),
+                    hostname: document.querySelector('#hostname')?.textContent
+                        .replaceAll(String.fromCharCode(0x00ad), '') || '',
+                    level: document.querySelector('.filteringModeSlider')?.dataset.level || '',
+                    matchedRulesEnabled: document.querySelector('#gotoMatchedRules')
+                        ?.classList.contains('enabled') === true
+                };
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 5_000_000_000
+            ) as? [String: Any]
+            if let raw,
+               raw["loading"] as? Bool == false,
+               raw["hostname"] as? String == "localhost",
+               let levelString = raw["level"] as? String,
+               let level = Int(levelString),
+               let matchedRulesEnabled = raw["matchedRulesEnabled"] as? Bool {
+                return FloorpUBOLPopupWindowAcceptance(
+                    hostname: "localhost",
+                    filteringLevel: level,
+                    matchedRulesEnabled: matchedRulesEnabled
+                )
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+            "uBO Lite popup did not resolve the active localhost tab"
+        )
+    }
+
+    private func inspectMatchedRulesRouting(
+        in browser: FloorpUBOLReleaseBrowserEnvironment
+    ) async throws -> FloorpUBOLMatchedRulesRoutingAcceptance {
+        defer { browser.delegate.openNewTabHandler = nil }
+        let normal = try await requestMatchedRulesWindow(
+            isPrivate: false,
+            window: browser.normalWindow,
+            tab: browser.normalTab,
+            browser: browser
+        )
+        let privateBrowsing = try await requestMatchedRulesWindow(
+            isPrivate: true,
+            window: browser.privateWindow,
+            tab: browser.privateTab,
+            browser: browser
+        )
+        controller.didFocusWindow(browser.normalWindow)
+        controller.didActivateTab(browser.normalTab, previousActiveTab: nil)
+        browser.delegate.focusedWindow = browser.normalWindow
+        return FloorpUBOLMatchedRulesRoutingAcceptance(
+            normal: normal,
+            privateBrowsing: privateBrowsing
+        )
+    }
+
+    private func requestMatchedRulesWindow(
+        isPrivate: Bool,
+        window: FloorpUBOLDiagnosticWindow,
+        tab: FloorpUBOLDiagnosticTab,
+        browser: FloorpUBOLReleaseBrowserEnvironment
+    ) async throws -> FloorpUBOLMatchedRulesWindowAcceptance {
+        var requestedPrivate: Bool?
+        var requestedURLs: [String]?
+        browser.delegate.openNewTabHandler = { configuration in
+            guard configuration.window as AnyObject? === window,
+                  configuration.shouldBeActive,
+                  let url = configuration.url else {
+                return nil
+            }
+            requestedPrivate = window.isPrivateBrowsing
+            requestedURLs = [url.absoluteString]
+            return window.tab
+        }
+        browser.delegate.focusedWindow = window
+        controller.didFocusWindow(window)
+        controller.didActivateTab(tab, previousActiveTab: nil)
+
+        let raw = try await extensionWebView.floorpCallAsyncJavaScript(
+            """
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            if ( tab instanceof Object === false || typeof tab.id !== 'number' ) {
+                throw new Error('uBO Lite could not resolve the active tab for matched rules');
+            }
+            if ( tab.incognito !== expectedPrivate ) {
+                throw new Error(`Unexpected active-tab privacy: ${tab.incognito}`);
+            }
+            if ( typeof tab.windowId !== 'number' ) {
+                throw new Error('uBO Lite could not resolve the active window for matched rules');
+            }
+            const response = await browser.runtime.sendMessage({
+                what: 'showMatchedRules',
+                tabId: tab.id,
+                windowId: tab.windowId,
+                incognito: tab.incognito === true,
+            });
+            if ( response?.opened !== true ) {
+                throw new Error(response?.error || 'Matched-rules tab was not opened');
+            }
+            return { tabId: tab.id, windowId: tab.windowId };
+            """,
+            arguments: ["expectedPrivate": isPrivate],
+            contentWorld: .page,
+            timeoutNanoseconds: 10_000_000_000
+        )
+        guard let result = raw as? [String: Any],
+              let sourceTabID = (result["tabId"] as? NSNumber)?.intValue,
+              (result["windowId"] as? NSNumber)?.intValue != nil else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "uBO Lite matched-rules request did not resolve an active tab ID"
+            )
+        }
+
+        for _ in 0..<40 {
+            if let requestedPrivate, let requestedURLs {
+                return FloorpUBOLMatchedRulesWindowAcceptance(
+                    sourceTabID: sourceTabID,
+                    requestedPrivate: requestedPrivate,
+                    urls: requestedURLs
+                )
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+            "uBO Lite did not request the matched-rules window"
+        )
+    }
+
+    private static func firstWebView(in view: UIView) -> WKWebView? {
+        if let webView = view as? WKWebView { return webView }
+        return view.subviews.lazy.compactMap { firstWebView(in: $0) }.first
     }
 
     private func makeBrowserEnvironment() -> FloorpUBOLReleaseBrowserEnvironment {
@@ -329,6 +991,21 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         hostWindow.rootViewController = hostController
         hostWindow.makeKeyAndVisible()
 
+        let delegate = FloorpUBOLDiagnosticControllerDelegate(
+            windows: [normalWindow, privateWindow],
+            focusedWindow: normalWindow
+        )
+        retainedRuntimeObjects = [
+            normalWebView,
+            privateWebView,
+            normalTab,
+            privateTab,
+            normalWindow,
+            privateWindow,
+            hostController,
+            hostWindow,
+            delegate
+        ]
         return FloorpUBOLReleaseBrowserEnvironment(
             normalWebView: normalWebView,
             privateWebView: privateWebView,
@@ -338,10 +1015,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             privateWindow: privateWindow,
             hostController: hostController,
             hostWindow: hostWindow,
-            delegate: FloorpUBOLDiagnosticControllerDelegate(
-                windows: [normalWindow, privateWindow],
-                focusedWindow: normalWindow
-            )
+            delegate: delegate
         )
     }
 
@@ -371,6 +1045,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             config.rulesetConfig.enabledRulesets = requestedRulesets;
             config.rulesetConfig.strictBlockMode = false;
             await config.saveRulesetConfig();
+            await browser.runtime.sendMessage({ what: 'setDeveloperMode', state: true });
             const filterManager = await import(browser.runtime.getURL('js/filter-manager.js'));
             await filterManager.removeAllCustomFilters('localhost');
             const scriptingManager = await import(browser.runtime.getURL('js/scripting-manager.js'));
@@ -727,32 +1402,32 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         )
     }
 
-    private func verifyUnloadReloadPreservesState() async throws
-        -> FloorpUBOLUnloadReloadAcceptance {
-        extensionWebView.stopLoading()
-        extensionWebView.loadHTMLString("<!doctype html>", baseURL: nil)
-        try await Task.sleep(nanoseconds: 750_000_000)
-        try controller.unload(context)
-        try await Task.sleep(nanoseconds: 1_000_000_000)
-        let replacementExtension = try await WKWebExtension(resourceBaseURL: packageURL)
-        let replacementContext = Self.makeContext(
-            webExtension: replacementExtension,
-            identifier: contextIdentifier,
-            baseURL: baseURL,
-            privateAccess: true
-        )
-        self.replacementContext = replacementContext
-        try controller.load(replacementContext)
+    private func verifyBackgroundWakePreservesState() async throws
+        -> FloorpUBOLBackgroundWakeAcceptance {
+        // A WKWebView created from a context's extension-page configuration may
+        // keep the MV3 background alive. Retire that page, allow WebKit to suspend
+        // the background, and then use the same explicit wake path as Floorp does
+        // before navigation. Disable/re-enable itself is intentionally deferred to
+        // the next process and is covered by the host lifecycle integration tests.
+        retainedExtensionWebView?.stopLoading()
+        retainedExtensionWebView?.navigationDelegate = nil
+        retainedExtensionWebView = nil
+        extensionNavigationWaiter = nil
+
+        try await Task.sleep(nanoseconds: 35_000_000_000)
+        try await Self.loadBackgroundContent(in: context)
         let readyPage = try await Self.makeReadyExtensionPage(
-            context: replacementContext,
-            baseURL: baseURL
+            context: context,
+            baseURL: context.baseURL
         )
-        let replacementWebView = readyPage.webView
+        retainedExtensionWebView = readyPage.webView
+        extensionNavigationWaiter = readyPage.waiter
+        let resumedWebView = readyPage.webView
         let scripts = try await waitForRegisteredContentScripts(
             containing: ["css-generic-all", "css-user", "jpn-1.main"],
-            in: replacementWebView
+            in: resumedWebView
         )
-        let raw = try await replacementWebView.floorpCallAsyncJavaScript(
+        let raw = try await resumedWebView.floorpCallAsyncJavaScript(
             """
             const stored = await browser.storage.local.get([
                 'filteringModeDetails',
@@ -779,17 +1454,17 @@ private final class FloorpUBOLReleaseAcceptanceSession {
               let enabled = result["enabled"] as? [String],
               let customCount = (result["customCount"] as? NSNumber)?.intValue else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
-                "unload/reload state returned \(String(describing: raw))"
+                "background-wake state returned \(String(describing: raw))"
             )
         }
 
-        return FloorpUBOLUnloadReloadAcceptance(
-            packageVersion: replacementExtension.version ?? "unknown",
+        return FloorpUBOLBackgroundWakeAcceptance(
+            packageVersion: webExtension.version ?? "unknown",
             filteringLevel: mode,
             enabledRulesets: enabled.sorted(),
             customFilterCount: customCount,
             registeredContentScripts: scripts,
-            privateAccessPreserved: replacementContext.hasAccessToPrivateData
+            privateAccessPreserved: context.hasAccessToPrivateData
         )
     }
 
@@ -816,6 +1491,21 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         return context
     }
 
+    private static func loadBackgroundContent(
+        in context: WKWebExtensionContext
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = FloorpUBOLBackgroundLoadGate(continuation: continuation)
+            context.loadBackgroundContent { error in
+                gate.resolve(error)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                gate.timeout()
+            }
+        }
+    }
+
     private static func makeReadyExtensionPage(
         context: WKWebExtensionContext,
         baseURL: URL
@@ -829,6 +1519,11 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                 lastError = FloorpUBOLDNRDiagnosticError.extensionPageConfigurationUnavailable
                 continue
             }
+            // This driver intentionally follows WebKit's documented extension-
+            // page configuration path exactly. Replacing its user-content
+            // controller strips private configuration state on iOS 26.5 and
+            // makes the first navigation fail inside Gestures.framework.
+            // Production popup isolation has separate host-level coverage.
             let webView = WKWebView(frame: .zero, configuration: configuration)
             let waiter = FloorpUBOLNavigationWaiter()
             do {
@@ -840,6 +1535,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                 return (webView, waiter)
             } catch {
                 lastError = error
+                print(
+                    "FLOORP_UBOL_RELEASE_GATE extension-page-attempt=\(attempt + 1) "
+                        + "error=\((error as NSError).localizedDescription)"
+                )
                 webView.stopLoading()
             }
         }
@@ -850,12 +1549,26 @@ private final class FloorpUBOLReleaseAcceptanceSession {
 
     private static func waitUntilBackgroundIsReady(in webView: WKWebView) async throws {
         let result = try await webView.floorpCallAsyncJavaScript(
-            "return await browser.runtime.sendMessage({ what: 'getOptionsPageData' });",
+            """
+            const initial = await browser.runtime.sendMessage({ what: 'floorpReadiness' });
+            if ( initial?.foregroundReconciliationRequired !== true ) {
+                return initial;
+            }
+            const module = await import(browser.runtime.getURL('js/floorp-reconcile.js'));
+            const reconciled = await module.reconcileProtection();
+            if ( reconciled?.ready !== true ) {
+                return reconciled;
+            }
+            return await browser.runtime.sendMessage({ what: 'floorpReadiness' });
+            """,
             arguments: [:],
             contentWorld: .page,
             timeoutNanoseconds: 5_000_000_000
         )
-        guard result is [String: Any] else {
+        guard let readiness = result as? [String: Any],
+              readiness["ready"] as? Bool == true,
+              readiness["version"] as? String
+                == FloorpNativeWebExtensionCatalog.uBlockOriginLite.expectedVersion else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
                 "uBO Lite background readiness returned \(String(describing: result))"
             )
@@ -934,6 +1647,16 @@ private final class FloorpUBOLDNRDiagnosticSession {
             resourcePath: "rulesets/main/easyprivacy.json",
             declaredRuleCount: 55_873
         )
+        static let adguardMobile = Ruleset(
+            identifier: "adguard-mobile",
+            resourcePath: "rulesets/main/adguard-mobile.json",
+            declaredRuleCount: 1_528
+        )
+        static let japanese = Ruleset(
+            identifier: "jpn-1",
+            resourcePath: "rulesets/main/jpn-1.json",
+            declaredRuleCount: 1_906
+        )
         static let defaults = [uBlockFilters, easyList, easyPrivacy]
     }
 
@@ -946,9 +1669,11 @@ private final class FloorpUBOLDNRDiagnosticSession {
     private let websiteDataStore: WKWebsiteDataStore
     private let webView: WKWebView
     private let navigationWaiter: FloorpUBOLNavigationWaiter
+    private let resourceRoot: URL
     private var remainingBisectionProbeCount = maximumBisectionProbeCount
 
     init(fixtureURL: URL) async throws {
+        self.resourceRoot = fixtureURL
         let webExtension = try await WKWebExtension(resourceBaseURL: fixtureURL)
         guard webExtension.errors.isEmpty else {
             throw FloorpUBOLDNRDiagnosticError.packageErrors(
@@ -957,11 +1682,12 @@ private final class FloorpUBOLDNRDiagnosticSession {
         }
         self.webExtension = webExtension
 
+        FloorpNativeWebExtensionCatalog.registerBaseURLSchemes()
         let context = WKWebExtensionContext(for: webExtension)
         let diagnosticIdentifier = UUID().uuidString.lowercased()
         context.uniqueIdentifier = "org.ublockorigin.lite.floorp-dnr-diagnostic.\(diagnosticIdentifier)"
         context.baseURL = URL(
-            string: "webkit-extension://ubol-dnr-\(diagnosticIdentifier).floorp.internal/"
+            string: "safari-web-extension://ubol-dnr-\(diagnosticIdentifier).floorp.internal/"
         )!
         context.grantedPermissions = Dictionary(
             uniqueKeysWithValues: webExtension.requestedPermissions.map {
@@ -985,6 +1711,14 @@ private final class FloorpUBOLDNRDiagnosticSession {
         let controller = WKWebExtensionController(configuration: controllerConfiguration)
         self.controller = controller
 
+        defer {
+            FloorpWebExtensionTestRuntimeRetainer.retain(
+                controller: controller,
+                context: context,
+                objects: [webExtension, websiteDataStore],
+                resourceRoot: fixtureURL
+            )
+        }
         try controller.load(context)
         guard let webViewConfiguration = context.webViewConfiguration else {
             throw FloorpUBOLDNRDiagnosticError.extensionPageConfigurationUnavailable
@@ -1002,10 +1736,14 @@ private final class FloorpUBOLDNRDiagnosticSession {
 
     func close() {
         webView.stopLoading()
-        if context.isLoaded {
-            try? controller.unload(context)
-        }
-        withExtendedLifetime(navigationWaiter) {}
+        webView.navigationDelegate = nil
+        controller.delegate = nil
+        FloorpWebExtensionTestRuntimeRetainer.retain(
+            controller: controller,
+            context: context,
+            objects: [webExtension, websiteDataStore, webView, navigationWaiter],
+            resourceRoot: resourceRoot
+        )
     }
 
     func run() async throws -> FloorpUBOLDNRDiagnosticReport {
@@ -1020,7 +1758,10 @@ private final class FloorpUBOLDNRDiagnosticSession {
             [.uBlockFilters, .easyList],
             [.uBlockFilters, .easyPrivacy],
             [.easyList, .easyPrivacy],
-            Ruleset.defaults
+            Ruleset.defaults,
+            Ruleset.defaults + [.japanese],
+            Ruleset.defaults + [.adguardMobile],
+            Ruleset.defaults + [.adguardMobile, .japanese]
         ]
 
         var staticProbes = [FloorpUBOLDNRProbeResult]()
@@ -1542,12 +2283,13 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
     let sessionRuleCountAfterRulesetUpdate: Int
     let restoredSessionRuleCount: Int
     let strictBlock: FloorpUBOLStrictBlockAcceptance
+    let popup: FloorpUBOLPopupAcceptance
     let optimal: FloorpUBOLPageAcceptance
     let dynamicAndSession: FloorpUBOLPageAcceptance
     let complete: FloorpUBOLPageAcceptance
     let japanese: FloorpUBOLPageAcceptance
     let privateBrowsing: FloorpUBOLPageAcceptance
-    let unloadReload: FloorpUBOLUnloadReloadAcceptance
+    let backgroundWake: FloorpUBOLBackgroundWakeAcceptance
     let contextErrors: [FloorpUBOLDNRErrorRecord]
 
     var succeeded: Bool {
@@ -1572,6 +2314,15 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
             && strictBlock.configured == false
             && strictBlock.redirectRuleCount == 0
             && strictBlock.upstreamSafariLimitation
+            && popup.loadingCleared
+            && popup.hostname == "localhost"
+            && popup.filteringLevel == optimalFilteringLevel
+            && popup.matchedRulesEnabled
+            && popup.privateLoadingCleared
+            && popup.privateHostname == "localhost"
+            && popup.privateFilteringLevel == optimalFilteringLevel
+            && popup.privateMatchedRulesEnabled
+            && popup.matchedRulesRouting.succeeded
             && optimal.controlScriptExecuted
             && !optimal.defaultBlockedScriptExecuted
             && optimal.customCosmeticHidden
@@ -1614,19 +2365,66 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
             && privateBrowsing.japaneseCosmeticHidden
             && privateBrowsing.japaneseHighlyGenericCosmeticHidden
             && privateBrowsing.stockScriptletExecuted
-            && unloadReload.packageVersion == packageVersion
-            && unloadReload.filteringLevel == 3
-            && unloadReload.enabledRulesets == expectedJapanese
-            && unloadReload.customFilterCount == 2
-            && unloadReload.privateAccessPreserved
+            && backgroundWake.packageVersion == packageVersion
+            && backgroundWake.filteringLevel == 3
+            && backgroundWake.enabledRulesets == expectedJapanese
+            && backgroundWake.customFilterCount == 2
+            && backgroundWake.privateAccessPreserved
             && Set(["css-generic-all", "css-user", "jpn-1.main"])
-                .isSubset(of: Set(unloadReload.registeredContentScripts))
+                .isSubset(of: Set(backgroundWake.registeredContentScripts))
             && contextErrors.isEmpty
     }
 
     var failureSummary: String {
         succeeded ? "All uBO Lite release gates passed." :
             "One or more uBO Lite release gates failed. Inspect uBOL-release-acceptance.json."
+    }
+}
+
+private struct FloorpUBOLPopupAcceptance: Codable {
+    let loadingCleared: Bool
+    let hostname: String
+    let filteringLevel: Int
+    let matchedRulesEnabled: Bool
+    let privateLoadingCleared: Bool
+    let privateHostname: String
+    let privateFilteringLevel: Int
+    let privateMatchedRulesEnabled: Bool
+    let matchedRulesRouting: FloorpUBOLMatchedRulesRoutingAcceptance
+}
+
+private struct FloorpUBOLPopupWindowAcceptance {
+    let hostname: String
+    let filteringLevel: Int
+    let matchedRulesEnabled: Bool
+}
+
+private struct FloorpUBOLMatchedRulesRoutingAcceptance: Codable {
+    let normal: FloorpUBOLMatchedRulesWindowAcceptance
+    let privateBrowsing: FloorpUBOLMatchedRulesWindowAcceptance
+
+    var succeeded: Bool {
+        !normal.requestedPrivate
+            && privateBrowsing.requestedPrivate
+            && normal.urls.count == 1
+            && privateBrowsing.urls.count == 1
+            && normal.hasExactMatchedRulesURL
+            && privateBrowsing.hasExactMatchedRulesURL
+    }
+}
+
+private struct FloorpUBOLMatchedRulesWindowAcceptance: Codable {
+    let sourceTabID: Int
+    let requestedPrivate: Bool
+    let urls: [String]
+
+    var hasExactMatchedRulesURL: Bool {
+        guard urls.count == 1,
+              let components = URLComponents(string: urls[0]) else { return false }
+        return components.path == "/matched-rules.html"
+            && components.queryItems == [
+                URLQueryItem(name: "tab", value: String(sourceTabID))
+            ]
     }
 }
 
@@ -1700,7 +2498,7 @@ private struct FloorpUBOLStrictBlockAcceptance: Codable {
     let upstreamSafariLimitation: Bool
 }
 
-private struct FloorpUBOLUnloadReloadAcceptance: Codable {
+private struct FloorpUBOLBackgroundWakeAcceptance: Codable {
     let packageVersion: String
     let filteringLevel: Int
     let enabledRulesets: [String]
@@ -1756,6 +2554,7 @@ private struct FloorpUBOLDNRErrorRecord: Codable {
 private enum FloorpUBOLDNRDiagnosticError: LocalizedError {
     case packageErrors([String])
     case extensionPageConfigurationUnavailable
+    case extensionContextDidNotUnload
     case invalidJavaScriptResult(String)
     case javaScriptTimedOut
     case navigationTimedOut(URL)
@@ -1770,6 +2569,8 @@ private enum FloorpUBOLDNRDiagnosticError: LocalizedError {
             return "WebKit rejected the uBO Lite package: \(errors.joined(separator: "; "))"
         case .extensionPageConfigurationUnavailable:
             return "WebKit did not provide an extension-page configuration."
+        case .extensionContextDidNotUnload:
+            return "WebKit did not fully detach the uBO Lite extension context."
         case .invalidJavaScriptResult(let description):
             return "The WebExtension diagnostic API returned an invalid value: \(description)"
         case .javaScriptTimedOut:
@@ -1819,7 +2620,7 @@ private final class FloorpUBOLJavaScriptCallGate {
     }
 }
 
-private extension WKWebView {
+extension WKWebView {
     @MainActor
     func floorpCallAsyncJavaScript(
         _ functionBody: String,
@@ -1903,7 +2704,11 @@ private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
 private final class FloorpUBOLDiagnosticControllerDelegate: NSObject,
     WKWebExtensionControllerDelegate {
     let windows: [FloorpUBOLDiagnosticWindow]
-    let focusedWindow: FloorpUBOLDiagnosticWindow
+    var focusedWindow: FloorpUBOLDiagnosticWindow
+    var actionPopupHandler: ((WKWebExtension.Action) -> Void)?
+    var openNewTabHandler: (
+        (WKWebExtension.TabConfiguration) -> (any WKWebExtensionTab)?
+    )?
 
     init(window: FloorpUBOLDiagnosticWindow) {
         self.windows = [window]
@@ -1930,6 +2735,49 @@ private final class FloorpUBOLDiagnosticControllerDelegate: NSObject,
         focusedWindowFor extensionContext: WKWebExtensionContext
     ) -> (any WKWebExtensionWindow)? {
         focusedWindow
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        presentActionPopup action: WKWebExtension.Action,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let actionPopupHandler else {
+            completionHandler(FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "No action popup presenter is configured"
+            ))
+            return
+        }
+        actionPopupHandler(action)
+        completionHandler(nil)
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        openNewTabUsing configuration: WKWebExtension.TabConfiguration,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void
+    ) {
+        guard let openNewTabHandler else {
+            completionHandler(
+                nil,
+                FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                    "No diagnostic tab opener is configured"
+                )
+            )
+            return
+        }
+        guard let tab = openNewTabHandler(configuration) else {
+            completionHandler(
+                nil,
+                FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                    "The diagnostic tab request did not target the expected window"
+                )
+            )
+            return
+        }
+        completionHandler(tab, nil)
     }
 }
 

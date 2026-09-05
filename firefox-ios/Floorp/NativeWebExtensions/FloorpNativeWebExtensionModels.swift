@@ -26,6 +26,11 @@ struct FloorpOperatingSystemVersion: Codable, Hashable, Sendable, CustomStringCo
     }
 }
 
+enum FloorpNativeWebExtensionNavigationFailurePolicy: Hashable, Sendable {
+    case failOpen
+    case failClosed
+}
+
 struct FloorpNativeWebExtensionCatalogItem: Hashable, Sendable {
     let identifier: String
     let resourceName: String
@@ -33,7 +38,15 @@ struct FloorpNativeWebExtensionCatalogItem: Hashable, Sendable {
     let expectedSHA256: String
     let expectedVersion: String
     let contextIdentifier: String
+    let baseURLScheme: String
     let baseURLHost: String
+    /// Canonical, digest-pinned popup resource for bundled actions. Floorp
+    /// presents this page in a tab-scoped WKWebView instead of WebKit's popup
+    /// view, whose data store is always the controller's persistent default.
+    let actionPopupPath: String?
+    let requiresBackgroundReadiness: Bool
+    let requiresNavigationBackgroundReadiness: Bool
+    let navigationReadinessFailurePolicy: FloorpNativeWebExtensionNavigationFailurePolicy
     let minimumOS: FloorpOperatingSystemVersion
     let name: String
     let summary: String
@@ -57,14 +70,42 @@ struct FloorpNativeWebExtensionCatalogItem: Hashable, Sendable {
 }
 
 enum FloorpNativeWebExtensionCatalog {
+    static let legacyDarkReaderSHA256 =
+        "20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64"
+    static let previousDarkReaderSHA256 =
+        "775dd26e8a3b1414d71f5329d52bcf0c1cfe57986f370f6d27fdc003a18fa16c"
+    static let preDurableStorageDarkReaderSHA256 =
+        "c397484ffd0b1a413bab9263ff4e2ef479bc7973689e0ae88c2e77e82cbfd076"
+    static let legacyUBlockOriginLiteSHA256 =
+        "89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94"
+    static let initialFloorpUBlockOriginLiteSHA256 =
+        "8c1e478b690fe4545b2d80df23f28afbe366ca0913dc472a74b78350b8c1dd3d"
+    static let previousUBlockOriginLiteSHA256 =
+        "2fdb69bd1c9ad9965a61351bd0e94cebb158f787eb3b5c7d8b7e9dcc0fe37585"
+    static let preStorageSerializationUBlockOriginLiteSHA256 =
+        "33c9006cbe094283c506d7219cd0e57d5b9bd508b8a5bd103dfb6ae32f330076"
+    static let preContentScriptSentinelUBlockOriginLiteSHA256 =
+        "8c47c090123b7a99b6525910a7d5c34688bb96b3ed07c02711f0a740051255b2"
+    static let preLocalStorageSentinelUBlockOriginLiteSHA256 =
+        "2f14ed921c05a2ab6a0dcafe1cc5ae0b79e8991ec26e129a63d9b77c9231c915"
+    static let preWakeContentScriptReconciliationUBlockOriginLiteSHA256 =
+        "cc8ce47cb1957a3bde40492b1c2fcba6f9a38e873b08e5d9348796cd63f31e1c"
+    static let preDurableProtectionReconciliationUBlockOriginLiteSHA256 =
+        "87c01f8c8e71ab2f65a14225ddaf284198c19417ea77d3d3e70497bfeeec4fcd"
+
     static let darkReader = FloorpNativeWebExtensionCatalogItem(
         identifier: "floorp.bundled.darkreader",
-        resourceName: "darkreader-chrome-mv3-4.9.129",
+        resourceName: "darkreader-floorp-ios-mv3-4.9.129",
         resourceExtension: "zip",
-        expectedSHA256: "20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64",
+        expectedSHA256: "ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761",
         expectedVersion: "4.9.129",
         contextIdentifier: "org.darkreader.floorp-ios",
+        baseURLScheme: "webkit-extension",
         baseURLHost: "darkreader.floorp.internal",
+        actionPopupPath: "ui/popup/index.html",
+        requiresBackgroundReadiness: true,
+        requiresNavigationBackgroundReadiness: true,
+        navigationReadinessFailurePolicy: .failOpen,
         minimumOS: FloorpOperatingSystemVersion(18, 4),
         name: "Dark Reader",
         summary: FloorpStrings.WebExtensions.darkReaderSummary,
@@ -75,6 +116,8 @@ enum FloorpNativeWebExtensionCatalog {
         disabledAPIs: [
             "browser.runtime.connectNative",
             "browser.runtime.sendNativeMessage",
+            "browser.action.openPopup",
+            "browser.action.setPopup",
             "browser.windows.create",
             "browser.windows.remove",
             "browser.windows.update"
@@ -83,12 +126,17 @@ enum FloorpNativeWebExtensionCatalog {
 
     static let uBlockOriginLite = FloorpNativeWebExtensionCatalogItem(
         identifier: "floorp.bundled.ublock-origin-lite",
-        resourceName: "uBOLite_2026.825.1619.safari",
+        resourceName: "uBOLite-floorp-ios-2026.825.1619",
         resourceExtension: "zip",
-        expectedSHA256: "89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94",
+        expectedSHA256: "0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d",
         expectedVersion: "2026.825.1619",
         contextIdentifier: "org.ublockorigin.lite.floorp-ios",
+        baseURLScheme: "safari-web-extension",
         baseURLHost: "ubol.floorp.internal",
+        actionPopupPath: "popup.html",
+        requiresBackgroundReadiness: true,
+        requiresNavigationBackgroundReadiness: true,
+        navigationReadinessFailurePolicy: .failClosed,
         minimumOS: FloorpOperatingSystemVersion(18, 6),
         name: "uBlock Origin Lite",
         summary: FloorpStrings.WebExtensions.uBlockOriginLiteSummary,
@@ -98,14 +146,61 @@ enum FloorpNativeWebExtensionCatalog {
         approvedParseErrorCodes: [],
         disabledAPIs: [
             "browser.runtime.connectNative",
-            "browser.runtime.sendNativeMessage"
+            "browser.runtime.sendNativeMessage",
+            "browser.action.openPopup",
+            "browser.action.setPopup"
         ]
     )
 
     static let items = [darkReader, uBlockOriginLite]
 
+    @MainActor private static let registeredCustomBaseURLSchemes: Void = {
+        Set(items.map(\.baseURLScheme)).subtracting(["webkit-extension"]).forEach {
+            WKWebExtension.MatchPattern.registerCustomURLScheme($0)
+        }
+    }()
+
+    @MainActor static func registerBaseURLSchemes() {
+        _ = registeredCustomBaseURLSchemes
+    }
+
     static func item(identifier: String) -> FloorpNativeWebExtensionCatalogItem? {
         items.first { $0.identifier == identifier }
+    }
+
+    static func replacementForLegacyBundledRecord(
+        _ record: FloorpNativeWebExtensionRecord
+    ) -> FloorpNativeWebExtensionCatalogItem? {
+        guard record.packageSource == .bundled,
+              record.transactionState == .stable else { return nil }
+        if record.id == darkReader.identifier,
+           record.installedVersion == darkReader.expectedVersion {
+            let isOfficialPackage = record.packageReference == "darkreader-chrome-mv3-4.9.129.zip"
+                && record.sha256 == legacyDarkReaderSHA256
+            let isPreviousFloorpPackage = record.packageReference == darkReader.packageReference
+                && [
+                    previousDarkReaderSHA256,
+                    preDurableStorageDarkReaderSHA256
+                ].contains(record.sha256)
+            return isOfficialPackage || isPreviousFloorpPackage ? darkReader : nil
+        }
+        if record.id == uBlockOriginLite.identifier,
+           record.installedVersion == uBlockOriginLite.expectedVersion {
+            let isOfficialPackage = record.packageReference == "uBOLite_2026.825.1619.safari.zip"
+                && record.sha256 == legacyUBlockOriginLiteSHA256
+            let isPreviousFloorpPackage = record.packageReference == uBlockOriginLite.packageReference
+                && [
+                    initialFloorpUBlockOriginLiteSHA256,
+                    previousUBlockOriginLiteSHA256,
+                    preStorageSerializationUBlockOriginLiteSHA256,
+                    preContentScriptSentinelUBlockOriginLiteSHA256,
+                    preLocalStorageSentinelUBlockOriginLiteSHA256,
+                    preWakeContentScriptReconciliationUBlockOriginLiteSHA256,
+                    preDurableProtectionReconciliationUBlockOriginLiteSHA256
+                ].contains(record.sha256)
+            return isOfficialPackage || isPreviousFloorpPackage ? uBlockOriginLite : nil
+        }
+        return nil
     }
 }
 
@@ -134,6 +229,42 @@ struct FloorpNativeWebExtensionPermissionDecision: Codable, Equatable, Hashable,
     init(value: String, expiration: Date = .distantFuture) {
         self.value = value
         self.expiration = expiration
+    }
+}
+
+enum FloorpNativeWebExtensionPermissionDecisionReconciler {
+    static func reconcile(
+        previousGranted: [FloorpNativeWebExtensionPermissionDecision],
+        previousDenied: [FloorpNativeWebExtensionPermissionDecision],
+        declaredValues: Set<String>,
+        requiredGrantedValues: Set<String>,
+        requiredDeniedValues: Set<String>
+    ) -> (
+        granted: [FloorpNativeWebExtensionPermissionDecision],
+        denied: [FloorpNativeWebExtensionPermissionDecision]
+    ) {
+        var granted = Dictionary(
+            uniqueKeysWithValues: previousGranted
+                .filter { declaredValues.contains($0.value) }
+                .map { ($0.value, $0) }
+        )
+        var denied = Dictionary(
+            uniqueKeysWithValues: previousDenied
+                .filter { declaredValues.contains($0.value) }
+                .map { ($0.value, $0) }
+        )
+        for value in requiredGrantedValues {
+            granted[value] = FloorpNativeWebExtensionPermissionDecision(value: value)
+            denied.removeValue(forKey: value)
+        }
+        for value in requiredDeniedValues {
+            denied[value] = FloorpNativeWebExtensionPermissionDecision(value: value)
+            granted.removeValue(forKey: value)
+        }
+        return (
+            granted.values.sorted { $0.value < $1.value },
+            denied.values.sorted { $0.value < $1.value }
+        )
     }
 }
 
@@ -166,6 +297,7 @@ struct FloorpNativeWebExtensionRollback: Codable, Equatable, Sendable {
     let displayName: String
     let installedVersion: String
     let isEnabled: Bool
+    let unloadState: FloorpNativeWebExtensionUnloadState?
     let hasPrivateAccess: Bool
     let grantedPermissions: [FloorpNativeWebExtensionPermissionDecision]
     let deniedPermissions: [FloorpNativeWebExtensionPermissionDecision]
@@ -174,6 +306,11 @@ struct FloorpNativeWebExtensionRollback: Codable, Equatable, Sendable {
     let packageDiagnostics: [FloorpNativeWebExtensionDiagnostic]
     let runtimeDiagnostics: [FloorpNativeWebExtensionDiagnostic]
     let updatedAt: Date
+}
+
+struct FloorpNativeWebExtensionUnloadState: Codable, Equatable, Sendable {
+    let processIdentifier: UUID
+    var enableOnNextColdLaunch: Bool
 }
 
 struct FloorpNativeWebExtensionRegistry: Codable, Equatable, Sendable {
@@ -204,6 +341,7 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
     var displayName: String
     var installedVersion: String
     var isEnabled: Bool
+    var unloadState: FloorpNativeWebExtensionUnloadState?
     var hasPrivateAccess: Bool
     var grantedPermissions: [FloorpNativeWebExtensionPermissionDecision]
     var deniedPermissions: [FloorpNativeWebExtensionPermissionDecision]
@@ -228,6 +366,7 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
         displayName: String,
         installedVersion: String,
         isEnabled: Bool = true,
+        unloadState: FloorpNativeWebExtensionUnloadState? = nil,
         hasPrivateAccess: Bool = false,
         grantedPermissions: [FloorpNativeWebExtensionPermissionDecision] = [],
         deniedPermissions: [FloorpNativeWebExtensionPermissionDecision] = [],
@@ -251,6 +390,7 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
         self.displayName = displayName
         self.installedVersion = installedVersion
         self.isEnabled = isEnabled
+        self.unloadState = unloadState
         self.hasPrivateAccess = hasPrivateAccess
         self.grantedPermissions = grantedPermissions
         self.deniedPermissions = deniedPermissions
@@ -274,6 +414,7 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
             displayName: displayName,
             installedVersion: installedVersion,
             isEnabled: isEnabled,
+            unloadState: unloadState,
             hasPrivateAccess: hasPrivateAccess,
             grantedPermissions: grantedPermissions,
             deniedPermissions: deniedPermissions,
@@ -292,6 +433,7 @@ struct FloorpNativeWebExtensionRecord: Codable, Equatable, Identifiable, Sendabl
         displayName = snapshot.displayName
         installedVersion = snapshot.installedVersion
         isEnabled = snapshot.isEnabled
+        unloadState = snapshot.unloadState
         hasPrivateAccess = snapshot.hasPrivateAccess
         grantedPermissions = snapshot.grantedPermissions
         deniedPermissions = snapshot.deniedPermissions
@@ -348,6 +490,7 @@ struct FloorpNativeWebExtensionSettingsItem: Hashable, Sendable {
     let source: String
     let license: String
     let isEnabled: Bool
+    let requiresRestartToEnable: Bool
     let hasPrivateAccess: Bool
     let permissions: [String]
     let optionalPermissions: [String]
@@ -382,6 +525,9 @@ enum FloorpNativeWebExtensionError: LocalizedError {
     case packageDigestMismatch(expected: String, actual: String)
     case packageVersionMismatch(expected: String, actual: String)
     case unapprovedPackageDiagnostics([FloorpNativeWebExtensionDiagnostic])
+    case backgroundContentStartupTimedOut(String)
+    case operationAlreadyInProgress(String)
+    case restartRequired(String)
     case unsupportedOperation(String)
 
     var errorDescription: String? {
@@ -415,6 +561,12 @@ enum FloorpNativeWebExtensionError: LocalizedError {
         case .unapprovedPackageDiagnostics(let diagnostics):
             return "WebKit reported unapproved package diagnostics: "
                 + diagnostics.map(\.message).joined(separator: "; ")
+        case .backgroundContentStartupTimedOut(let identifier):
+            return "The extension background content did not become ready in time: \(identifier)."
+        case .operationAlreadyInProgress(let identifier):
+            return "Another operation is already in progress for this extension: \(identifier)."
+        case .restartRequired(let operation):
+            return "\(operation) requires restarting Floorp."
         case .unsupportedOperation(let operation):
             return "The extension operation is not supported: \(operation)."
         }

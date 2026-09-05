@@ -1,6 +1,6 @@
 # Floorp iOS `WKWebExtension` ネイティブ置換設計
 
-- Date: 2026-09-03
+- Date: 2026-09-04
 - Status: Implemented / physical-device release validation pending
 - Product floor: iOS / iPadOS 18.4 以降
 - Runtime: WebKit の公開 `WKWebExtension` API のみ
@@ -12,19 +12,80 @@
 action/options、通常・プライベート分離、extension URL surface history、旧 runtime の
 全面削除、iOS 18.4 への deployment target 引き上げまで実装済みである。
 
-iOS 26.5 Simulator / WebKit 8624.2.5.10.4 では、公式 Dark Reader ZIP の digest 検証、
-context load、content script による通常ページの暗色化、native action popup、再起動後の
-復元を確認した。最小 DNR 拡張による block/redirect、registry/rollback/history、Firefox
-追跡防止と WebExtension 所有 content rule の共存も integration test で確認している。
+iOS 26.5 Simulator / WebKit 8624.2.5.10.4 では、公式 Dark Reader Chrome MV3 ZIP の
+`background.service_worker` が cold start 時に `loadBackgroundContent` の完了を返さず、
+初回 content-script message の欠落、popup の loader 固着、非同期 toggle 処理の途中終了を
+起こすことを確認した。nonpersistent background page への変換で初回 startup と action は
+安定したが、35秒 idle 後には `DOCUMENT_CONNECT` が成功扱いのまま捨てられ、background が
+wake しない。content script の有限再送、long-lived `runtime.Port`、`persistent: true` の
+いずれもこの idle wake を保証しないため、package 内の回避策には依存しない。
 
-公式 uBOL Safari ZIP 2026.825.1619 は無変更のまま app-bundled catalog に掲載した。
-SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-upstream source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
-`GPL-3.0-or-later` である。package の宣言どおり iOS 18.6 未満では利用不可にする。
+そこで Dark Reader は、background を
+`scripts: ["background/floorp-compat.js", "background/index.js"]`、`persistent: false` とし、
+Safari storage の sentinel、unknown-error 限定 retry、直列化、exact readback、UI mutation と
+close handshake を追加した Floorp 派生資産を同梱する。
+派生 SHA-256 は `ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761`、
+上流 ZIP の SHA-256 は `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
+である。patch、再現 build script、両 digest、上流 revision を provenance に固定し、
+App Review でも「無変更」とは表現しない。
+
+派生資産の acceptance では background readiness、初回 navigation の暗色化、popup / GET_DATA、
+site toggle と global toggle の off/on、空の `context.errors` を確認済みである。idle wake は
+host navigation preflight で扱う。Dark Reader が有効でアクセス可能な main-frame HTTP(S)
+navigation は policy decision を一時保留し、`loadBackgroundContent` の completion を待ってから
+同じ action を一度だけ再評価する。3秒の上限で失敗時も通常 browsing を止めず、診断を残す。
+35秒 idle、アプリ terminate/relaunch 直後の初回 page、実アプリ UI install は、この経路を含む
+リリース前の実機相当検証対象とする。最小 DNR 拡張による block/redirect、
+registry/rollback/history、Firefox 追跡防止と WebExtension 所有 content rule の共存も
+integration test で確認している。
+
+公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
+upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
+派生 SHA-256 は `0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d`、
+source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
+`GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
+公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
+rules 導線を有効にし、popup の active tab にある数値の `windowId` を matched-rules の
+`browser.tabs.create` へ伝えて、同じ通常／プライベート window に明示的に開く。さらに、
+Report 導線も source の window ID／incognito を渡し、同一 URL の検索・再利用・新規 tab を
+同じ window／realm に限定して、作成結果の privacy realm を検証する。
+起動時の DNR・content script・設定・session storage・managed policy を待ち、起動中に届いた
+Safari realm 更新を完了後に直列化する。起動中の失敗は readiness まで保持しつつ、後続の成功で
+一時的な realm error を回復できる。閉鎖済み window の stale focus event を無害化してから、
+Safari の local/session storage を領域別に直列化し、WebKit の unknown error だけを有限 retry
+する。Safari local storage は最初の read より前に内部 sentinel を書いて DB を作成し、その行を
+保持する。sentinel は uBO のキー列挙から除外する。read failure は空データとして扱わず、最終失敗を
+readiness へ伝播する。content script
+登録は既存内容を比較し、同一なら無操作、新規 ID は register、変更 ID は update、不要 ID は
+指定 remove とする。さらに Safari では inert な persistent sentinel を更新前に1件保持する。WebKit の
+update が対象行を delete してから add する際も DB が空にならず、使用中の
+`RegisteredContentScripts.db` が unlink されることを避ける。ruleset details は ID 順へ正規化してから
+script 定義を作り、列挙順の揺れを変更と誤判定する cold-start update も防ぐ。
+local/session と realm 記録は同じ直列化・unknown-error 限定 retry 経路を使う。登録処理は
+実状態を再読込する3回の bounded convergence とし、register/update/remove の部分適用後も
+sentinel を更新・削除せず exact readback まで進める。background の起動／wake ごとに必ず実行し、
+途中の API failure 後に sentinel だけが残った場合も欠落・stale 登録を自己修復する。
+background listener の `{ error }` 応答は UI 共通送信層で reject へ変換する。filtering/popup mode は
+content-script 更新失敗時に保存値を rollback し、popup slider、dashboard control、editor は旧値を
+保持して自動 reload を行わない。popup/dashboard は error を `role=alert` で表示し、restore/import は
+最初の失敗で中断する。dashboard の filter-list 変更は 997ms debounce と実行中 mutation を
+単一 queue で直列化する。Floorp は Done、`window.close()`、外部 link 遷移の前に page-world の
+`floorpPrepareToClose()` を待ち、DNR enabled rulesets の readback が要求選択と一致した
+`{ ready: true }` の場合だけ surface を破棄して readiness cache を無効化する。失敗時は
+dashboard を開いたまま accessible error を残す。Filter lists pane が一度も描画されず ruleset
+mutation revision が 0 の場合は空 DOM を選択として適用せず、native の現 enabled set を readback
+するだけにする。`beforeunload` flush は補助であり、終了順序の
+保証には使わない。MV3 background page から WebKit の static DNR 更新が失敗する場合、readiness は
+`foregroundReconciliationRequired` を返す。host は同じ context の可視 extension page で
+`js/floorp-reconcile.js` を読み込み、durable target の static/derived DNR と script を exact
+readback まで収束させた後だけ background finalize と `{ ready: true }` を認める。
+同一拡張機能 origin からのみ応答する readiness handshake を context の初回 activation に使う。
+`scripts/package-ubol-ios.sh` がこの監査済み差分を再現する。package の宣言どおり iOS 18.6
+未満では利用不可にする。
 
 2026-09-03 の full acceptance は、既定 113,100 static rules、日本語 1,906 rules、
 network・dynamic・session blocking、通常・プライベート、generic cosmetic、custom /
-procedural cosmetic、stock scriptlet、ruleset 更新、unload/reload 後の状態復元を含めて
+procedural cosmetic、stock scriptlet、ruleset 更新、background suspension/wake 後の状態復元を含めて
 162.250秒で合格した。公式 Safari build が無効化している strict-block interstitial は
 既知の upstream WebKit 制約として検出し、通常の遮断機能とは別に扱う。
 
@@ -77,7 +138,7 @@ test host、UI test target は 18.4 に揃える。
 | extension storage | WebKit | profile の persistent controller と uninstall data purge を管理 |
 | permissions / host access | WebKit context + Floorp UI | 同意取得、保存、復元 |
 | tabs / windows | Floorp adapter | 実タブ操作と lifecycle 通知 |
-| action popup / options | WebKit + Floorp presentation | Floorp UI から表示 |
+| action popup / options | WebKit runtime + Floorp surface | 固定 popup の privacy-safe WebView と options modal を表示 |
 | package trust / bundled catalog | Floorp | app code signature、固定 digest、provenance、配布方針 |
 | install/update/uninstall transaction | Floorp | ZIP の staging と registry commit |
 
@@ -278,13 +339,26 @@ active/suspended の全 WebView を閉じる。
 
 ### 6.4 popup と options
 
-- action popup は `WKWebExtensionAction.popupViewController` をそのまま present する
+- iOS 26.5 では `WKWebExtensionAction.popupViewController` / `popupWebView` が
+  controller の永続 `WKWebsiteDataStore` を継承することを実測した。そのため
+  private tab の action ではこれらの getter を呼び出さない
+- bundled catalog に digest 固定の `action.default_popup` path を保持し、
+  `context.webViewConfiguration` の copy に元 tab と同一の data store と surface 専用
+  `WKUserContentController` を設定した WebView で表示する
+- action の user gesture は公開 API `userGesturePerformed(in:)` で開始し、popup の
+  close、元 tab の遷移／終了／選択解除、scene focus 移動、disable、private 許可取消、
+  uninstall、host teardown のすべてで `clearUserGesture(in:)` と WebView 停止を行う
+- package verifier は popup path の完全一致と ZIP entry の存在を確認し、
+  `action.setPopup` / `action.openPopup` と予約済み `_execute_*` command を拒否する
 - options は `context.optionsPageURL` と `context.webViewConfiguration` を使う専用 modal
   とし、通常タブの WebView を不要に切り替えない
+- uBO options の終了は package の close handshake を最大5秒待つ。明示的な
+  `ready: true` 以外では閉じず、interactive swipe も禁止する。host teardown だけは待たず破棄する
 - extension が `tabs.create` で拡張 URL を開いた場合は、最初から extension surface の
   Tab を作る
 
-旧 `FloorpWebExtensionPageHost` や popup 用 JS bridge は残さない。
+この popup surface は WebKit の context configuration を使い、`browser.*` の実行は
+引き続き WebKit が担う。旧 `FloorpWebExtensionPageHost` や popup 用 JS bridge は残さない。
 
 ## 7. Tab / Window adapter
 
@@ -327,9 +401,12 @@ WebView surface の切替は同じ Floorp Tab adapter の内部変更なので `
 ### 7.3 action の実行
 
 拡張機能メニューを開く直前に `context.action(for:)` を取得し、label、icon、badge、
-enabled state を表示する。ユーザーが押したら `context.performAction(for:)` を呼ぶ。
-これにより `activeTab` の user gesture と action click/popup の意味を WebKit に任せる。
-`didUpdateAction` delegate で表示中のメニューを更新する。
+enabled state を表示する。ユーザーが押した直後にも action の identity、
+`isEnabled`、`presentsPopup`、元 tab の selected/focused/privacy state を再確認する。
+固定 popup がある reviewed bundled extension では `userGesturePerformed(in:)` と
+前節の privacy-safe surface を使う。popup を持たない action だけは
+`context.performAction(for:)` で WebKit の click semantics を使う。`didUpdateAction` delegate で
+表示中のメニューを更新する。
 
 ## 8. Package と install 経路
 
@@ -390,7 +467,7 @@ catalog item は次だけを持つ。
 - Floorp catalog ID
 - bundle resource または managed URL
 - expected SHA-256 と version
-- stable context identifier / base URL host
+- stable context identifier / reviewed base URL scheme / base URL host
 - package-specific minimum OS
 - source/license/review metadata
 - product policy で明示的に無効にする host-dependent API
@@ -402,11 +479,55 @@ catalog item は次だけを持つ。
 各インストール時に stable context identifier と host を生成し、更新後も保持する。
 
 - `context.uniqueIdentifier`: registry の stable ID
-- `context.baseURL`: `webkit-extension://<stable-host>/`
+- `context.baseURL`: catalog で固定した `<reviewed-scheme>://<stable-host>/`
 
-任意の拡張機能を Safari と誤認させるために `safari-web-extension` など別 scheme を
-設定しない。Safari 向けの package は catalog/build flavor と package 自身の
-`browser_specific_settings.safari` で選ぶ。
+既定 scheme は `webkit-extension` とする。review 済みの Safari package が upstream の
+WebKit compatibility 分岐に scheme を利用する場合に限り、catalog がその scheme を固定し、
+context 作成前に `WKWebExtension.MatchPattern.registerCustomURLScheme` で登録する。現在は
+review 済みの uBlock Origin Lite Safari 派生 asset にだけ `safari-web-extension` を使い、
+upstream の Safari 向け回避策を有効にする。任意 package が scheme を指定する経路は持たず、
+extension ID による JavaScript patch や runtime API 分岐も作らない。
+
+### 8.4 Dark Reader の iOS compatibility package
+
+Dark Reader は runtime 分岐ではなく、review 済みの派生 ZIP として catalog に固定する。
+画像、CSS、locale は上流のまま、manifest の background 宣言を iOS 対応の
+nonpersistent background page 形式へ置換する。さらに Floorp compatibility script が
+Safari storage の作成・直列化・unknown-error 限定 retry・exact readback を担当し、background
+と各 UI surface は mutation 完了と close readiness を明示応答する。
+
+- 上流: `darkreader-chrome-mv3.zip` v4.9.129、SHA-256
+  `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
+- 派生: `darkreader-floorp-ios-mv3-4.9.129.zip`、SHA-256
+  `ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761`
+- patch: `Bundled/darkreader-floorp-ios-mv3-4.9.129.patch`
+- build: `scripts/package-darkreader-ios.sh`
+- license: MIT、source revision `c2a707302a39b8047543712e9c582bac07835d34`
+
+build script は上流 digest を検証してから patch を適用し、timestamp と ZIP metadata / ordering
+を正規化する。CI verifier は派生 ZIP、patch、build script、provenance、manifest の
+`background.scripts` と `persistent: false` を fail-closed で照合する。
+
+この manifest 変換だけでは WebKit が idle 後に background を自動 wake する保証にならない。
+そのため catalog は Dark Reader と uBO Lite に `requiresNavigationBackgroundReadiness` を設定する。
+権限を持つ main-frame HTTP(S) navigation の policy callback では、host が次を行う。
+
+1. 元の `WKNavigationAction` を保留する。
+2. 読み込み済み extension context に public `loadBackgroundContent` を呼ぶ。
+3. Dark Reader は毎回3秒を上限に待ち、失敗を diagnostic log に残して navigation を許可する。
+   uBO Lite は context lifecycle 内の通常／private 各 realm の初回だけ strict readiness を最大90秒待ち、
+   一過性の WebKit probe は15秒以内の単位で再試行し、
+   失敗時は navigation を止めて次回に再試行し、成功した realm は以降の navigation で待機しない。
+4. action identity を prepared set に入れ、同じ policy chain を一度だけ再評価して navigation を許可する。
+
+prepared identity は再評価時に consume し、preflight の無限再帰を防ぐ。extension が無効、URL
+access がない、private access がない、subframe、非 HTTP(S) の場合は preflight しない。
+uBO Lite の成功 cache は context unload/update/teardown、private access 境界で破棄する。
+scene の8秒 UI budget を過ぎても enabled uBO の cold restore が未完了なら初回 HTTP(S) navigation は
+fail-closed のまま terminal readiness を待つ。restore error も広告素通しにはせず、明示 disable で解除する。
+Dark Reader の timeout/error は通常 browsing を止めない。package 側の storage/readback と
+UI close handshake はデータ永続性を保証するが、navigation の可用性方針は host の3秒
+fail-open を維持する。
 
 ## 9. Registry と WebKit state
 
@@ -461,7 +582,7 @@ install UI で required API permission と host match pattern を人間向けに
 private access は host permission と分け、設定画面の独立した toggle とする。
 toggle は `context.hasAccessToPrivateData` を変更して永続化する。OFF にした時点で
 private tab/window/cookie への extension access を失効させる。既に private page の DOM
-へ注入済みの効果を確実に除くには、該当 private tab の reload を案内する。
+へ注入済みの効果を確実に除くため、Floorp が該当 private tab だけを自動で reload する。
 
 ### 10.2 初期状態で禁止する API
 
@@ -494,40 +615,50 @@ controller 自体の初期化に失敗しても scene は開始するが、exten
 
 ### 11.2 enable / disable
 
-- enable: registry state を pending にし、context を作って load、成功後に commit
-- disable: context を unload し、成功後に disabled を commit
-- disable 後、既に変更された DOM は reload まで残り得るため、現在タブの reload を
-  ユーザーへ案内する
+- disable は先に disabled を永続化し、popup/options を閉じ、影響を受けたタブを reload
+  してから context を unload する
+- WebKit が同一プロセス内の同一 extension identity の unload/load を安全に完了できない
+  OS では、unload 後の enable は context を再 load しない。要求元 process ID と
+  `enableOnNextColdLaunch` を registry に保存し、拡張機能は inactive のままにする
+- 次のコールド起動では process ID が変わったことを確認して context を1回 load し、
+  background readiness の成功後に enabled を commit して deferred state を消す。失敗時は
+  disabled に戻し、次のコールド起動へ再度 defer する
+- 設定画面は「再起動後に有効」を明示し、待機中の要求をキャンセルできる。以前の起動で
+  無効のまま終了した extension は、新しいプロセスでは通常どおりその場で有効化できる
 
 ### 11.3 update
 
 1. 新 ZIP を stage し、旧 context を動かしたまま parse/validate
-2. permission snapshot と旧 package reference を rollback record に保存
-3. 旧 context を unload
-4. 同じ unique identifier/base URL で新 context を load
-5. load が成功したら registry を commit
-6. 同期 load に失敗した場合は新 context を unload し、旧 ZIP から旧 context を再 load
-7. commit 後に旧 managed package を削除
+2. 同じ controller で対象 identity の load を一度でも試行済みなら、旧 context を変更せず
+   「Floorp の再起動が必要」として更新を中止する。コールド起動後も未 load の disabled
+   context はこの制約に該当しない
+3. 対応済み bundled package migration は、次のコールド起動で context を生成する前にだけ実行する
+4. permission snapshot と旧 package reference を rollback record に保存し、新 context を1回 load する
+5. background readiness が成功したら registry を commit し、旧 managed package を削除する
+6. load に失敗した場合は新 context を fail-closed で unload して旧 record を戻し、同一プロセスでは
+   旧／新どちらの identity も再 load せず、次のコールド起動で回復を再試行する
 
 crash recovery 用に `preparing`、`switching`、`committed` の journal state を持つ。
-起動時に `committed` でない update は旧 package を正として回復する。
+起動時に `committed` でない update は旧 package を正として、context の初回 load 前に回復する。
 
 ### 11.4 uninstall
 
 1. registry record を `pendingPurge` にし、package reference、context ID、base URL を保持
 2. context を profile controller から unload
 3. `fetchDataRecord` で対象 context の WebKit data record を取得
-4. `WKWebExtensionController.allExtensionDataTypes` を指定して削除
+4. unload で無効化済みとなる `.session` を除いた
+   `WKWebExtensionController.allExtensionDataTypes` を指定して永続データを削除
 5. registry の permission/context record と managed ZIP を削除
-6. crash で `pendingPurge` が残った場合は、保持した identity/package から context を
-   再構築して次回 startup で再試行
+6. crash で `pendingPurge` が残った場合は context を再構築せず、保持した identity から
+   次回 startup で data purge を再試行
 
 ## 12. Settings UI
 
 設定画面には次を表示する。
 
 - installed / available
-- enable
+- enable と、unload 後の再有効化、更新、アンインストール直後の再インストールに
+  再起動が必要な状態
 - 「プライベートブラウジングで許可」と、拡張機能自身の設定/storage は profile に
   残り得る旨の disclosure
 - required/optional API permission と site access
@@ -598,7 +729,7 @@ manifest の minimum version を Floorp が書き換えたり無視したりし�
 | `AppDelegate.swift` | custom background release を削除、profile host teardown のみ |
 | `Tab.swift` | document generation、policy prepare、bridge、custom DNR hook を削除。controller attachment と surface router を追加 |
 | `BrowserViewController+WebViewDelegates.swift` | pre-navigation custom policy hook を削除し、extension URL routing を追加 |
-| `BrowserCoordinator.swift` | custom popup resolver を削除し、WebKit action UI へ置換 |
+| `BrowserCoordinator.swift` | 旧 JS popup resolver を削除し、WebKit action と native host UI へ置換 |
 | `SettingsCoordinator.swift` | native settings controller へ置換 |
 | `FloorpFlags.swift` | `FloorpWebExtensionFeature` と旧 runtime flag を削除 |
 | `Prefs.swift` | 旧 Dark Reader install marker を削除。新 controller UUID/cleanup version のみ追加 |
@@ -609,8 +740,9 @@ manifest の minimum version を Floorp が書き換えたり無視したりし�
 project 参照ごと削除する。`demanding-mv3`、`event-runtime-mv3`、
 `content-messaging-mv3` など旧 bridge 専用 fixture も削除する。
 
-expanded Dark Reader fixture は upstream bytes を保持した canonical ZIP と license へ
-置換する。Floorp 独自 `fixture-metadata.json` は新 catalog metadata へ移す。
+expanded Dark Reader fixture は、上流 ZIP に review 済み Safari durability patch を再現適用した
+canonical 派生 ZIP、license、provenance、patch、build script へ置換する。Floorp 独自
+`fixture-metadata.json` は新 catalog metadata へ移す。
 
 旧独自 runtime を記述する以下の文書は、native 設計・native compatibility matrix と
 置換した後に削除する。
@@ -659,7 +791,7 @@ cleanup は次を必須とする。
 ### Phase 0: baseline
 
 - current build/test result と変更中ファイルを固定
-- Dark Reader と uBOL の canonical test ZIP、digest、license を用意
+- Dark Reader の再現可能な派生 ZIP と uBOL の upstream ZIP、digest、license、provenance を用意
 - iOS 18.4 / 18.6 / current simulator matrix を CI に用意
 
 ### Phase 1: OS floor と native host skeleton
@@ -674,6 +806,7 @@ cleanup は次を必須とする。
 - logical normal/private window adapters
 - stable tab adapter registry
 - open/close/focus/activate/change/move event wiring
+- Dark Reader 対象 navigation の background-readiness preflight と一度だけの policy 再評価
 - tab create/update/reload/close と permission visibility の integration test
 
 ### Phase 3: navigation surfaces と UI
@@ -687,12 +820,14 @@ cleanup は次を必須とする。
 
 - bundled ZIP verification
 - registry、permission round-trip、startup restore
-- install/enable/disable/update/rollback/uninstall/data purge
+- install/enable/disable/cold-start update/rollback/uninstall/data purge と、同一プロセスでの
+  identity 再 load 拒否
 - crash journal recovery test
 
 ### Phase 5: package acceptance
 
-- unmodified Dark Reader package の background/content/action/storage test
+- Floorp 派生 Dark Reader package の background/content/action/storage/readback/close test
+- host preflight 経由の35秒 idle / terminate-relaunch cold-wake test
 - iOS 18.6+ で公式 uBOL Safari package の DNR/action/options/strictblock test
 - context runtime errors と性能を記録
 
@@ -728,11 +863,14 @@ cleanup は次を必須とする。
 - background、content script、runtime messaging、storage、action
 - tab/window lifecycle と activeTab user gesture
 - normal/private の cookie、website data store、UCC の分離
-- private tab から開いた action popup/extension page が private data store を使うこと
+- private tab から開いた action popup/extension page が元 tab と同一の
+  nonpersistent data store を使い、WebKit の persistent native popup を生成しないこと
+- popup の `window.close()`、再表示、元 tab の遷移／終了／選択解除、scene focus 移動、
+  disable/private 許可取消/uninstall で WebView と user gesture が残らないこと
 - private access OFF で private tab/window/cookie が context から不可視になること
 - extension-owned storage が profile 内で一貫し、private website data store と混同されないこと
 - extension URL 境界を双方向に移動できること
-- update rollback と uninstall data removal
+- cold-start update rollback、uninstall data removal、update/reinstall の再起動要求
 
 ### 16.3 DNR / uBOL
 
@@ -763,7 +901,7 @@ Simulator / WebKit 8624.2.5.10.4 で次を確認した。
 - 日本語 ruleset 追加時に uBOL 自身が regex 上限保護のため session rules をいったん
   clear する公式挙動を確認。その後 session rule を再追加し、再び遮断できることを確認
 - filtering level 3、日本語 ruleset、custom filters、private access、登録 content scripts が
-  context unload/load 後も復元された
+  background suspension/wake 後も復元された
 - `WKWebView.callAsyncJavaScript` と navigation に期限を設け、初回 DNR compile 中に
   WebKit が extension page を入れ替えた場合は新しい制御 page で background readiness を
   再確認する。callback 消失を無期限待機や合格として扱わない
@@ -812,7 +950,8 @@ uBOL acceptance は少なくとも次を end-to-end で確認する。
 4. 旧 runtime と native controller が同時実行される経路がない
 5. normal/private の website data store、UCC、logical window が分離される
 6. extension URL への移動と復帰が同じ Floorp Tab identity で動く
-7. permission、private toggle、action、options、install/update/uninstall が動く
+7. permission、private toggle、action、options、install/update/uninstall が動き、update と
+   uninstall 後の reinstall は同一プロセスで identity を再 load せず再起動を要求する
 8. Dark Reader acceptance が通る
 9. iOS 18.6+ で uBOL acceptance が通る
 10. 旧 source、tests、fixtures、feature flags、prefs、永続領域が削除される
@@ -844,13 +983,19 @@ FloorpWebContentPolicyCoordinator
 | Dark Reader default install | なし、catalog から明示 install |
 | native messaging | 無効 |
 
-uBOL の GPL code 同梱は、Floorp の該当 release source を公開し、版・digest・無変更の
-upstream asset・license・対応 source を App Review notes へ明記する方針である。GPL を
+uBOL の GPL code 同梱は、Floorp の該当 release source を公開し、版、上流／派生 digest、
+互換 patch、再現 build script、license、対応 source を App Review notes へ明記する。GPL を
 技術的 release blocker にはしない。提出時は
 `docs/app-review-notes-native-webextensions.md` の placeholder を公開済み release commit
-へ置き換え、Apple の審査結果を外部 release gate とする。Dark Reader を含む他の同梱物も
-license、privacy、provenance の表示と確認を継続する。Dark Reader と uBOL はそれぞれの
-license notice と provenance JSON も ZIP とは別の app bundle resource として同梱する。
+へ置き換え、Apple の審査結果を外部 release gate とする。両拡張は Floorp 派生資産で
+あること、各 patch と再現 build script、上流と派生の両 digest、license、上流 source
+revision を同じ notes に明記し、無変更の upstream asset とは表現しない。
+また、idle 後の background wake を host navigation preflight の `loadBackgroundContent` で同期し、
+Dark Reader は毎 navigation を3秒 fail-open、uBO Lite は context ごとの通常／private 初回を
+90秒 fail-closed（15秒以内の probe 単位で再試行）として成功後に cache することを
+review notes と試験手順に明記する。
+Dark Reader と uBOL はそれぞれの license notice と provenance JSON も ZIP とは別の
+app bundle resource として同梱する。
 
 ## 19. 根拠資料
 
@@ -865,5 +1010,7 @@ license notice と provenance JSON も ZIP とは別の app bundle resource と�
 - [uBOL Safari manifest](https://github.com/gorhill/uBlock/blob/master/platform/mv3/safari/manifest.json)
 - [uBOL Safari compatibility layer](https://github.com/gorhill/uBlock/blob/master/platform/mv3/safari/ext-compat.js)
 - [uBOL Lite 2026.825.1619 release](https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.825.1619)
+- [WebKit bug 317981: initial background load 中の message drop](https://bugs.webkit.org/show_bug.cgi?id=317981)
+- [WebKit bug 277588: iOS Service Worker と background scripts workaround](https://bugs.webkit.org/show_bug.cgi?id=277588)
 - [WebKit bug 298199](https://bugs.webkit.org/show_bug.cgi?id=298199)
 - [Floorp native WebExtensions App Review notes](app-review-notes-native-webextensions.md)

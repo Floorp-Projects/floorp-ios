@@ -9,15 +9,14 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
 | Notes Sync production QA | GitHub Actions | Manual, protected workflow in `.github/workflows/floorp-notes-sync-production-qa.yml` |
 | Notes Sync public-beta QA | GitHub Actions | Separate manual, protected two-account workflow in `.github/workflows/floorp-notes-sync-public-beta-qa.yml` |
-| Signed public-beta delivery | GitHub Actions | Manual, source-bound workflow in `.github/workflows/floorp-public-beta-release.yml` |
-| Xcode Cloud TestFlight trigger | GitHub Actions | Manual `workflow_dispatch` bridge in `.github/workflows/floorp-xcode-cloud-testflight.yml` |
+| Signed public-beta delivery | Xcode Cloud | Source-bound `workflow_dispatch` bridge in `.github/workflows/floorp-xcode-cloud-testflight.yml` |
 | Upstream Firefox synchronization | GitHub Actions | Weekly draft-PR workflow with trusted automation restoration, reviewed localization conflict resolution, and explicit CI dispatch |
 | Signed archive and internal TestFlight | Manual Xcode upload | `0.1.0 (2)` signed, uploaded, and verified by the internal group |
 | Repeatable signed delivery | Xcode Cloud | Configured as `Floorp TestFlight Manual`; archive, signing, and App Store Connect distribution run in Xcode Cloud |
 | App Store release | App Store Connect | Manual approval initially |
 | Mozilla/Focus maintenance automation | Git history | Removed pending a Floorp-owned replacement |
 
-The public-beta release job receives signing and App Store Connect material only as protected GitHub secrets for the one approved run; no certificate, profile, p8 key, or password is committed. The routine TestFlight path does not sign in GitHub Actions: the Actions bridge only starts and monitors the pinned Xcode Cloud workflow, while Xcode Cloud performs the archive, signing, and App Store Connect distribution.
+GitHub Actions never receives signing certificates or provisioning profiles for the public-beta path. The bridge receives only the protected App Store Connect API key needed to start and inspect the pinned Xcode Cloud workflow. Xcode Cloud performs archive, signing, and App Store Connect distribution; no certificate, profile, p8 key, or password is committed.
 
 ### Validated Internal TestFlight baseline
 
@@ -105,7 +104,7 @@ Notes on the live contract:
 
 ## Release readiness
 
-Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented; every release candidate still requires a signed archive and Organizer validation before TestFlight distribution. `FloorpRelease` now uses the reviewed `release-default` Notes Sync policy, so ordinary internal and public TestFlight builds exercise the optional Sync feature against production FxA/Sync. The separate protected `floorp-notes-sync-public-beta-qa.yml` workflow and its evidence wrapper remain available for dedicated two-client integrity validation; they are not a prerequisite for the normal Xcode Cloud TestFlight workflow. When production FxA automation is blocked by an external client challenge, that workflow still has an explicit owner-approved waiver preflight. The waiver never claims live data-integrity QA and requires manual validation in a limited external TestFlight group before broader publication. The manual `floorp-public-beta-release.yml` workflow accepts either the live QA artifact or that separately bound waiver artifact, with an explicit waiver acknowledgement, and can sign/upload a candidate after the live App Store Connect review details pass a read-only preflight.
+Do not create an App Store archive from `Fennec`; it remains a development configuration. Use the shared `Floorp` scheme and its `FloorpRelease` Archive action. The repository-side release scaffold is implemented; every release candidate still requires a signed archive and Organizer validation before TestFlight distribution. `FloorpRelease` now uses the reviewed `release-default` Notes Sync policy, so ordinary internal and public TestFlight builds exercise the optional Sync feature against production FxA/Sync. The separate protected `floorp-notes-sync-public-beta-qa.yml` workflow and its evidence wrapper remain available for dedicated two-client integrity validation; they are not a prerequisite for the normal Xcode Cloud TestFlight workflow. The Xcode Cloud bridge does require a successful exact-source `Floorp iOS CI` run and its dedicated uBlock Origin Lite acceptance artifact before it can start the immutable tagged candidate.
 
 ### Release build configuration
 
@@ -196,14 +195,12 @@ The shared `Floorp` scheme now archives with `FloorpRelease` in Xcode Cloud. The
 
 1. In Signing & Capabilities, explicitly confirm the main `app.floorp.Floorp` bundle ID once before initial setup because the project derives it from an `.xcconfig` file. Register extension IDs only when those targets return to the release.
 2. Connect `Floorp-Projects/Floorp-iOS` to Xcode Cloud from Xcode's Report navigator. A GitHub organization owner must authorize the first connection.
-3. Keep `Floorp TestFlight Manual` manually started and restricted to `main`; App Store Connect remains the direct fallback for starting a build.
-4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml` when the deployment should be visible as an explicit GitHub Actions run. It validates the pinned workflow and repository, starts the Xcode Cloud run through `POST /v1/ciBuildRuns`, and optionally waits for completion.
-5. Let Xcode Cloud manage signing; verify the Client-only app is signed by the Floorp team and inspect its production entitlements. Repeat this check for each extension if one is restored later.
-6. Confirm `firefox-ios/TestFlight/WhatToTest.en-US.txt` appears in the TestFlight build and invite the internal group.
-7. Add a separate ordinary App Store workflow later by reusing `scripts/release/trigger-xcode-cloud.py` with its own pinned Xcode Cloud workflow ID and distribution target.
-8. Download and retain each shipped archive and its dSYMs outside Xcode Cloud; Xcode Cloud build information and artifacts are available for only 30 days.
-
-The public-beta workflow does not create groups or invent reviewer credentials. It selects one existing external group (or requires its explicit ID), reuses complete live Beta App Review details, records before/after state, and stops with a blocker if Apple agreements, review details, or group setup are incomplete.
+3. Keep `Floorp TestFlight Manual` manually started in Xcode Cloud, but start public-release candidates only through the GitHub Actions bridge. A direct App Store Connect start does not produce the source-bound release receipt and is not eligible for submission. Release builds use a protected immutable `floorp-catalog-<40-character merged SHA>` tag that points at the exact reviewed `main` commit.
+4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml`. It verifies the immutable tag and exact-source CI acceptance, validates the workflow repository and product against App Store Connect app `6796708699` / bundle `app.floorp.Floorp`, snapshots the current maximum build number, and starts the tagged run through `POST /v1/ciBuildRuns`.
+5. The bridge always waits for `COMPLETE` / `SUCCEEDED`, rechecks the exact source commit and workflow, and requires exactly one nonpaginated run-to-build linkage. The linked build must be a new, larger build number for Floorp `0.3.0` on iOS, `VALID`, `APP_STORE_ELIGIBLE`, unexpired, non-exempt-encryption false, and minimum OS `18.4`.
+6. Retain the emitted `floorp-xcode-cloud-build-receipt.json`. The workflow also materializes a notes-only App Review payload from that receipt; it rejects placeholders, a missing immutable public source URL or GPL disclosure, and content over 4,000 bytes.
+7. Before any external-beta write, `submit-floorp-external-beta.sh` re-reads the run, run-to-build linkage, build, and group. It requires the receipt and all expected source/build values, and requires the selected group to be external and belong to the same app. Contact fields must be complete; demo credentials are required only when App Store Connect reports `demoAccountRequired=true`. The client never creates groups or writes contact/demo credentials.
+8. Let Xcode Cloud manage signing; verify the Client-only app is signed by the Floorp team and inspect its production entitlements. Confirm `firefox-ios/TestFlight/WhatToTest.en-US.txt`, then retain each shipped archive and dSYMs outside Xcode Cloud; Xcode Cloud artifacts are available for only 30 days.
 
 ## Later hardening
 
@@ -218,11 +215,13 @@ The public-beta workflow does not create groups or invent reviewer credentials. 
 
 ### Release evidence, retention, and rollback
 
-One release/version authority: Xcode Cloud owns monotonic distribution build
-numbers; the marketing version remains reviewed in the repository
-(`FloorpRelease.xcconfig`). Manual and cloud numbering must never be mixed; a
-release candidate is identified only by the recorded source SHA-256, marketing
-version, and build number triple.
+The marketing version is reviewed in the repository (`FloorpRelease.xcconfig`),
+while Xcode Cloud owns monotonically increasing distribution build numbers. The
+bridge snapshots all existing Floorp build IDs and the maximum build number
+before starting the run, then accepts only the single new build linked from that
+run. A release candidate is identified by its immutable source SHA, Xcode Cloud
+run/workflow IDs, App Store Connect app/build IDs, marketing version, platform,
+and build number in the retained receipt.
 
 `scripts/release/collect-floorp-release-evidence.sh` binds each candidate to
 its source SHA, archived marketing version/build, signing identity,
@@ -242,14 +241,13 @@ including group creation, is denied before any request. Writes require the
 intended object ID, a prior-state SHA-256, and `--authorize-mutation`;
 `--dry-run` issues zero requests.
 
-Retention: release evidence documents, `.xcresult` bundles, archives, IPAs,
-and dSYM inventories are retained for at least 90 days; CI artifacts are
-retained 7 days by the workflow. Rollback: because each candidate is bound to
-its exact source SHA and App Store Connect build ID, a defective upload is
-removed through the allowlisted relationship and localization routes without
-re-uploading; the last-good archive and its evidence document remain the
-rollback target. IPAs are uploaded exclusively with `xcrun altool` during
-Todo 11 and never through the ASC REST client.
+Retention: source-bound receipts and rendered review notes are retained for 90
+days; release evidence documents, `.xcresult` bundles, archives, IPAs, and dSYM
+inventories follow the release retention policy. The REST client intentionally
+has no delete route. Stop testing or remove a defective build from groups in App
+Store Connect under an authorized operator account; never reinterpret an older
+build as the current candidate. Xcode Cloud, not the REST client or GitHub
+Actions, uploads the signed archive.
 
 - [GitHub Actions repository settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)
 - [Triggering a workflow with `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)

@@ -10,6 +10,22 @@ import Shared
 import WebKit
 import WebEngine
 
+@MainActor
+private final class PendingTabRemoval {
+    let token = UUID()
+    weak var tab: Tab?
+    weak var webView: WKWebView?
+    let webViewIdentifier: ObjectIdentifier?
+    var completions = [(Bool) -> Void]()
+
+    init(tab: Tab, completion: @escaping (Bool) -> Void) {
+        self.tab = tab
+        self.webView = tab.webView
+        self.webViewIdentifier = tab.webView.map(ObjectIdentifier.init)
+        self.completions = [completion]
+    }
+}
+
 final class TabManagerImplementation: NSObject,
                                       TabManager,
                                       FeatureFlaggable,
@@ -80,6 +96,7 @@ final class TabManagerImplementation: NSObject,
     private weak var navigationDelegate: WKNavigationDelegate?
     private var tabsTelemetry = TabsTelemetry()
     private var delegates = [WeakTabManagerDelegate]()
+    private var pendingTabRemovals = [ObjectIdentifier: PendingTabRemoval]()
     var tabRestoreHasFinished = false
     private(set) var selectedIndex: Int = -1
 
@@ -212,16 +229,43 @@ final class TabManagerImplementation: NSObject,
 
     // MARK: - Remove Tab
     func removeTab(_ tabUUID: TabUUID) {
-        guard let index = tabs.firstIndex(where: { $0.tabUUID == tabUUID }) else { return }
+        removeTab(tabUUID) { _ in }
+    }
+
+    func removeTab(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void) {
+        guard let index = tabs.firstIndex(where: { $0.tabUUID == tabUUID }) else {
+            completion(false)
+            return
+        }
 
         let tab = tabs[index]
-        removeTab(tab, flushToDisk: true)
-        updateSelectedTabAfterRemovalOf(tab, deletedIndex: index)
+        let key = ObjectIdentifier(tab)
+        if let pending = pendingTabRemovals[key] {
+            pending.completions.append(completion)
+            return
+        }
+
+        let pending = PendingTabRemoval(tab: tab, completion: completion)
+        pendingTabRemovals[key] = pending
+        let preparationCompletion: (Bool) -> Void = { [weak self, weak pending] shouldRemove in
+            guard let self, let pending else { return }
+            self.finishPendingTabRemoval(pending, shouldRemove: shouldRemove)
+        }
+        let wasHandled = delegates.compactMap { $0.get() }.contains { delegate in
+            delegate.tabManager(
+                self,
+                prepareToRemoveTab: tab,
+                completion: preparationCompletion
+            )
+        }
+        if !wasHandled {
+            finishPendingTabRemoval(pending, shouldRemove: true)
+        }
     }
 
     func removeTabs(_ tabs: [Tab]) {
         for tab in tabs {
-            removeTab(tab, flushToDisk: false)
+            removeTabImmediately(tab, flushToDisk: false)
         }
         commitChanges()
     }
@@ -233,7 +277,9 @@ final class TabManagerImplementation: NSObject,
             return urls.contains(url)
         }
         for tab in tabsToRemove {
-            removeTab(tab.tabUUID)
+            guard let index = tabs.firstIndex(where: { $0 === tab }) else { continue }
+            removeTabImmediately(tab, flushToDisk: true)
+            updateSelectedTabAfterRemovalOf(tab, deletedIndex: index)
         }
     }
 
@@ -246,7 +292,7 @@ final class TabManagerImplementation: NSObject,
 
         for tab in currentModeTabs {
             // Remove each tab without persisting changes
-            removeTab(tab, flushToDisk: false)
+            removeTabImmediately(tab, flushToDisk: false)
             if tab == currentModeTabs.last {
                 // Select tab calls preserve tabs so we don't need to call it again
                 if tab.isPrivate,
@@ -265,12 +311,14 @@ final class TabManagerImplementation: NSObject,
     /// - Parameters:
     ///   - tab: the tab to remove
     ///   - flushToDisk: Will store changes if true, and update selected index
-    private func removeTab(_ tab: Tab, flushToDisk: Bool) {
+    private func removeTabImmediately(_ tab: Tab, flushToDisk: Bool) {
+        let interruptedRemoval = pendingTabRemovals.removeValue(forKey: ObjectIdentifier(tab))
         guard let removalIndex = tabs.firstIndex(where: { $0 === tab }) else {
             logger.log("Could not find index of tab to remove",
                        level: .warning,
                        category: .tabs,
                        description: "Tab count: \(count)")
+            interruptedRemoval?.completions.forEach { $0(false) }
             return
         }
 
@@ -309,6 +357,34 @@ final class TabManagerImplementation: NSObject,
             }
             saveSessionData(forTab: selectedTab)
         }
+        interruptedRemoval?.completions.forEach { $0(true) }
+    }
+
+    private func finishPendingTabRemoval(
+        _ pending: PendingTabRemoval,
+        shouldRemove: Bool
+    ) {
+        guard let tab = pending.tab else {
+            pending.completions.forEach { $0(false) }
+            return
+        }
+        let key = ObjectIdentifier(tab)
+        guard pendingTabRemovals[key]?.token == pending.token else { return }
+        pendingTabRemovals.removeValue(forKey: key)
+
+        let currentWebViewIdentifier = tab.webView.map(ObjectIdentifier.init)
+        guard shouldRemove,
+              currentWebViewIdentifier == pending.webViewIdentifier,
+              let index = tabs.firstIndex(where: { $0 === tab }) else {
+            if tab.webView === pending.webView {
+                pending.webView?.isUserInteractionEnabled = true
+            }
+            pending.completions.forEach { $0(false) }
+            return
+        }
+        removeTabImmediately(tab, flushToDisk: true)
+        updateSelectedTabAfterRemovalOf(tab, deletedIndex: index)
+        pending.completions.forEach { $0(true) }
     }
 
     func removeNormalTabsOlderThan(period: TabsDeletionPeriod, currentDate: Date) {
@@ -337,7 +413,7 @@ final class TabManagerImplementation: NSObject,
 
         for tab in tabsToRemove {
             // Remove each tab without persisting changes
-            removeTab(tab, flushToDisk: false)
+            removeTabImmediately(tab, flushToDisk: false)
         }
 
         if normalTabs.isEmpty {
@@ -1146,7 +1222,9 @@ final class TabManagerImplementation: NSObject,
             tabToSelect = addTab(request, afterTab: selectedTab, isPrivate: selectedTab.isPrivate)
         }
         selectTab(tabToSelect)
-        removeTab(selectedTab.tabUUID)
+        guard let index = tabs.firstIndex(where: { $0 === selectedTab }) else { return }
+        removeTabImmediately(selectedTab, flushToDisk: true)
+        updateSelectedTabAfterRemovalOf(selectedTab, deletedIndex: index)
         let tabSessionStore = tabSessionStore
         Task {
             await tabSessionStore.deleteUnusedTabSessionData(keeping: [])

@@ -214,12 +214,54 @@ jobs:
             exit 1
           fi
 
+      - name: Run uBlock Origin Lite release acceptance
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          TEST_RUNNER_FLOORP_RUN_UBOL_DNR_DIAGNOSTICS=1 \
+            xcodebuild test-without-building \
+              -project "$PROJECT_PATH" \
+              -scheme "$SCHEME" \
+              -configuration "$CONFIGURATION" \
+              -destination "$DESTINATION" \
+              -testPlan FloorpCI \
+              -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+              -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+              -disableAutomaticPackageResolution \
+              -onlyUsePackageVersionsFromResolvedFile \
+              -skipMacroValidation \
+              -only-testing:ClientTests/FloorpUBOLWebKitDiagnosticsTests/testOfficialUBOLReleaseAcceptanceGates \
+              -test-timeouts-enabled YES \
+              -default-test-execution-time-allowance 480 \
+              -maximum-test-execution-time-allowance 480 \
+              -resultBundlePath "$RUNNER_TEMP/FloorpUBOLReleaseAcceptance.xcresult" \
+              CODE_SIGN_IDENTITY= \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              2>&1 | tee "$RUNNER_TEMP/ubol-release-acceptance.log"
+
+          if ! grep -Fq "FLOORP_UBOL_RELEASE_GATE report" \
+            "$RUNNER_TEMP/ubol-release-acceptance.log"; then
+            echo "::error::uBlock Origin Lite release acceptance did not execute to completion"
+            exit 1
+          fi
+
       - name: Upload Notes Sync G3 result
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: floorp-notes-sync-xcresult
           path: ${{ runner.temp }}/FloorpCI.xcresult
           if-no-files-found: error
+          retention-days: 7
+      - name: Upload uBlock Origin Lite acceptance result
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-ubol-release-acceptance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/FloorpUBOLReleaseAcceptance.xcresult
+            ${{ runner.temp }}/ubol-release-acceptance.log
+          if-no-files-found: warn
           retention-days: 7
       - name: Upload diagnostics
         if: failure()
@@ -229,6 +271,7 @@ jobs:
           path: |
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/test.log
+            ${{ runner.temp }}/ubol-release-acceptance.log
             ${{ runner.temp }}/FloorpCI.xcresult
           if-no-files-found: ignore
           retention-days: 7

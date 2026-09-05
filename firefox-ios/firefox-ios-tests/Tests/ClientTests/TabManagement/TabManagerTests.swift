@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import Foundation
+import WebKit
 import XCTest
 @testable import Client
 
@@ -61,6 +62,25 @@ final class TabManagerTests: TabManagerTestsBase {
         XCTAssertEqual(subject.tabs.count, 1)
         XCTAssertEqual(subject.tabs.first?.url?.absoluteString, "https://www.mozilla.org/privacy/firefox")
         XCTAssertEqual(subject.tabs.first?.isPrivate, true)
+    }
+
+    @MainActor
+    func testAddTabLetsDelegateInstallLegacyTabDelegateBeforeCreatingWebView() {
+        let subject = createSubject()
+        let delegate = TabManagerWebViewCreationOrderingDelegate()
+        subject.addDelegate(delegate)
+
+        let tab = subject.addTab(
+            URLRequest(url: URL(string: "https://example.com/new-tab")!),
+            afterTab: nil,
+            zombie: false,
+            isPrivate: false
+        )
+
+        XCTAssertTrue(delegate.didAddTab)
+        XCTAssertTrue(delegate.observedTab === tab)
+        XCTAssertNil(delegate.webViewAtDidAdd)
+        XCTAssertTrue(delegate.webViewCreationDelegate.createdWebView === tab.webView)
     }
 
     // MARK: - normalTabs / privateTabs cache tests
@@ -144,6 +164,88 @@ final class TabManagerTests: TabManagerTestsBase {
         let subject = createSubject()
         XCTAssertTrue(subject.normalTabs.isEmpty)
         XCTAssertTrue(subject.privateTabs.isEmpty)
+    }
+
+    @MainActor
+    func testRemoveTabWaitsForPreparationAndCoalescesCallers() {
+        let tabs = generateTabs(count: 2)
+        let subject = createSubject(tabs: tabs)
+        let delegate = TabRemovalPreparationDelegate()
+        subject.addDelegate(delegate)
+        var outcomes = [Bool]()
+
+        subject.removeTab(tabs[0].tabUUID) { outcomes.append($0) }
+        subject.removeTab(tabs[0].tabUUID) { outcomes.append($0) }
+
+        XCTAssertEqual(subject.tabs.count, 2)
+        XCTAssertEqual(delegate.preparationCount, 1)
+        XCTAssertTrue(outcomes.isEmpty)
+
+        delegate.finish(true)
+
+        XCTAssertEqual(subject.tabs.count, 1)
+        XCTAssertFalse(subject.tabs.contains { $0 === tabs[0] })
+        XCTAssertEqual(outcomes, [true, true])
+    }
+
+    @MainActor
+    func testRemoveTabPreparationFailureKeepsExactWebViewInteractive() {
+        let tabs = generateTabs(count: 2)
+        let subject = createSubject(tabs: tabs)
+        let webView = MockTabWebView(tab: tabs[0])
+        tabs[0].webView = webView
+        webView.isUserInteractionEnabled = false
+        let delegate = TabRemovalPreparationDelegate()
+        subject.addDelegate(delegate)
+        var outcome: Bool?
+
+        subject.removeTab(tabs[0].tabUUID) { outcome = $0 }
+        delegate.finish(false)
+
+        XCTAssertEqual(outcome, false)
+        XCTAssertEqual(subject.tabs.count, 2)
+        XCTAssertTrue(tabs[0].webView === webView)
+        XCTAssertTrue(webView.isUserInteractionEnabled)
+    }
+
+    @MainActor
+    func testRemoveTabRejectsPreparationFromReplacedWebView() {
+        let tabs = generateTabs(count: 2)
+        let subject = createSubject(tabs: tabs)
+        let originalWebView = MockTabWebView(tab: tabs[0])
+        tabs[0].webView = originalWebView
+        let delegate = TabRemovalPreparationDelegate()
+        subject.addDelegate(delegate)
+        var outcome: Bool?
+
+        subject.removeTab(tabs[0].tabUUID) { outcome = $0 }
+        let replacementWebView = MockTabWebView(tab: tabs[0])
+        tabs[0].webView = replacementWebView
+        delegate.finish(true)
+
+        XCTAssertEqual(outcome, false)
+        XCTAssertEqual(subject.tabs.count, 2)
+        XCTAssertTrue(tabs[0].webView === replacementWebView)
+    }
+
+    @MainActor
+    func testBulkPrivateAndRemoteRemovalsCannotBeRetainedByPreparation() throws {
+        let normalTabs = generateTabs(count: 2)
+        let privateTabs = generateTabs(ofType: .privateAny, count: 2)
+        let subject = createSubject(tabs: normalTabs + privateTabs)
+        let delegate = TabRemovalPreparationDelegate()
+        subject.addDelegate(delegate)
+
+        subject.removeAllTabs(isPrivateMode: true)
+
+        XCTAssertTrue(subject.privateTabs.isEmpty)
+        XCTAssertEqual(delegate.preparationCount, 0)
+
+        let remoteURL = try XCTUnwrap(normalTabs[0].url)
+        subject.removeTabs(by: [remoteURL])
+
+        XCTAssertFalse(subject.tabs.contains { $0 === normalTabs[0] })
+        XCTAssertEqual(delegate.preparationCount, 0)
     }
 
     // MARK: - Document pause - restore
@@ -475,4 +577,61 @@ final class TabManagerTests: TabManagerTestsBase {
         mockDiskImageStore.onGetImageForKey = { expectation.fulfill() }
         return expectation
     }
+}
+
+@MainActor
+private final class TabManagerWebViewCreationOrderingDelegate: TabManagerDelegate {
+    let webViewCreationDelegate = TabManagerLegacyTabDelegate()
+    private(set) var didAddTab = false
+    private(set) weak var observedTab: Tab?
+    private(set) weak var webViewAtDidAdd: WKWebView?
+
+    func tabManager(
+        _ tabManager: any TabManager,
+        didAddTab tab: Tab,
+        placeNextToParentTab: Bool,
+        isRestoring: Bool
+    ) {
+        didAddTab = true
+        observedTab = tab
+        webViewAtDidAdd = tab.webView
+        tab.tabDelegate = webViewCreationDelegate
+    }
+}
+
+@MainActor
+private final class TabRemovalPreparationDelegate: TabManagerDelegate {
+    private(set) var preparationCount = 0
+    private var completion: ((Bool) -> Void)?
+
+    func tabManager(
+        _ tabManager: any TabManager,
+        prepareToRemoveTab tab: Tab,
+        completion: @escaping (Bool) -> Void
+    ) -> Bool {
+        preparationCount += 1
+        self.completion = completion
+        return true
+    }
+
+    func finish(_ shouldRemove: Bool) {
+        let completion = completion
+        self.completion = nil
+        completion?(shouldRemove)
+    }
+}
+
+@MainActor
+private final class TabManagerLegacyTabDelegate: LegacyTabDelegate {
+    private(set) weak var createdWebView: WKWebView?
+
+    func tab(_ tab: Tab, didCreateWebView webView: WKWebView) {
+        createdWebView = webView
+    }
+
+    func tab(_ tab: Tab, didAddLoginAlert alert: SaveLoginAlert) {}
+    func tab(_ tab: Tab, didRemoveLoginAlert alert: SaveLoginAlert) {}
+    func tab(_ tab: Tab, didSelectFindInPageForSelection selection: String) {}
+    func tab(_ tab: Tab, didSelectSearchWithFirefoxForSelection selection: String) {}
+    func tab(_ tab: Tab, willDeleteWebView webView: WKWebView) {}
 }
