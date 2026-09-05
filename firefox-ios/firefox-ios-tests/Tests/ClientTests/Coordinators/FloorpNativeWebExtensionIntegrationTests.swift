@@ -1675,6 +1675,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
     func testUBOLReadinessRetriesUntilConcurrentTopologyChangesSettle() async throws {
 #if DEBUG || TESTING
+        // Repeated real WebKit probes can exceed the one-minute CI default on
+        // a loaded Simulator even though every retry continues to make progress.
+        executionTimeAllowance = 180
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_topology_readiness")
         let profile = profileFixture.profile
         defer { profileFixture.cleanup() }
@@ -1739,12 +1742,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
         try await host.installBundledExtension(identifier: identifier)
         let context = try XCTUnwrap(host.installedContext(identifier: identifier))
-        try await host.setPrivateAccess(true, identifier: identifier)
 
         XCTAssertEqual(readinessHookAttempts, 10)
         XCTAssertEqual(sameRealmPropertyNotificationCount, 250)
         XCTAssertTrue(didExerciseTopologyMutation)
         XCTAssertTrue(didFocusPrivateDuringReadiness)
+        // This hook exercises installation readiness only. Private-access
+        // publication has two additional, intentionally stable readiness gates.
+        host.backgroundReadinessAttemptHookForTesting = nil
+        try await host.setPrivateAccess(true, identifier: identifier)
+
         XCTAssertEqual(context.openWindows.count, 2)
         XCTAssertEqual(context.openTabs.count, 3)
         XCTAssertTrue(context.openTabs.contains {
@@ -4990,6 +4997,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
     // swiftlint:disable:next function_body_length
     func testBundledUBOLBlocksProductionHostTabsAndRendersDashboard() async throws {
+        // This end-to-end case exercises both privacy realms and every options
+        // mutation path. Its measured runtime exceeds the one-minute CI default.
+        executionTimeAllowance = 240
         let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_content_effects")
         let profile = profileFixture.profile
