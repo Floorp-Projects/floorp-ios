@@ -203,6 +203,7 @@ jobs:
         with:
           name: floorp-xcode-cloud-build-receipt-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/ci-release-gate.json
             ${{ runner.temp }}/floorp-xcode-cloud-run.json
             ${{ runner.temp }}/floorp-xcode-cloud-build-receipt.json
             ${{ runner.temp }}/floorp-app-review-notes.json

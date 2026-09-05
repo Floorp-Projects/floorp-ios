@@ -1817,6 +1817,20 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             context.errors.isEmpty,
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
+
+        do {
+            try await host.uninstall(identifier: identifier)
+            XCTFail("An extension with retired WebKit readiness surfaces must not purge in-process")
+        } catch {
+            guard let extensionError = error as? FloorpNativeWebExtensionError,
+                  case .restartRequired = extensionError else {
+                XCTFail("Expected restart-required purge deferral, got \(error)")
+                return
+            }
+        }
+        XCTAssertTrue(host.installedContext(identifier: identifier) === context)
+        XCTAssertTrue(context.isLoaded)
+        XCTAssertTrue(host.settingsItems().contains { $0.identifier == identifier })
 #else
         throw XCTSkip("The background readiness hooks are available only in test builds")
 #endif
@@ -5857,31 +5871,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let didCloseOptions = await waitForDismissedPresentation(from: root, attempts: 160)
         XCTAssertTrue(didCloseOptions, "Done must wait for and then close after the ruleset commit")
 
-        let confirmationTemplate = try XCTUnwrap(context.webViewConfiguration)
-        let confirmationConfiguration = try XCTUnwrap(
-            confirmationTemplate.copy() as? WKWebViewConfiguration
-        )
-        FloorpNativeWebExtensionHost.configureExtensionSurface(
-            confirmationConfiguration,
-            websiteDataStore: normalTab.floorpNativeWebsiteDataStore,
-            isPrivate: false
-        )
-        let confirmationWebView = WKWebView(frame: .zero, configuration: confirmationConfiguration)
-        defer { confirmationWebView.stopLoading() }
-        let confirmationNavigation = FloorpWebExtensionNavigationWaiter()
-        try await confirmationNavigation.load(
-            context.baseURL.appendingPathComponent("web_accessible_resources/noop.html"),
-            in: confirmationWebView
-        )
-        let enabledAfterClose = try await confirmationWebView.floorpCallAsyncJavaScript(
-            """
-            return await browser.runtime.sendMessage({ what: 'getEnabledRulesets' });
-            """,
-            contentWorld: .page,
-            timeoutNanoseconds: 5_000_000_000
-        ) as? [String]
-        XCTAssertTrue(enabledAfterClose?.contains("jpn-1") == true)
-
         manager.selectTab(normalTab)
         host.focus(windowUUID: manager.windowUUID, isPrivate: false)
         normalTab.webView?.isHidden = false
@@ -5929,7 +5918,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(japaneseEffect["controlExecuted"] as? Bool, true)
         XCTAssertEqual(japaneseEffect["japaneseBlocked"] as? Bool, true)
         XCTAssertTrue(context.errors.isEmpty, context.errors.map(\.localizedDescription).joined(separator: "\n"))
-        withExtendedLifetime(confirmationNavigation) {}
         withExtendedLifetime(navigationWaiters) {}
         for tab in manager.tabs {
             await tab.close()

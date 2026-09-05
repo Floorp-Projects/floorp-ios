@@ -74,6 +74,7 @@ class FloorpXcodeCloudTestFlightWorkflowTests(unittest.TestCase):
 
     def test_source_bound_receipt_and_review_notes_are_retained(self):
         self.assertIn("floorp-xcode-cloud-build-receipt-${{ github.run_id }}", self.text)
+        self.assertIn("${{ runner.temp }}/ci-release-gate.json", self.text)
         self.assertIn("floorp-xcode-cloud-build-receipt.json", self.text)
         self.assertIn("render-floorp-app-review-notes.py", self.text)
         self.assertIn("floorp-app-review-notes.json", self.text)
