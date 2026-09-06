@@ -3,7 +3,7 @@
   "buildScript": "scripts/package-ubol-ios.sh",
   "changes": [
     {
-      "description": "Declare WebKit's public declarativeNetRequestFeedback permission so uBO Lite's upstream Developer mode can expose its Matched rules diagnostics.",
+      "description": "Declare WebKit's public declarativeNetRequestFeedback permission so uBO Lite's upstream Developer mode can expose its Matched rules diagnostics, and set the derived package's strict Safari minimum to 26.0 where DNR allow-priority ordering is corrected.",
       "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
       "path": "manifest.json"
     },
@@ -17,13 +17,16 @@
       ]
     },
     {
-      "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; create and retain a hidden local-storage sentinel before reads; make local configuration authoritative with revisioned exact readback; preserve caller DNR rule objects while cloning and converting Safari aliases; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
+      "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; create and retain a hidden local-storage sentinel before reads; make local configuration authoritative with revisioned exact readback; normalize native submission and desired/readback through one clone-only Safari 26 rule normalizer; preserve exact-fingerprinted official regex/request-domain rules and fail closed on unproven or WebKit-ignored conditions; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
       "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
       "paths": [
         "js/alarms.js",
         "js/config.js",
         "js/ext-compat.js",
-        "js/ext.js"
+        "js/ext.js",
+        "js/ruleset-manager.js",
+        "js/safari-dnr-normalizer.js",
+        "js/safari-regex-normalizer.js"
       ]
     },
     {
@@ -43,13 +46,14 @@
       ]
     },
     {
-      "description": "Protect settings restore/reset and custom-filter edits with snapshots, durable recovery journals, strict mutation responses, foreground-completed Safari static-ruleset rollback/readback, authoritative state rebroadcast across concurrent dashboards, and retryable queues; track delayed FileReader, editor, filter-list, and dashboard writes to a fixed point so a failed or interrupted operation cannot be reported as saved.",
+      "description": "Protect settings restore/reset and live user-DNR/custom-filter edits with snapshots, durable recovery journals, strict commit/rollback responses, foreground-completed Safari static-ruleset rollback/readback, restored badge/alarm side effects, authoritative state rebroadcast across concurrent dashboards, and retryable queues; preserve incomplete parser drafts but reject effective Safari-incompatible live or imported user DNR before native mutation without removing installed rules, and keep Safari static-ruleset transitions after dynamic-rule validation; track delayed FileReader, editor, filter-list, and dashboard writes to a fixed point so a failed or interrupted operation cannot be reported as saved.",
       "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
       "paths": [
         "js/background.js",
         "js/backup-restore.js",
         "js/compiled-filters.js",
         "js/develop.js",
+        "js/dnr-parser.js",
         "js/filter-lists.js",
         "js/filter-manager-ui.js",
         "js/filter-manager.js",
@@ -78,9 +82,9 @@
   ],
   "license": "GPL-3.0-or-later",
   "release": "2026.825.1619",
-  "sha256": "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2",
+  "sha256": "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d",
   "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
-  "strictMinimumSafariVersion": "18.6",
+  "strictMinimumSafariVersion": "26.0",
   "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
   "upstreamDownloadURL": "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip",
   "upstreamSHA256": "89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94"

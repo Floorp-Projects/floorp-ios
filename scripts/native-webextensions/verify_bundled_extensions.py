@@ -102,7 +102,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "5b82afeba920162a5bfa71501841ea642c82d442b6cbf2ebc7c66ed28ff7b5b6",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "d70eea0f17651299941bc902204dd86372fbcfd3147927bbad2010fa221dbb3a",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -110,7 +110,7 @@ EXPECTED = (
             "buildScript": "scripts/package-ubol-ios.sh",
             "changes": [
                 {
-                    "description": "Declare WebKit's public declarativeNetRequestFeedback permission so uBO Lite's upstream Developer mode can expose its Matched rules diagnostics.",
+                    "description": "Declare WebKit's public declarativeNetRequestFeedback permission so uBO Lite's upstream Developer mode can expose its Matched rules diagnostics, and set the derived package's strict Safari minimum to 26.0 where DNR allow-priority ordering is corrected.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "path": "manifest.json",
                 },
@@ -120,13 +120,16 @@ EXPECTED = (
                     "paths": ["js/background.js", "js/ext-utils.js", "js/popup.js"],
                 },
                 {
-                    "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; create and retain a hidden local-storage sentinel before reads; make local configuration authoritative with revisioned exact readback; preserve caller DNR rule objects while cloning and converting Safari aliases; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
+                    "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; create and retain a hidden local-storage sentinel before reads; make local configuration authoritative with revisioned exact readback; normalize native submission and desired/readback through one clone-only Safari 26 rule normalizer; preserve exact-fingerprinted official regex/request-domain rules and fail closed on unproven or WebKit-ignored conditions; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/alarms.js",
                         "js/config.js",
                         "js/ext-compat.js",
                         "js/ext.js",
+                        "js/ruleset-manager.js",
+                        "js/safari-dnr-normalizer.js",
+                        "js/safari-regex-normalizer.js",
                     ],
                 },
                 {
@@ -146,13 +149,14 @@ EXPECTED = (
                     ],
                 },
                 {
-                    "description": "Protect settings restore/reset and custom-filter edits with snapshots, durable recovery journals, strict mutation responses, foreground-completed Safari static-ruleset rollback/readback, authoritative state rebroadcast across concurrent dashboards, and retryable queues; track delayed FileReader, editor, filter-list, and dashboard writes to a fixed point so a failed or interrupted operation cannot be reported as saved.",
+                    "description": "Protect settings restore/reset and live user-DNR/custom-filter edits with snapshots, durable recovery journals, strict commit/rollback responses, foreground-completed Safari static-ruleset rollback/readback, restored badge/alarm side effects, authoritative state rebroadcast across concurrent dashboards, and retryable queues; preserve incomplete parser drafts but reject effective Safari-incompatible live or imported user DNR before native mutation without removing installed rules, and keep Safari static-ruleset transitions after dynamic-rule validation; track delayed FileReader, editor, filter-list, and dashboard writes to a fixed point so a failed or interrupted operation cannot be reported as saved.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/background.js",
                         "js/backup-restore.js",
                         "js/compiled-filters.js",
                         "js/develop.js",
+                        "js/dnr-parser.js",
                         "js/filter-lists.js",
                         "js/filter-manager-ui.js",
                         "js/filter-manager.js",
@@ -181,14 +185,17 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2",
+            "sha256": "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
-            "strictMinimumSafariVersion": "18.6",
+            "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
             "upstreamDownloadURL": "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip",
             "upstreamSHA256": "89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94",
         },
         "manifest": {
+            "browser_specific_settings": {
+                "safari": {"strict_min_version": "26.0"},
+            },
             "manifest_version": 3,
             "name": "__MSG_extName__",
             "permissions": [
@@ -204,6 +211,10 @@ EXPECTED = (
             "version": "2026.825.1619",
         },
         "static_action_popup_path": "popup.html",
+        "archive_required_members": (
+            "js/safari-dnr-normalizer.js",
+            "js/safari-regex-normalizer.js",
+        ),
         "archive_text_requirements": {
             "js/popup.js": (
                 "assertSuccessfulMessageResponse,",
@@ -305,6 +316,24 @@ EXPECTED = (
                 "        fullDNR: true,\n"
                 "    });",
                 "const SETTINGS_RESTORE_JOURNAL_KEY = 'floorp.settingsRestoreJournal.v1';",
+                "case 'validateSettingsRestore':",
+                "targetConfig.developerMode === true",
+                "async function restoreRolledBackSettingsSideEffects()",
+                "displayActionCountAsBadgeText: rulesetConfig.showBlockedCount",
+                "await resetJobsAlarm();",
+                "rollback?.foregroundReconciliationRequired === true",
+                "if ( rollback?.rolledBack !== true )",
+                "Interrupted settings rollback response was invalid",
+                "async function commitSettingsRestore(id)",
+                "if ( journal?.id !== id )",
+                "return { committed: true };",
+                "async function rollbackSettingsRestore(id)",
+                "phase: 'rollingBack',",
+                "await localReplace(journal.beforeLocal, [ SETTINGS_RESTORE_JOURNAL_KEY ]);",
+                "await restoreRolledBackSettingsSideEffects();",
+                "return { rolledBack: true };",
+                "if ( journal?.phase === 'rollingBack' )",
+                "rolledBack: result?.rolledBack === true,",
                 "enabledRulesets: confirmedRulesets",
             ),
             "js/config.js": (
@@ -328,6 +357,8 @@ EXPECTED = (
                 "runStorageOperation('local'",
                 "runStorageOperation('session'",
                 "if ( webextFlavor === 'safari' ) { throw reason; }",
+                "export function recordOptionsOperationError(reason)",
+                "recordOptionsOperationError(reason);",
             ),
             "js/settings.js": (
                 "assertSuccessfulMessageResponse,",
@@ -336,6 +367,7 @@ EXPECTED = (
                 "showRuntimeError(reason);",
                 "export async function restoreSettingsFromObject(",
                 "await restore(targetConfig);",
+                "recordOptionsOperationError(reason);",
                 "return false;",
                 "input.checked = before;",
             ),
@@ -398,11 +430,74 @@ EXPECTED = (
             ),
             "js/ruleset-manager.js": (
                 "await localWrite('defaultRulesetIds', newDefaultIds)",
+                "import { dnr, normalizeSafariDNRRules } from './ext-compat.js';",
+                "import { validatedRulesFromText } from './dnr-parser.js';",
+                "import { normalizeSafariRegexRequestDomains } from './safari-regex-normalizer.js';",
+                "async function validateUserDnrRules(text, developerMode = true)",
+                "const { rules, bad, shapeErrors } = validatedRulesFromText(text);",
+                "const acceptedRules = await pruneInvalidRegexRules(",
+                "ignoredLineCount: bad.length",
+                "validRules = await normalizeSafariRegexRequestDomains(",
+                "'Safari normalized regexes',",
+                "function normalizeDesiredRules(addRules, realm)",
+                "const normalizedRules = normalizeSafariDNRRules(addRules, rejectedRules) || [];",
+                "const desiredRules = normalizeDesiredRules(addRules, 'dynamic');",
+                "for ( const rule of desiredRules ) {",
+                "const desiredManagedRules = desiredRules",
+                "addRules: desiredRules,",
+                "if ( deepEquals(confirmedManagedRules, desiredManagedRules) === false )",
+                "const compatibleRules = normalizeDesiredRules(addRulesUnfiltered, 'session');",
+                "for ( const rule of compatibleRules ) {",
+                "const addRules = compatibleRules.filter(a => a.id !== 0);",
+                "await dnr.updateSessionRules({ addRules, removeRuleIds });",
+                "const { rules, shapeErrors } = validatedRulesFromText(effectiveRulesText);",
+                "`User DNR validation failed: ${shapeErrors.join('; ')}`",
+                "out.errors.push(...shapeErrors);\n        return out;",
+                "const removeRuleIds = [ ...userRules.map(a => a.id) ];",
+                "const addRules = normalizeSafariDNRRules(\n"
+                "        probedRules,\n"
+                "        compatibilityRejected\n"
+                "    ) || [];",
+                "if ( rejectedRegexes.length !== 0 || compatibilityRejected.length !== 0 ) {",
+                "`User DNR compatibility validation failed: ${out.errors.join('; ')}`",
+                "if ( throwOnError ) { throw reason; }\n        return out;",
+                "const installedAfterFailure = (await getEffectiveUserRules())",
+                "addRules: currentSorted,",
+                "User-rule DNR rollback readback mismatch",
+                "User-rule DNR update failed and installed-rule rollback failed",
+                "for ( const rule of addRules ) {",
+                "const desiredRules = addRules;",
+                "if ( deepEquals(confirmedRules, desiredSorted) === false )",
+                "Settings restore DNR preflight failed:",
                 "updateUserRules(throwOnError = false)",
                 "if ( throwOnError ) { throw reason; }",
                 "Enabled ruleset readback mismatch",
+                "Session DNR readback mismatch",
+                "Session DNR rollback readback mismatch",
+                "Dynamic DNR rollback readback mismatch",
+                "Session ruleset rollback readback mismatch",
                 "const RULESET_RECONCILIATION_KEY = 'floorp.rulesetReconciliation.v1';",
                 "allowStaticMutation = true",
+            ),
+            "js/dnr-parser.js": (
+                "export function validateDNRRuleShape(rule)",
+                "rule condition is required",
+                "redirect action requires exactly one redirect target",
+                "modifyHeaders requires requestHeaders or responseHeaders",
+                "urlFilter and regexFilter are mutually exclusive",
+                "regexFilter with request-domain conditions is unsupported by Safari 26.0",
+                "modifyHeaders user rules are unsupported by Safari",
+                "response-header conditions are unsupported by Safari",
+                "topDomains user rules are unsupported by Safari",
+                "for ( const key of [ 'requestMethods', 'excludedRequestMethods' ] )",
+                "for ( const key of [ 'resourceTypes', 'excludedResourceTypes' ] )",
+                "allowAllRequests does not support excludedRequestDomains on Safari",
+                "allowAllRequests supports only main_frame on Safari",
+                "redirect.transform.port must be empty or a valid uint16",
+                "redirect.transform.scheme is invalid",
+                "export function getDNRRuleShapeErrors(rules)",
+                "export function validatedRulesFromText(text)",
+                "shapeErrors: getDNRRuleShapeErrors(parsed.rules),",
             ),
             "js/mode-manager.js": (
                 "startupFresh = false",
@@ -412,6 +507,8 @@ EXPECTED = (
                 "await saveRulesetConfig()",
             ),
             "js/ext-compat.js": (
+                "import { normalizeSafariDNRRules } from './safari-dnr-normalizer.js';",
+                "export { normalizeSafariDNRRules };",
                 "const safariStorageOperationTails = new Map()",
                 "export const safariLocalStorageSentinelKey = '__floorpSafariStorageSentinel'",
                 "webext.storage.local.set({ [safariLocalStorageSentinelKey]: true })",
@@ -441,7 +538,65 @@ EXPECTED = (
                 "realmRulesetUpdateError = undefined;",
                 "realmRulesetStartupError ??= reason;",
                 "isRealmRulesetStartupPending = false;",
-                "structuredClone(addRules).filter(isSupportedRule)",
+                "const prepareUpdateRules = optionsBefore => {",
+                "? normalizeSafariDNRRules(addRules)",
+                "if ( addRulesAfter?.length ) { optionsAfter.addRules = addRulesAfter; }",
+                "return nativeDNR.updateDynamicRules(optionsAfter);",
+                "return nativeDNR.updateSessionRules(optionsAfter);",
+                "rule0.condition.initiatorDomains = allowed;",
+                "rule0.condition.excludedInitiatorDomains = notAllowed;",
+            ),
+            "js/safari-dnr-normalizer.js": (
+                "const supportedActionTypes = new Set([",
+                "const supportedConditionKeys = new Set([",
+                "const unsupportedIncludedConditionKeys = new Set([",
+                "const unsupportedExcludedConditionKeys = new Set([",
+                "'excludedTopDomains',",
+                "[ 'domains', 'initiatorDomains' ]",
+                "[ 'excludedDomains', 'excludedInitiatorDomains' ]",
+                "sameArray(condition[legacyKey], condition[standardKey]) === false",
+                "delete condition[legacyKey];",
+                "function normalizeExcludedEnumArray(condition, key, supportedValues)",
+                "// Removing an excluded value broadens the rule.",
+                "if ( values.some(value => supportedValues.has(value) === false) ) {\n"
+                "        return `${key} contains values unsupported by Safari`;\n"
+                "    }",
+                "if ( Array.isArray(condition[key]) && condition[key].length === 0 ) {\n"
+                "                delete condition[key];\n"
+                "                continue;\n"
+                "            }\n"
+                "            return `${key} is unsupported`;",
+                "owns(condition, 'requestDomains') ||\n"
+                "            owns(condition, 'excludedRequestDomains')",
+                "return 'regexFilter with request-domain conditions is unsupported';",
+                "return `allowAllRequests with ${key} is unsupported`;",
+                "return 'case-sensitive allowAllRequests is unsupported';",
+                "sameArray(condition.resourceTypes, [ 'main_frame' ]) === false",
+                "export function normalizeSafariDNRRules(rules, rejectedRules = [])",
+                "const rule = structuredClone(sourceRule);",
+                "const reason = normalizeAction(rule) || normalizeCondition(rule);",
+                "rejectedRules.push({ rule: sourceRule, reason });",
+                "out.push(rule);",
+            ),
+            "js/safari-regex-normalizer.js": (
+                "function canonicalJSON(value)",
+                "export async function fingerprintSafariRegexRule(rule)",
+                "if ( key === 'id' ) { continue; }",
+                "subtle.digest(\n        'SHA-256',",
+                "const exactRuleActions = new Map([",
+                "{ type: 'removeRequestDomains' }",
+                "type: 'expandRequestDomains'",
+                "export async function normalizeSafariRegexRequestDomains(",
+                "const hasUnsafeExcludedRequestDomains =",
+                "excludedRequestDomains.length !== 0",
+                "const fingerprint = await fingerprintSafariRegexRule(rule);",
+                "const action = exactRuleActions.get(fingerprint);",
+                "if ( action === undefined ) {\n            rejectedRules.push(rule);",
+                "const normalized = structuredClone(rule);",
+                "delete normalized.condition.requestDomains;",
+                "regexFilter.split(action.hostFragment).length !== 2",
+                "const expanded = structuredClone(normalized);",
+                "delete expanded.condition.requestDomains;",
             ),
             "js/scripting-manager.js": (
                 "registerContentScripts(throwOnError = false)",
@@ -474,6 +629,7 @@ EXPECTED = (
                 "Foreground static ruleset readback mismatch",
                 "what: 'floorpFinalizeForegroundReconciliation'",
                 "foregroundReconciliationRequired: true",
+                "rolledBack: finalized?.rolledBack === true,",
             ),
             "js/fetch.js": (
                 "if ( response.ok !== true )",
@@ -493,11 +649,19 @@ EXPECTED = (
                 "Custom-filter mutation and rollback both failed",
             ),
             "js/backup-restore.js": (
+                "what: 'validateSettingsRestore'",
                 "what: 'beginSettingsRestore'",
                 "what: 'commitSettingsRestore'",
+                "transaction?.foregroundReconciliationRequired === true",
+                "Settings restore transaction response was invalid",
+                "commit?.foregroundReconciliationRequired === true",
+                "commit?.committed !== true",
                 "what: 'rollbackSettingsRestore'",
                 "rollback?.foregroundReconciliationRequired === true",
                 "const reconciliation = await reconcileProtection();",
+                "if ( reconciliation.rolledBack === true )",
+                "rollback = { rolledBack: true };",
+                "if ( rollback?.rolledBack !== true )",
                 "Settings rollback response was invalid",
                 "Settings rollback did not become ready",
             ),
@@ -506,6 +670,110 @@ EXPECTED = (
             "js/popup.js": (
                 "permissionRequest = capturePopupRequest(permissionRequester([",
                 "return queuePopupMutation(( ) => commitFilteringModeNow(",
+            ),
+        },
+        "archive_text_order_requirement_groups": {
+            "js/backup-restore.js": (
+                (
+                    "what: 'validateSettingsRestore'",
+                    "what: 'beginSettingsRestore'",
+                ),
+                (
+                    "what: 'updateUserDnrRules'",
+                    "const reconciliation = await reconcileProtection({\n"
+                    "        enabledRulesets: Array.from(enabledRulesets),",
+                ),
+                (
+                    "let transaction = await sendMessage({ what: 'beginSettingsRestore' });",
+                    "if ( transaction?.foregroundReconciliationRequired === true )",
+                    "\n        transaction = await sendMessage({ "
+                    "what: 'beginSettingsRestore' });",
+                    "if ( typeof transaction?.id !== 'string' || transaction.id === '' )",
+                ),
+                (
+                    "let commit = await sendMessage({",
+                    "if ( commit?.foregroundReconciliationRequired === true )",
+                    "            commit = await sendMessage({",
+                    "if ( commit?.committed !== true )",
+                ),
+                (
+                    "let rollback = await sendMessage({\n"
+                    "                what: 'rollbackSettingsRestore',",
+                    "if ( rollback?.foregroundReconciliationRequired === true ) {\n"
+                    "                const reconciliation = await reconcileProtection();",
+                    "if ( reconciliation.rolledBack === true )",
+                    "rollback = { rolledBack: true };",
+                    "rollback = await sendMessage({\n"
+                    "                        what: 'rollbackSettingsRestore',",
+                    "if ( rollback?.rolledBack !== true )",
+                    "const readiness = await sendMessage({ what: 'floorpReadiness' });",
+                ),
+            ),
+            "js/background.js": (
+                (
+                    "async function commitSettingsRestore(id)",
+                    "if ( journal?.id !== id )",
+                    "const result = await reconcileSettingsState({",
+                    "await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);",
+                    "return { committed: true };",
+                ),
+                (
+                    "async function rollbackSettingsRestore(id)",
+                    "phase: 'rollingBack',",
+                    "await localReplace(journal.beforeLocal, [ SETTINGS_RESTORE_JOURNAL_KEY ]);",
+                    "const result = await reconcileSettingsState({ resetSession: true });",
+                    "await restoreRolledBackSettingsSideEffects();",
+                    "await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);\n"
+                    "    return { rolledBack: true };",
+                ),
+                (
+                    "if ( request.what === 'floorpFinalizeForegroundReconciliation' )",
+                    "if ( journal?.phase === 'rollingBack' )",
+                    "result = await rollbackSettingsRestore(journal.id);",
+                    "rolledBack: result?.rolledBack === true,",
+                ),
+            ),
+            "js/ruleset-manager.js": (
+                (
+                    "const desiredRules = normalizeDesiredRules(addRules, 'dynamic');",
+                    "for ( const rule of desiredRules ) {",
+                    "const desiredManagedRules = desiredRules",
+                    "addRules: desiredRules,",
+                    "if ( deepEquals(confirmedManagedRules, desiredManagedRules) === false )",
+                ),
+                (
+                    "const compatibleRules = normalizeDesiredRules(addRulesUnfiltered, 'session');",
+                    "for ( const rule of compatibleRules ) {",
+                    "const addRules = compatibleRules.filter(a => a.id !== 0);",
+                    "await dnr.updateSessionRules({ addRules, removeRuleIds });",
+                ),
+                (
+                    "const { rules, shapeErrors } = validatedRulesFromText(effectiveRulesText);",
+                    "out.errors.push(...shapeErrors);\n        return out;",
+                    "if ( Array.isArray(sandboxRules) )",
+                    "const removeRuleIds = [ ...userRules.map(a => a.id) ];",
+                    "const addRules = normalizeSafariDNRRules(",
+                    "for ( const rule of addRules ) {",
+                    "const desiredRules = addRules;",
+                    "await dnr.updateDynamicRules({\n"
+                    "            addRules: desiredRules,",
+                    "if ( deepEquals(confirmedRules, desiredSorted) === false )",
+                ),
+            ),
+        },
+        "archive_text_forbidden_requirements": {
+            "js/background.js": ("    'validateSettingsRestore',",),
+            "js/ext-compat.js": (
+                "const isSupportedRule = r => {",
+                "structuredClone(addRules).filter(isSupportedRule)",
+                "r.condition.domains = r.condition.requestDomains;",
+                "r.condition.domains = r.condition.initiatorDomains;",
+                "r.condition.excludedDomains = r.condition.excludedInitiatorDomains;",
+                "rule0.condition.domains = allowed;",
+                "rule0.condition.excludedDomains = notAllowed;",
+            ),
+            "js/ruleset-manager.js": (
+                "Settings restore DNR preflight failed: invalid syntax at line(s)",
             ),
         },
         "review_required_values": {
@@ -617,6 +885,12 @@ def verify_archive(
             }
             if isinstance(commands, dict) and reserved_commands.intersection(commands):
                 fail(f"reserved action command is not allowed in {archive.name}")
+            for member in entry.get("archive_required_members", ()):
+                if names.count(str(member)) != 1:
+                    fail(
+                        f"{archive.name} must contain exactly one required archive "
+                        f"member: {member}"
+                    )
             forbidden_popup_apis = (
                 "browser.action.setPopup",
                 "chrome.action.setPopup",
@@ -645,6 +919,16 @@ def verify_archive(
                             f"{archive.name} omits required compatibility code in "
                             f"{member}: {required_value}"
                         )
+            for member, forbidden_values in entry.get(
+                "archive_text_forbidden_requirements", {}
+            ).items():
+                source = package.read(str(member)).decode("utf-8")
+                for forbidden_value in forbidden_values:
+                    if forbidden_value in source:
+                        fail(
+                            f"{archive.name} includes forbidden compatibility code in "
+                            f"{member}: {forbidden_value}"
+                        )
             for member, ordered_values in entry.get(
                 "archive_text_order_requirements", {}
             ).items():
@@ -655,6 +939,17 @@ def verify_archive(
                         f"{archive.name} orders compatibility code incorrectly in "
                         f"{member}: {ordered_values}"
                     )
+            for member, ordered_groups in entry.get(
+                "archive_text_order_requirement_groups", {}
+            ).items():
+                source = package.read(str(member)).decode("utf-8")
+                for ordered_values in ordered_groups:
+                    positions = [source.find(value) for value in ordered_values]
+                    if -1 in positions or positions != sorted(positions):
+                        fail(
+                            f"{archive.name} orders compatibility code incorrectly in "
+                            f"{member}: {ordered_values}"
+                        )
             bad_member = package.testzip()
             if bad_member is not None:
                 fail(f"CRC failure in {archive.name}: {bad_member}")

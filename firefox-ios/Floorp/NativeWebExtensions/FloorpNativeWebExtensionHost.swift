@@ -637,6 +637,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
         ((String) async -> Void)?
     var navigationCandidateReadinessCompletedHookForTesting:
         ((String, Tab) -> Void)?
+    var navigationReadinessTimeoutHookForTesting:
+        ((String, UInt64) -> Void)?
     var navigationPreparationCompletedHookForTesting:
         ((Tab, WKNavigationAction) -> Void)?
     var privateAccessCommitHookForTesting: ((String) -> Void)?
@@ -679,6 +681,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
         _ context: WKWebExtensionContext
     ) -> Bool {
         hasUnfinishedWebKitOperation(for: context)
+    }
+
+    func isContextQuarantinedForTesting(identifier: String) -> Bool {
+        quarantinedContextIdentifiers.contains(identifier)
     }
 #endif
 
@@ -858,7 +864,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     try await waitForStableBackgroundReadinessIfRequired(
                         in: context,
                         identifier: record.id,
-                        timeoutNanoseconds: backgroundReadinessTimeout(
+                        timeoutNanoseconds: coldBackgroundReadinessTimeout(
                             for: record.id
                         )
                     )
@@ -1043,6 +1049,24 @@ final class FloorpNativeWebExtensionHost: NSObject {
             )
             return false
         }
+        let readinessStart = DispatchTime.now().uptimeNanoseconds
+        let readinessAddition = readinessStart.addingReportingOverflow(
+            backgroundReadinessTimeout(
+                for: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            )
+        )
+        let readinessDeadline = readinessAddition.overflow
+            ? UInt64.max
+            : readinessAddition.partialValue
+        let remainingUBlockReadinessTimeout: () throws -> UInt64 = {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < readinessDeadline else {
+                throw FloorpNativeWebExtensionError.backgroundContentStartupTimedOut(
+                    FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+                )
+            }
+            return readinessDeadline - now
+        }
         readinessAttempt: for _ in 0..<4 {
             let topologyGeneration = extensionTopologyGeneration
             let focusGeneration = actionFocusGeneration
@@ -1075,12 +1099,22 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     return false
                 }
                 do {
+                    let timeoutNanoseconds: UInt64
+                    if isUBlockOriginLite {
+                        timeoutNanoseconds = try remainingUBlockReadinessTimeout()
+                    } else {
+                        timeoutNanoseconds = 3_000_000_000
+                    }
+#if DEBUG || TESTING
+                    navigationReadinessTimeoutHookForTesting?(
+                        identifier,
+                        timeoutNanoseconds
+                    )
+#endif
                     try await waitForStableBackgroundReadinessIfRequired(
                         in: context,
                         identifier: identifier,
-                        timeoutNanoseconds: isUBlockOriginLite
-                            ? backgroundReadinessTimeout(for: identifier)
-                            : 3_000_000_000
+                        timeoutNanoseconds: timeoutNanoseconds
                     )
                 } catch {
                     logger.log(
@@ -1217,6 +1251,17 @@ final class FloorpNativeWebExtensionHost: NSObject {
             .navigationReadinessFailurePolicy == .failClosed
             ? 90_000_000_000
             : 15_000_000_000
+    }
+
+    private func coldBackgroundReadinessTimeout(for identifier: String) -> UInt64 {
+        // On a fresh uBO context WebKit compiles more than 100,000 static
+        // rules and the dynamic regex realm before the first semantic probe
+        // can return. Keep navigation/action probes bounded at 90 seconds,
+        // while allowing cold install, restore, and re-enable enough time for
+        // that one-time native compilation to finish on slower devices.
+        identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            ? 240_000_000_000
+            : backgroundReadinessTimeout(for: identifier)
     }
 
     private func waitForStartupNavigationReadiness() async {
@@ -1732,7 +1777,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
             if record.isEnabled {
                 try await waitForStableBackgroundReadinessIfRequired(
                     in: newContext,
-                    identifier: identifier
+                    identifier: identifier,
+                    timeoutNanoseconds: coldBackgroundReadinessTimeout(for: identifier)
                 )
                 try validateTransition(for: identifier, generation: generation)
                 setContextReady(true, identifier: identifier)
@@ -1839,7 +1885,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
                             }
                             try await waitForStableBackgroundReadinessIfRequired(
                                 in: previousContext,
-                                identifier: identifier
+                                identifier: identifier,
+                                timeoutNanoseconds: coldBackgroundReadinessTimeout(for: identifier)
                             )
                             try validateTransition(
                                 for: identifier,
@@ -2122,7 +2169,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
             try loadContext(context, identifier: identifier)
             try await waitForStableBackgroundReadinessIfRequired(
                 in: context,
-                identifier: identifier
+                identifier: identifier,
+                timeoutNanoseconds: coldBackgroundReadinessTimeout(for: identifier)
             )
             try validateTransition(for: identifier, generation: generation)
             setContextReady(true, identifier: identifier)
@@ -4388,11 +4436,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
             quarantinedContextIdentifiers.insert(identifier)
             setContextReady(false, identifier: identifier)
             NotificationCenter.default.removeObserver(self, name: nil, object: context)
-            if context.isLoaded {
-                context.hasAccessToPrivateData = false
-                context.grantedPermissions = [:]
-                context.grantedPermissionMatchPatterns = [:]
-            }
+            // WebContent can still send API messages owned by the unfinished
+            // operation. Keep WebKit's authorization snapshot unchanged so its
+            // UIProcess validators do not reject those delayed messages.
             return false
         }
         // Permission notifications emitted synchronously by unload belong to

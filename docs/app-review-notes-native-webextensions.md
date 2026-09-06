@@ -4,7 +4,7 @@
 - Applies to: the first build shipping `WKWebExtension` and every build that changes a bundled extension
 - Product minimum: iOS / iPadOS 18.4
 - Dark Reader minimum: iOS / iPadOS 18.4
-- uBlock Origin Lite minimum: iOS / iPadOS 18.6
+- uBlock Origin Lite minimum: iOS / iPadOS 26.0
 
 This document is the source of truth for App Store Connect review notes. It is not a legal
 opinion and does not predict Apple's decision. The release manager must disclose the bundled
@@ -34,10 +34,10 @@ Floorp does not download WebExtension code or accept external ZIPs/catalogs. Cod
 ship in-app; patches and reproducible builds are public.
 
 Implementation:
-- Floorp uses only Apple's public WKWebExtension APIs. `safari-web-extension` uses public
-  WKWebExtension.MatchPattern; navigation preflight uses public loadBackgroundContent.
-- Popups use context.webViewConfiguration and the source-tab store. Private data is nonpersistent,
-  separately authorized, and off by default. Updates/re-enable/reinstall occur at cold startup.
+- Floorp uses only Apple's public WKWebExtension APIs, including MatchPattern,
+  loadBackgroundContent, and context.webViewConfiguration.
+- Popups retain their source tab. Private data is nonpersistent, separately authorized, and off by
+  default. Updates, re-enable, and reinstall complete at cold startup.
 
 Bundled open-source components:
 - Dark Reader 4.9.129, MIT, Floorp-derived. Its patch replaces background.service_worker with
@@ -50,34 +50,38 @@ Bundled open-source components:
   Build: scripts/package-darkreader-ios.sh
   Source commit: c2a707302a39b8047543712e9c582bac07835d34
 - uBlock Origin Lite 2026.825.1619, GNU GPL v3.0 or later, Floorp-derived. Its patch adds public
-  declarativeNetRequestFeedback; `incognito`/numeric windowId keep Matched rules and Report in the
-  source realm. Page Action treats only an omitted initial disabledFeatures value as empty and rejects
-  malformed tab/panel data. It adds deterministic startup, serialized Safari storage, durable DNR/script reconciliation, and a visible
-  page fallback for WebKit background static-DNR failures. Popup/Dashboard Done await mutation
-  readback; an unvisited Filter lists pane preserves the installed selection. Failure offers Keep
-  Editing, Try Again, or explicit Close Anyway with an incomplete-state warning.
+  declarativeNetRequestFeedback; incognito/window IDs keep Matched rules and Report in the source
+  realm. It validates Page Action data and adds deterministic startup, serialized storage, and
+  durable DNR/script reconciliation.
+  Popup/Dashboard Done await native readback. Restore preserves drafts, validates effective user DNR
+  before mutation, and recovers journals, alarms, and badge state. Audited official Safari-ignored
+  regex/domain rules are exact-normalized when provable and otherwise omitted instead of broadened.
+  A rejected live user rule aborts the whole update; mismatched native readback restores and verifies
+  the complete pre-update rule set.
+  An unvisited Filter lists pane preserves the installed selection. Failures remain visible and
+  retryable, with an explicit Close Anyway escape.
   Upstream: https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip
   Upstream SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
-  Derived SHA-256: 402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2
+  Derived SHA-256: 1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch
   Build: scripts/package-ubol-ios.sh
   Source commit: 080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
 - Floorp source: https://github.com/Floorp-Projects/floorp-ios/tree/[RELEASE_TAG_OR_FULL_COMMIT]
-  ZIPs, MIT/GPL text, and provenance ship in-app; patches/build scripts are public.
+  ZIPs, MIT/GPL text, and provenance ship in-app.
 
-Compatibility: Floorp/Dark Reader require iOS 18.4; uBO requires iOS 18.6. Its upstream Safari
-build omits strict-block UI for a WebKit limit; request/cosmetic filtering remains. No sign-in.
+Compatibility: Floorp/Dark Reader require iOS 18.4; uBO requires iOS 26.0. Floorp raises only
+uBO's package minimum to avoid the older WebKit DNR allow-priority behavior; its upstream Safari
+build also omits strict-block UI for a WebKit limit. Request/cosmetic filtering remains. No sign-in.
 
 Privacy: telemetry/crash/sponsored/ad-attribution uploads and tracking are off. Optional Mozilla
 Account services process account/operational data; Sync is E2EE and user-controlled.
 
-Review on iOS 18.6+: install both in Settings > Extensions. Dark Reader checks readiness for 3
-seconds per navigation and fails open; uBO checks the first normal/private navigation per context
-for up to 90 seconds (completed transient WebKit errors retry within that fixed deadline) and fails closed,
-including after the 8-second scene UI budget. Verify popups,
-Options, uBO request/cosmetic blocking, and explicit Private access separation. Enable uBO
-Developer mode and open Matched rules in both modes. After Dark Reader idles 35 seconds, verify a
-fresh HTTP(S) page is dark without popup/reload.
+Review on iOS 26.0+: install both in Settings > Extensions. Dark Reader readiness fails open; uBO's
+first install, cold restore, or re-enable can spend up to 240 seconds compiling its native DNR data;
+its first normal/private navigation per context waits up to 90 seconds and fails closed. Verify both
+popups, Options, uBO request/cosmetic blocking, and separate Private access. Enable uBO Developer
+mode and open Matched rules in both modes. After Dark Reader idles 35 seconds, verify a fresh
+HTTP(S) page is dark without popup/reload.
 ```
 
 ## Paste into TestFlight — What to Test
@@ -99,7 +103,10 @@ Extensions picker underneath it.
 After leaving Floorp/Dark Reader idle for at least 35 seconds, navigate to a fresh
 HTTP(S) page and confirm that its first load is dark without a popup or reload.
 
-On iOS 18.6 or later, install uBlock Origin Lite. On non-sensitive test sites,
+On iOS 26.0 or later, install uBlock Origin Lite. On non-sensitive test sites,
+allow up to four minutes for its first install, cold restore, or re-enable while
+WebKit compiles the native ruleset. Subsequent first navigation in each normal/private
+context can wait up to 90 seconds and fails closed if readiness is not confirmed. Then
 confirm that ad/tracker requests and cosmetic elements covered by its official
 rules are removed. Test its popup and dashboard; enable the Japanese filter list
 (if already enabled, turn it off and back on) and tap Done
@@ -113,8 +120,8 @@ Confirm links from its dashboard open in a Floorp tab and retain the current
 normal/private browsing mode.
 The upstream Safari package intentionally does not show its strict-block
 interstitial; ordinary request blocking and cosmetic filtering should still
-work. On iOS 18.4 or 18.5, uBlock Origin Lite must be shown as requiring iOS
-18.6 while Dark Reader remains available.
+work. On iOS versions earlier than 26.0, uBlock Origin Lite must be shown as
+requiring iOS 26.0 while Dark Reader remains available.
 
 Private Browsing access must remain off until separately enabled. Before
 opt-in, confirm neither extension affects private tabs. After opt-in, test both
@@ -130,7 +137,7 @@ Reader Mode, tracking protection, Notes, or Notes Sync.
 | Extension | Catalog identifier | Version | SHA-256 | Source commit | License | Package policy | Minimum |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
-| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe routing, serialized storage, durable DNR/script reconciliation, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 18.6 |
+| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe routing, serialized storage, durable DNR/script reconciliation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
 
 The canonical local evidence is:
 

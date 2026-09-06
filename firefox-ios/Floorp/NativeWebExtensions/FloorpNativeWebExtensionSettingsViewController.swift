@@ -1652,6 +1652,17 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
     func closeAfterPreparationFailureForTesting() {
         resolveClosePreparationFailure(.closeAnyway)
     }
+
+    func closeAfterNavigationPreparationFailureForTesting() {
+        guard let request = navigationRequest,
+              request.alert != nil,
+              let webView else { return }
+        finishPreparedNavigation(
+            request,
+            in: webView,
+            closePreservedSurface: true
+        )
+    }
 #endif
 
     override func viewDidAppear(_ animated: Bool) {
@@ -1852,13 +1863,18 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
 
     private func finishPreparedNavigation(
         _ request: NavigationRequest,
-        in webView: WKWebView
+        in webView: WKWebView,
+        closePreservedSurface: Bool = false
     ) {
         guard navigationRequest === request, self.webView === webView else {
             request.resolve(.cancel)
             return
         }
         guard !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) else {
+            if closePreservedSurface {
+                closeSurfaceWithoutReaccessingPreservedWebView(for: request)
+                return
+            }
             cancelNavigationPreparation(dismissAlert: true)
             return
         }
@@ -1872,6 +1888,44 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
             preparationAlreadyCompleted: true,
             decisionHandler: { policy in request.resolve(policy) }
         )
+    }
+
+    private func closeSurfaceWithoutReaccessingPreservedWebView(
+        for request: NavigationRequest
+    ) {
+        guard navigationRequest === request else {
+            request.resolve(.cancel)
+            return
+        }
+        navigationRequest = nil
+        navigationPreparationTask?.cancel()
+        navigationPreparationTask = nil
+        let alert = request.alert
+        request.alert = nil
+        let completion = browserOpenCompletion(for: request.action.request.url)
+        request.resolve(.cancel)
+        let closeSurface = { [weak self] in
+            self?.close(
+                animated: true,
+                completion: completion,
+                preparationAlreadyCompleted: true
+            )
+        }
+        if alert?.presentingViewController != nil || alert?.viewIfLoaded?.window != nil {
+            alert?.dismiss(animated: false, completion: closeSurface)
+        } else {
+            closeSurface()
+        }
+    }
+
+    private func browserOpenCompletion(for destination: URL?) -> (() -> Void)? {
+        guard let destination,
+              ["http", "https"].contains(destination.scheme?.lowercased()) else {
+            return nil
+        }
+        return { [openURLInBrowser] in
+            openURLInBrowser(destination)
+        }
     }
 
     private func decideNavigation(
@@ -1943,7 +1997,11 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
                 request.resolve(.cancel)
                 return
             }
-            self.finishPreparedNavigation(request, in: webView)
+            self.finishPreparedNavigation(
+                request,
+                in: webView,
+                closePreservedSurface: true
+            )
         })
         present(alert, animated: true)
     }
@@ -1965,13 +2023,14 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
 
     private func tearDownWebView() {
         guard let webView else { return }
+        let mustPreserve = FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
         closeBridge.invalidate(in: configuration)
         hasCommittedDocument = false
-        if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+        if !mustPreserve {
             webView.stopLoading()
+            webView.navigationDelegate = nil
+            webView.uiDelegate = nil
         }
-        webView.navigationDelegate = nil
-        webView.uiDelegate = nil
         self.webView = nil
         FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
     }
@@ -2057,6 +2116,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     let webView: WKWebView
 
     private let popupURL: URL
+    private let configuration: WKWebViewConfiguration
     private let openURLInBrowser: (URL) -> Void
     private let prepareToClose: (@MainActor (WKWebView) async -> Bool)?
     private let onClose: () -> Void
@@ -2079,7 +2139,9 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         onClose: @escaping () -> Void
     ) {
         self.popupURL = url
-        self.webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        self.configuration = webView.configuration
+        self.webView = webView
         self.openURLInBrowser = openURLInBrowser
         self.prepareToClose = prepareToClose
         self.onClose = onClose
@@ -2102,7 +2164,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         view.backgroundColor = .systemBackground
         view.accessibilityLabel = FloorpStrings.WebExtensions.genericExtensionName
 
-        closeBridge.install(in: webView.configuration)
+        closeBridge.install(in: configuration)
         closeBridge.attach(to: webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
@@ -2250,6 +2312,16 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
 
     func closeAfterPreparationFailureForTesting() {
         resolveClosePreparationFailure(.closeAnyway)
+    }
+
+    func closeAfterNavigationPreparationFailureForTesting() {
+        guard let request = navigationRequest,
+              request.alert != nil else { return }
+        finishPreparedNavigation(
+            request,
+            in: webView,
+            closePreservedSurface: true
+        )
     }
 #endif
 
@@ -2429,13 +2501,18 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
 
     private func finishPreparedNavigation(
         _ request: NavigationRequest,
-        in webView: WKWebView
+        in webView: WKWebView,
+        closePreservedSurface: Bool = false
     ) {
         guard navigationRequest === request, self.webView === webView else {
             request.resolve(.cancel)
             return
         }
         guard !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) else {
+            if closePreservedSurface {
+                closeSurfaceWithoutReaccessingPreservedWebView(for: request)
+                return
+            }
             cancelNavigationPreparation(dismissAlert: true)
             return
         }
@@ -2449,6 +2526,45 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
             preparationAlreadyCompleted: true,
             decisionHandler: { policy in request.resolve(policy) }
         )
+    }
+
+    private func closeSurfaceWithoutReaccessingPreservedWebView(
+        for request: NavigationRequest
+    ) {
+        guard navigationRequest === request else {
+            request.resolve(.cancel)
+            return
+        }
+        navigationRequest = nil
+        navigationPreparationTask?.cancel()
+        navigationPreparationTask = nil
+        let alert = request.alert
+        request.alert = nil
+        let completion = browserOpenCompletion(for: request.action.request.url)
+        request.resolve(.cancel)
+        let closeSurface = { [weak self] in
+            self?.requestClose(
+                animated: true,
+                completion: completion,
+                outcomeCompletion: nil,
+                preparationAlreadyCompleted: true
+            )
+        }
+        if alert?.presentingViewController != nil || alert?.viewIfLoaded?.window != nil {
+            alert?.dismiss(animated: false, completion: closeSurface)
+        } else {
+            closeSurface()
+        }
+    }
+
+    private func browserOpenCompletion(for destination: URL?) -> (() -> Void)? {
+        guard let destination,
+              ["http", "https"].contains(destination.scheme?.lowercased()) else {
+            return nil
+        }
+        return { [openURLInBrowser] in
+            openURLInBrowser(destination)
+        }
     }
 
     private func decideNavigation(
@@ -2520,7 +2636,11 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
                 request.resolve(.cancel)
                 return
             }
-            self.finishPreparedNavigation(request, in: webView)
+            self.finishPreparedNavigation(
+                request,
+                in: webView,
+                closePreservedSurface: true
+            )
         })
         present(alert, animated: true)
     }
@@ -2542,6 +2662,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
 
     private func invalidatePopup(closeOutcome: Bool = false) {
         guard !didClose else { return }
+        let mustPreserve = FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
         cancelNavigationPreparation(dismissAlert: true)
         let abandonedRequest = activeCloseRequest ?? failedCloseRequest
         didClose = true
@@ -2550,13 +2671,13 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         activeCloseRequest = nil
         failedCloseRequest = nil
         view.isUserInteractionEnabled = true
-        closeBridge.invalidate(in: webView.configuration)
+        closeBridge.invalidate(in: configuration)
         hasCommittedDocument = false
-        if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+        if !mustPreserve {
             webView.stopLoading()
+            webView.navigationDelegate = nil
+            webView.uiDelegate = nil
         }
-        webView.navigationDelegate = nil
-        webView.uiDelegate = nil
         FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
         onClose()
         abandonedRequest?.outcomeCompletion?(false)

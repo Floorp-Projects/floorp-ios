@@ -94,6 +94,10 @@ enum FloorpNativeWebExtensionCatalog {
         "87c01f8c8e71ab2f65a14225ddaf284198c19417ea77d3d3e70497bfeeec4fcd"
     static let prePopupInitializationRetryUBlockOriginLiteSHA256 =
         "0bf4f4ce6716a971bcf03bf1e18612161a6005152a37b591bf54200b00eb5a6d"
+    static let preSafariDNRNormalizationUBlockOriginLiteSHA256 =
+        "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2"
+    static let preUserDNRFailClosedUBlockOriginLiteSHA256 =
+        "f820df6b21d6a32ff002cd8d25d44063183ab0768c9386a010c2561e8c8ae7ee"
 
     static let darkReader = FloorpNativeWebExtensionCatalogItem(
         identifier: "floorp.bundled.darkreader",
@@ -130,7 +134,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.ublock-origin-lite",
         resourceName: "uBOLite-floorp-ios-2026.825.1619",
         resourceExtension: "zip",
-        expectedSHA256: "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2",
+        expectedSHA256: "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d",
         expectedVersion: "2026.825.1619",
         contextIdentifier: "org.ublockorigin.lite.floorp-ios",
         baseURLScheme: "safari-web-extension",
@@ -139,7 +143,7 @@ enum FloorpNativeWebExtensionCatalog {
         requiresBackgroundReadiness: true,
         requiresNavigationBackgroundReadiness: true,
         navigationReadinessFailurePolicy: .failClosed,
-        minimumOS: FloorpOperatingSystemVersion(18, 6),
+        minimumOS: FloorpOperatingSystemVersion(26, 0),
         name: "uBlock Origin Lite",
         summary: FloorpStrings.WebExtensions.uBlockOriginLiteSummary,
         source: "https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.825.1619",
@@ -199,7 +203,9 @@ enum FloorpNativeWebExtensionCatalog {
                     preLocalStorageSentinelUBlockOriginLiteSHA256,
                     preWakeContentScriptReconciliationUBlockOriginLiteSHA256,
                     preDurableProtectionReconciliationUBlockOriginLiteSHA256,
-                    prePopupInitializationRetryUBlockOriginLiteSHA256
+                    prePopupInitializationRetryUBlockOriginLiteSHA256,
+                    preSafariDNRNormalizationUBlockOriginLiteSHA256,
+                    preUserDNRFailClosedUBlockOriginLiteSHA256
                 ].contains(record.sha256)
             return isOfficialPackage || isPreviousFloorpPackage ? uBlockOriginLite : nil
         }

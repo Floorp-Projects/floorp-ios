@@ -14,7 +14,10 @@ Extensions picker underneath it.
 After leaving Floorp/Dark Reader idle for at least 35 seconds, navigate to a fresh
 HTTP(S) page and confirm that its first load is dark without a popup or reload.
 
-On iOS 18.6 or later, install uBlock Origin Lite. On non-sensitive test sites,
+On iOS 26.0 or later, install uBlock Origin Lite. On non-sensitive test sites,
+allow up to four minutes for its first install, cold restore, or re-enable while
+WebKit compiles the native ruleset. Subsequent first navigation in each normal/private
+context can wait up to 90 seconds and fails closed if readiness is not confirmed. Then
 confirm that ad/tracker requests and cosmetic elements covered by its official
 rules are removed. Test its popup and dashboard; enable the Japanese filter list
 (if already enabled, turn it off and back on) and tap Done
@@ -28,8 +31,8 @@ Confirm links from its dashboard open in a Floorp tab and retain the current
 normal/private browsing mode.
 The upstream Safari package intentionally does not show its strict-block
 interstitial; ordinary request blocking and cosmetic filtering should still
-work. On iOS 18.4 or 18.5, uBlock Origin Lite must be shown as requiring iOS
-18.6 while Dark Reader remains available.
+work. On iOS versions earlier than 26.0, uBlock Origin Lite must be shown as
+requiring iOS 26.0 while Dark Reader remains available.
 
 Private Browsing access must remain off until separately enabled. Before
 opt-in, confirm neither extension affects private tabs. After opt-in, test both

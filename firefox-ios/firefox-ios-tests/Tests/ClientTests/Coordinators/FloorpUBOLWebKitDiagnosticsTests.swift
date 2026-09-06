@@ -416,6 +416,52 @@ private final class FloorpUBOLBackgroundLoadGate {
 final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
     private static let optInEnvironmentKey = "FLOORP_RUN_UBOL_DNR_DIAGNOSTICS"
 
+    func testJavaScriptTimeoutQuarantinesWebViewForProcessLifetimeWhenCallbackOutlivesTimeout()
+        async throws {
+        let webView = WKWebView(frame: .zero)
+        let navigation = FloorpUBOLNavigationWaiter()
+        let documentURL = try XCTUnwrap(
+            URL(string: "data:text/html,%3Cmeta%20charset%3Dutf-8%3E")
+        )
+        try await navigation.load(documentURL, in: webView)
+
+        do {
+            _ = try await webView.floorpCallAsyncJavaScript(
+                """
+                return await new Promise(resolve => {
+                    setTimeout(() => {
+                        globalThis.floorpDelayedNativeCallbackFinished = true;
+                        resolve(true);
+                    }, 150);
+                });
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 10_000_000
+            )
+            XCTFail("The deliberately delayed JavaScript call must time out")
+        } catch FloorpUBOLDNRDiagnosticError.javaScriptTimedOut {
+            // Expected: WebKit still owns the callback after Swift resumes.
+        } catch {
+            XCTFail("Unexpected delayed JavaScript error: \(error)")
+        }
+
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView),
+            "A timed-out WebKit document must be quarantined before its owner can tear it down"
+        )
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let callbackFinished = try await webView.floorpCallAsyncJavaScript(
+            "return globalThis.floorpDelayedNativeCallbackFinished === true;",
+            contentWorld: .page,
+            timeoutNanoseconds: 2_000_000_000
+        ) as? Bool
+        XCTAssertEqual(callbackFinished, true)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView),
+            "A timed-out WebKit document remains process-lifetime quarantined after callback delivery"
+        )
+    }
+
     func testOfficialUBOLWebKitDNRCompilerMatrixAndBisectsSingletonFailures() async throws {
         guard ProcessInfo.processInfo.environment[Self.optInEnvironmentKey] == "1" else {
             throw XCTSkip(
@@ -2595,14 +2641,40 @@ private struct FloorpUBOLJavaScriptValue: @unchecked Sendable {
 }
 
 @MainActor
-private final class FloorpUBOLJavaScriptCallGate {
+private final class FloorpUBOLJavaScriptCallGate: @unchecked Sendable {
     private var continuation: CheckedContinuation<FloorpUBOLJavaScriptValue, any Error>?
+    private var timeoutTask: Task<Void, Never>?
+    private weak var webView: WKWebView?
+    private var nativeCallIsInFlight = false
 
-    init(continuation: CheckedContinuation<FloorpUBOLJavaScriptValue, any Error>) {
+    func start(
+        continuation: CheckedContinuation<FloorpUBOLJavaScriptValue, any Error>,
+        in webView: WKWebView,
+        timeoutNanoseconds: UInt64
+    ) {
         self.continuation = continuation
+        self.webView = webView
+        nativeCallIsInFlight = true
+        FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.beginOperation(in: webView)
+        timeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            } catch {
+                return
+            }
+            self?.timeout()
+        }
     }
 
     func resolve(_ result: Result<Any, any Error>) {
+        guard nativeCallIsInFlight else { return }
+        nativeCallIsInFlight = false
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        if let webView {
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
+        }
+        webView = nil
         guard let continuation else { return }
         self.continuation = nil
         switch result {
@@ -2615,8 +2687,27 @@ private final class FloorpUBOLJavaScriptCallGate {
 
     func timeout() {
         guard let continuation else { return }
+        // A Swift timeout does not cancel WebKit's native callback. Quarantine
+        // the document before resuming the test so XCTest teardown cannot call
+        // stopLoading() while WebKit still owns the operation.
+        if let webView {
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)
+        }
         self.continuation = nil
+        timeoutTask = nil
         continuation.resume(throwing: FloorpUBOLDNRDiagnosticError.javaScriptTimedOut)
+    }
+
+    func cancel() {
+        guard let continuation else { return }
+        // Cancellation has the same native ownership boundary as a timeout.
+        if let webView {
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)
+        }
+        self.continuation = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        continuation.resume(throwing: CancellationError())
     }
 }
 
@@ -2628,19 +2719,29 @@ extension WKWebView {
         contentWorld: WKContentWorld,
         timeoutNanoseconds: UInt64 = 60_000_000_000
     ) async throws -> Any? {
-        let boxed: FloorpUBOLJavaScriptValue = try await withCheckedThrowingContinuation { continuation in
-            let gate = FloorpUBOLJavaScriptCallGate(continuation: continuation)
-            callAsyncJavaScript(
-                functionBody,
-                arguments: arguments,
-                in: nil,
-                in: contentWorld
-            ) { result in
-                gate.resolve(result)
+        let gate = FloorpUBOLJavaScriptCallGate()
+        let boxed: FloorpUBOLJavaScriptValue = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                gate.start(
+                    continuation: continuation,
+                    in: self,
+                    timeoutNanoseconds: timeoutNanoseconds
+                )
+                callAsyncJavaScript(
+                    functionBody,
+                    arguments: arguments,
+                    in: nil,
+                    in: contentWorld
+                ) { result in
+                    gate.resolve(result)
+                }
+                if Task.isCancelled {
+                    gate.cancel()
+                }
             }
+        } onCancel: {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                gate.timeout()
+                gate.cancel()
             }
         }
         return boxed.value

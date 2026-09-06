@@ -41,7 +41,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2`、
+派生 SHA-256 は `1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -52,7 +52,10 @@ Report 導線も source の window ID／incognito を渡し、同一 URL の検�
 Page Action の初期化では active tab の整数 ID／window ID と incognito、popup panel の boolean、
 disabled-features 配列、非負整数の custom-filter count、0〜3 の blocking level を検証する。初回 admin cache 未構築による
 `disabledFeatures` の未提供だけは空配列へ正規化し、null、非配列、非文字列要素を含む応答は
-引き続き拒否して bounded retry する。
+引き続き拒否して bounded retry する。設定復元は user DNR の構文・必須 shape・
+regex を read-only preflight し、recovery journal や static DNR を変更する前に不正な入力を
+拒否する。preflight 後に WebKit が dynamic DNR を拒否した場合にも二重の static
+ruleset 再構築を避けるため、static ruleset reconciliation は適用シーケンスの最後に行う。
 起動時の DNR・content script・設定・session storage・managed policy を待ち、起動中に届いた
 Safari realm 更新を完了後に直列化する。起動中の失敗は readiness まで保持しつつ、後続の成功で
 一時的な realm error を回復できる。閉鎖済み window の stale focus event を無害化してから、
@@ -84,7 +87,7 @@ mutation revision が 0 の場合は空 DOM を選択として適用せず、nat
 `js/floorp-reconcile.js` を読み込み、durable target の static/derived DNR と script を exact
 readback まで収束させた後だけ background finalize と `{ ready: true }` を認める。
 同一拡張機能 origin からのみ応答する readiness handshake を context の初回 activation に使う。
-`scripts/package-ubol-ios.sh` がこの監査済み差分を再現する。package の宣言どおり iOS 18.6
+`scripts/package-ubol-ios.sh` がこの監査済み差分を再現する。Floorp 派生 package の宣言どおり iOS 26.0
 未満では利用不可にする。
 
 2026-09-03 の full acceptance は、既定 113,100 static rules、日本語 1,906 rules、
@@ -697,14 +700,16 @@ deployment target 引き上げ後、first-party app 内の 18.4 未満向け ava
 
 ### 13.2 package-specific floor
 
-app の floor と extension package の floor は別である。現在の uBOL Safari manifest は
-`browser_specific_settings.safari.strict_min_version = 18.6` を宣言している。
+app の floor と extension package の floor は別である。Floorp 派生 uBOL Safari manifest は
+`browser_specific_settings.safari.strict_min_version = 26.0` を宣言する。
 
-- iOS 18.4 / 18.5: native WebExtension host と対応 package は利用可、現行 uBOL は unavailable
-- iOS 18.6 以降: uBOL の install/enable 試験対象
+- iOS 18.4 以上 26.0 未満: native WebExtension host と Dark Reader は利用可、uBOL は unavailable
+- iOS 26.0 以降: uBOL の install/enable 試験対象
 
-manifest の minimum version を Floorp が書き換えたり無視したりしない。uBOL を全対応
-端末で必須にする製品判断なら、app floor 自体を 18.6 へ上げる。
+Safari 18.6 世代の DNR には、同優先度の allow rule が後続 block rule を確実に止めない
+既知の変換問題がある。広告遮断の意味を黙って変えないため、Floorp は app 全体ではなく
+派生 uBOL package だけを、優先度処理が修正された Safari / iOS 26.0 へ引き上げる。
+catalog と manifest の minimum version は常に同じ値とし、host はこれを無視しない。
 
 ## 14. 旧実装の削除
 
@@ -797,7 +802,7 @@ cleanup は次を必須とする。
 
 - current build/test result と変更中ファイルを固定
 - Dark Reader の再現可能な派生 ZIP と uBOL の upstream ZIP、digest、license、provenance を用意
-- iOS 18.4 / 18.6 / current simulator matrix を CI に用意
+- iOS 18.4 / 26.0 / current simulator matrix を CI に用意
 
 ### Phase 1: OS floor と native host skeleton
 
@@ -833,7 +838,7 @@ cleanup は次を必須とする。
 
 - Floorp 派生 Dark Reader package の background/content/action/storage/readback/close test
 - host preflight 経由の35秒 idle / terminate-relaunch cold-wake test
-- iOS 18.6+ で公式 uBOL Safari package の DNR/action/options/strictblock test
+- iOS 26.0+ で Floorp 派生 uBOL Safari package の DNR/action/options test
 - context runtime errors と性能を記録
 
 ### Phase 6: cutover と全面削除
@@ -911,6 +916,30 @@ Simulator / WebKit 8624.2.5.10.4 で次を確認した。
   WebKit が extension page を入れ替えた場合は新しい制御 page で background readiness を
   再確認する。callback 消失を無期限待機や合格として扱わない
 
+Safari 26 の DNR 変換でも `regexFilter` と `requestDomains` の併用時に request domain 条件が
+無視される。公式 ruleset の該当53件のうち38件は WebKit の regex support probe でもともと
+除外され、実効候補は15件（既定 ublock-filters 14件、任意 annoyances 1件）である。Floorp は
+ID を除く rule 全体の canonical SHA-256 fingerprint が一致する10件だけを変換する。domain 条件が
+regex に完全内包される4件は条件を除去し、有限の host-language を持つ6件は literal domain ごとの
+21件へ展開する。生成25件は再度 native regex probe を通す。意味保存を証明できない5件は
+desired set と native update の両方から fail closed で除外する。別に、WebKit が不正確に変換する
+`regexFilter` と非空 `excludedRequestDomains` の実効候補1件も除外する。既定有効 ruleset の
+regex 269件は native probe 後93件、厳密変換後104件となり、危険な組合せは0件である。
+strict-block realm の同種94件は Safari 経路では upstream の early return により実行されない。
+通常の static request blocking と cosmetic filtering は維持され、未知または変更された rule は
+fingerprint 不一致として自動的に fail closed になる。
+
+user DNR の restore preflight は Safari 26 の実装済み shape だけを許可し、WebKit が無視する
+非空条件や Floorp compatibility layer が drop する action を journal 開始前に拒否する。
+一方、Developer mode 無効時の text と、loose parser が incomplete と判定する editor draft は
+uBO 本来の保存契約どおり byte-equivalent に往復させ、実効 rule として native DNR へ送らない。
+live update でも regex probe または Safari normalizer が1件でも拒否した場合は更新全体を失敗させ、
+`updateDynamicRules` を呼ばず、既存の native user DNR と件数 metadata を保持する。
+native update が成功を返しても readback が部分集合なら、更新前 snapshot へ rollback して exact
+readback を必須とし、rollback 失敗または不一致は fatal error とする。
+復元 commit は `{ committed: true }` を必須とし、中断 journal、static foreground reconciliation、
+badge 設定、deferred-job alarm まで rollback 後に再収束させる。
+
 診断は `FLOORP_RUN_UBOL_DNR_DIAGNOSTICS=1` の時だけ実行し、JSON report を test
 attachment とログへ出力する。診断用 controller を non-persistent data store で作ると、
 ruleset の compile 成功後も通信遮断が適用されない偽陰性になった。本番 host と同じ
@@ -958,7 +987,7 @@ uBOL acceptance は少なくとも次を end-to-end で確認する。
 7. permission、private toggle、action、options、install/update/uninstall が動き、update と
    uninstall 後の reinstall は同一プロセスで identity を再 load せず再起動を要求する
 8. Dark Reader acceptance が通る
-9. iOS 18.6+ で uBOL acceptance が通る
+9. iOS 26.0+ で uBOL acceptance が通る
 10. 旧 source、tests、fixtures、feature flags、prefs、永続領域が削除される
 11. `WKWebExtensionContext.errors` を settings と diagnostics で確認できる
 12. clean install、upgrade、multi-window、private、restart の実機試験が通る
@@ -981,7 +1010,7 @@ FloorpWebContentPolicyCoordinator
 | 判断 | 推奨 |
 | --- | --- |
 | app minimum OS | iOS 18.4 |
-| uBOL minimum OS | package 宣言どおり iOS 18.6 |
+| uBOL minimum OS | Floorp 派生 package 宣言どおり iOS 26.0 |
 | legacy fallback | なし |
 | arbitrary ZIP import | v1 では無効 |
 | remote catalog | v1 では未提供 |
@@ -999,6 +1028,9 @@ revision を同じ notes に明記し、無変更の upstream asset とは表現
 Dark Reader は毎 navigation を3秒 fail-open、uBO Lite は context ごとの通常／private 初回を
 90秒 fail-closed（完了済みの一過性 error だけを固定 deadline 内で再試行）として成功後に cache することを
 review notes と試験手順に明記する。
+uBOL の初回 install、cold restore、再有効化では 100,000 件超の静的ルールと dynamic regex を
+WebKit が native compile するため、background readiness を最大240秒待つ。通常 navigation／action／options の
+90秒上限とは分離し、この cold-start 上限も review notes と試験手順へ明記する。
 Dark Reader と uBOL はそれぞれの license notice と provenance JSON も ZIP とは別の
 app bundle resource として同梱する。
 

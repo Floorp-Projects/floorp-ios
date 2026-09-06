@@ -450,12 +450,24 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             duringClose.deniedPermissions.first { $0.value == "contextMenus" }?.expiration,
             deniedExpiration
         )
+        let runtimeHadPrivateAccess = fixture.context.hasAccessToPrivateData
+        let runtimeGrantedPermissions = fixture.context.grantedPermissions
+        let runtimeGrantedMatchPatterns = fixture.context.grantedPermissionMatchPatterns
 
         try await fixture.host.setEnabled(false, identifier: identifier)
         XCTAssertTrue(fixture.context.isLoaded)
-        XCTAssertFalse(fixture.context.hasAccessToPrivateData)
-        XCTAssertTrue(fixture.context.grantedPermissions.isEmpty)
-        XCTAssertTrue(fixture.context.grantedPermissionMatchPatterns.isEmpty)
+        XCTAssertEqual(fixture.context.hasAccessToPrivateData, runtimeHadPrivateAccess)
+        XCTAssertEqual(fixture.context.grantedPermissions, runtimeGrantedPermissions)
+        XCTAssertEqual(
+            fixture.context.grantedPermissionMatchPatterns,
+            runtimeGrantedMatchPatterns
+        )
+        XCTAssertTrue(
+            fixture.host.isContextQuarantinedForTesting(identifier: identifier)
+        )
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
+        )
         let quarantined = try XCTUnwrap(
             fixture.host.registryRecordForTesting(identifier: identifier)
         )
@@ -558,12 +570,22 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertTrue(
             fixture.host.hasUnfinishedWebKitOperationForTesting(fixture.context)
         )
+        let runtimeHadPrivateAccess = fixture.context.hasAccessToPrivateData
+        let runtimeGrantedPermissions = fixture.context.grantedPermissions
+        let runtimeGrantedMatchPatterns = fixture.context.grantedPermissionMatchPatterns
 
         try await fixture.host.setEnabled(false, identifier: item.identifier)
 
         XCTAssertTrue(fixture.context.isLoaded)
-        XCTAssertTrue(fixture.context.grantedPermissions.isEmpty)
-        XCTAssertTrue(fixture.context.grantedPermissionMatchPatterns.isEmpty)
+        XCTAssertEqual(fixture.context.hasAccessToPrivateData, runtimeHadPrivateAccess)
+        XCTAssertEqual(fixture.context.grantedPermissions, runtimeGrantedPermissions)
+        XCTAssertEqual(
+            fixture.context.grantedPermissionMatchPatterns,
+            runtimeGrantedMatchPatterns
+        )
+        XCTAssertTrue(
+            fixture.host.isContextQuarantinedForTesting(identifier: item.identifier)
+        )
         let disabled = try XCTUnwrap(
             fixture.host.registryRecordForTesting(identifier: item.identifier)
         )
@@ -1849,6 +1871,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
     }
 
+    // swiftlint:disable:next function_body_length
     func testColdRestoreMigratesTheInitialFloorpUBOLPackageToTheCurrentBuild() async throws {
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_migration")
         let profile = profileFixture.profile
@@ -1927,6 +1950,24 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(
             FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
                 prePopupInitializationRetryRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preSafariDNRNormalizationRecord = legacyRecord
+        preSafariDNRNormalizationRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preSafariDNRNormalizationUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preSafariDNRNormalizationRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preUserDNRFailClosedRecord = legacyRecord
+        preUserDNRFailClosedRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preUserDNRFailClosedUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preUserDNRFailClosedRecord
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
@@ -2630,6 +2671,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 "version": FloorpNativeWebExtensionCatalog.uBlockOriginLite.expectedVersion
             ]
         }
+        var navigationReadinessTimeouts = [UInt64]()
         var didInvalidateDuringProbe = false
         host.backgroundReadinessAttemptHookForTesting = { hookIdentifier in
             guard hookIdentifier == identifier,
@@ -2637,9 +2679,14 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             didInvalidateDuringProbe = true
             optionsPage.prepareForHostTeardown()
         }
+        host.navigationReadinessTimeoutHookForTesting = { hookIdentifier, timeout in
+            guard hookIdentifier == identifier else { return }
+            navigationReadinessTimeouts.append(timeout)
+        }
         defer {
             host.backgroundReadinessResponseHookForTesting = nil
             host.backgroundReadinessAttemptHookForTesting = nil
+            host.navigationReadinessTimeoutHookForTesting = nil
         }
 
         let action = MockNavigationAction(url: url, type: .linkActivated)
@@ -2655,6 +2702,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertTrue(didPrepare)
         XCTAssertTrue(host.consumePreparedNavigation(action))
         XCTAssertEqual(probeCount, 2)
+        XCTAssertEqual(navigationReadinessTimeouts.count, 2)
+        XCTAssertLessThanOrEqual(navigationReadinessTimeouts[0], 90_000_000_000)
+        XCTAssertLessThan(navigationReadinessTimeouts[1], navigationReadinessTimeouts[0])
         XCTAssertFalse(host.needsBackgroundReadiness(beforeNavigating: tab, to: url))
 #else
         throw XCTSkip("The navigation readiness hooks are available only in test builds")
@@ -3155,6 +3205,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let enabled = try XCTUnwrap(
             host.settingsItems().first { $0.identifier == identifier }
         )
+        let runtimeHadPrivateAccess = context.hasAccessToPrivateData
+        let runtimeGrantedPermissions = context.grantedPermissions
+        let runtimeGrantedMatchPatterns = context.grantedPermissionMatchPatterns
         try await host.setEnabled(false, identifier: identifier)
 
 #if DEBUG || TESTING
@@ -3208,12 +3261,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(queued.matchPatterns, enabled.matchPatterns)
         XCTAssertEqual(queued.hasPrivateAccess, enabled.hasPrivateAccess)
         // A readiness timeout deliberately keeps the loaded WebKit context
-        // quarantined until process exit. Whether unload completed first or
-        // quarantine won the race, the disabled context must be inert.
+        // quarantined until process exit. The host must stay inert without
+        // changing authorization while WebKit can still deliver an API message.
         if context.isLoaded {
-            XCTAssertFalse(context.hasAccessToPrivateData)
-            XCTAssertTrue(context.grantedPermissions.isEmpty)
-            XCTAssertTrue(context.grantedPermissionMatchPatterns.isEmpty)
+            XCTAssertEqual(context.hasAccessToPrivateData, runtimeHadPrivateAccess)
+            XCTAssertEqual(context.grantedPermissions, runtimeGrantedPermissions)
+            XCTAssertEqual(
+                context.grantedPermissionMatchPatterns,
+                runtimeGrantedMatchPatterns
+            )
+            XCTAssertTrue(host.isContextQuarantinedForTesting(identifier: identifier))
             XCTAssertTrue(queued.errorDescription?.contains("Restart Floorp") == true)
         }
         XCTAssertFalse(host.canMutate(tab: normalTab, in: context))
@@ -3827,6 +3884,96 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertNil(root.presentedViewController)
     }
 
+    // swiftlint:disable:next function_body_length
+    func testOptionsNavigationCloseAnywayClosesPreservedSurfaceAndOpensExternalURL() async throws {
+#if DEBUG || TESTING
+        let destination = try XCTUnwrap(URL(string: "https://example.com/preserved-options"))
+        var events = [String]()
+        var preparationCount = 0
+        var receivedPolicy: WKNavigationActionPolicy?
+        var preservedWebView: WKWebView?
+        let policyResolved = expectation(description: "Navigation policy cancelled")
+        let surfaceClosed = expectation(description: "Options surface closed")
+        let externalURLOpened = expectation(description: "External URL opened after dismissal")
+        let page = FloorpNativeWebExtensionPageViewController(
+            title: "Options",
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { url in
+                XCTAssertEqual(url, destination)
+                events.append("opened")
+                externalURLOpened.fulfill()
+            },
+            prepareToClose: { webView in
+                preparationCount += 1
+                preservedWebView = webView
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.beginOperation(in: webView)
+                return false
+            },
+            onClose: {
+                events.append("closed")
+                surfaceClosed.fulfill()
+            }
+        )
+        let navigationController = UINavigationController(rootViewController: page)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer {
+            if let preservedWebView {
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(
+                    in: preservedWebView
+                )
+            }
+            page.prepareForHostTeardown()
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        root.present(navigationController, animated: false)
+        page.loadViewIfNeeded()
+        let webView = try XCTUnwrap(
+            page.view.subviews.first { $0 is WKWebView } as? WKWebView
+        )
+        try await waitForDocumentCommit(in: webView)
+
+        page.webView(
+            webView,
+            decidePolicyFor: MockNavigationAction(url: destination, type: .linkActivated)
+        ) { policy in
+            receivedPolicy = policy
+            events.append("policy")
+            policyResolved.fulfill()
+        }
+        for _ in 0..<40 {
+            if page.presentedViewController is UIAlertController { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(page.presentedViewController as? UIAlertController)
+        XCTAssertEqual(preparationCount, 1)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
+        )
+
+        page.closeAfterNavigationPreparationFailureForTesting()
+        await fulfillment(
+            of: [policyResolved, surfaceClosed, externalURLOpened],
+            timeout: 2,
+            enforceOrder: true
+        )
+
+        XCTAssertEqual(receivedPolicy, .cancel)
+        XCTAssertNil(root.presentedViewController)
+        XCTAssertEqual(events, ["policy", "closed", "opened"])
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
+        )
+#else
+        throw XCTSkip("The navigation-preparation test seam is available only in test builds")
+#endif
+    }
+
     func testOptionsClosePreparationFailureOffersExplicitEscapeAndClosesOnce() async throws {
 #if DEBUG || TESTING
         var closeAttemptCount = 0
@@ -4105,6 +4252,91 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(completionCount, 1)
 #else
         throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testActionPopupNavigationCloseAnywayClosesPreservedSurfaceAndOpensExternalURL() async throws {
+#if DEBUG || TESTING
+        let destination = try XCTUnwrap(URL(string: "https://example.com/preserved-popup"))
+        var events = [String]()
+        var preparationCount = 0
+        var receivedPolicy: WKNavigationActionPolicy?
+        var preservedWebView: WKWebView?
+        let policyResolved = expectation(description: "Navigation policy cancelled")
+        let surfaceClosed = expectation(description: "Action popup closed")
+        let externalURLOpened = expectation(description: "External URL opened after dismissal")
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { url in
+                XCTAssertEqual(url, destination)
+                events.append("opened")
+                externalURLOpened.fulfill()
+            },
+            prepareToClose: { webView in
+                preparationCount += 1
+                preservedWebView = webView
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.beginOperation(in: webView)
+                return false
+            },
+            onClose: {
+                events.append("closed")
+                surfaceClosed.fulfill()
+            }
+        )
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer {
+            if let preservedWebView {
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(
+                    in: preservedWebView
+                )
+            }
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        root.present(popup, animated: false)
+        popup.loadViewIfNeeded()
+        try await waitForDocumentCommit(in: popup.webView)
+
+        popup.webView(
+            popup.webView,
+            decidePolicyFor: MockNavigationAction(url: destination, type: .linkActivated)
+        ) { policy in
+            receivedPolicy = policy
+            events.append("policy")
+            policyResolved.fulfill()
+        }
+        for _ in 0..<40 {
+            if popup.presentedViewController is UIAlertController { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(popup.presentedViewController as? UIAlertController)
+        XCTAssertEqual(preparationCount, 1)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView)
+        )
+
+        popup.closeAfterNavigationPreparationFailureForTesting()
+        await fulfillment(
+            of: [policyResolved, surfaceClosed, externalURLOpened],
+            timeout: 2,
+            enforceOrder: true
+        )
+
+        XCTAssertEqual(receivedPolicy, .cancel)
+        XCTAssertNil(root.presentedViewController)
+        XCTAssertEqual(events, ["policy", "closed", "opened"])
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView)
+        )
+#else
+        throw XCTSkip("The navigation-preparation test seam is available only in test builds")
 #endif
     }
 
@@ -4576,9 +4808,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2"
+            "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d"
         )
-        XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(18, 6))
+        XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
         XCTAssertEqual(item.sourceRevision, "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b")
         XCTAssertEqual(item.baseURLScheme, "safari-web-extension")
@@ -4609,7 +4841,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             webExtension.manifest["browser_specific_settings"] as? [String: Any]
         )
         let safariSettings = try XCTUnwrap(browserSettings["safari"] as? [String: Any])
-        XCTAssertEqual(safariSettings["strict_min_version"] as? String, "18.6")
+        XCTAssertEqual(safariSettings["strict_min_version"] as? String, "26.0")
 
         FloorpNativeWebExtensionCatalog.registerBaseURLSchemes()
         let isolationToken = UUID().uuidString.lowercased()
@@ -5364,7 +5596,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     func testBundledUBOLBlocksProductionHostTabsAndRendersDashboard() async throws {
         // This end-to-end case exercises both privacy realms and every options
         // mutation path. Its measured runtime exceeds the one-minute CI default.
-        executionTimeAllowance = 240
+        executionTimeAllowance = 480
         let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_content_effects")
         let profile = profileFixture.profile
@@ -5510,6 +5742,14 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let optionsWebView = try XCTUnwrap(
             optionsPage.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        // Do not let the first tracked JavaScript probe race the initial
+        // navigation-policy callback. While a native callback is in flight,
+        // the production page correctly refuses document replacement; probing
+        // about:blank here would otherwise cancel the navigation under test.
+        try await waitForDocumentCommit(
+            in: optionsWebView,
+            expectedOrigin: context.baseURL
+        )
         let dashboard = try await waitForJavaScriptState(
             in: optionsWebView,
             description: "uBO Lite production options dashboard",
@@ -5548,7 +5788,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             return { before, after, renderedRulesetCount, preparation };
             """,
             contentWorld: .page,
-            timeoutNanoseconds: 20_000_000_000
+            timeoutNanoseconds: 90_000_000_000
         ) as? [String: Any]
         let settingsOnlyState = try XCTUnwrap(settingsOnlyClose)
         let defaultRulesets = Set(settingsOnlyState["before"] as? [String] ?? [])
@@ -5567,9 +5807,250 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             "Closing Settings before Filter lists renders must not disable the stock rulesets"
         )
 
-        let failedRestoreRollback = try await optionsWebView.floorpCallAsyncJavaScript(
+        let interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
             """
             const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+            const reconciler = await import(browser.runtime.getURL('js/floorp-reconcile.js'));
+            const journalKey = 'floorp.settingsRestoreJournal.v1';
+            const snapshot = await backup.backupToObject(self.cachedRulesetData);
+            const initialEnabled = await browser.runtime.sendMessage({
+                what: 'getEnabledRulesets',
+            });
+            const alternateEnabled = initialEnabled.includes('jpn-1')
+                ? initialEnabled.filter(id => id !== 'jpn-1')
+                : initialEnabled.concat('jpn-1');
+            const interrupted = await browser.runtime.sendMessage({
+                what: 'beginSettingsRestore',
+            });
+            const staged = await reconciler.reconcileProtection({
+                enabledRulesets: alternateEnabled,
+            });
+            if (staged.ready !== true) {
+                throw new Error(staged.error || 'Failed to stage interrupted restore');
+            }
+            const whileInterrupted = await browser.storage.local.get(journalKey);
+            await backup.restoreFromObject(snapshot);
+            const finalEnabled = await browser.runtime.sendMessage({
+                what: 'getEnabledRulesets',
+            });
+            const finalConfig = await browser.runtime.sendMessage({
+                what: 'getOptionsPageData',
+            });
+            Object.assign(self.cachedRulesetData, finalConfig);
+            const finalStorage = await browser.storage.local.get(journalKey);
+            const readiness = await browser.runtime.sendMessage({
+                what: 'floorpReadiness',
+            });
+            return {
+                interruptedJournalRetained:
+                    whileInterrupted[journalKey]?.id === interrupted.id,
+                stagedChanged:
+                    JSON.stringify([...alternateEnabled].sort()) !==
+                    JSON.stringify([...initialEnabled].sort()),
+                initialEnabled,
+                finalEnabled,
+                journalRemoved: finalStorage[journalKey] === undefined,
+                readiness,
+            };
+            """,
+            contentWorld: .page,
+            timeoutNanoseconds: 90_000_000_000
+        ) as? [String: Any]
+        let interruptedState = try XCTUnwrap(interruptedRestoreRecovery)
+        XCTAssertEqual(interruptedState["interruptedJournalRetained"] as? Bool, true)
+        XCTAssertEqual(interruptedState["stagedChanged"] as? Bool, true)
+        XCTAssertEqual(
+            Set(interruptedState["finalEnabled"] as? [String] ?? []),
+            Set(interruptedState["initialEnabled"] as? [String] ?? [])
+        )
+        XCTAssertEqual(interruptedState["journalRemoved"] as? Bool, true)
+        XCTAssertEqual(
+            (interruptedState["readiness"] as? [String: Any])?["ready"] as? Bool,
+            true
+        )
+
+        let userRuleDraftRoundTrip = try await optionsWebView.floorpCallAsyncJavaScript(
+            """
+            const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+            const journalKey = 'floorp.settingsRestoreJournal.v1';
+            const userRuleBase = 9000000;
+            const originalStorage = await browser.storage.local.get('userDnrRules');
+            const originalRules = (await browser.declarativeNetRequest.getDynamicRules())
+                .filter(rule => rule.id >= userRuleBase);
+            const snapshot = await backup.backupToObject(self.cachedRulesetData);
+            const inactiveDraft = [
+                'action:',
+                '  type: block',
+                '  unfinished: true',
+            ];
+            await backup.restoreFromObject({
+                ...snapshot,
+                developerMode: false,
+                dnrRules: inactiveDraft,
+            });
+            const inactiveStorage = await browser.storage.local.get('userDnrRules');
+            const inactiveRules = await browser.declarativeNetRequest.getDynamicRules();
+
+            const activeDraft = [
+                'action:',
+                '  type: block',
+                '  unfinished: true',
+                '---',
+                'action:',
+                '  type: block',
+                'condition:',
+                '  urlFilter: ||floorp-user-rule.invalid^',
+                '  excludedInitiatorDomains:',
+                '  excludedRequestDomains:',
+                '  excludedResourceTypes:',
+            ];
+            await backup.restoreFromObject({
+                ...snapshot,
+                developerMode: true,
+                dnrRules: activeDraft,
+            });
+            const activeStorage = await browser.storage.local.get('userDnrRules');
+            const activeRules = (await browser.declarativeNetRequest.getDynamicRules())
+                .filter(rule => rule.id >= userRuleBase);
+
+            await backup.restoreFromObject(snapshot);
+            const finalStorage = await browser.storage.local.get([
+                'userDnrRules',
+                journalKey,
+            ]);
+            const finalRules = (await browser.declarativeNetRequest.getDynamicRules())
+                .filter(rule => rule.id >= userRuleBase);
+            const finalConfig = await browser.runtime.sendMessage({
+                what: 'getOptionsPageData',
+            });
+            Object.assign(self.cachedRulesetData, finalConfig);
+            const readiness = await browser.runtime.sendMessage({
+                what: 'floorpReadiness',
+            });
+            return {
+                inactiveStoredExactly:
+                    inactiveStorage.userDnrRules === inactiveDraft.join('\n'),
+                inactiveRuleCount:
+                    inactiveRules.filter(rule => rule.id >= userRuleBase).length,
+                activeStoredExactly:
+                    activeStorage.userDnrRules === activeDraft.join('\n'),
+                activeRuleCount: activeRules.length,
+                activeURLFilter: activeRules[0]?.condition?.urlFilter || '',
+                finalUserRuleTextMatches:
+                    finalStorage.userDnrRules === originalStorage.userDnrRules,
+                finalRuleSetMatches:
+                    JSON.stringify(finalRules) === JSON.stringify(originalRules),
+                finalHasJournal: finalStorage[journalKey] !== undefined,
+                readiness,
+            };
+            """,
+            contentWorld: .page,
+            timeoutNanoseconds: 90_000_000_000
+        ) as? [String: Any]
+        let draftState = try XCTUnwrap(userRuleDraftRoundTrip)
+        XCTAssertEqual(draftState["inactiveStoredExactly"] as? Bool, true)
+        XCTAssertEqual((draftState["inactiveRuleCount"] as? NSNumber)?.intValue, 0)
+        XCTAssertEqual(draftState["activeStoredExactly"] as? Bool, true)
+        XCTAssertEqual((draftState["activeRuleCount"] as? NSNumber)?.intValue, 1)
+        XCTAssertEqual(
+            draftState["activeURLFilter"] as? String,
+            "||floorp-user-rule.invalid^"
+        )
+        XCTAssertEqual(draftState["finalUserRuleTextMatches"] as? Bool, true)
+        XCTAssertEqual(draftState["finalRuleSetMatches"] as? Bool, true)
+        XCTAssertEqual(draftState["finalHasJournal"] as? Bool, false)
+        XCTAssertEqual(
+            (draftState["readiness"] as? [String: Any])?["ready"] as? Bool,
+            true
+        )
+
+        let rollbackSideEffects = try await optionsWebView.floorpCallAsyncJavaScript(
+            """
+            const alarms = await import(browser.runtime.getURL('js/alarms.js'));
+            const journalKey = 'floorp.settingsRestoreJournal.v1';
+            const originalJobs = await browser.storage.local.get('deferredJobs');
+            const beforeConfig = await browser.runtime.sendMessage({
+                what: 'getOptionsPageData',
+            });
+            const testJob = {
+                name: 'floorpRollbackAlarmProbe',
+                time: Date.now() + 15 * 60 * 1000,
+            };
+            await browser.storage.local.set({ deferredJobs: [testJob] });
+            await alarms.resetJobsAlarm();
+            const transaction = await browser.runtime.sendMessage({
+                what: 'beginSettingsRestore',
+            });
+            await browser.runtime.sendMessage({
+                what: 'setShowBlockedCount',
+                state: !beforeConfig.showBlockedCount,
+            });
+            await browser.storage.local.remove('deferredJobs');
+            await browser.alarms.clear('deferredJobs');
+            const rollback = await browser.runtime.sendMessage({
+                what: 'rollbackSettingsRestore',
+                id: transaction.id,
+            });
+            const restoredStorage = await browser.storage.local.get([
+                'deferredJobs',
+                journalKey,
+            ]);
+            const restoredAlarm = await browser.alarms.get('deferredJobs');
+            const restoredConfig = await browser.runtime.sendMessage({
+                what: 'getOptionsPageData',
+            });
+            if (originalJobs.deferredJobs === undefined) {
+                await browser.storage.local.remove('deferredJobs');
+            } else {
+                await browser.storage.local.set({
+                    deferredJobs: originalJobs.deferredJobs,
+                });
+            }
+            await alarms.resetJobsAlarm();
+            Object.assign(self.cachedRulesetData, restoredConfig);
+            const readiness = await browser.runtime.sendMessage({
+                what: 'floorpReadiness',
+            });
+            return {
+                rolledBack: rollback?.rolledBack === true,
+                jobRestored:
+                    restoredStorage.deferredJobs?.length === 1 &&
+                    restoredStorage.deferredJobs[0]?.name === testJob.name,
+                alarmRestored: restoredAlarm?.name === 'deferredJobs',
+                optionRestored:
+                    restoredConfig.showBlockedCount === beforeConfig.showBlockedCount,
+                journalRemoved: restoredStorage[journalKey] === undefined,
+                readiness,
+            };
+            """,
+            contentWorld: .page,
+            timeoutNanoseconds: 60_000_000_000
+        ) as? [String: Any]
+        let rollbackSideEffectState = try XCTUnwrap(rollbackSideEffects)
+        XCTAssertEqual(rollbackSideEffectState["rolledBack"] as? Bool, true)
+        XCTAssertEqual(rollbackSideEffectState["jobRestored"] as? Bool, true)
+        XCTAssertEqual(rollbackSideEffectState["alarmRestored"] as? Bool, true)
+        XCTAssertEqual(rollbackSideEffectState["optionRestored"] as? Bool, true)
+        XCTAssertEqual(rollbackSideEffectState["journalRemoved"] as? Bool, true)
+        XCTAssertEqual(
+            (rollbackSideEffectState["readiness"] as? [String: Any])?["ready"] as? Bool,
+            true
+        )
+
+        let rejectedRestore = try await optionsWebView.floorpCallAsyncJavaScript(
+            """
+            const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+            const journalKey = 'floorp.settingsRestoreJournal.v1';
+            let journalMutationCount = 0;
+            const journalObserver = (changes, areaName) => {
+                if (
+                    areaName === 'local' &&
+                    Object.prototype.hasOwnProperty.call(changes, journalKey)
+                ) {
+                    journalMutationCount += 1;
+                }
+            };
+            browser.storage.onChanged.addListener(journalObserver);
             let restoreError = '';
             try {
                 await backup.restoreFromObject({
@@ -5579,6 +6060,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 });
             } catch (reason) {
                 restoreError = reason instanceof Error ? reason.message : `${reason}`;
+            } finally {
+                browser.storage.onChanged.removeListener(journalObserver);
             }
             const enabledRulesets = await browser.runtime.sendMessage({
                 what: 'getEnabledRulesets',
@@ -5596,7 +6079,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             });
             const persisted = await browser.storage.local.get([
                 'rulesetConfig',
-                'floorp.settingsRestoreJournal.v1',
+                journalKey,
             ]);
             const failedClose = await globalThis.floorpPrepareToClose();
             const retryClose = await globalThis.floorpPrepareToClose();
@@ -5607,35 +6090,45 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 persistedEnabledRulesets:
                     persisted.rulesetConfig?.config?.enabledRulesets,
                 hasRestoreJournal:
-                    persisted['floorp.settingsRestoreJournal.v1'] !== undefined,
+                    persisted[journalKey] !== undefined,
+                journalMutationCount,
                 readiness,
                 failedClose,
                 retryClose,
             };
             """,
             contentWorld: .page,
-            timeoutNanoseconds: 45_000_000_000
+            timeoutNanoseconds: 20_000_000_000
         ) as? [String: Any]
-        let rollbackState = try XCTUnwrap(failedRestoreRollback)
-        XCTAssertFalse((rollbackState["restoreError"] as? String)?.isEmpty ?? true)
-        XCTAssertEqual(
-            Set(rollbackState["enabledRulesets"] as? [String] ?? []),
-            defaultRulesets,
-            "A failed restore must roll WebKit static rulesets back in the foreground"
+        let rejectedRestoreState = try XCTUnwrap(rejectedRestore)
+        XCTAssertTrue(
+            (rejectedRestoreState["restoreError"] as? String)?.contains(
+                "Settings restore DNR preflight failed"
+            ) == true
         )
         XCTAssertEqual(
-            Set(rollbackState["persistedEnabledRulesets"] as? [String] ?? []),
+            Set(rejectedRestoreState["enabledRulesets"] as? [String] ?? []),
             defaultRulesets,
-            "A failed restore must roll durable ruleset intent back"
+            "A rejected restore must not mutate WebKit static rulesets"
         )
-        XCTAssertEqual(rollbackState["developerMode"] as? Bool, false)
-        XCTAssertEqual(rollbackState["hasRestoreJournal"] as? Bool, false)
+        XCTAssertEqual(
+            Set(rejectedRestoreState["persistedEnabledRulesets"] as? [String] ?? []),
+            defaultRulesets,
+            "A rejected restore must not mutate durable ruleset intent"
+        )
+        XCTAssertEqual(rejectedRestoreState["developerMode"] as? Bool, false)
+        XCTAssertEqual(rejectedRestoreState["hasRestoreJournal"] as? Bool, false)
+        XCTAssertEqual(
+            (rejectedRestoreState["journalMutationCount"] as? NSNumber)?.intValue,
+            0,
+            "Preflight rejection must occur before the restore journal is opened"
+        )
         let rollbackReadiness = try XCTUnwrap(
-            rollbackState["readiness"] as? [String: Any]
+            rejectedRestoreState["readiness"] as? [String: Any]
         )
         XCTAssertEqual(rollbackReadiness["ready"] as? Bool, true)
         let failedRollbackClose = try XCTUnwrap(
-            rollbackState["failedClose"] as? [String: Any]
+            rejectedRestoreState["failedClose"] as? [String: Any]
         )
         XCTAssertEqual(failedRollbackClose["ready"] as? Bool, false)
         XCTAssertTrue(
@@ -5643,7 +6136,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             "The first close attempt must surface the tracked restore failure"
         )
         let retriedRollbackClose = try XCTUnwrap(
-            rollbackState["retryClose"] as? [String: Any]
+            rejectedRestoreState["retryClose"] as? [String: Any]
         )
         XCTAssertEqual(retriedRollbackClose["ready"] as? Bool, true)
 
@@ -5983,6 +6476,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             """
             const settings = await import(browser.runtime.getURL('js/settings.js'));
             const ext = await import(browser.runtime.getURL('js/ext.js'));
+            await globalThis.floorpPrepareToClose();
+            await globalThis.floorpPrepareToClose();
             const input = document.querySelector(
                 '.filteringModeCard input[type="radio"][value="1"]'
             );
@@ -6014,6 +6509,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             );
             const restoreError = document.querySelector('#runtimeError')?.textContent || '';
             const busyAfterRestore = document.body.classList.contains('busy');
+            const restoreFailureClose = await globalThis.floorpPrepareToClose();
+            const restoreRetryClose = await globalThis.floorpPrepareToClose();
             document.querySelector('#runtimeError').textContent = '';
             return {
                 modeCommitted,
@@ -6026,6 +6523,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 restoreSteps,
                 restoreError,
                 busyAfterRestore,
+                restoreFailureClose,
+                restoreRetryClose,
             };
             """,
             contentWorld: .page,
@@ -6048,6 +6547,19 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             (failureState["restoreError"] as? String)?.contains("injected restore mutation failure") == true
         )
         XCTAssertEqual(failureState["busyAfterRestore"] as? Bool, false)
+        let directFailureClose = try XCTUnwrap(
+            failureState["restoreFailureClose"] as? [String: Any]
+        )
+        XCTAssertEqual(directFailureClose["ready"] as? Bool, false)
+        XCTAssertTrue(
+            (directFailureClose["error"] as? String)?.contains(
+                "injected restore mutation failure"
+            ) == true
+        )
+        XCTAssertEqual(
+            (failureState["restoreRetryClose"] as? [String: Any])?["ready"] as? Bool,
+            true
+        )
 
         // Exercise the same production runtime messages used by dashboard
         // settings while normal and private browsing WebViews remain loaded.

@@ -188,18 +188,27 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
-    def test_rejects_ubol_destructive_safari_dnr_alias_conversion(self) -> None:
+    def test_rejects_ubol_safari_dnr_normalizer_that_mutates_source_rules(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",
             lambda files: self.replace_archive_text(
                 files,
-                "js/ext-compat.js",
-                "structuredClone(addRules).filter(isSupportedRule)",
-                "addRules.filter(isSupportedRule)",
+                "js/safari-dnr-normalizer.js",
+                "const rule = structuredClone(sourceRule);",
+                "const rule = sourceRule;",
             ),
         )
 
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_missing_common_safari_dnr_normalizer(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: files.pop("js/safari-dnr-normalizer.js"),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "required archive member"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_missing_safari_local_storage_bootstrap(self) -> None:
@@ -530,6 +539,411 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_restore_that_hides_a_boolean_api_failure_from_close(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/settings.js",
+                "recordOptionsOperationError(reason);",
+                "void reason;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_restore_without_confirmed_commit(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/backup-restore.js",
+                "if ( commit?.committed !== true )",
+                "if ( false )",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_restore_that_overwrites_an_interrupted_journal(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "Interrupted settings rollback response was invalid",
+                "Interrupted settings rollback was ignored",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_rollback_without_restoring_alarm_side_effect(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "await resetJobsAlarm();",
+                "void resetJobsAlarm;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_user_rule_preflight_without_shape_validator(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "const { rules, shapeErrors } = validatedRulesFromText(effectiveRulesText);",
+                "const { rules, shapeErrors } = rulesFromText(effectiveRulesText);",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_user_rule_preflight_after_installed_rule_removal(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.move_archive_text_after(
+                files,
+                "js/ruleset-manager.js",
+                "const { rules, shapeErrors } = validatedRulesFromText(effectiveRulesText);",
+                "const removeRuleIds = [ ...userRules.map(a => a.id) ];",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "orders compatibility code incorrectly"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_common_normalizer_that_drops_unsupported_excluded_enums(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/safari-dnr-normalizer.js",
+                "if ( values.some(value => supportedValues.has(value) === false) ) {\n"
+                "        return `${key} contains values unsupported by Safari`;\n"
+                "    }",
+                "condition[key] = values.filter(value => supportedValues.has(value));",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_common_normalizer_that_drops_nonempty_excluded_top_domains(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/safari-dnr-normalizer.js",
+                "if ( Array.isArray(condition[key]) && condition[key].length === 0 ) {\n"
+                "                delete condition[key];\n"
+                "                continue;\n"
+                "            }\n"
+                "            return `${key} is unsupported`;",
+                "delete condition[key];\n"
+                "            continue;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_regex_fingerprint_that_ignores_priority(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/safari-regex-normalizer.js",
+                "if ( key === 'id' ) { continue; }",
+                "if ( key === 'id' || key === 'priority' ) { continue; }",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_regex_normalizer_without_exact_fingerprint_lookup(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/safari-regex-normalizer.js",
+                "const action = exactRuleActions.get(fingerprint);",
+                "const action = { type: 'removeRequestDomains' };",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_expanded_regexes_without_native_reprobe(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "'Safari normalized regexes',",
+                "'Safari regexes accepted without normalized reprobe',",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_native_updates_that_bypass_common_normalization(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "? normalizeSafariDNRRules(addRules)",
+                "? structuredClone(addRules)",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_session_desired_rules_that_bypass_common_normalization(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "const compatibleRules = normalizeDesiredRules(addRulesUnfiltered, 'session');",
+                "const compatibleRules = addRulesUnfiltered;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_user_desired_rules_that_bypass_common_normalization(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "const addRules = normalizeSafariDNRRules(\n"
+                "        probedRules,\n"
+                "        compatibilityRejected\n"
+                "    ) || [];",
+                "const addRules = probedRules;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_user_rules_that_partially_apply_after_rejection(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "if ( rejectedRegexes.length !== 0 || compatibilityRejected.length !== 0 ) {",
+                "if ( false ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_user_rule_rollback_without_exact_readback(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "User-rule DNR rollback readback mismatch",
+                "User-rule DNR rollback accepted without readback",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_session_update_without_exact_readback(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "Session DNR readback mismatch",
+                "Session DNR accepted without readback",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_ruleset_rollback_without_exact_readback(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "Dynamic DNR rollback readback mismatch",
+                "Dynamic DNR rollback accepted without readback",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_legacy_initiator_alias_submission(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "const optionsAfter = {};",
+                "r.condition.domains = r.condition.initiatorDomains;\n"
+                "    const optionsAfter = {};",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "includes forbidden compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_desired_set_that_keeps_ignored_regex_domains(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "const desiredRules = normalizeDesiredRules(addRules, 'dynamic');",
+                "const desiredRules = addRules;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_foreground_rollback_without_completion_branch(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/backup-restore.js",
+                "if ( reconciliation.rolledBack === true )",
+                "if ( false )",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_rollback_without_strict_confirmation(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/backup-restore.js",
+                "if ( rollback?.rolledBack !== true )",
+                "if ( false )",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_background_finalizer_without_rollback_propagation(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "rolledBack: result?.rolledBack === true,",
+                "rolledBack: false,",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_foreground_reconciler_without_rollback_propagation(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/floorp-reconcile.js",
+                "rolledBack: finalized?.rolledBack === true,",
+                "rolledBack: false,",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_restore_without_user_dnr_preflight(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/backup-restore.js",
+                "what: 'validateSettingsRestore'",
+                "what: 'skipSettingsRestoreValidation'",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_restore_validation_after_journal_creation(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.move_archive_text_after(
+                files,
+                "js/backup-restore.js",
+                "what: 'validateSettingsRestore'",
+                "what: 'beginSettingsRestore'",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "orders compatibility code incorrectly"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_static_ruleset_restore_before_user_dnr_validation(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.move_archive_text_after(
+                files,
+                "js/backup-restore.js",
+                "what: 'updateUserDnrRules'",
+                "const reconciliation = await reconcileProtection({\n"
+                "        enabledRulesets: Array.from(enabledRulesets),",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "orders compatibility code incorrectly"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_restore_preflight_as_background_mutation(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "const backgroundMutationMessages = new Set([",
+                "const backgroundMutationMessages = new Set([\n"
+                "    'validateSettingsRestore',",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "includes forbidden compatibility code"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_close_handshake_without_ruleset_readback(self) -> None:
@@ -931,8 +1345,10 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
     def test_rejects_stale_japanese_testflight_claims(self) -> None:
         metadata = self.testflight_root / "WhatToTest.ja-JP.txt"
         metadata.write_text(
-            metadata.read_text(encoding="utf-8")
-            + "\n\n署名済み・アプリ同梱の拡張機能は Dark Reader 1件です。\n",
+            metadata.read_text(encoding="utf-8").replace(
+                "サインインは不要です。",
+                "拡張機能は Dark Reader 1件です。",
+            ),
             encoding="utf-8",
         )
 
