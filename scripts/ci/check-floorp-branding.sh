@@ -165,6 +165,48 @@ require_plist_string_value() {
     fi
 }
 
+plist_key_has_true_value() {
+    local plist_file="$1"
+    local key="$2"
+
+    awk -v expected_key="<key>${key}</key>" '
+        {
+            line = $0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        }
+        line == expected_key {
+            awaiting_value = 1
+            next
+        }
+        awaiting_value && line == "<true/>" {
+            found = 1
+            exit
+        }
+        awaiting_value && line != "" {
+            exit
+        }
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$plist_file"
+}
+
+require_plist_true_value() {
+    local plist_file="$1"
+    local key="$2"
+    local description="$3"
+
+    if ! require_file "$plist_file"; then
+        return
+    fi
+
+    if plist_key_has_true_value "$plist_file" "$key"; then
+        pass "$description"
+    else
+        fail "$description ($key must map to true in $plist_file)"
+    fi
+}
+
 find_permission_description_matches() {
     local file="$1"
 
@@ -815,9 +857,13 @@ require_fixed "$RELEASE_CONFIG" "MOZ_PUBLIC_URL_SCHEME = floorp" "Public URL sch
 require_fixed "$RELEASE_CONFIG" "MOZ_INTERNAL_URL_SCHEME = floorp-internal" "Internal URL scheme is fixed"
 
 require_fixed "$RELEASE_ENTITLEMENTS" "\$(AppIdentifierPrefix)app.floorp.Floorp" "Floorp keychain group is fixed"
-forbid_fixed_in_files \
+require_plist_true_value \
+    "$RELEASE_ENTITLEMENTS" \
     "com.apple.developer.web-browser" \
-    "FloorpRelease omits the unapproved default-browser entitlement" \
+    "FloorpRelease enables the approved default-browser entitlement"
+forbid_fixed_in_files \
+    "com.apple.developer.browser.app-installation" \
+    "FloorpRelease omits the unapproved browser app-installation entitlement" \
     "$RELEASE_ENTITLEMENTS"
 require_fixed "$RELEASE_PLIST" "\$(FLOORP_APP_GROUP_IDENTIFIER)" "Release plist uses the Floorp App Group setting"
 require_fixed "$RELEASE_PLIST" "app.floorp.sync.part1" "Background sync task 1 is fixed"
