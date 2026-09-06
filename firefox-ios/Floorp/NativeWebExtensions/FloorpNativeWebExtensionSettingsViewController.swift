@@ -1904,7 +1904,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         request.alert = nil
         let completion = browserOpenCompletion(for: request.action.request.url)
         request.resolve(.cancel)
-        let closeSurface = { [weak self] in
+        let closeSurface: () -> Void = { [weak self] in
             self?.close(
                 animated: true,
                 completion: completion,
@@ -2542,7 +2542,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         request.alert = nil
         let completion = browserOpenCompletion(for: request.action.request.url)
         request.resolve(.cancel)
-        let closeSurface = { [weak self] in
+        let closeSurface: () -> Void = { [weak self] in
             self?.requestClose(
                 animated: true,
                 completion: completion,
