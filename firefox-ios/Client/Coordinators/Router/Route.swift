@@ -116,6 +116,7 @@ enum Route {
         case wallpaper
         case rateApp
         case translation
+        case webExtensions = "web-extensions"
     }
 
     /// An enumeration representing different actions that can be performed within the application.

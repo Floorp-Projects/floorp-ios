@@ -89,8 +89,10 @@ class SceneDelegate: UIResponder,
         // occur on termination or when a window is disconnected/closed by iPadOS
         downloadQueue.cancelAll(for: sceneCoordinator.windowUUID)
 
-        FloorpNativeWebExtensionHost.host(for: profile.localName())?
-            .unregister(windowUUID: sceneCoordinator.windowUUID)
+        if let tabManager = sceneCoordinator.tabManager {
+            FloorpNativeWebExtensionHost.host(for: profile.localName())?
+                .unregister(tabManager: tabManager)
+        }
 
         // Notify WindowManager that window is closing
         windowManager.windowWillClose(uuid: sceneCoordinator.windowUUID)
@@ -125,6 +127,13 @@ class SceneDelegate: UIResponder,
         }
     }
 
+    func sceneWillResignActive(_ scene: UIScene) {
+        guard !AppConstants.isRunningUnitTest,
+              let uuid = sceneCoordinator?.windowUUID else { return }
+        FloorpNativeWebExtensionHost.host(for: profile.localName())?
+            .resignFocus(windowUUID: uuid)
+    }
+
     // MARK: - Transitioning to Background
 
     /// The scene's running in the background and not visible on screen.
@@ -135,6 +144,8 @@ class SceneDelegate: UIResponder,
         let logUUID = sceneCoordinator?.windowUUID.uuidString ?? "<nil>"
         logger.log("SceneDelegate: scene did enter background. UUID: \(logUUID)", level: .info, category: .lifecycle)
         if let uuid = sceneCoordinator?.windowUUID {
+            FloorpNativeWebExtensionHost.host(for: profile.localName())?
+                .resignFocus(windowUUID: uuid)
             downloadQueue.pauseAll(for: uuid)
             tabErrorTelemetryHelper.recordTabCountForBackgroundedScene(uuid)
         }

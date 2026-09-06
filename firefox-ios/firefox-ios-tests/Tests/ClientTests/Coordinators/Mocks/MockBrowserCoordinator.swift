@@ -44,6 +44,7 @@ class MockBrowserCoordinator: BrowserNavigationHandler,
     var showNativeErrorPageCalled = 0
     var showPrivateHomepageCalled = 0
     var showWebViewCalled = 0
+    private(set) weak var shownWebView: WKWebView?
     var setHomepageVisibilityCalled = 0
     var showSummarizePanelCalled = 0
     var showShortcutsLibraryCalled = 0
@@ -208,6 +209,7 @@ class MockBrowserCoordinator: BrowserNavigationHandler,
 
     func show(webView: WKWebView) {
         showWebViewCalled += 1
+        shownWebView = webView
     }
 
     func showHomepage(

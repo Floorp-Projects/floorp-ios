@@ -492,12 +492,13 @@ whose `release_inputs.ios.build_number` is exactly the `FloorpRelease` build
 number. The ordinary `release-default` build uses the checked-in endpoint
 matrix and does not require a generated evidence file.
 
-The public-beta build wrapper builds and archives only. The protected
-`floorp-public-beta-release.yml` workflow performs export, signing, upload,
-and the allowlisted external TestFlight/Beta App Review submission after an
-explicit approval input. Enabled modes do make narrowly scoped GitHub API requests through the pinned
-`gh` copy to validate retrievable evidence and to dispatch and capture the
-validation-clock workflow.
+The historical GitHub-hosted public-beta signing workflow has been removed.
+Public release candidates are archived, signed, and uploaded only by the pinned
+Xcode Cloud workflow through `.github/workflows/floorp-xcode-cloud-testflight.yml`.
+That bridge binds the immutable source tag and exact-source CI acceptance to the
+single new App Store Connect build produced by the Xcode Cloud run; external
+submission requires the retained source-bound build receipt and a fresh live
+identity check before any metadata, group, or review mutation.
 
 ## Formal Todo 20 rescope boundary — 2026-08-15
 

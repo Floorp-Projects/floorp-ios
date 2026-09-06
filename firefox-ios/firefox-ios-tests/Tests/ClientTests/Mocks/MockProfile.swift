@@ -145,7 +145,7 @@ final class MockProfile: Client.Profile, @unchecked Sendable {
     public let remoteSettingsService: RemoteSettingsService
     public let mockNotificationCenter: NotificationProtocol = MockNotificationCenter()
 
-    fileprivate let name = "mockaccount"
+    fileprivate let name: String
 
     private let directory: String
     private let databasePrefix: String
@@ -155,10 +155,13 @@ final class MockProfile: Client.Profile, @unchecked Sendable {
         databasePrefix: String = "mock_\(UUID().uuidString.prefix(8))",
         firefoxSuggest: RustFirefoxSuggestProtocol? = nil,
         remoteSettingsService: RemoteSettingsService = RemoteSettingsService(unsafeFromHandle: 0),
-        injectedPinnedSites: MockablePinnedSites? = nil
+        injectedPinnedSites: MockablePinnedSites? = nil,
+        localName: String = "mockaccount",
+        fileRootPath: String? = nil
     ) {
-        files = MockFiles()
+        files = MockFiles(rootPath: fileRootPath)
         syncManager = ClientSyncManagerSpy()
+        name = localName
         self.databasePrefix = databasePrefix
         self.firefoxSuggest = firefoxSuggest
         self.remoteSettingsService = remoteSettingsService

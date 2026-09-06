@@ -57,6 +57,131 @@ class FloorpPrivacyValidatorTests(unittest.TestCase):
             1,
         )
 
+    def test_every_approved_sync_and_account_disclosure_is_required(self):
+        required = {
+            "Name",
+            "Email Address",
+            "Phone Number",
+            "Physical Address",
+            "Payment Info",
+            "Coarse Location",
+            "Photos or Videos",
+            "Other User Content",
+            "Browsing History",
+            "Search History",
+            "User ID",
+            "Device ID",
+            "Product Interaction",
+            "Crash Data",
+            "Performance Data",
+            "Other Diagnostic Data",
+            "Other Data Types",
+        }
+        for data_type in required:
+            with self.subTest(data_type=data_type), tempfile.TemporaryDirectory() as tmp:
+                metadata = json.loads(METADATA.read_text(encoding="utf-8"))
+                metadata["privacy"]["data_types"] = [
+                    entry for entry in metadata["privacy"]["data_types"]
+                    if entry.get("data_type") != data_type
+                ]
+                path = Path(tmp) / "metadata.json"
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+                self.assertEqual(
+                    privacy.main([
+                        "--matrix", str(MATRIX),
+                        "--metadata", str(path),
+                    ]),
+                    1,
+                )
+
+    def test_unapproved_extra_disclosure_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            metadata = json.loads(METADATA.read_text(encoding="utf-8"))
+            metadata["privacy"]["data_types"].append({
+                "category": "Usage Data",
+                "data_type": "Advertising Data",
+                "collected": True,
+                "linked_to_user_identity": True,
+                "used_for_tracking": False,
+                "purpose": ["App Functionality"],
+            })
+            path = Path(tmp) / "metadata.json"
+            path.write_text(json.dumps(metadata), encoding="utf-8")
+            self.assertEqual(
+                privacy.main([
+                    "--matrix", str(MATRIX),
+                    "--metadata", str(path),
+                ]),
+                1,
+            )
+
+    def test_tracking_answer_must_be_explicitly_false(self):
+        for value in (True, None):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                metadata = json.loads(METADATA.read_text(encoding="utf-8"))
+                if value is None:
+                    metadata["privacy"].pop("tracking")
+                else:
+                    metadata["privacy"]["tracking"] = value
+                path = Path(tmp) / "metadata.json"
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+                self.assertEqual(
+                    privacy.main([
+                        "--matrix", str(MATRIX),
+                        "--metadata", str(path),
+                    ]),
+                    1,
+                )
+
+    def test_live_privacy_policy_gate_is_required(self):
+        for field, value in (
+            ("privacy_policy_url", "https://example.invalid/privacy"),
+            ("live_verification", "App Store Connect checked"),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                metadata = json.loads(METADATA.read_text(encoding="utf-8"))
+                metadata["privacy"][field] = value
+                path = Path(tmp) / "metadata.json"
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+                self.assertEqual(
+                    privacy.main([
+                        "--matrix", str(MATRIX),
+                        "--metadata", str(path),
+                    ]),
+                    1,
+                )
+
+    def test_sync_disclosure_must_be_account_linked_app_functionality_and_not_tracking(self):
+        for field, value in (
+            ("linked_to_user_identity", False),
+            ("purpose", ["Analytics"]),
+            ("used_for_tracking", True),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                metadata = json.loads(METADATA.read_text(encoding="utf-8"))
+                entry = next(
+                    item for item in metadata["privacy"]["data_types"]
+                    if item.get("data_type") == "Other User Content"
+                )
+                entry[field] = value
+                path = Path(tmp) / "metadata.json"
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+                self.assertEqual(
+                    privacy.main([
+                        "--matrix", str(MATRIX),
+                        "--metadata", str(path),
+                    ]),
+                    1,
+                )
+
+    def test_every_disclosure_explicitly_rejects_tracking(self):
+        metadata = json.loads(METADATA.read_text(encoding="utf-8"))
+        self.assertTrue(metadata["privacy"]["data_types"])
+        self.assertTrue(all(
+            entry.get("used_for_tracking") is False
+            for entry in metadata["privacy"]["data_types"]
+        ))
+
     def test_forbidden_entitlement_fails(self):
         self.assertEqual(
             self.run_validator(entitlements=FIXTURES / "floorp-privacy-entitlements-forbidden.plist"),

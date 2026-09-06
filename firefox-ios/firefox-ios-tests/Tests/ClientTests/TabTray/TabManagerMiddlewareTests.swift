@@ -9,12 +9,14 @@ import XCTest
 @testable import Client
 
 final class TabManagerMiddlewareTests: XCTestCase, StoreTestUtility {
+    // swiftlint:disable implicitly_unwrapped_optional
     private var mockProfile: MockProfile!
     private var mockWindowManager: MockWindowManager!
     private var mockStore: MockStoreForMiddleware<AppState>!
     private var mockTabManager: MockTabManager!
     private var summarizerConfigFactory: MockSummarizerConfigFactory!
     private var appState: AppState!
+    // swiftlint:enable implicitly_unwrapped_optional
     private let homepageURLString = "internal://local/about/home"
 
     @MainActor
@@ -154,6 +156,63 @@ final class TabManagerMiddlewareTests: XCTestCase, StoreTestUtility {
         subject.tabsPanelProvider.legacyMiddleware(appState, action)
 
         XCTAssertTrue(mockTabManager.restoreScreenshotCalls.isEmpty)
+    }
+
+    func testCloseTabDefersRefreshAndDismissAndKeepsUIOnPreparationFailure() {
+        let subject = createSubject()
+        let tab = createTab(profile: mockProfile, urlString: "https://example.com/extension")
+        mockTabManager.tabs = [tab]
+        mockTabManager.normalTabs = [tab]
+        mockTabManager.selectedTab = tab
+        mockTabManager.defersRemoveTabCompletion = true
+        let action = TabPanelViewAction(
+            panelType: .tabs,
+            tabUUID: tab.tabUUID,
+            windowUUID: .XCTestDefaultUUID,
+            actionType: TabPanelViewActionType.closeTab
+        )
+
+        subject.tabsPanelProvider.legacyMiddleware(appState, action)
+
+        XCTAssertEqual(mockTabManager.removeTabCallCount, 1)
+        XCTAssertTrue(mockStore.dispatchedActions.isEmpty)
+
+        mockTabManager.resolvePendingRemoveTabCompletions(with: false)
+
+        XCTAssertTrue(
+            mockStore.dispatchedActions.isEmpty,
+            "A fail-closed extension tab must remain visible without a stale refresh or tray dismissal."
+        )
+    }
+
+    func testCloseTabPublishesRefreshAndDismissOnlyAfterPreparationSucceeds() throws {
+        let subject = createSubject()
+        let tab = createTab(profile: mockProfile, urlString: "https://example.com/extension")
+        mockTabManager.tabs = [tab]
+        mockTabManager.normalTabs = [tab]
+        mockTabManager.selectedTab = tab
+        mockTabManager.defersRemoveTabCompletion = true
+        let action = TabPanelViewAction(
+            panelType: .tabs,
+            tabUUID: tab.tabUUID,
+            windowUUID: .XCTestDefaultUUID,
+            actionType: TabPanelViewActionType.closeTab
+        )
+
+        subject.tabsPanelProvider.legacyMiddleware(appState, action)
+        XCTAssertTrue(mockStore.dispatchedActions.isEmpty)
+
+        mockTabManager.normalTabs = []
+        mockTabManager.tabs = []
+        mockTabManager.resolvePendingRemoveTabCompletions(with: true)
+
+        XCTAssertEqual(mockStore.dispatchedActions.count, 2)
+        XCTAssertTrue(mockStore.dispatchedActions[0] is TabPanelMiddlewareAction)
+        let dismiss = try XCTUnwrap(mockStore.dispatchedActions[1] as? TabTrayAction)
+        XCTAssertEqual(
+            try XCTUnwrap(dismiss.actionType as? TabTrayActionType),
+            TabTrayActionType.dismissTabTray
+        )
     }
 
     // MARK: - Recent Tabs

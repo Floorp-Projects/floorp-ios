@@ -36,6 +36,10 @@ class MockTabManager: TabManager {
     var addTabsURLs: [URL] = []
 
     var removeTabsByURLCalled = 0
+    var removeTabCallCount = 0
+    var removeTabCompletionResult = true
+    var defersRemoveTabCompletion = false
+    private var pendingRemoveTabCompletions = [(Bool) -> Void]()
 
     var addTabWasCalled = false
     var notifyCurrentTabDidFinishLoadingCalled = 0
@@ -86,7 +90,32 @@ class MockTabManager: TabManager {
 
     func removeTabs(_ tabs: [Tab]) {}
 
-    func removeTab(_ tabUUID: TabUUID) {}
+    func removeTab(_ tabUUID: TabUUID) {
+        removeTabCallCount += 1
+    }
+
+    func removeTab(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void) {
+        removeTab(tabUUID)
+        if defersRemoveTabCompletion {
+            pendingRemoveTabCompletions.append(completion)
+        } else {
+            completion(removeTabCompletionResult)
+        }
+    }
+
+    func removeTabIfUnselected(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void) {
+        guard selectedTab?.tabUUID != tabUUID else {
+            completion(false)
+            return
+        }
+        removeTab(tabUUID, completion: completion)
+    }
+
+    func resolvePendingRemoveTabCompletions(with result: Bool) {
+        let completions = pendingRemoveTabCompletions
+        pendingRemoveTabCompletions.removeAll()
+        completions.forEach { $0(result) }
+    }
 
     func removeAllTabs(isPrivateMode: Bool) {}
 

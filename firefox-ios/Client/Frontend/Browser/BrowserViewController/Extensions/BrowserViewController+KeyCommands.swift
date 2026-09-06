@@ -171,8 +171,12 @@ extension BrowserViewController {
                                          object: .keyCommand,
                                          extras: ["action": "close-tab"])
             guard let currentTab = self.tabManager.selectedTab else { return }
-            self.tabsPanelTelemetry.tabClosed(mode: currentTab.isPrivate ? .private : .normal)
-            self.tabManager.removeTab(currentTab.tabUUID)
+            self.tabManager.removeTab(currentTab.tabUUID) { [weak self] didRemove in
+                guard didRemove else { return }
+                self?.tabsPanelTelemetry.tabClosed(
+                    mode: currentTab.isPrivate ? .private : .normal
+                )
+            }
             self.keyboardPressesHandler().reset()
         }
     }

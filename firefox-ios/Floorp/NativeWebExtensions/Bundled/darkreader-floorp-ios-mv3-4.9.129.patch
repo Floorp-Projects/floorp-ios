@@ -1,0 +1,2173 @@
+--- a/manifest.json
++++ b/manifest.json
+@@ -11,7 +11,11 @@
+         "128": "icons/dr_128.png"
+     },
+     "background": {
+-        "service_worker": "background/index.js"
++        "scripts": [
++            "background/floorp-compat.js",
++            "background/index.js"
++        ],
++        "persistent": false
+     },
+     "content_scripts": [
+         {
+@@ -93,7 +97,17 @@
+     "content_security_policy": {
+         "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self'; img-src * data:; connect-src *; navigate-to 'self' https://darkreader.org/* https://github.com/darkreader/darkreader/blob/main/CONTRIBUTING.md https://github.com/darkreader/darkreader https://twitter.com/darkreaderapp; media-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'"
+     },
++    "web_accessible_resources": [
++        {
++            "resources": [
++                "floorp-readiness.html"
++            ],
++            "matches": [
++                "<all_urls>"
++            ]
++        }
++    ],
+     "host_permissions": [
+         "*://*/*"
+     ]
+-}
+\ No newline at end of file
++}
+--- /dev/null
++++ b/background/floorp-compat.js
+@@ -0,0 +1,296 @@
++/*
++ * Floorp iOS compatibility primitives for Dark Reader.
++ *
++ * WKWebExtension can transiently fail otherwise valid storage calls with an
++ * "unknown error" while its backing database is being opened.  Dark Reader's
++ * upstream callback wrappers treat some of those failures as empty storage,
++ * which can replace the user's settings with defaults.  Keep this shim small
++ * and independent from Dark Reader internals so the upstream bundle remains
++ * easy to audit and update.
++ */
++(() => {
++    "use strict";
++
++    const SENTINEL_KEY = "__floorp_darkreader_storage_ready_v1";
++    const UNKNOWN_ERROR = /unknown error/i;
++    const RETRY_DELAYS = [50, 100, 200, 400];
++
++    function createFloorpDarkReaderCompat(
++        webExtension,
++        {
++            setTimeoutFn = globalThis.setTimeout.bind(globalThis),
++            clearTimeoutFn = globalThis.clearTimeout.bind(globalThis),
++            retryDelays = RETRY_DELAYS
++        } = {}
++    ) {
++        const handled = (promise) => {
++            promise.catch(() => undefined);
++            return promise;
++        };
++        const asError = (reason) => {
++            if (reason instanceof Error) {
++                return reason;
++            }
++            if (reason && typeof reason.message === "string") {
++                return new Error(reason.message);
++            }
++            return new Error(String(reason));
++        };
++        const delay = (milliseconds) =>
++            new Promise((resolve) => setTimeoutFn(resolve, milliseconds));
++
++        async function retryUnknown(operation) {
++            let attempt = 0;
++            while (true) {
++                try {
++                    return await operation();
++                } catch (reason) {
++                    const error = asError(reason);
++                    if (
++                        !UNKNOWN_ERROR.test(error.message) ||
++                        attempt >= retryDelays.length
++                    ) {
++                        throw error;
++                    }
++                    await delay(retryDelays[attempt++]);
++                }
++            }
++        }
++
++        function createRecoveringQueue() {
++            let tail = Promise.resolve();
++            let lastError = null;
++            let revision = 0;
++
++            const enqueue = (operation) => {
++                revision++;
++                const result = tail.then(operation);
++                tail = result.then(
++                    () => {
++                        lastError = null;
++                    },
++                    (reason) => {
++                        lastError = asError(reason);
++                    }
++                );
++                return handled(result);
++            };
++            const drain = async () => {
++                while (true) {
++                    const observed = tail;
++                    await observed;
++                    if (observed === tail) {
++                        return;
++                    }
++                }
++            };
++            const flush = async () => {
++                await drain();
++                if (lastError) {
++                    throw lastError;
++                }
++            };
++
++            return {
++                enqueue,
++                drain,
++                flush,
++                getLastError: () => lastError,
++                getRevision: () => revision
++            };
++        }
++
++        function createFlushableDebounce(milliseconds, operation) {
++            const execution = createRecoveringQueue();
++            let timer = null;
++            let pending = null;
++
++            const launch = () => {
++                if (!pending) {
++                    return null;
++                }
++                if (timer !== null) {
++                    clearTimeoutFn(timer);
++                    timer = null;
++                }
++                const batch = pending;
++                pending = null;
++                const result = execution.enqueue(() =>
++                    operation(...batch.arguments)
++                );
++                result.then(
++                    (value) =>
++                        batch.waiters.forEach(({resolve}) => resolve(value)),
++                    (reason) =>
++                        batch.waiters.forEach(({reject}) => reject(reason))
++                );
++                return result;
++            };
++            const schedule = (...args) => {
++                if (!pending) {
++                    pending = {arguments: args, waiters: []};
++                } else {
++                    pending.arguments = args;
++                }
++                const result = new Promise((resolve, reject) => {
++                    pending.waiters.push({resolve, reject});
++                });
++                if (timer !== null) {
++                    clearTimeoutFn(timer);
++                }
++                timer = setTimeoutFn(launch, milliseconds);
++                return handled(result);
++            };
++            schedule.flush = async () => {
++                while (true) {
++                    if (pending) {
++                        launch();
++                    }
++                    try {
++                        await execution.flush();
++                    } catch (reason) {
++                        if (pending) {
++                            continue;
++                        }
++                        throw reason;
++                    }
++                    if (!pending) {
++                        return;
++                    }
++                }
++            };
++            schedule.getLastError = execution.getLastError;
++            schedule.getRevision = execution.getRevision;
++            return schedule;
++        }
++
++        function invokeStorage(areaName, method, argument) {
++            return new Promise((resolve, reject) => {
++                const area = webExtension.storage?.[areaName];
++                if (!area || typeof area[method] !== "function") {
++                    reject(
++                        new Error(
++                            `Storage area ${areaName}.${method} is unavailable`
++                        )
++                    );
++                    return;
++                }
++                try {
++                    area[method](argument, (value) => {
++                        const lastError = webExtension.runtime?.lastError;
++                        if (lastError) {
++                            reject(asError(lastError));
++                            return;
++                        }
++                        resolve(value);
++                    });
++                } catch (reason) {
++                    reject(asError(reason));
++                }
++            });
++        }
++
++        const storageQueues = new Map();
++        let localSentinelReady = false;
++        const getStorageQueue = (areaName) => {
++            if (!storageQueues.has(areaName)) {
++                storageQueues.set(areaName, createRecoveringQueue());
++            }
++            return storageQueues.get(areaName);
++        };
++        const ensureLocalSentinel = async () => {
++            if (localSentinelReady) {
++                return;
++            }
++            await retryUnknown(() =>
++                invokeStorage("local", "set", {[SENTINEL_KEY]: true})
++            );
++            localSentinelReady = true;
++        };
++        const runStorage = (areaName, operation) =>
++            getStorageQueue(areaName).enqueue(async () => {
++                if (areaName === "local") {
++                    await ensureLocalSentinel();
++                }
++                return await retryUnknown(operation);
++            });
++        const stripSentinel = (areaName, value) => {
++            if (
++                areaName !== "local" ||
++                value === null ||
++                typeof value !== "object" ||
++                !(SENTINEL_KEY in value)
++            ) {
++                return value;
++            }
++            const copy = {...value};
++            delete copy[SENTINEL_KEY];
++            return copy;
++        };
++        const get = (areaName, keys) =>
++            runStorage(areaName, async () =>
++                stripSentinel(
++                    areaName,
++                    await invokeStorage(areaName, "get", keys)
++                )
++            );
++        const set = (areaName, values) =>
++            runStorage(areaName, () =>
++                invokeStorage(areaName, "set", values)
++            );
++        const remove = (areaName, keys) =>
++            runStorage(areaName, () =>
++                invokeStorage(areaName, "remove", keys)
++            );
++        const flushStorage = async () => {
++            while (true) {
++                const queues = Array.from(storageQueues.values());
++                const revisions = queues.map((queue) => queue.getRevision());
++                await Promise.all(queues.map((queue) => queue.drain()));
++                if (
++                    queues.length === storageQueues.size &&
++                    queues.every((queue, index) =>
++                        queue.getRevision() === revisions[index]
++                    )
++                ) {
++                    return;
++                }
++            }
++        };
++        const equal = (left, right) => {
++            const normalize = (value) => {
++                if (Array.isArray(value)) {
++                    return value.map(normalize);
++                }
++                if (value && typeof value === "object") {
++                    return Object.fromEntries(
++                        Object.keys(value)
++                            .sort()
++                            .map((key) => [key, normalize(value[key])])
++                    );
++                }
++                return value;
++            };
++            return (
++                JSON.stringify(normalize(left)) ===
++                JSON.stringify(normalize(right))
++            );
++        };
++
++        return Object.freeze({
++            sentinelKey: SENTINEL_KEY,
++            get,
++            set,
++            remove,
++            flushStorage,
++            equal,
++            retryUnknown,
++            createRecoveringQueue,
++            createFlushableDebounce
++        });
++    }
++
++    globalThis.floorpCreateDarkReaderCompat = createFloorpDarkReaderCompat;
++    globalThis.floorpDarkReaderCompat =
++        createFloorpDarkReaderCompat(globalThis.chrome);
++})();
+--- a/background/index.js
++++ b/background/index.js
+@@ -789,56 +789,37 @@
+             !url.startsWith("view-source")
+         );
+     }
++    const floorpCompat = globalThis.floorpDarkReaderCompat;
+     async function readSyncStorage(defaults) {
+-        return new Promise((resolve) => {
+-            chrome.storage.sync.get(null, (sync) => {
+-                if (chrome.runtime.lastError) {
+-                    console.error(chrome.runtime.lastError.message);
+-                    resolve(null);
+-                    return;
+-                }
+-                for (const key in sync) {
+-                    if (!sync[key]) {
+-                        continue;
+-                    }
+-                    const metaKeysCount = sync[key].__meta_split_count;
+-                    if (!metaKeysCount) {
+-                        continue;
+-                    }
+-                    let string = "";
+-                    for (let i = 0; i < metaKeysCount; i++) {
+-                        string += sync[`${key}_${i.toString(36)}`];
+-                        delete sync[`${key}_${i.toString(36)}`];
+-                    }
+-                    try {
+-                        sync[key] = JSON.parse(string);
+-                    } catch (error) {
+-                        console.error(
+-                            `sync[${key}]: Could not parse record from sync storage: ${string}`
+-                        );
+-                        resolve(null);
+-                        return;
+-                    }
+-                }
+-                sync = {
+-                    ...defaults,
+-                    ...sync
+-                };
+-                resolve(sync);
+-            });
+-        });
++        const sync = await floorpCompat.get("sync", null);
++        for (const key in sync) {
++            if (!sync[key]) {
++                continue;
++            }
++            const metaKeysCount = sync[key].__meta_split_count;
++            if (!metaKeysCount) {
++                continue;
++            }
++            let string = "";
++            for (let i = 0; i < metaKeysCount; i++) {
++                string += sync[`${key}_${i.toString(36)}`];
++                delete sync[`${key}_${i.toString(36)}`];
++            }
++            try {
++                sync[key] = JSON.parse(string);
++            } catch (error) {
++                throw new Error(
++                    `sync[${key}]: Could not parse record from sync storage`
++                );
++            }
++        }
++        return {
++            ...defaults,
++            ...sync
++        };
+     }
+     async function readLocalStorage(defaults) {
+-        return new Promise((resolve) => {
+-            chrome.storage.local.get(defaults, (local) => {
+-                if (chrome.runtime.lastError) {
+-                    console.error(chrome.runtime.lastError.message);
+-                    resolve(defaults);
+-                    return;
+-                }
+-                resolve(local);
+-            });
+-        });
++        return await floorpCompat.get("local", defaults);
+     }
+     function prepareSyncStorage(values) {
+         for (const key in values) {
+@@ -866,37 +847,17 @@
+         return values;
+     }
+     async function writeSyncStorage(values) {
+-        return new Promise((resolve, reject) => {
+-            const packaged = prepareSyncStorage(values);
+-            chrome.storage.sync.set(packaged, () => {
+-                if (chrome.runtime.lastError) {
+-                    reject(chrome.runtime.lastError);
+-                    return;
+-                }
+-                resolve();
+-            });
+-        });
++        const packaged = prepareSyncStorage({...values});
++        await floorpCompat.set("sync", packaged);
+     }
+     async function writeLocalStorage(values) {
+-        return new Promise((resolve) => {
+-            chrome.storage.local.set(values, () => {
+-                resolve();
+-            });
+-        });
++        await floorpCompat.set("local", values);
+     }
+     async function removeSyncStorage(keys) {
+-        return new Promise((resolve) => {
+-            chrome.storage.sync.remove(keys, () => {
+-                resolve();
+-            });
+-        });
++        await floorpCompat.remove("sync", keys);
+     }
+     async function removeLocalStorage(keys) {
+-        return new Promise((resolve) => {
+-            chrome.storage.local.remove(keys, () => {
+-                resolve();
+-            });
+-        });
++        await floorpCompat.remove("local", keys);
+     }
+     async function getCommands() {
+         return new Promise((resolve) => {
+@@ -2625,6 +2586,12 @@
+             this.barrier = new PromiseBarrier();
+             barrier.resolve();
+         }
++        rejectBarrier(reason, nextState) {
++            const barrier = this.barrier;
++            this.barrier = new PromiseBarrier();
++            this.meta = nextState;
++            barrier.reject(reason);
++        }
+         notifyListeners() {
+             this.listeners.forEach((listener) => listener());
+         }
+@@ -2655,7 +2622,11 @@
+         saveStateInternal() {
+             this.storage.set(
+                 {[this.localStorageKey]: this.collectState()},
+-                () => {
++                (error) => {
++                    if (error) {
++                        this.rejectBarrier(error, StateManagerImplState.READY);
++                        return;
++                    }
+                     switch (this.meta) {
+                         case StateManagerImplState.INITIAL:
+                         case StateManagerImplState.LOADING:
+@@ -2718,7 +2689,11 @@
+             }
+         }
+         loadStateInternal() {
+-            this.storage.get(this.localStorageKey, (data) => {
++            this.storage.get(this.localStorageKey, (data, error) => {
++                if (error) {
++                    this.rejectBarrier(error, StateManagerImplState.INITIAL);
++                    return;
++                }
+                 switch (this.meta) {
+                     case StateManagerImplState.INITIAL:
+                     case StateManagerImplState.READY:
+@@ -2789,15 +2764,30 @@
+                     localStorageKey,
+                     parent,
+                     defaults,
+-                    chrome.storage.local,
++                    {
++                        get(keys, callback) {
++                            floorpCompat.get("local", keys).then(
++                                (data) => callback(data, null),
++                                (error) => callback(undefined, error)
++                            );
++                        },
++                        set(values, callback) {
++                            floorpCompat.set("local", values).then(
++                                () => callback(null),
++                                (error) => callback(error)
++                            );
++                        }
++                    },
+                     addListener,
+                     logWarn
+                 );
+             }
+         }
+-        async saveState() {
++        saveState() {
+             if (this.stateManager) {
+-                return this.stateManager.saveState();
++                const save = this.stateManager.saveState();
++                save?.catch(() => undefined);
++                return save;
+             }
+         }
+         async loadState() {
+@@ -3556,8 +3546,15 @@
+         static settings;
+         static async loadSettings() {
+             if (!UserStorage.settings) {
+-                UserStorage.settings =
+-                    await UserStorage.loadSettingsFromStorage();
++                try {
++                    UserStorage.settings =
++                        await UserStorage.loadSettingsFromStorage();
++                } catch (reason) {
++                    if (UserStorage.loadBarrier?.isPending()) {
++                        await UserStorage.loadBarrier.reject(reason);
++                    }
++                    throw reason;
++                }
+             }
+         }
+         static fillDefaults(settings) {
+@@ -3692,36 +3689,51 @@
+             } catch (err) {
+                 logWarn(
+                     "Settings synchronization was disabled due to error:",
+-                    chrome.runtime.lastError
++                    err
+                 );
+                 UserStorage.set({syncSettings: false});
+             }
+         }
+-        static saveSettingsIntoStorage = debounce(SAVE_TIMEOUT, async () => {
+-            if (UserStorage.saveStorageBarrier) {
+-                await UserStorage.saveStorageBarrier.entry();
+-                return;
+-            }
+-            UserStorage.saveStorageBarrier = new PromiseBarrier();
+-            const settings = UserStorage.settings;
+-            if (settings.syncSettings) {
+-                try {
+-                    await writeSyncStorage(settings);
+-                } catch (err) {
+-                    logWarn(
+-                        "Settings synchronization was disabled due to error:",
+-                        chrome.runtime.lastError
++        static saveSettingsIntoStorage = floorpCompat.createFlushableDebounce(
++            SAVE_TIMEOUT,
++            async () => {
++                if (UserStorage.saveStorageBarrier) {
++                    await UserStorage.saveStorageBarrier.entry();
++                    return;
++                }
++                const barrier = new PromiseBarrier();
++                UserStorage.saveStorageBarrier = barrier;
++                try {
++                    const settings = JSON.parse(
++                        JSON.stringify(UserStorage.settings)
+                     );
+-                    UserStorage.set({syncSettings: false});
+-                    await UserStorage.saveSyncSetting(false);
+-                    await writeLocalStorage(settings);
++                    if (settings.syncSettings) {
++                        try {
++                            await writeSyncStorage(settings);
++                        } catch (err) {
++                            logWarn(
++                                "Settings synchronization was disabled due to error:",
++                                err
++                            );
++                            settings.syncSettings = false;
++                            UserStorage.set({syncSettings: false});
++                            await UserStorage.saveSyncSetting(false);
++                            await writeLocalStorage(settings);
++                        }
++                    } else {
++                        await writeLocalStorage(settings);
++                    }
++                    await barrier.resolve();
++                } catch (reason) {
++                    await barrier.reject(reason);
++                    throw reason;
++                } finally {
++                    if (UserStorage.saveStorageBarrier === barrier) {
++                        UserStorage.saveStorageBarrier = null;
++                    }
+                 }
+-            } else {
+-                await writeLocalStorage(settings);
+             }
+-            UserStorage.saveStorageBarrier.resolve();
+-            UserStorage.saveStorageBarrier = null;
+-        });
++        );
+         static set($settings) {
+             if (!UserStorage.settings) {
+                 return;
+@@ -4226,52 +4238,20 @@
+             if (key in this.cache) {
+                 return this.cache[key];
+             }
+-            return new Promise((resolve) => {
+-                chrome.storage.local.get(key, (result) => {
+-                    if (key in this.cache) {
+-                        resolve(this.cache[key]);
+-                        return;
+-                    }
+-                    if (chrome.runtime.lastError) {
+-                        console.error(
+-                            "Failed to query DevTools data",
+-                            chrome.runtime.lastError
+-                        );
+-                        resolve(null);
+-                        return;
+-                    }
+-                    this.cache[key] = result[key];
+-                    resolve(result[key]);
+-                });
+-            });
++            const result = await floorpCompat.get("local", key);
++            if (key in this.cache) {
++                return this.cache[key];
++            }
++            this.cache[key] = result[key];
++            return result[key];
+         }
+         async set(key, value) {
++            await floorpCompat.set("local", {[key]: value});
+             this.cache[key] = value;
+-            return new Promise((resolve) =>
+-                chrome.storage.local.set({[key]: value}, () => {
+-                    if (chrome.runtime.lastError) {
+-                        console.error(
+-                            "Failed to write DevTools data",
+-                            chrome.runtime.lastError
+-                        );
+-                    }
+-                    resolve();
+-                })
+-            );
+         }
+         async remove(key) {
++            await floorpCompat.remove("local", key);
+             this.cache[key] = null;
+-            return new Promise((resolve) =>
+-                chrome.storage.local.remove(key, () => {
+-                    if (chrome.runtime.lastError) {
+-                        console.error(
+-                            "Failed to delete DevTools data",
+-                            chrome.runtime.lastError
+-                        );
+-                    }
+-                    resolve();
+-                })
+-            );
+         }
+         async has(key) {
+             return Boolean(await this.get(key));
+@@ -4323,7 +4303,7 @@
+             ConfigManager.overrides.inversionFixes = inversionFixes || null;
+             ConfigManager.overrides.staticThemes = staticThemes || null;
+         }
+-        static applyFixes(type, text) {
++        static async applyFixes(type, text) {
+             try {
+                 const apply = {
+                     detector: DevTools.applyDetectorHints,
+@@ -4331,26 +4311,26 @@
+                     filter: DevTools.applyInversionFixes,
+                     static: DevTools.applyStaticThemes
+                 }[type];
+-                apply(text);
++                await apply(text);
+                 return null;
+             } catch (err) {
+                 return err;
+             }
+         }
+-        static resetFixes(type) {
++        static async resetFixes(type) {
+             const reset = {
+                 detector: DevTools.resetDetectorHints,
+                 dynamic: DevTools.resetDynamicThemeFixes,
+                 filter: DevTools.resetInversionFixes,
+                 static: DevTools.resetStaticThemes
+             }[type];
+-            reset();
++            await reset();
+         }
+         static async getSavedDetectorHints() {
+             return DevTools.store.get(DevTools.KEY_DETECTOR);
+         }
+-        static saveDetectorHints(text) {
+-            DevTools.store.set(DevTools.KEY_DETECTOR, text);
++        static async saveDetectorHints(text) {
++            await DevTools.store.set(DevTools.KEY_DETECTOR, text);
+         }
+         static async getDetectorHintsText() {
+             let rawFixes = await DevTools.getSavedDetectorHints();
+@@ -4361,24 +4341,24 @@
+             const fixes = parseDetectorHints(rawFixes);
+             return formatDetectorHints(fixes);
+         }
+-        static resetDetectorHints() {
+-            DevTools.store.remove(DevTools.KEY_DETECTOR);
++        static async resetDetectorHints() {
++            await DevTools.store.remove(DevTools.KEY_DETECTOR);
+             ConfigManager.overrides.detectorHints = null;
+             ConfigManager.handleDetectorHints();
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+-        static applyDetectorHints(text) {
++        static async applyDetectorHints(text) {
+             const formatted = formatDetectorHints(parseDetectorHints(text));
++            await DevTools.saveDetectorHints(formatted);
+             ConfigManager.overrides.detectorHints = formatted;
+             ConfigManager.handleDetectorHints();
+-            DevTools.saveDetectorHints(formatted);
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+         static async getSavedDynamicThemeFixes() {
+             return DevTools.store.get(DevTools.KEY_DYNAMIC);
+         }
+-        static saveDynamicThemeFixes(text) {
+-            DevTools.store.set(DevTools.KEY_DYNAMIC, text);
++        static async saveDynamicThemeFixes(text) {
++            await DevTools.store.set(DevTools.KEY_DYNAMIC, text);
+         }
+         static async getDynamicThemeFixesText() {
+             let rawFixes = await DevTools.getSavedDynamicThemeFixes();
+@@ -4389,26 +4369,26 @@
+             const fixes = parseDynamicThemeFixes(rawFixes);
+             return formatDynamicThemeFixes(fixes);
+         }
+-        static resetDynamicThemeFixes() {
+-            DevTools.store.remove(DevTools.KEY_DYNAMIC);
++        static async resetDynamicThemeFixes() {
++            await DevTools.store.remove(DevTools.KEY_DYNAMIC);
+             ConfigManager.overrides.dynamicThemeFixes = null;
+             ConfigManager.handleDynamicThemeFixes();
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+-        static applyDynamicThemeFixes(text) {
++        static async applyDynamicThemeFixes(text) {
+             const formatted = formatDynamicThemeFixes(
+                 parseDynamicThemeFixes(text)
+             );
++            await DevTools.saveDynamicThemeFixes(formatted);
+             ConfigManager.overrides.dynamicThemeFixes = formatted;
+             ConfigManager.handleDynamicThemeFixes();
+-            DevTools.saveDynamicThemeFixes(formatted);
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+         static async getSavedInversionFixes() {
+             return this.store.get(DevTools.KEY_FILTER);
+         }
+-        static saveInversionFixes(text) {
+-            this.store.set(DevTools.KEY_FILTER, text);
++        static async saveInversionFixes(text) {
++            await this.store.set(DevTools.KEY_FILTER, text);
+         }
+         static async getInversionFixesText() {
+             let rawFixes = await DevTools.getSavedInversionFixes();
+@@ -4419,24 +4399,24 @@
+             const fixes = parseInversionFixes(rawFixes);
+             return formatInversionFixes(fixes);
+         }
+-        static resetInversionFixes() {
+-            DevTools.store.remove(DevTools.KEY_FILTER);
++        static async resetInversionFixes() {
++            await DevTools.store.remove(DevTools.KEY_FILTER);
+             ConfigManager.overrides.inversionFixes = null;
+             ConfigManager.handleInversionFixes();
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+-        static applyInversionFixes(text) {
++        static async applyInversionFixes(text) {
+             const formatted = formatInversionFixes(parseInversionFixes(text));
++            await DevTools.saveInversionFixes(formatted);
+             ConfigManager.overrides.inversionFixes = formatted;
+             ConfigManager.handleInversionFixes();
+-            DevTools.saveInversionFixes(formatted);
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+         static async getSavedStaticThemes() {
+             return DevTools.store.get(DevTools.KEY_STATIC);
+         }
+-        static saveStaticThemes(text) {
+-            DevTools.store.set(DevTools.KEY_STATIC, text);
++        static async saveStaticThemes(text) {
++            await DevTools.store.set(DevTools.KEY_STATIC, text);
+         }
+         static async getStaticThemesText() {
+             let rawThemes = await DevTools.getSavedStaticThemes();
+@@ -4447,18 +4427,18 @@
+             const themes = parseStaticThemes(rawThemes);
+             return formatStaticThemes(themes);
+         }
+-        static resetStaticThemes() {
+-            DevTools.store.remove(DevTools.KEY_STATIC);
++        static async resetStaticThemes() {
++            await DevTools.store.remove(DevTools.KEY_STATIC);
+             ConfigManager.overrides.staticThemes = null;
+             ConfigManager.handleStaticThemes();
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+-        static applyStaticThemes(text) {
++        static async applyStaticThemes(text) {
+             const formatted = formatStaticThemes(parseStaticThemes(text));
++            await DevTools.saveStaticThemes(formatted);
+             ConfigManager.overrides.staticThemes = formatted;
+             ConfigManager.handleStaticThemes();
+-            DevTools.saveStaticThemes(formatted);
+-            DevTools.onChange();
++            await DevTools.onChange();
+         }
+     }
+ 
+@@ -4522,15 +4502,39 @@
+         }
+     }
+ 
++    let floorpStartupPromise;
+     class Messenger {
+         static adapter;
+         static changeListenerCount;
++        static mutationQueue = floorpCompat.createRecoveringQueue();
+         static init(adapter) {
+             Messenger.adapter = adapter;
+             Messenger.changeListenerCount = 0;
+             chrome.runtime.onMessage.addListener(Messenger.messageListener);
+         }
+         static messageListener(message, sender, sendResponse) {
++            if (message?.what === "floorpReadiness") {
++                const extensionOrigin = chrome.runtime
++                    .getURL("")
++                    .replace(/\/$/, "")
++                    .toLowerCase();
++                if (
++                    sender?.id !== chrome.runtime.id ||
++                    sender?.origin?.toLowerCase() !== extensionOrigin
++                ) {
++                    return false;
++                }
++                Messenger.collectReadiness().then(
++                    (result) => Messenger.respond(sendResponse, result),
++                    (reason) =>
++                        Messenger.respond(sendResponse, {
++                            ready: false,
++                            version: chrome.runtime.getManifest().version,
++                            error: Messenger.errorMessage(reason)
++                        })
++                );
++                return true;
++            }
+             const allowedSenderURL = [
+                 chrome.runtime.getURL("/ui/popup/index.html"),
+                 chrome.runtime.getURL("/ui/devtools/index.html"),
+@@ -4538,82 +4542,151 @@
+                 chrome.runtime.getURL("/ui/stylesheet-editor/index.html")
+             ];
+             if (allowedSenderURL.includes(sender.url) || false) {
+-                Messenger.onUIMessage(message, sendResponse);
+-                return [
++                if (
++                    message.type === MessageTypeUItoBG.SUBSCRIBE_TO_CHANGES ||
++                    message.type === MessageTypeUItoBG.UNSUBSCRIBE_FROM_CHANGES
++                ) {
++                    Messenger.onSubscriptionMessage(message.type);
++                    return false;
++                }
++                const isRead = [
+                     MessageTypeUItoBG.GET_DATA,
+                     MessageTypeUItoBG.GET_DEVTOOLS_DATA
+                 ].includes(message.type);
++                const invoke = async () => {
++                    await floorpStartupPromise;
++                    return await Messenger.onUIMessage(message);
++                };
++                const operation = isRead
++                    ? invoke()
++                    : Messenger.mutationQueue.enqueue(invoke);
++                operation.then(
++                    (data) => Messenger.respond(sendResponse, {data}),
++                    (reason) =>
++                        Messenger.respond(sendResponse, {
++                            error: Messenger.errorMessage(reason)
++                        })
++                );
++                return true;
+             }
++            return false;
+         }
++        static respond(sendResponse, response) {
++            try {
++                sendResponse(response);
++            } catch (error) {
++                console.error(error);
++            }
++        }
++        static errorMessage(reason) {
++            return reason?.message || String(reason);
++        }
++        static onSubscriptionMessage(type) {
++            if (type === MessageTypeUItoBG.SUBSCRIBE_TO_CHANGES) {
++                Messenger.changeListenerCount++;
++            } else {
++                Messenger.changeListenerCount = Math.max(
++                    0,
++                    Messenger.changeListenerCount - 1
++                );
++            }
++        }
++        static async collectReadiness() {
++            const version = chrome.runtime.getManifest().version;
++            try {
++                await floorpStartupPromise;
++                await Messenger.mutationQueue.flush();
++                await UserStorage.saveSettingsIntoStorage.flush();
++                await floorpCompat.flushStorage();
++                if (!UserStorage.settings) {
++                    throw new Error("Dark Reader settings are not loaded");
++                }
++                const settings = UserStorage.settings;
++                const persisted = settings.syncSettings
++                    ? await readSyncStorage(DEFAULT_SETTINGS)
++                    : await readLocalStorage(DEFAULT_SETTINGS);
++                const keys = Object.keys(DEFAULT_SETTINGS);
++                const expectedSettings = Object.fromEntries(
++                    keys.map((key) => [key, settings[key]])
++                );
++                const persistedSettings = Object.fromEntries(
++                    keys.map((key) => [key, persisted[key]])
++                );
++                if (!floorpCompat.equal(expectedSettings, persistedSettings)) {
++                    throw new Error(
++                        "Dark Reader settings readback did not match memory"
++                    );
++                }
++                return {ready: true, version};
++            } catch (reason) {
++                return {
++                    ready: false,
++                    version,
++                    error: Messenger.errorMessage(reason)
++                };
++            }
++        }
+         static firefoxPortListener(port) {
+             {
+                 return;
+             }
+         }
+-        static onUIMessage({type, data}, sendResponse) {
++        static async onUIMessage({type, data}) {
+             switch (type) {
+                 case MessageTypeUItoBG.GET_DATA:
+-                    Messenger.adapter
+-                        .collect()
+-                        .then((data) => sendResponse({data}));
+-                    break;
++                    return await Messenger.adapter.collect();
+                 case MessageTypeUItoBG.GET_DEVTOOLS_DATA:
+-                    Messenger.adapter
+-                        .collectDevToolsData()
+-                        .then((data) => sendResponse({data}));
+-                    break;
+-                case MessageTypeUItoBG.SUBSCRIBE_TO_CHANGES:
+-                    Messenger.changeListenerCount++;
+-                    break;
+-                case MessageTypeUItoBG.UNSUBSCRIBE_FROM_CHANGES:
+-                    Messenger.changeListenerCount--;
+-                    break;
++                    return await Messenger.adapter.collectDevToolsData();
+                 case MessageTypeUItoBG.CHANGE_SETTINGS:
+-                    Messenger.adapter.changeSettings(data);
+-                    break;
++                    return await Messenger.adapter.changeSettings(data);
+                 case MessageTypeUItoBG.SET_THEME:
+-                    Messenger.adapter.setTheme(data);
+-                    break;
++                    return await Messenger.adapter.setTheme(data);
+                 case MessageTypeUItoBG.TOGGLE_ACTIVE_TAB:
+-                    Messenger.adapter.toggleActiveTab();
+-                    break;
++                    return await Messenger.adapter.toggleActiveTab();
+                 case MessageTypeUItoBG.MARK_NEWS_AS_READ:
+-                    Messenger.adapter.markNewsAsRead(data);
+-                    break;
++                    return await Messenger.adapter.markNewsAsRead(data);
+                 case MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED:
+-                    Messenger.adapter.markNewsAsDisplayed(data);
+-                    break;
++                    return await Messenger.adapter.markNewsAsDisplayed(data);
+                 case MessageTypeUItoBG.LOAD_CONFIG:
+-                    Messenger.adapter.loadConfig(data);
+-                    break;
++                    return await Messenger.adapter.loadConfig(data);
+                 case MessageTypeUItoBG.APPLY_DEV_FIXES: {
+-                    const error = Messenger.adapter.applyDevFixes(
++                    const error = await Messenger.adapter.applyDevFixes(
+                         data.type,
+                         data.text
+                     );
+-                    sendResponse({error: error ? error.message : undefined});
+-                    break;
++                    if (error) {
++                        throw error;
++                    }
++                    return;
+                 }
+                 case MessageTypeUItoBG.RESET_DEV_FIXES:
+-                    Messenger.adapter.resetDevFixes(data.type);
+-                    break;
++                    return await Messenger.adapter.resetDevFixes(data.type);
+                 case MessageTypeUItoBG.START_ACTIVATION:
+-                    Messenger.adapter.startActivation(data.email, data.key);
+-                    break;
++                    return await Messenger.adapter.startActivation(
++                        data.email,
++                        data.key
++                    );
+                 case MessageTypeUItoBG.RESET_ACTIVATION:
+-                    Messenger.adapter.resetActivation();
+-                    break;
++                    return await Messenger.adapter.resetActivation();
+                 case MessageTypeUItoBG.HIDE_HIGHLIGHTS:
+-                    Messenger.adapter.hideHighlights(data);
+-                    break;
++                    return await Messenger.adapter.hideHighlights(data);
++                case MessageTypeUItoBG.COLOR_SCHEME_CHANGE:
++                    return await Messenger.adapter.colorSchemeChange(
++                        data.isDark
++                    );
++                default:
++                    throw new Error(`Unsupported UI message: ${type}`);
+             }
+         }
+         static reportChanges(data) {
+             if (Messenger.changeListenerCount > 0) {
+-                chrome.runtime.sendMessage({
++                const delivery = chrome.runtime.sendMessage({
+                     type: MessageTypeBGtoUI.CHANGES,
+                     data
+                 });
++                if (delivery && typeof delivery.catch === "function") {
++                    delivery.catch(() => undefined);
++                }
+             }
+         }
+     }
+@@ -5044,7 +5117,6 @@
+                                 });
+                             return true;
+                         }
+-                        case MessageTypeUItoBG.COLOR_SCHEME_CHANGE:
+                         case MessageTypeCStoBG.COLOR_SCHEME_CHANGE:
+                             TabManager.onColorSchemeMessage(message, sender);
+                             break;
+@@ -6530,7 +6602,8 @@
+                 resetDevFixes: DevTools.resetFixes,
+                 startActivation: Extension.startActivation,
+                 resetActivation: Extension.resetActivation,
+-                hideHighlights: UIHighlights.hideHighlights
++                hideHighlights: UIHighlights.hideHighlights,
++                colorSchemeChange: Extension.onColorSchemeChange
+             };
+         }
+         static onCommandInternal = async (
+@@ -6545,7 +6618,7 @@
+             Extension.stateManager.loadState();
+             switch (command) {
+                 case "toggle":
+-                    Extension.changeSettings({
++                    return await Extension.changeSettings({
+                         enabled: !Extension.isExtensionSwitchedOn(),
+                         automation: {
+                             ...UserStorage.settings.automation,
+@@ -6588,13 +6661,12 @@
+                     const pdf = async () =>
+                         isPDF(frameURL || (await TabManager.getActiveTabURL()));
+                     if ((await scriptPDF(tabId, frameId)) || (await pdf())) {
+-                        Extension.changeSettings({
++                        return await Extension.changeSettings({
+                             enableForPDF: !UserStorage.settings.enableForPDF
+                         });
+                     } else {
+-                        Extension.toggleActiveTab();
++                        return await Extension.toggleActiveTab();
+                     }
+-                    break;
+                 }
+                 case "switchEngine": {
+                     const engines = Object.values(ThemeEngine);
+@@ -6602,12 +6674,14 @@
+                         UserStorage.settings.theme.engine
+                     );
+                     const next = engines[(index + 1) % engines.length];
+-                    Extension.setTheme({engine: next});
+-                    break;
++                    return await Extension.setTheme({engine: next});
+                 }
+             }
+         };
+-        static onCommand = debounce(75, Extension.onCommandInternal);
++        static onCommand = floorpCompat.createFlushableDebounce(
++            75,
++            Extension.onCommandInternal
++        );
+         static registerContextMenus() {
+             chrome.contextMenus.onClicked.addListener(
+                 async ({menuItemId, frameId, frameUrl, pageUrl}, tab) =>
+@@ -6696,7 +6770,10 @@
+                           ? "light"
+                           : null,
+                 activeTab,
+-                uiHighlights
++                uiHighlights,
++                installation: (
++                    await readLocalStorage({installation: {}})
++                ).installation
+             };
+         }
+         static async collectDevToolsData() {
+@@ -6845,7 +6922,7 @@
+             promises.push(promise);
+             await Promise.all(promises);
+         }
+-        static setTheme($theme) {
++        static async setTheme($theme) {
+             UserStorage.set({
+                 theme: {...UserStorage.settings.theme, ...$theme}
+             });
+@@ -6855,7 +6932,7 @@
+             ) {
+                 setWindowTheme(UserStorage.settings.theme);
+             }
+-            Extension.onSettingsChanged();
++            await Extension.onSettingsChanged();
+         }
+         static async reportChanges() {
+             const info = await Extension.collectData();
+@@ -6894,8 +6971,10 @@
+                 darkThemeDetected
+             ) {
+                 const toggledList = getToggledList(settings.enabledFor);
+-                Extension.changeSettings({enabledFor: toggledList}, true);
+-                return;
++                return await Extension.changeSettings(
++                    {enabledFor: toggledList},
++                    true
++                );
+             }
+             if (
+                 settings.enabledByDefault &&
+@@ -6903,11 +6982,16 @@
+             ) {
+                 const enabledFor = getToggledList(settings.enabledFor);
+                 const disabledFor = getToggledList(settings.disabledFor);
+-                Extension.changeSettings({enabledFor, disabledFor}, true);
+-                return;
++                return await Extension.changeSettings(
++                    {enabledFor, disabledFor},
++                    true
++                );
+             }
+             const toggledList = getToggledList(settings.disabledFor);
+-            Extension.changeSettings({disabledFor: toggledList}, true);
++            return await Extension.changeSettings(
++                {disabledFor: toggledList},
++                true
++            );
+         }
+         static onAppToggle() {
+             if (Extension.isExtensionSwitchedOn()) {
+@@ -6939,13 +7023,13 @@
+         static async onSettingsChanged(onlyUpdateActiveTab = false) {
+             await Extension.loadData();
+             Extension.wasEnabledOnLastCheck = Extension.isExtensionSwitchedOn();
+-            TabManager.sendMessage(onlyUpdateActiveTab);
+-            Extension.saveUserSettings();
+-            Extension.reportChanges();
++            await Extension.saveUserSettings();
++            await TabManager.sendMessage(onlyUpdateActiveTab);
+             IconManager.setIcon({
+                 colorScheme: UserStorage.settings.theme.mode ? "dark" : "light"
+             });
+-            Extension.stateManager.saveState();
++            await Extension.stateManager.saveState();
++            await Extension.reportChanges();
+         }
+         static async startActivation(email, key) {
+             const delay = 2000 + Math.round(Math.random() * 2000);
+@@ -6954,21 +7038,20 @@
+                 key.replaceAll("-", "").length === 25 &&
+                 key.toLocaleLowerCase().startsWith("dr") &&
+                 key.replaceAll("-", "").match(/^[0-9a-z]{25}$/i);
+-            setTimeout(async () => {
+-                await writeLocalStorage({
+-                    activationEmail: email,
+-                    activationKey: key
+-                });
+-                if (checkEmail(email) && checkKey(key)) {
+-                    await UIHighlights.hideHighlights(["anniversary"]);
+-                }
+-                Extension.reportChanges();
+-            }, delay);
++            await new Promise((resolve) => setTimeout(resolve, delay));
++            await writeLocalStorage({
++                activationEmail: email,
++                activationKey: key
++            });
++            if (checkEmail(email) && checkKey(key)) {
++                await UIHighlights.hideHighlights(["anniversary"]);
++            }
++            await Extension.reportChanges();
+         }
+         static async resetActivation() {
+             await removeLocalStorage(["activationEmail", "activationKey"]);
+             await UIHighlights.restoreHighlights(["anniversary"]);
+-            Extension.reportChanges();
++            await Extension.reportChanges();
+         }
+         static getTabInfo(tabURL) {
+             const isInDarkList = ConfigManager.isURLInDarkList(tabURL);
+@@ -7114,7 +7197,13 @@
+         }
+     }
+ 
+-    Extension.start();
++    floorpStartupPromise = Extension.start();
++    floorpStartupPromise.catch(async (reason) => {
++        if (Extension.startBarrier?.isPending()) {
++            await Extension.startBarrier.reject(reason);
++        }
++        console.error("Dark Reader startup failed", reason);
++    });
+     const welcome = `  /''''\\
+  (0)==(0)
+ /__||||__\\
+@@ -7134,24 +7223,28 @@
+         });
+         chrome.runtime.setUninstallURL(UNINSTALL_URL);
+     }
+-    function writeInstallationVersion(storage, details) {
+-        storage.get({installation: {version: ""}}, (data) => {
+-            if (data?.installation?.version) {
+-                return;
++    async function writeInstallationVersion(areaName, details) {
++        const data = await floorpCompat.get(areaName, {
++            installation: {version: ""}
++        });
++        if (data?.installation?.version) {
++            return;
++        }
++        await floorpCompat.set(areaName, {
++            installation: {
++                date: Date.now(),
++                reason: details.reason,
++                version:
++                    details.previousVersion ?? chrome.runtime.getManifest().version
+             }
+-            storage.set({
+-                installation: {
+-                    date: Date.now(),
+-                    reason: details.reason,
+-                    version:
+-                        details.previousVersion ??
+-                        chrome.runtime.getManifest().version
+-                }
+-            });
+         });
+     }
+     chrome.runtime.onInstalled.addListener((details) => {
+-        writeInstallationVersion(chrome.storage.local, details);
+-        writeInstallationVersion(chrome.storage.sync, details);
++        Promise.all([
++            writeInstallationVersion("local", details),
++            writeInstallationVersion("sync", details)
++        ]).catch((reason) =>
++            console.error("Failed to save installation version", reason)
++        );
+     });
+ })();
+--- a/ui/devtools/index.js
++++ b/ui/devtools/index.js
+@@ -1319,6 +1319,13 @@
+                     }
+                 });
+             });
++        }
++        sendMutation(type, data) {
++            const request = this.sendRequest(type, data);
++            request.catch((error) =>
++                console.error("Dark Reader mutation failed", error)
++            );
++            return request;
+         }
+         async firefoxSendRequestWithResponse(type, data) {
+             return new Promise((resolve, reject) => {
+@@ -1340,6 +1347,29 @@
+         }
+         async getDevToolsData() {
+             return await this.sendRequest(MessageTypeUItoBG.GET_DEVTOOLS_DATA);
++        }
++        async prepareToClose() {
++            return new Promise((resolve) => {
++                chrome.runtime.sendMessage(
++                    {what: "floorpReadiness"},
++                    (response) => {
++                        const error = chrome.runtime.lastError;
++                        if (error) {
++                            resolve({
++                                ready: false,
++                                error: error.message || String(error)
++                            });
++                            return;
++                        }
++                        resolve(
++                            response || {
++                                ready: false,
++                                error: "Missing Dark Reader readiness response"
++                            }
++                        );
++                    }
++                );
++            });
+         }
+         onChangesReceived = ({type, data}) => {
+             if (type === MessageTypeBGtoUI.CHANGES) {
+@@ -1359,40 +1389,31 @@
+             return null;
+         }
+         changeSettings(settings) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.CHANGE_SETTINGS,
+-                data: settings
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.CHANGE_SETTINGS,
++                settings
++            );
+         }
+         setTheme(theme) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.SET_THEME,
+-                data: theme
+-            });
++            return this.sendMutation(MessageTypeUItoBG.SET_THEME, theme);
+         }
+         toggleActiveTab() {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
+-                data: {}
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
++                {}
++            );
+         }
+         markNewsAsRead(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_READ,
+-                data: ids
+-            });
++            return this.sendMutation(MessageTypeUItoBG.MARK_NEWS_AS_READ, ids);
+         }
+         markNewsAsDisplayed(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
+-                data: ids
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
++                ids
++            );
+         }
+         loadConfig(options) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.LOAD_CONFIG,
+-                data: options
+-            });
++            return this.sendMutation(MessageTypeUItoBG.LOAD_CONFIG, options);
+         }
+         async applyDevFixes(type, text) {
+             return await this.sendRequest(MessageTypeUItoBG.APPLY_DEV_FIXES, {
+@@ -1401,27 +1422,24 @@
+             });
+         }
+         resetDevFixes(type) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_DEV_FIXES,
+-                data: {type}
++            return this.sendMutation(MessageTypeUItoBG.RESET_DEV_FIXES, {
++                type
+             });
+         }
+         startActivation(email, key) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.START_ACTIVATION,
+-                data: {email, key}
++            return this.sendMutation(MessageTypeUItoBG.START_ACTIVATION, {
++                email,
++                key
+             });
+         }
+         resetActivation() {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_ACTIVATION
+-            });
++            return this.sendMutation(MessageTypeUItoBG.RESET_ACTIVATION);
+         }
+-        async hideHighlights(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.HIDE_HIGHLIGHTS,
+-                data: ids
+-            });
++        hideHighlights(ids) {
++            return this.sendMutation(
++                MessageTypeUItoBG.HIDE_HIGHLIGHTS,
++                ids
++            );
+         }
+         disconnect() {
+             if (this.changeSubscribers.size > 0) {
+@@ -3957,6 +3975,7 @@
+     }
+     async function start() {
+         const connector = new Connector();
++        globalThis.floorpPrepareToClose = () => connector.prepareToClose();
+         window.addEventListener("unload", () => connector.disconnect(), {
+             passive: true
+         });
+--- a/ui/options/index.js
++++ b/ui/options/index.js
+@@ -1322,6 +1322,13 @@
+                 });
+             });
+         }
++        sendMutation(type, data) {
++            const request = this.sendRequest(type, data);
++            request.catch((error) =>
++                console.error("Dark Reader mutation failed", error)
++            );
++            return request;
++        }
+         async firefoxSendRequestWithResponse(type, data) {
+             return new Promise((resolve, reject) => {
+                 const dataPort = chrome.runtime.connect({name: type});
+@@ -1342,6 +1349,29 @@
+         }
+         async getDevToolsData() {
+             return await this.sendRequest(MessageTypeUItoBG.GET_DEVTOOLS_DATA);
++        }
++        async prepareToClose() {
++            return new Promise((resolve) => {
++                chrome.runtime.sendMessage(
++                    {what: "floorpReadiness"},
++                    (response) => {
++                        const error = chrome.runtime.lastError;
++                        if (error) {
++                            resolve({
++                                ready: false,
++                                error: error.message || String(error)
++                            });
++                            return;
++                        }
++                        resolve(
++                            response || {
++                                ready: false,
++                                error: "Missing Dark Reader readiness response"
++                            }
++                        );
++                    }
++                );
++            });
+         }
+         onChangesReceived = ({type, data}) => {
+             if (type === MessageTypeBGtoUI.CHANGES) {
+@@ -1361,41 +1391,38 @@
+             return null;
+         }
+         changeSettings(settings) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.CHANGE_SETTINGS,
+-                data: settings
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.CHANGE_SETTINGS,
++                settings
++            );
+         }
+         setTheme(theme) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.SET_THEME,
+-                data: theme
+-            });
++            return this.sendMutation(MessageTypeUItoBG.SET_THEME, theme);
+         }
+         toggleActiveTab() {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
+-                data: {}
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
++                {}
++            );
+         }
+         markNewsAsRead(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_READ,
+-                data: ids
+-            });
++            return this.sendMutation(MessageTypeUItoBG.MARK_NEWS_AS_READ, ids);
+         }
+         markNewsAsDisplayed(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
+-                data: ids
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
++                ids
++            );
+         }
+         loadConfig(options) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.LOAD_CONFIG,
+-                data: options
+-            });
++            return this.sendMutation(MessageTypeUItoBG.LOAD_CONFIG, options);
+         }
++        colorSchemeChange(isDark) {
++            return this.sendMutation(
++                MessageTypeUItoBG.COLOR_SCHEME_CHANGE,
++                {isDark}
++            );
++        }
+         async applyDevFixes(type, text) {
+             return await this.sendRequest(MessageTypeUItoBG.APPLY_DEV_FIXES, {
+                 type,
+@@ -1403,27 +1430,24 @@
+             });
+         }
+         resetDevFixes(type) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_DEV_FIXES,
+-                data: {type}
++            return this.sendMutation(MessageTypeUItoBG.RESET_DEV_FIXES, {
++                type
+             });
+         }
+         startActivation(email, key) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.START_ACTIVATION,
+-                data: {email, key}
++            return this.sendMutation(MessageTypeUItoBG.START_ACTIVATION, {
++                email,
++                key
+             });
+         }
+         resetActivation() {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_ACTIVATION
+-            });
++            return this.sendMutation(MessageTypeUItoBG.RESET_ACTIVATION);
+         }
+-        async hideHighlights(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.HIDE_HIGHLIGHTS,
+-                data: ids
+-            });
++        hideHighlights(ids) {
++            return this.sendMutation(
++                MessageTypeUItoBG.HIDE_HIGHLIGHTS,
++                ids
++            );
+         }
+         disconnect() {
+             if (this.changeSubscribers.size > 0) {
+@@ -3026,31 +3050,3 @@
+-    function ShortcutLink(props) {
+-        const shortcut = props.shortcuts[props.commandName];
+-        const shortcutMessage = props.textTemplate(shortcut);
+-        const cls = mergeClass("shortcut", [
+-            shortcut ? "shortcut--set" : null,
+-            props.class
+-        ]);
+-        function onClick(e) {
+-            e.preventDefault();
+-            if (isEdge) {
+-                chrome.tabs.create({
+-                    url: `edge://extensions/shortcuts`,
+-                    active: true
+-                });
+-                return;
+-            }
+-            chrome.tabs.create({
+-                url: `chrome://extensions/configureCommands#command-${chrome.runtime.id}-${props.commandName}`,
+-                active: true
+-            });
+-        }
+-        function onRender(node) {
+-            node.textContent = shortcutMessage;
+-        }
+-        return m$1("a", {
+-            class: cls,
+-            href: "#",
+-            onclick: onClick,
+-            oncreate: onRender
+-        });
++    function ShortcutLink() {
++        return null;
+     }
+@@ -4658,16 +4682,10 @@
+                                     isSystemAutomation
+                             },
+                             onclick: () => {
+-                                {
+-                                    chrome.runtime.sendMessage({
+-                                        type: MessageTypeUItoBG.COLOR_SCHEME_CHANGE,
+-                                        data: {
+-                                            isDark: matchMedia(
+-                                                "(prefers-color-scheme: dark)"
+-                                            ).matches
+-                                        }
+-                                    });
+-                                }
++                                props.actions.colorSchemeChange(
++                                    matchMedia("(prefers-color-scheme: dark)")
++                                        .matches
++                                );
+                                 changeAutomationMode(
+                                     isSystemAutomation
+                                         ? AutomationMode.NONE
+@@ -5129,16 +5119,6 @@
+                         iconClass: "settings-icon-auto"
+                     },
+                     m$1(AutomationTab, {...props})
+-                ),
+-                m$1(
+-                    TabPanel$1.Tab,
+-                    {
+-                        id: "hotkeys",
+-                        label: "Hotkeys",
+-                        icon: m$1(KeyboardIcon, null),
+-                        iconClass: "settings-icon-hotkeys"
+-                    },
+-                    m$1(HotkeysTab, {...props})
+                 ),
+                 m$1(
+                     TabPanel$1.Tab,
+@@ -5180,6 +5198,7 @@
+     }
+     async function start() {
+         const connector = new Connector();
++        globalThis.floorpPrepareToClose = () => connector.prepareToClose();
+         window.addEventListener("unload", () => connector.disconnect(), {
+             passive: true
+         });
+--- a/ui/popup/index.js
++++ b/ui/popup/index.js
+@@ -1340,0 +1341,7 @@
++        sendMutation(type, data) {
++            const request = this.sendRequest(type, data);
++            request.catch((error) =>
++                console.error("Dark Reader mutation failed", error)
++            );
++            return request;
++        }
+@@ -1360,0 +1368,23 @@
++        }
++        async prepareToClose() {
++            return new Promise((resolve) => {
++                chrome.runtime.sendMessage(
++                    {what: "floorpReadiness"},
++                    (response) => {
++                        const error = chrome.runtime.lastError;
++                        if (error) {
++                            resolve({
++                                ready: false,
++                                error: error.message || String(error)
++                            });
++                            return;
++                        }
++                        resolve(
++                            response || {
++                                ready: false,
++                                error: "Missing Dark Reader readiness response"
++                            }
++                        );
++                    }
++                );
++            });
+@@ -1380,4 +1410,4 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.CHANGE_SETTINGS,
+-                data: settings
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.CHANGE_SETTINGS,
++                settings
++            );
+@@ -1386,4 +1416 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.SET_THEME,
+-                data: theme
+-            });
++            return this.sendMutation(MessageTypeUItoBG.SET_THEME, theme);
+@@ -1392,4 +1419,4 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
+-                data: {}
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
++                {}
++            );
+@@ -1398,4 +1425 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_READ,
+-                data: ids
+-            });
++            return this.sendMutation(MessageTypeUItoBG.MARK_NEWS_AS_READ, ids);
+@@ -1404,4 +1428,4 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
+-                data: ids
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
++                ids
++            );
+@@ -1410,4 +1434 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.LOAD_CONFIG,
+-                data: options
+-            });
++            return this.sendMutation(MessageTypeUItoBG.LOAD_CONFIG, options);
+@@ -1422,3 +1443,2 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_DEV_FIXES,
+-                data: {type}
++            return this.sendMutation(MessageTypeUItoBG.RESET_DEV_FIXES, {
++                type
+@@ -1428,3 +1448,3 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.START_ACTIVATION,
+-                data: {email, key}
++            return this.sendMutation(MessageTypeUItoBG.START_ACTIVATION, {
++                email,
++                key
+@@ -1434,3 +1454 @@
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_ACTIVATION
+-            });
++            return this.sendMutation(MessageTypeUItoBG.RESET_ACTIVATION);
+@@ -1438,5 +1456,5 @@
+-        async hideHighlights(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.HIDE_HIGHLIGHTS,
+-                data: ids
+-            });
++        hideHighlights(ids) {
++            return this.sendMutation(
++                MessageTypeUItoBG.HIDE_HIGHLIGHTS,
++                ids
++            );
+@@ -1586,10 +1604,20 @@
+-    async function openExtensionPage(page) {
+-        const url = chrome.runtime.getURL(`/ui/${page}/index.html`);
+-        if (isMobile || page === "options") {
+-            const extensionPageTab = await getExtensionPageTab();
+-            if (extensionPageTab !== null) {
+-                chrome.tabs.update(extensionPageTab.id, {active: true});
+-                window.close();
+-            } else {
+-                chrome.tabs.create({url});
+-                window.close();
++    const pendingExtensionPageRoutes = new Set();
++    let extensionPageRouteError = null;
++    let extensionPageClosePreparation = null;
++    function getExtensionPageRouteErrorMessage(reason) {
++        if (reason && typeof reason.message === "string") {
++            return reason.message;
++        }
++        return String(reason);
++    }
++    function trackExtensionPageRoute(operation) {
++        if (pendingExtensionPageRoutes.size === 0) {
++            extensionPageRouteError = null;
++        }
++        const route = operation();
++        pendingExtensionPageRoutes.add(route);
++        route.then(
++            () => pendingExtensionPageRoutes.delete(route),
++            (reason) => {
++                extensionPageRouteError = reason;
++                pendingExtensionPageRoutes.delete(route);
+@@ -1597,15 +1625,47 @@
+-        } else {
+-            const extensionPageTab = await getExtensionPageTab();
+-            if (extensionPageTab !== null) {
+-                chrome.windows.update(extensionPageTab.windowId, {
+-                    focused: true
+-                });
+-                window.close();
+-            } else {
+-                chrome.windows.create({
+-                    type: "popup",
+-                    url,
+-                    width: 800,
+-                    height: 600
+-                });
+-                window.close();
++        );
++        return route;
++    }
++    async function prepareExtensionPageRoutesToClose() {
++        while (pendingExtensionPageRoutes.size > 0) {
++            await Promise.allSettled([...pendingExtensionPageRoutes]);
++        }
++        if (extensionPageRouteError !== null) {
++            return {
++                ready: false,
++                error: `Dark Reader page route failed: ${getExtensionPageRouteErrorMessage(extensionPageRouteError)}`
++            };
++        }
++        return {ready: true};
++    }
++    async function preparePopupToClose(connector) {
++        if (extensionPageClosePreparation !== null) {
++            return extensionPageClosePreparation;
++        }
++        const preparation = (async () => {
++            const [readiness, routeReadiness] = await Promise.allSettled([
++                connector.prepareToClose(),
++                prepareExtensionPageRoutesToClose()
++            ]);
++            if (routeReadiness.status === "rejected") {
++                return {
++                    ready: false,
++                    error: `Dark Reader page route settlement failed: ${getExtensionPageRouteErrorMessage(routeReadiness.reason)}`
++                };
++            }
++            if (!routeReadiness.value.ready) {
++                return routeReadiness.value;
++            }
++            if (readiness.status === "rejected") {
++                return {
++                    ready: false,
++                    error: `Dark Reader close preparation failed: ${getExtensionPageRouteErrorMessage(readiness.reason)}`
++                };
++            }
++            return readiness.value;
++        })();
++        extensionPageClosePreparation = preparation;
++        try {
++            return await preparation;
++        } finally {
++            if (extensionPageClosePreparation === preparation) {
++                extensionPageClosePreparation = null;
+@@ -1614,0 +1675,32 @@
++    async function openExtensionPage(page) {
++        const route = trackExtensionPageRoute(async () => {
++            const url = chrome.runtime.getURL(`/ui/${page}/index.html`);
++            if (isMobile || page === "options") {
++                const extensionPageTab = await getExtensionPageTab();
++                if (extensionPageTab !== null) {
++                    await chrome.tabs.update(extensionPageTab.id, {
++                        active: true
++                    });
++                } else {
++                    await chrome.tabs.create({url});
++                }
++            } else {
++                const extensionPageTab = await getExtensionPageTab();
++                if (extensionPageTab !== null) {
++                    await chrome.windows.update(extensionPageTab.windowId, {
++                        focused: true
++                    });
++                } else {
++                    await chrome.windows.create({
++                        type: "popup",
++                        url,
++                        width: 800,
++                        height: 600
++                    });
++                }
++            }
++        });
++        await route;
++        window.close();
++    }
++    globalThis.floorpOpenExtensionPage = openExtensionPage;
+@@ -3527,33 +3619,5 @@
+     var Select$1 = withState(Select);
+-
++
+-    function ShortcutLink(props) {
+-        const shortcut = props.shortcuts[props.commandName];
+-        const shortcutMessage = props.textTemplate(shortcut);
+-        const cls = mergeClass("shortcut", [
+-            shortcut ? "shortcut--set" : null,
+-            props.class
+-        ]);
+-        function onClick(e) {
+-            e.preventDefault();
+-            if (isEdge) {
+-                chrome.tabs.create({
+-                    url: `edge://extensions/shortcuts`,
+-                    active: true
+-                });
+-                return;
+-            }
+-            chrome.tabs.create({
+-                url: `chrome://extensions/configureCommands#command-${chrome.runtime.id}-${props.commandName}`,
+-                active: true
+-            });
+-        }
+-        function onRender(node) {
+-            node.textContent = shortcutMessage;
+-        }
+-        return m$1("a", {
+-            class: cls,
+-            href: "#",
+-            onclick: onClick,
+-            oncreate: onRender
+-        });
++    function ShortcutLink() {
++        return null;
+     }
+@@ -7861,25 +7925,16 @@
+             })
+         );
+     }
+-    async function getInstallationData() {
+-        return new Promise((resolve) => {
+-            chrome.storage.local.get({installation: {}}, (data) => {
+-                if (data?.installation?.version) {
+-                    resolve(data.installation);
+-                } else {
+-                    resolve({});
+-                }
+-            });
+-        });
+-    }
+     async function start() {
+         const connector = new Connector();
++        globalThis.floorpPrepareToClose = () =>
++            preparePopupToClose(connector);
+         window.addEventListener("unload", () => connector.disconnect());
+-        const [data, fonts, installation] = await Promise.all([
++        const [data, fonts] = await Promise.all([
+             connector.getData(),
+-            getFontList(),
+-            getInstallationData()
++            getFontList()
+         ]);
++        const installation = data.installation || {};
+         renderBody(data, fonts, installation, connector);
+         connector.subscribeToChanges((data) =>
+             renderBody(data, fonts, installation, connector)
+--- a/ui/popup/style.css
++++ b/ui/popup/style.css
+@@ -1891,6 +1891,11 @@
+     flex: none;
+     white-space: nowrap;
+ }
++.header__more-settings__shortcut-wrapper,
++.header__more-settings__shortcut-wrapper + .header__more-settings__description,
++.site-list-settings__shortcut {
++    display: none !important;
++}
+ .site-list-settings__text-list {
+     flex: initial;
+ }
+--- a/ui/stylesheet-editor/index.js
++++ b/ui/stylesheet-editor/index.js
+@@ -1318,6 +1318,13 @@
+                     }
+                 });
+             });
++        }
++        sendMutation(type, data) {
++            const request = this.sendRequest(type, data);
++            request.catch((error) =>
++                console.error("Dark Reader mutation failed", error)
++            );
++            return request;
+         }
+         async firefoxSendRequestWithResponse(type, data) {
+             return new Promise((resolve, reject) => {
+@@ -1339,6 +1346,29 @@
+         }
+         async getDevToolsData() {
+             return await this.sendRequest(MessageTypeUItoBG.GET_DEVTOOLS_DATA);
++        }
++        async prepareToClose() {
++            return new Promise((resolve) => {
++                chrome.runtime.sendMessage(
++                    {what: "floorpReadiness"},
++                    (response) => {
++                        const error = chrome.runtime.lastError;
++                        if (error) {
++                            resolve({
++                                ready: false,
++                                error: error.message || String(error)
++                            });
++                            return;
++                        }
++                        resolve(
++                            response || {
++                                ready: false,
++                                error: "Missing Dark Reader readiness response"
++                            }
++                        );
++                    }
++                );
++            });
+         }
+         onChangesReceived = ({type, data}) => {
+             if (type === MessageTypeBGtoUI.CHANGES) {
+@@ -1358,40 +1388,31 @@
+             return null;
+         }
+         changeSettings(settings) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.CHANGE_SETTINGS,
+-                data: settings
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.CHANGE_SETTINGS,
++                settings
++            );
+         }
+         setTheme(theme) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.SET_THEME,
+-                data: theme
+-            });
++            return this.sendMutation(MessageTypeUItoBG.SET_THEME, theme);
+         }
+         toggleActiveTab() {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
+-                data: {}
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
++                {}
++            );
+         }
+         markNewsAsRead(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_READ,
+-                data: ids
+-            });
++            return this.sendMutation(MessageTypeUItoBG.MARK_NEWS_AS_READ, ids);
+         }
+         markNewsAsDisplayed(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
+-                data: ids
+-            });
++            return this.sendMutation(
++                MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
++                ids
++            );
+         }
+         loadConfig(options) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.LOAD_CONFIG,
+-                data: options
+-            });
++            return this.sendMutation(MessageTypeUItoBG.LOAD_CONFIG, options);
+         }
+         async applyDevFixes(type, text) {
+             return await this.sendRequest(MessageTypeUItoBG.APPLY_DEV_FIXES, {
+@@ -1400,27 +1421,24 @@
+             });
+         }
+         resetDevFixes(type) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_DEV_FIXES,
+-                data: {type}
++            return this.sendMutation(MessageTypeUItoBG.RESET_DEV_FIXES, {
++                type
+             });
+         }
+         startActivation(email, key) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.START_ACTIVATION,
+-                data: {email, key}
++            return this.sendMutation(MessageTypeUItoBG.START_ACTIVATION, {
++                email,
++                key
+             });
+         }
+         resetActivation() {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.RESET_ACTIVATION
+-            });
++            return this.sendMutation(MessageTypeUItoBG.RESET_ACTIVATION);
+         }
+-        async hideHighlights(ids) {
+-            chrome.runtime.sendMessage({
+-                type: MessageTypeUItoBG.HIDE_HIGHLIGHTS,
+-                data: ids
+-            });
++        hideHighlights(ids) {
++            return this.sendMutation(
++                MessageTypeUItoBG.HIDE_HIGHLIGHTS,
++                ids
++            );
+         }
+         disconnect() {
+             if (this.changeSubscribers.size > 0) {
+@@ -2929,6 +2947,7 @@
+     }
+     async function start() {
+         const connector = new Connector();
++        globalThis.floorpPrepareToClose = () => connector.prepareToClose();
+         window.addEventListener("unload", () => connector.disconnect(), {
+             passive: true
+         });
+--- /dev/null
++++ b/floorp-readiness.html
+@@ -0,0 +1,3 @@
++<!doctype html>
++<meta charset="utf-8">
++<title>Dark Reader readiness</title>

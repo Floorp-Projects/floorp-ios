@@ -1034,6 +1034,21 @@ enum FloorpStrings {
             value: "Disabled",
             comment: "Status for a disabled extension"
         )
+        static let enableAfterRestartStatus = string(
+            "Floorp.WebExtensions.EnableAfterRestartStatus.v1",
+            value: "Will enable after restart",
+            comment: "Status for an extension queued to enable after restarting Floorp"
+        )
+        static let enableAfterRestartMessage = string(
+            "Floorp.WebExtensions.EnableAfterRestartMessage.v1",
+            value: "Restart Floorp to finish enabling this extension. It remains inactive until then.",
+            comment: "Guidance for an extension queued to enable after restarting Floorp"
+        )
+        static let cancelEnableAfterRestartMessage = string(
+            "Floorp.WebExtensions.CancelEnableAfterRestartMessage.v1",
+            value: "Keep this extension disabled after restarting Floorp.",
+            comment: "Detail for cancelling a queued extension enable"
+        )
         static let enableAction = string(
             "Floorp.WebExtensions.EnableAction.v1",
             value: "Enable Extension",
@@ -1078,6 +1093,32 @@ enum FloorpStrings {
             "Floorp.WebExtensions.Done.v1",
             value: "Done",
             comment: "Action that dismisses extension information"
+        )
+        static let optionsCloseFailureTitle = string(
+            "Floorp.WebExtensions.OptionsCloseFailureTitle.v1",
+            value: "Extension changes aren’t confirmed",
+            comment: "Title shown when an extension options page cannot confirm pending changes"
+        )
+        static let optionsCloseFailureMessage = string(
+            "Floorp.WebExtensions.OptionsCloseFailureMessage.v1",
+            value: "Some changes may still be applying or may have failed. "
+                + "You can keep editing, try again, or close with the extension’s current state.",
+            comment: "Guidance shown when an extension options page cannot confirm pending changes"
+        )
+        static let continueEditing = string(
+            "Floorp.WebExtensions.ContinueEditing.v1",
+            value: "Keep Editing",
+            comment: "Action that keeps an extension options page open after a save failure"
+        )
+        static let closeAnyway = string(
+            "Floorp.WebExtensions.CloseAnyway.v1",
+            value: "Close Anyway",
+            comment: "Action that closes extension options despite an unconfirmed change"
+        )
+        static let finishingOptionsChanges = string(
+            "Floorp.WebExtensions.FinishingOptionsChanges.v1",
+            value: "Finishing extension changes…",
+            comment: "Progress shown while an extension options page confirms pending changes"
         )
         static let allow = string(
             "Floorp.WebExtensions.Allow.v1",
@@ -1447,6 +1488,22 @@ enum FloorpStrings {
             value: "Extension action could not open",
             comment: "Error title when an extension page action cannot open"
         )
+        static let navigationProtectionFailureTitle = string(
+            "Floorp.WebExtensions.NavigationProtectionFailureTitle.v1",
+            value: "Page loading was stopped",
+            comment: "Title shown when an enabled blocking extension cannot become ready"
+        )
+        private static let navigationProtectionFailureMessageFormat = string(
+            "Floorp.WebExtensions.NavigationProtectionFailureMessage.v1",
+            value: "%1$@ could not finish preparing protection, so Floorp stopped the page before it loaded. "
+                + "Review or disable the extension, then try again.",
+            comment: "Navigation failure guidance; argument is the blocking extension name"
+        )
+        static let openSettings = string(
+            "Floorp.WebExtensions.OpenSettings.v1",
+            value: "Open Extensions",
+            comment: "Action that opens extension settings after a protection startup failure"
+        )
         static let siteAccessChangeErrorTitle = string(
             "Floorp.WebExtensions.SiteAccessChangeErrorTitle.v1",
             value: "Site access could not be changed",
@@ -1668,6 +1725,13 @@ enum FloorpStrings {
 
         static func installedTitle(name: String) -> String {
             localizedStringWithFormat(installedTitleFormat, name)
+        }
+
+        static func navigationProtectionFailureMessage(extensionName: String) -> String {
+            localizedStringWithFormat(
+                navigationProtectionFailureMessageFormat,
+                extensionName
+            )
         }
 
         private static func localizedStringWithFormat(

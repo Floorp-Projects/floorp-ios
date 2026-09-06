@@ -75,6 +75,16 @@ protocol TabManager: AnyObject {
     /// - Parameter tabUUID: UUID from the tab
     func removeTab(_ tabUUID: TabUUID)
 
+    /// Removes one tab and reports whether the removal completed. A live
+    /// extension surface may defer this callback while it durably finishes
+    /// pending changes or asks the user how to handle a failed preparation.
+    func removeTab(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void)
+
+    /// Removes one tab only while it remains unselected. Selection is checked
+    /// again after any asynchronous extension-surface preparation, immediately
+    /// before removal, so background cleanup cannot delete the current tab.
+    func removeTabIfUnselected(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void)
+
     /// Remove all tabs indicating if is on private mode or not
     /// - Parameter isPrivateMode: Is private mode enabled or not
     func removeAllTabs(isPrivateMode: Bool)

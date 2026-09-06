@@ -1616,6 +1616,9 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         var richEditor: FloorpRichTextWebEditorView? = try XCTUnwrap(weakRichEditor)
         let session = try XCTUnwrap(editor.currentRichTextSession)
         _ = try await richEditor?.snapshot(expectedSession: session)
+        XCTAssertEqual(richEditor?.pendingJavaScriptRequestCountForTesting, 0)
+        XCTAssertFalse(richEditor?.preservesJavaScriptDocumentForTesting ?? true)
+        XCTAssertEqual(richEditor?.retiredJavaScriptRequestCountForTesting, 0)
         richEditor?.setJavaScriptRequestTimeoutForTesting(5_000_000_000)
         var pendingRequest: Task<Bool, Never>? = Task { @MainActor [weak richEditor] in
             guard let richEditor else { return false }
@@ -1635,6 +1638,9 @@ final class FloorpNoteEditorViewControllerTests: XCTestCase {
         XCTAssertTrue(richEditor?.isInvalidatedForTesting == true)
         let pendingRequestDidFail = await pendingRequest?.value
         XCTAssertEqual(pendingRequestDidFail, true)
+        XCTAssertEqual(richEditor?.pendingJavaScriptRequestCountForTesting, 0)
+        XCTAssertTrue(richEditor?.preservesJavaScriptDocumentForTesting == true)
+        XCTAssertEqual(richEditor?.retiredJavaScriptRequestCountForTesting, 1)
         pendingRequest = nil
         richEditor = nil
         try await waitUntil { weakRichEditor == nil }
@@ -3980,6 +3986,30 @@ final class FloorpRichTextWebEditorViewTests: XCTestCase {
             XCTFail("Expected snapshot to time out")
         } catch {}
         XCTAssertEqual(editor.pendingJavaScriptRequestCountForTesting, 0)
+    }
+
+    func testClosePreservesFireAndForgetJavaScriptCallbackOwner() async throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph"}]}"#
+        let document = try FloorpRichTextCodec.decode(source)
+        let session = try makeSession(noteID: "fire-and-forget-close")
+        var editor: FloorpRichTextWebEditorView? = FloorpRichTextWebEditorView()
+        weak let weakEditor = editor
+        editor?.load(document: document, session: session, isDirty: false)
+        _ = try await editor?.snapshot(expectedSession: session)
+        editor?.setJavaScriptRequestTimeoutForTesting(5_000_000_000)
+        _ = try await editor?.evaluateJavaScriptForTesting(
+            "window.floorpSetEditable = () => new Promise(() => {}); true;"
+        )
+
+        editor?.setEditable(false)
+        try await waitUntil { editor?.pendingJavaScriptRequestCountForTesting == 1 }
+        editor?.invalidate()
+
+        XCTAssertEqual(editor?.pendingJavaScriptRequestCountForTesting, 0)
+        XCTAssertTrue(editor?.preservesJavaScriptDocumentForTesting == true)
+        XCTAssertEqual(editor?.retiredJavaScriptRequestCountForTesting, 1)
+        editor = nil
+        try await waitUntil { weakEditor == nil }
     }
 
     func testWebContentProcessTerminationFailsPendingCommandImmediately() async throws {

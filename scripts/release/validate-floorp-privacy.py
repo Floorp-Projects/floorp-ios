@@ -91,6 +91,32 @@ DOCUMENTATION_HOSTS = {
     "www.oracle.com", "creativecommons.org", "www.unicode.org", "docs.swiftybeaver.com",
 }
 
+EXPECTED_PRIVACY_DISCLOSURES = {
+    ("Contact Info", "Name", True, True, False, ("App Functionality",)),
+    ("Contact Info", "Email Address", True, True, False, ("App Functionality",)),
+    ("Contact Info", "Phone Number", True, True, False, ("App Functionality",)),
+    ("Contact Info", "Physical Address", True, True, False, ("App Functionality",)),
+    ("Financial Info", "Payment Info", True, True, False, ("App Functionality",)),
+    ("Location", "Coarse Location", True, True, False,
+     ("Analytics", "App Functionality")),
+    ("User Content", "Photos or Videos", True, True, False, ("App Functionality",)),
+    ("User Content", "Other User Content", True, True, False, ("App Functionality",)),
+    ("Browsing History", "Browsing History", True, True, False, ("App Functionality",)),
+    ("Search History", "Search History", True, True, False, ("App Functionality",)),
+    ("Identifiers", "User ID", True, True, False, ("Analytics", "App Functionality")),
+    ("Identifiers", "Device ID", True, True, False, ("Analytics", "App Functionality")),
+    ("Usage Data", "Product Interaction", True, True, False,
+     ("Analytics", "App Functionality")),
+    ("Diagnostics", "Crash Data", True, True, False,
+     ("Analytics", "App Functionality")),
+    ("Diagnostics", "Performance Data", True, True, False,
+     ("Analytics", "App Functionality")),
+    ("Diagnostics", "Other Diagnostic Data", True, True, False,
+     ("Analytics", "App Functionality")),
+    ("Other Data", "Other Data Types", True, True, False,
+     ("Analytics", "App Functionality")),
+}
+
 
 def validate_static_endpoints(matrix: dict, static_path: Path) -> None:
     hosts = {entry["host"] for entry in matrix["endpoints"]}
@@ -141,6 +167,8 @@ def validate_metadata(metadata: dict) -> None:
     app = metadata.get("app", {})
     check(app.get("bundle_id") == "app.floorp.Floorp", "metadata bundle_id drift")
     check(app.get("apple_id") == "6796708699", "metadata apple_id drift")
+    check(app.get("app_store_id") == app.get("apple_id"),
+          "metadata app_store_id must match apple_id")
     check(app.get("team_id") == "DV2U35YBHT", "metadata team_id drift")
     locales = app.get("primary_locales", [])
     check(bool(locales) and set(locales).issubset({"en-US", "ja-JP"}),
@@ -154,18 +182,45 @@ def validate_metadata(metadata: dict) -> None:
           "export metadata contradiction: non-exempt encryption true while exempt")
 
     privacy = metadata.get("privacy", {})
+    check(privacy.get("privacy_policy_url") == "https://floorp.app/privacy",
+          "privacy metadata must use the public Floorp privacy policy URL")
+    check(privacy.get("tracking") is False,
+          "privacy metadata must explicitly declare tracking=false")
+    check("docs/floorp-ios-app-privacy.md" in privacy.get("live_verification", ""),
+          "privacy metadata must retain the live-policy release gate")
     data_types = privacy.get("data_types", [])
-    check(bool(data_types), "privacy metadata must declare collected data types")
+    check(isinstance(data_types, list) and bool(data_types),
+          "privacy metadata must declare collected data types")
     valid_categories = {"Contact Info", "Identifiers", "Health & Fitness", "Financial Info",
                         "Location", "Sensitive Info", "Contacts", "User Content",
                         "Browsing History", "Search History", "Purchases", "Usage Data",
-                        "Diagnostics", "Other Data Types"}
+                        "Diagnostics", "Other Data"}
+    observed_disclosures = []
     for entry in data_types:
+        check(isinstance(entry, dict), "privacy data entries must be objects")
         check(entry.get("category") in valid_categories,
               f"invalid privacy data category: {entry.get('category')}")
         check(entry.get("collected") is True, "privacy entry must declare collected=true")
         check(entry.get("linked_to_user_identity") is True,
               "privacy entry must declare linked_to_user_identity=true")
+        check(entry.get("used_for_tracking") is False,
+              "privacy entry must declare used_for_tracking=false")
+        purposes = entry.get("purpose", [])
+        check(isinstance(purposes, list) and all(isinstance(value, str) for value in purposes)
+              and "App Functionality" in purposes,
+              "privacy entry must include the App Functionality purpose")
+        observed_disclosures.append((
+            entry.get("category"),
+            entry.get("data_type"),
+            entry.get("collected"),
+            entry.get("linked_to_user_identity"),
+            entry.get("used_for_tracking"),
+            tuple(sorted(purposes)),
+        ))
+    check(len(observed_disclosures) == len(set(observed_disclosures)),
+          "privacy metadata must not contain duplicate disclosures")
+    check(set(observed_disclosures) == EXPECTED_PRIVACY_DISCLOSURES,
+          "privacy metadata disclosure set must exactly match the approved Floorp release declaration")
 
 
 def main(argv=None) -> int:

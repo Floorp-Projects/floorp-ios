@@ -581,8 +581,20 @@ final class BrowserCoordinator: BaseCoordinator,
             )
             return
         }
+        let invocation: FloorpNativeWebExtensionHost.ActionInvocation
+        do {
+            invocation = try host.reserveActionInvocation(for: tab)
+        } catch {
+            presentWebExtensionActionErrorIfCurrent(error, host: host, sourceTab: tab)
+            return
+        }
         if actions.count == 1, let action = actions.first {
-            performWebExtensionAction(action, host: host, tab: tab)
+            performWebExtensionAction(
+                action,
+                host: host,
+                tab: tab,
+                invocation: invocation
+            )
             return
         }
 
@@ -591,7 +603,12 @@ final class BrowserCoordinator: BaseCoordinator,
             windowUUID: windowUUID,
             onSelection: { [weak self, weak host, weak tab] action in
                 guard let self, let host, let tab else { return }
-                self.performWebExtensionAction(action, host: host, tab: tab)
+                self.performWebExtensionAction(
+                    action,
+                    host: host,
+                    tab: tab,
+                    invocation: invocation
+                )
             }
         )
         browserViewController.present(picker, animated: true)
@@ -613,19 +630,69 @@ final class BrowserCoordinator: BaseCoordinator,
     private func performWebExtensionAction(
         _ action: FloorpNativeWebExtensionActionItem,
         host: FloorpNativeWebExtensionHost,
-        tab: Tab
+        tab: Tab,
+        invocation: FloorpNativeWebExtensionHost.ActionInvocation
     ) {
-        do {
-            try host.performAction(
-                contextIdentifier: action.contextIdentifier,
-                for: tab
-            )
-        } catch {
-            presentWebExtensionActionsAlert(
-                title: FloorpStrings.WebExtensions.actionOpenErrorTitle,
-                message: error.localizedDescription
-            )
+        Task { @MainActor [weak self, weak host, weak tab] in
+            guard let host, let tab else { return }
+            do {
+                try await host.performAction(
+                    contextIdentifier: action.contextIdentifier,
+                    for: tab,
+                    invocation: invocation
+                )
+            } catch {
+                self?.presentWebExtensionActionErrorIfCurrent(
+                    error,
+                    host: host,
+                    sourceTab: tab
+                )
+            }
         }
+    }
+
+    private func presentWebExtensionActionErrorIfCurrent(
+        _ error: any Error,
+        host: FloorpNativeWebExtensionHost,
+        sourceTab: Tab
+    ) {
+        let presentationWindow = browserViewController.viewIfLoaded?.window
+        guard Self.shouldPresentWebExtensionActionError(
+            error,
+            hostIsCurrent: FloorpNativeWebExtensionHost.host(
+                for: profile.localName()
+            ) === host,
+            sourceWindowIsCurrent: sourceTab.windowUUID == windowUUID,
+            sourceTabIsSelected: tabManager.selectedTab === sourceTab,
+            presenterIsAttached: presentationWindow != nil,
+            sourceSceneIsForeground: presentationWindow?.windowScene?.activationState
+                == .foregroundActive,
+            presenterIsAvailable: !browserViewController.isBeingDismissed
+                && !browserViewController.isMovingFromParent
+                && browserViewController.presentedViewController == nil
+        ) else { return }
+        presentWebExtensionActionsAlert(
+            title: FloorpStrings.WebExtensions.actionOpenErrorTitle,
+            message: error.localizedDescription
+        )
+    }
+
+    static func shouldPresentWebExtensionActionError(
+        _ error: any Error,
+        hostIsCurrent: Bool,
+        sourceWindowIsCurrent: Bool,
+        sourceTabIsSelected: Bool,
+        presenterIsAttached: Bool,
+        sourceSceneIsForeground: Bool,
+        presenterIsAvailable: Bool
+    ) -> Bool {
+        !(error is CancellationError)
+            && hostIsCurrent
+            && sourceWindowIsCurrent
+            && sourceTabIsSelected
+            && presenterIsAttached
+            && sourceSceneIsForeground
+            && presenterIsAvailable
     }
 
     private func presentWebExtensionActionsAlert(title: String, message: String) {

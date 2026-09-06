@@ -19,6 +19,7 @@ class SceneCoordinator: BaseCoordinator,
     private let reservedWindowUUID: ReservedWindowUUID
     private let introManager: IntroScreenManagerProtocol
     private weak var launchScreenViewController: UIViewController?
+    private(set) weak var tabManager: (any TabManager)?
 
     init(scene: UIScene,
          sceneSetupHelper: SceneSetupHelper = SceneSetupHelper(),
@@ -140,6 +141,7 @@ class SceneCoordinator: BaseCoordinator,
 
         let tabManager = TabManagerImplementation(profile: AppContainer.shared.resolve(),
                                                   uuid: reservedWindowUUID)
+        self.tabManager = tabManager
         let browserCoordinator = BrowserCoordinator(router: router,
                                                     screenshotService: screenshotService,
                                                     tabManager: tabManager)

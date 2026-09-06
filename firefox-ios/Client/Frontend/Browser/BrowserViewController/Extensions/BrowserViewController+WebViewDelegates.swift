@@ -188,8 +188,12 @@ extension BrowserViewController: WKUIDelegate {
             if let tab = tabManager[webView] {
                 // Need to wait here in case we're waiting for a pending `window.open()`.
                 try await Task.sleep(nanoseconds: NSEC_PER_MSEC * 100)
-                tabsPanelTelemetry.tabClosed(mode: tab.isPrivate ? .private : .normal)
-                tabManager.removeTab(tab.tabUUID)
+                tabManager.removeTab(tab.tabUUID) { [weak self] didRemove in
+                    guard didRemove else { return }
+                    self?.tabsPanelTelemetry.tabClosed(
+                        mode: tab.isPrivate ? .private : .normal
+                    )
+                }
             }
         }
     }
@@ -526,6 +530,7 @@ extension BrowserViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         if let tab = tabManager[webView] {
+            dismissNavigationProtectionFailureAlert(for: tab, animated: false)
             FloorpNativeWebExtensionHost.host(for: profile.localName())?
                 .tabPropertiesDidChange([.loading], for: tab)
         }
@@ -557,10 +562,380 @@ extension BrowserViewController: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
     ) {
+        dismissNavigationProtectionFailureAlertIfStale()
         guard let url = navigationAction.request.url,
               let tab = tabManager[webView]
         else {
             decisionHandler(.cancel)
+            return
+        }
+
+        let isTopLevelNavigation = navigationAction.targetFrame?.isMainFrame != false
+        if isTopLevelNavigation {
+            dismissNavigationProtectionFailureAlert(for: tab, animated: false)
+        }
+
+        // A nil target frame is a new top-level browsing context
+        // (`window.open` / `target=_blank`), not a subframe. WebKit can begin
+        // that request automatically in the WKWebView returned by
+        // `createWebViewWith`, so it must cross the blocker-readiness barrier
+        // before popup creation too.
+        if isTopLevelNavigation,
+           let host = FloorpNativeWebExtensionHost.host(for: profile.localName()) {
+            let wasPrepared = host.consumePreparedNavigation(navigationAction)
+            let generation = wasPrepared ? nil : host.beginNavigationPreparation(for: tab)
+            guard !wasPrepared,
+                  let generation,
+                  host.needsBackgroundReadiness(beforeNavigating: tab, to: url) else {
+                return continueDecidingNavigationPolicy(
+                    webView,
+                    navigationAction: navigationAction,
+                    decisionHandler: decisionHandler
+                )
+            }
+            // swiftlint:disable:next closure_body_length
+            Task { @MainActor [weak self, weak webView, weak tab, weak host] in
+                guard let webView, let tab, let host else {
+                    decisionHandler(.cancel)
+                    return
+                }
+                let didPrepare = await host.prepareBackgroundContent(
+                    beforeNavigating: tab,
+                    to: url,
+                    navigationAction: navigationAction,
+                    generation: generation
+                )
+                guard didPrepare else {
+                    host.discardPreparedNavigation(navigationAction)
+                    decisionHandler(.cancel)
+                    guard !Task.isCancelled,
+                          let self,
+                          FloorpNativeWebExtensionHost.host(for: self.profile.localName()) === host,
+                          self.tabManager[webView] === tab,
+                          let failure = host.navigationProtectionFailure(
+                              for: tab,
+                              generation: generation
+                          ) else { return }
+                    self.presentNavigationProtectionFailure(
+                        failure,
+                        for: tab,
+                        webView: webView,
+                        generation: generation,
+                        host: host
+                    )
+                    return
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      FloorpNativeWebExtensionHost.host(for: self.profile.localName()) === host,
+                      self.tabManager[webView] === tab,
+                      host.consumePreparedNavigation(navigationAction) else {
+                    host.discardPreparedNavigation(navigationAction)
+                    decisionHandler(.cancel)
+                    return
+                }
+                self.dismissNavigationProtectionFailureAlert(for: tab, animated: false)
+                // Consume the exact readiness token in this task and continue
+                // directly. Recursing through the delegate would treat a
+                // superseded token as a fresh request and could resurrect an
+                // older navigation after a newer one had already started.
+                self.continueDecidingNavigationPolicy(
+                    webView,
+                    navigationAction: navigationAction,
+                    decisionHandler: decisionHandler
+                )
+            }
+            return
+        }
+
+        continueDecidingNavigationPolicy(
+            webView,
+            navigationAction: navigationAction,
+            decisionHandler: decisionHandler
+        )
+    }
+
+    @MainActor
+    func presentNavigationProtectionFailure(
+        _ failure: FloorpNativeWebExtensionHost.NavigationProtectionFailure,
+        for tab: Tab,
+        webView: WKWebView,
+        generation: Int,
+        host: FloorpNativeWebExtensionHost
+    ) {
+        if let state = navigationProtectionFailureAlertState,
+           state.matches(
+               host: host,
+               tab: tab,
+               webView: webView,
+               generation: generation
+           ) {
+            return
+        }
+        dismissNavigationProtectionFailureAlert(animated: false)
+        let state = NavigationProtectionFailureAlertState(
+            host: host,
+            tab: tab,
+            webView: webView,
+            generation: generation,
+            failure: failure
+        )
+        navigationProtectionFailureAlertState = state
+        attemptNavigationProtectionFailurePresentation(for: state)
+    }
+
+    @MainActor
+    func dismissNavigationProtectionFailureAlert(
+        for tab: Tab? = nil,
+        animated: Bool
+    ) {
+        guard let state = navigationProtectionFailureAlertState,
+              tab == nil || state.tab === tab else { return }
+        navigationProtectionFailureAlertState = nil
+        state.presentationTask?.cancel()
+        state.presentationTask = nil
+        let alert = state.alert
+        state.alert = nil
+        if alert?.presentingViewController != nil || alert?.viewIfLoaded?.window != nil {
+            alert?.dismiss(animated: animated)
+        }
+    }
+
+    @MainActor
+    func dismissNavigationProtectionFailureAlertIfStale() {
+        guard let state = navigationProtectionFailureAlertState,
+              !isNavigationProtectionFailureStateCurrent(state) else { return }
+        dismissNavigationProtectionFailureAlert(animated: false)
+    }
+
+    @MainActor
+    func openWebExtensionSettingsForNavigationProtectionFailure() {
+        guard let state = navigationProtectionFailureAlertState,
+              !state.isAcknowledged else { return }
+        acknowledgeNavigationProtectionFailureAlert(state)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            navigationHandler?.show(settings: .webExtensions)
+        }
+    }
+
+    @MainActor
+    private func attemptNavigationProtectionFailurePresentation(
+        for state: NavigationProtectionFailureAlertState
+    ) {
+        guard navigationProtectionFailureAlertState === state else { return }
+        guard isNavigationProtectionFailureStateCurrent(state) else {
+            dismissNavigationProtectionFailureAlert(animated: false)
+            return
+        }
+        guard !state.isAcknowledged, state.alert == nil else { return }
+        guard let presenter = navigationProtectionFailurePresenter() else {
+            scheduleNavigationProtectionFailureAlertRefresh(
+                for: state,
+                isPresentationRetry: true
+            )
+            return
+        }
+        let alert = UIAlertController(
+            title: FloorpStrings.WebExtensions.navigationProtectionFailureTitle,
+            message: FloorpStrings.WebExtensions.navigationProtectionFailureMessage(
+                extensionName: state.failure.extensionName
+            ),
+            preferredStyle: .alert
+        )
+        alert.view.accessibilityIdentifier = "Floorp.NavigationProtectionFailureAlert"
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.cancel,
+            style: .cancel
+        ) { [weak self, weak state] _ in
+            guard let self, let state else { return }
+            acknowledgeNavigationProtectionFailureAlert(state)
+        })
+        let openSettingsActionHandler: (UIAlertAction) -> Void = { [weak self] _ in
+            self?.openWebExtensionSettingsForNavigationProtectionFailure()
+        }
+#if DEBUG || TESTING
+        state.openSettingsActionHandlerForTesting = openSettingsActionHandler
+#endif
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.openSettings,
+            style: .default,
+            handler: openSettingsActionHandler
+        ))
+        state.alert = alert
+        state.didCompletePresentation = false
+        presenter.present(alert, animated: true) { [weak self, weak state] in
+            guard let self, let state,
+                  navigationProtectionFailureAlertState === state else { return }
+            state.didCompletePresentation = true
+        }
+        scheduleNavigationProtectionFailureAlertRefresh(for: state)
+    }
+
+    @MainActor
+    private func scheduleNavigationProtectionFailureAlertRefresh(
+        for state: NavigationProtectionFailureAlertState,
+        isPresentationRetry: Bool = false
+    ) {
+        if isPresentationRetry {
+            state.presentationRetryCount += 1
+            if state.presentationRetryCount == 40 {
+                logger.log(
+                    "Floorp: native WebExtension navigation failure alert is still waiting for a presenter.",
+                    level: .warning,
+                    category: .setup
+                )
+            }
+        }
+        state.presentationTask?.cancel()
+        state.presentationTask = Task { @MainActor [weak self, weak state] in
+            // Transient UIKit presentations normally settle quickly. If they
+            // do not, retain the still-current failure and retry at a lower
+            // frequency instead of silently discarding its only user notice.
+            let delay: UInt64 = (state?.presentationRetryCount ?? 0) < 40
+                ? 250_000_000
+                : 2_000_000_000
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled, let self, let state,
+                  navigationProtectionFailureAlertState === state else { return }
+            state.presentationTask = nil
+            guard isNavigationProtectionFailureStateCurrent(state) else {
+                dismissNavigationProtectionFailureAlert(animated: false)
+                return
+            }
+            if let alert = state.alert {
+                if alert.presentingViewController == nil,
+                   alert.viewIfLoaded?.window == nil,
+                   !alert.isBeingPresented {
+                    if state.didCompletePresentation {
+                        acknowledgeNavigationProtectionFailureAlert(state)
+                    } else {
+                        state.alert = nil
+                        scheduleNavigationProtectionFailureAlertRefresh(
+                            for: state,
+                            isPresentationRetry: true
+                        )
+                    }
+                    return
+                }
+                scheduleNavigationProtectionFailureAlertRefresh(for: state)
+                return
+            }
+            attemptNavigationProtectionFailurePresentation(for: state)
+        }
+    }
+
+    @MainActor
+    private func acknowledgeNavigationProtectionFailureAlert(
+        _ state: NavigationProtectionFailureAlertState
+    ) {
+        guard navigationProtectionFailureAlertState === state else { return }
+        state.presentationTask?.cancel()
+        state.presentationTask = nil
+        state.alert = nil
+        state.isAcknowledged = true
+    }
+
+    @MainActor
+    private func isNavigationProtectionFailureStateCurrent(
+        _ state: NavigationProtectionFailureAlertState
+    ) -> Bool {
+        guard let host = state.host,
+              let tab = state.tab,
+              let webView = state.webView,
+              FloorpNativeWebExtensionHost.host(for: profile.localName()) === host,
+              tabManager[webView] === tab,
+              tab.webView === webView,
+              tabManager.selectedTab === tab,
+              tabManager.selectedTab?.webView === webView,
+              viewIfLoaded?.window != nil,
+              webView.window === viewIfLoaded?.window else { return false }
+#if DEBUG || TESTING
+        let recordedFailure = navigationProtectionFailureRecordedFailureOverrideForTesting
+            ?? host.navigationProtectionFailure(for: tab, generation: state.generation)
+#else
+        let recordedFailure = host.navigationProtectionFailure(
+            for: tab,
+            generation: state.generation
+        )
+#endif
+        guard recordedFailure == state.failure else { return false }
+#if DEBUG || TESTING
+        if let override = navigationProtectionFailureSceneForegroundOverrideForTesting {
+            return override
+        }
+#endif
+        return viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive
+    }
+
+    @MainActor
+    private func navigationProtectionFailurePresenter() -> UIViewController? {
+        guard let window = viewIfLoaded?.window,
+              !isBeingDismissed else { return nil }
+        var presenter: UIViewController = self
+        while let presented = presenter.presentedViewController {
+            guard !presented.isBeingDismissed else { return nil }
+            presenter = presented
+        }
+        guard presenter.viewIfLoaded?.window === window,
+              !presenter.isBeingPresented,
+              !presenter.isBeingDismissed,
+              presenter.presentedViewController == nil else { return nil }
+        return presenter
+    }
+
+    @MainActor
+    // swiftlint:disable:next function_body_length
+    private func continueDecidingNavigationPolicy(
+        _ webView: WKWebView,
+        navigationAction: WKNavigationAction,
+        extensionSurfaceDeparturePrepared: Bool = false,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url,
+              let tab = tabManager[webView] else {
+            decisionHandler(.cancel)
+            return
+        }
+
+        // A committed extension document may still be persisting state when
+        // WebKit asks to replace its main-frame JS context. `beforeunload`
+        // cannot await that work, so hold this exact navigation until the
+        // extension's bounded close hook succeeds. Fragment-only changes do
+        // not replace the document and subframes never own this tab surface.
+        if !extensionSurfaceDeparturePrepared,
+           isMainFrameNavigation(navigationAction),
+           navigationReplacesCurrentDocument(
+               from: webView.url,
+               to: url
+           ),
+           let host = FloorpNativeWebExtensionHost.host(for: profile.localName()),
+           host.prepareExtensionTabSurfaceForDestruction(
+               in: tab,
+               expectedWebView: webView,
+               completion: { [weak self, weak webView, weak tab, weak host] shouldProceed in
+                   guard shouldProceed,
+                         let self,
+                         let webView,
+                         let tab,
+                         let host,
+                         FloorpNativeWebExtensionHost.host(
+                             for: self.profile.localName()
+                         ) === host,
+                         self.tabManager[webView] === tab,
+                         tab.webView === webView else {
+                       decisionHandler(.cancel)
+                       return
+                   }
+                   webView.isUserInteractionEnabled = true
+                   self.continueDecidingNavigationPolicy(
+                       webView,
+                       navigationAction: navigationAction,
+                       extensionSurfaceDeparturePrepared: true,
+                       decisionHandler: decisionHandler
+                   )
+               }
+           ) {
             return
         }
 
@@ -674,6 +1049,17 @@ extension BrowserViewController: WKNavigationDelegate {
         decisionHandler(.cancel)
     }
 
+    @MainActor
+    private func navigationReplacesCurrentDocument(from currentURL: URL?, to destinationURL: URL) -> Bool {
+        guard let currentURL else { return false }
+        var current = URLComponents(url: currentURL, resolvingAgainstBaseURL: false)
+        var destination = URLComponents(url: destinationURL, resolvingAgainstBaseURL: false)
+        let changesOnlyFragment = current?.fragment != destination?.fragment
+        current?.fragment = nil
+        destination?.fragment = nil
+        return !(changesOnlyFragment && current == destination)
+    }
+
     private func handleAdsTelemetryForNavigation(url: URL, tab: Tab) {
         let adUrl = url.absoluteString
         if tab.adsTelemetryUrlList.contains(adUrl) {
@@ -730,8 +1116,12 @@ extension BrowserViewController: WKNavigationDelegate {
                 if let currentTab = self?.tabManager.selectedTab,
                    currentTab.historyList.count == 1,
                    self?.isStoreURL(currentTab.historyList[0]) ?? false {
-                    self?.tabsPanelTelemetry.tabClosed(mode: currentTab.isPrivate ? .private : .normal)
-                    self?.tabManager.removeTab(currentTab.tabUUID)
+                    self?.tabManager.removeTab(currentTab.tabUUID) { [weak self] didRemove in
+                        guard didRemove else { return }
+                        self?.tabsPanelTelemetry.tabClosed(
+                            mode: currentTab.isPrivate ? .private : .normal
+                        )
+                    }
                 }
             }
         }
@@ -1260,6 +1650,7 @@ extension BrowserViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
         guard let tab = tabManager[webView] else { return }
+        dismissNavigationProtectionFailureAlert(for: tab, animated: false)
 
         // The main frame JSContext is available, and DOM parsing has begun.
         // Do not execute JS at this point that requires running prior to DOM parsing.
@@ -1319,6 +1710,10 @@ extension BrowserViewController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
         webviewTelemetry.stop()
         recordGoogleLensSearchCompletedIfNeeded(for: tabManager[webView], succeeded: true)
+
+        if let tab = tabManager[webView] {
+            dismissNavigationProtectionFailureAlert(for: tab, animated: false)
+        }
 
         if let url = webView.url, InternalURL(url) == nil {
             if let title = webView.title,

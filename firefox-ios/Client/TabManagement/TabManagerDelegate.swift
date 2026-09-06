@@ -17,6 +17,18 @@ protocol TabManagerDelegate: AnyObject {
     @MainActor
     func tabManager(_ tabManager: TabManager, didRemoveTab tab: Tab, isRestoring: Bool)
 
+    /// Gives a delegate an opportunity to finish asynchronous work owned by a
+    /// live tab before a user-requested, single-tab removal destroys its
+    /// WKWebView. Returning `true` transfers ownership of `completion` to the
+    /// delegate. Bulk, expiry, remote, and private-session purges deliberately
+    /// bypass this interactive hook so extension code cannot prevent them.
+    @MainActor
+    func tabManager(
+        _ tabManager: TabManager,
+        prepareToRemoveTab tab: Tab,
+        completion: @escaping (Bool) -> Void
+    ) -> Bool
+
     @MainActor
     func tabManagerDidRestoreTabs(_ tabManager: TabManager)
 
@@ -37,6 +49,11 @@ extension TabManagerDelegate {
     func tabManager(_ tabManager: TabManager, didSelectedTabChange selectedTab: Tab, previousTab: Tab?, isRestoring: Bool) {}
     func tabManager(_ tabManager: TabManager, didAddTab tab: Tab, placeNextToParentTab: Bool, isRestoring: Bool) {}
     func tabManager(_ tabManager: TabManager, didRemoveTab tab: Tab, isRestoring: Bool) {}
+    func tabManager(
+        _ tabManager: TabManager,
+        prepareToRemoveTab tab: Tab,
+        completion: @escaping (Bool) -> Void
+    ) -> Bool { false }
 
     func tabManagerDidRestoreTabs(_ tabManager: TabManager) {}
     func tabManagerDidAddTabs(_ tabManager: TabManager) {}

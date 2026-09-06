@@ -83,6 +83,39 @@ final class BrowserCoordinatorTests: XCTestCase,
         XCTAssertEqual(mockRouter.setRootViewControllerCalled, 0)
     }
 
+    func testWebExtensionActionErrorPresentationRequiresCurrentForegroundSource() {
+        let actionableError = NSError(domain: "WebExtensionAction", code: 1)
+        func shouldPresent(
+            isCancellation: Bool = false,
+            hostIsCurrent: Bool = true,
+            sourceWindowIsCurrent: Bool = true,
+            sourceTabIsSelected: Bool = true,
+            presenterIsAttached: Bool = true,
+            sourceSceneIsForeground: Bool = true,
+            presenterIsAvailable: Bool = true
+        ) -> Bool {
+            let error: any Error = isCancellation ? CancellationError() : actionableError
+            return BrowserCoordinator.shouldPresentWebExtensionActionError(
+                error,
+                hostIsCurrent: hostIsCurrent,
+                sourceWindowIsCurrent: sourceWindowIsCurrent,
+                sourceTabIsSelected: sourceTabIsSelected,
+                presenterIsAttached: presenterIsAttached,
+                sourceSceneIsForeground: sourceSceneIsForeground,
+                presenterIsAvailable: presenterIsAvailable
+            )
+        }
+
+        XCTAssertTrue(shouldPresent())
+        XCTAssertFalse(shouldPresent(isCancellation: true))
+        XCTAssertFalse(shouldPresent(hostIsCurrent: false))
+        XCTAssertFalse(shouldPresent(sourceWindowIsCurrent: false))
+        XCTAssertFalse(shouldPresent(sourceTabIsSelected: false))
+        XCTAssertFalse(shouldPresent(presenterIsAttached: false))
+        XCTAssertFalse(shouldPresent(sourceSceneIsForeground: false))
+        XCTAssertFalse(shouldPresent(presenterIsAvailable: false))
+    }
+
     func testWithoutLaunchType_startsBrowserOnly() {
         let subject = createSubject()
         subject.start(with: nil)

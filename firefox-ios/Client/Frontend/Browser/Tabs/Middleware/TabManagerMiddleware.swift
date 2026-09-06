@@ -427,44 +427,37 @@ final class TabManagerMiddleware: FeatureFlaggable, CanRemoveQuickActionBookmark
         store.dispatch(action)
     }
 
-    /// Async close single tab. If is the last tab the Tab Tray is dismissed and undo
-    /// option is presented in Homepage
-    ///
-    /// - Parameters:
-    ///   - tabUUID: UUID of the tab to be closed/removed
-    /// - Returns: If is the last tab to be closed used to trigger dismissTabTray action
-    private func closeTab(with tabUUID: TabUUID, uuid: WindowUUID, isPrivate: Bool) -> Bool {
-        tabsPanelTelemetry.tabClosed(mode: isPrivate ? .private : .normal)
-        guard let tabManager = tabManager(for: uuid) else { return false }
-        // In non-private mode, if:
-        //      A) the last normal active tab is closed, or
-        //      B) the last of ALL normal tabs are closed (i.e. all tabs are inactive and closed at once),
-        // then we want to close the tray.
-        let isLastActiveTab = isPrivate
-                            ? tabManager.privateTabs.count == 1
-                            : tabManager.normalTabs.count == 1
-        tabManager.removeTab(tabUUID)
-        return isLastActiveTab
-    }
-
     /// Close tab and trigger refresh
     /// - Parameter tabUUID: UUID of the tab to be closed/removed
     private func closeTabFromTabPanel(with tabUUID: TabUUID, uuid: WindowUUID, isPrivate: Bool) {
         guard let tabManager = tabManager(for: uuid) else { return }
-        let shouldDismiss = closeTab(with: tabUUID, uuid: uuid, isPrivate: isPrivate)
-        triggerRefresh(uuid: uuid, isPrivate: isPrivate)
+        // Capture this before removal, but publish all UI and telemetry only
+        // after an extension surface has either flushed successfully or the
+        // user explicitly chose Close Anyway.
+        let shouldDismiss = isPrivate
+            ? tabManager.privateTabs.count == 1
+            : tabManager.normalTabs.count == 1
+        tabManager.removeTab(tabUUID) { [weak self, weak tabManager] didRemove in
+            guard didRemove, let self, let tabManager else { return }
+            self.tabsPanelTelemetry.tabClosed(mode: isPrivate ? .private : .normal)
+            self.triggerRefresh(uuid: uuid, isPrivate: isPrivate)
 
-        if isPrivate && tabManager.privateTabs.isEmpty {
-            let didLoadAction = TabPanelViewAction(panelType: isPrivate ? .privateTabs : .tabs,
-                                                   windowUUID: uuid,
-                                                   actionType: TabPanelViewActionType.tabPanelDidLoad)
-            store.dispatch(didLoadAction)
-        } else if shouldDismiss {
-            let dismissAction = TabTrayAction(windowUUID: uuid,
-                                              actionType: TabTrayActionType.dismissTabTray)
-            store.dispatch(dismissAction)
+            if isPrivate && tabManager.privateTabs.isEmpty {
+                let didLoadAction = TabPanelViewAction(
+                    panelType: .privateTabs,
+                    windowUUID: uuid,
+                    actionType: TabPanelViewActionType.tabPanelDidLoad
+                )
+                store.dispatch(didLoadAction)
+            } else if shouldDismiss {
+                let dismissAction = TabTrayAction(
+                    windowUUID: uuid,
+                    actionType: TabTrayActionType.dismissTabTray
+                )
+                store.dispatch(dismissAction)
 
-            addNewNormalTabIfSelectedIsPrivate(uuid: uuid)
+                self.addNewNormalTabIfSelectedIsPrivate(uuid: uuid)
+            }
         }
     }
 

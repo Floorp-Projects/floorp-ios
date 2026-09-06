@@ -3,13 +3,13 @@ name: Floorp TestFlight Deploy (Xcode Cloud)
 on:
   workflow_dispatch:
     inputs:
-      wait_for_completion:
-        description: Wait for Xcode Cloud to finish the archive and App Store Connect distribution.
-        required: false
-        default: true
-        type: boolean
+      source_tag:
+        description: Immutable floorp-catalog-<merged SHA> tag to build.
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -18,17 +18,28 @@ concurrency:
 
 env:
   FLOORP_APP_ID: "6796708699"
+  FLOORP_BUNDLE_ID: "app.floorp.Floorp"
+  FLOORP_MARKETING_VERSION: "0.3.0"
+  FLOORP_PLATFORM: "IOS"
+  FLOORP_MIN_OS_VERSION: "18.4"
   FLOORP_TEAM_ID: "74c6a531-19e2-4ed5-a34b-915003cc10f9"
   FLOORP_XCODE_CLOUD_WORKFLOW_ID: "f75adb00-1ca4-4b24-9bec-f6b5b943903a"
   FLOORP_XCODE_CLOUD_WORKFLOW_NAME: "Floorp TestFlight Manual"
   FLOORP_XCODE_CLOUD_REPOSITORY: "https://github.com/Floorp-Projects/floorp-ios.git"
-  FLOORP_XCODE_CLOUD_BRANCH: "main"
+  FLOORP_CI_WORKFLOW_ID: "324234585"
+  FLOORP_SOURCE_TAG: ${{ inputs.source_tag }}
 
 jobs:
   deploy:
     name: Start and monitor Floorp TestFlight deployment
+    outputs:
+      xcode_cloud_run_id: ${{ steps.xcode_cloud.outputs.run_id }}
+      app_store_connect_build_id: ${{ steps.xcode_cloud.outputs.build_id }}
+      app_store_connect_build_number: ${{ steps.xcode_cloud.outputs.build_number }}
     runs-on: ubuntu-latest
-    timeout-minutes: 195
+    # The client permits up to 180 minutes for Xcode Cloud plus 60 minutes for
+    # the linked App Store Connect build to finish processing.
+    timeout-minutes: 260
     environment: floorp-testflight
 
     steps:
@@ -45,6 +56,56 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$FLOORP_SOURCE_TAG" = "floorp-catalog-$GITHUB_SHA"
+          remote_tag_sha="$(
+            git ls-remote --refs origin "refs/tags/$FLOORP_SOURCE_TAG" \
+              | awk 'NR == 1 { print $1 } END { if (NR != 1) exit 1 }'
+          )"
+          test "$remote_tag_sha" = "$GITHUB_SHA"
+
+      - name: Verify source-bound CI and uBO acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          runs="$RUNNER_TEMP/ci-runs.json"
+          run_json="$RUNNER_TEMP/ci-run.json"
+          artifact_root="$RUNNER_TEMP/ci-artifact"
+          receipt="$RUNNER_TEMP/ci-release-gate.json"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$FLOORP_CI_WORKFLOW_ID/runs" \
+            -f head_sha="$GITHUB_SHA" -f branch=main -f status=completed -f per_page=100 \
+            > "$runs"
+          run_id="$(python3 - "$runs" "$GITHUB_SHA" <<'PY'
+          import json, sys
+          runs = json.load(open(sys.argv[1], encoding="utf-8")).get("workflow_runs", [])
+          matches = [
+              run for run in runs
+              if run.get("head_sha") == sys.argv[2]
+              and run.get("head_branch") == "main"
+              and run.get("event") in {"push", "workflow_dispatch"}
+              and run.get("status") == "completed"
+              and run.get("conclusion") == "success"
+          ]
+          if not matches:
+              raise SystemExit("No successful Floorp iOS CI run exists for this exact main SHA")
+          matches.sort(key=lambda run: (run.get("run_attempt", 0), run.get("id", 0)), reverse=True)
+          print(matches[0]["id"])
+          PY
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$run_json"
+          mkdir -p "$artifact_root"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "floorp-ubol-release-acceptance-$run_id" \
+            --dir "$artifact_root"
+          python3 scripts/release/validate-floorp-ci-release-gate.py \
+            --run-json "$run_json" \
+            --artifact-root "$artifact_root" \
+            --expected-run-id "$run_id" \
+            --expected-head-sha "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --output "$receipt"
 
       - name: Prepare App Store Connect API key
         env:
@@ -86,26 +147,68 @@ jobs:
               handle.write(f"APP_STORE_CONNECT_PRIVATE_KEY_PATH={key_path}\n")
           PY
 
-      - name: Start Xcode Cloud and optionally wait for completion
+      - name: Start Xcode Cloud and wait for completion
+        id: xcode_cloud
         run: |
           set -euo pipefail
           output="$RUNNER_TEMP/floorp-xcode-cloud-run.json"
+          receipt="$RUNNER_TEMP/floorp-xcode-cloud-build-receipt.json"
           args=(
             --workflow-id "$FLOORP_XCODE_CLOUD_WORKFLOW_ID"
             --expected-workflow-name "$FLOORP_XCODE_CLOUD_WORKFLOW_NAME"
             --expected-repository "$FLOORP_XCODE_CLOUD_REPOSITORY"
-            --branch "$FLOORP_XCODE_CLOUD_BRANCH"
+            --source-tag "$FLOORP_SOURCE_TAG"
             --expected-head "$GITHUB_SHA"
             --team-id "$FLOORP_TEAM_ID"
             --app-id "$FLOORP_APP_ID"
+            --expected-bundle-id "$FLOORP_BUNDLE_ID"
+            --expected-marketing-version "$FLOORP_MARKETING_VERSION"
+            --expected-platform "$FLOORP_PLATFORM"
+            --expected-min-os-version "$FLOORP_MIN_OS_VERSION"
             --output "$output"
+            --receipt-output "$receipt"
             --authorize-mutation
+            --wait
           )
-          if [[ "${{ inputs.wait_for_completion }}" == "true" ]]; then
-            args+=(--wait)
-          fi
           python3 scripts/release/trigger-xcode-cloud.py "${args[@]}"
           printf 'FLOORP_XCODE_CLOUD_RUN=%s\n' "$output" >> "$GITHUB_ENV"
+          printf 'FLOORP_XCODE_CLOUD_BUILD_RECEIPT=%s\n' "$receipt" >> "$GITHUB_ENV"
+          python3 - "$receipt" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          receipt = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          run = receipt["run"]
+          build = receipt["build"]
+          with Path(sys.argv[2]).open("a", encoding="utf-8") as output:
+              output.write(f"run_id={run['id']}\n")
+              output.write(f"build_id={build['id']}\n")
+              output.write(f"build_number={build['number']}\n")
+          PY
+
+      - name: Materialize source-bound App Review notes
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/floorp-app-review-notes.json"
+          python3 scripts/release/render-floorp-app-review-notes.py \
+            --template docs/app-review-notes-native-webextensions.md \
+            --receipt "$FLOORP_XCODE_CLOUD_BUILD_RECEIPT" \
+            --output "$notes"
+          printf 'FLOORP_APP_REVIEW_NOTES=%s\n' "$notes" >> "$GITHUB_ENV"
+
+      - name: Upload source-bound deployment receipt
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-xcode-cloud-build-receipt-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/ci-release-gate.json
+            ${{ runner.temp }}/floorp-xcode-cloud-run.json
+            ${{ runner.temp }}/floorp-xcode-cloud-build-receipt.json
+            ${{ runner.temp }}/floorp-app-review-notes.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Publish deployment summary
         if: always()
@@ -114,8 +217,9 @@ jobs:
           {
             printf '%s\n\n' '## Floorp TestFlight deployment'
             code_span="$(printf '\140')"
-            printf -- '- Source: %smain%s (%s%s%s)\n' \
-              "$code_span" "$code_span" "$code_span" "$GITHUB_SHA" "$code_span"
+            printf -- '- Source: %s%s%s (%s%s%s)\n' \
+              "$code_span" "$FLOORP_SOURCE_TAG" "$code_span" \
+              "$code_span" "$GITHUB_SHA" "$code_span"
             printf -- '- Xcode Cloud workflow: %s%s%s\n' \
               "$code_span" "$FLOORP_XCODE_CLOUD_WORKFLOW_NAME" "$code_span"
             if [[ -n "${FLOORP_XCODE_CLOUD_RUN:-}" && -f "$FLOORP_XCODE_CLOUD_RUN" ]]; then
@@ -127,10 +231,14 @@ jobs:
           report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           run = report.get("run") or {}
           attributes = run.get("attributes") or {}
+          receipt = report.get("receipt") or {}
+          build = receipt.get("build") or {}
           print(f"- Xcode Cloud run: `{run.get('id', 'unknown')}`")
           print(f"- Progress: `{attributes.get('executionProgress', 'unknown')}`")
           print(f"- Completion: `{attributes.get('completionStatus', 'unknown')}`")
-          print(f"- [Open App Store Connect build]({report['build_url']})")
+          print(f"- App Store Connect build ID: `{build.get('id', 'unknown')}`")
+          print(f"- App Store Connect build number: `{build.get('number', 'unknown')}`")
+          print(f"- [Open Xcode Cloud run]({report['build_url']})")
           PY
             else
               echo "- Xcode Cloud run report was not produced."

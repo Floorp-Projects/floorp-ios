@@ -450,6 +450,9 @@ class Tab: NSObject,
     private var configuration: WKWebViewConfiguration?
     private var floorpNativeBaseConfiguration: WKWebViewConfiguration?
     private(set) var floorpNativeWebExtensionContextIdentifier: String?
+    /// True only after the current surface's main document committed. This
+    /// distinguishes a live extension page from a newly rebuilt, empty WebView.
+    private(set) var floorpNativeHasCommittedDocument = false
     private var floorpNativeSurfaceHistory = FloorpNativeWebExtensionSurfaceHistory()
     private var floorpNativePreservesForwardNavigation = false
 
@@ -525,7 +528,12 @@ class Tab: NSObject,
     func createWebview(with restoreSessionData: Data? = nil, configuration: WKWebViewConfiguration) {
         guard webView == nil else { return }
 
-        let requiredConfiguration = requiredPopupConfiguration ?? configuration
+        let savedExtensionConfiguration = floorpNativeWebExtensionContextIdentifier == nil
+            ? nil
+            : self.configuration?.copy() as? WKWebViewConfiguration
+        let requiredConfiguration = requiredPopupConfiguration
+            ?? savedExtensionConfiguration
+            ?? configuration
         if floorpNativeWebExtensionContextIdentifier == nil {
             floorpNativeBaseConfiguration = configuration.copy() as? WKWebViewConfiguration
             // App-owned scripts use a fresh controller for every normal browsing surface.
@@ -637,7 +645,10 @@ class Tab: NSObject,
     func close() async {
         await webView?.pauseAllMediaPlayback()
 
-        webView?.stopLoading()
+        if let webView,
+           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+            webView.stopLoading()
+        }
 
         contentScriptManager.uninstall(tab: self)
         if let webView = webView {
@@ -650,6 +661,7 @@ class Tab: NSObject,
 
         webViewLoadingObserver?.invalidate()
         webViewLoadingObserver = nil
+        floorpNativeHasCommittedDocument = false
         webView = nil
 
         deleteDownloadedDocuments(docsURL: temporaryDocumentsSession)
@@ -669,7 +681,12 @@ class Tab: NSObject,
         url: URL,
         forceRebuild: Bool = false
     ) {
-        guard forceRebuild || floorpNativeWebExtensionContextIdentifier != contextIdentifier else {
+        let mustReplacePreservedDocument = webView.map {
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve($0)
+        } ?? false
+        guard forceRebuild
+                || mustReplacePreservedDocument
+                || floorpNativeWebExtensionContextIdentifier != contextIdentifier else {
             loadRequest(URLRequest(url: url))
             return
         }
@@ -684,9 +701,12 @@ class Tab: NSObject,
 
         webViewLoadingObserver?.invalidate()
         webViewLoadingObserver = nil
+        floorpNativeHasCommittedDocument = false
         contentScriptManager.uninstall(tab: self)
         if let webView {
-            webView.stopLoading()
+            if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+                webView.stopLoading()
+            }
             tabDelegate?.tab(self, willDeleteWebView: webView)
             webView.navigationDelegate = nil
             webView.removeFromSuperview()
@@ -738,6 +758,7 @@ class Tab: NSObject,
     }
 
     func commitFloorpNativeSurfaceNavigation(url: URL) {
+        floorpNativeHasCommittedDocument = true
         floorpNativeSurfaceHistory.commit(
             contextIdentifier: floorpNativeWebExtensionContextIdentifier,
             url: url
@@ -769,6 +790,11 @@ class Tab: NSObject,
 
     func clearFloorpNativeSurfaceHistory() {
         floorpNativeSurfaceHistory.removeAll()
+        floorpNativePreservesForwardNavigation = false
+    }
+
+    func removeFloorpNativeSurfaceHistoryEntries(contextIdentifier: String) {
+        floorpNativeSurfaceHistory.removeEntries(contextIdentifier: contextIdentifier)
         floorpNativePreservesForwardNavigation = false
     }
 
@@ -825,7 +851,10 @@ class Tab: NSObject,
     }
 
     func stop() {
-        webView?.stopLoading()
+        if let webView,
+           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+            webView.stopLoading()
+        }
         cancelTemporaryDocumentDownload()
     }
 

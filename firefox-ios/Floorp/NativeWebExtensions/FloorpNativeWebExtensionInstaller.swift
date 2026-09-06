@@ -311,6 +311,9 @@ struct FloorpNativeWebExtensionRegistryStore {
               Set(deniedPermissionValues).count == deniedPermissionValues.count,
               Set(grantedMatchPatternValues).count == grantedMatchPatternValues.count,
               Set(deniedMatchPatternValues).count == deniedMatchPatternValues.count,
+              Set(grantedPermissionValues).isDisjoint(with: deniedPermissionValues),
+              Set(grantedMatchPatternValues).isDisjoint(with: deniedMatchPatternValues),
+              record.unloadState == nil || !record.isEnabled,
               URL(string: "webkit-extension://\(record.baseURLHost)/")?.host == record.baseURLHost else {
             return false
         }

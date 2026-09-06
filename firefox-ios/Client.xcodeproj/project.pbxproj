@@ -1450,15 +1450,15 @@
 		F10A3F000000000000000203 /* FloorpNativeWebExtensionHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000103 /* FloorpNativeWebExtensionHost.swift */; };
 		F10A3F000000000000000204 /* FloorpNativeWebExtensionSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000104 /* FloorpNativeWebExtensionSettingsViewController.swift */; };
 		F10A3F000000000000000205 /* FloorpWebExtensionsSetting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000105 /* FloorpWebExtensionsSetting.swift */; };
-		F10A3F000000000000000206 /* darkreader-chrome-mv3-4.9.129.zip in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000106 /* darkreader-chrome-mv3-4.9.129.zip */; };
+		F10A3F000000000000000206 /* darkreader-floorp-ios-mv3-4.9.129.zip in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000106 /* darkreader-floorp-ios-mv3-4.9.129.zip */; };
 		F10A3F000000000000000207 /* FloorpNativeWebExtensionInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000107 /* FloorpNativeWebExtensionInstaller.swift */; };
 		F10A3F000000000000000208 /* FloorpNativeWebExtensionSurfaceHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000108 /* FloorpNativeWebExtensionSurfaceHistory.swift */; };
-		F10A3F000000000000000209 /* uBOLite_2026.825.1619.safari.zip in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000109 /* uBOLite_2026.825.1619.safari.zip */; };
-		F10A3F00000000000000020A /* uBOLite_2026.825.1619.safari.zip in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000109 /* uBOLite_2026.825.1619.safari.zip */; };
-		F10A3F00000000000000020B /* darkreader-chrome-mv3-4.9.129.LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010C /* darkreader-chrome-mv3-4.9.129.LICENSE */; };
-		F10A3F00000000000000020C /* darkreader-chrome-mv3-4.9.129.provenance.json in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010D /* darkreader-chrome-mv3-4.9.129.provenance.json */; };
-		F10A3F00000000000000020D /* uBOLite_2026.825.1619.LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010A /* uBOLite_2026.825.1619.LICENSE */; };
-		F10A3F00000000000000020E /* uBOLite_2026.825.1619.provenance.json in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010B /* uBOLite_2026.825.1619.provenance.json */; };
+		F10A3F000000000000000209 /* uBOLite-floorp-ios-2026.825.1619.zip in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000109 /* uBOLite-floorp-ios-2026.825.1619.zip */; };
+		F10A3F00000000000000020A /* uBOLite-floorp-ios-2026.825.1619.zip in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F000000000000000109 /* uBOLite-floorp-ios-2026.825.1619.zip */; };
+		F10A3F00000000000000020B /* darkreader-floorp-ios-mv3-4.9.129.LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010C /* darkreader-floorp-ios-mv3-4.9.129.LICENSE */; };
+		F10A3F00000000000000020C /* darkreader-floorp-ios-mv3-4.9.129.provenance.json in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010D /* darkreader-floorp-ios-mv3-4.9.129.provenance.json */; };
+		F10A3F00000000000000020D /* uBOLite-floorp-ios-2026.825.1619.LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010A /* uBOLite-floorp-ios-2026.825.1619.LICENSE */; };
+		F10A3F00000000000000020E /* uBOLite-floorp-ios-2026.825.1619.provenance.json in Resources */ = {isa = PBXBuildFile; fileRef = F10A3F00000000000000010B /* uBOLite-floorp-ios-2026.825.1619.provenance.json */; };
 		CEC2F0AF2F98000200D67401 /* FloorpNoteEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B092F98000200D67401 /* FloorpNoteEditorViewController.swift */; };
 		CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */; };
 		CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */; };
@@ -11165,14 +11165,14 @@
 		F10A3F000000000000000103 /* FloorpNativeWebExtensionHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNativeWebExtensionHost.swift; sourceTree = "<group>"; };
 		F10A3F000000000000000104 /* FloorpNativeWebExtensionSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNativeWebExtensionSettingsViewController.swift; sourceTree = "<group>"; };
 		F10A3F000000000000000105 /* FloorpWebExtensionsSetting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebExtensionsSetting.swift; sourceTree = "<group>"; };
-		F10A3F000000000000000106 /* darkreader-chrome-mv3-4.9.129.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; path = "Bundled/darkreader-chrome-mv3-4.9.129.zip"; sourceTree = "<group>"; };
+		F10A3F000000000000000106 /* darkreader-floorp-ios-mv3-4.9.129.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; path = "Bundled/darkreader-floorp-ios-mv3-4.9.129.zip"; sourceTree = "<group>"; };
 		F10A3F000000000000000107 /* FloorpNativeWebExtensionInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNativeWebExtensionInstaller.swift; sourceTree = "<group>"; };
 		F10A3F000000000000000108 /* FloorpNativeWebExtensionSurfaceHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpNativeWebExtensionSurfaceHistory.swift; sourceTree = "<group>"; };
-		F10A3F000000000000000109 /* uBOLite_2026.825.1619.safari.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; path = "Bundled/uBOLite_2026.825.1619.safari.zip"; sourceTree = "<group>"; };
-		F10A3F00000000000000010A /* uBOLite_2026.825.1619.LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Bundled/uBOLite_2026.825.1619.LICENSE"; sourceTree = "<group>"; };
-		F10A3F00000000000000010B /* uBOLite_2026.825.1619.provenance.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Bundled/uBOLite_2026.825.1619.provenance.json"; sourceTree = "<group>"; };
-		F10A3F00000000000000010C /* darkreader-chrome-mv3-4.9.129.LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Bundled/darkreader-chrome-mv3-4.9.129.LICENSE"; sourceTree = "<group>"; };
-		F10A3F00000000000000010D /* darkreader-chrome-mv3-4.9.129.provenance.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Bundled/darkreader-chrome-mv3-4.9.129.provenance.json"; sourceTree = "<group>"; };
+		F10A3F000000000000000109 /* uBOLite-floorp-ios-2026.825.1619.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; path = "Bundled/uBOLite-floorp-ios-2026.825.1619.zip"; sourceTree = "<group>"; };
+		F10A3F00000000000000010A /* uBOLite-floorp-ios-2026.825.1619.LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Bundled/uBOLite-floorp-ios-2026.825.1619.LICENSE"; sourceTree = "<group>"; };
+		F10A3F00000000000000010B /* uBOLite-floorp-ios-2026.825.1619.provenance.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Bundled/uBOLite-floorp-ios-2026.825.1619.provenance.json"; sourceTree = "<group>"; };
+		F10A3F00000000000000010C /* darkreader-floorp-ios-mv3-4.9.129.LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Bundled/darkreader-floorp-ios-mv3-4.9.129.LICENSE"; sourceTree = "<group>"; };
+		F10A3F00000000000000010D /* darkreader-floorp-ios-mv3-4.9.129.provenance.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Bundled/darkreader-floorp-ios-mv3-4.9.129.provenance.json"; sourceTree = "<group>"; };
 		CE903B0C2F98000500D67401 /* FloorpPanelRegistryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPanelRegistryViewController.swift; sourceTree = "<group>"; };
 		CE903B0D2F98000600D67401 /* FloorpWebPanelSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelSession.swift; sourceTree = "<group>"; };
 		CE903B0E2F98000700D67401 /* FloorpWebPanelSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWebPanelSessionStore.swift; sourceTree = "<group>"; };
@@ -16509,12 +16509,12 @@
 				F10A3F000000000000000105 /* FloorpWebExtensionsSetting.swift */,
 				F10A3F000000000000000107 /* FloorpNativeWebExtensionInstaller.swift */,
 				F10A3F000000000000000108 /* FloorpNativeWebExtensionSurfaceHistory.swift */,
-				F10A3F000000000000000106 /* darkreader-chrome-mv3-4.9.129.zip */,
-				F10A3F00000000000000010C /* darkreader-chrome-mv3-4.9.129.LICENSE */,
-				F10A3F00000000000000010D /* darkreader-chrome-mv3-4.9.129.provenance.json */,
-				F10A3F000000000000000109 /* uBOLite_2026.825.1619.safari.zip */,
-				F10A3F00000000000000010A /* uBOLite_2026.825.1619.LICENSE */,
-				F10A3F00000000000000010B /* uBOLite_2026.825.1619.provenance.json */,
+				F10A3F000000000000000106 /* darkreader-floorp-ios-mv3-4.9.129.zip */,
+				F10A3F00000000000000010C /* darkreader-floorp-ios-mv3-4.9.129.LICENSE */,
+				F10A3F00000000000000010D /* darkreader-floorp-ios-mv3-4.9.129.provenance.json */,
+				F10A3F000000000000000109 /* uBOLite-floorp-ios-2026.825.1619.zip */,
+				F10A3F00000000000000010A /* uBOLite-floorp-ios-2026.825.1619.LICENSE */,
+				F10A3F00000000000000010B /* uBOLite-floorp-ios-2026.825.1619.provenance.json */,
 			);
 			path = NativeWebExtensions;
 			sourceTree = "<group>";
@@ -19070,12 +19070,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F10A3F000000000000000206 /* darkreader-chrome-mv3-4.9.129.zip in Resources */,
-				F10A3F00000000000000020B /* darkreader-chrome-mv3-4.9.129.LICENSE in Resources */,
-				F10A3F00000000000000020C /* darkreader-chrome-mv3-4.9.129.provenance.json in Resources */,
-				F10A3F00000000000000020A /* uBOLite_2026.825.1619.safari.zip in Resources */,
-				F10A3F00000000000000020D /* uBOLite_2026.825.1619.LICENSE in Resources */,
-				F10A3F00000000000000020E /* uBOLite_2026.825.1619.provenance.json in Resources */,
+				F10A3F000000000000000206 /* darkreader-floorp-ios-mv3-4.9.129.zip in Resources */,
+				F10A3F00000000000000020B /* darkreader-floorp-ios-mv3-4.9.129.LICENSE in Resources */,
+				F10A3F00000000000000020C /* darkreader-floorp-ios-mv3-4.9.129.provenance.json in Resources */,
+				F10A3F00000000000000020A /* uBOLite-floorp-ios-2026.825.1619.zip in Resources */,
+				F10A3F00000000000000020D /* uBOLite-floorp-ios-2026.825.1619.LICENSE in Resources */,
+				F10A3F00000000000000020E /* uBOLite-floorp-ios-2026.825.1619.provenance.json in Resources */,
 				CEC2F0B12F98000400D67401 /* Floorp.xcstrings in Resources */,
 				EEB971C42FC48C5100D6C232 /* NewYorkMedium-Bold.otf in Resources */,
 				EEB971C52FC48C5100D6C232 /* NewYorkMedium-BoldItalic.otf in Resources */,
@@ -19177,7 +19177,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F10A3F000000000000000209 /* uBOLite_2026.825.1619.safari.zip in Resources */,
+				F10A3F000000000000000209 /* uBOLite-floorp-ios-2026.825.1619.zip in Resources */,
 				F10A00062FA9000000000001 /* floorp-notes-merge-v1.json in Resources */,
 				8A11C80F2731916E00AC7318 /* defaultOnlyTestList.json in Resources */,
 				C869915828917811007ACC5C /* wallpaperNoAvailabilityRange.json in Resources */,

@@ -1,0 +1,58 @@
+{
+  "asset": "darkreader-floorp-ios-mv3-4.9.129.zip",
+  "buildScript": "scripts/package-darkreader-ios.sh",
+  "changes": [
+    {
+      "description": "Use the iOS-compatible nonpersistent background-page form, load the Floorp compatibility primitives before Dark Reader, and expose a same-extension readiness document for native lifecycle probes.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "manifest.json"
+    },
+    {
+      "description": "Add bounded retries limited to transient WebKit unknown errors, a local-storage sentinel, per-area recovering serialization, flushable debounce and mutation queues, and deterministic deep comparison for persisted readback.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "background/floorp-compat.js"
+    },
+    {
+      "description": "Route Dark Reader storage through the compatibility layer; reject failed reads and writes instead of substituting defaults; keep UI mutation responses alive through durable storage; recover queue tails after failure; and report readiness only after startup, flush, and settings readback all succeed.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "background/index.js"
+    },
+    {
+      "description": "Send popup and options mutations with an explicit response callback, retain failures without unhandled rejections, remove the popup's independent storage read, expose a native close-preparation handshake, track pending tab and window routes through that handshake, await API acknowledgement before explicitly closing a route-opening popup, and disable shortcut configuration links that iOS cannot represent.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "ui/popup/index.js"
+    },
+    {
+      "description": "Keep options-page mutation messages alive through their durable background response, expose the same native close-preparation handshake, disable shortcut configuration links, and omit the empty Hotkeys tab on iOS.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "ui/options/index.js"
+    },
+    {
+      "description": "Hide popup shortcut wrappers and descriptions so unsupported shortcut controls leave no dead UI on iOS.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "ui/popup/style.css"
+    },
+    {
+      "description": "Keep developer-tools mutation messages alive through their durable background response and expose the same native close-preparation handshake.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "ui/devtools/index.js"
+    },
+    {
+      "description": "Keep stylesheet-editor mutation messages alive through their durable background response and expose the same native close-preparation handshake.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "ui/stylesheet-editor/index.js"
+    },
+    {
+      "description": "Provide a side-effect-free same-extension page from which Floorp can request background readiness after process eviction or before closing a surface.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "path": "floorp-readiness.html"
+    }
+  ],
+  "license": "MIT",
+  "release": "v4.9.129",
+  "sha256": "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6",
+  "sourceCommit": "c2a707302a39b8047543712e9c582bac07835d34",
+  "upstreamAsset": "darkreader-chrome-mv3.zip",
+  "upstreamDownloadURL": "https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip",
+  "upstreamSHA256": "20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64"
+}
