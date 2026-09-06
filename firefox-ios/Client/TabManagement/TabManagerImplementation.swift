@@ -16,12 +16,18 @@ private final class PendingTabRemoval {
     weak var tab: Tab?
     weak var webView: WKWebView?
     let webViewIdentifier: ObjectIdentifier?
+    var permitsSelectedTabRemoval: Bool
     var completions = [(Bool) -> Void]()
 
-    init(tab: Tab, completion: @escaping (Bool) -> Void) {
+    init(
+        tab: Tab,
+        permitsSelectedTabRemoval: Bool,
+        completion: @escaping (Bool) -> Void
+    ) {
         self.tab = tab
         self.webView = tab.webView
         self.webViewIdentifier = tab.webView.map(ObjectIdentifier.init)
+        self.permitsSelectedTabRemoval = permitsSelectedTabRemoval
         self.completions = [completion]
     }
 }
@@ -233,6 +239,26 @@ final class TabManagerImplementation: NSObject,
     }
 
     func removeTab(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void) {
+        removeTab(
+            tabUUID,
+            permitsSelectedTabRemoval: true,
+            completion: completion
+        )
+    }
+
+    func removeTabIfUnselected(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void) {
+        removeTab(
+            tabUUID,
+            permitsSelectedTabRemoval: false,
+            completion: completion
+        )
+    }
+
+    private func removeTab(
+        _ tabUUID: TabUUID,
+        permitsSelectedTabRemoval: Bool,
+        completion: @escaping (Bool) -> Void
+    ) {
         guard let index = tabs.firstIndex(where: { $0.tabUUID == tabUUID }) else {
             completion(false)
             return
@@ -241,11 +267,22 @@ final class TabManagerImplementation: NSObject,
         let tab = tabs[index]
         let key = ObjectIdentifier(tab)
         if let pending = pendingTabRemovals[key] {
+            pending.permitsSelectedTabRemoval = pending.permitsSelectedTabRemoval
+                || permitsSelectedTabRemoval
             pending.completions.append(completion)
             return
         }
 
-        let pending = PendingTabRemoval(tab: tab, completion: completion)
+        guard permitsSelectedTabRemoval || selectedTab !== tab else {
+            completion(false)
+            return
+        }
+
+        let pending = PendingTabRemoval(
+            tab: tab,
+            permitsSelectedTabRemoval: permitsSelectedTabRemoval,
+            completion: completion
+        )
         pendingTabRemovals[key] = pending
         let preparationCompletion: (Bool) -> Void = { [weak self, weak pending] shouldRemove in
             guard let self, let pending else { return }
@@ -374,6 +411,7 @@ final class TabManagerImplementation: NSObject,
 
         let currentWebViewIdentifier = tab.webView.map(ObjectIdentifier.init)
         guard shouldRemove,
+              pending.permitsSelectedTabRemoval || selectedTab !== tab,
               currentWebViewIdentifier == pending.webViewIdentifier,
               let index = tabs.firstIndex(where: { $0 === tab }) else {
             if tab.webView === pending.webView {

@@ -103,6 +103,14 @@ class MockTabManager: TabManager {
         }
     }
 
+    func removeTabIfUnselected(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void) {
+        guard selectedTab?.tabUUID != tabUUID else {
+            completion(false)
+            return
+        }
+        removeTab(tabUUID, completion: completion)
+    }
+
     func resolvePendingRemoveTabCompletions(with result: Bool) {
         let completions = pendingRemoveTabCompletions
         pendingRemoveTabCompletions.removeAll()

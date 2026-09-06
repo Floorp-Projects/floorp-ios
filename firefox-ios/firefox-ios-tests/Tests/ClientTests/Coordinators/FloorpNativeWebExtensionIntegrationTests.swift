@@ -7780,6 +7780,85 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         await externallySelectedCreatedTab.close()
         manager.rejectsSingleTabRemovalForTesting = false
 
+        // Selection can also change after rollback has requested removal but
+        // while an extension document is still finishing its asynchronous
+        // close preparation. The final removal commit must re-check selection.
+        manager.selectTab(source)
+        try await host.performAction(contextIdentifier: item.identifier, for: source)
+        let racingRoutePopupResult = await waitForPresentedActionPopup(
+            presentingRoot: root
+        )
+        let racingRoutePopup = try XCTUnwrap(racingRoutePopupResult)
+        let racingRouteGate = FloorpClosePreparationTestGate()
+        let racingRemovalGate = FloorpClosePreparationTestGate()
+        defer {
+            racingRouteGate.mayFinish = true
+            racingRemovalGate.mayFinish = true
+            manager.unselectedRemovalGateForTesting = nil
+            host.extensionTabCreationCompletionHookForTesting = nil
+        }
+        manager.unselectedRemovalGateForTesting = racingRemovalGate
+        host.extensionTabCreationCompletionHookForTesting = { identifier, _ in
+            guard identifier == item.identifier else { return }
+            _ = await racingRouteGate.waitUntilReleased()
+        }
+        let unselectedRemovalCount = manager.unselectedRemovalRequestCount
+        let forcedRemovalCount = manager.forcedRemoveTabsCallCount
+        let racingRouteTask = Task { @MainActor in
+            try await racingRoutePopup.webView.floorpCallAsyncJavaScript(
+                """
+                try {
+                    await browser.tabs.create({
+                        active: true,
+                        url: browser.runtime.getURL('/dashboard.html'),
+                    });
+                    return '';
+                } catch (reason) {
+                    return reason instanceof Error ? reason.message : `${reason}`;
+                }
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 10_000_000_000
+            ) as? String
+        }
+        for _ in 0..<80 where !racingRouteGate.didBegin {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(racingRouteGate.didBegin)
+        let racingCreatedTab = try XCTUnwrap(manager.extensionCreatedTabs.last)
+        XCTAssertTrue(manager.selectedTab === source)
+
+        manager.selectTab(abandonedTarget)
+        let didDismissRacingPopup = await waitForDismissedPresentation(from: root)
+        XCTAssertTrue(didDismissRacingPopup)
+        racingRouteGate.mayFinish = true
+        host.extensionTabCreationCompletionHookForTesting = nil
+        for _ in 0..<80 where !racingRemovalGate.didBegin {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(racingRemovalGate.didBegin)
+        XCTAssertEqual(
+            manager.unselectedRemovalRequestCount,
+            unselectedRemovalCount + 1
+        )
+
+        manager.selectTab(racingCreatedTab)
+        racingRemovalGate.mayFinish = true
+        manager.unselectedRemovalGateForTesting = nil
+        let racingRouteError = try await racingRouteTask.value
+        XCTAssertFalse(racingRouteError?.isEmpty ?? true)
+        await Task.yield()
+        XCTAssertTrue(manager.selectedTab === racingCreatedTab)
+        XCTAssertTrue(manager.tabs.contains { $0 === racingCreatedTab })
+        XCTAssertEqual(
+            manager.forcedRemoveTabsCallCount,
+            forcedRemovalCount,
+            "Rollback must not force-remove a tab selected during close preparation"
+        )
+        racingRoutePopup.webView.stopLoading()
+        manager.removeSeedTab(racingCreatedTab)
+        await racingCreatedTab.close()
+
         manager.selectTab(source)
         mayClose = false
         try await host.performAction(contextIdentifier: item.identifier, for: source)
@@ -9693,7 +9772,9 @@ private final class FloorpUBOLRoutingTabManager: MockTabManager {
     private var registeredDelegates = [WeakTabManagerDelegate]()
     private(set) var extensionCreatedTabs = [Tab]()
     var rejectsSingleTabRemovalForTesting = false
+    var unselectedRemovalGateForTesting: FloorpClosePreparationTestGate?
     private(set) var rejectedSingleTabRemovalCount = 0
+    private(set) var unselectedRemovalRequestCount = 0
     private(set) var forcedRemoveTabsCallCount = 0
     private(set) var didAttemptToForceRemoveSelectedTab = false
     var registeredDelegateCount: Int {
@@ -9744,6 +9825,41 @@ private final class FloorpUBOLRoutingTabManager: MockTabManager {
         }
         removeSeedTab(tab)
         completion(true)
+    }
+
+    override func removeTabIfUnselected(
+        _ tabUUID: TabUUID,
+        completion: @escaping (Bool) -> Void
+    ) {
+        unselectedRemovalRequestCount += 1
+        guard let tab = tabs.first(where: { $0.tabUUID == tabUUID }),
+              selectedTab !== tab else {
+            completion(false)
+            return
+        }
+        guard let gate = unselectedRemovalGateForTesting else {
+            finishUnselectedRemoval(of: tab, completion: completion)
+            return
+        }
+        Task { @MainActor [weak self, weak tab] in
+            _ = await gate.waitUntilReleased()
+            guard let self, let tab else {
+                completion(false)
+                return
+            }
+            self.finishUnselectedRemoval(of: tab, completion: completion)
+        }
+    }
+
+    private func finishUnselectedRemoval(
+        of tab: Tab,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard selectedTab !== tab else {
+            completion(false)
+            return
+        }
+        removeTab(tab.tabUUID, completion: completion)
     }
 
     override func removeTabs(_ tabs: [Tab]) {

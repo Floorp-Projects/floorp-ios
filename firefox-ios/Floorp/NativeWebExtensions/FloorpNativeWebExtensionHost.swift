@@ -1691,7 +1691,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             )
             return
         }
-        manager.removeTab(tab.tabUUID) { [self] didRemove in
+        manager.removeTabIfUnselected(tab.tabUUID) { [self] didRemove in
             if !didRemove {
                 if manager.tabs.contains(where: { $0 === tab }),
                    manager.selectedTab !== tab {

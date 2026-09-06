@@ -209,6 +209,49 @@ final class TabManagerTests: TabManagerTestsBase {
     }
 
     @MainActor
+    func testRemoveTabIfUnselectedRechecksSelectionAfterPreparation() {
+        let tabs = generateTabs(count: 2)
+        let subject = createSubject(tabs: tabs)
+        tabs[0].webView = MockTabWebView(tab: tabs[0])
+        let delegate = TabRemovalPreparationDelegate()
+        subject.addDelegate(delegate)
+        subject.selectTab(tabs[1])
+        var outcome: Bool?
+
+        subject.removeTabIfUnselected(tabs[0].tabUUID) { outcome = $0 }
+
+        XCTAssertEqual(delegate.preparationCount, 1)
+        XCTAssertNil(outcome)
+        subject.selectTab(tabs[0])
+        delegate.finish(true)
+
+        XCTAssertEqual(outcome, false)
+        XCTAssertTrue(subject.selectedTab === tabs[0])
+        XCTAssertTrue(subject.tabs.contains { $0 === tabs[0] })
+    }
+
+    @MainActor
+    func testUnconditionalRemoveWinsWhenCoalescedWithConditionalRemoval() {
+        let tabs = generateTabs(count: 2)
+        let subject = createSubject(tabs: tabs)
+        tabs[0].webView = MockTabWebView(tab: tabs[0])
+        let delegate = TabRemovalPreparationDelegate()
+        subject.addDelegate(delegate)
+        subject.selectTab(tabs[1])
+        var outcomes = [Bool]()
+
+        subject.removeTabIfUnselected(tabs[0].tabUUID) { outcomes.append($0) }
+        subject.selectTab(tabs[0])
+        subject.removeTab(tabs[0].tabUUID) { outcomes.append($0) }
+        delegate.finish(true)
+
+        XCTAssertEqual(delegate.preparationCount, 1)
+        XCTAssertEqual(outcomes, [true, true])
+        XCTAssertFalse(subject.tabs.contains { $0 === tabs[0] })
+        XCTAssertTrue(subject.selectedTab === tabs[1])
+    }
+
+    @MainActor
     func testRemoveTabRejectsPreparationFromReplacedWebView() {
         let tabs = generateTabs(count: 2)
         let subject = createSubject(tabs: tabs)
