@@ -1762,19 +1762,22 @@ final class FloorpNativeWebExtensionHost: NSObject {
             throw FloorpNativeWebExtensionError.hostUnavailable
         }
         let sourceWindow = popup.sourceWindow
-        let didStage = popup.setPendingCloseTransition(operation: operation, transition: {
-            [weak self, weak context, weak sourceTab, weak sourceAdapter] in
-            guard let self, let context, let sourceTab, let sourceAdapter,
-                  self.currentReadyIdentifier(for: context) == identifier,
-                  sourceAdapter.tab === sourceTab,
-                  self.isManagedTab(sourceTab),
-                  self.tabManager(for: sourceWindow.windowUUID)?.selectedTab === sourceTab,
-                  self.lastFocusedWindow == sourceWindow,
-                  self.canOperate(tab: sourceTab, in: context) else {
-                throw FloorpNativeWebExtensionError.hostUnavailable
-            }
-            try transition()
-        }, cancellation: cancellation)
+        let didStage = popup.setPendingCloseTransition(
+            operation: operation,
+            transition: { [weak self, weak context, weak sourceTab, weak sourceAdapter] in
+                guard let self, let context, let sourceTab, let sourceAdapter,
+                      self.currentReadyIdentifier(for: context) == identifier,
+                      sourceAdapter.tab === sourceTab,
+                      self.isManagedTab(sourceTab),
+                      self.tabManager(for: sourceWindow.windowUUID)?.selectedTab === sourceTab,
+                      self.lastFocusedWindow == sourceWindow,
+                      self.canOperate(tab: sourceTab, in: context) else {
+                    throw FloorpNativeWebExtensionError.hostUnavailable
+                }
+                try transition()
+            },
+            cancellation: cancellation
+        )
         guard didStage else {
             throw FloorpNativeWebExtensionError.unsupportedOperation(
                 "action popup already has a pending browser transition"
@@ -5470,6 +5473,25 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
     }
 
+    private func actionPopupClosePreparation(
+        for context: WKWebExtensionContext,
+        identifier: String
+    ) -> (@MainActor (WKWebView) async -> Bool)? {
+        guard semanticReadinessPagePath(for: identifier) != nil else { return nil }
+        return { [weak self, weak context] webView in
+            guard let self, let context,
+                  self.currentReadyIdentifier(for: context) == identifier else {
+                return false
+            }
+            return await self.prepareExtensionSurfaceForClose(
+                webView,
+                context: context,
+                identifier: identifier,
+                timeoutNanoseconds: self.backgroundReadinessTimeout(for: identifier)
+            )
+        }
+    }
+
     private func presentBundledActionPopup(
         path: String,
         context: WKWebExtensionContext,
@@ -5508,23 +5530,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
             windowUUID: sourceTab.windowUUID,
             isPrivate: sourceTab.isPrivate
         )
-        let prepareToClose: (@MainActor (WKWebView) async -> Bool)?
-        if semanticReadinessPagePath(for: identifier) != nil {
-            prepareToClose = { [weak self, weak context] webView in
-                guard let self, let context,
-                      self.currentReadyIdentifier(for: context) == identifier else {
-                    return false
-                }
-                return await self.prepareExtensionSurfaceForClose(
-                    webView,
-                    context: context,
-                    identifier: identifier,
-                    timeoutNanoseconds: self.backgroundReadinessTimeout(for: identifier)
-                )
-            }
-        } else {
-            prepareToClose = nil
-        }
+        let prepareToClose = actionPopupClosePreparation(
+            for: context,
+            identifier: identifier
+        )
         let popup = FloorpNativeWebExtensionActionPopupViewController(
             url: popupURL,
             configuration: configuration,
@@ -5995,6 +6004,91 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
         focusedWindow(for: extensionContext)
     }
 
+    private func finishOpeningNewTab(
+        using configuration: WKWebExtension.TabConfiguration,
+        for extensionContext: WKWebExtensionContext,
+        identifier: String,
+        window: FloorpNativeWebExtensionWindow,
+        manager: any TabManager,
+        popupToken: UUID?,
+        finish: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void
+    ) {
+        guard currentReadyIdentifier(for: extensionContext) == identifier,
+              tabManager(for: window.windowUUID) === manager,
+              !window.isPrivateBrowsing || extensionContext.hasAccessToPrivateData else {
+            finish(nil, FloorpNativeWebExtensionError.hostUnavailable)
+            return
+        }
+        let parent = (configuration.parentTab as? FloorpNativeWebExtensionTab)?.tab
+        let tab = manager.addTab(
+            nil as URLRequest?,
+            afterTab: parent,
+            zombie: false,
+            isPrivate: window.isPrivateBrowsing
+        )
+        announceTabIfNeeded(tab)
+        do {
+            if configuration.shouldBeActive {
+                try requestActivation(
+                    of: tab,
+                    requestedBy: extensionContext,
+                    cancellation: { [weak self, weak tab] in
+                        guard let self, let tab else { return }
+                        self.rollbackCreatedTabsAfterFailedActivation(
+                            [tab],
+                            from: manager,
+                            completion: {}
+                        )
+                    }
+                )
+            }
+            if let url = configuration.url {
+                load(url: url, in: tab, requestedBy: extensionContext)
+            }
+            let adapter = tabAdapter(for: tab)
+#if DEBUG || TESTING
+            if let hook = extensionTabCreationCompletionHookForTesting {
+                Task { @MainActor [weak self, weak extensionContext, weak tab] in
+                    guard let tab else {
+                        finish(nil, FloorpNativeWebExtensionError.hostUnavailable)
+                        return
+                    }
+                    await hook(identifier, tab)
+                    guard let self else {
+                        finish(nil, FloorpNativeWebExtensionError.hostUnavailable)
+                        return
+                    }
+                    let originatingPopupIsCurrent = popupToken.map { token in
+                        self.managedActionPopups[identifier]?.token == token
+                    } ?? true
+                    guard let extensionContext,
+                          self.currentReadyIdentifier(for: extensionContext) == identifier,
+                          self.isManagedTab(tab),
+                          originatingPopupIsCurrent else {
+                        self.rollbackCreatedTabsAfterFailedActivation(
+                            [tab],
+                            from: manager
+                        ) {
+                            finish(nil, FloorpNativeWebExtensionError.hostUnavailable)
+                        }
+                        return
+                    }
+                    finish(self.tabAdapter(for: tab), nil)
+                }
+                return
+            }
+#endif
+            finish(adapter, nil)
+        } catch {
+            rollbackCreatedTabsAfterFailedActivation(
+                [tab],
+                from: manager
+            ) {
+                finish(nil, error)
+            }
+        }
+    }
+
     func webExtensionController(
         _ controller: WKWebExtensionController,
         openNewTabUsing configuration: WKWebExtension.TabConfiguration,
@@ -6037,94 +6131,15 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
                 completionHandler(tab, error)
             }
         }
-        let finishOpening = { [weak self, weak extensionContext] in
-            guard let self,
-                  let extensionContext,
-                  self.currentReadyIdentifier(for: extensionContext) == identifier,
-                  self.tabManager(for: window.windowUUID) === manager,
-                  !window.isPrivateBrowsing || extensionContext.hasAccessToPrivateData else {
-                finish(nil, FloorpNativeWebExtensionError.hostUnavailable)
-                return
-            }
-            let parent = (configuration.parentTab as? FloorpNativeWebExtensionTab)?.tab
-            let tab = manager.addTab(
-                nil as URLRequest?,
-                afterTab: parent,
-                zombie: false,
-                isPrivate: window.isPrivateBrowsing
-            )
-            self.announceTabIfNeeded(tab)
-            do {
-                if configuration.shouldBeActive {
-                    try self.requestActivation(
-                        of: tab,
-                        requestedBy: extensionContext,
-                        cancellation: { [weak self, weak tab] in
-                            guard let self, let tab else { return }
-                            self.rollbackCreatedTabsAfterFailedActivation(
-                                [tab],
-                                from: manager,
-                                completion: {}
-                            )
-                        }
-                    )
-                }
-                if let url = configuration.url {
-                    self.load(url: url, in: tab, requestedBy: extensionContext)
-                }
-                let adapter = self.tabAdapter(for: tab)
-#if DEBUG || TESTING
-                if let hook = self.extensionTabCreationCompletionHookForTesting {
-                    Task { @MainActor [weak self, weak extensionContext, weak tab] in
-                        guard let tab else {
-                            finish(
-                                nil,
-                                FloorpNativeWebExtensionError.hostUnavailable
-                            )
-                            return
-                        }
-                        await hook(identifier, tab)
-                        guard let self else {
-                            finish(
-                                nil,
-                                FloorpNativeWebExtensionError.hostUnavailable
-                            )
-                            return
-                        }
-                        let originatingPopupIsCurrent = popupToken.map { token in
-                            self.managedActionPopups[identifier]?.token == token
-                        } ?? true
-                        guard let extensionContext,
-                              self.currentReadyIdentifier(for: extensionContext) == identifier,
-                              self.isManagedTab(tab),
-                              originatingPopupIsCurrent else {
-                            self.rollbackCreatedTabsAfterFailedActivation(
-                                [tab],
-                                from: manager
-                            ) {
-                                finish(
-                                    nil,
-                                    FloorpNativeWebExtensionError.hostUnavailable
-                                )
-                            }
-                            return
-                        }
-                        finish(self.tabAdapter(for: tab), nil)
-                    }
-                    return
-                }
-#endif
-                finish(adapter, nil)
-            } catch {
-                self.rollbackCreatedTabsAfterFailedActivation(
-                    [tab],
-                    from: manager
-                ) {
-                    finish(nil, error)
-                }
-            }
-        }
-        finishOpening()
+        finishOpeningNewTab(
+            using: configuration,
+            for: extensionContext,
+            identifier: identifier,
+            window: window,
+            manager: manager,
+            popupToken: popupToken,
+            finish: finish
+        )
     }
 
     func webExtensionController(
