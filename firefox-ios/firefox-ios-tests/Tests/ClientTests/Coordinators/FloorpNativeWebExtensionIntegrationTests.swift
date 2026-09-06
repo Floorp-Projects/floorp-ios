@@ -57,12 +57,29 @@ final class FloorpWebExtensionTestRuntimeRetainer {
 @MainActor
 private final class FloorpClosePreparationTestGate {
     private(set) var didBegin = false
-    var mayFinish = false
+    private var isReleased = false
+    private var waiters = [CheckedContinuation<Void, Never>]()
+    var mayFinish: Bool {
+        get { isReleased }
+        set {
+            isReleased = newValue
+            guard newValue else { return }
+            let pendingWaiters = waiters
+            waiters.removeAll()
+            pendingWaiters.forEach { $0.resume() }
+        }
+    }
 
     func waitUntilReleased() async -> Bool {
         didBegin = true
-        while !mayFinish {
-            await Task.yield()
+        if !isReleased {
+            await withCheckedContinuation { continuation in
+                if isReleased {
+                    continuation.resume()
+                } else {
+                    waiters.append(continuation)
+                }
+            }
         }
         return true
     }
@@ -81,7 +98,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(
             package.sha256,
-            "ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761"
+            "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6"
         )
         XCTAssertEqual(package.url.pathExtension, "zip")
 
@@ -1968,6 +1985,24 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(
             FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
                 preUserDNRFailClosedRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preSafariDNRKeeperRecord = legacyRecord
+        preSafariDNRKeeperRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preSafariDNRKeeperUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preSafariDNRKeeperRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preSafariDNRPerStoreCapacityGuardRecord = legacyRecord
+        preSafariDNRPerStoreCapacityGuardRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preSafariDNRPerStoreCapacityGuardUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preSafariDNRPerStoreCapacityGuardRecord
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
@@ -4385,6 +4420,14 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ]
         )
 
+        // A delayed route acknowledgement may issue its script close while
+        // this failure alert is already visible. Keep the existing request and
+        // its live actions, while upgrading its close disposition in place.
+        popup.requestCloseForTesting()
+        await Task.yield()
+        XCTAssertTrue(popup.presentedViewController === firstAlert)
+        XCTAssertEqual(closeAttemptCount, 1)
+
         popup.retryCloseAfterPreparationFailureForTesting()
         for _ in 0..<80 {
             if closeAttemptCount == 2,
@@ -4808,7 +4851,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d"
+            "cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
@@ -4973,6 +5016,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         withExtendedLifetime(retainedExtensionWebView) {}
     }
 
+    // swiftlint:disable:next function_body_length
     func testBundledUBOLMatchedRulesRoutesThroughProductionHostInBothPrivacyRealms() async throws {
         let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_route")
@@ -5032,33 +5076,49 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let extensionWebView = try await makeUBOLDeveloperModePage(context: context)
         defer { extensionWebView.stopLoading() }
 
-        let normalRoute = try await requestUBOLMatchedRulesRoute(
+        try await exerciseBundledUBOLPopupRouteCloseRace(
             sourceTab: normalSource,
-            isPrivate: false,
             host: host,
             manager: manager,
             item: item,
-            observerWebView: extensionWebView,
             presentingRoot: root
         )
-        let privateRoute = try await requestUBOLMatchedRulesRoute(
-            sourceTab: privateSource,
-            isPrivate: true,
-            host: host,
-            manager: manager,
-            item: item,
-            observerWebView: extensionWebView,
-            presentingRoot: root
-        )
-        let privateReportRoute = try await requestUBOLPrivateReportRouteAfterFocusShift(
-            sourceTab: privateSource,
-            normalFocusTab: normalSource,
-            host: host,
-            manager: manager,
-            item: item,
-            observerWebView: extensionWebView,
-            presentingRoot: root
-        )
+
+        let normalRoute: Tab
+        let privateRoute: Tab
+        let privateReportRoute: Tab
+        do {
+            normalRoute = try await requestUBOLMatchedRulesRoute(
+                sourceTab: normalSource,
+                isPrivate: false,
+                host: host,
+                manager: manager,
+                item: item,
+                observerWebView: extensionWebView,
+                presentingRoot: root
+            )
+            privateRoute = try await requestUBOLMatchedRulesRoute(
+                sourceTab: privateSource,
+                isPrivate: true,
+                host: host,
+                manager: manager,
+                item: item,
+                observerWebView: extensionWebView,
+                presentingRoot: root
+            )
+            privateReportRoute = try await requestUBOLPrivateReportRouteAfterFocusShift(
+                sourceTab: privateSource,
+                normalFocusTab: normalSource,
+                host: host,
+                manager: manager,
+                item: item,
+                observerWebView: extensionWebView,
+                presentingRoot: root
+            )
+        } catch {
+            await closePresentedActionPopupForCleanup(from: root)
+            throw error
+        }
 
         XCTAssertEqual(manager.extensionCreatedTabs.map(\.isPrivate), [false, true, true])
         XCTAssertTrue(
@@ -5807,55 +5867,151 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             "Closing Settings before Filter lists renders must not disable the stock rulesets"
         )
 
-        let interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
-            """
-            const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
-            const reconciler = await import(browser.runtime.getURL('js/floorp-reconcile.js'));
-            const journalKey = 'floorp.settingsRestoreJournal.v1';
-            const snapshot = await backup.backupToObject(self.cachedRulesetData);
-            const initialEnabled = await browser.runtime.sendMessage({
-                what: 'getEnabledRulesets',
-            });
-            const alternateEnabled = initialEnabled.includes('jpn-1')
-                ? initialEnabled.filter(id => id !== 'jpn-1')
-                : initialEnabled.concat('jpn-1');
-            const interrupted = await browser.runtime.sendMessage({
-                what: 'beginSettingsRestore',
-            });
-            const staged = await reconciler.reconcileProtection({
-                enabledRulesets: alternateEnabled,
-            });
-            if (staged.ready !== true) {
-                throw new Error(staged.error || 'Failed to stage interrupted restore');
+        let interruptedRestoreRecovery: [String: Any]?
+        var interruptedSnapshot: [String: Any]?
+        var interruptedRestoreOperation = "setup"
+        do {
+            let setup = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const snapshot = await backup.backupToObject(self.cachedRulesetData);
+                const initialEnabled = await browser.runtime.sendMessage({
+                    what: 'getEnabledRulesets',
+                });
+                const alternateEnabled = initialEnabled.includes('jpn-1')
+                    ? initialEnabled.filter(id => id !== 'jpn-1')
+                    : initialEnabled.concat('jpn-1');
+                const documentToken = crypto.randomUUID();
+                document.documentElement.dataset.floorpRestoreProbe = documentToken;
+                return {
+                    snapshot,
+                    initialEnabled,
+                    alternateEnabled,
+                    documentToken,
+                };
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 90_000_000_000
+            ) as? [String: Any]
+            let setupState = try XCTUnwrap(setup)
+            let snapshot = try XCTUnwrap(setupState["snapshot"] as? [String: Any])
+            let initialEnabled = setupState["initialEnabled"] as? [String] ?? []
+            let alternateEnabled = setupState["alternateEnabled"] as? [String] ?? []
+            let documentToken = try XCTUnwrap(setupState["documentToken"] as? String)
+            interruptedSnapshot = snapshot
+
+            interruptedRestoreOperation = "stage"
+            let staged = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                if (
+                    document.documentElement.dataset.floorpRestoreProbe !==
+                    documentToken
+                ) {
+                    throw new Error('Options document changed before restore staging');
+                }
+                const reconciler = await import(
+                    browser.runtime.getURL('js/floorp-reconcile.js')
+                );
+                const journalKey = 'floorp.settingsRestoreJournal.v1';
+                const interrupted = await browser.runtime.sendMessage({
+                    what: 'beginSettingsRestore',
+                });
+                const result = await reconciler.reconcileProtection({
+                    enabledRulesets: alternateEnabled,
+                });
+                if (result.ready !== true) {
+                    throw new Error(result.error || 'Failed to stage interrupted restore');
+                }
+                const whileInterrupted = await browser.storage.local.get(journalKey);
+                return {
+                    interruptedJournalRetained:
+                        whileInterrupted[journalKey]?.id === interrupted.id,
+                    stagedChanged:
+                        JSON.stringify([...alternateEnabled].sort()) !==
+                        JSON.stringify([...initialEnabled].sort()),
+                };
+                """,
+                arguments: [
+                    "documentToken": documentToken,
+                    "initialEnabled": initialEnabled,
+                    "alternateEnabled": alternateEnabled,
+                ],
+                contentWorld: .page,
+                timeoutNanoseconds: 90_000_000_000
+            ) as? [String: Any]
+            let stagedState = try XCTUnwrap(staged)
+
+            interruptedRestoreOperation = "restore"
+            interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                if (
+                    document.documentElement.dataset.floorpRestoreProbe !==
+                    documentToken
+                ) {
+                    throw new Error('Options document changed before restore recovery');
+                }
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const journalKey = 'floorp.settingsRestoreJournal.v1';
+                await backup.restoreFromObject(snapshot);
+                const finalEnabled = await browser.runtime.sendMessage({
+                    what: 'getEnabledRulesets',
+                });
+                const finalConfig = await browser.runtime.sendMessage({
+                    what: 'getOptionsPageData',
+                });
+                Object.assign(self.cachedRulesetData, finalConfig);
+                const finalStorage = await browser.storage.local.get(journalKey);
+                const readiness = await browser.runtime.sendMessage({
+                    what: 'floorpReadiness',
+                });
+                delete document.documentElement.dataset.floorpRestoreProbe;
+                return {
+                    interruptedJournalRetained,
+                    stagedChanged,
+                    initialEnabled,
+                    finalEnabled,
+                    journalRemoved: finalStorage[journalKey] === undefined,
+                    readiness,
+                };
+                """,
+                arguments: [
+                    "documentToken": documentToken,
+                    "snapshot": snapshot,
+                    "initialEnabled": initialEnabled,
+                    "interruptedJournalRetained":
+                        stagedState["interruptedJournalRetained"] as? Bool ?? false,
+                    "stagedChanged": stagedState["stagedChanged"] as? Bool ?? false,
+                ],
+                contentWorld: .page,
+                timeoutNanoseconds: 90_000_000_000
+            ) as? [String: Any]
+        } catch {
+            let operationError = error
+            if let interruptedSnapshot {
+                _ = try? await optionsWebView.floorpCallAsyncJavaScript(
+                    """
+                    const backup = await import(
+                        browser.runtime.getURL('js/backup-restore.js')
+                    );
+                    await backup.restoreFromObject(snapshot);
+                    delete document.documentElement.dataset.floorpRestoreProbe;
+                    return true;
+                    """,
+                    arguments: ["snapshot": interruptedSnapshot],
+                    contentWorld: .page,
+                    timeoutNanoseconds: 90_000_000_000
+                )
             }
-            const whileInterrupted = await browser.storage.local.get(journalKey);
-            await backup.restoreFromObject(snapshot);
-            const finalEnabled = await browser.runtime.sendMessage({
-                what: 'getEnabledRulesets',
-            });
-            const finalConfig = await browser.runtime.sendMessage({
-                what: 'getOptionsPageData',
-            });
-            Object.assign(self.cachedRulesetData, finalConfig);
-            const finalStorage = await browser.storage.local.get(journalKey);
-            const readiness = await browser.runtime.sendMessage({
-                what: 'floorpReadiness',
-            });
-            return {
-                interruptedJournalRetained:
-                    whileInterrupted[journalKey]?.id === interrupted.id,
-                stagedChanged:
-                    JSON.stringify([...alternateEnabled].sort()) !==
-                    JSON.stringify([...initialEnabled].sort()),
-                initialEnabled,
-                finalEnabled,
-                journalRemoved: finalStorage[journalKey] === undefined,
-                readiness,
-            };
-            """,
-            contentWorld: .page,
-            timeoutNanoseconds: 90_000_000_000
-        ) as? [String: Any]
+            throw NSError(
+                domain: "FloorpInterruptedRestoreIntegration",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "\(interruptedRestoreOperation) failed: \(operationError)",
+                    NSUnderlyingErrorKey: operationError,
+                ]
+            )
+        }
         let interruptedState = try XCTUnwrap(interruptedRestoreRecovery)
         XCTAssertEqual(interruptedState["interruptedJournalRetained"] as? Bool, true)
         XCTAssertEqual(interruptedState["stagedChanged"] as? Bool, true)
@@ -5869,84 +6025,211 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             true
         )
 
-        let userRuleDraftRoundTrip = try await optionsWebView.floorpCallAsyncJavaScript(
-            """
-            const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
-            const journalKey = 'floorp.settingsRestoreJournal.v1';
-            const userRuleBase = 9000000;
-            const originalStorage = await browser.storage.local.get('userDnrRules');
-            const originalRules = (await browser.declarativeNetRequest.getDynamicRules())
-                .filter(rule => rule.id >= userRuleBase);
-            const snapshot = await backup.backupToObject(self.cachedRulesetData);
-            const inactiveDraft = [
-                'action:',
-                '  type: block',
-                '  unfinished: true',
-            ];
-            await backup.restoreFromObject({
-                ...snapshot,
-                developerMode: false,
-                dnrRules: inactiveDraft,
-            });
-            const inactiveStorage = await browser.storage.local.get('userDnrRules');
-            const inactiveRules = await browser.declarativeNetRequest.getDynamicRules();
+        let userRuleDraftRoundTrip: [String: Any]?
+        var userRuleSnapshot: [String: Any]?
+        var userRuleRestoreOperation = "setup"
+        do {
+            let setup = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const userRuleBase = 9000000;
+                const originalStorage = await browser.storage.local.get('userDnrRules');
+                const originalRules = (
+                    await browser.declarativeNetRequest.getDynamicRules()
+                ).filter(rule => rule.id >= userRuleBase);
+                const snapshot = await backup.backupToObject(self.cachedRulesetData);
+                const documentToken = crypto.randomUUID();
+                document.documentElement.dataset.floorpUserRuleProbe = documentToken;
+                return {
+                    snapshot,
+                    originalStorage,
+                    originalRules,
+                    documentToken,
+                };
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 90_000_000_000
+            ) as? [String: Any]
+            let setupState = try XCTUnwrap(setup)
+            let snapshot = try XCTUnwrap(setupState["snapshot"] as? [String: Any])
+            let originalStorage =
+                setupState["originalStorage"] as? [String: Any] ?? [:]
+            let originalRules =
+                setupState["originalRules"] as? [[String: Any]] ?? []
+            let documentToken = try XCTUnwrap(setupState["documentToken"] as? String)
+            userRuleSnapshot = snapshot
 
-            const activeDraft = [
-                'action:',
-                '  type: block',
-                '  unfinished: true',
-                '---',
-                'action:',
-                '  type: block',
-                'condition:',
-                '  urlFilter: ||floorp-user-rule.invalid^',
-                '  excludedInitiatorDomains:',
-                '  excludedRequestDomains:',
-                '  excludedResourceTypes:',
-            ];
-            await backup.restoreFromObject({
-                ...snapshot,
-                developerMode: true,
-                dnrRules: activeDraft,
-            });
-            const activeStorage = await browser.storage.local.get('userDnrRules');
-            const activeRules = (await browser.declarativeNetRequest.getDynamicRules())
-                .filter(rule => rule.id >= userRuleBase);
+            userRuleRestoreOperation = "inactive"
+            let inactive = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                if (
+                    document.documentElement.dataset.floorpUserRuleProbe !==
+                    documentToken
+                ) {
+                    throw new Error('Options document changed before inactive user rules');
+                }
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const userRuleBase = 9000000;
+                const inactiveDraft = [
+                    'action:',
+                    '  type: block',
+                    '  unfinished: true',
+                ];
+                await backup.restoreFromObject({
+                    ...snapshot,
+                    developerMode: false,
+                    dnrRules: inactiveDraft,
+                });
+                const inactiveStorage =
+                    await browser.storage.local.get('userDnrRules');
+                const inactiveRules =
+                    await browser.declarativeNetRequest.getDynamicRules();
+                return {
+                    inactiveStoredExactly:
+                        inactiveStorage.userDnrRules === inactiveDraft.join('\\n'),
+                    inactiveRuleCount: inactiveRules.filter(
+                        rule => rule.id >= userRuleBase
+                    ).length,
+                };
+                """,
+                arguments: [
+                    "documentToken": documentToken,
+                    "snapshot": snapshot,
+                ],
+                contentWorld: .page,
+                timeoutNanoseconds: 90_000_000_000
+            ) as? [String: Any]
+            let inactiveState = try XCTUnwrap(inactive)
 
-            await backup.restoreFromObject(snapshot);
-            const finalStorage = await browser.storage.local.get([
-                'userDnrRules',
-                journalKey,
-            ]);
-            const finalRules = (await browser.declarativeNetRequest.getDynamicRules())
-                .filter(rule => rule.id >= userRuleBase);
-            const finalConfig = await browser.runtime.sendMessage({
-                what: 'getOptionsPageData',
-            });
-            Object.assign(self.cachedRulesetData, finalConfig);
-            const readiness = await browser.runtime.sendMessage({
-                what: 'floorpReadiness',
-            });
-            return {
-                inactiveStoredExactly:
-                    inactiveStorage.userDnrRules === inactiveDraft.join('\n'),
-                inactiveRuleCount:
-                    inactiveRules.filter(rule => rule.id >= userRuleBase).length,
-                activeStoredExactly:
-                    activeStorage.userDnrRules === activeDraft.join('\n'),
-                activeRuleCount: activeRules.length,
-                activeURLFilter: activeRules[0]?.condition?.urlFilter || '',
-                finalUserRuleTextMatches:
-                    finalStorage.userDnrRules === originalStorage.userDnrRules,
-                finalRuleSetMatches:
-                    JSON.stringify(finalRules) === JSON.stringify(originalRules),
-                finalHasJournal: finalStorage[journalKey] !== undefined,
-                readiness,
-            };
-            """,
-            contentWorld: .page,
-            timeoutNanoseconds: 90_000_000_000
-        ) as? [String: Any]
+            userRuleRestoreOperation = "active"
+            let active = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                if (
+                    document.documentElement.dataset.floorpUserRuleProbe !==
+                    documentToken
+                ) {
+                    throw new Error('Options document changed before active user rules');
+                }
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const userRuleBase = 9000000;
+                const activeDraft = [
+                    'action:',
+                    '  type: block',
+                    '  unfinished: true',
+                    '---',
+                    'action:',
+                    '  type: block',
+                    'condition:',
+                    '  urlFilter: ||floorp-user-rule.invalid^',
+                    '  excludedInitiatorDomains:',
+                    '  excludedRequestDomains:',
+                    '  excludedResourceTypes:',
+                ];
+                await backup.restoreFromObject({
+                    ...snapshot,
+                    developerMode: true,
+                    dnrRules: activeDraft,
+                });
+                const activeStorage =
+                    await browser.storage.local.get('userDnrRules');
+                const activeRules = (
+                    await browser.declarativeNetRequest.getDynamicRules()
+                ).filter(rule => rule.id >= userRuleBase);
+                return {
+                    activeStoredExactly:
+                        activeStorage.userDnrRules === activeDraft.join('\\n'),
+                    activeRuleCount: activeRules.length,
+                    activeURLFilter:
+                        activeRules[0]?.condition?.urlFilter || '',
+                };
+                """,
+                arguments: [
+                    "documentToken": documentToken,
+                    "snapshot": snapshot,
+                ],
+                contentWorld: .page,
+                timeoutNanoseconds: 90_000_000_000
+            ) as? [String: Any]
+            let activeState = try XCTUnwrap(active)
+
+            userRuleRestoreOperation = "final restore"
+            let restored = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                if (
+                    document.documentElement.dataset.floorpUserRuleProbe !==
+                    documentToken
+                ) {
+                    throw new Error('Options document changed before final user-rule restore');
+                }
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const journalKey = 'floorp.settingsRestoreJournal.v1';
+                const userRuleBase = 9000000;
+                await backup.restoreFromObject(snapshot);
+                const finalStorage = await browser.storage.local.get([
+                    'userDnrRules',
+                    journalKey,
+                ]);
+                const finalRules = (
+                    await browser.declarativeNetRequest.getDynamicRules()
+                ).filter(rule => rule.id >= userRuleBase);
+                const finalConfig = await browser.runtime.sendMessage({
+                    what: 'getOptionsPageData',
+                });
+                Object.assign(self.cachedRulesetData, finalConfig);
+                const readiness = await browser.runtime.sendMessage({
+                    what: 'floorpReadiness',
+                });
+                delete document.documentElement.dataset.floorpUserRuleProbe;
+                return {
+                    finalUserRuleTextMatches:
+                        finalStorage.userDnrRules === originalStorage.userDnrRules,
+                    finalRuleSetMatches:
+                        JSON.stringify(finalRules) === JSON.stringify(originalRules),
+                    finalHasJournal: finalStorage[journalKey] !== undefined,
+                    readiness,
+                };
+                """,
+                arguments: [
+                    "documentToken": documentToken,
+                    "snapshot": snapshot,
+                    "originalStorage": originalStorage,
+                    "originalRules": originalRules,
+                ],
+                contentWorld: .page,
+                timeoutNanoseconds: 90_000_000_000
+            ) as? [String: Any]
+            let restoredState = try XCTUnwrap(restored)
+
+            userRuleDraftRoundTrip = inactiveState
+                .merging(activeState) { _, new in new }
+                .merging(restoredState) { _, new in new }
+        } catch {
+            let operationError = error
+            if let userRuleSnapshot {
+                _ = try? await optionsWebView.floorpCallAsyncJavaScript(
+                    """
+                    const backup = await import(
+                        browser.runtime.getURL('js/backup-restore.js')
+                    );
+                    await backup.restoreFromObject(snapshot);
+                    delete document.documentElement.dataset.floorpUserRuleProbe;
+                    return true;
+                    """,
+                    arguments: ["snapshot": userRuleSnapshot],
+                    contentWorld: .page,
+                    timeoutNanoseconds: 90_000_000_000
+                )
+            }
+            throw NSError(
+                domain: "FloorpUserRuleRestoreIntegration",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "\(userRuleRestoreOperation) failed: \(operationError)",
+                    NSUnderlyingErrorKey: operationError,
+                ]
+            )
+        }
         let draftState = try XCTUnwrap(userRuleDraftRoundTrip)
         XCTAssertEqual(draftState["inactiveStoredExactly"] as? Bool, true)
         XCTAssertEqual((draftState["inactiveRuleCount"] as? NSNumber)?.intValue, 0)
@@ -5976,11 +6259,29 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 name: 'floorpRollbackAlarmProbe',
                 time: Date.now() + 15 * 60 * 1000,
             };
+            const readLocalUntil = async predicate => {
+                const deadline = Date.now() + 2_000;
+                let state;
+                do {
+                    state = await browser.storage.local.get([
+                        'deferredJobs',
+                        journalKey,
+                    ]);
+                    if ( predicate(state) ) { return state; }
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                } while ( Date.now() < deadline );
+                return state;
+            };
             await browser.storage.local.set({ deferredJobs: [testJob] });
             await alarms.resetJobsAlarm();
             const transaction = await browser.runtime.sendMessage({
                 what: 'beginSettingsRestore',
             });
+            const snapshottedStorage = await readLocalUntil(state =>
+                state[journalKey]?.id === transaction.id &&
+                state[journalKey]?.beforeLocal?.deferredJobs?.length === 1 &&
+                state[journalKey].beforeLocal.deferredJobs[0]?.name === testJob.name
+            );
             await browser.runtime.sendMessage({
                 what: 'setShowBlockedCount',
                 state: !beforeConfig.showBlockedCount,
@@ -5991,10 +6292,26 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 what: 'rollbackSettingsRestore',
                 id: transaction.id,
             });
-            const restoredStorage = await browser.storage.local.get([
-                'deferredJobs',
-                journalKey,
-            ]);
+            const rollbackVisible = await readLocalUntil(state =>
+                state[journalKey] === undefined
+            );
+            const verificationTransaction = await browser.runtime.sendMessage({
+                what: 'beginSettingsRestore',
+            });
+            let verifiedStorage;
+            try {
+                verifiedStorage = await readLocalUntil(state =>
+                    state[journalKey]?.id === verificationTransaction.id
+                );
+            } finally {
+                await browser.runtime.sendMessage({
+                    what: 'commitSettingsRestore',
+                    id: verificationTransaction.id,
+                });
+            }
+            const committedVerification = await readLocalUntil(state =>
+                state[journalKey] === undefined
+            );
             const restoredAlarm = await browser.alarms.get('deferredJobs');
             const restoredConfig = await browser.runtime.sendMessage({
                 what: 'getOptionsPageData',
@@ -6013,13 +6330,23 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             });
             return {
                 rolledBack: rollback?.rolledBack === true,
+                jobSnapshotted:
+                    snapshottedStorage[journalKey]?.beforeLocal
+                        ?.deferredJobs?.length === 1 &&
+                    snapshottedStorage[journalKey].beforeLocal
+                        .deferredJobs[0]?.name === testJob.name,
                 jobRestored:
-                    restoredStorage.deferredJobs?.length === 1 &&
-                    restoredStorage.deferredJobs[0]?.name === testJob.name,
+                    verifiedStorage[journalKey]?.beforeLocal?.deferredJobs
+                        ?.filter(job =>
+                            job?.name === testJob.name &&
+                            job?.time === testJob.time
+                        ).length === 1,
                 alarmRestored: restoredAlarm?.name === 'deferredJobs',
                 optionRestored:
                     restoredConfig.showBlockedCount === beforeConfig.showBlockedCount,
-                journalRemoved: restoredStorage[journalKey] === undefined,
+                journalRemoved:
+                    rollbackVisible[journalKey] === undefined &&
+                    committedVerification[journalKey] === undefined,
                 readiness,
             };
             """,
@@ -6028,6 +6355,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         ) as? [String: Any]
         let rollbackSideEffectState = try XCTUnwrap(rollbackSideEffects)
         XCTAssertEqual(rollbackSideEffectState["rolledBack"] as? Bool, true)
+        XCTAssertEqual(rollbackSideEffectState["jobSnapshotted"] as? Bool, true)
         XCTAssertEqual(rollbackSideEffectState["jobRestored"] as? Bool, true)
         XCTAssertEqual(rollbackSideEffectState["alarmRestored"] as? Bool, true)
         XCTAssertEqual(rollbackSideEffectState["optionRestored"] as? Bool, true)
@@ -6967,6 +7295,15 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
         let extensionTabCountBeforeSettings = manager.extensionCreatedTabs.count
+        let routeAcknowledgementGate = FloorpClosePreparationTestGate()
+        host.extensionTabCreationCompletionHookForTesting = { identifier, _ in
+            guard identifier == item.identifier else { return }
+            _ = await routeAcknowledgementGate.waitUntilReleased()
+        }
+        defer {
+            routeAcknowledgementGate.mayFinish = true
+            host.extensionTabCreationCompletionHookForTesting = nil
+        }
         let clickedSettings = try await popup.webView.floorpCallAsyncJavaScript(
             """
             const button = document.querySelector('.settings-button-icon')?.closest('button');
@@ -6978,19 +7315,40 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             timeoutNanoseconds: 3_000_000_000
         ) as? Bool
         XCTAssertEqual(clickedSettings, true)
+        for _ in 0..<80 where !routeAcknowledgementGate.didBegin {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(routeAcknowledgementGate.didBegin)
+
+        popup.viewController.closePopup(animated: false)
+        for _ in 0..<20 where
+            !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(root.presentedViewController === popup.viewController)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
+            "Native close must retain Dark Reader until its real tabs.create callback settles"
+        )
+        routeAcknowledgementGate.mayFinish = true
+        host.extensionTabCreationCompletionHookForTesting = nil
         let didDismissPopup = await waitForDismissedPresentation(from: root, attempts: 340)
         for _ in 0..<120 where manager.extensionCreatedTabs.count == extensionTabCountBeforeSettings {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        popup.webView.stopLoading()
-        await Task.yield()
-        await Task.yield()
+        if didDismissPopup,
+           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView) {
+            popup.webView.stopLoading()
+            await Task.yield()
+            await Task.yield()
+        }
         didClosePopup = didDismissPopup
         XCTAssertTrue(didDismissPopup)
         XCTAssertNil(popup.viewController.presentedViewController)
         XCTAssertNil(root.presentedViewController)
         XCTAssertEqual(manager.extensionCreatedTabs.count, extensionTabCountBeforeSettings + 1)
         let optionsTab = try XCTUnwrap(manager.extensionCreatedTabs.last)
+        XCTAssertTrue(manager.selectedTab === optionsTab)
         let optionsURL = try XCTUnwrap(optionsTab.webView?.url ?? optionsTab.url)
         let optionsComponents = try XCTUnwrap(
             URLComponents(url: optionsURL, resolvingAgainstBaseURL: false)
@@ -7203,6 +7561,285 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     }
 
     // swiftlint:disable:next function_body_length
+    func testManagedPopupCancellationAndKeepOpenDiscardStagedActivations() async throws {
+#if DEBUG || TESTING
+        let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        let profileFixture = try makeIsolatedHostProfile(prefix: "managed_popup_keep_open")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: profile,
+            host: host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedProfile: profile,
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
+        defer { profileFixture.cleanup() }
+        let source = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/popup-source")),
+            isPrivate: false
+        )
+        let abandonedTarget = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/abandoned-target")),
+            isPrivate: false
+        )
+        let committedTarget = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/committed-target")),
+            isPrivate: false
+        )
+        manager.selectedTab = source
+        host.register(tabManager: manager)
+        host.focus(windowUUID: manager.windowUUID, isPrivate: false)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        root.loadViewIfNeeded()
+        source.webView?.frame = root.view.bounds
+        if let webView = source.webView {
+            root.view.addSubview(webView)
+        }
+        window.makeKeyAndVisible()
+        var mayClose = false
+        host.extensionSurfaceClosePreparationHookForTesting = { identifier, _ in
+            identifier == item.identifier && mayClose
+        }
+        defer {
+            mayClose = true
+            host.extensionSurfaceClosePreparationHookForTesting = nil
+            (root.presentedViewController
+                as? FloorpNativeWebExtensionActionPopupViewController)?
+                .closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        try await host.performAction(contextIdentifier: item.identifier, for: source)
+        let popupResult = await waitForPresentedActionPopup(presentingRoot: root)
+        let popup = try XCTUnwrap(popupResult)
+
+        let createdTabCount = manager.extensionCreatedTabs.count
+        manager.rejectsSingleTabRemovalForTesting = true
+        let forcedRouteGate = FloorpClosePreparationTestGate()
+        host.extensionTabCreationCompletionHookForTesting = { identifier, _ in
+            guard identifier == item.identifier else { return }
+            _ = await forcedRouteGate.waitUntilReleased()
+        }
+        defer {
+            forcedRouteGate.mayFinish = true
+            host.extensionTabCreationCompletionHookForTesting = nil
+        }
+        let forcedRouteTask = Task { @MainActor in
+            try await popup.webView.floorpCallAsyncJavaScript(
+                """
+                try {
+                    await browser.tabs.create({
+                        active: true,
+                        url: browser.runtime.getURL('/dashboard.html'),
+                    });
+                    return '';
+                } catch (reason) {
+                    return reason instanceof Error ? reason.message : `${reason}`;
+                }
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 10_000_000_000
+            ) as? String
+        }
+        for _ in 0..<80 where !forcedRouteGate.didBegin {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(forcedRouteGate.didBegin)
+        XCTAssertEqual(manager.extensionCreatedTabs.count, createdTabCount + 1)
+        XCTAssertTrue(manager.selectedTab === source)
+        XCTAssertTrue(root.presentedViewController === popup.viewController)
+
+        manager.selectTab(abandonedTarget)
+        let didForceCloseFirstPopup = await waitForDismissedPresentation(from: root)
+        XCTAssertTrue(didForceCloseFirstPopup)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
+            "A forced-retired popup must remain alive while its native callback is pending"
+        )
+        try await Task.sleep(nanoseconds: 2_250_000_000)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
+            "Native callback retention must outlive the fixed two-second UIKit teardown grace"
+        )
+        forcedRouteGate.mayFinish = true
+        host.extensionTabCreationCompletionHookForTesting = nil
+        let forcedRouteError = try await forcedRouteTask.value
+        XCTAssertFalse(forcedRouteError?.isEmpty ?? true)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
+            "Callback delivery must begin a fresh teardown grace period"
+        )
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
+            "The callback teardown grace must retain the popup for two seconds"
+        )
+        for _ in 0..<160 where
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
+            "The forced-retired popup lease must end after its callback grace expires"
+        )
+        for _ in 0..<80 where manager.extensionCreatedTabs.count != createdTabCount {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertEqual(manager.extensionCreatedTabs.count, createdTabCount)
+        XCTAssertTrue(manager.selectedTab === abandonedTarget)
+        XCTAssertEqual(manager.rejectedSingleTabRemovalCount, 1)
+        XCTAssertEqual(manager.forcedRemoveTabsCallCount, 1)
+        XCTAssertFalse(manager.didAttemptToForceRemoveSelectedTab)
+
+        // A user/system activation can win after tabs.create has staged its
+        // destination but before the popup's script-close acknowledgement.
+        // Cancelling that stale popup must preserve the now-current created tab
+        // without even asking TabManager to remove it.
+        manager.selectTab(source)
+        try await host.performAction(contextIdentifier: item.identifier, for: source)
+        let selectedRoutePopupResult = await waitForPresentedActionPopup(
+            presentingRoot: root
+        )
+        let selectedRoutePopup = try XCTUnwrap(selectedRoutePopupResult)
+        let selectedRouteGate = FloorpClosePreparationTestGate()
+        defer {
+            selectedRouteGate.mayFinish = true
+            host.extensionTabCreationCompletionHookForTesting = nil
+        }
+        host.extensionTabCreationCompletionHookForTesting = { identifier, _ in
+            guard identifier == item.identifier else { return }
+            _ = await selectedRouteGate.waitUntilReleased()
+        }
+        let selectedRouteTask = Task { @MainActor in
+            try await selectedRoutePopup.webView.floorpCallAsyncJavaScript(
+                """
+                try {
+                    await browser.tabs.create({
+                        active: true,
+                        url: browser.runtime.getURL('/dashboard.html'),
+                    });
+                    return '';
+                } catch (reason) {
+                    return reason instanceof Error ? reason.message : `${reason}`;
+                }
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 10_000_000_000
+            ) as? String
+        }
+        for _ in 0..<80 where !selectedRouteGate.didBegin {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(selectedRouteGate.didBegin)
+        XCTAssertEqual(manager.extensionCreatedTabs.count, createdTabCount + 1)
+        let externallySelectedCreatedTab = try XCTUnwrap(manager.extensionCreatedTabs.last)
+        XCTAssertTrue(manager.selectedTab === source)
+
+        manager.selectTab(externallySelectedCreatedTab)
+        let didDismissSelectedRoutePopup = await waitForDismissedPresentation(from: root)
+        XCTAssertTrue(didDismissSelectedRoutePopup)
+        XCTAssertTrue(manager.selectedTab === externallySelectedCreatedTab)
+        selectedRouteGate.mayFinish = true
+        host.extensionTabCreationCompletionHookForTesting = nil
+        let selectedRouteError = try await selectedRouteTask.value
+        XCTAssertFalse(selectedRouteError?.isEmpty ?? true)
+        await Task.yield()
+        XCTAssertTrue(manager.selectedTab === externallySelectedCreatedTab)
+        XCTAssertTrue(manager.tabs.contains { $0 === externallySelectedCreatedTab })
+        XCTAssertEqual(manager.extensionCreatedTabs.count, createdTabCount + 1)
+        XCTAssertEqual(
+            manager.rejectedSingleTabRemovalCount,
+            1,
+            "Rollback must not request removal after the staged-created tab becomes current"
+        )
+        XCTAssertEqual(manager.forcedRemoveTabsCallCount, 1)
+        for _ in 0..<160 where FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+            .mustPreserve(selectedRoutePopup.webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+                .mustPreserve(selectedRoutePopup.webView)
+        )
+        selectedRoutePopup.webView.stopLoading()
+        manager.removeSeedTab(externallySelectedCreatedTab)
+        await externallySelectedCreatedTab.close()
+        manager.rejectsSingleTabRemovalForTesting = false
+
+        manager.selectTab(source)
+        mayClose = false
+        try await host.performAction(contextIdentifier: item.identifier, for: source)
+        let retryPopupResult = await waitForPresentedActionPopup(presentingRoot: root)
+        let retryPopup = try XCTUnwrap(retryPopupResult)
+        var abandonedActivationCompleted = false
+        var abandonedActivationError: (any Error)?
+        host.tabAdapter(for: abandonedTarget).activate(for: context) { error in
+            abandonedActivationError = error
+            abandonedActivationCompleted = true
+        }
+        XCTAssertTrue(abandonedActivationCompleted)
+        XCTAssertNil(abandonedActivationError)
+        XCTAssertTrue(manager.selectedTab === source)
+
+        retryPopup.viewController.requestCloseForTesting()
+        for _ in 0..<80 where !(retryPopup.viewController.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(retryPopup.viewController.presentedViewController as? UIAlertController)
+        XCTAssertTrue(manager.selectedTab === source)
+
+        retryPopup.viewController.keepOpenAfterPreparationFailureForTesting()
+        for _ in 0..<80 where retryPopup.viewController.presentedViewController != nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        await Task.yield()
+        XCTAssertNil(retryPopup.viewController.presentedViewController)
+        XCTAssertTrue(root.presentedViewController === retryPopup.viewController)
+        XCTAssertTrue(manager.selectedTab === source)
+
+        var committedActivationCompleted = false
+        var committedActivationError: (any Error)?
+        host.tabAdapter(for: committedTarget).activate(for: context) { error in
+            committedActivationError = error
+            committedActivationCompleted = true
+        }
+        XCTAssertTrue(committedActivationCompleted)
+        XCTAssertNil(committedActivationError)
+        XCTAssertTrue(manager.selectedTab === source)
+
+        mayClose = true
+        retryPopup.viewController.requestCloseForTesting()
+        let didDismiss = await waitForDismissedPresentation(from: root)
+        XCTAssertTrue(didDismiss)
+        XCTAssertTrue(manager.selectedTab === committedTarget)
+        XCTAssertFalse(manager.selectedTab === abandonedTarget)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        await source.close()
+        await abandonedTarget.close()
+        await committedTarget.close()
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
     func testManagedPrivatePopupOptionsFailClosedWhenFocusMovesToNormalWindow() async throws {
         let item = FloorpNativeWebExtensionCatalog.darkReader
         let profileFixture = try makeIsolatedHostProfile(prefix: "managed_popup_options_focus")
@@ -7277,7 +7914,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let privateAdapter = host.tabAdapter(for: privateTab)
         try await host.performAction(contextIdentifier: item.identifier, for: privateTab)
         let popupResult = await waitForPresentedActionPopup(presentingRoot: privateRoot)
-        _ = try XCTUnwrap(popupResult)
+        let popup = try XCTUnwrap(popupResult)
         XCTAssertTrue(context.hasActiveUserGesture(in: privateAdapter))
 
         var optionsRequestCompleted = false
@@ -7295,9 +7932,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
         XCTAssertTrue(optionsRequestCompleted)
         XCTAssertNil(optionsError)
-        let optionsNavigation = try XCTUnwrap(
-            privateRoot.presentedViewController as? UINavigationController
-        )
+        XCTAssertTrue(privateRoot.presentedViewController === popup.viewController)
+        popup.viewController.requestCloseForTesting()
+        var presentedOptionsNavigation: UINavigationController?
+        for _ in 0..<120 {
+            presentedOptionsNavigation = privateRoot.presentedViewController
+                as? UINavigationController
+            if presentedOptionsNavigation != nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let optionsNavigation = try XCTUnwrap(presentedOptionsNavigation)
         let optionsPage = try XCTUnwrap(optionsNavigation.viewControllers.first)
         optionsPage.loadViewIfNeeded()
         let optionsWebView = try XCTUnwrap(
@@ -7938,6 +8582,143 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         return root.presentedViewController == nil
     }
 
+    // A throwing JavaScript call only starts the helper's deferred close. Await that close before
+    // the test unregisters its host, with a bounded force-close fallback for failed preparation.
+    private func closePresentedActionPopupForCleanup(from root: UIViewController) async {
+        guard let popup = root.presentedViewController
+            as? FloorpNativeWebExtensionActionPopupViewController else {
+            return
+        }
+        let webView = popup.webView
+        let didFinishPreparedClose: Bool
+        if FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+            didFinishPreparedClose = false
+        } else {
+            let closeTask = Task { @MainActor in
+                await popup.closePopupAfterPreparing(animated: false)
+            }
+            let timeoutTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                closeTask.cancel()
+            }
+            didFinishPreparedClose = await closeTask.value
+            timeoutTask.cancel()
+            await timeoutTask.value
+        }
+        if !didFinishPreparedClose {
+            popup.closePopupImmediately(animated: false)
+        }
+        let didDismiss = await waitForDismissedPresentation(from: root, attempts: 80)
+        guard didDismiss,
+              popup.presentingViewController == nil,
+              !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) else {
+            return
+        }
+        webView.stopLoading()
+        await Task.yield()
+        await Task.yield()
+    }
+
+    private func exerciseBundledUBOLPopupRouteCloseRace(
+        sourceTab: Tab,
+        host: FloorpNativeWebExtensionHost,
+        manager: FloorpUBOLRoutingTabManager,
+        item: FloorpNativeWebExtensionCatalogItem,
+        presentingRoot: UIViewController
+    ) async throws {
+        manager.selectTab(sourceTab)
+        host.focus(windowUUID: sourceTab.windowUUID, isPrivate: sourceTab.isPrivate)
+        try await host.performAction(contextIdentifier: item.identifier, for: sourceTab)
+        let popupResult = await waitForPresentedActionPopup(presentingRoot: presentingRoot)
+        let popup = try XCTUnwrap(popupResult)
+        let createdTabCount = manager.extensionCreatedTabs.count
+        let routeAcknowledgementGate = FloorpClosePreparationTestGate()
+        host.extensionTabCreationCompletionHookForTesting = { identifier, _ in
+            guard identifier == item.identifier else { return }
+            _ = await routeAcknowledgementGate.waitUntilReleased()
+        }
+        defer {
+            routeAcknowledgementGate.mayFinish = true
+            host.extensionTabCreationCompletionHookForTesting = nil
+        }
+
+        let didStartBundledRoute = try await popup.webView.floorpCallAsyncJavaScript(
+            """
+            if (typeof globalThis.floorpCompletePopupRoute !== 'function') {
+                return false;
+            }
+            const operation = (async () => {
+                const [tab] = await browser.tabs.query({
+                    active: true,
+                    currentWindow: true,
+                });
+                if (typeof tab?.id !== 'number' || typeof tab?.windowId !== 'number') {
+                    throw new Error('Missing active source tab for route race');
+                }
+                return browser.runtime.sendMessage({
+                    what: 'showMatchedRules',
+                    tabId: tab.id,
+                    windowId: tab.windowId,
+                    incognito: tab.incognito === true,
+                });
+            })();
+            void globalThis.floorpCompletePopupRoute(operation);
+            return true;
+            """,
+            contentWorld: .page,
+            timeoutNanoseconds: 3_000_000_000
+        ) as? Bool
+        XCTAssertEqual(didStartBundledRoute, true)
+        for _ in 0..<80 where !routeAcknowledgementGate.didBegin {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(routeAcknowledgementGate.didBegin)
+        XCTAssertEqual(manager.extensionCreatedTabs.count, createdTabCount + 1)
+        XCTAssertTrue(manager.selectedTab === sourceTab)
+
+        popup.viewController.closePopup(animated: false)
+        for _ in 0..<20 where
+            !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(
+            presentingRoot.presentedViewController === popup.viewController,
+            "Native close must wait for the bundled popup route promise"
+        )
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView)
+        )
+
+        routeAcknowledgementGate.mayFinish = true
+        host.extensionTabCreationCompletionHookForTesting = nil
+        let didDismiss = await waitForDismissedPresentation(from: presentingRoot)
+        XCTAssertTrue(didDismiss)
+        var routedTab: Tab?
+        for _ in 0..<120 {
+            if manager.extensionCreatedTabs.count == createdTabCount + 1,
+               let candidate = manager.extensionCreatedTabs.last,
+               (candidate.webView?.url ?? candidate.url) != nil {
+                routedTab = candidate
+                break
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let tab = try XCTUnwrap(routedTab)
+        let routeURL = try XCTUnwrap(tab.webView?.url ?? tab.url)
+        XCTAssertTrue(manager.selectedTab === tab)
+        XCTAssertEqual(routeURL.path, "/matched-rules.html")
+        if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView) {
+            popup.webView.stopLoading()
+            await Task.yield()
+            await Task.yield()
+        }
+        manager.removeSeedTab(tab)
+        await tab.close()
+        manager.selectTab(sourceTab)
+        XCTAssertEqual(manager.extensionCreatedTabs.count, createdTabCount)
+    }
+
     // swiftlint:disable:next function_body_length
     private func requestUBOLMatchedRulesRoute(
         sourceTab: Tab,
@@ -8225,6 +9006,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         ) as? [String: Any]
         let result = try XCTUnwrap(raw)
         let sourceTabID = try XCTUnwrap((result["tabId"] as? NSNumber)?.intValue)
+        XCTAssertEqual(sourceTabID, expectedSourceTabID)
         XCTAssertNotNil((result["windowId"] as? NSNumber)?.intValue)
         XCTAssertEqual(result["incognito"] as? Bool, isPrivate)
         XCTAssertEqual(
@@ -8232,6 +9014,42 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             true,
             result["error"] as? String ?? "Matched-rules handler did not confirm tab creation"
         )
+        XCTAssertTrue(presentingRoot.presentedViewController === popupViewController)
+        XCTAssertTrue(manager.selectedTab === sourceTab)
+        XCTAssertEqual(manager.extensionCreatedTabs.count, previousCreatedTabCount + 1)
+
+        let rejectedSecondRoute = try await popup.floorpCallAsyncJavaScript(
+            """
+            try {
+                await browser.tabs.create({
+                    active: true,
+                    url: browser.runtime.getURL('/dashboard.html'),
+                });
+                return '';
+            } catch (reason) {
+                return reason instanceof Error ? reason.message : `${reason}`;
+            }
+            """,
+            contentWorld: .page,
+            timeoutNanoseconds: 5_000_000_000
+        ) as? String
+        XCTAssertFalse(rejectedSecondRoute?.isEmpty ?? true)
+        XCTAssertEqual(
+            manager.extensionCreatedTabs.count,
+            previousCreatedTabCount + 1,
+            "A rejected second popup transition must not leave a ghost tab"
+        )
+
+        // The bundled handler performs this explicit close after its route
+        // acknowledgement. The direct API probe above first proves that the
+        // response reaches a still-live popup callback.
+        popupViewController.requestCloseForTesting()
+        let didDismissPopup = await waitForDismissedPresentation(
+            from: presentingRoot,
+            attempts: 340
+        )
+        didClosePopup = didDismissPopup
+        XCTAssertTrue(didDismissPopup)
 
         var routedTab: Tab?
         for _ in 0..<200 {
@@ -8256,6 +9074,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let url = try XCTUnwrap(tab.webView?.url ?? tab.url)
         let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
 
+        XCTAssertTrue(manager.selectedTab === tab)
         XCTAssertEqual(tab.isPrivate, isPrivate)
         XCTAssertEqual(tab.floorpNativeWebExtensionContextIdentifier, item.identifier)
         XCTAssertEqual(tab.webView?.configuration.websiteDataStore.isPersistent, !isPrivate)
@@ -8266,15 +9085,12 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             components.queryItems?.filter { $0.name == "tab" }.map(\.value),
             [String(sourceTabID)]
         )
-        let didDismissPopup = await waitForDismissedPresentation(
-            from: presentingRoot,
-            attempts: 340
-        )
-        popup.stopLoading()
-        await Task.yield()
-        await Task.yield()
-        didClosePopup = didDismissPopup
-        XCTAssertTrue(didDismissPopup)
+        if didDismissPopup,
+           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup) {
+            popup.stopLoading()
+            await Task.yield()
+            await Task.yield()
+        }
         XCTAssertNil(popupViewController.presentedViewController)
         XCTAssertNil(presentingRoot.presentedViewController)
         XCTAssertTrue(
@@ -8394,6 +9210,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         let reportTab = try XCTUnwrap(createdReport, "No private Report tab was created")
+        XCTAssertTrue(manager.selectedTab === reportTab)
         XCTAssertFalse(reportTab === existingNormalReport)
         XCTAssertTrue(reportTab.isPrivate)
         XCTAssertFalse(reportTab.webView?.configuration.websiteDataStore.isPersistent ?? true)
@@ -8875,6 +9692,10 @@ private final class FloorpUBOLRoutingTabManager: MockTabManager {
     private let privateWebsiteDataStore = WKWebsiteDataStore.nonPersistent()
     private var registeredDelegates = [WeakTabManagerDelegate]()
     private(set) var extensionCreatedTabs = [Tab]()
+    var rejectsSingleTabRemovalForTesting = false
+    private(set) var rejectedSingleTabRemovalCount = 0
+    private(set) var forcedRemoveTabsCallCount = 0
+    private(set) var didAttemptToForceRemoveSelectedTab = false
     var registeredDelegateCount: Int {
         registeredDelegates.compactMap { $0.get() }.count
     }
@@ -8908,6 +9729,31 @@ private final class FloorpUBOLRoutingTabManager: MockTabManager {
         }
         registeredDelegates.forEach {
             $0.get()?.tabManager(self, didRemoveTab: tab, isRestoring: false)
+        }
+    }
+
+    override func removeTab(_ tabUUID: TabUUID, completion: @escaping (Bool) -> Void) {
+        if rejectsSingleTabRemovalForTesting {
+            rejectedSingleTabRemovalCount += 1
+            completion(false)
+            return
+        }
+        guard let tab = tabs.first(where: { $0.tabUUID == tabUUID }) else {
+            completion(false)
+            return
+        }
+        removeSeedTab(tab)
+        completion(true)
+    }
+
+    override func removeTabs(_ tabs: [Tab]) {
+        forcedRemoveTabsCallCount += 1
+        for tab in tabs where self.tabs.contains(where: { $0 === tab }) {
+            guard selectedTab !== tab else {
+                didAttemptToForceRemoveSelectedTab = true
+                continue
+            }
+            removeSeedTab(tab)
         }
     }
 

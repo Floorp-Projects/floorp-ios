@@ -188,13 +188,16 @@ final class FloorpNativeWebExtensionTab: NSObject, WKWebExtensionTab {
         for context: WKWebExtensionContext,
         completionHandler: @escaping ((any Error)?) -> Void
     ) {
-        guard let tab, let host, host.canMutate(tab: tab, in: context),
-              let manager = host.tabManager(for: tab.windowUUID) else {
+        guard let tab, let host, host.canMutate(tab: tab, in: context) else {
             completionHandler(FloorpNativeWebExtensionError.privateAccessDenied)
             return
         }
-        manager.selectTab(tab)
-        completionHandler(nil)
+        do {
+            try host.requestActivation(of: tab, requestedBy: context)
+            completionHandler(nil)
+        } catch {
+            completionHandler(error)
+        }
     }
 
     func isSelected(for context: WKWebExtensionContext) -> Bool {
@@ -224,6 +227,14 @@ final class FloorpNativeWebExtensionTab: NSObject, WKWebExtensionTab {
             completionHandler(nil, FloorpNativeWebExtensionError.privateAccessDenied)
             return
         }
+        do {
+            if configuration.shouldBeActive {
+                try host.validateDeferredActivation(requestedBy: context)
+            }
+        } catch {
+            completionHandler(nil, error)
+            return
+        }
         let url = configuration.url ?? tab.webView?.url ?? tab.url
         let duplicate = manager.addTab(
             nil as URLRequest?,
@@ -232,13 +243,33 @@ final class FloorpNativeWebExtensionTab: NSObject, WKWebExtensionTab {
             isPrivate: tab.isPrivate
         )
         host.announceTabIfNeeded(duplicate)
-        if let url {
-            host.load(url: url, in: duplicate, requestedBy: context)
+        do {
+            if configuration.shouldBeActive {
+                try host.requestActivation(
+                    of: duplicate,
+                    requestedBy: context,
+                    cancellation: { [weak host, weak duplicate] in
+                        guard let host, let duplicate else { return }
+                        host.rollbackCreatedTabsAfterFailedActivation(
+                            [duplicate],
+                            from: manager,
+                            completion: {}
+                        )
+                    }
+                )
+            }
+            if let url {
+                host.load(url: url, in: duplicate, requestedBy: context)
+            }
+            completionHandler(host.tabAdapter(for: duplicate), nil)
+        } catch {
+            host.rollbackCreatedTabsAfterFailedActivation(
+                [duplicate],
+                from: manager
+            ) {
+                completionHandler(nil, error)
+            }
         }
-        if configuration.shouldBeActive {
-            manager.selectTab(duplicate)
-        }
-        completionHandler(host.tabAdapter(for: duplicate), nil)
     }
 
     func close(
@@ -332,7 +363,11 @@ final class FloorpNativeWebExtensionWindow: NSObject, WKWebExtensionWindow {
             return
         }
         do {
-            try host.requestFocus(windowUUID: windowUUID, isPrivate: isPrivateBrowsing)
+            try host.requestFocus(
+                windowUUID: windowUUID,
+                isPrivate: isPrivateBrowsing,
+                requestedBy: context
+            )
             completionHandler(nil)
         } catch {
             completionHandler(error)

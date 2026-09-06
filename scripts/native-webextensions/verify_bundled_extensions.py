@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
 import sys
 import zipfile
 
@@ -22,8 +23,8 @@ EXPECTED = (
         "review_license_marker": "MIT",
         "provenance_file": "darkreader-floorp-ios-mv3-4.9.129.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch": "41ce6decc01bef4998451567cb77f2876240dba7be55d23cc685275f1997e12e",
-            "scripts/package-darkreader-ios.sh": "92a61a8d60dc13ce1058235e6cc686f323a60c18f4db2927cae5d67c0ff8caaa",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch": "0be2a2d45b51e2d4b2bc24ae139dddfb71c5386f6a5466702c0412d7376a9e07",
+            "scripts/package-darkreader-ios.sh": "059760bc09a4668c2edf835cfe34f0d548961341be5457adb8eaa4f114f81eac",
         },
         "provenance": {
             "asset": "darkreader-floorp-ios-mv3-4.9.129.zip",
@@ -45,14 +46,19 @@ EXPECTED = (
                     "path": "background/index.js",
                 },
                 {
-                    "description": "Send popup and options mutations with an explicit response callback, retain failures without unhandled rejections, remove the popup's independent storage read, and expose a native close-preparation handshake.",
+                    "description": "Send popup and options mutations with an explicit response callback, retain failures without unhandled rejections, remove the popup's independent storage read, expose a native close-preparation handshake, track pending tab and window routes through that handshake, await API acknowledgement before explicitly closing a route-opening popup, and disable shortcut configuration links that iOS cannot represent.",
                     "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
                     "path": "ui/popup/index.js",
                 },
                 {
-                    "description": "Keep options-page mutation messages alive through their durable background response and expose the same native close-preparation handshake.",
+                    "description": "Keep options-page mutation messages alive through their durable background response, expose the same native close-preparation handshake, disable shortcut configuration links, and omit the empty Hotkeys tab on iOS.",
                     "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
                     "path": "ui/options/index.js",
+                },
+                {
+                    "description": "Hide popup shortcut wrappers and descriptions so unsupported shortcut controls leave no dead UI on iOS.",
+                    "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+                    "path": "ui/popup/style.css",
                 },
                 {
                     "description": "Keep developer-tools mutation messages alive through their durable background response and expose the same native close-preparation handshake.",
@@ -72,7 +78,7 @@ EXPECTED = (
             ],
             "license": "MIT",
             "release": "v4.9.129",
-            "sha256": "ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761",
+            "sha256": "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6",
             "sourceCommit": "c2a707302a39b8047543712e9c582bac07835d34",
             "upstreamAsset": "darkreader-chrome-mv3.zip",
             "upstreamDownloadURL": "https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip",
@@ -88,10 +94,64 @@ EXPECTED = (
             "version": "4.9.129",
         },
         "static_action_popup_path": "ui/popup/index.html",
+        "archive_text_requirements": {
+            "ui/popup/index.js": (
+                "const pendingExtensionPageRoutes = new Set();",
+                "function trackExtensionPageRoute(operation)",
+                "async function prepareExtensionPageRoutesToClose()",
+                "async function preparePopupToClose(connector)",
+                "const route = trackExtensionPageRoute(async () => {",
+                "await chrome.tabs.update(",
+                "await chrome.tabs.create(",
+                "await chrome.windows.update(",
+                "await chrome.windows.create(",
+                "await route;",
+                "globalThis.floorpOpenExtensionPage = openExtensionPage;",
+                "preparePopupToClose(connector);",
+                "function ShortcutLink() {\n        return null;",
+            ),
+            "ui/options/index.js": (
+                "function ShortcutLink() {\n        return null;",
+            ),
+            "ui/popup/style.css": (
+                ".header__more-settings__shortcut-wrapper,\n"
+                ".header__more-settings__shortcut-wrapper + "
+                ".header__more-settings__description,\n"
+                ".site-list-settings__shortcut {\n"
+                "    display: none !important;\n"
+                "}",
+            ),
+        },
+        "archive_text_forbidden_requirements": {
+            "ui/popup/index.js": (
+                "chrome://extensions/configureCommands",
+                "edge://extensions/shortcuts",
+            ),
+            "ui/options/index.js": (
+                "chrome://extensions/configureCommands",
+                "edge://extensions/shortcuts",
+                'id: "hotkeys"',
+            ),
+        },
+        "archive_text_order_requirement_groups": {
+            "ui/popup/index.js": (
+                (
+                    "const route = trackExtensionPageRoute(async () => {",
+                    "await route;",
+                    "window.close();",
+                ),
+                (
+                    "connector.prepareToClose(),",
+                    "                prepareExtensionPageRoutesToClose()\n"
+                    "            ]);",
+                ),
+            ),
+        },
         "review_required_values": {
             "Floorp-derived",
             "background.service_worker",
             "background.scripts",
+            "unsupported shortcut UI",
         },
     },
     {
@@ -102,7 +162,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "d70eea0f17651299941bc902204dd86372fbcfd3147927bbad2010fa221dbb3a",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "4e2926ecb38bed3ad38a6f27b375175e502fd335cfd44b79c0e53915bffc05a1",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -115,12 +175,12 @@ EXPECTED = (
                     "path": "manifest.json",
                 },
                 {
-                    "description": "Propagate the active tab's numeric logical window ID and incognito state when opening Matched rules and Report; adapt upstream Matched rules windows.create to an awaited active tabs.create in the source window; scope Report lookup, reuse, and creation to the same window and privacy realm; verify the created realm; and return explicit opened/error responses so WebKit does not strand popup message ports.",
+                    "description": "Propagate the active tab's numeric logical window ID and incognito state when opening Matched rules and Report; adapt upstream Matched rules windows.create to an awaited active tabs.create in the source window; scope Report lookup, reuse, and creation to the same window and privacy realm; verify the created realm; return explicit opened/error responses; track every Matched rules, Report, and Options route through native close preparation; and close the Page Action only after the route acknowledgement so WebKit does not strand popup message ports.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": ["js/background.js", "js/ext-utils.js", "js/popup.js"],
                 },
                 {
-                    "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; create and retain a hidden local-storage sentinel before reads; make local configuration authoritative with revisioned exact readback; normalize native submission and desired/readback through one clone-only Safari 26 rule normalizer; preserve exact-fingerprinted official regex/request-domain rules and fail closed on unproven or WebKit-ignored conditions; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
+                    "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; retain hidden, collision-protected dynamic/session DNR keeper rules and reserve their two slots from WebKit's combined quota, while capping each public store at floor(native limit / 2) - 1 so Safari 26's current-plus-final target-store quota check accepts every normal replacement/removal; keep legacy at-capacity rules readable and static-operable while deferring a missing keeper only after exact combined and target-store quota readback, preflight doomed updates before native mutation, permit only explicit non-empty sufficiently large reductions, and fold a target keeper into a capacity-opening update without silently removing protection rules; preserve native Promise pass-through outside Safari; hide keepers from facade reads and match feedback; serialize native DNR operations across realms when Web Locks are available and converge simultaneous first-use without them; make local configuration authoritative with revisioned exact readback; normalize native submission and desired/readback through one clone-only Safari 26 rule normalizer; preserve exact-fingerprinted official regex/request-domain rules and fail closed on unproven or WebKit-ignored conditions; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/alarms.js",
@@ -185,7 +245,7 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d",
+            "sha256": "cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
@@ -218,6 +278,16 @@ EXPECTED = (
         "archive_text_requirements": {
             "js/popup.js": (
                 "assertSuccessfulMessageResponse,",
+                "async function completePopupRoute(",
+                "const pendingPopupRoutes = new Set();",
+                "function trackPopupRoute(route)",
+                "async function settlePopupRoutes()",
+                "await settlePopupRoutes();",
+                "await trackPopupRoute((async ( ) => {",
+                "self.floorpCompletePopupRoute = completePopupRoute;",
+                "void completePopupRoute(sendMessage({",
+                "void completePopupRoute(runtime.openOptionsPage(), false);",
+                "self.close();",
                 "what: 'showMatchedRules'",
                 "windowId: currentTab.windowId",
                 "incognito: currentTab.incognito === true",
@@ -519,14 +589,65 @@ EXPECTED = (
                 "    webext.storage.session.get('safari.seenRealms')",
                 "webext.storage.session.set({ 'safari.seenRealms': nextSeenRealms })",
                 "runStorageOperation('session', ( ) =>\n"
-                "            webext.storage.session.remove('safari.seenRealms')",
+                "                webext.storage.session.remove('safari.seenRealms')",
                 "throwOnError = false",
                 "if ( throwOnError ) { throw reason; }",
-                "await nativeDNR.updateEnabledRulesets",
+                "const safariDNROperationLockName = 'floorp.ubol.safari-dnr.v1';",
+                "export const safariDNRKeeperRuleCount = 2;",
+                "nativeDynamicAndSessionRuleLimit - safariDNRKeeperRuleCount",
+                "export const safariDNRPublicRuleLimit = isSafari",
+                "export const safariDNRPublicRuleLimitPerStore = isSafari",
+                "Math.floor(nativeDynamicAndSessionRuleLimit / 2) - 1",
+                "export const safariDNRKeeperRuleId = 7000000;",
+                "urlFilter: '|https://floorp.invalid/.well-known/ubol-dnr-keeper|'",
+                "const lockManager = self.navigator?.locks;",
+                "return lockManager.request(",
+                "function updateNativeDynamicRules(options)",
+                "return nativeDNR.updateDynamicRules(options);",
+                "function updateNativeSessionRules(options)",
+                "return nativeDNR.updateSessionRules(options);",
+                "function updateNativeEnabledRulesets(...args)",
+                "return nativeDNR.updateEnabledRulesets(...args);",
+                "async function ensureSafariDNRKeeper(storageType)",
+                "if ( isSafariDNRKeeperCapacityBlocked(storageType, stores) )",
+                "await updateRules({ addRules: [ structuredClone(safariDNRKeeperRule) ] });",
+                "stores = await readNativeDNRStores();\n"
+                "        rules = rulesForSafariDNRStorage(stores, storageType);",
+                "async function ensureSafariDNRKeeperWithCapacityDeferral(storageType)",
+                "isConfirmedSafariDNRCapacityBlock(reason, storageType, stores)",
+                "async function ensureSafariDNRKeepers({ allowCapacityDeferral = false } = {})",
+                "function assertNoSafariDNRKeeperCollision(options)",
+                "Safari DNR keeper rule cannot be removed",
+                "Safari DNR keeper rule ID is reserved",
+                "await ensureSafariDNRKeepers({ allowCapacityDeferral: true });",
+                "(options.addRules?.length || 0) === 0",
+                "(options.removeRuleIds?.length || 0) === 0",
+                "await ensureSafariDNRKeeperWithCapacityDeferral('dynamic');",
+                "await ensureSafariDNRKeeperWithCapacityDeferral('session');",
+                "function projectSafariDNRUpdate(rules, options)",
+                "Safari DNR capacity reserves ${safariDNRKeeperRuleCount} hidden",
+                "projectedTargetPublicRuleCount + visibleOtherRules.length",
+                "projectedTargetPublicRuleCount > safariDNRPublicRuleLimitPerStore",
+                "if ( isPureReduction === false || hasDeletionAnchor === false )",
+                "projection.retainedRules.length === 0",
+                "const optionsWithKeeper = targetKeeper === undefined",
+                "await ensureSafariDNRKeepers({ allowCapacityDeferral: true });",
+                "rule => rule.id !== safariDNRKeeperRuleId",
+                "const result = await runSafariDNROperation(( ) =>",
+                "rulesMatchedInfo: result.rulesMatchedInfo.filter(info =>",
+                "info?.rule?.ruleId !== safariDNRKeeperRuleId",
+                "? safariDNRPublicRuleLimitPerStore",
+                "await updateNativeEnabledRulesets",
                 "export function readNativeEnabledRulesets(",
                 "Invalid enabled static DNR readback",
                 "Realm static DNR refresh readback mismatch",
                 "Static ruleset update readback mismatch",
+                "return getNativeDynamicRules(...args);",
+                "return getNativeSessionRules(...args);",
+                "return getNativeEnabledRulesets(...args);",
+                "return updateNativeDynamicRules(optionsBefore);",
+                "return updateNativeSessionRules(optionsBefore);",
+                "return updateNativeEnabledRulesets(...args);",
                 "async function resolveRealm(windowId)",
                 "windows.getAll({ windowTypes: [ 'normal' ] })",
                 "currentRealm => ({ succeeded: true, currentRealm })",
@@ -539,10 +660,11 @@ EXPECTED = (
                 "realmRulesetStartupError ??= reason;",
                 "isRealmRulesetStartupPending = false;",
                 "const prepareUpdateRules = optionsBefore => {",
+                "assertNoSafariDNRKeeperCollision(optionsBefore);",
                 "? normalizeSafariDNRRules(addRules)",
                 "if ( addRulesAfter?.length ) { optionsAfter.addRules = addRulesAfter; }",
-                "return nativeDNR.updateDynamicRules(optionsAfter);",
-                "return nativeDNR.updateSessionRules(optionsAfter);",
+                "return updateSafariDNRRules('dynamic', optionsAfter);",
+                "return updateSafariDNRRules('session', optionsAfter);",
                 "rule0.condition.initiatorDomains = allowed;",
                 "rule0.condition.excludedInitiatorDomains = notAllowed;",
             ),
@@ -673,6 +795,16 @@ EXPECTED = (
             ),
         },
         "archive_text_order_requirement_groups": {
+            "js/popup.js": (
+                (
+                    "await settlePopupRoutes();",
+                    "if ( popupMutationRevision === 0 )",
+                ),
+                (
+                    "await trackPopupRoute((async ( ) => {",
+                    "self.close();",
+                ),
+            ),
             "js/backup-restore.js": (
                 (
                     "what: 'validateSettingsRestore'",
@@ -779,6 +911,8 @@ EXPECTED = (
         "review_required_values": {
             "Floorp-derived",
             "declarativeNetRequestFeedback",
+            "floorp.invalid",
+            "hidden DNR keeper",
             "incognito",
             "deterministic startup",
             "uBOLite-floorp-ios-2026.825.1619.patch",
@@ -818,6 +952,303 @@ def verify_support_files(entry: dict[str, object], repository_root: Path) -> Non
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if digest != expected_digest:
             fail(f"unexpected SHA-256 for support file {relative_path}: {digest}")
+
+
+def javascript_without_comments(source: str) -> str:
+    """Remove JS comments while preserving strings and source whitespace."""
+    output: list[str] = []
+    quote: str | None = None
+    escaped = False
+    in_block_comment = False
+    index = 0
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if in_block_comment:
+            if character == "*" and following == "/":
+                output.extend("  ")
+                index += 2
+                in_block_comment = False
+                continue
+            output.append("\n" if character == "\n" else " ")
+            index += 1
+            continue
+        if quote is not None:
+            output.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in ("'", '"', "`"):
+            quote = character
+            output.append(character)
+            index += 1
+            continue
+        if character == "/" and following == "/":
+            while index < len(source) and source[index] != "\n":
+                output.append(" ")
+                index += 1
+            continue
+        if character == "/" and following == "*":
+            output.extend("  ")
+            index += 2
+            in_block_comment = True
+            continue
+        output.append(character)
+        index += 1
+    return "".join(output)
+
+
+def verify_ubol_safari_dnr_keeper(
+    package: zipfile.ZipFile,
+    names: list[str],
+    archive_name: str,
+) -> None:
+    source = package.read("js/ext-compat.js").decode("utf-8")
+    raw_root_tokens: list[tuple[str, int]] = []
+    computed_raw_roots: list[tuple[str, int]] = []
+    uncommented_javascript: dict[str, str] = {}
+    raw_root_token_pattern = re.compile(r"\bdeclarativeNetRequest\b")
+    computed_raw_root_pattern = re.compile(
+        r"\[\s*(['\"])declarative\1\s*\+\s*"
+        r"(['\"])NetRequest\2\s*\]"
+    )
+    for member in names:
+        if not member.startswith("js/") or not member.endswith((".js", ".mjs")):
+            continue
+        member_source = package.read(member).decode("utf-8")
+        uncommented_source = javascript_without_comments(member_source)
+        uncommented_javascript[member] = uncommented_source
+        raw_root_tokens.extend(
+            (member, uncommented_source.count("\n", 0, match.start()) + 1)
+            for match in raw_root_token_pattern.finditer(uncommented_source)
+        )
+        computed_raw_roots.extend(
+            (member, uncommented_source.count("\n", 0, match.start()) + 1)
+            for match in computed_raw_root_pattern.finditer(uncommented_source)
+        )
+    canonical_raw_root_pattern = re.compile(
+        r"\bconst\s+nativeDNR\s*=\s*webext\s*\.\s*"
+        r"declarativeNetRequest\s*;"
+    )
+    if (
+        len(raw_root_tokens) != 1 or
+        raw_root_tokens[0][0] != "js/ext-compat.js" or
+        computed_raw_roots
+    ):
+        fail(
+            f"{archive_name} bypasses the Safari DNR facade: acquire the raw "
+            "DNR root only through the single reviewed ext-compat alias"
+        )
+    if len(canonical_raw_root_pattern.findall(javascript_without_comments(source))) != 1:
+        fail(f"{archive_name} must define exactly one reviewed raw DNR root")
+
+    direct_updates = (
+        "updateDynamicRules",
+        "updateSessionRules",
+        "updateEnabledRulesets",
+    )
+    for method in direct_updates:
+        member_access_pattern = re.compile(
+            rf"\bnativeDNR\s*(?:\?\.|\.)\s*{method}\b"
+        )
+        direct_call_pattern = re.compile(
+            rf"\bnativeDNR\s*(?:\?\.|\.)\s*{method}\s*\("
+        )
+        member_accesses: list[tuple[str, int]] = []
+        direct_calls: list[tuple[str, int]] = []
+        for member, uncommented_source in uncommented_javascript.items():
+            member_accesses.extend(
+                (member, uncommented_source.count("\n", 0, match.start()) + 1)
+                for match in member_access_pattern.finditer(uncommented_source)
+            )
+            direct_calls.extend(
+                (member, uncommented_source.count("\n", 0, match.start()) + 1)
+                for match in direct_call_pattern.finditer(uncommented_source)
+            )
+        if (
+            len(member_accesses) != 1 or
+            member_accesses[0][0] != "js/ext-compat.js" or
+            len(direct_calls) != 1 or
+            direct_calls[0][0] != "js/ext-compat.js"
+        ):
+            fail(
+                f"{archive_name} must route every native {method} call through "
+                "its single Safari DNR gate helper"
+            )
+    if any(
+        re.search(r"\bnativeDNR\s*(?:\?\.\s*)?\[", member_source)
+        for member_source in uncommented_javascript.values()
+    ):
+        fail(f"{archive_name} bypasses the Safari DNR gate through bracket access")
+
+    update_names = "|".join(direct_updates)
+    native_update_extractions = (
+        re.compile(
+            rf"\b(?:const|let|var)\s+\w+\s*=\s*nativeDNR\b"
+            rf"(?!\s*[.\[])"
+        ),
+        re.compile(
+            rf"\b(?:const|let|var)\s*\{{[^;{{}}]*"
+            rf"\b(?:{update_names})\b[^;{{}}]*\}}\s*=\s*nativeDNR\b",
+            re.DOTALL,
+        ),
+        re.compile(
+            rf"\bReflect\s*\.\s*get\s*\(\s*nativeDNR\s*,\s*"
+            rf"(['\"])(?:{update_names})\1"
+        ),
+    )
+    if any(
+        pattern.search(member_source)
+        for member_source in uncommented_javascript.values()
+        for pattern in native_update_extractions
+    ):
+        fail(f"{archive_name} extracts a raw native DNR update method")
+    native_dnr_alias_pattern = re.compile(
+        r"\b([A-Za-z_$][\w$]*)\s*=\s*nativeDNR\b"
+        r"(?!\s*(?:\?\.|\.|\[))"
+    )
+    native_dnr_aliases = [
+        (member, match.group(1))
+        for member, member_source in uncommented_javascript.items()
+        for match in native_dnr_alias_pattern.finditer(member_source)
+    ]
+    if native_dnr_aliases != [
+        ("js/ext-compat.js", "api"),
+        ("js/ext-compat.js", "api"),
+    ]:
+        fail(f"{archive_name} extracts or aliases the raw native DNR object")
+
+    for member in names:
+        if not member.startswith("js/") or not member.endswith((".js", ".mjs")):
+            continue
+        member_source = package.read(member).decode("utf-8")
+        for method in direct_updates:
+            if f"declarativeNetRequest.{method}(" in member_source:
+                fail(
+                    f"{archive_name} bypasses the Safari DNR facade in {member}: "
+                    f"{method}"
+                )
+
+    def section(start: str, end: str) -> str:
+        start_index = source.find(start)
+        end_index = source.find(end, start_index + len(start))
+        if start_index == -1 or end_index == -1:
+            fail(f"{archive_name} omits the Safari DNR keeper section: {start}")
+        return source[start_index:end_index]
+
+    def require_ordered(label: str, body: str, values: tuple[str, ...]) -> None:
+        cursor = 0
+        for value in values:
+            position = body.find(value, cursor)
+            if position == -1:
+                fail(
+                    f"{archive_name} orders the Safari DNR keeper incorrectly in "
+                    f"{label}: {values}"
+                )
+            cursor = position + len(value)
+
+    ensure_body = section(
+        "async function ensureSafariDNRKeeper(storageType)",
+        "async function ensureSafariDNRKeeperWithCapacityDeferral(storageType)",
+    )
+    require_ordered(
+        "concurrent first-use recovery",
+        ensure_body,
+        (
+            "await updateRules({ addRules:",
+            "} catch(reason) {",
+            "stores = await readNativeDNRStores();",
+            "keeper = findSafariDNRKeeper(rules, storageType);",
+        ),
+    )
+    require_ordered(
+        "capacity-preserving update",
+        section(
+            "async function updateSafariDNRRules(storageType, options)",
+            "// Workaround for:",
+        ),
+        (
+            "await ensureSafariDNRKeepers({ allowCapacityDeferral: true });",
+            "(options.addRules?.length || 0) === 0",
+            "(options.removeRuleIds?.length || 0) === 0",
+            "const projection = projectSafariDNRUpdate",
+            "projectedTargetPublicRuleCount > safariDNRPublicRuleLimitPerStore",
+            "projectedPublicRuleCount > safariDNRPublicRuleLimit",
+            "if ( isPureReduction === false || hasDeletionAnchor === false )",
+            "projection.retainedRules.length === 0",
+            "const optionsWithKeeper = targetKeeper === undefined",
+            "await updateNative",
+            "confirmedKeeper === undefined",
+            "await ensureSafariDNRKeepers({ allowCapacityDeferral: true });",
+        ),
+    )
+    for function_name, end_marker in (
+        ("async function forceEnableRulesets(currentRealm)", "let realmRulesetUpdates"),
+        (
+            "async function updateEnabledRulesetsAndResetRealms(options)",
+            "const prepareUpdateRules",
+        ),
+    ):
+        require_ordered(
+            function_name,
+            section(function_name, end_marker),
+            (
+                "await ensureSafariDNRKeepers({ allowCapacityDeferral: true });",
+                "await updateNativeEnabledRulesets",
+            ),
+        )
+
+    dynamic_facade = section(
+        "    getDynamicRules(...args) {",
+        "    getEnabledRulesets(...args) {",
+    )
+    session_facade = section(
+        "    getSessionRules(...args) {",
+        "    isRegexSupported",
+    )
+    keeper_filter_pattern = re.compile(
+        r"rules\s*\.\s*filter\s*\(\s*rule\s*=>\s*"
+        r"rule\s*\.\s*id\s*!==\s*safariDNRKeeperRuleId\s*\)",
+        re.DOTALL,
+    )
+    if any(
+        len(keeper_filter_pattern.findall(body)) != 1
+        for body in (dynamic_facade, session_facade)
+    ):
+        fail(f"{archive_name} does not hide both Safari DNR keeper rules")
+    require_ordered(
+        "dynamic-rule facade",
+        dynamic_facade,
+        (
+            "return getNativeDynamicRules(...args);",
+            "await ensureSafariDNRKeeperWithCapacityDeferral('dynamic');",
+            "rule => rule.id !== safariDNRKeeperRuleId",
+        ),
+    )
+    require_ordered(
+        "session-rule facade",
+        session_facade,
+        (
+            "return getNativeSessionRules(...args);",
+            "await ensureSafariDNRKeeperWithCapacityDeferral('session');",
+            "rule => rule.id !== safariDNRKeeperRuleId",
+        ),
+    )
+    require_ordered(
+        "matched-rule facade",
+        section("    getMatchedRules(...args) {", "    getSessionRules(...args) {"),
+        (
+            "return nativeDNR.getMatchedRules(...args);",
+            "const result = await runSafariDNROperation(( ) =>",
+            "rulesMatchedInfo: result.rulesMatchedInfo.filter(info =>",
+            "info?.rule?.ruleId !== safariDNRKeeperRuleId",
+        ),
+    )
 
 
 def verify_archive(
@@ -950,6 +1381,8 @@ def verify_archive(
                             f"{archive.name} orders compatibility code incorrectly in "
                             f"{member}: {ordered_values}"
                         )
+            if entry["display_name"] == "uBlock Origin Lite":
+                verify_ubol_safari_dnr_keeper(package, names, archive.name)
             bad_member = package.testzip()
             if bad_member is not None:
                 fail(f"CRC failure in {archive.name}: {bad_member}")
@@ -1025,7 +1458,13 @@ def verify_testflight_metadata(repository_root: Path) -> None:
         "en-US": repository_root / "firefox-ios/TestFlight/WhatToTest.en-US.txt",
         "ja-JP": repository_root / "firefox-ios/TestFlight/WhatToTest.ja-JP.txt",
     }
-    required_values = {"Dark Reader", "uBlock Origin Lite", "WKWebExtension"}
+    required_values = {
+        "7,000,000",
+        "Dark Reader",
+        "uBlock Origin Lite",
+        "WKWebExtension",
+        "user DNR",
+    }
     for entry in EXPECTED:
         manifest = entry["manifest"]
         assert isinstance(manifest, dict)
@@ -1070,6 +1509,35 @@ def verify_testflight_metadata(repository_root: Path) -> None:
         fail("English TestFlight metadata differs from the reviewed What to Test template")
 
 
+def verify_catalog_hashes(repository_root: Path) -> None:
+    catalog_path = (
+        repository_root /
+        "firefox-ios/Floorp/NativeWebExtensions/FloorpNativeWebExtensionModels.swift"
+    )
+    try:
+        catalog = catalog_path.read_text(encoding="utf-8")
+    except OSError as error:
+        fail(f"cannot read the native WebExtension catalog: {error}")
+    for entry in EXPECTED:
+        resource_name = Path(str(entry["archive"])).stem
+        provenance = entry["provenance"]
+        assert isinstance(provenance, dict)
+        expected_hash = str(provenance["sha256"])
+        catalog_item_pattern = re.compile(
+            rf'resourceName:\s*"{re.escape(resource_name)}"\s*,\s*'
+            rf'resourceExtension:\s*"zip"\s*,\s*'
+            rf'expectedSHA256:\s*"([0-9a-f]{{64}})"'
+        )
+        match = catalog_item_pattern.search(catalog)
+        if match is None:
+            fail(f"native WebExtension catalog omits {resource_name}.zip")
+        if match.group(1) != expected_hash:
+            fail(
+                f"native WebExtension catalog hash mismatch for {resource_name}.zip: "
+                f"expected {expected_hash}, found {match.group(1)}"
+            )
+
+
 def verify_repository(repository_root: Path) -> None:
     repository_root = repository_root.resolve()
     bundle_root = repository_root / "firefox-ios/Floorp/NativeWebExtensions/Bundled"
@@ -1107,6 +1575,7 @@ def verify_repository(repository_root: Path) -> None:
 
     for entry in EXPECTED:
         verify_archive(entry, bundle_root, repository_root)
+    verify_catalog_hashes(repository_root)
     verify_review_notes(repository_root)
     verify_testflight_metadata(repository_root)
 

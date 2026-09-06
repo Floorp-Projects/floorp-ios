@@ -2048,10 +2048,28 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
                                                                WKNavigationDelegate,
                                                                WKUIDelegate,
                                                                UIAdaptivePresentationControllerDelegate {
-    private struct CloseRequest {
+    enum CloseDisposition {
+        case commitPendingTransition
+        case cancelPendingTransition
+    }
+
+    private final class CloseRequest {
         let animated: Bool
         let completion: (() -> Void)?
         let outcomeCompletion: ((Bool) -> Void)?
+        var disposition: CloseDisposition
+
+        init(
+            animated: Bool,
+            completion: (() -> Void)?,
+            outcomeCompletion: ((Bool) -> Void)?,
+            disposition: CloseDisposition
+        ) {
+            self.animated = animated
+            self.completion = completion
+            self.outcomeCompletion = outcomeCompletion
+            self.disposition = disposition
+        }
     }
 
     @MainActor
@@ -2120,6 +2138,8 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     private let openURLInBrowser: (URL) -> Void
     private let prepareToClose: (@MainActor (WKWebView) async -> Bool)?
     private let onClose: () -> Void
+    private let onCloseDisposition: ((CloseDisposition) -> Void)?
+    private let onPendingTransitionCancellation: (() -> Void)?
     private let closeBridge: FloorpNativeWebExtensionCloseBridge
     private var didClose = false
     private var lastRoutedNewWindowRequest: URLRequest?
@@ -2136,7 +2156,9 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         configuration: WKWebViewConfiguration,
         openURLInBrowser: @escaping (URL) -> Void,
         prepareToClose: (@MainActor (WKWebView) async -> Bool)? = nil,
-        onClose: @escaping () -> Void
+        onClose: @escaping () -> Void,
+        onCloseDisposition: ((CloseDisposition) -> Void)? = nil,
+        onPendingTransitionCancellation: (() -> Void)? = nil
     ) {
         self.popupURL = url
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -2145,10 +2167,12 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         self.openURLInBrowser = openURLInBrowser
         self.prepareToClose = prepareToClose
         self.onClose = onClose
+        self.onCloseDisposition = onCloseDisposition
+        self.onPendingTransitionCancellation = onPendingTransitionCancellation
         self.closeBridge = FloorpNativeWebExtensionCloseBridge(expectedURL: url)
         super.init(nibName: nil, bundle: nil)
         closeBridge.onClose = { [weak self] in
-            self?.closePopup(animated: true)
+            self?.closePopupAfterScriptAcknowledgement(animated: true)
         }
         modalPresentationStyle = .popover
         isModalInPresentation = prepareToClose != nil
@@ -2196,7 +2220,20 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         requestClose(
             animated: animated,
             completion: completion,
-            outcomeCompletion: nil
+            outcomeCompletion: nil,
+            disposition: .cancelPendingTransition
+        )
+    }
+
+    private func closePopupAfterScriptAcknowledgement(
+        animated: Bool,
+        completion: (() -> Void)? = nil
+    ) {
+        requestClose(
+            animated: animated,
+            completion: completion,
+            outcomeCompletion: nil,
+            disposition: .commitPendingTransition
         )
     }
 
@@ -2213,7 +2250,8 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
             requestClose(
                 animated: animated,
                 completion: nil,
-                outcomeCompletion: nil
+                outcomeCompletion: nil,
+                disposition: .cancelPendingTransition
             )
         }
         let outcome = await waiter.wait()
@@ -2225,6 +2263,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         animated: Bool,
         completion: (() -> Void)?,
         outcomeCompletion: ((Bool) -> Void)?,
+        disposition: CloseDisposition,
         preparationAlreadyCompleted: Bool = false
     ) {
         guard !didClose else {
@@ -2232,7 +2271,17 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
             outcomeCompletion?(true)
             return
         }
+        if let failedCloseRequest {
+            if disposition == .commitPendingTransition {
+                failedCloseRequest.disposition = .commitPendingTransition
+            }
+            outcomeCompletion?(false)
+            return
+        }
         guard closePreparationTask == nil else {
+            if disposition == .commitPendingTransition {
+                activeCloseRequest?.disposition = .commitPendingTransition
+            }
             outcomeCompletion?(false)
             return
         }
@@ -2240,8 +2289,12 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         let request = failedCloseRequest ?? CloseRequest(
             animated: animated,
             completion: completion,
-            outcomeCompletion: outcomeCompletion
+            outcomeCompletion: outcomeCompletion,
+            disposition: disposition
         )
+        if disposition == .commitPendingTransition {
+            request.disposition = .commitPendingTransition
+        }
         failedCloseRequest = nil
         guard !preparationAlreadyCompleted,
               hasCommittedDocument,
@@ -2280,7 +2333,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     private func finishClosing(_ request: CloseRequest) {
         activeCloseRequest = nil
         failedCloseRequest = nil
-        invalidatePopup(closeOutcome: true)
+        invalidatePopup(closeOutcome: true, disposition: request.disposition)
         guard presentingViewController != nil else {
             request.completion?()
             request.outcomeCompletion?(true)
@@ -2292,8 +2345,16 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         }
     }
 
-    func closePopupImmediately(animated: Bool, completion: (() -> Void)? = nil) {
-        invalidatePopup(closeOutcome: false)
+    func closePopupImmediately(
+        animated: Bool,
+        preservingPendingCallbacks: Bool = false,
+        completion: (() -> Void)? = nil
+    ) {
+        invalidatePopup(
+            closeOutcome: false,
+            disposition: .cancelPendingTransition,
+            preservingPendingCallbacks: preservingPendingCallbacks
+        )
         guard presentingViewController != nil else {
             completion?()
             return
@@ -2303,11 +2364,15 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
 
 #if DEBUG || TESTING
     func requestCloseForTesting(completion: (() -> Void)? = nil) {
-        closePopup(animated: false, completion: completion)
+        closePopupAfterScriptAcknowledgement(animated: false, completion: completion)
     }
 
     func retryCloseAfterPreparationFailureForTesting() {
         resolveClosePreparationFailure(.retry)
+    }
+
+    func keepOpenAfterPreparationFailureForTesting() {
+        resolveClosePreparationFailure(.keepOpen)
     }
 
     func closeAfterPreparationFailureForTesting() {
@@ -2326,7 +2391,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
 #endif
 
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-        invalidatePopup()
+        invalidatePopup(disposition: .cancelPendingTransition)
     }
 
     func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
@@ -2338,7 +2403,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     }
 
     func webViewDidClose(_ webView: WKWebView) {
-        closePopup(animated: true)
+        closePopupAfterScriptAcknowledgement(animated: true)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
@@ -2436,6 +2501,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
                     openURLInBrowser(destination)
                 },
                 outcomeCompletion: nil,
+                disposition: .cancelPendingTransition,
                 preparationAlreadyCompleted: preparationAlreadyCompleted
             )
         }
@@ -2547,6 +2613,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
                 animated: true,
                 completion: completion,
                 outcomeCompletion: nil,
+                disposition: .cancelPendingTransition,
                 preparationAlreadyCompleted: true
             )
         }
@@ -2660,7 +2727,11 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         request.resolve(.cancel)
     }
 
-    private func invalidatePopup(closeOutcome: Bool = false) {
+    private func invalidatePopup(
+        closeOutcome: Bool = false,
+        disposition: CloseDisposition = .cancelPendingTransition,
+        preservingPendingCallbacks: Bool = false
+    ) {
         guard !didClose else { return }
         let mustPreserve = FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
         cancelNavigationPreparation(dismissAlert: true)
@@ -2674,12 +2745,15 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         closeBridge.invalidate(in: configuration)
         hasCommittedDocument = false
         if !mustPreserve {
-            webView.stopLoading()
+            if !preservingPendingCallbacks {
+                webView.stopLoading()
+            }
             webView.navigationDelegate = nil
             webView.uiDelegate = nil
         }
         FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
         onClose()
+        onCloseDisposition?(disposition)
         abandonedRequest?.outcomeCompletion?(false)
         resolveCloseOutcomeObservers(closeOutcome)
     }
@@ -2689,6 +2763,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         guard presentedViewController == nil,
               viewIfLoaded?.window != nil else {
             failedCloseRequest = nil
+            onPendingTransitionCancellation?()
             request.outcomeCompletion?(false)
             resolveCloseOutcomeObservers(false)
             return
@@ -2739,14 +2814,15 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     ) {
         switch resolution {
         case .keepOpen:
+            onPendingTransitionCancellation?()
             request.outcomeCompletion?(false)
             resolveCloseOutcomeObservers(false)
         case .retry:
-            failedCloseRequest = request
             requestClose(
                 animated: request.animated,
                 completion: request.completion,
-                outcomeCompletion: request.outcomeCompletion
+                outcomeCompletion: request.outcomeCompletion,
+                disposition: request.disposition
             )
         case .closeAnyway:
             finishClosing(request)

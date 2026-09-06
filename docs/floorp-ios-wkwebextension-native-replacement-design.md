@@ -23,8 +23,9 @@ wake しない。content script の有限再送、long-lived `runtime.Port`、`p
 そこで Dark Reader は、background を
 `scripts: ["background/floorp-compat.js", "background/index.js"]`、`persistent: false` とし、
 Safari storage の sentinel、unknown-error 限定 retry、直列化、exact readback、UI mutation と
-close handshake を追加した Floorp 派生資産を同梱する。
-派生 SHA-256 は `ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761`、
+close handshake、popup route の追跡と API 応答待機、iOS で表現不能な shortcut 設定 UI の
+除去を追加した Floorp 派生資産を同梱する。
+派生 SHA-256 は `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6`、
 上流 ZIP の SHA-256 は `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
 である。patch、再現 build script、両 digest、上流 revision を provenance に固定し、
 App Review でも「無変更」とは表現しない。
@@ -41,14 +42,17 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d`、
+派生 SHA-256 は `cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
 rules 導線を有効にし、popup の active tab にある数値の `windowId` を matched-rules の
 `browser.tabs.create` へ伝えて、同じ通常／プライベート window に明示的に開く。さらに、
 Report 導線も source の window ID／incognito を渡し、同一 URL の検索・再利用・新規 tab を
-同じ window／realm に限定して、作成結果の privacy realm を検証する。
+同じ window／realm に限定して、作成結果の privacy realm を検証する。Matched rules、Report、
+Dashboard の各 route は close handshake の pending 集合へ登録して WebExtension API の成功応答を
+待ち、失敗なら popup 内にエラーを残す。
+host は popup が明示的に close されるまで選択・presentation を保留し、close 後に一度だけ確定する。
 Page Action の初期化では active tab の整数 ID／window ID と incognito、popup panel の boolean、
 disabled-features 配列、非負整数の custom-filter count、0〜3 の blocking level を検証する。初回 admin cache 未構築による
 `disabledFeatures` の未提供だけは空配列へ正規化し、null、非配列、非文字列要素を含む応答は
@@ -62,7 +66,40 @@ Safari realm 更新を完了後に直列化する。起動中の失敗は readin
 Safari の local/session storage を領域別に直列化し、WebKit の unknown error だけを有限 retry
 する。Safari local storage は最初の read より前に内部 sentinel を書いて DB を作成し、その行を
 保持する。sentinel は uBO のキー列挙から除外する。read failure は空データとして扱わず、最終失敗を
-readiness へ伝播する。content script
+readiness へ伝播する。
+
+Safari の dynamic/session DNR DB にも、実在しない `floorp.invalid` URL だけを対象とする inert な
+keeper rule を各1件保持する。予約 ID `7,000,000` は通常 rule（5M 未満）、trusted directive
+（8M 以降）、user rule（9M 以降）の未使用 gap に置く。WebKit の現行 `deleteRules()` は最終行削除時に
+DB の空判定と削除へ進む一方、SQLite statement の finalize は同じ queue へ遅延 dispatch されるため、
+close/unlink が未 finalize statement を追い越し得る。固定 delay ではその内部順序を保証できないため、
+Floorp は空 DB への遷移自体を避ける。keeper は public dynamic/session read と matched-rule feedback
+から除外し、予約 ID の add/remove または異なる rule との衝突は native mutation 前に拒否する。
+全 native DNR update は Safari 専用 gate を通し、Web Locks がある realm 間では排他、ない場合も
+同時初回 add の失敗後に exact readback して同一 keeper なら成功へ収束する。static ruleset update
+より前にも両 keeper を確認する。通常状態では WebKit の dynamic+session 合計上限から keeper 用2枠を
+明示予約し、拡張へ見せる合計上限を `native limit - 2`、各 store の上限を
+`floor(native limit / 2) - 1` とする。後者は Safari 26 の C++ 実装が other store ではなく target
+store の current+final を加算するために必要であり、通常の最大状態でも replacement／removal が native
+quota check を通る。更新後の可視 rule が両方の範囲なら、未設置の target keeper を caller の remove/add
+と同じ native update に含める。ただし WebKit は同じ update でも
+`deleteRules()` を `addRules()` より先に実行するため、既存 target rule を全削除して DB を一時的に空に
+する移行は拒否する。既存 rule が anchor として残る場合だけ更新し、保護 rule を容量確保のために暗黙削除
+しない。
+
+旧 TestFlight 版などで keeper 導入前から可視 rule が合計上限または各 store 上限を超える場合、keeper
+add の quota error を native dynamic/session の exact readback と両方の式で照合できた場合に限り設置を
+保留する。read は既存 rule をそのまま返す。更新は native mutation 前に current+final も preflight し、
+明示的な pure removal が十分大きく、target DB に既存 rule または keeper が残る場合だけ段階的な縮小を
+許す。空の add/remove は keeper 確認後に native mutation なしの no-op とする。合計2枠と各 store の
+current+final headroom ができた時点で keeper を定着させる。static ruleset update は
+`updateRulesByRemovingIDs()` を呼ばず、static enable state を変更して統合 ruleset を再 load するだけで
+dynamic/session SQLite の delete path に入らないため、容量理由で keeper が保留中でも継続する。これは
+missing store が空の fixture でも `deleteRules()`／空遷移がないことを固定 test する。quota 以外の error、
+不正 readback、ID collision は保留せず失敗させる。非 Safari は callback wrapper や Safari normalizer を
+通さず、3つの native read と update の Promise・引数を元のまま渡す。
+
+content script
 登録は既存内容を比較し、同一なら無操作、新規 ID は register、変更 ID は update、不要 ID は
 指定 remove とする。さらに Safari では inert な persistent sentinel を更新前に1件保持する。WebKit の
 update が対象行を delete してから add する際も DB が空にならず、使用中の
@@ -498,15 +535,19 @@ extension ID による JavaScript patch や runtime API 分岐も作らない。
 ### 8.4 Dark Reader の iOS compatibility package
 
 Dark Reader は runtime 分岐ではなく、review 済みの派生 ZIP として catalog に固定する。
-画像、CSS、locale は上流のまま、manifest の background 宣言を iOS 対応の
+画像と locale は上流のまま、manifest の background 宣言を iOS 対応の
 nonpersistent background page 形式へ置換する。さらに Floorp compatibility script が
 Safari storage の作成・直列化・unknown-error 限定 retry・exact readback を担当し、background
-と各 UI surface は mutation 完了と close readiness を明示応答する。
+と各 UI surface は mutation 完了と close readiness を明示応答する。popup から tab/window を
+開く route は close handshake の pending 集合へ登録し、API acknowledgement を await した後だけ
+明示 close する。手動 close と競合しても、host は route callback の完了まで WebView を保持する。
+popup/options の shortcut 設定 link は iOS に対応先がないため inert 化し、popup CSS は関連する
+wrapper と説明を隠し、options は空になる Hotkeys tab 自体を表示しない。
 
 - 上流: `darkreader-chrome-mv3.zip` v4.9.129、SHA-256
   `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
 - 派生: `darkreader-floorp-ios-mv3-4.9.129.zip`、SHA-256
-  `ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761`
+  `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6`
 - patch: `Bundled/darkreader-floorp-ios-mv3-4.9.129.patch`
 - build: `scripts/package-darkreader-ios.sh`
 - license: MIT、source revision `c2a707302a39b8047543712e9c582bac07835d34`
@@ -891,6 +932,18 @@ dynamic+session 合計30,000件である。さらに WebKit の content-extensio
 旧上限であり、現在の上限ではない。ただし150,000も public API の安定契約ではないため、
 Floorp に hardcode しない。
 
+keeper 2件を含む Safari 上の実効可視合計上限は29,998件、各 store の上限は14,999件とする。WebKit の旧 Cocoa 実装は
+`updatedDynamic + session`／`updatedSession + dynamic` で30,000件を判定する。一方、2025-09-16 の
+C++ SQLite store 移植後の WebKit source には、other store ではなく target store を再度加える
+`updatedDynamic + dynamic`／`updatedSession + session` が残る。この Safari 26 系実装では target の
+current+final が30,000件を超える更新が、合計に空きがあっても native quota error になり得る。Floorp は
+各 store を14,999件に制限して keeper を含む current+final を30,000件以内にし、通常上限での
+replacement／removal を保証する。legacy store の doomed update は native mutation 前に拒否し、
+dashboard／readiness／static ruleset を quarantine せず、更新で rule を部分削除しない。十分大きい明示 removal を WebKit が受理すれば回復できる
+が、受理可能な縮小を UI から作れない状態の解除は WebKit 修正版 OS への更新、または拡張の
+uninstall・Floorp 再起動・reinstall が必要である。この native 制約を protection rule の自動削除で
+回避しない。
+
 2026-09-02 時点の公式 uBOL Safari package は既定で `ublock-filters`、`easylist`、
 `easyprivacy` を有効にし、fixture 上の rule 数は合計 113,100 件である。iOS 26.5
 Simulator / WebKit 8624.2.5.10.4 で次を確認した。
@@ -908,6 +961,13 @@ Simulator / WebKit 8624.2.5.10.4 で次を確認した。
   プライベート両方で非表示にできた
 - custom CSS、procedural filter、stock scriptlet を通常・プライベート両方で確認
 - dynamic rule と session rule を追加し、通常・プライベート両方の通信を遮断できた
+- dynamic/session の全可視 rule を削除しても hidden keeper が各1件残り、再読込、static list
+  切替、別 realm の同時初回 ensure 後も public readback と Matched rules には現れない
+- keeper 導入前の legacy store が30,000件に達していても read/static は継続し、公開上限29,998件合計／
+  各14,999件へ明示的かつ十分大きく縮小できる場合だけ、既存 nonempty rule を anchor に target keeper を
+  同じ update へ含める。Safari 26 の target-store 二重加算で失敗する update は native mutation 前に
+  rule を変更せず拒否し、missing session store が空でも
+  static update は dynamic/session delete path へ入らない
 - 日本語 ruleset 追加時に uBOL 自身が regex 上限保護のため session rules をいったん
   clear する公式挙動を確認。その後 session rule を再追加し、再び遮断できることを確認
 - filtering level 3、日本語 ruleset、custom filters、private access、登録 content scripts が
@@ -1044,6 +1104,9 @@ app bundle resource として同梱する。
 - [WebKit WebExtension limits](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Shared/Extensions/WebExtensionConstants.h)
 - [WebKit content rule parser の現行150,000件上限](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/contentextensions/ContentExtensionParser.cpp)
 - [WebKit の50,000件から150,000件への変更](https://github.com/WebKit/WebKit/commit/d069434deaa0)
+- [WebKit DNR SQLite store の空 DB 削除経路](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/Extensions/WebExtensionDeclarativeNetRequestSQLiteStore.cpp)
+- [WebKit SQLite statement の遅延 finalize](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Shared/Extensions/WebExtensionSQLiteStatement.cpp)
+- [WebKit SQLite store の close/unlink](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Shared/Extensions/WebExtensionSQLiteStore.cpp)
 - [uBOL Safari manifest](https://github.com/gorhill/uBlock/blob/master/platform/mv3/safari/manifest.json)
 - [uBOL Safari compatibility layer](https://github.com/gorhill/uBlock/blob/master/platform/mv3/safari/ext-compat.js)
 - [uBOL Lite 2026.825.1619 release](https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.825.1619)

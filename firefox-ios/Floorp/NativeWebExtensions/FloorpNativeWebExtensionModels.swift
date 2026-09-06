@@ -98,12 +98,16 @@ enum FloorpNativeWebExtensionCatalog {
         "402934f1f49d0c83d3eec7fb1c4f421897cced7f0fe78e9745551f8ebb80a9a2"
     static let preUserDNRFailClosedUBlockOriginLiteSHA256 =
         "f820df6b21d6a32ff002cd8d25d44063183ab0768c9386a010c2561e8c8ae7ee"
+    static let preSafariDNRKeeperUBlockOriginLiteSHA256 =
+        "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d"
+    static let preSafariDNRPerStoreCapacityGuardUBlockOriginLiteSHA256 =
+        "8f7a43ac13ad09531af2e20023fddcd5354fd737ac6839b85d48f9d041ab429f"
 
     static let darkReader = FloorpNativeWebExtensionCatalogItem(
         identifier: "floorp.bundled.darkreader",
         resourceName: "darkreader-floorp-ios-mv3-4.9.129",
         resourceExtension: "zip",
-        expectedSHA256: "ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761",
+        expectedSHA256: "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6",
         expectedVersion: "4.9.129",
         contextIdentifier: "org.darkreader.floorp-ios",
         baseURLScheme: "webkit-extension",
@@ -134,7 +138,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.ublock-origin-lite",
         resourceName: "uBOLite-floorp-ios-2026.825.1619",
         resourceExtension: "zip",
-        expectedSHA256: "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d",
+        expectedSHA256: "cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057",
         expectedVersion: "2026.825.1619",
         contextIdentifier: "org.ublockorigin.lite.floorp-ios",
         baseURLScheme: "safari-web-extension",
@@ -205,7 +209,9 @@ enum FloorpNativeWebExtensionCatalog {
                     preDurableProtectionReconciliationUBlockOriginLiteSHA256,
                     prePopupInitializationRetryUBlockOriginLiteSHA256,
                     preSafariDNRNormalizationUBlockOriginLiteSHA256,
-                    preUserDNRFailClosedUBlockOriginLiteSHA256
+                    preUserDNRFailClosedUBlockOriginLiteSHA256,
+                    preSafariDNRKeeperUBlockOriginLiteSHA256,
+                    preSafariDNRPerStoreCapacityGuardUBlockOriginLiteSHA256
                 ].contains(record.sha256)
             return isOfficialPackage || isPreviousFloorpPackage ? uBlockOriginLite : nil
         }

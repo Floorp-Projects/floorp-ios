@@ -29,6 +29,12 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         destination.parent.mkdir(parents=True)
         shutil.copytree(source, destination)
         self.bundle_root = destination
+        models_source = (
+            REPOSITORY_ROOT /
+            "firefox-ios/Floorp/NativeWebExtensions/FloorpNativeWebExtensionModels.swift"
+        )
+        self.models = destination.parent / "FloorpNativeWebExtensionModels.swift"
+        shutil.copy2(models_source, self.models)
         review_notes_source = REPOSITORY_ROOT / "docs/app-review-notes-native-webextensions.md"
         review_notes_destination = self.root / "docs/app-review-notes-native-webextensions.md"
         review_notes_destination.parent.mkdir(parents=True)
@@ -63,6 +69,21 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         archive.write_bytes(archive.read_bytes() + b"drift")
 
         with self.assertRaisesRegex(RuntimeError, "unexpected SHA-256"):
+            VERIFIER.verify_repository(self.root)
+
+    def test_rejects_catalog_hash_drift(self) -> None:
+        source = self.models.read_text(encoding="utf-8")
+        expected = next(
+            entry["provenance"]["sha256"]
+            for entry in VERIFIER.EXPECTED
+            if entry["display_name"] == "uBlock Origin Lite"
+        )
+        self.models.write_text(
+            source.replace(str(expected), "0" * 64, 1),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "catalog hash mismatch"):
             VERIFIER.verify_repository(self.root)
 
     def test_rejects_derived_patch_drift(self) -> None:
@@ -143,6 +164,42 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "unsupported dynamic popup API"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_dark_reader_shortcut_configuration_route(self) -> None:
+        entry = self.rewrite_archive(
+            "Dark Reader",
+            lambda files: self.replace_archive_text(
+                files,
+                "ui/popup/index.js",
+                "function ShortcutLink() {\n        return null;\n    }",
+                "function ShortcutLink() {\n        return null;\n    }\n"
+                "    void 'chrome://extensions/configureCommands';",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "includes forbidden compatibility code",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_dark_reader_empty_hotkeys_tab(self) -> None:
+        entry = self.rewrite_archive(
+            "Dark Reader",
+            lambda files: self.replace_archive_text(
+                files,
+                "ui/options/index.js",
+                "function ShortcutLink() {\n        return null;\n    }",
+                "function ShortcutLink() {\n        return null;\n    }\n"
+                "    void {id: \"hotkeys\"};",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "includes forbidden compatibility code",
+        ):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_readiness_origin_guard_drift(self) -> None:
@@ -357,6 +414,191 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_static_update_before_dnr_keepers(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "return runSafariDNROperation(async ( ) => {\n"
+                "        // Static ruleset changes do not delete dynamic/session SQLite rows.\n"
+                "        // A legacy store at capacity may therefore defer its missing keepers\n"
+                "        // while still allowing the independent static update to complete.\n"
+                "        await ensureSafariDNRKeepers({ allowCapacityDeferral: true });\n"
+                "        const rulesetSnapshot",
+                "return runSafariDNROperation(async ( ) => {\n"
+                "        const rulesetSnapshot",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "orders the Safari DNR keeper"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_publicly_visible_dnr_keeper(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "rule => rule.id !== safariDNRKeeperRuleId",
+                "rule => false",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_matched_rule_keeper_exposure(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "info?.rule?.ruleId !== safariDNRKeeperRuleId",
+                "true",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_unprotected_dnr_keeper_id(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "assertNoSafariDNRKeeperCollision(optionsBefore);",
+                "void optionsBefore;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_extra_direct_native_dnr_update(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "return nativeDNR.updateDynamicRules(options);",
+                "return nativeDNR.updateDynamicRules(options);\n"
+                "    void (() => nativeDNR.updateDynamicRules(options));",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "single Safari DNR gate helper"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_native_dnr_update_extractions(self) -> None:
+        bypasses = (
+            "void nativeDNR . updateDynamicRules(options);",
+            "void nativeDNR?.updateDynamicRules(options);",
+            "void nativeDNR['updateDynamicRules'](options);",
+            "void nativeDNR?.['updateDynamicRules'](options);",
+            "const rawDNR = nativeDNR; rawDNR.updateDynamicRules(options);",
+            "let rawDNR; rawDNR = nativeDNR; "
+            "rawDNR.updateDynamicRules(options);",
+            "const { updateDynamicRules: rawUpdate } = nativeDNR; "
+            "rawUpdate(options);",
+            "const rawUpdate = nativeDNR.updateDynamicRules.bind(nativeDNR); "
+            "rawUpdate(options);",
+            "const rawUpdate = Reflect.get(nativeDNR, 'updateDynamicRules'); "
+            "rawUpdate(options);",
+        )
+        for index, bypass in enumerate(bypasses):
+            with self.subTest(index=index, bypass=bypass):
+                entry = self.rewrite_archive(
+                    "uBlock Origin Lite",
+                    lambda files, bypass=bypass: self.replace_archive_text(
+                        files,
+                        "js/ext-compat.js",
+                        "return nativeDNR.updateDynamicRules(options);",
+                        "return nativeDNR.updateDynamicRules(options);\n    " + bypass,
+                    ),
+                )
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Safari DNR gate|raw native DNR",
+                ):
+                    VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_raw_dnr_root_aliases(self) -> None:
+        aliases = (
+            "const rawDNR = browser.declarativeNetRequest;",
+            "const rawDNR = browser['declarativeNetRequest'];",
+            "const { declarativeNetRequest: rawDNR } = browser;",
+            "const {\n    declarativeNetRequest: rawDNR\n} = browser;",
+            "const rawDNR = browser[`declarativeNetRequest`];",
+            "const rawDNR = Reflect.get(browser, 'declarativeNetRequest');",
+            "const rawDNR = browser['declarative' + 'NetRequest'];",
+        )
+        for index, alias in enumerate(aliases):
+            with self.subTest(index=index, alias=alias):
+                entry = self.rewrite_archive(
+                    "uBlock Origin Lite",
+                    lambda files, alias=alias: self.replace_archive_text(
+                        files,
+                        "js/ruleset-manager.js",
+                        "const SPECIAL_RULES_REALM = 5000000;",
+                        "const SPECIAL_RULES_REALM = 5000000;\n" + alias,
+                    ),
+                )
+
+                with self.assertRaisesRegex(RuntimeError, "raw DNR root"):
+                    VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_missing_keeper_capacity_reservation(self) -> None:
+        replacements = (
+            (
+                "nativeDynamicAndSessionRuleLimit - safariDNRKeeperRuleCount",
+                "nativeDynamicAndSessionRuleLimit",
+            ),
+            (
+                "Math.floor(nativeDynamicAndSessionRuleLimit / 2) - 1",
+                "Math.floor(nativeDynamicAndSessionRuleLimit / 2)",
+            ),
+            (
+                "projectedTargetPublicRuleCount > "
+                "safariDNRPublicRuleLimitPerStore",
+                "false",
+            ),
+        )
+        for before, after in replacements:
+            with self.subTest(before=before):
+                entry = self.rewrite_archive(
+                    "uBlock Origin Lite",
+                    lambda files, before=before, after=after: self.replace_archive_text(
+                        files,
+                        "js/ext-compat.js",
+                        before,
+                        after,
+                    ),
+                )
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "omits required compatibility code",
+                ):
+                    VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_dnr_facade_bypass_from_another_module(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ruleset-manager.js",
+                "const SPECIAL_RULES_REALM = 5000000;",
+                "const SPECIAL_RULES_REALM = 5000000;\n"
+                "void browser.declarativeNetRequest.updateSessionRules({});",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "bypasses the Safari DNR facade"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_single_attempt_content_script_reconciliation(self) -> None:
@@ -1218,8 +1460,8 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/ext-compat.js",
-                "await nativeDNR.updateEnabledRulesets",
-                "nativeDNR.updateEnabledRulesets",
+                "await updateNativeEnabledRulesets",
+                "updateNativeEnabledRulesets",
             ),
         )
 

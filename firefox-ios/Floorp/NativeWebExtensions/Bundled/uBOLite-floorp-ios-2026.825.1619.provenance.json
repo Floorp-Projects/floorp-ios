@@ -8,7 +8,7 @@
       "path": "manifest.json"
     },
     {
-      "description": "Propagate the active tab's numeric logical window ID and incognito state when opening Matched rules and Report; adapt upstream Matched rules windows.create to an awaited active tabs.create in the source window; scope Report lookup, reuse, and creation to the same window and privacy realm; verify the created realm; and return explicit opened/error responses so WebKit does not strand popup message ports.",
+      "description": "Propagate the active tab's numeric logical window ID and incognito state when opening Matched rules and Report; adapt upstream Matched rules windows.create to an awaited active tabs.create in the source window; scope Report lookup, reuse, and creation to the same window and privacy realm; verify the created realm; return explicit opened/error responses; track every Matched rules, Report, and Options route through native close preparation; and close the Page Action only after the route acknowledgement so WebKit does not strand popup message ports.",
       "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
       "paths": [
         "js/background.js",
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; create and retain a hidden local-storage sentinel before reads; make local configuration authoritative with revisioned exact readback; normalize native submission and desired/readback through one clone-only Safari 26 rule normalizer; preserve exact-fingerprinted official regex/request-domain rules and fail closed on unproven or WebKit-ignored conditions; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
+      "description": "Serialize Safari local/session storage with bounded retries limited to WebKit unknown errors; retain hidden, collision-protected dynamic/session DNR keeper rules and reserve their two slots from WebKit's combined quota, while capping each public store at floor(native limit / 2) - 1 so Safari 26's current-plus-final target-store quota check accepts every normal replacement/removal; keep legacy at-capacity rules readable and static-operable while deferring a missing keeper only after exact combined and target-store quota readback, preflight doomed updates before native mutation, permit only explicit non-empty sufficiently large reductions, and fold a target keeper into a capacity-opening update without silently removing protection rules; preserve native Promise pass-through outside Safari; hide keepers from facade reads and match feedback; serialize native DNR operations across realms when Web Locks are available and converge simultaneous first-use without them; make local configuration authoritative with revisioned exact readback; normalize native submission and desired/readback through one clone-only Safari 26 rule normalizer; preserve exact-fingerprinted official regex/request-domain rules and fail closed on unproven or WebKit-ignored conditions; recover poisoned queues; order realm markers around verified native DNR mutations; and reject missing, malformed, or runtime-error DNR readbacks instead of treating them as empty success.",
       "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
       "paths": [
         "js/alarms.js",
@@ -82,7 +82,7 @@
   ],
   "license": "GPL-3.0-or-later",
   "release": "2026.825.1619",
-  "sha256": "1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d",
+  "sha256": "cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057",
   "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
   "strictMinimumSafariVersion": "26.0",
   "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",

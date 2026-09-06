@@ -31,7 +31,7 @@ staging_directory="$(mktemp -d "${TMPDIR:-/tmp}/floorp-darkreader-package.XXXXXX
 trap 'rm -rf "${staging_directory}"' EXIT
 
 unzip -q "${upstream_archive}" -d "${staging_directory}"
-# Dark Reader ships generated JavaScript bundles with CRLF line endings.
+# Dark Reader ships generated JavaScript and CSS with CRLF line endings.
 # Normalize the files touched by the reviewable compatibility patch so the
 # patch itself remains portable and free of embedded CR bytes.
 perl -pi -e 's/\r\n/\n/g' \
@@ -39,7 +39,8 @@ perl -pi -e 's/\r\n/\n/g' \
     "${staging_directory}/ui/devtools/index.js" \
     "${staging_directory}/ui/options/index.js" \
     "${staging_directory}/ui/stylesheet-editor/index.js" \
-    "${staging_directory}/ui/popup/index.js"
+    "${staging_directory}/ui/popup/index.js" \
+    "${staging_directory}/ui/popup/style.css"
 patch -s -F 0 -V none -d "${staging_directory}" -p1 < "${compatibility_patch}"
 if find "${staging_directory}" -type f \( -name '*.orig' -o -name '*.rej' \) -print -quit \
     | grep -q .; then

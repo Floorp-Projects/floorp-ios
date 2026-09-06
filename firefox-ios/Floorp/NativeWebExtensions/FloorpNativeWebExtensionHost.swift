@@ -14,30 +14,86 @@ extension Notification.Name {
     )
 }
 
-/// Marks a WebView whose document must remain alive because WebKit still owns
+/// Tracks a WebView whose document must remain alive because WebKit still owns
 /// an asynchronous JavaScript callback. UI owners may detach the view, but
-/// must not stop its document before process exit.
+/// must not stop its document while `mustPreserve(_:)` is true. Callback
+/// timeouts can promote the document to permanent, process-lifetime retention.
 @MainActor
 enum FloorpNativeWebExtensionProcessLifetimeWebViewRegistry {
+    private struct InFlightEntry {
+        let webView: WKWebView
+        var count: Int
+        var teardownGraceNanoseconds: UInt64
+    }
+
+    private struct TeardownGraceEntry {
+        let webView: WKWebView
+        let token: UUID
+        let durationNanoseconds: UInt64
+    }
+
     private static var retained = [ObjectIdentifier: WKWebView]()
-    private static var inFlight = [ObjectIdentifier: (webView: WKWebView, count: Int)]()
+    private static var inFlight = [ObjectIdentifier: InFlightEntry]()
+    private static var teardownGrace = [ObjectIdentifier: TeardownGraceEntry]()
 
     static func beginOperation(in webView: WKWebView) {
         let identifier = ObjectIdentifier(webView)
-        if let entry = inFlight[identifier] {
-            inFlight[identifier] = (entry.webView, entry.count + 1)
+        if var entry = inFlight[identifier] {
+            entry.count += 1
+            inFlight[identifier] = entry
         } else {
-            inFlight[identifier] = (webView, 1)
+            let inheritedGrace = teardownGrace.removeValue(forKey: identifier)?
+                .durationNanoseconds ?? 0
+            inFlight[identifier] = InFlightEntry(
+                webView: webView,
+                count: 1,
+                teardownGraceNanoseconds: inheritedGrace
+            )
         }
     }
 
-    static func endOperation(in webView: WKWebView) {
+    static func endOperation(
+        in webView: WKWebView,
+        teardownGraceNanoseconds: UInt64 = 0
+    ) {
         let identifier = ObjectIdentifier(webView)
-        guard let entry = inFlight[identifier] else { return }
+        guard var entry = inFlight[identifier] else { return }
+        entry.teardownGraceNanoseconds = max(
+            entry.teardownGraceNanoseconds,
+            teardownGraceNanoseconds
+        )
         if entry.count == 1 {
             inFlight.removeValue(forKey: identifier)
+            scheduleTeardownGrace(
+                for: webView,
+                durationNanoseconds: entry.teardownGraceNanoseconds
+            )
         } else {
-            inFlight[identifier] = (entry.webView, entry.count - 1)
+            entry.count -= 1
+            inFlight[identifier] = entry
+        }
+    }
+
+    private static func scheduleTeardownGrace(
+        for webView: WKWebView,
+        durationNanoseconds: UInt64
+    ) {
+        guard durationNanoseconds > 0 else { return }
+        let identifier = ObjectIdentifier(webView)
+        let token = UUID()
+        teardownGrace[identifier] = TeardownGraceEntry(
+            webView: webView,
+            token: token,
+            durationNanoseconds: durationNanoseconds
+        )
+        Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: durationNanoseconds)
+            } catch {
+                return
+            }
+            guard teardownGrace[identifier]?.token == token else { return }
+            teardownGrace.removeValue(forKey: identifier)
         }
     }
 
@@ -45,9 +101,15 @@ enum FloorpNativeWebExtensionProcessLifetimeWebViewRegistry {
         retained[ObjectIdentifier(webView)] = webView
     }
 
+    static func isPermanentlyRetained(_ webView: WKWebView) -> Bool {
+        retained[ObjectIdentifier(webView)] != nil
+    }
+
     static func mustPreserve(_ webView: WKWebView) -> Bool {
         let identifier = ObjectIdentifier(webView)
-        return retained[identifier] != nil || inFlight[identifier] != nil
+        return retained[identifier] != nil
+            || inFlight[identifier] != nil
+            || teardownGrace[identifier] != nil
     }
 }
 
@@ -434,12 +496,19 @@ final class FloorpNativeWebExtensionHost: NSObject {
     }
 
     private final class ManagedActionPopup {
+        struct PendingCloseTransition {
+            let operation: String
+            let perform: () throws -> Void
+            let cancel: () -> Void
+        }
+
         let token: UUID
         weak var viewController: FloorpNativeWebExtensionActionPopupViewController?
         weak var context: WKWebExtensionContext?
         weak var sourceTab: Tab?
         weak var sourceAdapter: FloorpNativeWebExtensionTab?
         let sourceWindow: WindowKey
+        private var pendingCloseTransition: PendingCloseTransition?
 
         init(
             token: UUID,
@@ -455,6 +524,70 @@ final class FloorpNativeWebExtensionHost: NSObject {
             self.sourceTab = sourceTab
             self.sourceAdapter = sourceAdapter
             self.sourceWindow = sourceWindow
+        }
+
+        func setPendingCloseTransition(
+            operation: String,
+            transition: @escaping () throws -> Void,
+            cancellation: @escaping () -> Void
+        ) -> Bool {
+            guard pendingCloseTransition == nil else { return false }
+            pendingCloseTransition = PendingCloseTransition(
+                operation: operation,
+                perform: transition,
+                cancel: cancellation
+            )
+            return true
+        }
+
+        var hasPendingCloseTransition: Bool {
+            pendingCloseTransition != nil
+        }
+
+        func takePendingCloseTransition() -> PendingCloseTransition? {
+            defer { pendingCloseTransition = nil }
+            return pendingCloseTransition
+        }
+
+        func discardPendingCloseTransition() {
+            let transition = takePendingCloseTransition()
+            transition?.cancel()
+        }
+    }
+
+    /// Keeps a managed popup document alive until WebKit's native callback has
+    /// actually been delivered. Host-forced popup retirement can happen while
+    /// an extension API request is suspended, so the fixed UIKit teardown grace
+    /// period alone is not a sufficient ownership boundary.
+    @MainActor
+    private final class ManagedActionPopupCallbackLease {
+        private static let teardownGraceNanoseconds: UInt64 = 2_000_000_000
+
+        private var webView: WKWebView?
+        private var didFinish = false
+
+        init(webView: WKWebView?) {
+            self.webView = webView
+            if let webView {
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.beginOperation(
+                    in: webView
+                )
+            }
+        }
+
+        func finish(_ deliver: () -> Void) {
+            guard !didFinish else { return }
+            didFinish = true
+            defer {
+                if let webView {
+                    FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(
+                        in: webView,
+                        teardownGraceNanoseconds: Self.teardownGraceNanoseconds
+                    )
+                    self.webView = nil
+                }
+            }
+            deliver()
         }
     }
 
@@ -644,6 +777,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
     var privateAccessCommitHookForTesting: ((String) -> Void)?
     var extensionSurfaceClosePreparationHookForTesting:
         ((String, WKWebView) async -> Bool)?
+    var extensionTabCreationCompletionHookForTesting:
+        ((String, Tab) async -> Void)?
     var privateAccessTransitionHookForTesting: ((String) -> Void)?
     var contextWillUnloadHookForTesting: ((String) -> Void)?
 
@@ -1468,6 +1603,120 @@ final class FloorpNativeWebExtensionHost: NSObject {
         currentReadyIdentifier(for: context) != nil && canOperate(tab: tab, in: context)
     }
 
+    /// Selects a tab immediately unless the request came from a managed action
+    /// popup. A popup-originated WebExtension API call must finish its native
+    /// completion before selecting the destination, because selection dismisses
+    /// the source popup and can otherwise destroy WebKit's pending callback.
+    func requestActivation(
+        of tab: Tab,
+        requestedBy context: WKWebExtensionContext,
+        cancellation: @escaping () -> Void = {}
+    ) throws {
+        guard canMutate(tab: tab, in: context),
+              let manager = tabManager(for: tab.windowUUID) else {
+            throw FloorpNativeWebExtensionError.privateAccessDenied
+        }
+        guard manager.selectedTab !== tab else { return }
+        if try stageManagedActionPopupCloseTransition(
+            for: context,
+            operation: "tab activation",
+            transition: { [weak self, weak tab, weak context] in
+                guard let self, let tab, let context,
+                      self.canMutate(tab: tab, in: context),
+                      let manager = self.tabManager(for: tab.windowUUID) else {
+                    throw FloorpNativeWebExtensionError.hostUnavailable
+                }
+                manager.selectTab(tab)
+            },
+            cancellation: cancellation
+        ) {
+            return
+        }
+        manager.selectTab(tab)
+    }
+
+    /// Fails before a create/duplicate operation mutates browser topology when
+    /// its eventual activation could not be staged on the current popup.
+    func validateDeferredActivation(requestedBy context: WKWebExtensionContext) throws {
+        guard let identifier = currentReadyIdentifier(for: context),
+              let popup = managedActionPopups[identifier],
+              popup.context === context else { return }
+        guard let sourceTab = popup.sourceTab,
+              let sourceAdapter = popup.sourceAdapter,
+              sourceAdapter.tab === sourceTab,
+              isManagedTab(sourceTab),
+              tabManager(for: popup.sourceWindow.windowUUID)?.selectedTab === sourceTab,
+              lastFocusedWindow == popup.sourceWindow,
+              canOperate(tab: sourceTab, in: context) else {
+            throw FloorpNativeWebExtensionError.hostUnavailable
+        }
+        guard !popup.hasPendingCloseTransition else {
+            throw FloorpNativeWebExtensionError.unsupportedOperation(
+                "action popup already has a pending browser transition"
+            )
+        }
+    }
+
+    /// Removes tabs created by an operation whose deferred activation could
+    /// not be staged. Completion is delayed until the browser has processed
+    /// every removal so WebKit never receives an error alongside live ghost
+    /// topology from the failed operation.
+    func rollbackCreatedTabsAfterFailedActivation(
+        _ tabs: [Tab],
+        from manager: any TabManager,
+        completion: @escaping () -> Void
+    ) {
+        guard let tab = tabs.first else {
+            completion()
+            return
+        }
+        let remainingTabs = Array(tabs.dropFirst())
+        guard manager.tabs.contains(where: { $0 === tab }) else {
+            rollbackCreatedTabsAfterFailedActivation(
+                remainingTabs,
+                from: manager,
+                completion: completion
+            )
+            return
+        }
+        guard manager.selectedTab !== tab else {
+            // Another browser action may select the staged-created tab before
+            // the originating popup closes itself. That external activation is
+            // now authoritative; never delete the user's current tab while
+            // cancelling the older popup transition.
+            rollbackCreatedTabsAfterFailedActivation(
+                remainingTabs,
+                from: manager,
+                completion: completion
+            )
+            return
+        }
+        manager.removeTab(tab.tabUUID) { [self] didRemove in
+            if !didRemove {
+                if manager.tabs.contains(where: { $0 === tab }),
+                   manager.selectedTab !== tab {
+                    // The normal removal path may be vetoed by an unrelated
+                    // surface-preparation delegate. This tab was created only
+                    // for the failed staged transition and was never selected,
+                    // so synchronously remove that isolated topology instead.
+                    manager.removeTabs([tab])
+                }
+                if manager.tabs.contains(where: { $0 === tab }) {
+                    logger.log(
+                        "Floorp: failed to roll back a tab after deferred activation was cancelled",
+                        level: .warning,
+                        category: .setup
+                    )
+                }
+            }
+            rollbackCreatedTabsAfterFailedActivation(
+                remainingTabs,
+                from: manager,
+                completion: completion
+            )
+        }
+    }
+
     func canOperate(
         windowUUID: WindowUUID,
         isPrivate: Bool,
@@ -1487,6 +1736,51 @@ final class FloorpNativeWebExtensionHost: NSObject {
     ) -> Bool {
         currentReadyIdentifier(for: context) != nil
             && canOperate(windowUUID: windowUUID, isPrivate: isPrivate, in: context)
+    }
+
+    /// Stores the UI side effect of a popup-originated API call without
+    /// delaying that API's completion. The transition is eligible only while
+    /// the popup's original tab, realm, and context remain current.
+    private func stageManagedActionPopupCloseTransition(
+        for context: WKWebExtensionContext,
+        operation: String,
+        transition: @escaping () throws -> Void,
+        cancellation: @escaping () -> Void = {}
+    ) throws -> Bool {
+        guard let identifier = currentReadyIdentifier(for: context),
+              let popup = managedActionPopups[identifier],
+              popup.context === context else {
+            return false
+        }
+        guard let sourceTab = popup.sourceTab,
+              let sourceAdapter = popup.sourceAdapter,
+              sourceAdapter.tab === sourceTab,
+              isManagedTab(sourceTab),
+              tabManager(for: popup.sourceWindow.windowUUID)?.selectedTab === sourceTab,
+              lastFocusedWindow == popup.sourceWindow,
+              canOperate(tab: sourceTab, in: context) else {
+            throw FloorpNativeWebExtensionError.hostUnavailable
+        }
+        let sourceWindow = popup.sourceWindow
+        let didStage = popup.setPendingCloseTransition(operation: operation, transition: {
+            [weak self, weak context, weak sourceTab, weak sourceAdapter] in
+            guard let self, let context, let sourceTab, let sourceAdapter,
+                  self.currentReadyIdentifier(for: context) == identifier,
+                  sourceAdapter.tab === sourceTab,
+                  self.isManagedTab(sourceTab),
+                  self.tabManager(for: sourceWindow.windowUUID)?.selectedTab === sourceTab,
+                  self.lastFocusedWindow == sourceWindow,
+                  self.canOperate(tab: sourceTab, in: context) else {
+                throw FloorpNativeWebExtensionError.hostUnavailable
+            }
+            try transition()
+        }, cancellation: cancellation)
+        guard didStage else {
+            throw FloorpNativeWebExtensionError.unsupportedOperation(
+                "action popup already has a pending browser transition"
+            )
+        }
+        return true
     }
 
     func focus(windowUUID: WindowUUID, isPrivate: Bool) {
@@ -1555,6 +1849,34 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 category: .setup
             )
         }
+    }
+
+    func requestFocus(
+        windowUUID: WindowUUID,
+        isPrivate: Bool,
+        requestedBy context: WKWebExtensionContext
+    ) throws {
+        guard canMutate(windowUUID: windowUUID, isPrivate: isPrivate, in: context) else {
+            throw FloorpNativeWebExtensionError.privateAccessDenied
+        }
+        if try stageManagedActionPopupCloseTransition(
+            for: context,
+            operation: "window focus",
+            transition: { [weak self, weak context] in
+                guard let self, let context,
+                      self.canMutate(
+                          windowUUID: windowUUID,
+                          isPrivate: isPrivate,
+                          in: context
+                      ) else {
+                    throw FloorpNativeWebExtensionError.hostUnavailable
+                }
+                try self.requestFocus(windowUUID: windowUUID, isPrivate: isPrivate)
+            }
+        ) {
+            return
+        }
+        try requestFocus(windowUUID: windowUUID, isPrivate: isPrivate)
     }
 
     func settingsItems() -> [FloorpNativeWebExtensionSettingsItem] {
@@ -2574,7 +2896,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
         guard !Task.isCancelled,
               contexts[identifier] === context,
               currentReadyIdentifier(for: context) == identifier,
-              !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) else {
+              !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+                .isPermanentlyRetained(webView) else {
             return false
         }
         let closeOperationID = UUID()
@@ -5213,14 +5536,22 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 )
             },
             prepareToClose: prepareToClose,
-            onClose: { [weak self, weak context, weak sourceAdapter] in
+            onClose: {},
+            onCloseDisposition: { [weak self, weak context, weak sourceAdapter] disposition in
                 guard let self else { return }
                 self.managedActionPopupDidClose(
                     identifier: identifier,
                     token: token,
                     context: context,
                     sourceAdapter: sourceAdapter,
-                    sourceWindow: sourceWindow
+                    sourceWindow: sourceWindow,
+                    commitPendingTransition: disposition == .commitPendingTransition
+                )
+            },
+            onPendingTransitionCancellation: { [weak self] in
+                self?.discardManagedActionPopupCloseTransition(
+                    identifier: identifier,
+                    token: token
                 )
             }
         )
@@ -5249,9 +5580,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     && self.lastFocusedWindow == sourceWindow
                     && self.canOperate(tab: sourceTab, in: context)
             }
-        ) { [weak popup] error in
+        ) { [weak self, weak popup] error in
             if error != nil {
-                popup?.closePopupImmediately(animated: false)
+                if let managedPopup = self?.managedActionPopups[identifier],
+                   managedPopup.token == token {
+                    managedPopup.discardPendingCloseTransition()
+                }
+                popup?.closePopupImmediately(
+                    animated: false,
+                    preservingPendingCallbacks: true
+                )
             }
             completionHandler(error)
         }
@@ -5262,9 +5600,18 @@ final class FloorpNativeWebExtensionHost: NSObject {
         token: UUID,
         context: WKWebExtensionContext?,
         sourceAdapter: FloorpNativeWebExtensionTab?,
-        sourceWindow: WindowKey
+        sourceWindow: WindowKey,
+        commitPendingTransition: Bool
     ) {
-        guard managedActionPopups[identifier]?.token == token else { return }
+        guard let popup = managedActionPopups[identifier],
+              popup.token == token else { return }
+        let pendingCloseTransition: ManagedActionPopup.PendingCloseTransition?
+        if commitPendingTransition {
+            pendingCloseTransition = popup.takePendingCloseTransition()
+        } else {
+            popup.discardPendingCloseTransition()
+            pendingCloseTransition = nil
+        }
         if identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier {
             invalidateUBlockOriginLiteNavigationReadiness(isPrivate: sourceWindow.isPrivate)
         }
@@ -5283,6 +5630,30 @@ final class FloorpNativeWebExtensionHost: NSObject {
         if presentedExtensionSurfaces[identifier]?.isEmpty == true {
             presentedExtensionSurfaces.removeValue(forKey: identifier)
         }
+        // Remove every reference to the old popup before applying its staged
+        // transition. Tab activation synchronously publishes lifecycle events,
+        // which must not treat this already-closed popup as a stale surface.
+        if let pendingCloseTransition {
+            do {
+                try pendingCloseTransition.perform()
+            } catch {
+                pendingCloseTransition.cancel()
+                logger.log(
+                    "Floorp: deferred WebExtension \(pendingCloseTransition.operation) was cancelled: \(error)",
+                    level: .warning,
+                    category: .setup
+                )
+            }
+        }
+    }
+
+    private func discardManagedActionPopupCloseTransition(
+        identifier: String,
+        token: UUID
+    ) {
+        guard let popup = managedActionPopups[identifier],
+              popup.token == token else { return }
+        popup.discardPendingCloseTransition()
     }
 
     private func dismissManagedActionPopups(
@@ -5290,19 +5661,27 @@ final class FloorpNativeWebExtensionHost: NSObject {
     ) {
         let popups = managedActionPopups.filter { shouldDismiss($0.value) }
         for (identifier, popup) in popups {
+            // Only a close initiated by the popup page should commit a staged
+            // browser transition. Host teardown, focus changes, and superseding
+            // action invocations invalidate it.
+            popup.discardPendingCloseTransition()
             if let viewController = popup.viewController {
                 // Lifecycle and topology changes cannot keep a stale popup
                 // interactive while its source tab/context is disappearing.
                 // User-initiated close paths use the async durability gate;
                 // this host-forced path tears down immediately.
-                viewController.closePopupImmediately(animated: false)
+                viewController.closePopupImmediately(
+                    animated: false,
+                    preservingPendingCallbacks: true
+                )
             } else {
                 managedActionPopupDidClose(
                     identifier: identifier,
                     token: popup.token,
                     context: popup.context,
                     sourceAdapter: popup.sourceAdapter,
-                    sourceWindow: popup.sourceWindow
+                    sourceWindow: popup.sourceWindow,
+                    commitPendingTransition: false
                 )
             }
         }
@@ -5314,13 +5693,15 @@ final class FloorpNativeWebExtensionHost: NSObject {
         let popups = managedActionPopups.filter { shouldClose($0.value) }
         for (identifier, popup) in popups {
             guard managedActionPopups[identifier]?.token == popup.token else { return false }
+            popup.discardPendingCloseTransition()
             guard let viewController = popup.viewController else {
                 managedActionPopupDidClose(
                     identifier: identifier,
                     token: popup.token,
                     context: popup.context,
                     sourceAdapter: popup.sourceAdapter,
-                    sourceWindow: popup.sourceWindow
+                    sourceWindow: popup.sourceWindow,
+                    commitPendingTransition: false
                 )
                 continue
             }
@@ -5427,7 +5808,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
             guard let viewController = surface.viewController else { continue }
             if isPrivate == nil || surface.isPrivate == isPrivate {
                 if let popup = viewController as? FloorpNativeWebExtensionActionPopupViewController {
-                    popup.closePopupImmediately(animated: false)
+                    popup.closePopupImmediately(
+                        animated: false,
+                        preservingPendingCallbacks: true
+                    )
                 } else {
                     if let page = viewController as? FloorpNativeWebExtensionPageViewController {
                         page.prepareForHostTeardown()
@@ -5629,13 +6013,37 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
             completionHandler(nil, FloorpNativeWebExtensionError.privateAccessDenied)
             return
         }
+        do {
+            if configuration.shouldBeActive {
+                try validateDeferredActivation(requestedBy: extensionContext)
+            }
+        } catch {
+            completionHandler(nil, error)
+            return
+        }
+        let popupToken: UUID?
+        let popupWebView: WKWebView?
+        if let popup = managedActionPopups[identifier],
+           popup.context === extensionContext {
+            popupToken = popup.token
+            popupWebView = popup.viewController?.webView
+        } else {
+            popupToken = nil
+            popupWebView = nil
+        }
+        let callbackLease = ManagedActionPopupCallbackLease(webView: popupWebView)
+        let finish: ((any WKWebExtensionTab)?, (any Error)?) -> Void = { tab, error in
+            callbackLease.finish {
+                completionHandler(tab, error)
+            }
+        }
         let finishOpening = { [weak self, weak extensionContext] in
             guard let self,
                   let extensionContext,
                   self.currentReadyIdentifier(for: extensionContext) == identifier,
                   self.tabManager(for: window.windowUUID) === manager,
                   !window.isPrivateBrowsing || extensionContext.hasAccessToPrivateData else {
-                completionHandler(nil, FloorpNativeWebExtensionError.hostUnavailable)
+                finish(nil, FloorpNativeWebExtensionError.hostUnavailable)
                 return
             }
             let parent = (configuration.parentTab as? FloorpNativeWebExtensionTab)?.tab
@@ -5646,37 +6054,77 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
                 isPrivate: window.isPrivateBrowsing
             )
             self.announceTabIfNeeded(tab)
-            if let url = configuration.url {
-                self.load(url: url, in: tab, requestedBy: extensionContext)
-            }
-            if configuration.shouldBeActive {
-                manager.selectTab(tab)
-            }
-            completionHandler(self.tabAdapter(for: tab), nil)
-        }
-
-        if let popup = managedActionPopups[identifier],
-           popup.context === extensionContext {
-            let popupToken = popup.token
-            Task { @MainActor [weak self] in
-                guard let self,
-                      await self.closeManagedActionPopupsAfterPreparing(where: {
-                          $0.token == popupToken
-                      }),
-                      self.managedActionPopups[identifier] == nil else {
-                    completionHandler(
-                        nil,
-                        FloorpNativeWebExtensionError.unsupportedOperation(
-                            "action popup could not finish closing before opening a tab"
-                        )
+            do {
+                if configuration.shouldBeActive {
+                    try self.requestActivation(
+                        of: tab,
+                        requestedBy: extensionContext,
+                        cancellation: { [weak self, weak tab] in
+                            guard let self, let tab else { return }
+                            self.rollbackCreatedTabsAfterFailedActivation(
+                                [tab],
+                                from: manager,
+                                completion: {}
+                            )
+                        }
                     )
+                }
+                if let url = configuration.url {
+                    self.load(url: url, in: tab, requestedBy: extensionContext)
+                }
+                let adapter = self.tabAdapter(for: tab)
+#if DEBUG || TESTING
+                if let hook = self.extensionTabCreationCompletionHookForTesting {
+                    Task { @MainActor [weak self, weak extensionContext, weak tab] in
+                        guard let tab else {
+                            finish(
+                                nil,
+                                FloorpNativeWebExtensionError.hostUnavailable
+                            )
+                            return
+                        }
+                        await hook(identifier, tab)
+                        guard let self else {
+                            finish(
+                                nil,
+                                FloorpNativeWebExtensionError.hostUnavailable
+                            )
+                            return
+                        }
+                        let originatingPopupIsCurrent = popupToken.map { token in
+                            self.managedActionPopups[identifier]?.token == token
+                        } ?? true
+                        guard let extensionContext,
+                              self.currentReadyIdentifier(for: extensionContext) == identifier,
+                              self.isManagedTab(tab),
+                              originatingPopupIsCurrent else {
+                            self.rollbackCreatedTabsAfterFailedActivation(
+                                [tab],
+                                from: manager
+                            ) {
+                                finish(
+                                    nil,
+                                    FloorpNativeWebExtensionError.hostUnavailable
+                                )
+                            }
+                            return
+                        }
+                        finish(self.tabAdapter(for: tab), nil)
+                    }
                     return
                 }
-                finishOpening()
+#endif
+                finish(adapter, nil)
+            } catch {
+                self.rollbackCreatedTabsAfterFailedActivation(
+                    [tab],
+                    from: manager
+                ) {
+                    finish(nil, error)
+                }
             }
-        } else {
-            finishOpening()
         }
+        finishOpening()
     }
 
     func webExtensionController(
@@ -5703,10 +6151,19 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
             completionHandler(nil, FloorpNativeWebExtensionError.privateAccessDenied)
             return
         }
+        do {
+            if configuration.shouldBeFocused {
+                try validateDeferredActivation(requestedBy: extensionContext)
+            }
+        } catch {
+            completionHandler(nil, error)
+            return
+        }
 
         let urls = configuration.tabURLs.isEmpty
             ? [URL(string: "about:blank")!]
             : configuration.tabURLs
+        var createdTabs = [(tab: Tab, url: URL)]()
         var lastTab: Tab?
         for url in urls {
             let tab = manager.addTab(
@@ -5716,11 +6173,38 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
                 isPrivate: isPrivate
             )
             announceTabIfNeeded(tab)
-            load(url: url, in: tab, requestedBy: extensionContext)
+            createdTabs.append((tab, url))
             lastTab = tab
         }
-        if configuration.shouldBeFocused, let lastTab {
-            manager.selectTab(lastTab)
+        do {
+            if configuration.shouldBeFocused, let lastTab {
+                try requestActivation(
+                    of: lastTab,
+                    requestedBy: extensionContext,
+                    cancellation: { [weak self] in
+                        self?.rollbackCreatedTabsAfterFailedActivation(
+                            createdTabs.map(\.tab),
+                            from: manager,
+                            completion: {}
+                        )
+                    }
+                )
+            }
+            for createdTab in createdTabs {
+                load(
+                    url: createdTab.url,
+                    in: createdTab.tab,
+                    requestedBy: extensionContext
+                )
+            }
+        } catch {
+            rollbackCreatedTabsAfterFailedActivation(
+                createdTabs.map(\.tab),
+                from: manager
+            ) {
+                completionHandler(nil, error)
+            }
+            return
         }
         let window = windowAdapter(for: manager.windowUUID, isPrivate: isPrivate)
         announceWindowIfNeeded(windowUUID: manager.windowUUID, isPrivate: isPrivate)
@@ -5759,41 +6243,82 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
         let isPrivate = sourceWindow?.isPrivate
             ?? focusedWindow(for: extensionContext)?.isPrivateBrowsing
             ?? false
-        let popupToken = managedPopup?.token
-        // swiftlint:disable:next closure_body_length
-        Task { @MainActor [weak self, weak extensionContext, weak sourceTab, weak sourceAdapter] in
-            guard let self,
-                  let extensionContext,
-                  self.currentReadyIdentifier(for: extensionContext) == identifier else {
-                completionHandler(FloorpNativeWebExtensionError.hostUnavailable)
-                return
-            }
-            if let popupToken {
-                guard await self.closeManagedActionPopupsAfterPreparing(where: {
-                    $0.token == popupToken
-                }),
-                self.managedActionPopups[identifier] == nil else {
-                    completionHandler(FloorpNativeWebExtensionError.unsupportedOperation(
-                        "action popup could not finish closing"
-                    ))
-                    return
+        if usesManagedPopup {
+            do {
+                let didStage = try stageManagedActionPopupCloseTransition(
+                    for: extensionContext,
+                    operation: "options presentation"
+                ) { [weak self, weak extensionContext, weak sourceTab, weak sourceAdapter] in
+                    guard let self, let extensionContext else {
+                        throw FloorpNativeWebExtensionError.hostUnavailable
+                    }
+                    self.presentOptionsPage(
+                        identifier: identifier,
+                        sourceWindow: sourceWindow,
+                        sourceTab: sourceTab,
+                        sourceAdapter: sourceAdapter,
+                        isPrivate: isPrivate,
+                        expectedContext: extensionContext
+                    ) { [weak self] error in
+                        guard let error else { return }
+                        self?.logger.log(
+                            "Floorp: deferred WebExtension options presentation failed: \(error)",
+                            level: .warning,
+                            category: .setup
+                        )
+                    }
                 }
-            }
-            let validation: (() -> Bool)?
-            if usesManagedPopup {
-                guard let sourceWindow,
-                      let sourceTab,
-                      let sourceAdapter else {
+                guard didStage else {
                     completionHandler(FloorpNativeWebExtensionError.hostUnavailable)
                     return
                 }
+                // The popup page must regain control before it closes itself.
+                // Presentation starts from managedActionPopupDidClose after the
+                // old WebView no longer owns this WebExtension API callback.
+                completionHandler(nil)
+            } catch {
+                completionHandler(error)
+            }
+            return
+        }
+
+        presentOptionsPage(
+            identifier: identifier,
+            sourceWindow: nil,
+            sourceTab: nil,
+            sourceAdapter: nil,
+            isPrivate: isPrivate,
+            expectedContext: extensionContext,
+            completionHandler: completionHandler
+        )
+    }
+
+    private func presentOptionsPage(
+        identifier: String,
+        sourceWindow: WindowKey?,
+        sourceTab: Tab?,
+        sourceAdapter: FloorpNativeWebExtensionTab?,
+        isPrivate: Bool,
+        expectedContext: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        // swiftlint:disable:next closure_body_length
+        Task { @MainActor [weak self, weak expectedContext, weak sourceTab, weak sourceAdapter] in
+            guard let self,
+                  let expectedContext,
+                  self.currentReadyIdentifier(for: expectedContext) == identifier else {
+                completionHandler(FloorpNativeWebExtensionError.hostUnavailable)
+                return
+            }
+            let validation: (() -> Bool)?
+            if let sourceWindow {
                 let sourceIsStillActive = { [weak self, weak sourceTab, weak sourceAdapter] in
                     guard let self, let sourceTab, let sourceAdapter else { return false }
                     return sourceAdapter.tab === sourceTab
                         && self.isManagedTab(sourceTab)
                         && self.tabManager(for: sourceWindow.windowUUID)?.selectedTab === sourceTab
                         && self.lastFocusedWindow == sourceWindow
-                        && self.canOperate(tab: sourceTab, in: extensionContext)
+                        && self.canOperate(tab: sourceTab, in: expectedContext)
                 }
                 guard sourceIsStillActive() else {
                     completionHandler(FloorpNativeWebExtensionError.hostUnavailable)
@@ -5813,7 +6338,7 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
                 self.presentActionPopup(
                     options,
                     for: sourceAdapter,
-                    expectedContext: extensionContext,
+                    expectedContext: expectedContext,
                     validation: validation,
                     completionHandler: completionHandler
                 )

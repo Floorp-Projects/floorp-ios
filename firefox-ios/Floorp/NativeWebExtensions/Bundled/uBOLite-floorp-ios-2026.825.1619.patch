@@ -2170,14 +2170,14 @@ index 674cc63..bce8aa7 100644
 +/******************************************************************************/
 +
 diff --git a/js/ext-compat.js b/js/ext-compat.js
-index 73d0354..88d9d9b 100644
+index 73d0354..3bd6443 100644
 --- a/js/ext-compat.js
 +++ b/js/ext-compat.js
 @@ -22,0 +23,3 @@ import { deepEquals } from './deep-compare.js';
 +import { normalizeSafariDNRRules } from './safari-dnr-normalizer.js';
 +
 +export { normalizeSafariDNRRules };
-@@ -25,0 +29,52 @@ export const webext = self.browser;
+@@ -25,0 +29,417 @@ export const webext = self.browser;
 +// WKWebExtension lazily creates its storage databases. Concurrent first-use
 +// operations can race that creation on Safari and fail with an "unknown error";
 +// treating a failed read as an empty store can then overwrite valid settings.
@@ -2230,14 +2230,379 @@ index 73d0354..88d9d9b 100644
 +    return current;
 +}
 +
-@@ -40 +95,3 @@ let seenRealms = 0b00;
++/******************************************************************************/
++
++const nativeDNR = webext.declarativeNetRequest;
++const safariDNROperationLockName = 'floorp.ubol.safari-dnr.v1';
++let safariDNROperationTail = Promise.resolve();
++
++const nativeDynamicAndSessionRuleLimit =
++    nativeDNR.MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES;
++export const safariDNRKeeperRuleCount = 2;
++export const safariDNRPublicRuleLimit = isSafari
++    ? Math.max(0, nativeDynamicAndSessionRuleLimit - safariDNRKeeperRuleCount)
++    : nativeDynamicAndSessionRuleLimit;
++export const safariDNRPublicRuleLimitPerStore = isSafari
++    ? Math.max(0, Math.floor(nativeDynamicAndSessionRuleLimit / 2) - 1)
++    : nativeDynamicAndSessionRuleLimit;
++const safariDNRQuotaErrorPattern =
++    /maximum number of dynamic and session rules exceeded/i;
++
++// Upstream-managed IDs end below 5M; trusted directives start at 8M and user
++// rules at 9M. Reserve the otherwise unused gap without entering either band.
++export const safariDNRKeeperRuleId = 7000000;
++const safariDNRKeeperRule = {
++    id: safariDNRKeeperRuleId,
++    priority: 1,
++    action: { type: 'block' },
++    condition: {
++        urlFilter: '|https://floorp.invalid/.well-known/ubol-dnr-keeper|',
++        resourceTypes: [ 'xmlhttprequest' ],
++    },
++};
++
++function runLocalSafariDNROperation(operation) {
++    const current = safariDNROperationTail
++        .catch(( ) => undefined)
++        .then(operation);
++    safariDNROperationTail = current.catch(( ) => undefined);
++    return current;
++}
++
++export function runSafariDNROperation(operation) {
++    if ( isSafari === false ) { return operation(); }
++    const lockManager = self.navigator?.locks;
++    if ( typeof lockManager?.request === 'function' ) {
++        return lockManager.request(
++            safariDNROperationLockName,
++            { mode: 'exclusive' },
++            operation
++        );
++    }
++    return runLocalSafariDNROperation(operation);
++}
++
++function getNativeDynamicRules(...args) {
++    return nativeDNR.getDynamicRules(...args);
++}
++
++function readNativeDynamicRules() {
++    return new Promise((resolve, reject) => {
++        getNativeDynamicRules(rules => {
++            const lastError = webext.runtime.lastError;
++            if ( lastError ) {
++                reject(new Error(lastError.message || `${lastError}`));
++                return;
++            }
++            if ( Array.isArray(rules) === false ) {
++                reject(new Error('Invalid dynamic DNR readback'));
++                return;
++            }
++            resolve(rules);
++        });
++    });
++}
++
++function getNativeSessionRules(...args) {
++    return nativeDNR.getSessionRules(...args);
++}
++
++function readNativeSessionRules() {
++    return new Promise((resolve, reject) => {
++        getNativeSessionRules(rules => {
++            const lastError = webext.runtime.lastError;
++            if ( lastError ) {
++                reject(new Error(lastError.message || `${lastError}`));
++                return;
++            }
++            if ( Array.isArray(rules) === false ) {
++                reject(new Error('Invalid session DNR readback'));
++                return;
++            }
++            resolve(rules);
++        });
++    });
++}
++
++function updateNativeDynamicRules(options) {
++    return nativeDNR.updateDynamicRules(options);
++}
++
++function updateNativeSessionRules(options) {
++    return nativeDNR.updateSessionRules(options);
++}
++
++function getNativeEnabledRulesets(...args) {
++    return nativeDNR.getEnabledRulesets(...args);
++}
++
++function updateNativeEnabledRulesets(...args) {
++    return nativeDNR.updateEnabledRulesets(...args);
++}
++
++function assertSafariDNRKeeperRule(rule, storageType) {
++    if ( deepEquals(rule, safariDNRKeeperRule) ) { return; }
++    throw new Error(`Safari ${storageType} DNR keeper rule ID collision`);
++}
++
++function rulesForSafariDNRStorage(stores, storageType) {
++    return storageType === 'dynamic' ? stores.dynamic : stores.session;
++}
++
++function otherSafariDNRStorageType(storageType) {
++    return storageType === 'dynamic' ? 'session' : 'dynamic';
++}
++
++function readNativeDNRStores() {
++    return readNativeDynamicRules().then(async dynamic => ({
++        dynamic,
++        session: await readNativeSessionRules(),
++    }));
++}
++
++function findSafariDNRKeeper(rules, storageType) {
++    const keeper = rules.find(rule => rule.id === safariDNRKeeperRuleId);
++    if ( keeper !== undefined ) {
++        assertSafariDNRKeeperRule(keeper, storageType);
++    }
++    return keeper;
++}
++
++function isSafariDNRKeeperCapacityBlocked(storageType, stores) {
++    if ( Number.isSafeInteger(nativeDynamicAndSessionRuleLimit) === false ) {
++        return false;
++    }
++    const targetRules = rulesForSafariDNRStorage(stores, storageType);
++    const otherRules = rulesForSafariDNRStorage(
++        stores,
++        otherSafariDNRStorageType(storageType)
++    );
++    // Released WebKit uses the documented shared final-count check. Some
++    // Safari 26 builds instead compare current+final counts for the target
++    // store. Suppress a quota error only when the exact native readback proves
++    // that at least one of those known checks has no room for the keeper.
++    const nextTargetCount = targetRules.length + 1;
++    return nextTargetCount + otherRules.length > nativeDynamicAndSessionRuleLimit ||
++        targetRules.length + nextTargetCount > nativeDynamicAndSessionRuleLimit;
++}
++
++function isConfirmedSafariDNRCapacityBlock(reason, storageType, stores) {
++    const message = reason instanceof Error ? reason.message : `${reason}`;
++    return safariDNRQuotaErrorPattern.test(message) &&
++        isSafariDNRKeeperCapacityBlocked(storageType, stores);
++}
++
++async function ensureSafariDNRKeeper(storageType) {
++    if ( isSafari === false ) { return; }
++    const updateRules = storageType === 'dynamic'
++        ? updateNativeDynamicRules
++        : updateNativeSessionRules;
++    let stores = await readNativeDNRStores();
++    let rules = rulesForSafariDNRStorage(stores, storageType);
++    let keeper = findSafariDNRKeeper(rules, storageType);
++    if ( keeper !== undefined ) {
++        return true;
++    }
++    if ( isSafariDNRKeeperCapacityBlocked(storageType, stores) ) {
++        throw new Error(
++            'Maximum number of dynamic and session rules exceeded'
++        );
++    }
++    try {
++        await updateRules({ addRules: [ structuredClone(safariDNRKeeperRule) ] });
++    } catch(reason) {
++        stores = await readNativeDNRStores();
++        rules = rulesForSafariDNRStorage(stores, storageType);
++        keeper = findSafariDNRKeeper(rules, storageType);
++        if ( keeper === undefined ) { throw reason; }
++        return true;
++    }
++    stores = await readNativeDNRStores();
++    rules = rulesForSafariDNRStorage(stores, storageType);
++    keeper = findSafariDNRKeeper(rules, storageType);
++    if ( keeper === undefined ) {
++        throw new Error(`Safari ${storageType} DNR keeper rule was not retained`);
++    }
++    return true;
++}
++
++async function ensureSafariDNRKeeperWithCapacityDeferral(storageType) {
++    try {
++        return await ensureSafariDNRKeeper(storageType);
++    } catch(reason) {
++        const stores = await readNativeDNRStores();
++        const rules = rulesForSafariDNRStorage(stores, storageType);
++        if ( findSafariDNRKeeper(rules, storageType) !== undefined ) {
++            return true;
++        }
++        if ( isConfirmedSafariDNRCapacityBlock(reason, storageType, stores) ) {
++            return false;
++        }
++        throw reason;
++    }
++}
++
++async function ensureSafariDNRKeepers({ allowCapacityDeferral = false } = {}) {
++    const ensure = allowCapacityDeferral
++        ? ensureSafariDNRKeeperWithCapacityDeferral
++        : ensureSafariDNRKeeper;
++    const dynamic = await ensure('dynamic');
++    const session = await ensure('session');
++    return dynamic !== false && session !== false;
++}
++
++function assertNoSafariDNRKeeperCollision(options) {
++    if ( isSafari === false ) { return; }
++    if ( options.removeRuleIds?.includes(safariDNRKeeperRuleId) ) {
++        throw new Error('Safari DNR keeper rule cannot be removed');
++    }
++    if ( options.addRules?.some(rule => rule?.id === safariDNRKeeperRuleId) ) {
++        throw new Error('Safari DNR keeper rule ID is reserved');
++    }
++}
++
++function projectSafariDNRUpdate(rules, options) {
++    const removeRuleIds = new Set(options.removeRuleIds || []);
++    const retainedRules = rules.filter(rule => removeRuleIds.has(rule.id) === false);
++    const nextRules = retainedRules.slice();
++    const nextRuleIds = new Set(nextRules.map(rule => rule.id));
++    for ( const rule of options.addRules || [] ) {
++        if ( nextRuleIds.has(rule.id) ) {
++            throw new Error(`Duplicate Safari DNR rule ID ${rule.id}`);
++        }
++        nextRuleIds.add(rule.id);
++        nextRules.push(rule);
++    }
++    return { nextRules, retainedRules };
++}
++
++function safariDNRCapacityError(storageType) {
++    return new Error(
++        `Safari DNR capacity reserves ${safariDNRKeeperRuleCount} hidden ` +
++        `keeper slots; at most ${safariDNRPublicRuleLimit} public dynamic and ` +
++        'session rules can be installed in total, and at most ' +
++        `${safariDNRPublicRuleLimitPerStore} public ${storageType} rules can ` +
++        'be installed in one store'
++    );
++}
++
++async function updateSafariDNRRules(storageType, options) {
++    await ensureSafariDNRKeepers({ allowCapacityDeferral: true });
++    if ( options === undefined ) { return; }
++    if (
++        (options.addRules?.length || 0) === 0 &&
++        (options.removeRuleIds?.length || 0) === 0
++    ) {
++        return;
++    }
++
++    const stores = await readNativeDNRStores();
++    const otherStorageType = otherSafariDNRStorageType(storageType);
++    const targetRules = rulesForSafariDNRStorage(stores, storageType);
++    const otherRules = rulesForSafariDNRStorage(stores, otherStorageType);
++    const targetKeeper = findSafariDNRKeeper(targetRules, storageType);
++    findSafariDNRKeeper(otherRules, otherStorageType);
++    const visibleTargetRules = targetRules.filter(
++        rule => rule.id !== safariDNRKeeperRuleId
++    );
++    const visibleOtherRules = otherRules.filter(
++        rule => rule.id !== safariDNRKeeperRuleId
++    );
++    const projection = projectSafariDNRUpdate(visibleTargetRules, options);
++    const projectedTargetPublicRuleCount = projection.nextRules.length;
++    const projectedPublicRuleCount =
++        projectedTargetPublicRuleCount + visibleOtherRules.length;
++    const isPureReduction = options.addRules === undefined &&
++        projectedTargetPublicRuleCount < visibleTargetRules.length;
++    const hasDeletionAnchor = targetKeeper !== undefined ||
++        projection.retainedRules.length !== 0;
++
++    // Safari 26's C++ port checks currentTarget + finalTarget against the
++    // documented shared limit. Keeping each public store at floor(limit/2)-1
++    // leaves one keeper in both terms, so every replacement/removal accepted
++    // by this facade also passes that native check. Legacy stores above the
++    // boundary must make a sufficiently large explicit reduction in one
++    // atomic update; never let a doomed update reach native storage.
++    if ( projectedTargetPublicRuleCount > safariDNRPublicRuleLimitPerStore ) {
++        throw safariDNRCapacityError(storageType);
++    }
++
++    if ( projectedPublicRuleCount > safariDNRPublicRuleLimit ) {
++        // A legacy/TestFlight store can predate the two-slot reservation. Let
++        // an explicit removal drain it in safe stages, but never weaken the
++        // requested rule set implicitly or let the native delete phase empty
++        // an unguarded database.
++        if ( isPureReduction === false || hasDeletionAnchor === false ) {
++            throw safariDNRCapacityError(storageType);
++        }
++        const projectedTargetNativeRuleCount =
++            projectedTargetPublicRuleCount + (targetKeeper === undefined ? 0 : 1);
++        if (
++            targetRules.length + projectedTargetNativeRuleCount >
++                nativeDynamicAndSessionRuleLimit ||
++            projectedTargetNativeRuleCount + otherRules.length >
++                nativeDynamicAndSessionRuleLimit
++        ) {
++            throw safariDNRCapacityError(storageType);
++        }
++        return storageType === 'dynamic'
++            ? updateNativeDynamicRules(options)
++            : updateNativeSessionRules(options);
++    }
++
++    if ( targetKeeper === undefined && targetRules.length !== 0 &&
++        projection.retainedRules.length === 0 ) {
++        throw new Error(
++            `Safari ${storageType} DNR capacity migration cannot delete the ` +
++            'last unguarded rule; free capacity in a non-empty store first'
++        );
++    }
++
++    const optionsWithKeeper = targetKeeper === undefined
++        ? {
++            ...options,
++            addRules: [
++                ...(options.addRules || []),
++                structuredClone(safariDNRKeeperRule),
++            ],
++        }
++        : options;
++    const projectedTargetNativeRuleCount = projectedTargetPublicRuleCount + 1;
++    if (
++        targetRules.length + projectedTargetNativeRuleCount >
++            nativeDynamicAndSessionRuleLimit ||
++        projectedTargetNativeRuleCount + otherRules.length >
++            nativeDynamicAndSessionRuleLimit
++    ) {
++        throw safariDNRCapacityError(storageType);
++    }
++    const result = storageType === 'dynamic'
++        ? await updateNativeDynamicRules(optionsWithKeeper)
++        : await updateNativeSessionRules(optionsWithKeeper);
++    const confirmedStores = await readNativeDNRStores();
++    const confirmedTargetRules = rulesForSafariDNRStorage(
++        confirmedStores,
++        storageType
++    );
++    const confirmedKeeper = findSafariDNRKeeper(
++        confirmedTargetRules,
++        storageType
++    );
++    if ( confirmedKeeper === undefined ) {
++        throw new Error(`Safari ${storageType} DNR keeper rule was not retained`);
++    }
++    await ensureSafariDNRKeepers({ allowCapacityDeferral: true });
++    return result;
++}
++
+@@ -40 +460,3 @@ let seenRealms = 0b00;
 -let seenRealmsReady = webext.storage.session.get('safari.seenRealms').then(bin => {
 +let seenRealmsReady = runStorageOperation('session', ( ) =>
 +    webext.storage.session.get('safari.seenRealms')
 +).then(bin => {
-@@ -42 +98,0 @@ let seenRealmsReady = webext.storage.session.get('safari.seenRealms').then(bin =
+@@ -42 +463,0 @@ let seenRealmsReady = webext.storage.session.get('safari.seenRealms').then(bin =
 -}).catch(( ) => {
-@@ -45,5 +101,17 @@ let seenRealmsReady = webext.storage.session.get('safari.seenRealms').then(bin =
+@@ -45,5 +466,17 @@ let seenRealmsReady = webext.storage.session.get('safari.seenRealms').then(bin =
 -async function forceEnableRulesets(windowId) {
 -    await seenRealmsReady;
 -    if ( seenRealms === ALL_REALMS ) { return; }
@@ -2260,7 +2625,7 @@ index 73d0354..88d9d9b 100644
 +        }
 +        return 0;
 +    }
-@@ -51,10 +119,29 @@ async function forceEnableRulesets(windowId) {
+@@ -51,10 +484,32 @@ async function forceEnableRulesets(windowId) {
 -    if ( typeof incognito !== 'boolean' ) { return; }
 -    const currentRealm = incognito ? PRIVATE_REALM : NORMAL_REALM;
 -    if ( (seenRealms & currentRealm) !== 0 ) { return; }
@@ -2283,12 +2648,15 @@ index 73d0354..88d9d9b 100644
 +    return left.every((id, index) => id === right[index]);
 +}
 +
-+export function readNativeEnabledRulesets(
++function readNativeEnabledRulesetsNow(
 +    api = nativeDNR,
 +    runtimeAPI = webext.runtime
 +) {
 +    return new Promise((resolve, reject) => {
-+        api.getEnabledRulesets(ids => {
++        const getEnabledRulesets = api === nativeDNR
++            ? getNativeEnabledRulesets
++            : api.getEnabledRulesets.bind(api);
++        getEnabledRulesets(ids => {
 +            const lastError = runtimeAPI.lastError;
 +            if ( lastError ) {
 +                reject(new Error(lastError.message || `${lastError}`));
@@ -2300,24 +2668,37 @@ index 73d0354..88d9d9b 100644
 +            }
 +            resolve(ids);
 +        });
-@@ -64 +151,88 @@ async function forceEnableRulesets(windowId) {
+@@ -64 +519,8 @@ async function forceEnableRulesets(windowId) {
 -windows.onFocusChanged.addListener(forceEnableRulesets);
++export function readNativeEnabledRulesets(
++    api = nativeDNR,
++    runtimeAPI = webext.runtime
++) {
++    const operation = ( ) => readNativeEnabledRulesetsNow(api, runtimeAPI);
++    if ( api !== nativeDNR ) { return operation(); }
++    return runSafariDNROperation(operation);
++}
+@@ -66 +528,28 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
+-/******************************************************************************/
 +async function forceEnableRulesets(currentRealm) {
 +    await seenRealmsReady;
 +    if ( seenRealms === ALL_REALMS ) { return false; }
 +    if ( currentRealm === 0 ) { return false; }
 +    if ( (seenRealms & currentRealm) !== 0 ) { return false; }
-+    const ids = await readNativeEnabledRulesets();
-+    if ( ids.length !== 0 ) {
-+        await nativeDNR.updateEnabledRulesets({
-+            disableRulesetIds: ids.slice(),
-+            enableRulesetIds: ids.slice(),
-+        });
-+        const confirmedIds = await readNativeEnabledRulesets();
-+        if ( compareIds(confirmedIds, ids) === false ) {
-+            throw new Error('Realm static DNR refresh readback mismatch');
++    await runSafariDNROperation(async ( ) => {
++        await ensureSafariDNRKeepers({ allowCapacityDeferral: true });
++        const ids = await readNativeEnabledRulesetsNow();
++        if ( ids.length !== 0 ) {
++            await updateNativeEnabledRulesets({
++                disableRulesetIds: ids.slice(),
++                enableRulesetIds: ids.slice(),
++            });
++            const confirmedIds = await readNativeEnabledRulesetsNow();
++            if ( compareIds(confirmedIds, ids) === false ) {
++                throw new Error('Realm static DNR refresh readback mismatch');
++            }
 +        }
-+    }
++    });
 +    const nextSeenRealms = seenRealms | currentRealm;
 +    // Persist completion only after WebKit accepted the native DNR toggle.
 +    // If either step is interrupted, the next wake safely repeats the toggle.
@@ -2327,7 +2708,8 @@ index 73d0354..88d9d9b 100644
 +    seenRealms = nextSeenRealms;
 +    return true;
 +}
-+
+@@ -68 +557,8 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
+-// https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/declarativeNetRequest/
 +let realmRulesetUpdates = Promise.resolve();
 +let realmRulesetUpdateError;
 +let realmRulesetStartupError;
@@ -2336,7 +2718,8 @@ index 73d0354..88d9d9b 100644
 +const startupGate = new Promise(resolve => {
 +    releaseStartupGate = resolve;
 +});
-+
+@@ -70 +566,27 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
+-const nativeDNR = webext.declarativeNetRequest;
 +export function releaseRealmRulesetStartupGate() {
 +    releaseStartupGate?.();
 +    releaseStartupGate = undefined;
@@ -2364,33 +2747,7 @@ index 73d0354..88d9d9b 100644
 +        }
 +    );
 +});
-+
-+export async function waitForRealmRulesetUpdates() {
-+    await seenRealmsReady;
-+    await startupGate;
-+    for (;;) {
-+        const pending = realmRulesetUpdates;
-+        await pending;
-+        if ( pending === realmRulesetUpdates ) { break; }
-+    }
-+    if ( isRealmRulesetStartupPending ) {
-+        isRealmRulesetStartupPending = false;
-+        if ( realmRulesetStartupError !== undefined ) {
-+            throw realmRulesetStartupError;
-+        }
-+    }
-+    if ( realmRulesetUpdateError !== undefined ) {
-+        throw realmRulesetUpdateError;
-+    }
-+}
-+
-+export function resetSafariRealmReadiness() {
-+    seenRealms = 0b00;
-+    seenRealmsReady = Promise.resolve();
-+    realmRulesetUpdateError = undefined;
-+    realmRulesetStartupError = undefined;
-+}
-@@ -72,9 +246,27 @@ const nativeDNR = webext.declarativeNetRequest;
+@@ -72,9 +594,7 @@ const nativeDNR = webext.declarativeNetRequest;
 -const isSupportedRule = r => {
 -    if ( r.action.responseHeaders ) { return false; }
 -    if ( r.action.requestHeaders ) { return false; }
@@ -2400,88 +2757,35 @@ index 73d0354..88d9d9b 100644
 -        if ( condition.resourceTypes.length === 1 ) { return false; }
 -        const i = condition.resourceTypes.indexOf('object');
 -        condition.resourceTypes.splice(i, 1);
-+async function restoreEnabledRulesets(snapshot) {
-+    const current = new Set(await readNativeEnabledRulesets());
-+    const before = new Set(snapshot);
-+    const enableRulesetIds = snapshot.filter(id => current.has(id) === false);
-+    const disableRulesetIds = Array.from(current).filter(id => before.has(id) === false);
-+    if ( enableRulesetIds.length === 0 && disableRulesetIds.length === 0 ) {
-+        return;
-+    }
-+    await nativeDNR.updateEnabledRulesets({
-+        enableRulesetIds,
-+        disableRulesetIds,
-+    });
-+    const confirmed = await readNativeEnabledRulesets();
-+    if ( compareIds(confirmed, snapshot) === false ) {
-+        throw new Error('Static ruleset rollback readback mismatch');
-+    }
-+}
-+
-+async function updateEnabledRulesetsAndResetRealms(options) {
++export async function waitForRealmRulesetUpdates() {
 +    await seenRealmsReady;
-+    const rulesetSnapshot = await readNativeEnabledRulesets();
-+    const expectedRulesets = new Set(rulesetSnapshot);
-+    for ( const id of options.enableRulesetIds || [] ) {
-+        expectedRulesets.add(id);
-+    }
-+    for ( const id of options.disableRulesetIds || [] ) {
-+        expectedRulesets.delete(id);
-@@ -82,5 +274,37 @@ const isSupportedRule = r => {
++    await startupGate;
++    for (;;) {
++        const pending = realmRulesetUpdates;
++        await pending;
++        if ( pending === realmRulesetUpdates ) { break; }
+@@ -82,5 +602,4 @@ const isSupportedRule = r => {
 -    if ( condition.excludedResourceTypes?.includes('object') ) {
 -        const i = condition.excludedResourceTypes.indexOf('object');
 -        condition.excludedResourceTypes.splice(i, 1);
 -        if ( condition.excludedResourceTypes.length === 0 ) {
 -            delete condition.excludedResourceTypes;
-+    const seenRealmsSnapshot = seenRealms;
-+    try {
-+        seenRealms = 0b00;
-+        await runStorageOperation('session', ( ) =>
-+            webext.storage.session.remove('safari.seenRealms')
-+        );
-+        // Invalidate the durable realm completion marker before mutating the
-+        // static rules. An eviction at either boundary can then only cause a
-+        // harmless extra realm refresh, never a skipped refresh for new rules.
-+        await nativeDNR.updateEnabledRulesets(options);
-+        const confirmedRulesets = await readNativeEnabledRulesets();
-+        if ( compareIds(confirmedRulesets, Array.from(expectedRulesets)) === false ) {
-+            throw new Error('Static ruleset update readback mismatch');
-+        }
-+    } catch(reason) {
-+        const rollbackErrors = [];
-+        try {
-+            await restoreEnabledRulesets(rulesetSnapshot);
-+        } catch(rollbackReason) {
-+            rollbackErrors.push(rollbackReason);
-+        }
-+        seenRealms = seenRealmsSnapshot;
-+        try {
-+            await runStorageOperation('session', ( ) => seenRealmsSnapshot === 0
-+                ? webext.storage.session.remove('safari.seenRealms')
-+                : webext.storage.session.set({
-+                    'safari.seenRealms': seenRealmsSnapshot,
-+                })
-+            );
-+        } catch(rollbackReason) {
-+            rollbackErrors.push(rollbackReason);
-+        }
-+        if ( rollbackErrors.length !== 0 ) {
-+            throw new AggregateError(
-+                [ reason, ...rollbackErrors ],
-+                'Static ruleset update and rollback both failed'
-+            );
-@@ -87,0 +312 @@ const isSupportedRule = r => {
-+        throw reason;
-@@ -89,2 +314 @@ const isSupportedRule = r => {
++    if ( isRealmRulesetStartupPending ) {
++        isRealmRulesetStartupPending = false;
++        if ( realmRulesetStartupError !== undefined ) {
++            throw realmRulesetStartupError;
+@@ -89,2 +608,4 @@ const isSupportedRule = r => {
 -    return true;
 -};
++    if ( realmRulesetUpdateError !== undefined ) {
++        throw realmRulesetUpdateError;
++    }
 +}
-@@ -94 +318,3 @@ const prepareUpdateRules = optionsBefore => {
+@@ -92,11 +613,40 @@ const isSupportedRule = r => {
+-const prepareUpdateRules = optionsBefore => {
+-    const { addRules, removeRuleIds } = optionsBefore;
 -    const addRulesAfter = addRules?.filter(isSupportedRule);
-+    const addRulesAfter = Array.isArray(addRules)
-+        ? normalizeSafariDNRRules(addRules)
-+        : undefined;
-@@ -96,17 +322,4 @@ const prepareUpdateRules = optionsBefore => {
+-    if ( Boolean(addRulesAfter?.length || removeRuleIds?.length) === false ) { return; }
 -    addRulesAfter?.forEach(r => {
 -        if ( r.action?.redirect?.regexSubstitution ) {
 -            if ( r.condition?.requestDomains ) {
@@ -2489,59 +2793,220 @@ index 73d0354..88d9d9b 100644
 -                delete r.condition.requestDomains;
 -                return;
 -            }
--        }
++export function resetSafariRealmReadiness() {
++    seenRealms = 0b00;
++    seenRealmsReady = Promise.resolve();
++    realmRulesetUpdateError = undefined;
++    realmRulesetStartupError = undefined;
++}
++
++/******************************************************************************/
++
++// https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/declarativeNetRequest/
++
++async function restoreEnabledRulesets(snapshot) {
++    const current = new Set(await readNativeEnabledRulesetsNow());
++    const before = new Set(snapshot);
++    const enableRulesetIds = snapshot.filter(id => current.has(id) === false);
++    const disableRulesetIds = Array.from(current).filter(id => before.has(id) === false);
++    if ( enableRulesetIds.length === 0 && disableRulesetIds.length === 0 ) {
++        return;
++    }
++    await updateNativeEnabledRulesets({
++        enableRulesetIds,
++        disableRulesetIds,
++    });
++    const confirmed = await readNativeEnabledRulesetsNow();
++    if ( compareIds(confirmed, snapshot) === false ) {
++        throw new Error('Static ruleset rollback readback mismatch');
++    }
++}
++
++async function updateEnabledRulesetsAndResetRealms(options) {
++    await seenRealmsReady;
++    return runSafariDNROperation(async ( ) => {
++        // Static ruleset changes do not delete dynamic/session SQLite rows.
++        // A legacy store at capacity may therefore defer its missing keepers
++        // while still allowing the independent static update to complete.
++        await ensureSafariDNRKeepers({ allowCapacityDeferral: true });
++        const rulesetSnapshot = await readNativeEnabledRulesetsNow();
++        const expectedRulesets = new Set(rulesetSnapshot);
++        for ( const id of options.enableRulesetIds || [] ) {
++            expectedRulesets.add(id);
+@@ -104,3 +654,2 @@ const prepareUpdateRules = optionsBefore => {
 -        if ( r.condition?.initiatorDomains ) {
 -            r.condition.domains = r.condition.initiatorDomains;
 -            delete r.condition.initiatorDomains;
--        }
++        for ( const id of options.disableRulesetIds || [] ) {
++            expectedRulesets.delete(id);
+@@ -108,3 +657,39 @@ const prepareUpdateRules = optionsBefore => {
 -        if ( r.condition?.excludedInitiatorDomains ) {
 -            r.condition.excludedDomains = r.condition.excludedInitiatorDomains;
 -            delete r.condition.excludedInitiatorDomains;
--        }
--    });
++        const seenRealmsSnapshot = seenRealms;
++        try {
++            seenRealms = 0b00;
++            await runStorageOperation('session', ( ) =>
++                webext.storage.session.remove('safari.seenRealms')
++            );
++            // Invalidate the durable realm completion marker before mutating the
++            // static rules. An eviction at either boundary can then only cause a
++            // harmless extra realm refresh, never a skipped refresh for new rules.
++            await updateNativeEnabledRulesets(options);
++            const confirmedRulesets = await readNativeEnabledRulesetsNow();
++            if ( compareIds(confirmedRulesets, Array.from(expectedRulesets)) === false ) {
++                throw new Error('Static ruleset update readback mismatch');
++            }
++        } catch(reason) {
++            const rollbackErrors = [];
++            try {
++                await restoreEnabledRulesets(rulesetSnapshot);
++            } catch(rollbackReason) {
++                rollbackErrors.push(rollbackReason);
++            }
++            seenRealms = seenRealmsSnapshot;
++            try {
++                await runStorageOperation('session', ( ) => seenRealmsSnapshot === 0
++                    ? webext.storage.session.remove('safari.seenRealms')
++                    : webext.storage.session.set({
++                        'safari.seenRealms': seenRealmsSnapshot,
++                    })
++                );
++            } catch(rollbackReason) {
++                rollbackErrors.push(rollbackReason);
++            }
++            if ( rollbackErrors.length !== 0 ) {
++                throw new AggregateError(
++                    [ reason, ...rollbackErrors ],
++                    'Static ruleset update and rollback both failed'
++                );
++            }
++            throw reason;
+@@ -112,0 +698,13 @@ const prepareUpdateRules = optionsBefore => {
++}
++
++const prepareUpdateRules = optionsBefore => {
++    assertNoSafariDNRKeeperCollision(optionsBefore);
++    const { addRules, removeRuleIds } = optionsBefore;
++    const addRulesAfter = Array.isArray(addRules)
++        ? normalizeSafariDNRRules(addRules)
++        : undefined;
++    if ( Boolean(addRulesAfter?.length || removeRuleIds?.length) === false ) { return; }
 +    // Safari 26 implements the standard initiator-domain keys, including the
 +    // included+excluded combination. Legacy domains/excludedDomains cannot
 +    // represent that combination because WebKit prefers domains and ignores
 +    // excludedDomains when both aliases are present.
-@@ -150 +363 @@ export const dnr = {
+@@ -145 +743,3 @@ export const dnr = {
+-    MAX_NUMBER_OF_REGEX_RULES: nativeDNR.MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES,
++    MAX_NUMBER_OF_REGEX_RULES: isSafari
++        ? safariDNRPublicRuleLimitPerStore
++        : nativeDNR.MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES,
+@@ -149,5 +749,9 @@ export const dnr = {
+-    getDynamicRules({ ruleIds } = {}) {
 -        return new Promise(resolve => {
-+        return new Promise((resolve, reject) => {
-@@ -152 +365,9 @@ export const dnr = {
+-            nativeDNR.getDynamicRules(rules => {
 -                if ( Array.isArray(rules) === false ) { return resolve([]); }
-+                const lastError = webext.runtime.lastError;
-+                if ( lastError ) {
-+                    reject(new Error(lastError.message || `${lastError}`));
-+                    return;
-+                }
-+                if ( Array.isArray(rules) === false ) {
-+                    reject(new Error('Invalid dynamic DNR readback'));
-+                    return;
-+                }
-@@ -157,2 +378,2 @@ export const dnr = {
--    getEnabledRulesets(...args) {
+-                return resolve(normalizeDNRRules(rules, ruleIds));
++    getDynamicRules(...args) {
++        if ( isSafari === false ) {
++            return getNativeDynamicRules(...args);
++        }
++        const { ruleIds } = args[0] || {};
++        return (async ( ) => {
++            const rules = await runSafariDNROperation(async ( ) => {
++                await ensureSafariDNRKeeperWithCapacityDeferral('dynamic');
++                return readNativeDynamicRules();
+@@ -155 +759,5 @@ export const dnr = {
+-        });
++            const visibleRules = rules.filter(
++                rule => rule.id !== safariDNRKeeperRuleId
++            );
++            return normalizeDNRRules(visibleRules, ruleIds);
++        })();
+@@ -158 +766,4 @@ export const dnr = {
 -        return nativeDNR.getEnabledRulesets(...args);
-+    getEnabledRulesets() {
++        if ( isSafari === false ) {
++            return getNativeEnabledRulesets(...args);
++        }
 +        return readNativeEnabledRulesets();
-@@ -164 +385 @@ export const dnr = {
+@@ -161 +772,17 @@ export const dnr = {
+-        return nativeDNR.getMatchedRules(...args);
++        if ( isSafari === false ) {
++            return nativeDNR.getMatchedRules(...args);
++        }
++        return (async ( ) => {
++            const result = await runSafariDNROperation(( ) =>
++                nativeDNR.getMatchedRules(...args)
++            );
++            if ( Array.isArray(result?.rulesMatchedInfo) === false ) {
++                return result;
++            }
++            return {
++                ...result,
++                rulesMatchedInfo: result.rulesMatchedInfo.filter(info =>
++                    info?.rule?.ruleId !== safariDNRKeeperRuleId
++                ),
++            };
++        })();
+@@ -163,5 +790,9 @@ export const dnr = {
+-    getSessionRules({ ruleIds } = {}) {
 -        return new Promise(resolve => {
-+        return new Promise((resolve, reject) => {
-@@ -166 +387,9 @@ export const dnr = {
+-            nativeDNR.getSessionRules(rules => {
 -                if ( Array.isArray(rules) === false ) { return resolve([]); }
-+                const lastError = webext.runtime.lastError;
-+                if ( lastError ) {
-+                    reject(new Error(lastError.message || `${lastError}`));
-+                    return;
-+                }
-+                if ( Array.isArray(rules) === false ) {
-+                    reject(new Error('Invalid session DNR readback'));
-+                    return;
-+                }
-@@ -180,3 +409 @@ export const dnr = {
+-                return resolve(normalizeDNRRules(rules, ruleIds));
++    getSessionRules(...args) {
++        if ( isSafari === false ) {
++            return getNativeSessionRules(...args);
++        }
++        const { ruleIds } = args[0] || {};
++        return (async ( ) => {
++            const rules = await runSafariDNROperation(async ( ) => {
++                await ensureSafariDNRKeeperWithCapacityDeferral('session');
++                return readNativeSessionRules();
+@@ -169 +800,5 @@ export const dnr = {
+-        });
++            const visibleRules = rules.filter(
++                rule => rule.id !== safariDNRKeeperRuleId
++            );
++            return normalizeDNRRules(visibleRules, ruleIds);
++        })();
+@@ -174,4 +809,8 @@ export const dnr = {
+-    async updateDynamicRules(optionsBefore) {
+-        const optionsAfter = prepareUpdateRules(optionsBefore);
+-        if ( optionsAfter === undefined ) { return; }
+-        return nativeDNR.updateDynamicRules(optionsAfter);
++    updateDynamicRules(optionsBefore) {
++        if ( isSafari === false ) {
++            return updateNativeDynamicRules(optionsBefore);
++        }
++        return runSafariDNROperation(( ) => {
++            const optionsAfter = prepareUpdateRules(optionsBefore);
++            return updateSafariDNRRules('dynamic', optionsAfter);
++        });
+@@ -179,4 +818,5 @@ export const dnr = {
+-    async updateEnabledRulesets(...args) {
 -        await nativeDNR.updateEnabledRulesets(...args);
 -        seenRealms = 0b00;
 -        await webext.storage.session.remove('safari.seenRealms');
++    updateEnabledRulesets(...args) {
++        if ( isSafari === false ) {
++            return updateNativeEnabledRulesets(...args);
++        }
 +        return updateEnabledRulesetsAndResetRealms(...args);
-@@ -189 +416,8 @@ export const dnr = {
+@@ -184,4 +824,8 @@ export const dnr = {
+-    async updateSessionRules(optionsBefore) {
+-        const optionsAfter = prepareUpdateRules(optionsBefore);
+-        if ( optionsAfter === undefined ) { return; }
+-        return nativeDNR.updateSessionRules(optionsAfter);
++    updateSessionRules(optionsBefore) {
++        if ( isSafari === false ) {
++            return updateNativeSessionRules(optionsBefore);
++        }
++        return runSafariDNROperation(( ) => {
++            const optionsAfter = prepareUpdateRules(optionsBefore);
++            return updateSafariDNRRules('session', optionsAfter);
++        });
+@@ -189 +833,8 @@ export const dnr = {
 -    async setAllowAllRules(id, allowed, notAllowed, reverse, priority) {
 +    async setAllowAllRules(
 +        id,
@@ -2551,13 +3016,13 @@ index 73d0354..88d9d9b 100644
 +        priority,
 +        throwOnError = false
 +    ) {
-@@ -200 +434 @@ export const dnr = {
+@@ -200 +851 @@ export const dnr = {
 -                rule0.condition.domains = allowed;
 +                rule0.condition.initiatorDomains = allowed;
-@@ -202 +436 @@ export const dnr = {
+@@ -202 +853 @@ export const dnr = {
 -                rule0.condition.excludedDomains = notAllowed;
 +                rule0.condition.excludedInitiatorDomains = notAllowed;
-@@ -207,8 +441,14 @@ export const dnr = {
+@@ -207,8 +858,14 @@ export const dnr = {
 -        return this.updateDynamicRules({
 -            addRules,
 -            removeRuleIds: beforeRules.map(r => r.id),
@@ -3823,7 +4288,7 @@ index 8a7831a..335baad 100644
 -            await writeFilteringModeDetails(filteringModes);
 +            await writeFilteringModeDetails(filteringModes, startupFresh);
 diff --git a/js/popup.js b/js/popup.js
-index 89cd69f..782969e 100644
+index 89cd69f..9c95e21 100644
 --- a/js/popup.js
 +++ b/js/popup.js
 @@ -22 +22,6 @@
@@ -3834,11 +4299,13 @@ index 89cd69f..782969e 100644
 +    runtime,
 +    sendMessage,
 +} from './ext.js';
-@@ -32,0 +38,24 @@ const tabURL = new URL(runtime.getURL('/'));
+@@ -32,0 +38,53 @@ const tabURL = new URL(runtime.getURL('/'));
 +let popupMutationTail = Promise.resolve();
 +let popupMutationError;
 +let popupMutationRevision = 0;
 +let popupInitialization;
++const pendingPopupRoutes = new Set();
++let popupRouteError;
 +
 +function queuePopupMutation(operation) {
 +    popupMutationRevision += 1;
@@ -3859,7 +4326,34 @@ index 89cd69f..782969e 100644
 +    }
 +}
 +
-@@ -44,0 +74,16 @@ const BLOCKING_MODE_MAX = 3;
++function trackPopupRoute(route) {
++    pendingPopupRoutes.add(route);
++    void route.then(
++        ( ) => {
++            pendingPopupRoutes.delete(route);
++        },
++        reason => {
++            popupRouteError ??= reason;
++            pendingPopupRoutes.delete(route);
++        }
++    );
++    return route;
++}
++
++async function settlePopupRoutes() {
++    for (;;) {
++        const pending = Array.from(pendingPopupRoutes);
++        if ( pending.length === 0 ) { break; }
++        await Promise.allSettled(pending);
++    }
++    const earlierRouteError = popupRouteError;
++    popupRouteError = undefined;
++    if ( earlierRouteError !== undefined ) {
++        throw earlierRouteError;
++    }
++}
++
+@@ -44,0 +103,16 @@ const BLOCKING_MODE_MAX = 3;
 +function showRuntimeError(reason) {
 +    const message = reason instanceof Error ? reason.message : `${reason}`;
 +    dom.text('#runtimeError', message);
@@ -3876,7 +4370,7 @@ index 89cd69f..782969e 100644
 +    );
 +}
 +
-@@ -60,2 +105,6 @@ async function setFilteringMode(level, commit = false) {
+@@ -60,2 +134,6 @@ async function setFilteringMode(level, commit = false) {
 -async function commitFilteringMode() {
 -    if ( tabURL.hostname === '' ) { return; }
 +export function commitFilteringMode(
@@ -3885,12 +4379,12 @@ index 89cd69f..782969e 100644
 +    autoReload = popupPanelData.autoReload,
 +    permissionRequester = origins => browser.permissions.request({ origins })
 +) {
-@@ -62,0 +112 @@ async function commitFilteringMode() {
+@@ -62,0 +141 @@ async function commitFilteringMode() {
 +    if ( targetHostname === '' ) { return Promise.resolve(false); }
-@@ -65,0 +116,2 @@ async function commitFilteringMode() {
+@@ -65,0 +145,2 @@ async function commitFilteringMode() {
 +    let pendingModeRequest = Promise.resolve({ value: undefined });
 +    let permissionRequest = Promise.resolve({ value: true });
-@@ -68,8 +120,20 @@ async function commitFilteringMode() {
+@@ -68,8 +149,20 @@ async function commitFilteringMode() {
 -            sendMessage({
 -                what: 'setPendingFilteringMode',
 -                tabId: currentTab.id,
@@ -3919,12 +4413,12 @@ index 89cd69f..782969e 100644
 +            } catch(reason) {
 +                pendingModeRequest = Promise.resolve({ error: reason });
 +            }
-@@ -77 +141,3 @@ async function commitFilteringMode() {
+@@ -77 +170,3 @@ async function commitFilteringMode() {
 -        let granted = false;
 +        // WebKit requires permissions.request() to be invoked in the original
 +        // user-gesture stack. Starting it inside the serialized promise tail
 +        // makes every Basic -> Optimal/Complete click fail on iOS.
-@@ -79,4 +145,47 @@ async function commitFilteringMode() {
+@@ -79,4 +174,5 @@ async function commitFilteringMode() {
 -            granted = await browser.permissions.request({
 -                origins: [ `*://*.${targetHostname}/*` ],
 -            });
@@ -3934,7 +4428,7 @@ index 89cd69f..782969e 100644
 +            ]));
 +        } catch(reason) {
 +            permissionRequest = Promise.resolve({ error: reason });
-+        }
+@@ -83,0 +180,43 @@ async function commitFilteringMode() {
 +    }
 +    return queuePopupMutation(( ) => commitFilteringModeNow(
 +        messageSender,
@@ -3976,12 +4470,12 @@ index 89cd69f..782969e 100644
 +            setFilteringMode(beforeLevel);
 +            showRuntimeError(permissionResult.error);
 +            return false;
-@@ -83,0 +193 @@ async function commitFilteringMode() {
++        }
 +        const granted = permissionResult.value;
-@@ -86 +196 @@ async function commitFilteringMode() {
+@@ -86 +225 @@ async function commitFilteringMode() {
 -            return;
 +            return false;
-@@ -93,5 +203,16 @@ async function commitFilteringMode() {
+@@ -93,5 +232,16 @@ async function commitFilteringMode() {
 -    const actualLevel = await sendMessage({
 -        what: 'setFilteringMode',
 -        hostname: targetHostname,
@@ -4003,21 +4497,22 @@ index 89cd69f..782969e 100644
 +        showRuntimeError(reason);
 +        return false;
 +    }
-@@ -101 +222,3 @@ async function commitFilteringMode() {
+@@ -101 +251,3 @@ async function commitFilteringMode() {
 -    if ( actualLevel !== beforeLevel && popupPanelData.autoReload ) {
 +    modeSlider.dataset.levelBefore = `${actualLevel}`;
 +    popupPanelData.level = actualLevel;
 +    if ( actualLevel !== beforeLevel && autoReload ) {
-@@ -104 +227,3 @@ async function commitFilteringMode() {
+@@ -104 +256,3 @@ async function commitFilteringMode() {
 -            if ( justReload ) {
 +            if ( typeof reloadTab === 'function' ) {
 +                reloadTab();
 +            } else if ( justReload ) {
-@@ -110,0 +236 @@ async function commitFilteringMode() {
+@@ -110,0 +265 @@ async function commitFilteringMode() {
 +    return true;
-@@ -112,0 +239,53 @@ async function commitFilteringMode() {
+@@ -112,0 +268,78 @@ async function commitFilteringMode() {
 +self.floorpPrepareToClose = async ( ) => {
 +    try {
++        await settlePopupRoutes();
 +        if ( popupMutationRevision === 0 ) {
 +            return { ready: true, noMutation: true };
 +        }
@@ -4069,31 +4564,68 @@ index 89cd69f..782969e 100644
 +    }
 +};
 +
-@@ -223,0 +403,2 @@ dom.on('#gotoMatchedRules', 'click', ev => {
++async function completePopupRoute(
++    operation,
++    expectsOpenedResponse = true
++) {
++    clearRuntimeError();
++    if ( pendingPopupRoutes.size === 0 ) {
++        popupRouteError = undefined;
++    }
++    try {
++        await trackPopupRoute((async ( ) => {
++            const response = assertSuccessfulMessageResponse(await operation);
++            if ( expectsOpenedResponse && response?.opened !== true ) {
++                throw new Error(response?.error || 'Popup route was not opened');
++            }
++            return response;
++        })());
++        self.close();
++    } catch(reason) {
++        showRuntimeError(reason);
++    }
++}
++
++self.floorpCompletePopupRoute = completePopupRoute;
++
+@@ -221 +454 @@ dom.on('#gotoMatchedRules', 'click', ev => {
+-    sendMessage({
++    void completePopupRoute(sendMessage({
+@@ -224 +457,3 @@ dom.on('#gotoMatchedRules', 'click', ev => {
+-    });
 +        windowId: currentTab.windowId,
 +        incognito: currentTab.incognito === true,
-@@ -243,0 +425,2 @@ dom.on('#gotoReport', 'click', ev => {
++    }));
+@@ -241 +476 @@ dom.on('#gotoReport', 'click', ev => {
+-    sendMessage({
++    void completePopupRoute(sendMessage({
+@@ -244 +479,3 @@ dom.on('#gotoReport', 'click', ev => {
+-    });
 +        windowId: currentTab.windowId,
 +        incognito: currentTab.incognito === true,
-@@ -259 +442 @@ dom.on('#gotoZapper', 'click', ( ) => {
++    }));
+@@ -252 +489 @@ dom.on('#gotoDashboard', 'click', ev => {
+-    runtime.openOptionsPage();
++    void completePopupRoute(runtime.openOptionsPage(), false);
+@@ -259 +496 @@ dom.on('#gotoZapper', 'click', ( ) => {
 -    browser.scripting.executeScript({
 +    void queuePopupMutation(( ) => browser.scripting.executeScript({
-@@ -262 +445 @@ dom.on('#gotoZapper', 'click', ( ) => {
+@@ -262 +499 @@ dom.on('#gotoZapper', 'click', ( ) => {
 -    });
 +    }));
-@@ -270 +453 @@ dom.on('#gotoPicker', 'click', ( ) => {
+@@ -270 +507 @@ dom.on('#gotoPicker', 'click', ( ) => {
 -    browser.scripting.executeScript({
 +    void queuePopupMutation(( ) => browser.scripting.executeScript({
-@@ -277 +460 @@ dom.on('#gotoPicker', 'click', ( ) => {
+@@ -277 +514 @@ dom.on('#gotoPicker', 'click', ( ) => {
 -    });
 +    }));
-@@ -285 +468 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
+@@ -285 +522 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
 -    browser.scripting.executeScript({
 +    void queuePopupMutation(( ) => browser.scripting.executeScript({
-@@ -292 +475 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
+@@ -292 +529 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
 -    });
 +    }));
-@@ -303 +486,10 @@ async function init() {
+@@ -303 +540,10 @@ async function init() {
 -    if ( tab instanceof Object === false ) { return true; }
 +    if ( tab instanceof Object === false ) {
 +        throw new Error('Active tab is unavailable');
@@ -4105,13 +4637,13 @@ index 89cd69f..782969e 100644
 +    ) {
 +        throw new Error('Active tab routing data is unavailable');
 +    }
-@@ -315 +507 @@ async function init() {
+@@ -315 +561 @@ async function init() {
 -        return false;
 +        throw new Error('Active tab URL is unavailable');
-@@ -319 +511 @@ async function init() {
+@@ -319 +565 @@ async function init() {
 -        const response = await sendMessage({
 +        const response = assertSuccessfulMessageResponse(await sendMessage({
-@@ -323,3 +515,20 @@ async function init() {
+@@ -323,3 +569,20 @@ async function init() {
 -        });
 -        if ( response instanceof Object ) {
 -            Object.assign(popupPanelData, response);
@@ -4135,12 +4667,12 @@ index 89cd69f..782969e 100644
 +            response.hasCustomFilters < 0
 +        ) {
 +            throw new Error('Invalid popup panel data');
-@@ -326,0 +536 @@ async function init() {
+@@ -326,0 +590 @@ async function init() {
 +        Object.assign(popupPanelData, response, { disabledFeatures });
-@@ -350 +560 @@ async function init() {
+@@ -350 +614 @@ async function init() {
 -async function tryInit() {
 +async function tryInit(attempt = 1) {
-@@ -352,5 +562,5 @@ async function tryInit() {
+@@ -352,5 +616,5 @@ async function tryInit() {
 -        await init();
 -    } catch {
 -        setTimeout(tryInit, 100);
@@ -4151,7 +4683,7 @@ index 89cd69f..782969e 100644
 +        if ( attempt >= 20 ) { throw reason; }
 +        await new Promise(resolve => self.setTimeout(resolve, 100));
 +        return tryInit(attempt + 1);
-@@ -360 +570,7 @@ async function tryInit() {
+@@ -360 +624,7 @@ async function tryInit() {
 -tryInit();
 +popupInitialization = tryInit().finally(( ) => {
 +    dom.cl.remove(dom.body, 'loading', 'busy');
@@ -4160,7 +4692,7 @@ index 89cd69f..782969e 100644
 +    popupMutationError ??= reason;
 +    showRuntimeError(reason);
 +});
-@@ -363 +578,0 @@ tryInit();
+@@ -363 +632,0 @@ tryInit();
 -
 diff --git a/js/ruleset-manager.js b/js/ruleset-manager.js
 index ea0db34..fb1461a 100644

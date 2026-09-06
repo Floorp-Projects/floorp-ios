@@ -1619,6 +1619,40 @@
          }
          disconnect() {
              if (this.changeSubscribers.size > 0) {
+@@ -3026,31 +3050,3 @@
+-    function ShortcutLink(props) {
+-        const shortcut = props.shortcuts[props.commandName];
+-        const shortcutMessage = props.textTemplate(shortcut);
+-        const cls = mergeClass("shortcut", [
+-            shortcut ? "shortcut--set" : null,
+-            props.class
+-        ]);
+-        function onClick(e) {
+-            e.preventDefault();
+-            if (isEdge) {
+-                chrome.tabs.create({
+-                    url: `edge://extensions/shortcuts`,
+-                    active: true
+-                });
+-                return;
+-            }
+-            chrome.tabs.create({
+-                url: `chrome://extensions/configureCommands#command-${chrome.runtime.id}-${props.commandName}`,
+-                active: true
+-            });
+-        }
+-        function onRender(node) {
+-            node.textContent = shortcutMessage;
+-        }
+-        return m$1("a", {
+-            class: cls,
+-            href: "#",
+-            onclick: onClick,
+-            oncreate: onRender
+-        });
++    function ShortcutLink() {
++        return null;
+     }
 @@ -4658,16 +4682,10 @@
                                      isSystemAutomation
                              },
@@ -1640,6 +1674,23 @@
                                  changeAutomationMode(
                                      isSystemAutomation
                                          ? AutomationMode.NONE
+@@ -5129,16 +5119,6 @@
+                         iconClass: "settings-icon-auto"
+                     },
+                     m$1(AutomationTab, {...props})
+-                ),
+-                m$1(
+-                    TabPanel$1.Tab,
+-                    {
+-                        id: "hotkeys",
+-                        label: "Hotkeys",
+-                        icon: m$1(KeyboardIcon, null),
+-                        iconClass: "settings-icon-hotkeys"
+-                    },
+-                    m$1(HotkeysTab, {...props})
+                 ),
+                 m$1(
+                     TabPanel$1.Tab,
 @@ -5180,6 +5198,7 @@
      }
      async function start() {
@@ -1650,10 +1701,7 @@
          });
 --- a/ui/popup/index.js
 +++ b/ui/popup/index.js
-@@ -1338,6 +1338,13 @@
-                 });
-             });
-         }
+@@ -1340,0 +1341,7 @@
 +        sendMutation(type, data) {
 +            const request = this.sendRequest(type, data);
 +            request.catch((error) =>
@@ -1661,13 +1709,7 @@
 +            );
 +            return request;
 +        }
-         async firefoxSendRequestWithResponse(type, data) {
-             return new Promise((resolve, reject) => {
-                 const dataPort = chrome.runtime.connect({name: type});
-@@ -1358,6 +1365,29 @@
-         }
-         async getDevToolsData() {
-             return await this.sendRequest(MessageTypeUItoBG.GET_DEVTOOLS_DATA);
+@@ -1360,0 +1368,23 @@
 +        }
 +        async prepareToClose() {
 +            return new Promise((resolve) => {
@@ -1691,13 +1733,7 @@
 +                    }
 +                );
 +            });
-         }
-         onChangesReceived = ({type, data}) => {
-             if (type === MessageTypeBGtoUI.CHANGES) {
-@@ -1377,40 +1407,31 @@
-             return null;
-         }
-         changeSettings(settings) {
+@@ -1380,4 +1410,4 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.CHANGE_SETTINGS,
 -                data: settings
@@ -1706,15 +1742,13 @@
 +                MessageTypeUItoBG.CHANGE_SETTINGS,
 +                settings
 +            );
-         }
-         setTheme(theme) {
+@@ -1386,4 +1416 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.SET_THEME,
 -                data: theme
 -            });
 +            return this.sendMutation(MessageTypeUItoBG.SET_THEME, theme);
-         }
-         toggleActiveTab() {
+@@ -1392,4 +1419,4 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
 -                data: {}
@@ -1723,15 +1757,13 @@
 +                MessageTypeUItoBG.TOGGLE_ACTIVE_TAB,
 +                {}
 +            );
-         }
-         markNewsAsRead(ids) {
+@@ -1398,4 +1425 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.MARK_NEWS_AS_READ,
 -                data: ids
 -            });
 +            return this.sendMutation(MessageTypeUItoBG.MARK_NEWS_AS_READ, ids);
-         }
-         markNewsAsDisplayed(ids) {
+@@ -1404,4 +1428,4 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
 -                data: ids
@@ -1740,42 +1772,31 @@
 +                MessageTypeUItoBG.MARK_NEWS_AS_DISPLAYED,
 +                ids
 +            );
-         }
-         loadConfig(options) {
+@@ -1410,4 +1434 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.LOAD_CONFIG,
 -                data: options
 -            });
 +            return this.sendMutation(MessageTypeUItoBG.LOAD_CONFIG, options);
-         }
-         async applyDevFixes(type, text) {
-             return await this.sendRequest(MessageTypeUItoBG.APPLY_DEV_FIXES, {
-@@ -1419,27 +1440,24 @@
-             });
-         }
-         resetDevFixes(type) {
+@@ -1422,3 +1443,2 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.RESET_DEV_FIXES,
 -                data: {type}
 +            return this.sendMutation(MessageTypeUItoBG.RESET_DEV_FIXES, {
 +                type
-             });
-         }
-         startActivation(email, key) {
+@@ -1428,3 +1448,3 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.START_ACTIVATION,
 -                data: {email, key}
 +            return this.sendMutation(MessageTypeUItoBG.START_ACTIVATION, {
 +                email,
 +                key
-             });
-         }
-         resetActivation() {
+@@ -1434,3 +1454 @@
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.RESET_ACTIVATION
 -            });
 +            return this.sendMutation(MessageTypeUItoBG.RESET_ACTIVATION);
-         }
+@@ -1438,5 +1456,5 @@
 -        async hideHighlights(ids) {
 -            chrome.runtime.sendMessage({
 -                type: MessageTypeUItoBG.HIDE_HIGHLIGHTS,
@@ -1786,10 +1807,171 @@
 +                MessageTypeUItoBG.HIDE_HIGHLIGHTS,
 +                ids
 +            );
-         }
-         disconnect() {
-             if (this.changeSubscribers.size > 0) {
-@@ -7861,25 +7879,15 @@
+@@ -1586,10 +1604,20 @@
+-    async function openExtensionPage(page) {
+-        const url = chrome.runtime.getURL(`/ui/${page}/index.html`);
+-        if (isMobile || page === "options") {
+-            const extensionPageTab = await getExtensionPageTab();
+-            if (extensionPageTab !== null) {
+-                chrome.tabs.update(extensionPageTab.id, {active: true});
+-                window.close();
+-            } else {
+-                chrome.tabs.create({url});
+-                window.close();
++    const pendingExtensionPageRoutes = new Set();
++    let extensionPageRouteError = null;
++    let extensionPageClosePreparation = null;
++    function getExtensionPageRouteErrorMessage(reason) {
++        if (reason && typeof reason.message === "string") {
++            return reason.message;
++        }
++        return String(reason);
++    }
++    function trackExtensionPageRoute(operation) {
++        if (pendingExtensionPageRoutes.size === 0) {
++            extensionPageRouteError = null;
++        }
++        const route = operation();
++        pendingExtensionPageRoutes.add(route);
++        route.then(
++            () => pendingExtensionPageRoutes.delete(route),
++            (reason) => {
++                extensionPageRouteError = reason;
++                pendingExtensionPageRoutes.delete(route);
+@@ -1597,15 +1625,47 @@
+-        } else {
+-            const extensionPageTab = await getExtensionPageTab();
+-            if (extensionPageTab !== null) {
+-                chrome.windows.update(extensionPageTab.windowId, {
+-                    focused: true
+-                });
+-                window.close();
+-            } else {
+-                chrome.windows.create({
+-                    type: "popup",
+-                    url,
+-                    width: 800,
+-                    height: 600
+-                });
+-                window.close();
++        );
++        return route;
++    }
++    async function prepareExtensionPageRoutesToClose() {
++        while (pendingExtensionPageRoutes.size > 0) {
++            await Promise.allSettled([...pendingExtensionPageRoutes]);
++        }
++        if (extensionPageRouteError !== null) {
++            return {
++                ready: false,
++                error: `Dark Reader page route failed: ${getExtensionPageRouteErrorMessage(extensionPageRouteError)}`
++            };
++        }
++        return {ready: true};
++    }
++    async function preparePopupToClose(connector) {
++        if (extensionPageClosePreparation !== null) {
++            return extensionPageClosePreparation;
++        }
++        const preparation = (async () => {
++            const [readiness, routeReadiness] = await Promise.allSettled([
++                connector.prepareToClose(),
++                prepareExtensionPageRoutesToClose()
++            ]);
++            if (routeReadiness.status === "rejected") {
++                return {
++                    ready: false,
++                    error: `Dark Reader page route settlement failed: ${getExtensionPageRouteErrorMessage(routeReadiness.reason)}`
++                };
++            }
++            if (!routeReadiness.value.ready) {
++                return routeReadiness.value;
++            }
++            if (readiness.status === "rejected") {
++                return {
++                    ready: false,
++                    error: `Dark Reader close preparation failed: ${getExtensionPageRouteErrorMessage(readiness.reason)}`
++                };
++            }
++            return readiness.value;
++        })();
++        extensionPageClosePreparation = preparation;
++        try {
++            return await preparation;
++        } finally {
++            if (extensionPageClosePreparation === preparation) {
++                extensionPageClosePreparation = null;
+@@ -1614,0 +1675,32 @@
++    async function openExtensionPage(page) {
++        const route = trackExtensionPageRoute(async () => {
++            const url = chrome.runtime.getURL(`/ui/${page}/index.html`);
++            if (isMobile || page === "options") {
++                const extensionPageTab = await getExtensionPageTab();
++                if (extensionPageTab !== null) {
++                    await chrome.tabs.update(extensionPageTab.id, {
++                        active: true
++                    });
++                } else {
++                    await chrome.tabs.create({url});
++                }
++            } else {
++                const extensionPageTab = await getExtensionPageTab();
++                if (extensionPageTab !== null) {
++                    await chrome.windows.update(extensionPageTab.windowId, {
++                        focused: true
++                    });
++                } else {
++                    await chrome.windows.create({
++                        type: "popup",
++                        url,
++                        width: 800,
++                        height: 600
++                    });
++                }
++            }
++        });
++        await route;
++        window.close();
++    }
++    globalThis.floorpOpenExtensionPage = openExtensionPage;
+@@ -3527,33 +3619,5 @@
+     var Select$1 = withState(Select);
+-
++
+-    function ShortcutLink(props) {
+-        const shortcut = props.shortcuts[props.commandName];
+-        const shortcutMessage = props.textTemplate(shortcut);
+-        const cls = mergeClass("shortcut", [
+-            shortcut ? "shortcut--set" : null,
+-            props.class
+-        ]);
+-        function onClick(e) {
+-            e.preventDefault();
+-            if (isEdge) {
+-                chrome.tabs.create({
+-                    url: `edge://extensions/shortcuts`,
+-                    active: true
+-                });
+-                return;
+-            }
+-            chrome.tabs.create({
+-                url: `chrome://extensions/configureCommands#command-${chrome.runtime.id}-${props.commandName}`,
+-                active: true
+-            });
+-        }
+-        function onRender(node) {
+-            node.textContent = shortcutMessage;
+-        }
+-        return m$1("a", {
+-            class: cls,
+-            href: "#",
+-            onclick: onClick,
+-            oncreate: onRender
+-        });
++    function ShortcutLink() {
++        return null;
+     }
+@@ -7861,25 +7925,16 @@
              })
          );
      }
@@ -1806,7 +1988,8 @@
 -    }
      async function start() {
          const connector = new Connector();
-+        globalThis.floorpPrepareToClose = () => connector.prepareToClose();
++        globalThis.floorpPrepareToClose = () =>
++            preparePopupToClose(connector);
          window.addEventListener("unload", () => connector.disconnect());
 -        const [data, fonts, installation] = await Promise.all([
 +        const [data, fonts] = await Promise.all([
@@ -1819,6 +2002,20 @@
          renderBody(data, fonts, installation, connector);
          connector.subscribeToChanges((data) =>
              renderBody(data, fonts, installation, connector)
+--- a/ui/popup/style.css
++++ b/ui/popup/style.css
+@@ -1891,6 +1891,11 @@
+     flex: none;
+     white-space: nowrap;
+ }
++.header__more-settings__shortcut-wrapper,
++.header__more-settings__shortcut-wrapper + .header__more-settings__description,
++.site-list-settings__shortcut {
++    display: none !important;
++}
+ .site-list-settings__text-list {
+     flex: initial;
+ }
 --- a/ui/stylesheet-editor/index.js
 +++ b/ui/stylesheet-editor/index.js
 @@ -1318,6 +1318,13 @@

@@ -5,7 +5,8 @@ WKWebExtension APIs. It contains two optional, app-bundled extensions: Dark
 Reader 4.9.129 and uBlock Origin Lite 2026.825.1619. No sign-in is required.
 
 In Settings > Extensions, install Dark Reader. Confirm that page appearance,
-its action popup and options work; disabling or uninstalling it immediately
+its action popup and options work; opening Options, even while also closing the popup,
+must wait until the Floorp tab has been accepted; disabling or uninstalling it immediately
 restores open pages. After disabling, enabling must show “Will enable after restart”
 and remain inactive until Floorp is restarted. After uninstalling, restart Floorp before
 reinstalling; installation then works. Confirm that
@@ -25,8 +26,12 @@ immediately, then confirm the selection and blocking persist. Also test disable/
 across restart, uninstall/restart/reinstall, and persistence after restart.
 If an update is offered, confirm it requires restart and completes on the next cold launch.
 Enable Developer mode in the dashboard, then open Matched rules from both normal
-and explicitly allowed Private Browsing and confirm each page stays in its originating
-browsing mode.
+and explicitly allowed Private Browsing. Also try closing during the route. Confirm the popup closes, the route opens once,
+and each page stays in its originating browsing mode.
+Save and then clear a harmless user DNR rule. Confirm there is no “unknown error,” blocking
+and the dashboard survive relaunch, and Matched rules never lists internal keeper ID 7,000,000.
+When upgrading an existing test install, confirm its rules/dashboard remain available; Floorp reserves
+two of WebKit's 30,000 dynamic/session slots, caps each store at 14,999, and never auto-deletes a rule.
 Confirm links from its dashboard open in a Floorp tab and retain the current
 normal/private browsing mode.
 The upstream Safari package intentionally does not show its strict-block

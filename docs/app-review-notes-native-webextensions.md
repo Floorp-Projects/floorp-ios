@@ -36,33 +36,32 @@ ship in-app; patches and reproducible builds are public.
 Implementation:
 - Floorp uses only Apple's public WKWebExtension APIs, including MatchPattern,
   loadBackgroundContent, and context.webViewConfiguration.
-- Popups retain their source tab. Private data is nonpersistent, separately authorized, and off by
-  default. Updates, re-enable, and reinstall complete at cold startup.
+- Popup routes settle before close; Floorp applies their UI transitions afterward. Private
+  data is nonpersistent, separately authorized, and off by default. Lifecycle changes finish at cold startup.
 
 Bundled open-source components:
 - Dark Reader 4.9.129, MIT, Floorp-derived. Its patch replaces background.service_worker with
-  nonpersistent background.scripts and adds Safari storage durability, readback, and UI-close
-  handshakes.
+  nonpersistent background.scripts, adds durable Safari storage/readback and acknowledged popup routes,
+  and removes unsupported shortcut UI.
   Upstream: https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip
   Upstream SHA-256: 20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64
-  Derived SHA-256: ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761
+  Derived SHA-256: 92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch
   Build: scripts/package-darkreader-ios.sh
   Source commit: c2a707302a39b8047543712e9c582bac07835d34
 - uBlock Origin Lite 2026.825.1619, GNU GPL v3.0 or later, Floorp-derived. Its patch adds public
-  declarativeNetRequestFeedback; incognito/window IDs keep Matched rules and Report in the source
-  realm. It validates Page Action data and adds deterministic startup, serialized storage, and
-  durable DNR/script reconciliation.
-  Popup/Dashboard Done await native readback. Restore preserves drafts, validates effective user DNR
-  before mutation, and recovers journals, alarms, and badge state. Audited official Safari-ignored
-  regex/domain rules are exact-normalized when provable and otherwise omitted instead of broadened.
-  A rejected live user rule aborts the whole update; mismatched native readback restores and verifies
-  the complete pre-update rule set.
-  An unvisited Filter lists pane preserves the installed selection. Failures remain visible and
-  retryable, with an explicit Close Anyway escape.
+  declarativeNetRequestFeedback, validates Page Action data, keeps incognito/window routes in their
+  source realm, and adds deterministic startup plus durable storage/DNR/script readback.
+  Safari reserves two hidden DNR keeper slots and caps each store at 14,999 for Safari 26's current-plus-final check: reserved
+  ID 7,000,000 blocks only an exact floorp.invalid URL. This avoids empty SQLite teardown, makes no
+  request, is hidden from reads/Matched rules, and rejects collisions. Legacy full stores remain readable with
+  static rules; doomed updates fail before mutation, with no automatic rule removal.
+  Native DNR operations are serialized where
+  Web Locks exist and exact-read back. Popup/Dashboard Done await readback; restore preserves drafts and
+  rolls back rejected or partial user rules. Failures stay visible and retryable.
   Upstream: https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip
   Upstream SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
-  Derived SHA-256: 1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d
+  Derived SHA-256: cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch
   Build: scripts/package-ubol-ios.sh
   Source commit: 080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
@@ -94,7 +93,8 @@ WKWebExtension APIs. It contains two optional, app-bundled extensions: Dark
 Reader 4.9.129 and uBlock Origin Lite 2026.825.1619. No sign-in is required.
 
 In Settings > Extensions, install Dark Reader. Confirm that page appearance,
-its action popup and options work; disabling or uninstalling it immediately
+its action popup and options work; opening Options, even while also closing the popup,
+must wait until the Floorp tab has been accepted; disabling or uninstalling it immediately
 restores open pages. After disabling, enabling must show “Will enable after restart”
 and remain inactive until Floorp is restarted. After uninstalling, restart Floorp before
 reinstalling; installation then works. Confirm that
@@ -114,8 +114,12 @@ immediately, then confirm the selection and blocking persist. Also test disable/
 across restart, uninstall/restart/reinstall, and persistence after restart.
 If an update is offered, confirm it requires restart and completes on the next cold launch.
 Enable Developer mode in the dashboard, then open Matched rules from both normal
-and explicitly allowed Private Browsing and confirm each page stays in its originating
-browsing mode.
+and explicitly allowed Private Browsing. Also try closing during the route. Confirm the popup closes, the route opens once,
+and each page stays in its originating browsing mode.
+Save and then clear a harmless user DNR rule. Confirm there is no “unknown error,” blocking
+and the dashboard survive relaunch, and Matched rules never lists internal keeper ID 7,000,000.
+When upgrading an existing test install, confirm its rules/dashboard remain available; Floorp reserves
+two of WebKit's 30,000 dynamic/session slots, caps each store at 14,999, and never auto-deletes a rule.
 Confirm links from its dashboard open in a Floorp tab and retain the current
 normal/private browsing mode.
 The upstream Safari package intentionally does not show its strict-block
@@ -136,8 +140,8 @@ Reader Mode, tracking protection, Notes, or Notes Sync.
 
 | Extension | Catalog identifier | Version | SHA-256 | Source commit | License | Package policy | Minimum |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `ebbb916a7b2bd8e3c5c6e538316fe3eea2e11875432522934f489697654cd761` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
-| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `1408e320bd8ed6f0d3c12e95c53c477f219e7f04b5c154fe7743e9d42f94a22d` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe routing, serialized storage, durable DNR/script reconciliation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
+| Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability, close-tracked acknowledged popup routing, and unsupported shortcut UI removal; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
+| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable DNR/script reconciliation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
 
 The canonical local evidence is:
 

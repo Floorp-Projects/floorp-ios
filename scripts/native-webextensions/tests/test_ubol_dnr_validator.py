@@ -18,6 +18,7 @@ NODE_TEST = Path(__file__).with_name("ubol_dnr_validator_test.mjs")
 NORMALIZER_TEST = Path(__file__).with_name(
     "ubol_safari_regex_normalizer_test.mjs"
 )
+KEEPER_TEST = Path(__file__).with_name("ubol_safari_dnr_keeper_test.mjs")
 
 
 class UBOLSafariDNRValidatorTests(unittest.TestCase):
@@ -90,6 +91,44 @@ class UBOLSafariDNRValidatorTests(unittest.TestCase):
             "Safari DNR compatibility tests passed",
             completed.stdout,
         )
+
+    def test_safari_dnr_stores_retain_hidden_keeper_rules(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is required for the compatibility harness")
+
+        members = (
+            "js/deep-compare.js",
+            "js/ext-compat.js",
+            "js/ruleset-manager.js",
+            "js/safari-dnr-normalizer.js",
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            with zipfile.ZipFile(ARCHIVE) as archive:
+                for member in members:
+                    destination = root / member
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(archive.read(member))
+            (root / "package.json").write_text(
+                '{"type":"module"}\n',
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                [node, str(KEEPER_TEST), str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        self.assertEqual(
+            completed.returncode,
+            0,
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+        )
+        self.assertIn("Safari DNR keeper tests passed", completed.stdout)
 
 
 if __name__ == "__main__":

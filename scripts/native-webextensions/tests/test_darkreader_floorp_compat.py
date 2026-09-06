@@ -41,6 +41,7 @@ class DarkReaderFloorpCompatTests(unittest.TestCase):
                         "ui/stylesheet-editor/index.js",
                     )
                 }
+                popup_style = archive.read("ui/popup/style.css").decode("utf-8")
                 readiness = archive.read("floorp-readiness.html")
             compat_path = root / "floorp-compat.js"
             compat_path.write_bytes(compat)
@@ -68,6 +69,24 @@ class DarkReaderFloorpCompatTests(unittest.TestCase):
                     self.assertIn("sendMutation(type, data)", surface)
                     self.assertIn("globalThis.floorpPrepareToClose", surface)
                     self.assertNotIn("chrome.storage.local.get", surface)
+            for path in ("ui/options/index.js", "ui/popup/index.js"):
+                with self.subTest(shortcut_surface=path):
+                    self.assertIn(
+                        "function ShortcutLink() {\n        return null;",
+                        surfaces[path],
+                    )
+                    self.assertNotIn(
+                        "chrome://extensions/configureCommands",
+                        surfaces[path],
+                    )
+                    self.assertNotIn("edge://extensions/shortcuts", surfaces[path])
+            self.assertNotIn('id: "hotkeys"', surfaces["ui/options/index.js"])
+            self.assertIn(
+                ".header__more-settings__shortcut-wrapper + "
+                ".header__more-settings__description",
+                popup_style,
+            )
+            self.assertIn("display: none !important", popup_style)
 
             completed = subprocess.run(
                 [node, str(NODE_TEST), str(compat_path)],
