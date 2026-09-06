@@ -517,7 +517,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
 
         closeGate.mayFinish = true
-        for _ in 0..<80 where
+        for _ in 0..<80 where fixture.host
+            .extensionSurfaceClosePreparationIsPendingForTesting(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(fixture.host.extensionSurfaceClosePreparationIsPendingForTesting(webView))
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView),
+            "A disabled surface needs post-callback teardown grace"
+        )
+        for _ in 0..<120 where
             FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
@@ -3920,6 +3929,83 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     }
 
     // swiftlint:disable:next function_body_length
+    func testHostPreparedOptionsNavigationIsNotBlockedByCallbackTeardownGrace() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, _ in
+            hookIdentifier == identifier
+        }
+        defer { fixture.host.extensionSurfaceClosePreparationHookForTesting = nil }
+
+        let destination = try XCTUnwrap(URL(string: "https://example.com/prepared-options"))
+        var receivedPolicy: WKNavigationActionPolicy?
+        let policyResolved = expectation(description: "Navigation policy resolved")
+        let surfaceClosed = expectation(description: "Options surface closed")
+        let externalURLOpened = expectation(description: "External URL opened")
+        let page = FloorpNativeWebExtensionPageViewController(
+            title: "Options",
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { url in
+                XCTAssertEqual(url, destination)
+                externalURLOpened.fulfill()
+            },
+            prepareToClose: { [host = fixture.host] webView in
+                await host.prepareExtensionSurfaceForCloseForTesting(
+                    webView,
+                    identifier: identifier
+                )
+            },
+            abandonClosePreparation: { [host = fixture.host] webView, surfaceWillDetach in
+                host.abandonExtensionSurfaceClosePreparationForTesting(
+                    webView,
+                    surfaceWillDetach: surfaceWillDetach
+                )
+            },
+            onClose: { surfaceClosed.fulfill() }
+        )
+        let navigation = UINavigationController(rootViewController: page)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        root.present(navigation, animated: false)
+        defer {
+            page.prepareForHostTeardown()
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        page.loadViewIfNeeded()
+        let webView = try XCTUnwrap(
+            page.view.subviews.first { $0 is WKWebView } as? WKWebView
+        )
+        try await waitForDocumentCommit(in: webView)
+
+        page.webView(
+            webView,
+            decidePolicyFor: MockNavigationAction(url: destination, type: .linkActivated)
+        ) { policy in
+            receivedPolicy = policy
+            policyResolved.fulfill()
+        }
+        await fulfillment(
+            of: [surfaceClosed, policyResolved, externalURLOpened],
+            timeout: 2,
+            enforceOrder: true
+        )
+
+        XCTAssertEqual(receivedPolicy, .cancel)
+        XCTAssertNil(root.presentedViewController)
+        XCTAssertFalse(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
     func testOptionsNavigationCloseAnywayClosesPreservedSurfaceAndOpensExternalURL() async throws {
 #if DEBUG || TESTING
         let destination = try XCTUnwrap(URL(string: "https://example.com/preserved-options"))
@@ -4014,6 +4100,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         var closeAttemptCount = 0
         var onCloseCount = 0
         var completionCount = 0
+        var duplicateCompletionCount = 0
         let page = FloorpNativeWebExtensionPageViewController(
             title: "Options",
             url: try XCTUnwrap(URL(string: "about:blank")),
@@ -4065,6 +4152,13 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(page.navigationItem.rightBarButtonItem?.isEnabled, true)
         XCTAssertNil(page.navigationItem.prompt)
 
+        page.requestCloseForTesting { duplicateCompletionCount += 1 }
+        XCTAssertTrue(page.presentedViewController === alert)
+        XCTAssertEqual(closeAttemptCount, 1)
+        XCTAssertEqual(onCloseCount, 0)
+        XCTAssertEqual(completionCount, 0)
+        XCTAssertEqual(duplicateCompletionCount, 0)
+
         page.closeAfterPreparationFailureForTesting()
         for _ in 0..<40 {
             if root.presentedViewController == nil { break }
@@ -4073,9 +4167,11 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertNil(root.presentedViewController)
         XCTAssertEqual(onCloseCount, 1)
         XCTAssertEqual(completionCount, 1)
+        XCTAssertEqual(duplicateCompletionCount, 0)
         page.prepareForHostTeardown()
         XCTAssertEqual(onCloseCount, 1)
         XCTAssertEqual(completionCount, 1)
+        XCTAssertEqual(duplicateCompletionCount, 0)
 #else
         throw XCTSkip("The close-preparation test seam is available only in test builds")
 #endif
@@ -4128,6 +4224,547 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertNil(root.presentedViewController)
         XCTAssertEqual(closeAttemptCount, 2)
         XCTAssertEqual(onCloseCount, 1)
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testHostCloseUIBudgetReusesOnePendingOperationAndLateSuccess() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let closeGate = FloorpClosePreparationTestGate()
+        var nativeAttemptCount = 0
+        fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = 50_000_000
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == identifier else { return false }
+            nativeAttemptCount += 1
+            return await closeGate.waitUntilReleased()
+        }
+        defer {
+            closeGate.mayFinish = true
+            fixture.host.extensionSurfaceClosePreparationHookForTesting = nil
+            fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = nil
+        }
+
+        let options = try await fixture.host.optionsViewController(identifier: identifier)
+        let navigation = try XCTUnwrap(options as? UINavigationController)
+        let page = try XCTUnwrap(
+            navigation.viewControllers.first as? FloorpNativeWebExtensionPageViewController
+        )
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        root.present(navigation, animated: false)
+        defer {
+            page.prepareForHostTeardown()
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        page.loadViewIfNeeded()
+        let webView = try XCTUnwrap(
+            page.view.subviews.first { $0 is WKWebView } as? WKWebView
+        )
+        try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
+
+        page.requestCloseForTesting()
+        for _ in 0..<80 where !(page.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let firstAlert = try XCTUnwrap(page.presentedViewController as? UIAlertController)
+        XCTAssertEqual(nativeAttemptCount, 1)
+        XCTAssertTrue(fixture.host.extensionSurfaceClosePreparationIsPendingForTesting(webView))
+        XCTAssertTrue(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+
+        page.retryCloseAfterPreparationFailureForTesting()
+        for _ in 0..<120 {
+            if let alert = page.presentedViewController as? UIAlertController,
+               alert !== firstAlert {
+                break
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(page.presentedViewController as? UIAlertController)
+        XCTAssertEqual(nativeAttemptCount, 1, "Retry must join the pending native callback")
+
+        closeGate.mayFinish = true
+        for _ in 0..<80 where !fixture.host
+            .extensionSurfaceClosePreparationHasReusableSuccessForTesting(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(
+            fixture.host.extensionSurfaceClosePreparationHasReusableSuccessForTesting(webView)
+        )
+
+        page.retryCloseAfterPreparationFailureForTesting()
+        let didClose = await waitForDismissedPresentation(from: root, attempts: 80)
+        XCTAssertTrue(didClose)
+        XCTAssertEqual(nativeAttemptCount, 1, "Late success must be consumed exactly once")
+        for _ in 0..<120 where FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+            .mustPreserve(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testHostCloseContinueEditingInvalidatesLateSuccessBeforeFreshDone() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let firstCloseGate = FloorpClosePreparationTestGate()
+        var nativeAttemptCount = 0
+        fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = 50_000_000
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == identifier else { return false }
+            nativeAttemptCount += 1
+            if nativeAttemptCount == 1 {
+                return await firstCloseGate.waitUntilReleased()
+            }
+            return true
+        }
+        defer {
+            firstCloseGate.mayFinish = true
+            fixture.host.extensionSurfaceClosePreparationHookForTesting = nil
+            fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = nil
+        }
+
+        let options = try await fixture.host.optionsViewController(identifier: identifier)
+        let navigation = try XCTUnwrap(options as? UINavigationController)
+        let page = try XCTUnwrap(
+            navigation.viewControllers.first as? FloorpNativeWebExtensionPageViewController
+        )
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        root.present(navigation, animated: false)
+        defer {
+            page.prepareForHostTeardown()
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        page.loadViewIfNeeded()
+        let webView = try XCTUnwrap(
+            page.view.subviews.first { $0 is WKWebView } as? WKWebView
+        )
+        try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
+
+        page.requestCloseForTesting()
+        for _ in 0..<80 where !(page.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(page.presentedViewController as? UIAlertController)
+        XCTAssertEqual(nativeAttemptCount, 1)
+        page.keepEditingAfterPreparationFailureForTesting()
+        for _ in 0..<80 where page.presentedViewController != nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNil(page.presentedViewController)
+        XCTAssertTrue(root.presentedViewController === navigation)
+
+        firstCloseGate.mayFinish = true
+        for _ in 0..<80 where fixture.host
+            .extensionSurfaceClosePreparationIsPendingForTesting(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(
+            fixture.host.extensionSurfaceClosePreparationHasReusableSuccessForTesting(webView),
+            "Continue Editing must make the late success stale"
+        )
+        XCTAssertFalse(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView),
+            "An attached stale result must not inherit teardown-only grace"
+        )
+
+        page.requestCloseForTesting()
+        let didClose = await waitForDismissedPresentation(from: root, attempts: 80)
+        XCTAssertTrue(didClose)
+        XCTAssertEqual(nativeAttemptCount, 2, "A new Done must run a fresh handshake")
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testHostCloseAnywayKeepsNativeCallbackAliveUntilDelivery() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let closeGate = FloorpClosePreparationTestGate()
+        var completionCount = 0
+        fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = 50_000_000
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == identifier else { return false }
+            return await closeGate.waitUntilReleased()
+        }
+        defer {
+            closeGate.mayFinish = true
+            fixture.host.extensionSurfaceClosePreparationHookForTesting = nil
+            fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = nil
+        }
+
+        let options = try await fixture.host.optionsViewController(identifier: identifier)
+        let navigation = try XCTUnwrap(options as? UINavigationController)
+        let page = try XCTUnwrap(
+            navigation.viewControllers.first as? FloorpNativeWebExtensionPageViewController
+        )
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        root.present(navigation, animated: false)
+        defer {
+            page.prepareForHostTeardown()
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        page.loadViewIfNeeded()
+        let webView = try XCTUnwrap(
+            page.view.subviews.first { $0 is WKWebView } as? WKWebView
+        )
+        try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
+        page.webView(webView, didCommit: nil)
+
+        // Observe controller teardown as well as the host-owned callback lease.
+        page.requestCloseForTesting { completionCount += 1 }
+        for _ in 0..<80 where !(page.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(page.presentedViewController as? UIAlertController)
+        page.closeAfterPreparationFailureForTesting()
+        let didClose = await waitForDismissedPresentation(from: root, attempts: 80)
+        XCTAssertTrue(didClose)
+        XCTAssertEqual(completionCount, 1)
+        XCTAssertTrue(fixture.host.extensionSurfaceClosePreparationIsPendingForTesting(webView))
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView),
+            "Close Anyway must not tear down a page with a native callback in flight"
+        )
+
+        closeGate.mayFinish = true
+        for _ in 0..<80 where fixture.host
+            .extensionSurfaceClosePreparationIsPendingForTesting(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(fixture.host.extensionSurfaceClosePreparationIsPendingForTesting(webView))
+        XCTAssertFalse(
+            fixture.host.extensionSurfaceClosePreparationHasReusableSuccessForTesting(webView),
+            "A late result must not re-enter a closed controller"
+        )
+        XCTAssertEqual(completionCount, 1)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView),
+            "A detached late callback needs a bounded post-callback teardown grace"
+        )
+        for _ in 0..<120 where FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+            .mustPreserve(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testSuccessfulExtensionTabReplacementDefersOldWebViewRelease() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: fixture.profile,
+            host: fixture.host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedProfile: fixture.profile,
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
+        let tab = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/extension-tab-source")),
+            isPrivate: false
+        )
+        manager.selectedTab = tab
+        fixture.host.register(tabManager: manager)
+        fixture.host.focus(windowUUID: manager.windowUUID, isPrivate: false)
+
+        let extensionURL = try XCTUnwrap(fixture.context.optionsPageURL)
+        tab.replaceWebViewForNativeWebExtension(
+            contextIdentifier: identifier,
+            configuration: try XCTUnwrap(fixture.context.webViewConfiguration),
+            url: extensionURL,
+            forceRebuild: true
+        )
+        let oldWebView = try XCTUnwrap(tab.webView)
+        try await waitForDocumentCommit(in: oldWebView, expectedOrigin: fixture.context.baseURL)
+        tab.commitFloorpNativeSurfaceNavigation(url: extensionURL)
+
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, candidate in
+            XCTAssertEqual(hookIdentifier, identifier)
+            XCTAssertTrue(candidate === oldWebView)
+            return true
+        }
+        defer { fixture.host.extensionSurfaceClosePreparationHookForTesting = nil }
+
+        let destination = try XCTUnwrap(URL(string: "https://example.com/after-extension"))
+        let loadFinished = expectation(description: "Cross-surface load finished")
+        fixture.host.load(url: destination, in: tab) { didLoad in
+            XCTAssertTrue(didLoad)
+            loadFinished.fulfill()
+        }
+        await fulfillment(of: [loadFinished], timeout: 2)
+
+        XCTAssertFalse(try XCTUnwrap(tab.webView) === oldWebView)
+        XCTAssertTrue(
+            FloorpNativeWebExtensionDeferredWebViewRelease.isRetainedForTesting(oldWebView),
+            "The old tab surface must survive WebKit's post-callback teardown window"
+        )
+        XCTAssertFalse(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(oldWebView),
+            "The deferred lifetime guard must not block the prepared replacement"
+        )
+        manager.removeSeedTab(tab)
+        await tab.close()
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testRemovedExtensionTabKeepsAbandonedLateCloseCallbackThroughTeardownGrace() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: fixture.profile,
+            host: fixture.host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedProfile: fixture.profile,
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
+        let tab = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/extension-tab-source")),
+            isPrivate: false
+        )
+        manager.selectedTab = tab
+        fixture.host.register(tabManager: manager)
+        fixture.host.focus(windowUUID: manager.windowUUID, isPrivate: false)
+
+        let extensionURL = try XCTUnwrap(fixture.context.optionsPageURL)
+        tab.replaceWebViewForNativeWebExtension(
+            contextIdentifier: identifier,
+            configuration: try XCTUnwrap(fixture.context.webViewConfiguration),
+            url: extensionURL,
+            forceRebuild: true
+        )
+        let webView = try XCTUnwrap(tab.webView)
+        try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
+        tab.commitFloorpNativeSurfaceNavigation(url: extensionURL)
+
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        root.loadViewIfNeeded()
+        webView.frame = root.view.bounds
+        root.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        defer {
+            root.presentedViewController?.dismiss(animated: false)
+            webView.removeFromSuperview()
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let closeGate = FloorpClosePreparationTestGate()
+        fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = 50_000_000
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, candidate in
+            guard hookIdentifier == identifier, candidate === webView else { return false }
+            return await closeGate.waitUntilReleased()
+        }
+        defer {
+            closeGate.mayFinish = true
+            fixture.host.extensionSurfaceClosePreparationHookForTesting = nil
+            fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = nil
+        }
+        var closeResolution: Bool?
+        XCTAssertTrue(
+            fixture.host.prepareExtensionTabSurfaceForDestruction(
+                in: tab,
+                expectedWebView: webView
+            ) { closeResolution = $0 }
+        )
+        for _ in 0..<80 where !(root.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(root.presentedViewController as? UIAlertController)
+        XCTAssertTrue(fixture.host.extensionSurfaceClosePreparationIsPendingForTesting(webView))
+
+        fixture.host.keepExtensionTabSurfaceOpenAfterFailureForTesting(tab)
+        XCTAssertEqual(closeResolution, false)
+        XCTAssertFalse(
+            FloorpNativeWebExtensionDeferredWebViewRelease.isRetainedForTesting(webView),
+            "Keep Open only makes the pending result stale while the tab remains attached"
+        )
+        XCTAssertTrue(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+
+        // The close request is gone after Keep Open, so didRemoveTab must find
+        // and mark the stale host-owned callback directly before detaching.
+        manager.removeSeedTab(tab)
+        webView.removeFromSuperview()
+        XCTAssertTrue(
+            FloorpNativeWebExtensionDeferredWebViewRelease.isRetainedForTesting(webView),
+            "didRemoveTab must defer releasing the detached WebView"
+        )
+        XCTAssertTrue(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+
+        closeGate.mayFinish = true
+        for _ in 0..<80 where fixture.host
+            .extensionSurfaceClosePreparationIsPendingForTesting(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(fixture.host.extensionSurfaceClosePreparationIsPendingForTesting(webView))
+        XCTAssertTrue(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView),
+            "A removed extension tab needs post-callback teardown grace"
+        )
+        for _ in 0..<120 where FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+            .mustPreserve(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+        await tab.close()
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testRemovedExtensionTabExtendsDeferredReleaseAfterAbandonedCallbackCompletes() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: fixture.profile,
+            host: fixture.host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedProfile: fixture.profile,
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
+        let tab = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/completed-extension-tab")),
+            isPrivate: false
+        )
+        manager.selectedTab = tab
+        fixture.host.register(tabManager: manager)
+        fixture.host.focus(windowUUID: manager.windowUUID, isPrivate: false)
+
+        let extensionURL = try XCTUnwrap(fixture.context.optionsPageURL)
+        tab.replaceWebViewForNativeWebExtension(
+            contextIdentifier: identifier,
+            configuration: try XCTUnwrap(fixture.context.webViewConfiguration),
+            url: extensionURL,
+            forceRebuild: true
+        )
+        let webView = try XCTUnwrap(tab.webView)
+        try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
+        tab.commitFloorpNativeSurfaceNavigation(url: extensionURL)
+
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        root.loadViewIfNeeded()
+        webView.frame = root.view.bounds
+        root.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        defer {
+            root.presentedViewController?.dismiss(animated: false)
+            webView.removeFromSuperview()
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let closeGate = FloorpClosePreparationTestGate()
+        fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = 50_000_000
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, candidate in
+            guard hookIdentifier == identifier, candidate === webView else { return false }
+            return await closeGate.waitUntilReleased()
+        }
+        defer {
+            closeGate.mayFinish = true
+            fixture.host.extensionSurfaceClosePreparationHookForTesting = nil
+            fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = nil
+        }
+        var closeResolution: Bool?
+        XCTAssertTrue(
+            fixture.host.prepareExtensionTabSurfaceForDestruction(
+                in: tab,
+                expectedWebView: webView
+            ) { closeResolution = $0 }
+        )
+        for _ in 0..<80 where !(root.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(root.presentedViewController as? UIAlertController)
+
+        closeGate.mayFinish = true
+        for _ in 0..<80 where fixture.host
+            .extensionSurfaceClosePreparationIsPendingForTesting(webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(
+            fixture.host.extensionSurfaceClosePreparationHasReusableSuccessForTesting(webView)
+        )
+        let callbackRetentionToken = try XCTUnwrap(
+            FloorpNativeWebExtensionDeferredWebViewRelease.retentionTokenForTesting(webView)
+        )
+        XCTAssertFalse(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+
+        fixture.host.keepExtensionTabSurfaceOpenAfterFailureForTesting(tab)
+        XCTAssertEqual(closeResolution, false)
+        XCTAssertFalse(
+            fixture.host.extensionSurfaceClosePreparationHasReusableSuccessForTesting(webView)
+        )
+
+        manager.removeSeedTab(tab)
+        webView.removeFromSuperview()
+        let detachRetentionToken = try XCTUnwrap(
+            FloorpNativeWebExtensionDeferredWebViewRelease.retentionTokenForTesting(webView)
+        )
+        XCTAssertNotEqual(
+            detachRetentionToken,
+            callbackRetentionToken,
+            "didRemoveTab must restart the bounded release window after the request is gone"
+        )
+        XCTAssertFalse(FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView))
+        await tab.close()
 #else
         throw XCTSkip("The close-preparation test seam is available only in test builds")
 #endif
@@ -4285,6 +4922,97 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertNil(root.presentedViewController)
         XCTAssertEqual(onCloseCount, 1)
         XCTAssertEqual(completionCount, 1)
+#else
+        throw XCTSkip("The close-preparation test seam is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testHostPopupKeepOpenInvalidatesLateSuccessBeforeFreshClose() async throws {
+#if DEBUG || TESTING
+        let fixture = try await makeHostContextFixture(hasPrivateAccess: false)
+        defer { fixture.cleanup() }
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let firstCloseGate = FloorpClosePreparationTestGate()
+        var nativeAttemptCount = 0
+        fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = 50_000_000
+        fixture.host.extensionSurfaceClosePreparationHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == identifier else { return false }
+            nativeAttemptCount += 1
+            if nativeAttemptCount == 1 {
+                return await firstCloseGate.waitUntilReleased()
+            }
+            return true
+        }
+        defer {
+            firstCloseGate.mayFinish = true
+            fixture.host.extensionSurfaceClosePreparationHookForTesting = nil
+            fixture.host.extensionSurfaceCloseUIBudgetNanosecondsForTesting = nil
+        }
+
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { _ in },
+            prepareToClose: { [host = fixture.host] webView in
+                await host.prepareExtensionSurfaceForCloseForTesting(
+                    webView,
+                    identifier: identifier
+                )
+            },
+            abandonClosePreparation: { [host = fixture.host] webView, surfaceWillDetach in
+                host.abandonExtensionSurfaceClosePreparationForTesting(
+                    webView,
+                    surfaceWillDetach: surfaceWillDetach
+                )
+            },
+            onClose: {}
+        )
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        root.present(popup, animated: false)
+        defer {
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        popup.loadViewIfNeeded()
+        try await waitForDocumentCommit(in: popup.webView)
+
+        popup.requestCloseForTesting()
+        for _ in 0..<80 where !(popup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertNotNil(popup.presentedViewController as? UIAlertController)
+        XCTAssertEqual(nativeAttemptCount, 1)
+        popup.keepOpenAfterPreparationFailureForTesting()
+        for _ in 0..<80 where popup.presentedViewController != nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(root.presentedViewController === popup)
+
+        firstCloseGate.mayFinish = true
+        for _ in 0..<80 where fixture.host
+            .extensionSurfaceClosePreparationIsPendingForTesting(popup.webView) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(
+            fixture.host.extensionSurfaceClosePreparationHasReusableSuccessForTesting(
+                popup.webView
+            )
+        )
+        XCTAssertFalse(
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
+            "Keep Open must not apply detached-surface teardown grace"
+        )
+
+        popup.requestCloseForTesting()
+        let didClose = await waitForDismissedPresentation(from: root, attempts: 80)
+        XCTAssertTrue(didClose)
+        XCTAssertEqual(nativeAttemptCount, 2)
 #else
         throw XCTSkip("The close-preparation test seam is available only in test builds")
 #endif
@@ -7059,8 +7787,44 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 for: nil
             )
         )
-        let didCloseOptions = await waitForDismissedPresentation(from: root, attempts: 160)
-        XCTAssertTrue(didCloseOptions, "Done must wait for and then close after the ruleset commit")
+        var didCloseOptions = false
+        var didPresentCloseFailure = false
+        // The UIKit close budget is five seconds even when WebKit needs longer
+        // to finish the native callback. CI must observe either completion or
+        // the explicit recovery UI before it proceeds to another navigation.
+        for _ in 0..<130 {
+            if root.presentedViewController == nil {
+                didCloseOptions = true
+                break
+            }
+            if optionsPage.presentedViewController is UIAlertController {
+                didPresentCloseFailure = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(
+            didCloseOptions || didPresentCloseFailure,
+            "Done must close or offer recovery after the five-second UI budget"
+        )
+        if didPresentCloseFailure {
+            for _ in 0..<1_900 where host
+                .extensionSurfaceClosePreparationIsPendingForTesting(optionsWebView) {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            guard host.extensionSurfaceClosePreparationHasReusableSuccessForTesting(
+                optionsWebView
+            ) else {
+                XCTFail("The late ruleset commit must remain available to Retry")
+                return
+            }
+            optionsPage.retryCloseAfterPreparationFailureForTesting()
+            didCloseOptions = await waitForDismissedPresentation(from: root, attempts: 160)
+        }
+        guard didCloseOptions else {
+            XCTFail("Done must close after the ruleset commit or successful Retry")
+            return
+        }
 
         manager.selectTab(normalTab)
         host.focus(windowUUID: manager.windowUUID, isPrivate: false)

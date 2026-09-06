@@ -27,7 +27,7 @@ private func floorpNavigationReplacesDocument(
 /// use-after-release assertion. Keep closed extension surfaces alive only for
 /// the short asynchronous close window; repeated teardown extends the grace.
 @MainActor
-private enum FloorpNativeWebExtensionDeferredWebViewRelease {
+enum FloorpNativeWebExtensionDeferredWebViewRelease {
     private static var retained = [ObjectIdentifier: (token: UUID, webView: WKWebView)]()
 
     static func retain(_ webView: WKWebView) {
@@ -39,6 +39,16 @@ private enum FloorpNativeWebExtensionDeferredWebViewRelease {
             retained.removeValue(forKey: key)
         }
     }
+
+#if DEBUG || TESTING
+    static func isRetainedForTesting(_ webView: WKWebView) -> Bool {
+        retained[ObjectIdentifier(webView)]?.webView === webView
+    }
+
+    static func retentionTokenForTesting(_ webView: WKWebView) -> UUID? {
+        retained[ObjectIdentifier(webView)]?.token
+    }
+#endif
 }
 
 /// Bridges `window.close()` for a top-level WKWebView that was not created by
@@ -1460,6 +1470,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
     private let configuration: WKWebViewConfiguration
     private let openURLInBrowser: (URL) -> Void
     private let prepareToClose: (@MainActor (WKWebView) async -> Bool)?
+    private let abandonClosePreparation: (@MainActor (WKWebView, Bool) -> Void)?
     private let onClose: () -> Void
     private let closeBridge: FloorpNativeWebExtensionCloseBridge
     private var webView: WKWebView?
@@ -1477,6 +1488,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         configuration: WKWebViewConfiguration,
         openURLInBrowser: @escaping (URL) -> Void = { _ in },
         prepareToClose: (@MainActor (WKWebView) async -> Bool)? = nil,
+        abandonClosePreparation: (@MainActor (WKWebView, Bool) -> Void)? = nil,
         onClose: @escaping () -> Void = {}
     ) {
         self.pageTitle = title
@@ -1484,6 +1496,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         self.configuration = configuration
         self.openURLInBrowser = openURLInBrowser
         self.prepareToClose = prepareToClose
+        self.abandonClosePreparation = abandonClosePreparation
         self.onClose = onClose
         self.closeBridge = FloorpNativeWebExtensionCloseBridge(expectedURL: url)
         super.init(nibName: nil, bundle: nil)
@@ -1534,13 +1547,17 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         completion: (() -> Void)? = nil,
         preparationAlreadyCompleted: Bool = false
     ) {
-        guard !didClose, closePreparationTask == nil else { return }
+        // Keep the original request and its alert actionable while a failed
+        // preparation is awaiting the user's decision. A second window.close()
+        // must not replace that request; Retry clears it before re-entering.
+        guard !didClose,
+              closePreparationTask == nil,
+              failedCloseRequest == nil else { return }
         cancelNavigationPreparation(dismissAlert: true)
-        let request = failedCloseRequest ?? CloseRequest(
+        let request = CloseRequest(
             animated: animated,
             completion: completion
         )
-        failedCloseRequest = nil
         guard !preparationAlreadyCompleted,
               hasCommittedDocument,
               let webView,
@@ -1582,6 +1599,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         guard presentedViewController == nil,
               viewIfLoaded?.window != nil else {
             failedCloseRequest = nil
+            abandonCurrentClosePreparation(surfaceWillDetach: false)
             return
         }
         let alert = UIAlertController(
@@ -1631,7 +1649,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
     ) {
         switch resolution {
         case .keepEditing:
-            break
+            abandonCurrentClosePreparation(surfaceWillDetach: false)
         case .retry:
             close(animated: request.animated, completion: request.completion)
         case .closeAnyway:
@@ -1647,6 +1665,10 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
 
     func retryCloseAfterPreparationFailureForTesting() {
         resolveClosePreparationFailure(.retry)
+    }
+
+    func keepEditingAfterPreparationFailureForTesting() {
+        resolveClosePreparationFailure(.keepEditing)
     }
 
     func closeAfterPreparationFailureForTesting() {
@@ -1705,6 +1727,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         guard !didClose else { return }
         didClose = true
         cancelNavigationPreparation(dismissAlert: true)
+        abandonCurrentClosePreparation(surfaceWillDetach: true)
         closePreparationTask?.cancel()
         closePreparationTask = nil
         failedCloseRequest = nil
@@ -2011,6 +2034,7 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         navigationRequest = nil
         navigationPreparationTask?.cancel()
         navigationPreparationTask = nil
+        abandonCurrentClosePreparation(surfaceWillDetach: false)
         let alert = request.alert
         request.alert = nil
         if dismissAlert,
@@ -2019,6 +2043,11 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
         }
         webView?.isUserInteractionEnabled = true
         request.resolve(.cancel)
+    }
+
+    private func abandonCurrentClosePreparation(surfaceWillDetach: Bool) {
+        guard let webView else { return }
+        abandonClosePreparation?(webView, surfaceWillDetach)
     }
 
     private func tearDownWebView() {
@@ -2137,6 +2166,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     private let configuration: WKWebViewConfiguration
     private let openURLInBrowser: (URL) -> Void
     private let prepareToClose: (@MainActor (WKWebView) async -> Bool)?
+    private let abandonClosePreparation: (@MainActor (WKWebView, Bool) -> Void)?
     private let onClose: () -> Void
     private let onCloseDisposition: ((CloseDisposition) -> Void)?
     private let onPendingTransitionCancellation: (() -> Void)?
@@ -2156,6 +2186,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         configuration: WKWebViewConfiguration,
         openURLInBrowser: @escaping (URL) -> Void,
         prepareToClose: (@MainActor (WKWebView) async -> Bool)? = nil,
+        abandonClosePreparation: (@MainActor (WKWebView, Bool) -> Void)? = nil,
         onClose: @escaping () -> Void,
         onCloseDisposition: ((CloseDisposition) -> Void)? = nil,
         onPendingTransitionCancellation: (() -> Void)? = nil
@@ -2166,6 +2197,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         self.webView = webView
         self.openURLInBrowser = openURLInBrowser
         self.prepareToClose = prepareToClose
+        self.abandonClosePreparation = abandonClosePreparation
         self.onClose = onClose
         self.onCloseDisposition = onCloseDisposition
         self.onPendingTransitionCancellation = onPendingTransitionCancellation
@@ -2717,6 +2749,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         navigationRequest = nil
         navigationPreparationTask?.cancel()
         navigationPreparationTask = nil
+        abandonClosePreparation?(webView, false)
         let alert = request.alert
         request.alert = nil
         if dismissAlert,
@@ -2733,6 +2766,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         preservingPendingCallbacks: Bool = false
     ) {
         guard !didClose else { return }
+        abandonClosePreparation?(webView, true)
         let mustPreserve = FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
         cancelNavigationPreparation(dismissAlert: true)
         let abandonedRequest = activeCloseRequest ?? failedCloseRequest
@@ -2763,6 +2797,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         guard presentedViewController == nil,
               viewIfLoaded?.window != nil else {
             failedCloseRequest = nil
+            abandonClosePreparation?(webView, false)
             onPendingTransitionCancellation?()
             request.outcomeCompletion?(false)
             resolveCloseOutcomeObservers(false)
@@ -2814,6 +2849,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     ) {
         switch resolution {
         case .keepOpen:
+            abandonClosePreparation?(webView, false)
             onPendingTransitionCancellation?()
             request.outcomeCompletion?(false)
             resolveCloseOutcomeObservers(false)

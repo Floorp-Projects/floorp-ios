@@ -451,6 +451,45 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
     }
 
+    /// A close handshake has two independent lifetime boundaries. UIKit only
+    /// waits for a bounded period before offering Retry/Close Anyway, while
+    /// WebKit's native JavaScript callback must remain owned until it is
+    /// actually delivered (or reaches the longer native safety timeout).
+    @MainActor
+    private final class ExtensionSurfaceCloseOperation {
+        let token = UUID()
+        let identifier: String
+        let context: WKWebExtensionContext
+        let webViewIdentifier: ObjectIdentifier
+        weak var webView: WKWebView?
+        let probe = BackgroundReadinessProbe()
+        var completion: Bool?
+        var mayReuseSuccessfulResult = true
+        var needsPostCallbackTeardownGrace = false
+
+        init(
+            identifier: String,
+            context: WKWebExtensionContext,
+            webView: WKWebView
+        ) {
+            self.identifier = identifier
+            self.context = context
+            webViewIdentifier = ObjectIdentifier(webView)
+            self.webView = webView
+        }
+
+        func matches(
+            identifier: String,
+            context: WKWebExtensionContext,
+            webView: WKWebView
+        ) -> Bool {
+            self.identifier == identifier
+                && self.context === context
+                && webViewIdentifier == ObjectIdentifier(webView)
+                && self.webView === webView
+        }
+    }
+
     /// Keeps an unsafe-to-release extension page and probe alive until process
     /// exit. The controller and host already use the same retirement boundary
     /// after a context load.
@@ -728,6 +767,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private var backgroundLoadCompletionResults = [UUID: BackgroundContentLoadCompletion]()
     private var activeBackgroundReadinessOperations = [UUID: WKWebExtensionContext]()
     private var activeSurfaceCloseOperations = [UUID: WKWebExtensionContext]()
+    private var extensionSurfaceCloseOperations = [
+        ObjectIdentifier: ExtensionSurfaceCloseOperation
+    ]()
     private var retiredBackgroundReadinessSurfaces = [BackgroundReadinessSurface]()
     private var actionOrigins = [String: [ActionOrigin]]()
     private var presentedExtensionSurfaces = [String: [PresentedExtensionSurface]]()
@@ -777,6 +819,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
     var privateAccessCommitHookForTesting: ((String) -> Void)?
     var extensionSurfaceClosePreparationHookForTesting:
         ((String, WKWebView) async -> Bool)?
+    var extensionSurfaceCloseUIBudgetNanosecondsForTesting: UInt64?
     var extensionTabCreationCompletionHookForTesting:
         ((String, Tab) async -> Void)?
     var privateAccessTransitionHookForTesting: ((String) -> Void)?
@@ -800,6 +843,50 @@ final class FloorpNativeWebExtensionHost: NSObject {
         isPrivate: Bool
     ) -> Bool {
         verifiedNavigationReadinessRealms[identifier]?.contains(isPrivate) == true
+    }
+
+    func extensionSurfaceClosePreparationIsPendingForTesting(
+        _ webView: WKWebView
+    ) -> Bool {
+        guard let operation = extensionSurfaceCloseOperations[ObjectIdentifier(webView)],
+              operation.webView === webView else {
+            return false
+        }
+        return operation.completion == nil
+    }
+
+    func extensionSurfaceClosePreparationHasReusableSuccessForTesting(
+        _ webView: WKWebView
+    ) -> Bool {
+        guard let operation = extensionSurfaceCloseOperations[ObjectIdentifier(webView)] else {
+            return false
+        }
+        return operation.webView === webView
+            && operation.completion == true
+            && operation.mayReuseSuccessfulResult
+    }
+
+    func prepareExtensionSurfaceForCloseForTesting(
+        _ webView: WKWebView,
+        identifier: String
+    ) async -> Bool {
+        guard let context = contexts[identifier] else { return false }
+        return await prepareExtensionSurfaceForClose(
+            webView,
+            context: context,
+            identifier: identifier,
+            timeoutNanoseconds: backgroundReadinessTimeout(for: identifier)
+        )
+    }
+
+    func abandonExtensionSurfaceClosePreparationForTesting(
+        _ webView: WKWebView,
+        surfaceWillDetach: Bool = false
+    ) {
+        abandonExtensionSurfaceClosePreparation(
+            for: webView,
+            surfaceWillDetach: surfaceWillDetach
+        )
     }
 
     func persistPermissionStateForTesting(_ context: WKWebExtensionContext) {
@@ -1388,6 +1475,15 @@ final class FloorpNativeWebExtensionHost: NSObject {
             : 15_000_000_000
     }
 
+    private func extensionSurfaceCloseUIBudget() -> UInt64 {
+#if DEBUG || TESTING
+        if let extensionSurfaceCloseUIBudgetNanosecondsForTesting {
+            return extensionSurfaceCloseUIBudgetNanosecondsForTesting
+        }
+#endif
+        return 5_000_000_000
+    }
+
     private func coldBackgroundReadinessTimeout(for identifier: String) -> UInt64 {
         // On a fresh uBO context WebKit compiles more than 100,000 static
         // rules and the dynamic regex realm before the first semantic probe
@@ -1471,13 +1567,21 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 resolveExtensionTabSurfaceCloseRequest(
                     $0,
                     shouldProceed: $0.forceOnFailure,
-                    dismissAlert: true
+                    dismissAlert: true,
+                    surfaceWillDetach: true
                 )
             }
         dismissManagedActionPopups { popup in
             popup.sourceWindow.windowUUID == windowUUID
         }
         if let manager = tabManagers[windowUUID]?.value {
+            manager.tabs.forEach { tab in
+                guard let webView = tab.webView else { return }
+                markOutstandingExtensionSurfaceCloseOperationForDetachment(webView)
+                if tab.floorpNativeWebExtensionContextIdentifier != nil {
+                    FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
+                }
+            }
             manager.removeDelegate(self, completion: nil)
         }
         let closingAdapters = tabAdapters.filter { $0.value.tab?.windowUUID == windowUUID }
@@ -2878,6 +2982,12 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 )
             },
             prepareToClose: prepareToClose,
+            abandonClosePreparation: { [weak self] webView, surfaceWillDetach in
+                self?.abandonExtensionSurfaceClosePreparation(
+                    for: webView,
+                    surfaceWillDetach: surfaceWillDetach
+                )
+            },
             onClose: invalidateReadiness
         )
         let navigationController = UINavigationController(rootViewController: page)
@@ -2903,20 +3013,121 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 .isPermanentlyRetained(webView) else {
             return false
         }
-        let closeOperationID = UUID()
-        activeSurfaceCloseOperations[closeOperationID] = context
+        let start = DispatchTime.now().uptimeNanoseconds
+        let deadlineAddition = start.addingReportingOverflow(extensionSurfaceCloseUIBudget())
+        let deadline = deadlineAddition.overflow ? UInt64.max : deadlineAddition.partialValue
+        let key = ObjectIdentifier(webView)
+
+        while !Task.isCancelled {
+            guard contexts[identifier] === context,
+                  currentReadyIdentifier(for: context) == identifier,
+                  !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+                    .isPermanentlyRetained(webView) else {
+                abandonExtensionSurfaceClosePreparation(
+                    for: webView,
+                    surfaceWillDetach: false
+                )
+                return false
+            }
+
+            let operation: ExtensionSurfaceCloseOperation
+            if let existing = extensionSurfaceCloseOperations[key] {
+                guard existing.matches(
+                    identifier: identifier,
+                    context: context,
+                    webView: webView
+                ) else {
+                    // An unfinished native callback owns its original page and
+                    // cannot safely overlap a replacement operation.
+                    if existing.completion == nil, existing.webView != nil {
+                        return false
+                    }
+                    extensionSurfaceCloseOperations.removeValue(forKey: key)
+                    continue
+                }
+                if let completion = existing.completion {
+                    extensionSurfaceCloseOperations.removeValue(forKey: key)
+                    if completion, existing.mayReuseSuccessfulResult {
+                        return true
+                    }
+                    // A completed failure or abandoned success belongs to the
+                    // prior attempt. Retry starts a fresh serialized handshake.
+                    continue
+                }
+                operation = existing
+            } else {
+                operation = startExtensionSurfaceCloseOperation(
+                    webView,
+                    context: context,
+                    identifier: identifier,
+                    nativeTimeoutNanoseconds: timeoutNanoseconds
+                )
+            }
+
+            guard let completion = await waitForExtensionSurfaceCloseOperation(
+                operation,
+                deadline: deadline
+            ) else {
+                return false
+            }
+            if extensionSurfaceCloseOperations[key] === operation {
+                extensionSurfaceCloseOperations.removeValue(forKey: key)
+            }
+            guard operation.mayReuseSuccessfulResult else {
+                continue
+            }
+            return completion
+        }
+        return false
+    }
+
+    private func startExtensionSurfaceCloseOperation(
+        _ webView: WKWebView,
+        context: WKWebExtensionContext,
+        identifier: String,
+        nativeTimeoutNanoseconds: UInt64
+    ) -> ExtensionSurfaceCloseOperation {
+        let operation = ExtensionSurfaceCloseOperation(
+            identifier: identifier,
+            context: context,
+            webView: webView
+        )
+        extensionSurfaceCloseOperations[operation.webViewIdentifier] = operation
+        activeSurfaceCloseOperations[operation.token] = context
         FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.beginOperation(in: webView)
+
+        // This task intentionally outlives the UIKit waiter. Cancelling the
+        // Done/Retry task must not cancel WebKit's native completion handler.
+        Task { @MainActor [self, operation, webView] in
+            await runExtensionSurfaceCloseOperation(
+                operation,
+                webView: webView,
+                nativeTimeoutNanoseconds: nativeTimeoutNanoseconds
+            )
+        }
+        return operation
+    }
+
+    private func runExtensionSurfaceCloseOperation(
+        _ operation: ExtensionSurfaceCloseOperation,
+        webView: WKWebView,
+        nativeTimeoutNanoseconds: UInt64
+    ) async {
+        let result: Bool
 #if DEBUG || TESTING
         if let hook = extensionSurfaceClosePreparationHookForTesting {
-            let result = await hook(identifier, webView)
-            activeSurfaceCloseOperations.removeValue(forKey: closeOperationID)
-            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
-            return result
+            result = await hook(operation.identifier, webView)
+            finishExtensionSurfaceCloseOperation(
+                operation,
+                webView: webView,
+                result: result,
+                requiresProcessLifetimeRetention: false
+            )
+            return
         }
 #endif
-        let probe = BackgroundReadinessProbe()
         do {
-            let raw = try await probe.callAsyncJavaScript(
+            let raw = try await operation.probe.callAsyncJavaScript(
                 """
                 if (typeof globalThis.floorpPrepareToClose !== 'function') {
                     return { ready: false, error: 'Floorp close preparation is unavailable' };
@@ -2924,47 +3135,129 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 return await globalThis.floorpPrepareToClose();
                 """,
                 in: webView,
-                identifier: identifier,
-                timeoutNanoseconds: timeoutNanoseconds
+                identifier: operation.identifier,
+                timeoutNanoseconds: nativeTimeoutNanoseconds
             )
-            activeSurfaceCloseOperations.removeValue(forKey: closeOperationID)
-            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
-            probe.invalidate()
-            guard let response = raw as? [String: Any],
-                  response["ready"] as? Bool == true else {
+            if let response = raw as? [String: Any],
+               response["ready"] as? Bool == true {
+                result = true
+            } else {
+                result = false
                 let detail = (raw as? [String: Any])?["error"] as? String
                     ?? "missing successful close-preparation response"
                 logger.log(
-                    "Floorp: native WebExtension \(identifier) options remain open: \(detail)",
+                    "Floorp: native WebExtension \(operation.identifier) options remain open: \(detail)",
                     level: .warning,
                     category: .setup
                 )
-                return false
             }
-            return true
         } catch {
-            activeSurfaceCloseOperations.removeValue(forKey: closeOperationID)
-            if probe.requiresProcessLifetimeRetention {
-                // The caller may explicitly close this page after a timeout,
-                // while WebKit still owns its JavaScript callback. Retain the
-                // complete page/probe pair so that callback remains reachable.
-                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)
-                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
-                retiredBackgroundReadinessSurfaces.append(BackgroundReadinessSurface(
-                    context: context,
-                    probe: probe,
-                    webView: webView
-                ))
-            } else {
-                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
-                probe.invalidate()
-            }
+            result = false
             logger.log(
-                "Floorp: native WebExtension \(identifier) options close preparation failed: \(error)",
+                "Floorp: native WebExtension \(operation.identifier) options close preparation failed: \(error)",
                 level: .warning,
                 category: .setup
             )
-            return false
+        }
+        finishExtensionSurfaceCloseOperation(
+            operation,
+            webView: webView,
+            result: result,
+            requiresProcessLifetimeRetention: operation.probe.requiresProcessLifetimeRetention
+        )
+    }
+
+    private func finishExtensionSurfaceCloseOperation(
+        _ operation: ExtensionSurfaceCloseOperation,
+        webView: WKWebView,
+        result: Bool,
+        requiresProcessLifetimeRetention: Bool
+    ) {
+        activeSurfaceCloseOperations.removeValue(forKey: operation.token)
+        if requiresProcessLifetimeRetention {
+            // The longer native deadline expired while WebKit still owns its
+            // callback. Preserve the complete callback owner until process exit.
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(in: webView)
+            retiredBackgroundReadinessSurfaces.append(BackgroundReadinessSurface(
+                context: operation.context,
+                probe: operation.probe,
+                webView: webView
+            ))
+        } else {
+            operation.probe.invalidate()
+            // WebKit can perform final process-pool work after delivering the
+            // native callback. This independent strong-reference grace does
+            // not participate in `mustPreserve`, so a prepared navigation may
+            // proceed while the just-completed source page stays alive.
+            FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
+            FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.endOperation(
+                in: webView,
+                // A detached surface may have exhausted UIKit's own teardown
+                // grace before this late callback arrives. An attached surface
+                // needs no registry grace; keeping it preserved here would
+                // incorrectly cancel a successfully prepared navigation.
+                teardownGraceNanoseconds: operation.needsPostCallbackTeardownGrace
+                    ? 2_000_000_000
+                    : 0
+            )
+        }
+        operation.completion = result
+        let key = operation.webViewIdentifier
+        if !result || !operation.mayReuseSuccessfulResult || isTornDown,
+           extensionSurfaceCloseOperations[key] === operation {
+            extensionSurfaceCloseOperations.removeValue(forKey: key)
+        }
+    }
+
+    private func waitForExtensionSurfaceCloseOperation(
+        _ operation: ExtensionSurfaceCloseOperation,
+        deadline: UInt64
+    ) async -> Bool? {
+        while operation.completion == nil {
+            guard !Task.isCancelled else { return nil }
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else { return nil }
+            do {
+                try await Task.sleep(nanoseconds: min(25_000_000, deadline - now))
+            } catch {
+                return nil
+            }
+        }
+        return operation.completion
+    }
+
+    private func abandonExtensionSurfaceClosePreparation(
+        for webView: WKWebView,
+        surfaceWillDetach: Bool
+    ) {
+        let key = ObjectIdentifier(webView)
+        guard let operation = extensionSurfaceCloseOperations[key],
+              operation.webView === webView else { return }
+        operation.mayReuseSuccessfulResult = false
+        operation.needsPostCallbackTeardownGrace =
+            operation.needsPostCallbackTeardownGrace || surfaceWillDetach
+        if operation.completion != nil {
+            extensionSurfaceCloseOperations.removeValue(forKey: key)
+        }
+    }
+
+    private func markOutstandingExtensionSurfaceCloseOperationForDetachment(
+        _ webView: WKWebView
+    ) {
+        guard let operation = extensionSurfaceCloseOperations[ObjectIdentifier(webView)],
+              operation.webView === webView else { return }
+        abandonExtensionSurfaceClosePreparation(for: webView, surfaceWillDetach: true)
+        FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
+    }
+
+    private func markOutstandingExtensionSurfaceCloseOperationsForDetachment(
+        identifier: String? = nil
+    ) {
+        let operations = Array(extensionSurfaceCloseOperations.values)
+        for operation in operations where identifier == nil || operation.identifier == identifier {
+            guard let webView = operation.webView else { continue }
+            markOutstandingExtensionSurfaceCloseOperationForDetachment(webView)
         }
     }
 
@@ -3027,7 +3320,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
             resolveExtensionTabSurfaceCloseRequest(
                 request,
                 shouldProceed: request.forceOnFailure,
-                dismissAlert: true
+                dismissAlert: true,
+                surfaceWillDetach: true
             )
             return
         }
@@ -3052,7 +3346,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 self.resolveExtensionTabSurfaceCloseRequest(
                     request,
                     shouldProceed: request.forceOnFailure,
-                    dismissAlert: true
+                    dismissAlert: true,
+                    surfaceWillDetach: true
                 )
                 return
             }
@@ -3075,7 +3370,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 self.resolveExtensionTabSurfaceCloseRequest(
                     request,
                     shouldProceed: request.forceOnFailure,
-                    dismissAlert: true
+                    dismissAlert: true,
+                    surfaceWillDetach: true
                 )
                 return
             }
@@ -3124,7 +3420,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
             resolveExtensionTabSurfaceCloseRequest(
                 request,
                 shouldProceed: request.forceOnFailure,
-                dismissAlert: true
+                dismissAlert: true,
+                surfaceWillDetach: true
             )
             return
         }
@@ -3208,6 +3505,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
         }
         request.presentationTask?.cancel()
+        // swiftlint:disable:next closure_body_length
         request.presentationTask = Task { @MainActor [weak self, request] in
             let delay: UInt64 = request.presentationRetryCount < 40
                 ? 250_000_000
@@ -3228,7 +3526,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 self.resolveExtensionTabSurfaceCloseRequest(
                     request,
                     shouldProceed: request.forceOnFailure,
-                    dismissAlert: true
+                    dismissAlert: true,
+                    surfaceWillDetach: true
                 )
                 return
             }
@@ -3249,7 +3548,8 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private func resolveExtensionTabSurfaceCloseRequest(
         _ request: ExtensionTabSurfaceCloseRequest,
         shouldProceed: Bool,
-        dismissAlert: Bool
+        dismissAlert: Bool,
+        surfaceWillDetach: Bool? = nil
     ) {
         guard extensionTabSurfaceCloseRequests[request.tabIdentifier]?.token == request.token else {
             return
@@ -3259,6 +3559,13 @@ final class FloorpNativeWebExtensionHost: NSObject {
         request.task = nil
         request.presentationTask?.cancel()
         request.presentationTask = nil
+        let willDetach = surfaceWillDetach ?? (shouldProceed || isTornDown)
+        if let webView = request.webView {
+            abandonExtensionSurfaceClosePreparation(
+                for: webView,
+                surfaceWillDetach: willDetach
+            )
+        }
         let alert = request.alert
         request.alert = nil
         if dismissAlert,
@@ -3286,15 +3593,31 @@ final class FloorpNativeWebExtensionHost: NSObject {
            request.tab?.webView === request.webView {
             request.webView?.isUserInteractionEnabled = true
         }
+        if willDetach, let webView = request.webView {
+            // The successful native callback may have already released its
+            // in-flight registry lease. Keep the old tab surface alive across
+            // the synchronous replacement/removal triggered by completion,
+            // without blocking that navigation through `mustPreserve`.
+            FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
+        }
         request.takeCompletion()?(canProceed)
     }
 
     private func cancelExtensionTabSurfaceClosePreparation(for tab: Tab) {
-        guard let request = extensionTabSurfaceCloseRequests[ObjectIdentifier(tab)] else { return }
+        guard let request = extensionTabSurfaceCloseRequests[ObjectIdentifier(tab)] else {
+            if let webView = tab.webView {
+                markOutstandingExtensionSurfaceCloseOperationForDetachment(webView)
+                if tab.floorpNativeWebExtensionContextIdentifier != nil {
+                    FloorpNativeWebExtensionDeferredWebViewRelease.retain(webView)
+                }
+            }
+            return
+        }
         resolveExtensionTabSurfaceCloseRequest(
             request,
             shouldProceed: false,
-            dismissAlert: true
+            dismissAlert: true,
+            surfaceWillDetach: true
         )
     }
 
@@ -4406,9 +4729,13 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     resolveExtensionTabSurfaceCloseRequest(
                         $0,
                         shouldProceed: $0.forceOnFailure,
-                        dismissAlert: true
+                        dismissAlert: true,
+                        surfaceWillDetach: true
                     )
                 }
+            markOutstandingExtensionSurfaceCloseOperationsForDetachment(
+                identifier: identifier
+            )
             verifiedNavigationReadinessRealms.removeValue(forKey: identifier)
             if let popupToken = managedActionPopups[identifier]?.token {
                 dismissManagedActionPopups { $0.token == popupToken }
@@ -5306,6 +5633,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 + windowAdapters.keys.map(\.windowUUID)
         )
         isTornDown = true
+        markOutstandingExtensionSurfaceCloseOperationsForDetachment()
         lifecycleGeneration += 1
         extensionTopologyGeneration &+= 1
         activeTransitions.removeAll()
@@ -5545,6 +5873,12 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 )
             },
             prepareToClose: prepareToClose,
+            abandonClosePreparation: { [weak self] webView, surfaceWillDetach in
+                self?.abandonExtensionSurfaceClosePreparation(
+                    for: webView,
+                    surfaceWillDetach: surfaceWillDetach
+                )
+            },
             onClose: {},
             onCloseDisposition: { [weak self, weak context, weak sourceAdapter] disposition in
                 guard let self else { return }
