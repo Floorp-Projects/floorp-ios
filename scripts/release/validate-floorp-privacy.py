@@ -9,7 +9,8 @@ artifact, and rejects:
   - any traced or statically referenced host outside the matrix, and any
     disabled-service host that appears in a trace;
   - missing dSYM UUIDs for frameworks embedded in the archive;
-  - forbidden entitlements (APNs, web-browser, browser app-installation);
+  - a missing default-browser entitlement, or forbidden APNs and browser
+    app-installation entitlements;
   - internally inconsistent App Privacy / export-compliance metadata.
 
 Exit codes:
@@ -151,11 +152,12 @@ def validate_entitlements(entitlements_path: Path) -> None:
     entitlements = load_entitlements(entitlements_path)
     forbidden = [
         "aps-environment",
-        "com.apple.developer.web-browser",
         "com.apple.developer.browser.app-installation",
     ]
     for name in forbidden:
         check(name not in entitlements, f"forbidden entitlement present: {name}")
+    check(entitlements.get("com.apple.developer.web-browser") is True,
+          "default-browser entitlement must be enabled")
     application_identifier = entitlements.get("application-identifier", "")
     check("app.floorp.Floorp" in application_identifier,
           "application-identifier must contain app.floorp.Floorp")

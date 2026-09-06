@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -186,6 +187,32 @@ class FloorpPrivacyValidatorTests(unittest.TestCase):
             self.run_validator(entitlements=FIXTURES / "floorp-privacy-entitlements-forbidden.plist"),
             1,
         )
+
+    def test_enabled_default_browser_entitlement_passes(self):
+        self.assertEqual(
+            self.run_validator(
+                entitlements=FIXTURES / "floorp-privacy-entitlements-default-browser.plist"
+            ),
+            0,
+        )
+
+    def test_missing_default_browser_entitlement_fails(self):
+        source = FIXTURES / "floorp-privacy-entitlements-default-browser.plist"
+        with tempfile.TemporaryDirectory() as tmp:
+            entitlements = plistlib.loads(source.read_bytes())
+            entitlements.pop("com.apple.developer.web-browser")
+            path = Path(tmp) / "entitlements.plist"
+            path.write_bytes(plistlib.dumps(entitlements))
+            self.assertEqual(self.run_validator(entitlements=path), 1)
+
+    def test_browser_app_installation_entitlement_fails(self):
+        source = FIXTURES / "floorp-privacy-entitlements-default-browser.plist"
+        with tempfile.TemporaryDirectory() as tmp:
+            entitlements = plistlib.loads(source.read_bytes())
+            entitlements["com.apple.developer.browser.app-installation"] = True
+            path = Path(tmp) / "entitlements.plist"
+            path.write_bytes(plistlib.dumps(entitlements))
+            self.assertEqual(self.run_validator(entitlements=path), 1)
 
     def test_static_endpoint_outside_matrix_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
