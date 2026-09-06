@@ -139,9 +139,11 @@ Adding Push later requires restoring that target where needed, production entitl
 
 ### Managed browser entitlements
 
-The private Internal TestFlight line intentionally omits `com.apple.developer.web-browser`. Apple has not approved that managed capability for the Floorp App ID, so these builds will not appear as a default-browser choice. Apple's request form requires an App Store build or a public TestFlight link, so the request is intentionally deferred while distribution remains private. When Floorp adopts external testing or public distribution, first provide an assessment build without the entitlement; after Apple approves the request, enable the capability for `app.floorp.Floorp`, regenerate the distribution profile, re-add the entitlement, and verify it in the signed archive.
+Apple has assigned `com.apple.developer.web-browser` to `app.floorp.Floorp`. `FloorpReleaseApplication.entitlements` declares it as `true`, allowing eligible signed builds to appear in iOS’s Default Browser App settings. `FloorpReleaseInfo.plist` already registers the required `http` and `https` URL schemes.
 
-The Floorp release entitlement omits `com.apple.developer.browser.app-installation`, which is for installing alternative-distribution apps from a website. Add it only if Floorp deliberately adopts that distribution path and Apple approves the request.
+The capability is managed. Before producing a distribution archive, let Xcode refresh the automatically managed provisioning profile for Team `DV2U35YBHT`, then verify the signed archive contains `com.apple.developer.web-browser = true`.
+
+The Floorp release entitlement continues to omit `com.apple.developer.browser.app-installation`, which is for installing alternative-distribution apps from a website. Add it only if Floorp deliberately adopts that distribution path and Apple approves the request.
 
 ### Versioning
 
@@ -175,7 +177,7 @@ Complete the remaining unchecked steps before broad public distribution:
 - [x] Omit Push/APNs and AutoFill Credential Provider from the initial Client-only release.
 - [ ] Confirm Multipath remains a product requirement; it is currently retained because networking code uses `.handover`.
 - [x] Disable Hosted Summarizer, its App Attest path, and Quick Answers; retain Apple on-device summarization.
-- [ ] Request the default-browser managed entitlement.
+- [x] Request and enable the default-browser managed entitlement.
 - [x] Omit the browser app-installation entitlement from the initial release configuration.
 - [ ] Choose the Floorp marketing-version policy and initial version.
 - [x] Create the Floorp app record in App Store Connect (`6796708699`).
@@ -229,7 +231,8 @@ its source SHA, archived marketing version/build, signing identity,
 entitlements, archive and IPA digests, and the dSYM UUID inventory.
 `scripts/release/validate-floorp-release-evidence.py` re-verifies the document
 against `scripts/release/floorp-release-evidence.schema.json` and rejects mixed
-build IDs, forbidden entitlements, missing dSYMs, and digest mismatches.
+build IDs, a missing default-browser entitlement, forbidden entitlements, missing
+dSYMs, and digest mismatches.
 
 `scripts/release/app-store-connect-api.py` is the only App Store Connect
 surface. Its read allowlist covers the required workflow, repository, and Git

@@ -17,6 +17,7 @@
   },
   "entitlements": {
     "com.apple.developer.networking.multipath": true,
+    "com.apple.developer.web-browser": true,
     "com.apple.security.application-groups": [
       "group.app.floorp.Floorp.DV2U35YBHT"
     ],

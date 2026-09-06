@@ -8,8 +8,8 @@ schema conformance this validator enforces the release contract:
   - the archive's captured version/build/team/bundle match the evidence and
     the Floorp release identity (DV2U35YBHT / app.floorp.Floorp);
   - the IPA's version/build match the archive (no mixed build IDs);
-  - the signed entitlements match the approved Floorp capability set and
-    omit the denied capabilities (APNs, web-browser, browser app-installation);
+  - the signed entitlements include the approved default-browser capability
+    and omit denied capabilities (APNs and browser app-installation);
   - the dSYM inventory is non-empty with unique UUIDs;
   - the IPA SHA-256 is recomputed when the file is present.
 
@@ -94,11 +94,12 @@ def validate_shape(schema: dict, evidence: dict) -> None:
 def validate_entitlements(entitlements: dict) -> None:
     denied = [
         "aps-environment",
-        "com.apple.developer.web-browser",
         "com.apple.developer.browser.app-installation",
     ]
     for name in denied:
         check(name not in entitlements, f"forbidden entitlement present: {name}")
+    check(entitlements.get("com.apple.developer.web-browser") is True,
+          "default-browser entitlement must be enabled")
 
     application_identifier = entitlements.get("application-identifier")
     if application_identifier is not None:

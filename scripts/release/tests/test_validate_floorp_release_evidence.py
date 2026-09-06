@@ -65,6 +65,26 @@ class FloorpReleaseEvidenceValidatorTests(unittest.TestCase):
     def test_forbidden_entitlement_fails(self):
         self.assertEqual(self.run_validator(FIXTURES / "floorp-release-evidence-wrong-entitlement.json"), 1)
 
+    def test_default_browser_entitlement_is_required(self):
+        evidence = json.loads(
+            (FIXTURES / "floorp-release-evidence-valid.json").read_text()
+        )
+        evidence["entitlements"].pop("com.apple.developer.web-browser")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ev.json"
+            path.write_text(json.dumps(evidence))
+            self.assertEqual(self.run_validator(path), 1)
+
+    def test_browser_app_installation_entitlement_is_forbidden(self):
+        evidence = json.loads(
+            (FIXTURES / "floorp-release-evidence-valid.json").read_text()
+        )
+        evidence["entitlements"]["com.apple.developer.browser.app-installation"] = True
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ev.json"
+            path.write_text(json.dumps(evidence))
+            self.assertEqual(self.run_validator(path), 1)
+
     def test_missing_dsym_inventory_fails(self):
         self.assertEqual(self.run_validator(FIXTURES / "floorp-release-evidence-missing-dsym.json"), 1)
 

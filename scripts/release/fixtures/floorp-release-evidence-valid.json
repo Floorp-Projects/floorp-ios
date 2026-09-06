@@ -21,6 +21,7 @@
   },
   "entitlements": {
     "application-identifier": "ABCDEF1234.app.floorp.Floorp",
+    "com.apple.developer.web-browser": true,
     "keychain-access-groups": ["ABCDEF1234.app.floorp.Floorp"],
     "com.apple.security.application-groups": ["group.app.floorp.Floorp.DV2U35YBHT"]
   },
