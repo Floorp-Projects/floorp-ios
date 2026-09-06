@@ -216,6 +216,104 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
+    def test_rejects_ubol_cross_document_custom_filter_state_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "self.cssUserDocumentGeneration === cssUserDocumentGeneration",
+                "false",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_cross_document_custom_filter_cleanup_tail_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "const cssUserCleanupOp = Promise.resolve(previousPendingOp)",
+                "const cssUserCleanupOp = Promise.resolve()",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_cross_document_css_api_state_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "api.documentElement === documentElement &&",
+                "false &&",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_cross_document_specific_filter_generation_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-specific.js",
+                "self.cssSpecificDocumentGeneration === cssSpecificDocumentGeneration",
+                "false",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_cross_document_specific_filter_cleanup_tail_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-specific.js",
+                "const cssSpecificResetTail = Promise.resolve(previousResetTail)",
+                "const cssSpecificResetTail = Promise.resolve()",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_cross_document_specific_filter_reset_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-specific.js",
+                "? previousListsProceduralFilterer.reset()",
+                "? undefined",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_cross_document_isolated_context_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/isolated-api.js",
+                "api.documentTimeOrigin === documentTimeOrigin",
+                "false",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
     def test_rejects_ubol_conditional_wake_registration_reconciliation(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",

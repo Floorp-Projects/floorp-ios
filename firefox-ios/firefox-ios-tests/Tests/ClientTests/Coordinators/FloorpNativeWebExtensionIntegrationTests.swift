@@ -430,6 +430,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(
             in: webView,
             expectedOrigin: fixture.context.baseURL
@@ -2012,6 +2013,15 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(
             FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
                 preSafariDNRPerStoreCapacityGuardRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preCrossDocumentCosmeticRecord = legacyRecord
+        preCrossDocumentCosmeticRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preCrossDocumentCosmeticUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preCrossDocumentCosmeticRecord
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
@@ -3982,6 +3992,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView)
 
         page.webView(
@@ -4057,6 +4068,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView)
 
         page.webView(
@@ -4127,6 +4139,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView)
 
         page.requestCloseForTesting { completionCount += 1 }
@@ -4207,6 +4220,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView)
 
         page.requestCloseForTesting()
@@ -4269,6 +4283,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
 
         page.requestCloseForTesting()
@@ -4357,6 +4372,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
 
         page.requestCloseForTesting()
@@ -4434,8 +4450,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView, expectedOrigin: fixture.context.baseURL)
-        page.webView(webView, didCommit: nil)
 
         // Observe controller teardown as well as the host-owned callback lease.
         page.requestCloseForTesting { completionCount += 1 }
@@ -4800,6 +4816,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let webView = try XCTUnwrap(
             page.view.subviews.first { $0 is WKWebView } as? WKWebView
         )
+        try await waitForPageDocumentCommit(page)
         try await waitForDocumentCommit(in: webView)
         let presentationController = try XCTUnwrap(navigationController.presentationController)
 
@@ -4901,6 +4918,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
         root.present(popup, animated: false)
         popup.loadViewIfNeeded()
+        try await waitForPopupDocumentCommit(popup)
         try await waitForDocumentCommit(in: popup.webView)
 
         popup.requestCloseForTesting { completionCount += 1 }
@@ -4980,6 +4998,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             window.rootViewController = nil
         }
         popup.loadViewIfNeeded()
+        try await waitForPopupDocumentCommit(popup)
         try await waitForDocumentCommit(in: popup.webView)
 
         popup.requestCloseForTesting()
@@ -5065,6 +5084,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
         root.present(popup, animated: false)
         popup.loadViewIfNeeded()
+        try await waitForPopupDocumentCommit(popup)
         try await waitForDocumentCommit(in: popup.webView)
 
         popup.webView(
@@ -5129,6 +5149,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
         root.present(popup, animated: false)
         popup.loadViewIfNeeded()
+        try await waitForPopupDocumentCommit(popup)
         try await waitForDocumentCommit(in: popup.webView)
 
         popup.requestCloseForTesting()
@@ -5579,7 +5600,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057"
+            "b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
@@ -6534,6 +6555,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         // navigation-policy callback. While a native callback is in flight,
         // the production page correctly refuses document replacement; probing
         // about:blank here would otherwise cancel the navigation under test.
+        try await waitForPageDocumentCommit(optionsPage)
         try await waitForDocumentCommit(
             in: optionsWebView,
             expectedOrigin: context.baseURL
@@ -9206,8 +9228,10 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     continue
                 }
             }
-            if let ready = try? await webView.evaluateJavaScript(
-                "document.readyState === 'complete'"
+            if let ready = try? await webView.floorpCallAsyncJavaScript(
+                "return document.readyState === 'complete';",
+                contentWorld: .page,
+                timeoutNanoseconds: 3_000_000_000
             ) as? Bool, ready {
                 if expectedOrigin != nil {
                     // The JavaScript completion can resume just before WebKit
@@ -9225,6 +9249,36 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             "The test document did not finish loading"
         )
     }
+
+#if DEBUG || TESTING
+    private func waitForPageDocumentCommit(
+        _ page: FloorpNativeWebExtensionPageViewController
+    ) async throws {
+        for _ in 0..<100 {
+            if page.hasCommittedDocumentForTesting {
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        throw FloorpNativeWebExtensionError.unsupportedOperation(
+            "The options page controller did not observe a committed document"
+        )
+    }
+
+    private func waitForPopupDocumentCommit(
+        _ popup: FloorpNativeWebExtensionActionPopupViewController
+    ) async throws {
+        for _ in 0..<100 {
+            if popup.hasCommittedDocumentForTesting {
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        throw FloorpNativeWebExtensionError.unsupportedOperation(
+            "The action popup controller did not observe a committed document"
+        )
+    }
+#endif
 
     private func waitForJavaScriptState(
         in webView: WKWebView,
@@ -9475,6 +9529,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         try await host.performAction(contextIdentifier: item.identifier, for: sourceTab)
         let popupResult = await waitForPresentedActionPopup(presentingRoot: presentingRoot)
         let popup = try XCTUnwrap(popupResult)
+        _ = try await waitForJavaScriptState(
+            in: popup.webView,
+            description: "uBO Lite matched-rules popup route",
+            source: """
+            return {
+                ready: document.readyState === 'complete' &&
+                    typeof globalThis.floorpCompletePopupRoute === 'function',
+            };
+            """
+        )
         let createdTabCount = manager.extensionCreatedTabs.count
         let routeAcknowledgementGate = FloorpClosePreparationTestGate()
         host.extensionTabCreationCompletionHookForTesting = { identifier, _ in

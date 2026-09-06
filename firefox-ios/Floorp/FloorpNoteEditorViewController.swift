@@ -2543,15 +2543,30 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         let value: Any?
     }
 
+    private struct RetiredJavaScriptRequest {
+        let token: JavaScriptRequestToken
+        let webViewIdentifier: ObjectIdentifier
+    }
+
     @MainActor
     private final class JavaScriptRequestToken {
         let id: UUID
         private var completion: ((Result<JavaScriptValue, Error>) -> Void)?
         private var timeoutTask: Task<Void, Never>?
+        private let onClientAbandonment: (JavaScriptRequestToken) -> Void
+        private let onNativeCompletion: (JavaScriptRequestToken) -> Void
+        private(set) var isNativeCallbackPending = true
 
-        init(id: UUID, completion: @escaping (Result<JavaScriptValue, Error>) -> Void) {
+        init(
+            id: UUID,
+            completion: @escaping (Result<JavaScriptValue, Error>) -> Void,
+            onClientAbandonment: @escaping (JavaScriptRequestToken) -> Void,
+            onNativeCompletion: @escaping (JavaScriptRequestToken) -> Void
+        ) {
             self.id = id
             self.completion = completion
+            self.onClientAbandonment = onClientAbandonment
+            self.onNativeCompletion = onNativeCompletion
         }
 
         func beginTimeout(after nanoseconds: UInt64) {
@@ -2561,11 +2576,27 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
                 } catch {
                     return
                 }
-                resolve(.failure(EditorError.javaScriptRequestTimedOut))
+                failClient(with: EditorError.javaScriptRequestTimedOut)
             }
         }
 
-        func resolve(_ result: Result<JavaScriptValue, Error>) {
+        func completeFromWebKit(_ result: Result<JavaScriptValue, Error>) {
+            guard isNativeCallbackPending else { return }
+            isNativeCallbackPending = false
+            resolveClient(result)
+            onNativeCompletion(self)
+        }
+
+        func failClient(with error: Error) {
+            guard completion != nil else { return }
+            // A Swift timeout, cancellation, or editor invalidation does not
+            // cancel WebKit's native callback. Establish process-lifetime
+            // ownership before resuming the client that may release this view.
+            onClientAbandonment(self)
+            resolveClient(.failure(error))
+        }
+
+        private func resolveClient(_ result: Result<JavaScriptValue, Error>) {
             guard let completion else { return }
             self.completion = nil
             timeoutTask?.cancel()
@@ -2599,6 +2630,12 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     private var webContentProcessGeneration = 0
     private var javaScriptRequestTimeoutNanoseconds: UInt64 = 5_000_000_000
     private var pendingJavaScriptRequests = [UUID: JavaScriptRequestToken]()
+    // WebKit can retain a native callAsyncJavaScript completion after the
+    // Swift client times out or the editor closes. Keep the callback owner
+    // until WebKit responds, and keep its exact document alive for the rest of
+    // the process. Releasing either side while WebCore still owns the call can
+    // surface an unsafe transition during a later JavaScriptCore collection.
+    private static var retiredJavaScriptRequests = [UUID: RetiredJavaScriptRequest]()
 #if TESTING
     private var suspendsUpdateDeliveryForTesting = false
     private var bufferedUpdatesForTesting = [FloorpRichTextUpdateEnvelope]()
@@ -2706,12 +2743,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     func setEditable(_ isEditable: Bool) {
         requestedEditable = isEditable
         guard !isInvalidated, isPageReady else { return }
-        webView.callAsyncJavaScript(
+        performJavaScriptWithoutWaiting(
             "return window.floorpSetEditable(isEditable);",
-            arguments: ["isEditable": isEditable],
-            in: nil,
-            in: .page
-        ) { _ in }
+            arguments: ["isEditable": isEditable]
+        )
     }
 
     func setEditableAndWait(_ isEditable: Bool) async throws {
@@ -2734,12 +2769,10 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 
     func focus() {
         guard !isInvalidated, isPageReady else { return }
-        webView.callAsyncJavaScript(
+        performJavaScriptWithoutWaiting(
             "document.getElementById('editor').focus(); return true;",
-            arguments: [:],
-            in: nil,
-            in: .page
-        ) { _ in }
+            arguments: [:]
+        )
     }
 
     func flush(
@@ -2781,13 +2814,16 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 #if TESTING
         bufferedUpdatesForTesting.removeAll()
 #endif
-        let userContentController = webView.configuration.userContentController
-        userContentController.removeScriptMessageHandler(forName: BridgeName.update)
-        userContentController.removeScriptMessageHandler(forName: BridgeName.state)
+        let mustPreserveDocument = Self.mustPreserveJavaScriptDocument(webView)
+        if !mustPreserveDocument {
+            let userContentController = webView.configuration.userContentController
+            userContentController.removeScriptMessageHandler(forName: BridgeName.update)
+            userContentController.removeScriptMessageHandler(forName: BridgeName.state)
+            webView.navigationDelegate = nil
+            webView.stopLoading()
+        }
         messageHandlerProxy?.target = nil
         messageHandlerProxy = nil
-        webView.navigationDelegate = nil
-        webView.stopLoading()
         delegate = nil
     }
 
@@ -2814,6 +2850,17 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 
     var pendingJavaScriptRequestCountForTesting: Int {
         pendingJavaScriptRequests.count
+    }
+
+    var preservesJavaScriptDocumentForTesting: Bool {
+        Self.mustPreserveJavaScriptDocument(webView)
+    }
+
+    var retiredJavaScriptRequestCountForTesting: Int {
+        let identifier = ObjectIdentifier(webView)
+        return Self.retiredJavaScriptRequests.values.filter {
+            $0.webViewIdentifier == identifier
+        }.count
     }
 
     var isInvalidatedForTesting: Bool {
@@ -3158,32 +3205,75 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
         let result: JavaScriptValue = try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
-                let token = registerJavaScriptRequest(
-                    id: requestID,
-                    continuation: continuation
-                )
-                webView.callAsyncJavaScript(
+                startJavaScriptCall(
                     body,
                     arguments: arguments,
-                    in: nil,
-                    in: .page
+                    requestID: requestID
                 ) { result in
-                    switch result {
-                    case .success(let value):
-                        token.resolve(.success(JavaScriptValue(value: value)))
-                    case .failure(let error):
-                        token.resolve(.failure(error))
-                    }
+                    continuation.resume(with: result)
                 }
             }
         } onCancel: { [weak self] in
             Task { @MainActor in
-                self?.pendingJavaScriptRequests[requestID]?.resolve(
-                    .failure(CancellationError())
+                self?.pendingJavaScriptRequests[requestID]?.failClient(
+                    with: CancellationError()
                 )
             }
         }
         return result.value
+    }
+
+    private func performJavaScriptWithoutWaiting(
+        _ body: String,
+        arguments: [String: Any]
+    ) {
+        guard !isInvalidated else { return }
+        startJavaScriptCall(
+            body,
+            arguments: arguments,
+            requestID: UUID()
+        ) { _ in }
+    }
+
+    private func startJavaScriptCall(
+        _ body: String,
+        arguments: [String: Any],
+        requestID: UUID,
+        completion: @escaping (Result<JavaScriptValue, Error>) -> Void
+    ) {
+        let operationRegistryName = "__floorpRichTextNativeOperations"
+        let retainedBody = """
+        const floorpOperation = (async () => {
+        \(body)
+        })();
+        const floorpOperations = globalThis.\(operationRegistryName) ??
+            (globalThis.\(operationRegistryName) = new Map());
+        floorpOperations.set(floorpNativeRequestID, floorpOperation);
+        try {
+            return await floorpOperation;
+        } finally {
+            floorpOperations.delete(floorpNativeRequestID);
+        }
+        """
+        var retainedArguments = arguments
+        retainedArguments["floorpNativeRequestID"] = requestID.uuidString
+        let token = registerJavaScriptRequest(
+            id: requestID,
+            completion: completion
+        )
+        webView.callAsyncJavaScript(
+            retainedBody,
+            arguments: retainedArguments,
+            in: nil,
+            in: .page
+        ) { result in
+            switch result {
+            case .success(let value):
+                token.completeFromWebKit(.success(JavaScriptValue(value: value)))
+            case .failure(let error):
+                token.completeFromWebKit(.failure(error))
+            }
+        }
     }
 
     private func evaluateJavaScript(_ script: String) async throws -> Any? {
@@ -3194,20 +3284,22 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
             return try await withCheckedThrowingContinuation { continuation in
                 let token = registerJavaScriptRequest(
                     id: requestID,
-                    continuation: continuation
+                    completion: { result in
+                        continuation.resume(with: result)
+                    }
                 )
                 webView.evaluateJavaScript(script) { value, error in
                     if let error {
-                        token.resolve(.failure(error))
+                        token.completeFromWebKit(.failure(error))
                     } else {
-                        token.resolve(.success(JavaScriptValue(value: value)))
+                        token.completeFromWebKit(.success(JavaScriptValue(value: value)))
                     }
                 }
             }
         } onCancel: { [weak self] in
             Task { @MainActor in
-                self?.pendingJavaScriptRequests[requestID]?.resolve(
-                    .failure(CancellationError())
+                self?.pendingJavaScriptRequests[requestID]?.failClient(
+                    with: CancellationError()
                 )
             }
         }
@@ -3216,12 +3308,21 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
 
     private func registerJavaScriptRequest(
         id: UUID,
-        continuation: CheckedContinuation<JavaScriptValue, Error>
+        completion: @escaping (Result<JavaScriptValue, Error>) -> Void
     ) -> JavaScriptRequestToken {
-        let token = JavaScriptRequestToken(id: id) { [weak self] result in
-            self?.pendingJavaScriptRequests.removeValue(forKey: id)
-            continuation.resume(with: result)
-        }
+        let token = JavaScriptRequestToken(
+            id: id,
+            completion: { [weak self] result in
+                self?.pendingJavaScriptRequests.removeValue(forKey: id)
+                completion(result)
+            },
+            onClientAbandonment: { [webView] token in
+                Self.preserveJavaScriptRequest(token, in: webView)
+            },
+            onNativeCompletion: { token in
+                Self.retiredJavaScriptRequests.removeValue(forKey: token.id)
+            }
+        )
         pendingJavaScriptRequests[id] = token
         token.beginTimeout(after: javaScriptRequestTimeoutNanoseconds)
         return token
@@ -3230,7 +3331,23 @@ final class FloorpRichTextWebEditorView: UIView, WKNavigationDelegate, WKScriptM
     private func failPendingJavaScriptRequests(with error: Error) {
         let requests = Array(pendingJavaScriptRequests.values)
         pendingJavaScriptRequests.removeAll()
-        requests.forEach { $0.resolve(.failure(error)) }
+        requests.forEach { $0.failClient(with: error) }
+    }
+
+    private static func preserveJavaScriptRequest(
+        _ token: JavaScriptRequestToken,
+        in webView: WKWebView
+    ) {
+        let webViewIdentifier = ObjectIdentifier(webView)
+        FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)
+        retiredJavaScriptRequests[token.id] = RetiredJavaScriptRequest(
+            token: token,
+            webViewIdentifier: webViewIdentifier
+        )
+    }
+
+    private static func mustPreserveJavaScriptDocument(_ webView: WKWebView) -> Bool {
+        FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView)
     }
 
     private func jsonObject<Value: Encodable>(_ value: Value) -> Any? {

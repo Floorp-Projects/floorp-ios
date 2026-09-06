@@ -42,7 +42,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057`、
+派生 SHA-256 は `b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -53,6 +53,9 @@ Report 導線も source の window ID／incognito を渡し、同一 URL の検�
 Dashboard の各 route は close handshake の pending 集合へ登録して WebExtension API の成功応答を
 待ち、失敗なら popup 内にエラーを残す。
 host は popup が明示的に close されるまで選択・presentation を保留し、close 後に一度だけ確定する。
+CSS 挿入履歴／hostname cache と custom cosmetic／procedural filter の状態・直列化処理は
+document ごとに更新し、Safari が isolated-world global を navigation 間で再利用しても
+cross-host／通常／プライベート tab の再注入を省略せず、前 document の CSS を持ち越さない。
 Page Action の初期化では active tab の整数 ID／window ID と incognito、popup panel の boolean、
 disabled-features 配列、非負整数の custom-filter count、0〜3 の blocking level を検証する。初回 admin cache 未構築による
 `disabledFeatures` の未提供だけは空配列へ正規化し、null、非配列、非文字列要素を含む応答は

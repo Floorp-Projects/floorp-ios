@@ -6036,6 +6036,173 @@ index e0b8aae..72a20ab 100644
 +    } catch(reason) {
 +        ubolErr(`registerContentScripts/${reason}`);
 +        if ( webextFlavor === 'safari' || throwOnError ) { throw reason; }
+diff --git a/js/scripting/css-api.js b/js/scripting/css-api.js
+index 88c7b27..3186c64 100644
+--- a/js/scripting/css-api.js
++++ b/js/scripting/css-api.js
+@@ -23 +23,10 @@
+-    if ( typeof api === 'object' ) { return; }
++    const documentElement = document.documentElement;
++    const documentTimeOrigin = performance.timeOrigin;
++    if (
++        typeof api === 'object' &&
++        api.documentElement === documentElement &&
++        api.documentTimeOrigin === documentTimeOrigin
++    ) { return; }
++    if ( typeof api?.pageRevealHandler === 'function' ) {
++        self.removeEventListener('pagereveal', api.pageRevealHandler);
++    }
+@@ -26,0 +36,8 @@
++    const pageRevealHandler = ( ) => {
++        chrome.runtime.sendMessage({
++            what: 'insertCSS',
++            css: Array.from(inserted).join('\n'),
++        }).catch(( ) => {
++        });
++    };
++
+@@ -27,0 +45,3 @@
++        documentElement,
++        documentTimeOrigin,
++        pageRevealHandler,
+@@ -38,7 +58 @@
+-    self.addEventListener('pagereveal', ( ) => {
+-        chrome.runtime.sendMessage({
+-            what: 'insertCSS',
+-            css: Array.from(inserted).join('\n'),
+-        }).catch(( ) => {
+-        });
+-    });
++    self.addEventListener('pagereveal', pageRevealHandler);
+diff --git a/js/scripting/css-specific.js b/js/scripting/css-specific.js
+index c28930c..c2d74e1 100644
+--- a/js/scripting/css-specific.js
++++ b/js/scripting/css-specific.js
+@@ -30,0 +31,18 @@ self.specificImports = undefined;
++const cssSpecificDocumentGeneration = {};
++const previousResetTail = self.cssSpecificResetTail;
++const previousListsProceduralFilterer = self.listsProceduralFiltererAPI;
++self.cssSpecificDocumentGeneration = cssSpecificDocumentGeneration;
++self.listsProceduralFiltererAPI = undefined;
++const cssSpecificResetTail = Promise.resolve(previousResetTail)
++    .catch(( ) => undefined)
++    .then(( ) => previousListsProceduralFilterer instanceof Object
++        ? previousListsProceduralFilterer.reset()
++        : undefined
++    )
++    .catch(( ) => undefined);
++self.cssSpecificResetTail = cssSpecificResetTail;
++await cssSpecificResetTail;
++const isCurrentDocument = ( ) =>
++    self.cssSpecificDocumentGeneration === cssSpecificDocumentGeneration;
++if ( isCurrentDocument() === false ) { return; }
++
+@@ -139,0 +158 @@ let cacheEntry = await sessionRead(cacheKey) ?? { t: 0 };
++if ( isCurrentDocument() === false ) { return; }
+@@ -141,0 +161 @@ if ( cacheEntry.t === 0 ) {
++    if ( isCurrentDocument() === false ) { return; }
+@@ -165,0 +186 @@ await self.ProceduralFiltererAPI;
++if ( isCurrentDocument() === false ) { return; }
+diff --git a/js/scripting/css-user.js b/js/scripting/css-user.js
+index ceb96e5..b58aa63 100644
+--- a/js/scripting/css-user.js
++++ b/js/scripting/css-user.js
+@@ -23,7 +23,37 @@
+
+ /******************************************************************************/
+
++// Safari can reuse an isolated-world global when the tab commits a new
++// document. Keep the custom-filter guard and its serialized operation scoped
++// to the document that created them, otherwise a later navigation can inherit
++// `customFilters` and skip both CSS and procedural injection.
++// Use the content-script execution as the generation boundary because Safari
++// can preserve the JavaScript `document` wrapper identity as well.
++const cssUserDocumentGeneration = {};
++if ( typeof self.cssUserStartHandler === 'function' ) {
++    self.removeEventListener('pagereveal', self.cssUserStartHandler);
++}
++const previousProceduralFilterer = self.customProceduralFiltererAPI;
++const previousPendingOp = self.cssUserPendingOp;
++self.cssUserDocumentGeneration = cssUserDocumentGeneration;
++self.customFilters = undefined;
++self.customProceduralFiltererAPI = undefined;
++const cssUserCleanupOp = Promise.resolve(previousPendingOp)
++    .catch(( ) => undefined)
++    .then(( ) => previousProceduralFilterer instanceof Object
++        ? previousProceduralFilterer.reset()
++        : undefined
++    )
++    .catch(( ) => undefined);
++self.cssUserPendingOp = cssUserCleanupOp;
++
++self.cssUserStartHandler = uBOL_cssUserStart;
++const isCurrentDocument = ( ) =>
++    self.cssUserDocumentGeneration === cssUserDocumentGeneration &&
++    self.cssUserStartHandler === uBOL_cssUserStart;
++
+ async function uBOL_cssUserActivate() {
++    if ( isCurrentDocument() === false ) { return; }
+     if ( self.customFilters ) { return; }
+
+     const docURL = new URL(document.baseURI);
+@@ -33,6 +63,7 @@ async function uBOL_cssUserActivate() {
+         hostname: docURL.hostname,
+     }).catch(( ) => {
+     });
++    if ( isCurrentDocument() === false ) { return; }
+     self.customFilters = details;
+     if ( Boolean(details) === false ) { return; }
+
+@@ -44,6 +75,7 @@ async function uBOL_cssUserActivate() {
+             });
+         }
+         await self.ProceduralFiltererAPI;
++        if ( isCurrentDocument() === false ) { return; }
+         self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+         const selectors = details.proceduralSelectors.map(a => JSON.parse(a));
+         const declaratives = selectors.filter(a => a.cssable);
+@@ -63,17 +95,20 @@ async function uBOL_cssUserActivate() {
+ }
+
+ async function uBOL_cssUserStart() {
++    if ( isCurrentDocument() === false ) { return; }
+-    if ( self.cssUserPendingOp === undefined ) {
+-        self.cssUserPendingOp = Promise.resolve();
+-    }
+-    self.cssUserPendingOp = self.cssUserPendingOp.then(uBOL_cssUserActivate);
+-    await self.cssUserPendingOp;
++    const pendingOp = Promise.resolve(self.cssUserPendingOp)
++        .catch(( ) => undefined)
++        .then(uBOL_cssUserActivate);
++    self.cssUserPendingOp = pendingOp.catch(( ) => undefined);
++    await pendingOp;
++    if ( isCurrentDocument() === false ) { return; }
+     if ( Boolean(self.customFilters) === false ) { return; }
+     self.removeEventListener('pagereveal', uBOL_cssUserStart);
+ }
+
+ await uBOL_cssUserStart();
+
++if ( isCurrentDocument() === false ) { return; }
+ if ( self.customFilters ) { return; }
+ self.addEventListener('pagereveal', uBOL_cssUserStart);
+
+diff --git a/js/scripting/isolated-api.js b/js/scripting/isolated-api.js
+index 090ad41..92a7cfb 100644
+--- a/js/scripting/isolated-api.js
++++ b/js/scripting/isolated-api.js
+@@ -26 +26,7 @@
+-    if ( typeof api === 'object' ) { return; }
++    const documentElement = document.documentElement;
++    const documentTimeOrigin = performance.timeOrigin;
++    if (
++        typeof api === 'object' &&
++        api.documentElement === documentElement &&
++        api.documentTimeOrigin === documentTimeOrigin
++    ) { return; }
+@@ -28,0 +35,2 @@
++    isolatedAPI.documentElement = documentElement;
++    isolatedAPI.documentTimeOrigin = documentTimeOrigin;
 diff --git a/js/settings.js b/js/settings.js
 index a92e7d0..ef7f17a 100644
 --- a/js/settings.js

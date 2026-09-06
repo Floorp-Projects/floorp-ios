@@ -84,13 +84,13 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
         try await waitForBackgroundContent(in: context)
         print("FLOORP_DARKREADER_RELEASE_GATE background")
         var presentedPopup: UIViewController?
-        var presentedPopupWebView: WKWebView?
+        var retainedPopupControllers = [UIViewController]()
+        var retainedPopupWebViews = [WKWebView]()
         defer {
             presentedPopup?.dismiss(animated: false)
-            presentedPopupWebView?.stopLoading()
-            presentedPopupWebView?.navigationDelegate = nil
-            browsingWebView.stopLoading()
-            browsingWebView.navigationDelegate = nil
+            retainedPopupControllers.forEach { $0.dismiss(animated: false) }
+            retainedPopupWebViews.forEach { $0.floorpTearDownDiagnosticWebViewIfSafe() }
+            browsingWebView.floorpTearDownDiagnosticWebViewIfSafe()
             controller.didCloseTab(tab, windowIsClosing: true)
             controller.didCloseWindow(extensionWindow)
             controller.delegate = nil
@@ -104,11 +104,10 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
                 hostController,
                 hostWindow
             ]
+            retainedObjects.append(contentsOf: retainedPopupControllers)
+            retainedObjects.append(contentsOf: retainedPopupWebViews)
             if let presentedPopup {
                 retainedObjects.append(presentedPopup)
-            }
-            if let presentedPopupWebView {
-                retainedObjects.append(presentedPopupWebView)
             }
             FloorpWebExtensionTestRuntimeRetainer.retain(
                 controller: controller,
@@ -155,7 +154,8 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
         await fulfillment(of: [popupPresented], timeout: 5)
         let popup = try XCTUnwrap(presentedPopup)
         let popupWebView = try await waitForWebView(in: popup)
-        presentedPopupWebView = popupWebView
+        retainedPopupControllers.append(popup)
+        retainedPopupWebViews.append(popupWebView)
         try await waitForJavaScriptCondition(
             in: popupWebView,
             """
@@ -263,6 +263,8 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
         await fulfillment(of: [resumedPopupPresented], timeout: 5)
         let resumedPopup = try XCTUnwrap(presentedPopup)
         let resumedPopupWebView = try await waitForWebView(in: resumedPopup)
+        retainedPopupControllers.append(resumedPopup)
+        retainedPopupWebViews.append(resumedPopupWebView)
         try await waitForJavaScriptCondition(
             in: resumedPopupWebView,
             """
@@ -288,7 +290,12 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
         var lastError: (any Error)?
         for _ in 0..<12 {
             do {
-                _ = try await webView.evaluateJavaScript("(() => { \(source) })()")
+                _ = try await webView.floorpCallAsyncJavaScript(
+                    "return (() => { \(source) })();",
+                    arguments: [:],
+                    contentWorld: .page,
+                    timeoutNanoseconds: 5_000_000_000
+                )
                 return
             } catch {
                 lastError = error
@@ -320,8 +327,12 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
         var lastError: (any Error)?
         for attempt in 0..<60 {
             do {
-                let result = try await webView.evaluateJavaScript("(() => { \(source) })()")
-                    as? Bool
+                let result = try await webView.floorpCallAsyncJavaScript(
+                    "return (() => { \(source) })();",
+                    arguments: [:],
+                    contentWorld: .page,
+                    timeoutNanoseconds: 5_000_000_000
+                ) as? Bool
                 if result == true {
                     return
                 }
@@ -565,10 +576,8 @@ private struct FloorpUBOLReleaseBrowserEnvironment {
     }
 
     func close(using controller: WKWebExtensionController) {
-        normalWebView.stopLoading()
-        normalWebView.navigationDelegate = nil
-        privateWebView.stopLoading()
-        privateWebView.navigationDelegate = nil
+        normalWebView.floorpTearDownDiagnosticWebViewIfSafe()
+        privateWebView.floorpTearDownDiagnosticWebViewIfSafe()
         controller.didCloseTab(normalTab, windowIsClosing: true)
         controller.didCloseWindow(normalWindow)
         controller.didCloseTab(privateTab, windowIsClosing: true)
@@ -636,8 +645,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     }
 
     func close() {
-        retainedExtensionWebView?.stopLoading()
-        retainedExtensionWebView?.navigationDelegate = nil
+        retainedExtensionWebView?.floorpTearDownDiagnosticWebViewIfSafe()
         controller.delegate = nil
         var objects: [AnyObject] = [webExtension, websiteDataStore]
         objects.append(contentsOf: retainedRuntimeObjects)
@@ -702,6 +710,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let normalURL = URL(string: "http://localhost:\(server.port)/")!
         print("FLOORP_UBOL_RELEASE_GATE optimal-page")
         let optimal = try await loadAndInspect(normalURL, in: normalWebView)
+        let crossHostResult = try await inspectCrossHostCustomFilterIsolation(
+            serverPort: server.port,
+            in: normalWebView
+        )
         print("FLOORP_UBOL_RELEASE_GATE popup")
         let popup = try await inspectActionPopup(pageURL: normalURL, in: browser)
 
@@ -735,11 +747,13 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         print("FLOORP_UBOL_RELEASE_GATE private")
         normalWebView.isHidden = true
         privateWebView.isHidden = false
+        browser.delegate.focusedWindow = privateWindow
         controller.didFocusWindow(privateWindow)
         controller.didActivateTab(privateTab, previousActiveTab: nil)
         let privateBrowsing = try await loadAndInspect(normalURL, in: privateWebView)
         privateWebView.isHidden = true
         normalWebView.isHidden = false
+        browser.delegate.focusedWindow = normalWindow
         controller.didFocusWindow(normalWindow)
         controller.didActivateTab(normalTab, previousActiveTab: nil)
 
@@ -773,6 +787,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             strictBlock: strictBlock,
             popup: popup,
             optimal: optimal,
+            crossHost: crossHostResult.away,
+            crossHostReturn: crossHostResult.returned,
             dynamicAndSession: dynamicAndSession,
             complete: complete,
             japanese: japanese,
@@ -834,8 +850,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         }
         defer {
             popupViewController?.dismiss(animated: false)
-            popupWebView?.stopLoading()
-            popupWebView?.navigationDelegate = nil
+            popupWebView?.floorpTearDownDiagnosticWebViewIfSafe()
             browser.delegate.actionPopupHandler = nil
             if let popupViewController {
                 retainedRuntimeObjects.append(popupViewController)
@@ -1235,12 +1250,90 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         )
     }
 
-    private func loadAndInspect(_ url: URL, in webView: WKWebView) async throws
+    private func loadAndInspect(
+        _ url: URL,
+        in webView: WKWebView,
+        expectedCustomCosmeticFilters: Bool = true
+    ) async throws
         -> FloorpUBOLPageAcceptance {
         let waiter = FloorpUBOLNavigationWaiter()
         try await waiter.load(url, in: webView)
-        try await Task.sleep(nanoseconds: 1_000_000_000)
+        let requiredSamples = expectedCustomCosmeticFilters ? 1 : 8
+        var consecutiveExpectedSamples = 0
+        var lastStates = (custom: false, procedural: false)
+        for _ in 0..<20 {
+            let states = try await customCosmeticFilterStates(in: webView)
+            lastStates = states
+            if states.custom == expectedCustomCosmeticFilters,
+               states.procedural == expectedCustomCosmeticFilters {
+                consecutiveExpectedSamples += 1
+                if consecutiveExpectedSamples >= requiredSamples {
+                    break
+                }
+            } else {
+                consecutiveExpectedSamples = 0
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        guard consecutiveExpectedSamples >= requiredSamples else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "custom cosmetic states at \(url.absoluteString) remained "
+                    + "custom=\(lastStates.custom), procedural=\(lastStates.procedural); "
+                    + "expected both \(expectedCustomCosmeticFilters) for "
+                    + "\(requiredSamples) samples"
+            )
+        }
         return try await inspectCurrentPage(in: webView)
+    }
+
+    private func inspectCrossHostCustomFilterIsolation(
+        serverPort: UInt,
+        in webView: WKWebView
+    ) async throws -> (away: FloorpUBOLPageAcceptance, returned: FloorpUBOLPageAcceptance) {
+        print("FLOORP_UBOL_RELEASE_GATE cross-host")
+        let awayURL = URL(string: "http://127.0.0.1:\(serverPort)/?floorp-cross-host=1")!
+        let away = try await loadAndInspect(
+            awayURL,
+            in: webView,
+            expectedCustomCosmeticFilters: false
+        )
+        print("FLOORP_UBOL_RELEASE_GATE cross-host-return")
+        let returnURL = URL(
+            string: "http://localhost:\(serverPort)/?floorp-cross-host-return=1"
+        )!
+        let returned = try await loadAndInspect(returnURL, in: webView)
+        return (away, returned)
+    }
+
+    private func customCosmeticFilterStates(
+        in webView: WKWebView
+    ) async throws -> (custom: Bool, procedural: Bool) {
+        let raw = try await webView.floorpCallAsyncJavaScript(
+            """
+            const hidden = id => {
+                const element = document.getElementById(id);
+                if (!element) return false;
+                const style = getComputedStyle(element);
+                return style.display === 'none' || style.visibility === 'hidden' ||
+                    Number(style.opacity) === 0;
+            };
+            return {
+                custom: hidden('floorp-custom-cosmetic'),
+                procedural: hidden('floorp-procedural-cosmetic')
+            };
+            """,
+            arguments: [:],
+            contentWorld: .page,
+            timeoutNanoseconds: 5_000_000_000
+        )
+        guard let values = raw as? [String: Any],
+              let custom = values["custom"] as? Bool,
+              let procedural = values["procedural"] as? Bool else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "custom cosmetic probe returned \(String(describing: raw))"
+            )
+        }
+        return (custom, procedural)
     }
 
     private func inspectCurrentPage(in webView: WKWebView) async throws
@@ -1455,8 +1548,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         // the background, and then use the same explicit wake path as Floorp does
         // before navigation. Disable/re-enable itself is intentionally deferred to
         // the next process and is covered by the host lifecycle integration tests.
-        retainedExtensionWebView?.stopLoading()
-        retainedExtensionWebView?.navigationDelegate = nil
+        retainedExtensionWebView?.floorpTearDownDiagnosticWebViewIfSafe()
         retainedExtensionWebView = nil
         extensionNavigationWaiter = nil
 
@@ -1585,7 +1677,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                     "FLOORP_UBOL_RELEASE_GATE extension-page-attempt=\(attempt + 1) "
                         + "error=\((error as NSError).localizedDescription)"
                 )
-                webView.stopLoading()
+                webView.floorpTearDownDiagnosticWebViewIfSafe()
             }
         }
         throw lastError ?? FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
@@ -1781,8 +1873,7 @@ private final class FloorpUBOLDNRDiagnosticSession {
     }
 
     func close() {
-        webView.stopLoading()
-        webView.navigationDelegate = nil
+        webView.floorpTearDownDiagnosticWebViewIfSafe()
         controller.delegate = nil
         FloorpWebExtensionTestRuntimeRetainer.retain(
             controller: controller,
@@ -2331,6 +2422,8 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
     let strictBlock: FloorpUBOLStrictBlockAcceptance
     let popup: FloorpUBOLPopupAcceptance
     let optimal: FloorpUBOLPageAcceptance
+    let crossHost: FloorpUBOLPageAcceptance
+    let crossHostReturn: FloorpUBOLPageAcceptance
     let dynamicAndSession: FloorpUBOLPageAcceptance
     let complete: FloorpUBOLPageAcceptance
     let japanese: FloorpUBOLPageAcceptance
@@ -2378,6 +2471,12 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
             && !optimal.japaneseCosmeticHidden
             && !optimal.japaneseHighlyGenericCosmeticHidden
             && optimal.stockScriptletExecuted
+            && crossHost.controlScriptExecuted
+            && !crossHost.customCosmeticHidden
+            && !crossHost.proceduralCosmeticHidden
+            && crossHostReturn.controlScriptExecuted
+            && crossHostReturn.customCosmeticHidden
+            && crossHostReturn.proceduralCosmeticHidden
             && dynamicAndSession.controlScriptExecuted
             && !dynamicAndSession.defaultBlockedScriptExecuted
             && !dynamicAndSession.dynamicBlockedScriptExecuted
@@ -2399,6 +2498,8 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
             && japanese.highlyGenericCosmeticHidden
             && japanese.japaneseCosmeticHidden
             && japanese.japaneseHighlyGenericCosmeticHidden
+            && japanese.customCosmeticHidden
+            && japanese.proceduralCosmeticHidden
             && japanese.stockScriptletExecuted
             && privateBrowsing.controlScriptExecuted
             && !privateBrowsing.defaultBlockedScriptExecuted
@@ -2712,6 +2813,15 @@ private final class FloorpUBOLJavaScriptCallGate: @unchecked Sendable {
 }
 
 extension WKWebView {
+    @MainActor
+    func floorpTearDownDiagnosticWebViewIfSafe() {
+        guard !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(self) else {
+            return
+        }
+        stopLoading()
+        navigationDelegate = nil
+    }
+
     @MainActor
     func floorpCallAsyncJavaScript(
         _ functionBody: String,

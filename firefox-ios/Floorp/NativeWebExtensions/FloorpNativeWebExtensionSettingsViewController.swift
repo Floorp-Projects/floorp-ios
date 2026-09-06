@@ -1659,6 +1659,10 @@ final class FloorpNativeWebExtensionPageViewController: UIViewController,
     }
 
 #if DEBUG || TESTING
+    var hasCommittedDocumentForTesting: Bool {
+        hasCommittedDocument
+    }
+
     func requestCloseForTesting(completion: (() -> Void)? = nil) {
         close(animated: false, completion: completion)
     }
@@ -2395,6 +2399,10 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     }
 
 #if DEBUG || TESTING
+    var hasCommittedDocumentForTesting: Bool {
+        hasCommittedDocument
+    }
+
     func requestCloseForTesting(completion: (() -> Void)? = nil) {
         closePopupAfterScriptAcknowledgement(animated: false, completion: completion)
     }
