@@ -38,7 +38,7 @@ index 8b5fcec..5861e16 100644
 +<p id="runtimeError" role="alert" aria-live="assertive"></p>
 +
 diff --git a/js/admin.js b/js/admin.js
-index c8bc7d0..9490b1b 100644
+index c8bc7d0..4349448 100644
 --- a/js/admin.js
 +++ b/js/admin.js
 @@ -25,0 +26 @@ import {
@@ -46,6 +46,9 @@ index c8bc7d0..9490b1b 100644
 @@ -49 +50 @@ import { setPopupBlockMode } from './prevent-popup.js';
 -import { ubolLog } from './debug.js';
 +import { ubolErr, ubolLog } from './debug.js';
+@@ -53 +54 @@ import { ubolLog } from './debug.js';
+-export async function loadAdminConfig() {
++export async function loadAdminConfig(apply = false) {
 @@ -59,3 +60,3 @@ export async function loadAdminConfig() {
 -        adminReadEx('popupBlockMode'),
 -        adminReadEx('showBlockedCount'),
@@ -53,79 +56,214 @@ index c8bc7d0..9490b1b 100644
 +        adminReadEx('popupBlockMode', true),
 +        adminReadEx('showBlockedCount', true),
 +        adminReadEx('strictBlockMode', true),
-@@ -63 +64 @@ export async function loadAdminConfig() {
+@@ -63 +64,4 @@ export async function loadAdminConfig() {
 -    applyAdminConfig({ popupBlockMode, showBlockedCount, strictBlockMode });
-+    await applyAdminConfig({ popupBlockMode, showBlockedCount, strictBlockMode });
-@@ -68 +69 @@ export async function loadAdminConfig() {
++    await applyAdminConfig(
++        { popupBlockMode, showBlockedCount, strictBlockMode },
++        apply
++    );
+@@ -68 +72 @@ export async function loadAdminConfig() {
 -function applyAdminConfig(config, apply = false) {
 +async function applyAdminConfig(config, apply = false) {
-@@ -77 +78 @@ function applyAdminConfig(config, apply = false) {
+@@ -69,0 +74 @@ function applyAdminConfig(config, apply = false) {
++    let modified = false;
+@@ -71,0 +77,3 @@ function applyAdminConfig(config, apply = false) {
++        // Retried managed-policy side effects must run even when the durable
++        // config was already saved before an earlier native API failure.
++        if ( apply ) { toApply.push(key); }
+@@ -74 +82 @@ function applyAdminConfig(config, apply = false) {
+-        toApply.push(key);
++        modified = true;
+@@ -76,2 +84 @@ function applyAdminConfig(config, apply = false) {
+-    if ( toApply.length === 0 ) { return; }
 -    saveRulesetConfig();
-+    await saveRulesetConfig();
-@@ -84,3 +85,2 @@ function applyAdminConfig(config, apply = false) {
++    if ( modified ) { await saveRulesetConfig(); }
+@@ -84,3 +91,2 @@ function applyAdminConfig(config, apply = false) {
 -            setPopupBlockMode(popupBlockMode, true).then(( ) => {
 -                broadcastMessage({ popupBlockMode });
 -            });
 +            await setPopupBlockMode(popupBlockMode, true);
 +            broadcastMessage({ popupBlockMode });
-@@ -92 +92 @@ function applyAdminConfig(config, apply = false) {
+@@ -92 +98 @@ function applyAdminConfig(config, apply = false) {
 -            dnr.setExtensionActionOptions({
 +            await dnr.setExtensionActionOptions({
-@@ -100,3 +100,3 @@ function applyAdminConfig(config, apply = false) {
+@@ -100,3 +106,3 @@ function applyAdminConfig(config, apply = false) {
 -            setStrictBlockMode(strictBlockMode, true).then(( ) => {
 -                broadcastMessage({ strictBlockMode });
 -            });
 +            const result = await setStrictBlockMode(strictBlockMode, true);
 +            if ( result?.error ) { throw new Error(result.error); }
 +            broadcastMessage({ strictBlockMode });
-@@ -121 +121,3 @@ const adminSettings = {
+@@ -112,0 +119,17 @@ function applyAdminConfig(config, apply = false) {
++let runAdminSettingsMutation = async operation => {
++    const result = await operation();
++    if ( result?.foregroundReconciliationRequired ) {
++        throw new Error('Foreground ruleset reconciliation is required');
++    }
++    return true;
++};
++
++export function setAdminSettingsMutationRunner(runner) {
++    if ( typeof runner !== 'function' ) {
++        throw new TypeError('Admin settings mutation runner must be a function');
++    }
++    runAdminSettingsMutation = runner;
++}
++
++/******************************************************************************/
++
+@@ -115,0 +139,2 @@ const adminSettings = {
++    processing: false,
++    deferred: false,
+@@ -117,2 +142,11 @@ const adminSettings = {
+-        this.keys.set(key, value);
+-        if ( this.timer !== undefined ) { return; }
++        // The token distinguishes a change which arrived while an earlier
++        // snapshot was being applied, even when both managed values compare
++        // equal. Only the exact snapshot which completed may be removed.
++        this.keys.set(key, { token: {}, value });
++        this.deferred = false;
++        this.schedule();
++    },
++    schedule() {
++        if ( this.timer !== undefined || this.processing || this.deferred ) {
++            return;
++        }
+@@ -121 +155,14 @@ const adminSettings = {
 -            this.process();
++            this.processing = true;
 +            void this.process().catch(reason => {
++                // A persistent managed-policy or storage error must not keep
++                // Safari's background process awake in a tight retry loop.
++                // A new managed value or a successful foreground recovery
++                // explicitly resumes the retained token snapshot.
++                this.deferred = true;
 +                ubolErr(`adminSettings.process/${reason}`);
++            }).finally(( ) => {
++                this.processing = false;
++                if ( this.keys.size !== 0 && this.deferred === false ) {
++                    this.schedule();
++                }
 +            });
-@@ -127,2 +129,10 @@ const adminSettings = {
+@@ -125,29 +172,56 @@ const adminSettings = {
+-        if ( this.keys.has('rulesets') ) {
+-            ubolLog('admin setting "rulesets" changed');
 -            await enableRulesets(rulesetConfig.enabledRulesets);
 -            await registerContentScripts();
-+            const result = await enableRulesets(
-+                rulesetConfig.enabledRulesets,
-+                true,
-+                webextFlavor !== 'safari'
-+            );
-+            if ( result.foregroundReconciliationRequired ) {
-+                throw new Error('Foreground ruleset reconciliation is required');
-+            }
-+            if ( result.error ) { throw new Error(result.error); }
-+            await registerContentScripts(true);
-@@ -139 +149 @@ const adminSettings = {
+-            const results = await Promise.all([
+-                getAdminRulesets(),
+-                getEnabledRulesets(),
+-            ]);
+-            const [ adminRulesets, enabledRulesets ] = results;
+-            broadcastMessage({ adminRulesets, enabledRulesets });
+-        }
+-        if ( this.keys.has('defaultFiltering') ) {
+-            ubolLog('admin setting "defaultFiltering" changed');
+-            await readFilteringModeDetails(true);
 -            await registerContentScripts();
-+            await registerContentScripts(true);
-@@ -146 +156 @@ const adminSettings = {
+-            const defaultFilteringMode = await getDefaultFilteringMode();
+-            broadcastMessage({ defaultFilteringMode });
+-        }
+-        if ( this.keys.has('noFiltering') ) {
+-            ubolLog('admin setting "noFiltering" changed');
+-            const filteringModeDetails = await readFilteringModeDetails(true);
 -            await registerContentScripts();
-+            await registerContentScripts(true);
-@@ -152,2 +162,2 @@ const adminSettings = {
+-            broadcastMessage({ filteringModeDetails });
+-        }
+-        if ( this.keys.has('popupBlockMode') ) {
+-            ubolLog('admin setting "popupBlockMode" changed');
+-            const popupBlockMode = this.keys.get('popupBlockMode');
 -            applyAdminConfig({ popupBlockMode }, true);
 -            await registerContentScripts();
-+            await applyAdminConfig({ popupBlockMode }, true);
-+            await registerContentScripts(true);
-@@ -158 +168 @@ const adminSettings = {
++        const snapshot = new Map(this.keys);
++        if ( snapshot.size === 0 ) { return; }
++        const completed = await runAdminSettingsMutation(async ( ) => {
++            if ( snapshot.has('rulesets') ) {
++                ubolLog('admin setting "rulesets" changed');
++                const result = await enableRulesets(
++                    rulesetConfig.enabledRulesets,
++                    true,
++                    webextFlavor !== 'safari'
++                );
++                if ( result.foregroundReconciliationRequired ) {
++                    return result;
++                }
++                if ( result.error ) { throw new Error(result.error); }
++                await registerContentScripts(true);
++                const results = await Promise.all([
++                    getAdminRulesets(),
++                    getEnabledRulesets(),
++                ]);
++                const [ adminRulesets, enabledRulesets ] = results;
++                broadcastMessage({ adminRulesets, enabledRulesets });
++            }
++            if ( snapshot.has('defaultFiltering') ) {
++                ubolLog('admin setting "defaultFiltering" changed');
++                await readFilteringModeDetails(true);
++                await registerContentScripts(true);
++                const defaultFilteringMode = await getDefaultFilteringMode();
++                broadcastMessage({ defaultFilteringMode });
++            }
++            if ( snapshot.has('noFiltering') ) {
++                ubolLog('admin setting "noFiltering" changed');
++                const filteringModeDetails = await readFilteringModeDetails(true);
++                await registerContentScripts(true);
++                broadcastMessage({ filteringModeDetails });
++            }
++            if ( snapshot.has('popupBlockMode') ) {
++                ubolLog('admin setting "popupBlockMode" changed');
++                const { value: popupBlockMode } = snapshot.get('popupBlockMode');
++                await applyAdminConfig({ popupBlockMode }, true);
++                await registerContentScripts(true);
++            }
++            if ( snapshot.has('showBlockedCount') ) {
++                ubolLog('admin setting "showBlockedCount" changed');
++                const { value: showBlockedCount } = snapshot.get('showBlockedCount');
++                await applyAdminConfig({ showBlockedCount }, true);
++            }
++            if ( snapshot.has('strictBlockMode') ) {
++                ubolLog('admin setting "strictBlockMode" changed');
++                const { value: strictBlockMode } = snapshot.get('strictBlockMode');
++                await applyAdminConfig({ strictBlockMode }, true);
++            }
++            return true;
++        });
++        if ( completed !== true ) {
++            this.deferred = true;
++            return;
+@@ -155,4 +229,2 @@ const adminSettings = {
+-        if ( this.keys.has('showBlockedCount') ) {
+-            ubolLog('admin setting "showBlockedCount" changed');
+-            const showBlockedCount = this.keys.get('showBlockedCount');
 -            applyAdminConfig({ showBlockedCount }, true);
-+            await applyAdminConfig({ showBlockedCount }, true);
-@@ -163 +173 @@ const adminSettings = {
++        for ( const [ key, entry ] of snapshot ) {
++            if ( this.keys.get(key) === entry ) { this.keys.delete(key); }
+@@ -160,6 +231,0 @@ const adminSettings = {
+-        if ( this.keys.has('strictBlockMode') ) {
+-            ubolLog('admin setting "strictBlockMode" changed');
+-            const strictBlockMode = this.keys.get('strictBlockMode');
 -            applyAdminConfig({ strictBlockMode }, true);
-+            await applyAdminConfig({ strictBlockMode }, true);
-@@ -171 +181 @@ const adminSettings = {
+-        }
+-        this.keys.clear();
+@@ -168,0 +235,5 @@ const adminSettings = {
++export function resumeAdminSettingsProcessing() {
++    adminSettings.deferred = false;
++    if ( adminSettings.keys.size !== 0 ) { adminSettings.schedule(); }
++}
++
+@@ -171 +242 @@ const adminSettings = {
 -export async function getAdminRulesets() {
 +export async function getAdminRulesets(fresh = false) {
-@@ -176 +186 @@ export async function getAdminRulesets() {
+@@ -176 +247 @@ export async function getAdminRulesets() {
 -        adminReadEx('rulesets'),
 +        adminReadEx('rulesets', fresh),
-@@ -209 +219 @@ export async function getAdminRulesets() {
+@@ -209 +280 @@ export async function getAdminRulesets() {
 -export async function adminReadEx(key) {
 +export async function adminReadEx(key, fresh = false) {
-@@ -219 +229 @@ export async function adminReadEx(key) {
+@@ -219 +290 @@ export async function adminReadEx(key) {
 -        localRemove(`admin_${key}`); // TODO: remove eventually
 +        await localRemove(`admin_${key}`); // TODO: remove eventually
-@@ -221,7 +231,8 @@ export async function adminReadEx(key) {
+@@ -221,7 +292,8 @@ export async function adminReadEx(key) {
 -    adminRead(key).then(async value => {
 -        const adminKey = `admin.${key}`;
 -        await Promise.all([
@@ -141,7 +279,7 @@ index c8bc7d0..9490b1b 100644
 +    ]);
 +    if ( JSON.stringify(value) !== JSON.stringify(cacheValue) ) {
 +        if ( fresh ) { return value; }
-@@ -229 +240 @@ export async function adminReadEx(key) {
+@@ -229 +301 @@ export async function adminReadEx(key) {
 -    });
 +    }
 diff --git a/js/alarms.js b/js/alarms.js
@@ -180,24 +318,38 @@ index d08dc84..69258f0 100644
 -    setupJobsAlarm(jobs);
 +    await setupJobsAlarm(jobs);
 diff --git a/js/background.js b/js/background.js
-index 1916765..905f7d4 100644
+index 1916765..6886636 100644
 --- a/js/background.js
 +++ b/js/background.js
-@@ -42,0 +43 @@ import {
+@@ -37,0 +38,7 @@ import {
++    assertSuccessfulScriptInjection,
++    committedCustomFilterMutationSnapshot,
++    committedSettingsRestoreSnapshot,
++    customFilterModeStorageKeys,
++    customFilterMutationJournalKey,
++    customFilteringEnabledFromStorageSnapshot,
++    customFilterStorageKeys,
+@@ -42,0 +50 @@ import {
 +    mutateCustomFiltersAtomically,
-@@ -44,0 +46,2 @@ import {
+@@ -44,0 +53,3 @@ import {
++    recoverCustomFilterMutation,
 +    replaceAllCustomFiltersAtomically,
 +    replaceCustomFiltersAtomically,
-@@ -67 +69,0 @@ import {
+@@ -45,0 +57 @@ import {
++    settingsRestoreJournalKey,
+@@ -60,0 +73,2 @@ import {
++    resumeAdminSettingsProcessing,
++    setAdminSettingsMutationRunner,
+@@ -67 +80,0 @@ import {
 -    isScriptlet,
-@@ -72 +74 @@ import {
+@@ -72 +85 @@ import {
 -    localRead, localRemove, localWrite,
 +    localRead, localRemove, localReplace, localSnapshot, localWrite,
-@@ -74,0 +77 @@ import {
+@@ -74,0 +88 @@ import {
 +    sessionClear,
-@@ -99,0 +103 @@ import {
+@@ -99,0 +114 @@ import {
 +    validateUserDnrRules,
-@@ -133 +137,6 @@ import {
+@@ -133 +148,6 @@ import {
 -import { dnr } from './ext-compat.js';
 +import {
 +    dnr,
@@ -205,52 +357,51 @@ index 1916765..905f7d4 100644
 +    resetSafariRealmReadiness,
 +    waitForRealmRulesetUpdates,
 +} from './ext-compat.js';
-@@ -176 +185 @@ async function onPermissionGrantedThruExtension(details, origins) {
+@@ -176 +196 @@ async function onPermissionGrantedThruExtension(details, origins) {
 -    const afterLevel = await setFilteringMode(details.hostname, details.afterLevel);
 +    const afterLevel = await setFilteringMode(details.hostname, details.afterLevel, true);
-@@ -178 +187,4 @@ async function onPermissionGrantedThruExtension(details, origins) {
+@@ -178 +198,4 @@ async function onPermissionGrantedThruExtension(details, origins) {
 -    await registerContentScripts();
 +    await Promise.all([
 +        registerContentScripts(true),
 +        registerUserScripts(),
 +    ]);
-@@ -185 +197 @@ async function onPermissionGrantedThruBrowser(origins) {
+@@ -185 +208 @@ async function onPermissionGrantedThruBrowser(origins) {
 -    const modified = await syncWithBrowserPermissions();
 +    const modified = await syncWithBrowserPermissions(true);
-@@ -187 +199 @@ async function onPermissionGrantedThruBrowser(origins) {
+@@ -187 +210 @@ async function onPermissionGrantedThruBrowser(origins) {
 -    await registerContentScripts();
 +    await registerContentScripts(true);
-@@ -208,3 +220 @@ async function onPermissionGrantedThruBrowser(origins) {
+@@ -208,3 +231 @@ async function onPermissionGrantedThruBrowser(origins) {
 -async function onPermissionsAdded(permissions) {
 -    const details = pendingPermissionRequest;
 -    pendingPermissionRequest = undefined;
 +async function onPermissionsAdded(permissions, details) {
-@@ -218 +228 @@ async function onPermissionsRemoved() {
+@@ -218 +239 @@ async function onPermissionsRemoved() {
 -    const modified = await syncWithBrowserPermissions();
 +    const modified = await syncWithBrowserPermissions(true);
-@@ -220 +230 @@ async function onPermissionsRemoved() {
+@@ -220 +241 @@ async function onPermissionsRemoved() {
 -    registerContentScripts();
 +    await registerContentScripts(true);
-@@ -224,8 +234,37 @@ async function onPermissionsRemoved() {
--async function onPermissionsChanged(op, permissions) {
--    await isFullyInitialized;
--    const { pending } = onPermissionsChanged;
--    await Promise.all(pending);
--    const promise = op === 'removed'
--        ? onPermissionsRemoved()
--        : onPermissionsAdded(permissions);
--    pending.push(promise);
+@@ -223,0 +245,33 @@ async function onPermissionsRemoved() {
 +let backgroundMutationTail = Promise.resolve();
 +let backgroundMutationError;
 +let foregroundRulesetReconciliationRequired = false;
++
++class SettingsRestoreConflictError extends Error {
++}
 +
 +function queueBackgroundMutation(operation) {
 +    const result = backgroundMutationTail
 +        .catch(( ) => undefined)
 +        .then(operation);
 +    backgroundMutationTail = result.then(
-+        ( ) => { backgroundMutationError = undefined; },
-+        reason => { backgroundMutationError = reason; }
++        ( ) => undefined,
++        reason => {
++            if ( reason instanceof SettingsRestoreConflictError === false ) {
++                backgroundMutationError = reason;
++            }
++        }
 +    );
 +    return result;
 +}
@@ -266,20 +417,37 @@ index 1916765..905f7d4 100644
 +    }
 +}
 +
-+function onPermissionsChanged(op, permissions) {
+@@ -225,7 +279,20 @@ async function onPermissionsChanged(op, permissions) {
+-    await isFullyInitialized;
+-    const { pending } = onPermissionsChanged;
+-    await Promise.all(pending);
+-    const promise = op === 'removed'
+-        ? onPermissionsRemoved()
+-        : onPermissionsAdded(permissions);
+-    pending.push(promise);
 +    const pendingDetails = op === 'added' ? pendingPermissionRequest : undefined;
 +    if ( op === 'added' ) {
 +        pendingPermissionRequest = undefined;
 +    }
-+    return queueBackgroundMutation(async ( ) => {
-+        await ensureFullyInitialized();
-+        return op === 'removed'
-+            ? onPermissionsRemoved()
-+            : onPermissionsAdded(permissions, pendingDetails);
-+    });
-@@ -233 +271,0 @@ async function onPermissionsChanged(op, permissions) {
++    const pendingJournal = await readSettingsRestoreJournal();
++    if ( pendingJournal instanceof Object ) { return false; }
++    await ensureFullyInitialized();
++    return withSettingsRestoreLock(( ) =>
++        queueBackgroundMutation(async ( ) => {
++            const journal = await readSettingsRestoreJournal();
++            if ( journal instanceof Object ) {
++                // Commit, rollback, or the next cold start resynchronizes the
++                // browser-owned permission state before publishing readiness.
++                return false;
++            }
++            return op === 'removed'
++                ? onPermissionsRemoved()
++                : onPermissionsAdded(permissions, pendingDetails);
++        })
++    );
+@@ -233 +299,0 @@ async function onPermissionsChanged(op, permissions) {
 -onPermissionsChanged.pending = [];
-@@ -238,13 +276,150 @@ async function applyRulesets(rulesets) {
+@@ -238,12 +304,233 @@ async function applyRulesets(rulesets) {
 -    const result = await enableRulesets(rulesets);
 -    const stockUpdated = result.stockUpdated ?? false;
 -    const importedUpdated = result.importedUpdated ?? false;
@@ -292,7 +460,6 @@ index 1916765..905f7d4 100644
 -                updateCompiledFilters().then(( ) =>
 -                    Promise.all([ registerUserScripts(), updateUserRules() ])
 -                )
--            );
 +    const result = await enableRulesets(
 +        rulesets,
 +        true,
@@ -325,7 +492,86 @@ index 1916765..905f7d4 100644
 +    ]);
 +}
 +
-+const SETTINGS_RESTORE_JOURNAL_KEY = 'floorp.settingsRestoreJournal.v1';
++const SETTINGS_RESTORE_JOURNAL_KEY = settingsRestoreJournalKey;
++const SETTINGS_RESTORE_LOCK_NAME = 'floorp.ubol.settings-restore.v1';
++const SETTINGS_RESTORE_PRESERVED_KEYS = [
++    SETTINGS_RESTORE_JOURNAL_KEY,
++    'dashboard.activePane',
++    'dashboard.develop.editor',
++    'goodStart',
++    'hideUnusedFilterLists',
++    'picker.view',
++];
++const SETTINGS_RESTORE_PRESERVED_PREFIXES = [ 'admin.', 'admin_' ];
++let activeSettingsRestoreId;
++let settingsRestoreLockTail = Promise.resolve();
++
++function validateSettingsRestoreJournal(journal) {
++    const isPlainObject = value => {
++        if ( typeof value !== 'object' || value === null || Array.isArray(value) ) {
++            return false;
++        }
++        const prototype = Object.getPrototypeOf(value);
++        return prototype === Object.prototype || prototype === null;
++    };
++    if (
++        isPlainObject(journal) === false ||
++        journal.version !== 1 ||
++        typeof journal.id !== 'string' ||
++        journal.id === '' ||
++        [ 'applying', 'committingForeground', 'rollingBack' ]
++            .includes(journal.phase) === false ||
++        isPlainObject(journal.beforeLocal) === false
++    ) {
++        throw new Error('Settings restore journal is invalid');
++    }
++    if ( Object.hasOwn(journal.beforeLocal, SETTINGS_RESTORE_JOURNAL_KEY) ) {
++        throw new Error('Settings restore snapshot contains its own journal');
++    }
++    if ( journal.phase === 'committingForeground' ) {
++        validatedSettingsRestoreRulesets(journal.targetEnabledRulesets);
++    }
++    return journal;
++}
++
++async function readSettingsRestoreJournal() {
++    const journal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
++    if ( journal === undefined ) { return; }
++    return validateSettingsRestoreJournal(journal);
++}
++
++function withSettingsRestoreLock(operation) {
++    const lockManager = globalThis.navigator?.locks;
++    if ( typeof lockManager?.request === 'function' ) {
++        return lockManager.request(
++            SETTINGS_RESTORE_LOCK_NAME,
++            { mode: 'exclusive' },
++            operation
++        );
++    }
++    if ( webextFlavor === 'safari' ) {
++        throw new Error('Settings restore lock is unavailable');
++    }
++    const current = settingsRestoreLockTail
++        .catch(( ) => undefined)
++        .then(operation);
++    settingsRestoreLockTail = current.catch(( ) => undefined);
++    return current;
++}
++
++async function foregroundReconciliationReadiness() {
++    const journal = await readSettingsRestoreJournal();
++    const terminalRestore =
++        journal?.phase === 'committingForeground' ||
++        journal?.phase === 'rollingBack';
++    return {
++        ready: false,
++        version: getCurrentVersion(),
++        foregroundReconciliationRequired: true,
++        ...(terminalRestore ? { settingsRestoreId: journal.id } : {}),
++        error: 'Foreground ruleset reconciliation is required',
++    };
++}
 +
 +async function restoreRolledBackSettingsSideEffects() {
 +    if ( canShowBlockedCount ) {
@@ -349,6 +595,8 @@ index 1916765..905f7d4 100644
 +        }
 +        await loadRulesetConfig();
 +    }
++    await loadAdminConfig(true);
++    await syncWithBrowserPermissions(true);
 +    await getFilteringModeDetails(true, true);
 +    const enabledResult = await enableRulesets(
 +        rulesetConfig.enabledRulesets,
@@ -408,6 +656,8 @@ index 1916765..905f7d4 100644
 +        strictBlockMode: rulesetConfig.strictBlockMode,
 +    });
 +    foregroundRulesetReconciliationRequired = false;
++    backgroundMutationError = undefined;
++    resumeAdminSettingsProcessing();
 +    return { ready: true };
 +}
 +
@@ -437,20 +687,24 @@ index 1916765..905f7d4 100644
 +    );
 +}
 +
-+async function beginSettingsRestore() {
-+    const existing = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
++async function beginSettingsRestoreNow() {
++    const existing = await readSettingsRestoreJournal();
 +    if ( existing instanceof Object ) {
++        if ( activeSettingsRestoreId === existing.id ) {
++            throw new SettingsRestoreConflictError(
++                'Settings restore is already in progress'
+@@ -252,2 +539,6 @@ async function applyRulesets(rulesets) {
+-        if ( stockUpdated ) {
+-            promises.push(registerContentScripts());
 +        const rollback = await rollbackSettingsRestore(existing.id);
 +        if ( rollback?.foregroundReconciliationRequired === true ) {
 +            return rollback;
-@@ -252,2 +427,2 @@ async function applyRulesets(rulesets) {
--        if ( stockUpdated ) {
--            promises.push(registerContentScripts());
++        }
 +        if ( rollback?.rolledBack !== true ) {
 +            throw new Error('Interrupted settings rollback response was invalid');
-@@ -255 +429,0 @@ async function applyRulesets(rulesets) {
+@@ -255 +545,0 @@ async function applyRulesets(rulesets) {
 -        await Promise.all(promises);
-@@ -257 +431,101 @@ async function applyRulesets(rulesets) {
+@@ -257 +547,164 @@ async function applyRulesets(rulesets) {
 -    broadcastMessage({ enabledRulesets: rulesetConfig.enabledRulesets });
 +    const beforeLocal = await localSnapshot([ SETTINGS_RESTORE_JOURNAL_KEY ]);
 +    const id = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -460,27 +714,77 @@ index 1916765..905f7d4 100644
 +        phase: 'applying',
 +        beforeLocal,
 +    });
++    activeSettingsRestoreId = id;
 +    return { id };
 +}
 +
-+async function commitSettingsRestore(id) {
-+    const journal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
++async function narrowCommittedCustomFilterRegistrations() {
++    await registerContentScripts(true).catch(reason => {
++        // The published selector snapshot and effective-mode gate remain
++        // authoritative if Safari retains a now-superfluous broad row. A later
++        // startup or mutation will converge the persistent registrations.
++        ubolErr(`narrowCustomFilterRegistrations/${reason}`);
++    });
++}
++
++function validatedSettingsRestoreRulesets(value) {
++    if (
++        Array.isArray(value) === false ||
++        value.some(id => typeof id !== 'string' || id === '')
++    ) {
++        throw new Error('Settings restore ruleset target is invalid');
++    }
++    return Array.from(new Set(value));
++}
++
++async function commitSettingsRestore(id, requestedRulesets) {
++    const journal = await readSettingsRestoreJournal();
 +    if ( journal?.id !== id ) {
 +        throw new Error('Settings restore journal does not match');
 +    }
++    let targetEnabledRulesets;
++    if ( journal.phase === 'applying' ) {
++        targetEnabledRulesets = validatedSettingsRestoreRulesets(
++            requestedRulesets
++        );
++        await localWrite(SETTINGS_RESTORE_JOURNAL_KEY, {
++            ...journal,
++            phase: 'committingForeground',
++            targetEnabledRulesets,
++        });
++    } else if ( journal.phase === 'committingForeground' ) {
++        targetEnabledRulesets = validatedSettingsRestoreRulesets(
++            journal.targetEnabledRulesets
++        );
++        if ( requestedRulesets !== undefined ) {
++            const requested = validatedSettingsRestoreRulesets(
++                requestedRulesets
++            );
++            if ( JSON.stringify(requested) !== JSON.stringify(targetEnabledRulesets) ) {
++                throw new Error('Settings restore ruleset target does not match');
++            }
++        }
++    } else {
++        throw new Error('Settings restore cannot be committed in this phase');
++    }
++    await loadRulesetConfig();
++    rulesetConfig.enabledRulesets = targetEnabledRulesets;
++    await saveRulesetConfig();
 +    const result = await reconcileSettingsState({
 +        reloadStorage: false,
 +        fullDNR: true,
 +    });
 +    if ( result?.foregroundReconciliationRequired ) {
-+        return result;
++        return { ...result, settingsRestoreId: id };
 +    }
 +    await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);
++    activeSettingsRestoreId = undefined;
++    await narrowCommittedCustomFilterRegistrations();
 +    return { committed: true };
 +}
 +
 +async function rollbackSettingsRestore(id) {
-+    const journal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
++    const journal = await readSettingsRestoreJournal();
 +    if ( journal instanceof Object === false || journal.id !== id ) {
 +        throw new Error('Settings restore journal does not match');
 +    }
@@ -488,13 +792,19 @@ index 1916765..905f7d4 100644
 +        ...journal,
 +        phase: 'rollingBack',
 +    });
-+    await localReplace(journal.beforeLocal, [ SETTINGS_RESTORE_JOURNAL_KEY ]);
++    await localReplace(
++        journal.beforeLocal,
++        SETTINGS_RESTORE_PRESERVED_KEYS,
++        SETTINGS_RESTORE_PRESERVED_PREFIXES
++    );
 +    const result = await reconcileSettingsState({ resetSession: true });
 +    if ( result?.foregroundReconciliationRequired ) {
-+        return result;
++        return { ...result, settingsRestoreId: id };
 +    }
 +    await restoreRolledBackSettingsSideEffects();
 +    await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);
++    activeSettingsRestoreId = undefined;
++    await narrowCommittedCustomFilterRegistrations();
 +    return { rolledBack: true };
 +}
 +
@@ -519,21 +829,28 @@ index 1916765..905f7d4 100644
 +function recoverProtectionState() {
 +    const operation = protectionRecoveryTail
 +        .catch(( ) => undefined)
-+        .then(async ( ) => {
-+            const journal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
-+            if ( journal instanceof Object ) {
-+                await rollbackSettingsRestore(journal.id);
-+            } else {
-+                const result = await reconcileSettingsState({
-+                    reloadStorage: true,
-+                    fullDNR: true,
-+                });
-+                if ( result?.foregroundReconciliationRequired ) {
-+                    throw new Error('Foreground ruleset reconciliation is required');
++        .then(( ) => withSettingsRestoreLock(( ) =>
++            queueBackgroundMutation(async ( ) => {
++                const journal = await readSettingsRestoreJournal();
++                let result;
++                if ( journal instanceof Object ) {
++                    result = await rollbackSettingsRestore(journal.id);
++                } else {
++                    result = await reconcileSettingsState({
++                        reloadStorage: true,
++                        fullDNR: true,
++                    });
 +                }
-+            }
-+            backgroundMutationError = undefined;
-+        });
++                if ( result?.foregroundReconciliationRequired ) {
++                    foregroundRulesetReconciliationRequired = true;
++                    throw new Error(
++                        'Foreground ruleset reconciliation is required'
++                    );
++                }
++                backgroundMutationError = undefined;
++                return result;
++            })
++        ));
 +    protectionRecoveryTail = operation.catch(( ) => undefined);
 +    return operation;
 +}
@@ -553,7 +870,7 @@ index 1916765..905f7d4 100644
 +        }
 +        throw reason;
 +    }
-@@ -263,5 +537,28 @@ async function setDeveloperMode(state) {
+@@ -263,5 +716,143 @@ async function setDeveloperMode(state) {
 -    rulesetConfig.developerMode = state === true;
 -    toggleDeveloperMode(rulesetConfig.developerMode);
 -    broadcastMessage({ developerMode: rulesetConfig.developerMode });
@@ -587,7 +904,235 @@ index 1916765..905f7d4 100644
 +        }
 +        throw reason;
 +    }
-@@ -319,0 +617,95 @@ async function onMessage(request, sender) {
++}
++
++/******************************************************************************/
++
++const CUSTOM_FILTER_MESSAGE_SCHEMA = 1;
++
++function documentTargetFromSender(sender) {
++    const tabId = sender?.tab?.id;
++    const documentId = sender?.documentId;
++    if (
++        Number.isInteger(tabId) === false ||
++        tabId < 0 ||
++        typeof documentId !== 'string' ||
++        documentId.trim() === ''
++    ) {
++        return;
++    }
++    return { tabId, documentIds: [ documentId ] };
++}
++
++function customFilterAck(requestId, details, reason) {
++    const response = {
++        ok: reason === undefined,
++        schema: CUSTOM_FILTER_MESSAGE_SCHEMA,
++        requestId: typeof requestId === 'string' ? requestId : null,
++    };
++    if ( reason !== undefined ) {
++        response.error = `${reason}`;
++        return response;
++    }
++    response.plainSelectors = details.plainSelectors;
++    response.proceduralSelectors = details.proceduralSelectors;
++    return response;
++}
++
++function customFilterHostname(request, sender) {
++    if ( request?.schema !== CUSTOM_FILTER_MESSAGE_SCHEMA ) {
++        throw new Error('Unsupported custom-filter message schema');
++    }
++    if (
++        typeof request.requestId !== 'string' ||
++        request.requestId === '' ||
++        request.requestId.length > 128
++    ) {
++        throw new Error('Invalid custom-filter request ID');
++    }
++    if (
++        typeof request.hostname !== 'string' ||
++        request.hostname.length > 253
++    ) {
++        throw new Error('Invalid custom-filter hostname');
++    }
++    let senderHostname = '';
++    try {
++        const senderURL = new URL(sender?.url);
++        if ( senderURL.protocol === 'http:' || senderURL.protocol === 'https:' ) {
++            senderHostname = senderURL.hostname.toLowerCase();
++        }
++    } catch {
++    }
++    if ( senderHostname === '' ) {
++        throw new Error('Custom-filter sender hostname mismatch');
++    }
++
++    let requestedURL;
++    try {
++        requestedURL = new URL(`https://${request.hostname}/`);
++    } catch {
++        throw new Error('Invalid custom-filter hostname');
++    }
++    if (
++        requestedURL.username !== '' ||
++        requestedURL.password !== '' ||
++        requestedURL.port !== '' ||
++        requestedURL.pathname !== '/' ||
++        requestedURL.search !== '' ||
++        requestedURL.hash !== ''
++    ) {
++        throw new Error('Invalid custom-filter hostname');
++    }
++    const hostname = requestedURL.hostname.toLowerCase();
++    if ( hostname === '' || senderHostname !== hostname ) {
++        throw new Error('Custom-filter sender hostname mismatch');
++    }
++    return hostname;
++}
++
++function authoritativeCustomFilterSnapshot(localState) {
++    const settingsSnapshot = committedSettingsRestoreSnapshot(
++        localState[SETTINGS_RESTORE_JOURNAL_KEY]
++    );
++    if ( settingsSnapshot !== undefined ) {
++        // A settings transaction owns user-controlled modes and selectors,
++        // but managed policy remains live authority and may change outside
++        // that transaction. Explicit undefined values also remove policy that
++        // existed in the last-committed user snapshot.
++        return {
++            ...settingsSnapshot,
++            'admin.defaultFiltering': localState['admin.defaultFiltering'],
++            'admin.noFiltering': localState['admin.noFiltering'],
++        };
++    }
++    const mutationSnapshot = committedCustomFilterMutationSnapshot(
++        localState[customFilterMutationJournalKey]
++    );
++    if ( mutationSnapshot !== undefined ) {
++        return {
++            ...Object.fromEntries(customFilterModeStorageKeys.map(key => [
++                key,
++                localState[key],
++            ])),
++            ...mutationSnapshot,
++        };
++    }
++    return localState;
+@@ -275,0 +867 @@ async function onMessage(request, sender) {
++    const documentTarget = documentTargetFromSender(sender);
+@@ -284,3 +876 @@ async function onMessage(request, sender) {
+-        if ( frameId === false ) { return false; }
+-        // https://bugs.webkit.org/show_bug.cgi?id=262491
+-        if ( frameId !== 0 && webextFlavor === 'safari' ) { return; }
++        if ( documentTarget === undefined ) { return false; }
+@@ -290 +880 @@ async function onMessage(request, sender) {
+-            target: { tabId, frameIds: [ frameId ] },
++            target: documentTarget,
+@@ -296,3 +886 @@ async function onMessage(request, sender) {
+-        if ( frameId === false ) { return false; }
+-        // https://bugs.webkit.org/show_bug.cgi?id=262491
+-        if ( frameId !== 0 && webextFlavor === 'safari' ) { return; }
++        if ( documentTarget === undefined ) { return false; }
+@@ -302 +890 @@ async function onMessage(request, sender) {
+-            target: { tabId, frameIds: [ frameId ] },
++            target: documentTarget,
+@@ -307,8 +895,76 @@ async function onMessage(request, sender) {
+-    case 'injectCSSProceduralAPI':
+-        return browser.scripting.executeScript({
+-            files: [ '/js/scripting/css-procedural-api.js' ],
+-            target: { tabId, frameIds: [ frameId ] },
+-            injectImmediately: true,
+-        }).catch(reason => {
+-            ubolErr(`executeScript/${reason}`);
+-        });
++    case 'injectCSSProceduralAPI': {
++        if ( documentTarget === undefined ) {
++            return customFilterAck(
++                request.requestId,
++                undefined,
++                'Missing sender document ID'
++            );
++        }
++        try {
++            const results = await browser.scripting.executeScript({
++                files: [
++                    '/js/scripting/css-api.js',
++                    '/js/scripting/css-procedural-api.js',
++                ],
++                target: documentTarget,
++                injectImmediately: true,
++            });
++            assertSuccessfulScriptInjection(
++                results,
++                'injectCSSProceduralAPI/executeScript'
++            );
++            return customFilterAck(request.requestId, {
++                plainSelectors: [],
++                proceduralSelectors: [],
++            });
++        } catch(reason) {
++            ubolErr(`injectCSSProceduralAPI/${reason}`);
++            return customFilterAck(request.requestId, undefined, reason);
++        }
++    }
++
++    // A registered document-start or document-idle script can be the event
++    // that wakes Safari's nonpersistent background. Bind every injection to
++    // that exact document and, while a mutation exists, read its authoritative
++    // committed snapshot. Neither path depends on full startup reconciliation,
++    // so keep this response ahead of that potentially long-running work.
++    case 'injectCustomFilters': {
++        const requestId = request?.requestId;
++        try {
++            if ( documentTarget === undefined ) {
++                throw new Error('Missing sender document ID');
++            }
++            const hostname = customFilterHostname(request, sender);
++            // Read both recovery journals, filtering policy, and only this
++            // hostname ancestry's site.* documents in one storage operation.
++            // A second live read could otherwise cross journal publication
++            // and expose uncommitted selectors to this document.
++            const localState = await localSnapshot([], [
++                SETTINGS_RESTORE_JOURNAL_KEY,
++                customFilterMutationJournalKey,
++                ...customFilterModeStorageKeys,
++                ...customFilterStorageKeys(hostname),
++            ]);
++            const storageSnapshot = authoritativeCustomFilterSnapshot(localState);
++            if (
++                customFilteringEnabledFromStorageSnapshot(
++                    storageSnapshot,
++                    hostname
++                ) === false
++            ) {
++                return customFilterAck(requestId, {
++                    plainSelectors: [],
++                    proceduralSelectors: [],
++                });
++            }
++            const details = await injectCustomFilters(
++                documentTarget,
++                hostname,
++                storageSnapshot
++            );
++            return customFilterAck(requestId, details);
++        } catch(reason) {
++            ubolErr(`injectCustomFilters/${reason}`);
++            return customFilterAck(requestId, undefined, reason);
++        }
++    }
+@@ -319,0 +976,148 @@ async function onMessage(request, sender) {
++    if ( request.what === 'floorpAuthorizeForegroundReconciliation' ) {
++        if ( sender?.id !== runtime.id ) { return false; }
++        if ( sender?.origin?.toLowerCase() !== UBOL_ORIGIN ) { return false; }
++        // Authorization begins a durable foreground handoff. Keep native
++        // readiness fail-closed until the same or a replacement extension
++        // page finalizes and the background revalidates every surface.
++        foregroundRulesetReconciliationRequired = true;
++        return { authorized: true };
++    }
++
 +    if ( request.what === 'floorpFinalizeForegroundReconciliation' ) {
 +        if ( sender?.id !== runtime.id ) { return false; }
 +        if ( sender?.origin?.toLowerCase() !== UBOL_ORIGIN ) { return false; }
@@ -598,10 +1143,12 @@ index 1916765..905f7d4 100644
 +            // removed the session marker before the mutation; mirror that
 +            // invalidation here before allowing navigation readiness again.
 +            resetSafariRealmReadiness();
-+            const journal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
++            const journal = await readSettingsRestoreJournal();
 +            let result;
 +            if ( journal?.phase === 'rollingBack' ) {
 +                result = await rollbackSettingsRestore(journal.id);
++            } else if ( journal?.phase === 'committingForeground' ) {
++                result = await commitSettingsRestore(journal.id);
 +            } else {
 +                result = await reconcileSettingsState({
 +                    reloadStorage: true,
@@ -624,6 +1171,7 @@ index 1916765..905f7d4 100644
 +                ready: true,
 +                version: getCurrentVersion(),
 +                foregroundReconciliationRequired: false,
++                committed: result?.committed === true,
 +                rolledBack: result?.rolledBack === true,
 +            };
 +        } catch(reason) {
@@ -641,17 +1189,33 @@ index 1916765..905f7d4 100644
 +        if ( sender?.id !== runtime.id ) { return false; }
 +        if ( sender?.origin?.toLowerCase() !== UBOL_ORIGIN ) { return false; }
 +        const readinessErrors = [];
++        let initializationError;
 +        try {
 +            await ensureFullyInitialized();
 +        } catch(reason) {
-+            readinessErrors.push(reason);
++            // A protected queue error is recovered again below. Do not retain
++            // a transient first error after that same readiness call has
++            // successfully converged every protected surface.
++            initializationError = reason;
 +        }
 +        if ( foregroundRulesetReconciliationRequired ) {
++            return foregroundReconciliationReadiness();
++        }
++        let activeRestoreJournal;
++        try {
++            activeRestoreJournal = await readSettingsRestoreJournal();
++        } catch(reason) {
++            readinessErrors.push(reason);
++        }
++        if (
++            activeRestoreJournal instanceof Object &&
++            activeSettingsRestoreId === activeRestoreJournal.id
++        ) {
 +            return {
 +                ready: false,
 +                version: getCurrentVersion(),
-+                foregroundReconciliationRequired: true,
-+                error: 'Foreground ruleset reconciliation is required',
++                restoreInProgress: true,
++                error: 'Settings restore is in progress',
 +            };
 +        }
 +        try {
@@ -663,12 +1227,36 @@ index 1916765..905f7d4 100644
 +            await waitForBackgroundMutations();
 +        } catch(reason) {
 +            try {
-+                await recoverProtectionState();
++                if ( initializationError === undefined ) {
++                    await recoverProtectionState();
++                } else {
++                    // Route startup recovery through the memoizing helper so
++                    // the successful retry is reused by the handler itself
++                    // and by every later message in this worker lifetime.
++                    await ensureFullyInitialized();
++                }
++                initializationError = undefined;
 +            } catch(recoveryReason) {
 +                readinessErrors.push(reason, recoveryReason);
 +            }
 +        }
-+        const restoreJournal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
++        if ( initializationError !== undefined ) {
++            try {
++                await ensureFullyInitialized();
++                initializationError = undefined;
++            } catch(reason) {
++                readinessErrors.push(reason);
++            }
++        }
++        if ( foregroundRulesetReconciliationRequired ) {
++            return foregroundReconciliationReadiness();
++        }
++        let restoreJournal;
++        try {
++            restoreJournal = await readSettingsRestoreJournal();
++        } catch(reason) {
++            readinessErrors.push(reason);
++        }
 +        if ( restoreJournal instanceof Object ) {
 +            readinessErrors.push(new Error('Settings restore recovery is pending'));
 +        }
@@ -683,18 +1271,23 @@ index 1916765..905f7d4 100644
 +        return { ready: true, version: getCurrentVersion() };
 +    }
 +
-@@ -322 +714 @@ async function onMessage(request, sender) {
+@@ -322 +1126 @@ async function onMessage(request, sender) {
 -    await isFullyInitialized;
 +    await ensureFullyInitialized();
-@@ -360,0 +753,15 @@ async function onMessage(request, sender) {
+@@ -343,4 +1146,0 @@ async function onMessage(request, sender) {
+-    case 'injectCustomFilters':
+-        if ( frameId === false ) { return; }
+-        return injectCustomFilters(tabId, frameId, request.hostname);
+-
+@@ -360,0 +1161,15 @@ async function onMessage(request, sender) {
 +    case 'validateSettingsRestore':
 +        return validateSettingsRestore(request.targetConfig);
 +
 +    case 'beginSettingsRestore':
-+        return beginSettingsRestore();
++        return beginSettingsRestoreNow();
 +
 +    case 'commitSettingsRestore':
-+        return commitSettingsRestore(request.id);
++        return commitSettingsRestore(request.id, request.enabledRulesets);
 +
 +    case 'rollbackSettingsRestore':
 +        return rollbackSettingsRestore(request.id);
@@ -702,7 +1295,7 @@ index 1916765..905f7d4 100644
 +    case 'floorpReconcileDashboardState':
 +        return reconcileDashboardState();
 +
-@@ -368,0 +776,11 @@ async function onMessage(request, sender) {
+@@ -368,0 +1184,11 @@ async function onMessage(request, sender) {
 +    case 'removeDisabledImportedLists': {
 +        const enabled = new Set(await getEnabledRulesets());
 +        const toRemove = (request.rulesetIds || []).filter(
@@ -714,7 +1307,7 @@ index 1916765..905f7d4 100644
 +        return { ready: true };
 +    }
 +
-@@ -440,3 +858,10 @@ async function onMessage(request, sender) {
+@@ -440,3 +1266,10 @@ async function onMessage(request, sender) {
 -    case 'setAutoReload':
 -        rulesetConfig.autoReload = request.state && true || false;
 -        await saveRulesetConfig();
@@ -728,9 +1321,9 @@ index 1916765..905f7d4 100644
 +            await saveRulesetConfig().catch(( ) => undefined);
 +            throw reason;
 +        }
-@@ -444,0 +870 @@ async function onMessage(request, sender) {
+@@ -444,0 +1278 @@ async function onMessage(request, sender) {
 +    }
-@@ -446,6 +872,19 @@ async function onMessage(request, sender) {
+@@ -446,6 +1280,19 @@ async function onMessage(request, sender) {
 -    case 'setShowBlockedCount':
 -        rulesetConfig.showBlockedCount = request.state && true || false;
 -        if ( canShowBlockedCount ) {
@@ -756,11 +1349,11 @@ index 1916765..905f7d4 100644
 +            }
 +            await saveRulesetConfig().catch(( ) => undefined);
 +            throw reason;
-@@ -453 +891,0 @@ async function onMessage(request, sender) {
+@@ -453 +1299,0 @@ async function onMessage(request, sender) {
 -        await saveRulesetConfig();
-@@ -455,0 +894 @@ async function onMessage(request, sender) {
+@@ -455,0 +1302 @@ async function onMessage(request, sender) {
 +    }
-@@ -457,2 +896,14 @@ async function onMessage(request, sender) {
+@@ -457,2 +1304,14 @@ async function onMessage(request, sender) {
 -    case 'setStrictBlockMode':
 -        await setStrictBlockMode(request.state);
 +    case 'setStrictBlockMode': {
@@ -777,9 +1370,9 @@ index 1916765..905f7d4 100644
 +            }
 +            throw reason;
 +        }
-@@ -460,0 +912 @@ async function onMessage(request, sender) {
+@@ -460,0 +1320 @@ async function onMessage(request, sender) {
 +    }
-@@ -462,3 +914,14 @@ async function onMessage(request, sender) {
+@@ -462,3 +1322,14 @@ async function onMessage(request, sender) {
 -    case 'setPopupBlockMode':
 -        await setPopupBlockMode(request.state);
 -        await registerContentScripts();
@@ -797,9 +1390,9 @@ index 1916765..905f7d4 100644
 +            }
 +            throw reason;
 +        }
-@@ -466,0 +930 @@ async function onMessage(request, sender) {
+@@ -466,0 +1338 @@ async function onMessage(request, sender) {
 +    }
-@@ -493,2 +957,16 @@ async function onMessage(request, sender) {
+@@ -493,2 +1365,16 @@ async function onMessage(request, sender) {
 -    case 'gotoURL':
 -        return gotoURL(request.url, request.type);
 +    case 'gotoURL': {
@@ -818,13 +1411,13 @@ index 1916765..905f7d4 100644
 +            return { opened: false, error };
 +        }
 +    }
-@@ -499,2 +977,3 @@ async function onMessage(request, sender) {
+@@ -499,2 +1385,3 @@ async function onMessage(request, sender) {
 -        const afterLevel = await setFilteringMode(request.hostname, request.level);
 -        await Promise.all([ registerContentScripts(), registerUserScripts() ]);
 +        const afterLevel = await mutateFilteringModeAndScripts(( ) =>
 +            setFilteringMode(request.hostname, request.level, true)
 +        );
-@@ -514,4 +993,4 @@ async function onMessage(request, sender) {
+@@ -514,4 +1401,4 @@ async function onMessage(request, sender) {
 -        const afterLevel = await setDefaultFilteringMode(request.level);
 -        if ( afterLevel !== beforeLevel ) {
 -            await Promise.all([ registerContentScripts(), registerUserScripts() ]);
@@ -833,13 +1426,13 @@ index 1916765..905f7d4 100644
 +        const afterLevel = await mutateFilteringModeAndScripts(( ) =>
 +            setDefaultFilteringMode(request.level, true)
 +        );
-@@ -525,2 +1004,3 @@ async function onMessage(request, sender) {
+@@ -525,2 +1412,3 @@ async function onMessage(request, sender) {
 -        await setFilteringModeDetails(request.modes);
 -        await Promise.all([ registerContentScripts(), registerUserScripts() ]);
 +        await mutateFilteringModeAndScripts(( ) =>
 +            setFilteringModeDetails(request.modes, true)
 +        );
-@@ -539,5 +1019,12 @@ async function onMessage(request, sender) {
+@@ -539,5 +1427,12 @@ async function onMessage(request, sender) {
 -        browser.windows.create({
 -            type: 'popup',
 -            url: `/matched-rules.html?tab=${request.tabId}`,
@@ -857,10 +1450,48 @@ index 1916765..905f7d4 100644
 +            ubolErr(`tabs.create/${error}`);
 +            return { opened: false, error };
 +        }
-@@ -555 +1042 @@ async function onMessage(request, sender) {
+@@ -555 +1450,39 @@ async function onMessage(request, sender) {
 -        return updateUserRules();
 +        return updateUserRules(true);
-@@ -560,8 +1047,11 @@ async function onMessage(request, sender) {
++
++    case 'replaceUserDnrRules': {
++        if ( typeof request.text !== 'string' ) {
++            throw new Error('Invalid user-rule text');
++        }
++        const before = await localRead('userDnrRules');
++        try {
++            if ( request.text !== '' ) {
++                await localWrite('userDnrRules', request.text);
++            } else {
++                await localRemove('userDnrRules');
++            }
++            return await updateUserRules(true);
++        } catch(reason) {
++            if ( typeof before === 'string' && before !== '' ) {
++                await localWrite('userDnrRules', before);
++            } else {
++                await localRemove('userDnrRules');
++            }
++            throw reason;
++        }
++    }
++
++    case 'replaceSettingsRestoreImportedLists': {
++        if (
++            Array.isArray(request.toAdd) === false ||
++            Array.isArray(request.toRemove) === false
++        ) {
++            throw new Error('Invalid imported-list restore mutation');
++        }
++        if ( request.toRemove.length !== 0 ) {
++            await removeImportedLists(request.toRemove);
++        }
++        if ( request.toAdd.length !== 0 ) {
++            await addImportedLists(request.toAdd);
++        }
++        return { updated: true };
++    }
+@@ -560,13 +1493,11 @@ async function onMessage(request, sender) {
 -    case 'addCustomFilters': {
 -        const modified = await addCustomFilters(request.hostname, request.selectors);
 -        if ( modified !== true ) { return; }
@@ -869,6 +1500,11 @@ index 1916765..905f7d4 100644
 -        const promises = [];
 -        if ( hasPlainFilters ) {
 -            promises.push(registerContentScripts());
+-        }
+-        if ( hasScriptletFilters ) {
+-            promises.push(
+-                updateCompiledFilters().then(( ) => registerUserScripts())
+-            );
 +    case 'replaceCustomFilters': {
 +        const { before, after } = request;
 +        if (
@@ -880,36 +1516,16 @@ index 1916765..905f7d4 100644
 +            Array.isArray(after.selectors) === false
 +        ) {
 +            throw new Error('Invalid custom-filter replacement');
-@@ -569,4 +1059,10 @@ async function onMessage(request, sender) {
--        if ( hasScriptletFilters ) {
--            promises.push(
--                updateCompiledFilters().then(( ) => registerUserScripts())
--            );
+@@ -574,2 +1505,5 @@ async function onMessage(request, sender) {
+-        await Promise.all(promises);
+-        return;
 +        return replaceCustomFiltersAtomically(
 +            before,
 +            after,
 +            reconcileCustomFilterState
 +        );
-+    }
-+
-+    case 'replaceAllCustomFilters': {
-+        if ( Array.isArray(request.entries) === false ) {
-+            throw new Error('Invalid custom-filter replacement');
-@@ -574,2 +1070,11 @@ async function onMessage(request, sender) {
--        await Promise.all(promises);
--        return;
-+        return replaceAllCustomFiltersAtomically(
-+            request.entries,
-+            reconcileCustomFilterState
-+        );
-+    }
-+
-+    case 'addCustomFilters': {
-+        return mutateCustomFiltersAtomically(
-+            ( ) => addCustomFilters(request.hostname, request.selectors),
-+            reconcileCustomFilterState
-+        );
-@@ -579,25 +1084,11 @@ async function onMessage(request, sender) {
+@@ -578,23 +1512,3 @@ async function onMessage(request, sender) {
+-    case 'addManyCustomFilters': {
 -        const promises = [];
 -        let hasScriptletFilters = false;
 -        let hasPlainFilters = false;
@@ -932,9 +1548,26 @@ index 1916765..905f7d4 100644
 -            promises.push(
 -                updateCompiledFilters().then(( ) => registerUserScripts())
 -            );
--        }
++    case 'replaceAllCustomFilters': {
++        if ( Array.isArray(request.entries) === false ) {
++            throw new Error('Invalid custom-filter replacement');
+@@ -602,2 +1516,25 @@ async function onMessage(request, sender) {
 -        await Promise.all(promises);
 -        return;
++        return replaceAllCustomFiltersAtomically(
++            request.entries,
++            reconcileCustomFilterState
++        );
++    }
++
++    case 'addCustomFilters': {
++        return mutateCustomFiltersAtomically(
++            ( ) => addCustomFilters(request.hostname, request.selectors),
++            reconcileCustomFilterState
++        );
++    }
++
++    case 'addManyCustomFilters': {
 +        return mutateCustomFiltersAtomically(async ( ) => {
 +            const results = [];
 +            for ( const [ hostname, selectors ] of request.entries ) {
@@ -946,7 +1579,7 @@ index 1916765..905f7d4 100644
 +            }
 +            return results.some(Boolean);
 +        }, reconcileCustomFilterState);
-@@ -607,16 +1098,4 @@ async function onMessage(request, sender) {
+@@ -607,16 +1544,4 @@ async function onMessage(request, sender) {
 -        const { selectors } = request;
 -        const modified = await removeCustomFilters(request.hostname, selectors);
 -        if ( modified !== true ) { return; }
@@ -967,7 +1600,7 @@ index 1916765..905f7d4 100644
 +            ( ) => removeCustomFilters(request.hostname, request.selectors),
 +            reconcileCustomFilterState
 +        );
-@@ -626,7 +1105,4 @@ async function onMessage(request, sender) {
+@@ -626,7 +1551,4 @@ async function onMessage(request, sender) {
 -        const modified = await removeAllCustomFilters(request.hostname);
 -        if ( modified !== true ) { return; }
 -        await Promise.all([
@@ -979,7 +1612,7 @@ index 1916765..905f7d4 100644
 +            ( ) => removeAllCustomFilters(request.hostname),
 +            reconcileCustomFilterState
 +        );
-@@ -639,4 +1115,19 @@ async function onMessage(request, sender) {
+@@ -639,4 +1561,19 @@ async function onMessage(request, sender) {
 -        await setSandboxFilters(request.text);
 -        await updateCompiledFilters();
 -        await Promise.all([ registerUserScripts(), updateUserRules() ]);
@@ -1003,16 +1636,16 @@ index 1916765..905f7d4 100644
 +            }
 +            throw reason;
 +        }
-@@ -671 +1162 @@ async function onMessage(request, sender) {
+@@ -671 +1608 @@ async function onMessage(request, sender) {
 -        await Promise.all([ registerUserScripts(), updateUserRules() ]);
 +        await Promise.all([ registerUserScripts(), updateUserRules(true) ]);
-@@ -720 +1211 @@ function onCommand(command, tab) {
+@@ -720 +1657 @@ function onCommand(command, tab) {
 -async function startSession() {
 +async function startSession(allowStaticMutation = true) {
-@@ -733 +1224 @@ async function startSession() {
+@@ -733 +1670 @@ async function startSession() {
 -        saveRulesetConfig();
 +        await saveRulesetConfig();
-@@ -740 +1231,11 @@ async function startSession() {
+@@ -740 +1677,11 @@ async function startSession() {
 -    } = await enableRulesets(rulesetConfig.enabledRulesets);
 +        error: enableRulesetsError,
 +        foregroundReconciliationRequired,
@@ -1025,10 +1658,10 @@ index 1916765..905f7d4 100644
 +        return { foregroundReconciliationRequired: true };
 +    }
 +    if ( enableRulesetsError ) { throw new Error(enableRulesetsError); }
-@@ -743 +1244 @@ async function startSession() {
+@@ -743 +1690 @@ async function startSession() {
 -        saveRulesetConfig();
 +        await saveRulesetConfig();
-@@ -750,4 +1251,10 @@ async function startSession() {
+@@ -750,4 +1697,10 @@ async function startSession() {
 -    if ( isNewVersion ) {
 -        updateDynamicAndSessionRules();
 -    } else {
@@ -1043,81 +1676,116 @@ index 1916765..905f7d4 100644
 +    } else if ( stockUpdated !== true ) {
 +        const result = await updateSessionRules();
 +        if ( result?.error ) { throw new Error(result.error); }
-@@ -757 +1264 @@ async function startSession() {
+@@ -757 +1710 @@ async function startSession() {
 -    const permissionsUpdated = await syncWithBrowserPermissions();
 +    const permissionsUpdated = await syncWithBrowserPermissions(true);
-@@ -764 +1271 @@ async function startSession() {
+@@ -764 +1717 @@ async function startSession() {
 -        saveRulesetConfig();
 +        await saveRulesetConfig();
-@@ -775 +1282 @@ async function startSession() {
+@@ -775 +1728 @@ async function startSession() {
 -        promises.push(registerContentScripts());
 +        promises.push(registerContentScripts(true));
-@@ -780 +1287 @@ async function startSession() {
+@@ -780 +1733 @@ async function startSession() {
 -                Promise.all([ registerUserScripts(), updateUserRules() ])
 +                Promise.all([ registerUserScripts(), updateUserRules(true) ])
-@@ -784 +1291 @@ async function startSession() {
+@@ -784 +1737 @@ async function startSession() {
 -        promises.push(registerUserScripts(), updateUserRules());
 +        promises.push(registerUserScripts(), updateUserRules(true));
-@@ -794 +1301 @@ async function startSession() {
+@@ -794 +1747 @@ async function startSession() {
 -    sessionAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
 +    await sessionAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
-@@ -799 +1306 @@ async function startSession() {
+@@ -799 +1752 @@ async function startSession() {
 -        dnr.setExtensionActionOptions({
 +        await dnr.setExtensionActionOptions({
-@@ -809 +1316 @@ async function startSession() {
+@@ -809 +1762 @@ async function startSession() {
 -            const afterLevel = await setDefaultFilteringMode(MODE_BASIC);
 +            const afterLevel = await setDefaultFilteringMode(MODE_BASIC, true);
-@@ -811 +1318 @@ async function startSession() {
+@@ -811 +1764 @@ async function startSession() {
 -                await registerContentScripts();
 +                await registerContentScripts(true);
-@@ -818,3 +1325,3 @@ async function startSession() {
+@@ -818,3 +1771,3 @@ async function startSession() {
 -    adminReadEx('disabledFeatures').then(items => {
 -        if ( Array.isArray(items) === false ) { return; }
 -        if ( items.includes('develop') ) {
 +    const disabledFeatures = await adminReadEx('disabledFeatures', true);
 +    if ( Array.isArray(disabledFeatures) ) {
 +        if ( disabledFeatures.includes('develop') ) {
-@@ -822 +1329 @@ async function startSession() {
+@@ -822 +1775 @@ async function startSession() {
 -                setDeveloperMode(false);
 +                await setDeveloperMode(false);
-@@ -825 +1332,3 @@ async function startSession() {
+@@ -825 +1778,3 @@ async function startSession() {
 -    });
 +    }
 +
 +    return { ready: true };
-@@ -830,0 +1340,11 @@ async function start() {
+@@ -830,2 +1785,21 @@ async function startSession() {
+-async function start() {
+-    await loadRulesetConfig();
++async function recoverInterruptedSettingsRestoreAtStart() {
++    // Avoid joining the cross-realm lock when no restore exists. Ordinary
++    // foreground reconciliation may hold the same lock while relying on this
++    // background's early finalizer, but it has no transaction to roll back.
++    const pendingJournal = await readSettingsRestoreJournal();
++    if ( pendingJournal instanceof Object === false ) { return; }
++    // Acquire the cross-realm lease before entering the mutation queue. If a
++    // foreground DNR transition survived a background eviction, its early
++    // authorize/finalize messages can terminally publish while startup waits.
++    return withSettingsRestoreLock(( ) =>
++        queueBackgroundMutation(async ( ) => {
++            const journal = await readSettingsRestoreJournal();
++            if ( journal instanceof Object === false ) { return; }
++            const result = await rollbackSettingsRestore(journal.id);
++            if ( result?.foregroundReconciliationRequired ) {
++                foregroundRulesetReconciliationRequired = true;
++            }
++            return result;
++        })
++    );
++}
+@@ -833,2 +1807,3 @@ async function start() {
+-    if ( process.wakeupRun === false ) {
+-        await startSession();
++async function start() {
 +    if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
 +        await browser.userScripts.configureWorld({ messaging: true });
-+    }
-+    const restoreJournal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);
-+    if ( restoreJournal instanceof Object ) {
-+        const rollbackResult = await rollbackSettingsRestore(restoreJournal.id);
-+        if ( rollbackResult?.foregroundReconciliationRequired ) {
-+            foregroundRulesetReconciliationRequired = true;
-+            return;
-+        }
-+    }
-@@ -834 +1354,5 @@ async function start() {
--        await startSession();
-+        const sessionResult = await startSession(webextFlavor !== 'safari');
-+        if ( sessionResult?.foregroundReconciliationRequired ) {
-+            foregroundRulesetReconciliationRequired = true;
-+            return;
-+        }
-@@ -837,4 +1361,8 @@ async function start() {
+@@ -836,4 +1811,3 @@ async function start() {
+-
 -    const scripts = await getRegisteredContentScripts();
 -    if ( scripts.length === 0 ) {
 -        await registerContentScripts();
--    }
-+    // A background process may be evicted at any await boundary of an earlier
-+    // mutation. Reconcile every protected surface from durable local state on
-+    // every wake before readiness can become true.
-+    const reconcileResult = await reconcileSettingsState({
-+        reloadStorage: true,
-+        fullDNR: true,
-+    });
-+    if ( reconcileResult?.foregroundReconciliationRequired ) { return; }
-@@ -850,16 +1378,2 @@ async function start() {
++    const rollbackResult = await recoverInterruptedSettingsRestoreAtStart();
++    if ( rollbackResult?.foregroundReconciliationRequired ) {
++        return;
+@@ -840,0 +1815,14 @@ async function start() {
++    return withSettingsRestoreLock(( ) =>
++        queueBackgroundMutation(async ( ) => {
++            await recoverCustomFilterMutation();
++            await loadRulesetConfig();
++
++            if ( process.wakeupRun === false ) {
++                const sessionResult = await startSession(
++                    webextFlavor !== 'safari'
++                );
++                if ( sessionResult?.foregroundReconciliationRequired ) {
++                    foregroundRulesetReconciliationRequired = true;
++                    return;
++                }
++            }
+@@ -842 +1830,12 @@ async function start() {
+-    toggleDeveloperMode(rulesetConfig.developerMode);
++            // A background process may be evicted at any await boundary of an
++            // earlier mutation. Reconcile every protected surface from
++            // durable local state on every wake before readiness can be true.
++            const reconcileResult = await reconcileSettingsState({
++                reloadStorage: true,
++                fullDNR: true,
++            });
++            if ( reconcileResult?.foregroundReconciliationRequired ) { return; }
++
++            toggleDeveloperMode(rulesetConfig.developerMode);
++        })
++    );
+@@ -850,10 +1849,7 @@ async function start() {
 -const isFullyInitialized = start().then(( ) => {
 -    localRemove('goodStart');
 -    return false;
@@ -1128,20 +1796,19 @@ index 1916765..905f7d4 100644
 -        if ( goodStart === false ) {
 -            localRemove('goodStart');
 -            return false;
--        }
++const floorpInitialization = start().then(async ( ) => {
++    await localRemove('goodStart');
++});
++floorpInitialization.then(
++    ( ) => {
++        if ( foregroundRulesetReconciliationRequired === false ) {
++            releaseRealmRulesetStartupGate();
+@@ -861,5 +1857,50 @@ const isFullyInitialized = start().then(( ) => {
 -        return localWrite('goodStart', false).then(( ) => true);
 -    });
 -}).then(restart => {
 -    if ( restart !== true ) { return; }
 -    runtime.reload();
-+const floorpInitialization = start().then(async ( ) => {
-+    await localRemove('goodStart');
-@@ -866,0 +1381,59 @@ const isFullyInitialized = start().then(( ) => {
-+floorpInitialization.then(
-+    ( ) => {
-+        if ( foregroundRulesetReconciliationRequired === false ) {
-+            releaseRealmRulesetStartupGate();
-+        }
 +    },
 +    releaseRealmRulesetStartupGate
 +);
@@ -1149,21 +1816,56 @@ index 1916765..905f7d4 100644
 +const isFullyInitialized = floorpInitialization.then(( ) => false);
 +void isFullyInitialized.catch(( ) => undefined);
 +
++let initializationRecovery;
++
 +async function ensureFullyInitialized() {
 +    try {
 +        return await isFullyInitialized;
 +    } catch(reason) {
 +        ubolErr(reason);
-+        await recoverProtectionState();
++        if ( initializationRecovery === undefined ) {
++            initializationRecovery = recoverProtectionState();
++            void initializationRecovery.catch(( ) => undefined);
++        }
++        const recovery = initializationRecovery;
++        try {
++            await recovery;
++        } catch(reason) {
++            if ( initializationRecovery === recovery ) {
++                initializationRecovery = undefined;
++            }
++            throw reason;
++        }
 +        return false;
 +    }
 +}
 +
++setAdminSettingsMutationRunner(async operation => {
++    await ensureFullyInitialized();
++    return withSettingsRestoreLock(( ) =>
++        queueBackgroundMutation(async ( ) => {
++            const journal = await readSettingsRestoreJournal();
++            if (
++                journal instanceof Object ||
++                foregroundRulesetReconciliationRequired
++            ) {
++                return false;
++            }
++            const result = await operation();
++            if ( result?.foregroundReconciliationRequired ) {
++                foregroundRulesetReconciliationRequired = true;
++                return false;
++            }
++            return true;
++        })
++    );
+@@ -867,0 +1909,157 @@ const isFullyInitialized = start().then(( ) => {
 +const backgroundMutationMessages = new Set([
 +    'applyRulesets',
 +    'beginSettingsRestore',
 +    'commitSettingsRestore',
 +    'rollbackSettingsRestore',
++    'floorpAuthorizeForegroundReconciliation',
 +    'floorpReconcileDashboardState',
 +    'floorpFinalizeForegroundReconciliation',
 +    'removeDisabledImportedLists',
@@ -1178,6 +1880,8 @@ index 1916765..905f7d4 100644
 +    'setFilteringModeDetails',
 +    'excludeFromStrictBlock',
 +    'updateUserDnrRules',
++    'replaceUserDnrRules',
++    'replaceSettingsRestoreImportedLists',
 +    'replaceCustomFilters',
 +    'replaceAllCustomFilters',
 +    'addCustomFilters',
@@ -1190,65 +1894,243 @@ index 1916765..905f7d4 100644
 +    'pruneCSSCache',
 +]);
 +
++const settingsRestoreOwnedMutationMessages = new Set([
++    'setAutoReload',
++    'setShowBlockedCount',
++    'setDeveloperMode',
++    'setStrictBlockMode',
++    'setPopupBlockMode',
++    'setFilteringModeDetails',
++    'replaceAllCustomFilters',
++    'setSandboxFilters',
++    'replaceUserDnrRules',
++    'replaceSettingsRestoreImportedLists',
++    'floorpAuthorizeForegroundReconciliation',
++    'floorpFinalizeForegroundReconciliation',
++]);
++
++async function assertSettingsRestoreMutationOwner(request) {
++    if ( request.what === 'beginSettingsRestore' ) { return; }
++    const journal = await readSettingsRestoreJournal();
++    const isTerminalRequest = request.what === 'commitSettingsRestore' ||
++        request.what === 'rollbackSettingsRestore';
++    const ownerId = isTerminalRequest
++        ? request.id
++        : request.settingsRestoreId;
++    if ( journal instanceof Object === false ) {
++        if ( ownerId !== undefined ) {
++            throw new SettingsRestoreConflictError(
++                'Settings restore transaction has expired'
++            );
++        }
++        return;
++    }
++    if (
++        isTerminalRequest &&
++        (
++            request.settingsRestoreId !== request.id ||
++            request.id !== journal.id
++        )
++    ) {
++        throw new SettingsRestoreConflictError(
++            'Settings restore journal does not match'
++        );
++    }
++    const liveOwner = activeSettingsRestoreId === journal.id;
++    const ownedRequest = ownerId === journal.id;
++    const isOwnedMutation = settingsRestoreOwnedMutationMessages.has(
++        request.what
++    ) || isTerminalRequest;
++    const isForegroundMessage =
++        request.what === 'floorpAuthorizeForegroundReconciliation' ||
++        request.what === 'floorpFinalizeForegroundReconciliation';
++    if (
++        journal.phase === 'applying' &&
++        liveOwner &&
++        ownedRequest &&
++        isOwnedMutation &&
++        isForegroundMessage === false
++    ) {
++        return;
++    }
++    if ( journal.phase === 'committingForeground' && ownedRequest ) {
++        if (
++            isForegroundMessage ||
++            liveOwner && isTerminalRequest
++        ) {
++            return;
++        }
++    }
++    if ( journal.phase === 'rollingBack' ) {
++        if (
++            ownedRequest &&
++            (
++                request.what === 'rollbackSettingsRestore' ||
++                isForegroundMessage
++            )
++        ) {
++            return;
++        }
++        const isInterruptedForegroundRecovery =
++            activeSettingsRestoreId === undefined &&
++            ownerId === undefined &&
++            (
++                isForegroundMessage
++            );
++        if ( isInterruptedForegroundRecovery ) { return; }
++    }
++    throw new SettingsRestoreConflictError('Settings restore is in progress');
++}
++
 +function dispatchMessage(request, sender) {
++    if ( request.what === 'beginSettingsRestore' ) {
++        // Initialization may itself wait for the cross-realm lease while it
++        // recovers an interrupted transaction. Do not acquire the lease or
++        // occupy the mutation queue until that startup work has settled.
++        return ensureFullyInitialized().then(( ) =>
++            withSettingsRestoreLock(( ) =>
++                queueBackgroundMutation(async ( ) => {
++                    await assertSettingsRestoreMutationOwner(request);
++                    return onMessage(request, sender);
++                })
++            )
++        );
++    }
 +    if ( backgroundMutationMessages.has(request.what) ) {
-+        return queueBackgroundMutation(( ) => onMessage(request, sender));
++        const enqueue = ( ) => queueBackgroundMutation(async ( ) => {
++            await assertSettingsRestoreMutationOwner(request);
++            return onMessage(request, sender);
++        });
++        if (
++            request.what === 'floorpAuthorizeForegroundReconciliation' ||
++            request.what === 'floorpFinalizeForegroundReconciliation'
++        ) {
++            return enqueue();
++        }
++        // Startup recovery owns Web Lock -> mutation queue. All ordinary
++        // mutations must settle initialization before entering that queue or
++        // they can invert the order and block the foreground finalizer.
++        return ensureFullyInitialized().then(( ) =>
++            withSettingsRestoreLock(enqueue)
++        );
 +    }
 +    return onMessage(request, sender);
 +}
-@@ -870 +1443,5 @@ runtime.onMessage.addListener((request, sender, callback) => {
++
+@@ -870 +2068,5 @@ runtime.onMessage.addListener((request, sender, callback) => {
 -    onMessage(request, sender).then(callback);
 +    dispatchMessage(request, sender).then(callback, reason => {
 +        const error = `${reason}`;
 +        ubolErr(`onMessage/${request.what}/${error}`);
 +        callback({ error });
 +    });
-@@ -875 +1451,0 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
+@@ -875 +2076,0 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
 -    browser.userScripts.configureWorld({ messaging: true });
-@@ -877 +1453,5 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
+@@ -877 +2078,5 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
 -        onMessage(request, sender).then(callback);
 +        dispatchMessage(request, sender).then(callback, reason => {
 +            const error = `${reason}`;
 +            ubolErr(`onUserScriptMessage/${request.what}/${error}`);
 +            callback({ error });
 +        });
-@@ -883,2 +1463,2 @@ browser.permissions.onRemoved.addListener((...args) => {
+@@ -883,2 +2088,2 @@ browser.permissions.onRemoved.addListener((...args) => {
 -    isFullyInitialized.then(( ) => {
 -        onPermissionsChanged('removed', ...args);
 +    onPermissionsChanged('removed', ...args).catch(reason => {
 +        ubolErr(`permissions.onRemoved/${reason}`);
-@@ -889,2 +1469,2 @@ browser.permissions.onAdded.addListener((...args) => {
+@@ -889,2 +2094,2 @@ browser.permissions.onAdded.addListener((...args) => {
 -    isFullyInitialized.then(( ) => {
 -        onPermissionsChanged('added', ...args);
 +    onPermissionsChanged('added', ...args).catch(reason => {
 +        ubolErr(`permissions.onAdded/${reason}`);
-@@ -895 +1475 @@ browser.commands.onCommand.addListener((...args) => {
+@@ -895,3 +2100,11 @@ browser.commands.onCommand.addListener((...args) => {
 -    isFullyInitialized.then(( ) => {
-+    ensureFullyInitialized().then(( ) => {
-@@ -897 +1477 @@ browser.commands.onCommand.addListener((...args) => {
+-        onCommand(...args);
 -    });
-+    }).catch(reason => ubolErr(`commands.onCommand/${reason}`));
-@@ -902 +1482 @@ browser.alarms.onAlarm.addListener(alarm => {
++    ensureFullyInitialized().then(( ) =>
++        withSettingsRestoreLock(( ) =>
++            queueBackgroundMutation(async ( ) => {
++                const journal = await localRead(
++                    SETTINGS_RESTORE_JOURNAL_KEY
++                );
++                if ( journal instanceof Object ) { return; }
++                return onCommand(...args);
++            })
++        )
++    ).catch(reason => ubolErr(`commands.onCommand/${reason}`));
+@@ -902,7 +2115,18 @@ browser.alarms.onAlarm.addListener(alarm => {
 -    isFullyInitialized.then(( ) => {
-+    ensureFullyInitialized().then(( ) => {
-@@ -908 +1488 @@ browser.alarms.onAlarm.addListener(alarm => {
+-        if ( process.wakeupRun === false && process.firstAlarm !== true ) {
+-            process.firstAlarm = true;
+-            return resetJobsAlarm();
+-        }
+-        processDueJobs(onMessage);
 -    });
-+    }).catch(reason => ubolErr(`alarms.onAlarm/${reason}`));
++    ensureFullyInitialized().then(( ) =>
++        withSettingsRestoreLock(( ) =>
++            queueBackgroundMutation(async ( ) => {
++                if (
++                    process.wakeupRun === false &&
++                    process.firstAlarm !== true
++                ) {
++                    process.firstAlarm = true;
++                    return resetJobsAlarm();
++                }
++                const journal = await localRead(
++                    SETTINGS_RESTORE_JOURNAL_KEY
++                );
++                if ( journal instanceof Object ) { return resetJobsAlarm(); }
++                return processDueJobs(onMessage);
++            })
++        )
++    ).catch(reason => ubolErr(`alarms.onAlarm/${reason}`));
 diff --git a/js/backup-restore.js b/js/backup-restore.js
-index 5c5c0d3..d8be6b4 100644
+index 5c5c0d3..4165927 100644
 --- a/js/backup-restore.js
 +++ b/js/backup-restore.js
-@@ -32,0 +33 @@ import {
+@@ -23 +22,0 @@ import {
+-    addImportedLists,
+@@ -25 +23,0 @@ import {
+-    removeImportedLists,
+@@ -28,5 +26,2 @@ import {
+-import {
+-    localRead, localRemove, localWrite,
+-    runtime,
+-    sendMessage,
+-} from './ext.js';
++import { localRead, runtime, sendMessage } from './ext.js';
 +import { reconcileProtection } from './floorp-reconcile.js';
-@@ -92 +93 @@ export async function backupToObject(currentConfig) {
+@@ -92 +87 @@ export async function backupToObject(currentConfig) {
 -export async function restoreFromObject(targetConfig) {
-+async function applyFromObject(targetConfig) {
-@@ -147,5 +147,0 @@ export async function restoreFromObject(targetConfig) {
--    await sendMessage({
++async function applyFromObject(targetConfig, settingsRestoreId) {
+@@ -96,0 +92 @@ export async function restoreFromObject(targetConfig) {
++        settingsRestoreId,
+@@ -101,0 +98 @@ export async function restoreFromObject(targetConfig) {
++        settingsRestoreId,
+@@ -106,0 +104 @@ export async function restoreFromObject(targetConfig) {
++        settingsRestoreId,
+@@ -111,0 +110 @@ export async function restoreFromObject(targetConfig) {
++        settingsRestoreId,
+@@ -116,0 +116 @@ export async function restoreFromObject(targetConfig) {
++        settingsRestoreId,
+@@ -141,6 +140,0 @@ export async function restoreFromObject(targetConfig) {
+-    if ( importedListsToRemove.length ) {
+-        await removeImportedLists(importedListsToRemove);
+-    }
+-    if ( importedListsToAdd.length ) {
+-        await addImportedLists(importedListsToAdd);
+-    }
+@@ -148,2 +142,4 @@ export async function restoreFromObject(targetConfig) {
 -        what: 'applyRulesets',
 -        enabledRulesets: Array.from(enabledRulesets),
--    });
++        what: 'replaceSettingsRestoreImportedLists',
++        settingsRestoreId,
++        toAdd: importedListsToAdd,
++        toRemove: importedListsToRemove,
+@@ -151 +146,0 @@ export async function restoreFromObject(targetConfig) {
 -
+@@ -153,0 +149 @@ export async function restoreFromObject(targetConfig) {
++        settingsRestoreId,
 @@ -157 +153 @@ export async function restoreFromObject(targetConfig) {
 -    await sendMessage({ what: 'removeAllCustomFilters', hostname: '*' });
 +    const customFilterMap = new Map();
@@ -1280,24 +2162,32 @@ index 5c5c0d3..d8be6b4 100644
 +                selectors.push(selector);
 +            }
 +        }
-@@ -185,0 +183,4 @@ export async function restoreFromObject(targetConfig) {
+@@ -185,0 +183,5 @@ export async function restoreFromObject(targetConfig) {
 +    await sendMessage({
 +        what: 'replaceAllCustomFilters',
++        settingsRestoreId,
 +        entries: Array.from(customFilterMap),
 +    });
-@@ -199,0 +201,103 @@ export async function restoreFromObject(targetConfig) {
-+    // Keep the comparatively slow Safari static-ruleset transition last. If a
-+    // preflight-approved rule is still rejected by native DNR, rollback can
-+    // finish without moving static rulesets forward and back.
-+    const reconciliation = await reconcileProtection({
-+        enabledRulesets: Array.from(enabledRulesets),
+@@ -188,0 +191 @@ export async function restoreFromObject(targetConfig) {
++        settingsRestoreId,
+@@ -192,7 +195,5 @@ export async function restoreFromObject(targetConfig) {
+-    const dnrRules = targetConfig.dnrRules ?? [];
+-    if ( dnrRules.length !== 0 ) {
+-        await localWrite('userDnrRules', dnrRules.join('\n'));
+-    } else {
+-        await localRemove('userDnrRules');
+-    }
+-    await sendMessage({ what: 'updateUserDnrRules' });
++    await sendMessage({
++        what: 'replaceUserDnrRules',
++        settingsRestoreId,
++        text: (targetConfig.dnrRules ?? []).join('\n'),
 +    });
-+    if ( reconciliation.ready !== true ) {
-+        throw new Error(
-+            reconciliation.error || 'Enabled rulesets did not reconcile'
-+        );
-+    }
-+
+@@ -199,0 +201,112 @@ export async function restoreFromObject(targetConfig) {
++    // Static rulesets are committed only after every background-owned setting
++    // above succeeds. The commit message publishes this intent durably before
++    // the foreground realm mutates WebKit DNR.
++    return Array.from(enabledRulesets);
 +}
 +
 +/******************************************************************************/
@@ -1312,7 +2202,9 @@ index 5c5c0d3..d8be6b4 100644
 +    });
 +    let transaction = await sendMessage({ what: 'beginSettingsRestore' });
 +    if ( transaction?.foregroundReconciliationRequired === true ) {
-+        const reconciliation = await reconcileProtection();
++        const reconciliation = await reconcileProtection({
++            settingsRestoreId: transaction.settingsRestoreId,
++        });
 +        if ( reconciliation.ready !== true ) {
 +            throw new Error(
 +                reconciliation.error ||
@@ -1325,23 +2217,34 @@ index 5c5c0d3..d8be6b4 100644
 +        throw new Error('Settings restore transaction response was invalid');
 +    }
 +    try {
-+        await applyFromObject(targetConfig);
++        const enabledRulesets = await applyFromObject(
++            targetConfig,
++            transaction.id
++        );
 +        let commit = await sendMessage({
 +            what: 'commitSettingsRestore',
 +            id: transaction.id,
++            settingsRestoreId: transaction.id,
++            enabledRulesets,
 +        });
 +        if ( commit?.foregroundReconciliationRequired === true ) {
-+            const reconciliation = await reconcileProtection();
++            const reconciliation = await reconcileProtection({
++                settingsRestoreId: commit.settingsRestoreId,
++            });
 +            if ( reconciliation.ready !== true ) {
 +                throw new Error(
 +                    reconciliation.error ||
 +                    'Foreground settings restore did not reconcile'
 +                );
 +            }
-+            commit = await sendMessage({
-+                what: 'commitSettingsRestore',
-+                id: transaction.id,
-+            });
++            commit = reconciliation.committed === true
++                ? { committed: true }
++                : await sendMessage({
++                    what: 'commitSettingsRestore',
++                    id: transaction.id,
++                    settingsRestoreId: transaction.id,
++                    enabledRulesets,
++                });
 +        }
 +        if ( commit?.committed !== true ) {
 +            throw new Error('Settings restore commit response was invalid');
@@ -1351,9 +2254,12 @@ index 5c5c0d3..d8be6b4 100644
 +            let rollback = await sendMessage({
 +                what: 'rollbackSettingsRestore',
 +                id: transaction.id,
++                settingsRestoreId: transaction.id,
 +            });
 +            if ( rollback?.foregroundReconciliationRequired === true ) {
-+                const reconciliation = await reconcileProtection();
++                const reconciliation = await reconcileProtection({
++                    settingsRestoreId: rollback.settingsRestoreId,
++                });
 +                if ( reconciliation.ready !== true ) {
 +                    throw new Error(
 +                        reconciliation.error ||
@@ -1369,6 +2275,7 @@ index 5c5c0d3..d8be6b4 100644
 +                    rollback = await sendMessage({
 +                        what: 'rollbackSettingsRestore',
 +                        id: transaction.id,
++                        settingsRestoreId: transaction.id,
 +                    });
 +                }
 +            }
@@ -2170,7 +3077,7 @@ index 674cc63..bce8aa7 100644
 +/******************************************************************************/
 +
 diff --git a/js/ext-compat.js b/js/ext-compat.js
-index 73d0354..3bd6443 100644
+index 73d0354..cc5829c 100644
 --- a/js/ext-compat.js
 +++ b/js/ext-compat.js
 @@ -22,0 +23,3 @@ import { deepEquals } from './deep-compare.js';
@@ -2678,14 +3585,21 @@ index 73d0354..3bd6443 100644
 +    if ( api !== nativeDNR ) { return operation(); }
 +    return runSafariDNROperation(operation);
 +}
-@@ -66 +528,28 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
+@@ -66 +528,38 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
 -/******************************************************************************/
 +async function forceEnableRulesets(currentRealm) {
-+    await seenRealmsReady;
-+    if ( seenRealms === ALL_REALMS ) { return false; }
-+    if ( currentRealm === 0 ) { return false; }
-+    if ( (seenRealms & currentRealm) !== 0 ) { return false; }
-+    await runSafariDNROperation(async ( ) => {
++    return runSafariDNROperation(async ( ) => {
++        await seenRealmsReady;
++        const marker = await runStorageOperation('session', ( ) =>
++            webext.storage.session.get('safari.seenRealms')
++        );
++        // The static updater can run in a different extension realm. Its
++        // durable marker removal is authoritative over this realm's cached
++        // bits, so refresh them while holding the shared DNR lock.
++        seenRealms = marker?.['safari.seenRealms'] ?? 0;
++        if ( seenRealms === ALL_REALMS ) { return false; }
++        if ( currentRealm === 0 ) { return false; }
++        if ( (seenRealms & currentRealm) !== 0 ) { return false; }
 +        await ensureSafariDNRKeepers({ allowCapacityDeferral: true });
 +        const ids = await readNativeEnabledRulesetsNow();
 +        if ( ids.length !== 0 ) {
@@ -2698,17 +3612,20 @@ index 73d0354..3bd6443 100644
 +                throw new Error('Realm static DNR refresh readback mismatch');
 +            }
 +        }
++        const nextSeenRealms = seenRealms | currentRealm;
++        // Publish completion in the same cross-realm critical section as the
++        // native toggle/readback. A foreground static update can otherwise
++        // invalidate the marker between those two operations.
++        await runStorageOperation('session', ( ) =>
++            webext.storage.session.set({
++                'safari.seenRealms': nextSeenRealms,
++            })
++        );
++        seenRealms = nextSeenRealms;
++        return true;
 +    });
-+    const nextSeenRealms = seenRealms | currentRealm;
-+    // Persist completion only after WebKit accepted the native DNR toggle.
-+    // If either step is interrupted, the next wake safely repeats the toggle.
-+    await runStorageOperation('session', ( ) =>
-+        webext.storage.session.set({ 'safari.seenRealms': nextSeenRealms })
-+    );
-+    seenRealms = nextSeenRealms;
-+    return true;
 +}
-@@ -68 +557,8 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
+@@ -68 +567,8 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
 -// https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/declarativeNetRequest/
 +let realmRulesetUpdates = Promise.resolve();
 +let realmRulesetUpdateError;
@@ -2718,13 +3635,22 @@ index 73d0354..3bd6443 100644
 +const startupGate = new Promise(resolve => {
 +    releaseStartupGate = resolve;
 +});
-@@ -70 +566,27 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
+@@ -70 +576,4 @@ windows.onFocusChanged.addListener(forceEnableRulesets);
 -const nativeDNR = webext.declarativeNetRequest;
 +export function releaseRealmRulesetStartupGate() {
 +    releaseStartupGate?.();
 +    releaseStartupGate = undefined;
 +}
-+
+@@ -72,9 +581,30 @@ const nativeDNR = webext.declarativeNetRequest;
+-const isSupportedRule = r => {
+-    if ( r.action.responseHeaders ) { return false; }
+-    if ( r.action.requestHeaders ) { return false; }
+-    const { condition } = r;
+-    if ( condition.tabIds !== undefined ) { return false; }
+-    if ( condition.resourceTypes?.includes('object') ) {
+-        if ( condition.resourceTypes.length === 1 ) { return false; }
+-        const i = condition.resourceTypes.indexOf('object');
+-        condition.resourceTypes.splice(i, 1);
 +windows.onFocusChanged.addListener(windowId => {
 +    const realmResolution = resolveRealm(windowId).then(
 +        currentRealm => ({ succeeded: true, currentRealm }),
@@ -2747,16 +3673,7 @@ index 73d0354..3bd6443 100644
 +        }
 +    );
 +});
-@@ -72,9 +594,7 @@ const nativeDNR = webext.declarativeNetRequest;
--const isSupportedRule = r => {
--    if ( r.action.responseHeaders ) { return false; }
--    if ( r.action.requestHeaders ) { return false; }
--    const { condition } = r;
--    if ( condition.tabIds !== undefined ) { return false; }
--    if ( condition.resourceTypes?.includes('object') ) {
--        if ( condition.resourceTypes.length === 1 ) { return false; }
--        const i = condition.resourceTypes.indexOf('object');
--        condition.resourceTypes.splice(i, 1);
++
 +export async function waitForRealmRulesetUpdates() {
 +    await seenRealmsReady;
 +    await startupGate;
@@ -2764,7 +3681,7 @@ index 73d0354..3bd6443 100644
 +        const pending = realmRulesetUpdates;
 +        await pending;
 +        if ( pending === realmRulesetUpdates ) { break; }
-@@ -82,5 +602,4 @@ const isSupportedRule = r => {
+@@ -82,5 +612,4 @@ const isSupportedRule = r => {
 -    if ( condition.excludedResourceTypes?.includes('object') ) {
 -        const i = condition.excludedResourceTypes.indexOf('object');
 -        condition.excludedResourceTypes.splice(i, 1);
@@ -2774,14 +3691,14 @@ index 73d0354..3bd6443 100644
 +        isRealmRulesetStartupPending = false;
 +        if ( realmRulesetStartupError !== undefined ) {
 +            throw realmRulesetStartupError;
-@@ -89,2 +608,4 @@ const isSupportedRule = r => {
+@@ -89,2 +618,4 @@ const isSupportedRule = r => {
 -    return true;
 -};
 +    if ( realmRulesetUpdateError !== undefined ) {
 +        throw realmRulesetUpdateError;
 +    }
 +}
-@@ -92,11 +613,40 @@ const isSupportedRule = r => {
+@@ -92,11 +623,47 @@ const isSupportedRule = r => {
 -const prepareUpdateRules = optionsBefore => {
 -    const { addRules, removeRuleIds } = optionsBefore;
 -    const addRulesAfter = addRules?.filter(isSupportedRule);
@@ -2825,6 +3742,13 @@ index 73d0354..3bd6443 100644
 +async function updateEnabledRulesetsAndResetRealms(options) {
 +    await seenRealmsReady;
 +    return runSafariDNROperation(async ( ) => {
++        const marker = await runStorageOperation('session', ( ) =>
++            webext.storage.session.get('safari.seenRealms')
++        );
++        // Another extension realm may have invalidated the durable marker
++        // after this realm populated its cache. The shared marker read under
++        // the DNR lease is authoritative for both mutation and rollback.
++        seenRealms = marker?.['safari.seenRealms'] ?? 0;
 +        // Static ruleset changes do not delete dynamic/session SQLite rows.
 +        // A legacy store at capacity may therefore defer its missing keepers
 +        // while still allowing the independent static update to complete.
@@ -2833,13 +3757,13 @@ index 73d0354..3bd6443 100644
 +        const expectedRulesets = new Set(rulesetSnapshot);
 +        for ( const id of options.enableRulesetIds || [] ) {
 +            expectedRulesets.add(id);
-@@ -104,3 +654,2 @@ const prepareUpdateRules = optionsBefore => {
+@@ -104,3 +671,2 @@ const prepareUpdateRules = optionsBefore => {
 -        if ( r.condition?.initiatorDomains ) {
 -            r.condition.domains = r.condition.initiatorDomains;
 -            delete r.condition.initiatorDomains;
 +        for ( const id of options.disableRulesetIds || [] ) {
 +            expectedRulesets.delete(id);
-@@ -108,3 +657,39 @@ const prepareUpdateRules = optionsBefore => {
+@@ -108,3 +674,39 @@ const prepareUpdateRules = optionsBefore => {
 -        if ( r.condition?.excludedInitiatorDomains ) {
 -            r.condition.excludedDomains = r.condition.excludedInitiatorDomains;
 -            delete r.condition.excludedInitiatorDomains;
@@ -2882,7 +3806,7 @@ index 73d0354..3bd6443 100644
 +                );
 +            }
 +            throw reason;
-@@ -112,0 +698,13 @@ const prepareUpdateRules = optionsBefore => {
+@@ -112,0 +715,13 @@ const prepareUpdateRules = optionsBefore => {
 +}
 +
 +const prepareUpdateRules = optionsBefore => {
@@ -2896,12 +3820,12 @@ index 73d0354..3bd6443 100644
 +    // included+excluded combination. Legacy domains/excludedDomains cannot
 +    // represent that combination because WebKit prefers domains and ignores
 +    // excludedDomains when both aliases are present.
-@@ -145 +743,3 @@ export const dnr = {
+@@ -145 +760,3 @@ export const dnr = {
 -    MAX_NUMBER_OF_REGEX_RULES: nativeDNR.MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES,
 +    MAX_NUMBER_OF_REGEX_RULES: isSafari
 +        ? safariDNRPublicRuleLimitPerStore
 +        : nativeDNR.MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES,
-@@ -149,5 +749,9 @@ export const dnr = {
+@@ -149,5 +766,9 @@ export const dnr = {
 -    getDynamicRules({ ruleIds } = {}) {
 -        return new Promise(resolve => {
 -            nativeDNR.getDynamicRules(rules => {
@@ -2916,20 +3840,20 @@ index 73d0354..3bd6443 100644
 +            const rules = await runSafariDNROperation(async ( ) => {
 +                await ensureSafariDNRKeeperWithCapacityDeferral('dynamic');
 +                return readNativeDynamicRules();
-@@ -155 +759,5 @@ export const dnr = {
+@@ -155 +776,5 @@ export const dnr = {
 -        });
 +            const visibleRules = rules.filter(
 +                rule => rule.id !== safariDNRKeeperRuleId
 +            );
 +            return normalizeDNRRules(visibleRules, ruleIds);
 +        })();
-@@ -158 +766,4 @@ export const dnr = {
+@@ -158 +783,4 @@ export const dnr = {
 -        return nativeDNR.getEnabledRulesets(...args);
 +        if ( isSafari === false ) {
 +            return getNativeEnabledRulesets(...args);
 +        }
 +        return readNativeEnabledRulesets();
-@@ -161 +772,17 @@ export const dnr = {
+@@ -161 +789,17 @@ export const dnr = {
 -        return nativeDNR.getMatchedRules(...args);
 +        if ( isSafari === false ) {
 +            return nativeDNR.getMatchedRules(...args);
@@ -2948,7 +3872,7 @@ index 73d0354..3bd6443 100644
 +                ),
 +            };
 +        })();
-@@ -163,5 +790,9 @@ export const dnr = {
+@@ -163,5 +807,9 @@ export const dnr = {
 -    getSessionRules({ ruleIds } = {}) {
 -        return new Promise(resolve => {
 -            nativeDNR.getSessionRules(rules => {
@@ -2963,14 +3887,14 @@ index 73d0354..3bd6443 100644
 +            const rules = await runSafariDNROperation(async ( ) => {
 +                await ensureSafariDNRKeeperWithCapacityDeferral('session');
 +                return readNativeSessionRules();
-@@ -169 +800,5 @@ export const dnr = {
+@@ -169 +817,5 @@ export const dnr = {
 -        });
 +            const visibleRules = rules.filter(
 +                rule => rule.id !== safariDNRKeeperRuleId
 +            );
 +            return normalizeDNRRules(visibleRules, ruleIds);
 +        })();
-@@ -174,4 +809,8 @@ export const dnr = {
+@@ -174,4 +826,8 @@ export const dnr = {
 -    async updateDynamicRules(optionsBefore) {
 -        const optionsAfter = prepareUpdateRules(optionsBefore);
 -        if ( optionsAfter === undefined ) { return; }
@@ -2983,7 +3907,7 @@ index 73d0354..3bd6443 100644
 +            const optionsAfter = prepareUpdateRules(optionsBefore);
 +            return updateSafariDNRRules('dynamic', optionsAfter);
 +        });
-@@ -179,4 +818,5 @@ export const dnr = {
+@@ -179,4 +835,5 @@ export const dnr = {
 -    async updateEnabledRulesets(...args) {
 -        await nativeDNR.updateEnabledRulesets(...args);
 -        seenRealms = 0b00;
@@ -2993,7 +3917,7 @@ index 73d0354..3bd6443 100644
 +            return updateNativeEnabledRulesets(...args);
 +        }
 +        return updateEnabledRulesetsAndResetRealms(...args);
-@@ -184,4 +824,8 @@ export const dnr = {
+@@ -184,4 +841,8 @@ export const dnr = {
 -    async updateSessionRules(optionsBefore) {
 -        const optionsAfter = prepareUpdateRules(optionsBefore);
 -        if ( optionsAfter === undefined ) { return; }
@@ -3006,7 +3930,7 @@ index 73d0354..3bd6443 100644
 +            const optionsAfter = prepareUpdateRules(optionsBefore);
 +            return updateSafariDNRRules('session', optionsAfter);
 +        });
-@@ -189 +833,8 @@ export const dnr = {
+@@ -189 +850,8 @@ export const dnr = {
 -    async setAllowAllRules(id, allowed, notAllowed, reverse, priority) {
 +    async setAllowAllRules(
 +        id,
@@ -3016,13 +3940,13 @@ index 73d0354..3bd6443 100644
 +        priority,
 +        throwOnError = false
 +    ) {
-@@ -200 +851 @@ export const dnr = {
+@@ -200 +868 @@ export const dnr = {
 -                rule0.condition.domains = allowed;
 +                rule0.condition.initiatorDomains = allowed;
-@@ -202 +853 @@ export const dnr = {
+@@ -202 +870 @@ export const dnr = {
 -                rule0.condition.excludedDomains = notAllowed;
 +                rule0.condition.excludedInitiatorDomains = notAllowed;
-@@ -207,8 +858,14 @@ export const dnr = {
+@@ -207,8 +875,14 @@ export const dnr = {
 -        return this.updateDynamicRules({
 -            addRules,
 -            removeRuleIds: beforeRules.map(r => r.id),
@@ -3103,7 +4027,7 @@ index 4ac7142..3bafc7d 100644
 +        windowId: createdTab?.windowId,
 +    };
 diff --git a/js/ext.js b/js/ext.js
-index 16042eb..32efe86 100644
+index 16042eb..95ae7aa 100644
 --- a/js/ext.js
 +++ b/js/ext.js
 @@ -22 +22,5 @@
@@ -3212,17 +4136,23 @@ index 16042eb..32efe86 100644
 +    const bin = await runStorageOperation('local', ( ) =>
 +        browser.storage.local.get(null)
 +    );
-@@ -86 +154,45 @@ export async function localKeys() {
+@@ -86 +154,63 @@ export async function localKeys() {
 -    return Object.keys(bin);
 +    return Object.keys(bin).filter(
 +        key => key !== safariLocalStorageSentinelKey
 +    );
 +}
 +
-+export async function localSnapshot(excludedKeys = []) {
++export async function localSnapshot(excludedKeys = [], requestedKeys = null) {
 +    if ( notAnObject(browser?.storage?.local) ) { return {}; }
++    if ( requestedKeys !== null && (
++        Array.isArray(requestedKeys) === false ||
++        requestedKeys.some(key => typeof key !== 'string' || key === '')
++    ) ) {
++        throw new Error('Invalid local-storage snapshot keys');
++    }
 +    const bin = await runStorageOperation('local', ( ) =>
-+        browser.storage.local.get(null)
++        browser.storage.local.get(requestedKeys)
 +    );
 +    if ( notAnObject(bin) ) { return {}; }
 +    const excluded = new Set([
@@ -3234,22 +4164,34 @@ index 16042eb..32efe86 100644
 +    );
 +}
 +
-+export async function localReplace(snapshot, preservedKeys = []) {
++export async function localReplace(
++    snapshot,
++    preservedKeys = [],
++    preservedKeyPrefixes = []
++) {
 +    if ( notAnObject(browser?.storage?.local) ) { return; }
-+    if ( notAnObject(snapshot) ) {
++    if (
++        notAnObject(snapshot) ||
++        Array.isArray(preservedKeys) === false ||
++        preservedKeys.some(key => typeof key !== 'string') ||
++        Array.isArray(preservedKeyPrefixes) === false ||
++        preservedKeyPrefixes.some(prefix => typeof prefix !== 'string')
++    ) {
 +        throw new Error('Invalid local-storage snapshot');
 +    }
 +    const preserved = new Set([
 +        safariLocalStorageSentinelKey,
 +        ...preservedKeys,
 +    ]);
++    const isPreserved = key => preserved.has(key) ||
++        preservedKeyPrefixes.some(prefix => key.startsWith(prefix));
 +    return runStorageOperation('local', async ( ) => {
 +        const current = await browser.storage.local.get(null);
 +        const replacement = Object.fromEntries(
-+            Object.entries(snapshot).filter(([ key ]) => preserved.has(key) === false)
++            Object.entries(snapshot).filter(([ key ]) => isPreserved(key) === false)
 +        );
 +        const removeKeys = Object.keys(current).filter(key =>
-+            preserved.has(key) === false &&
++            isPreserved(key) === false &&
 +            Object.prototype.hasOwnProperty.call(replacement, key) === false
 +        );
 +        if ( removeKeys.length !== 0 ) {
@@ -3259,21 +4201,21 @@ index 16042eb..32efe86 100644
 +            await browser.storage.local.set(replacement);
 +        }
 +    });
-@@ -94 +206,3 @@ export async function sessionRead(key) {
+@@ -94 +224,3 @@ export async function sessionRead(key) {
 -        const bin = await browser.storage.session.get(key);
 +        const bin = await runStorageOperation('session', ( ) =>
 +            browser.storage.session.get(key)
 +        );
-@@ -97 +211,2 @@ export async function sessionRead(key) {
+@@ -97 +229,2 @@ export async function sessionRead(key) {
 -    } catch {
 +    } catch(reason) {
 +        if ( webextFlavor === 'safari' ) { throw reason; }
-@@ -103 +218,3 @@ export async function sessionWrite(key, value) {
+@@ -103 +236,3 @@ export async function sessionWrite(key, value) {
 -    return browser.storage.session.set({ [key]: value });
 +    return runStorageOperation('session', ( ) =>
 +        browser.storage.session.set({ [key]: value })
 +    );
-@@ -108 +225,10 @@ export async function sessionRemove(keys) {
+@@ -108 +243,10 @@ export async function sessionRemove(keys) {
 -    return browser.storage.session.remove(keys);
 +    return runStorageOperation('session', ( ) =>
 +        browser.storage.session.remove(keys)
@@ -3285,17 +4227,17 @@ index 16042eb..32efe86 100644
 +    return runStorageOperation('session', ( ) =>
 +        browser.storage.session.clear()
 +    );
-@@ -114 +240,3 @@ export async function sessionKeys() {
+@@ -114 +258,3 @@ export async function sessionKeys() {
 -        return browser.storage.session.getKeys();
 +        return runStorageOperation('session', ( ) =>
 +            browser.storage.session.getKeys()
 +        );
-@@ -116 +244,3 @@ export async function sessionKeys() {
+@@ -116 +262,3 @@ export async function sessionKeys() {
 -    const bin = await browser.storage.session.get(null);
 +    const bin = await runStorageOperation('session', ( ) =>
 +        browser.storage.session.get(null)
 +    );
-@@ -123,2 +253,5 @@ export async function sessionAccessLevel(level) {
+@@ -123,2 +271,5 @@ export async function sessionAccessLevel(level) {
 -        browser.storage.session.setAccessLevel(level);
 -    } catch {
 +        return await runStorageOperation('session', ( ) =>
@@ -3885,26 +4827,256 @@ index e0eb861..5ffd165 100644
 +        rejectOperation(reason);
 +    }
 diff --git a/js/filter-manager.js b/js/filter-manager.js
-index 0eed1c2..dd296b8 100644
+index 0eed1c2..c02353d 100644
 --- a/js/filter-manager.js
 +++ b/js/filter-manager.js
-@@ -47,2 +47 @@ async function keysFromStorage() {
+@@ -31 +30,0 @@ import {
+-    intersectHostnameIters,
+@@ -34 +32,0 @@ import {
+-    subtractHostnameIters,
+@@ -43,0 +42,225 @@ const isCSS = a => isProcedural(a) === false && isScriptlet(a) === false;
++export const customFilterMutationJournalKey =
++    'floorp.customFilterMutationJournal.v1';
++export const settingsRestoreJournalKey = 'floorp.settingsRestoreJournal.v1';
++export const customFilterModeStorageKeys = [
++    'filteringModeDetails',
++    'admin.defaultFiltering',
++    'admin.noFiltering',
++];
++
++function committedJournalSnapshot(journal, label, phases) {
++    if ( journal === undefined ) { return; }
++    if (
++        typeof journal !== 'object' ||
++        journal === null ||
++        Array.isArray(journal) ||
++        journal.version !== 1 ||
++        typeof journal.id !== 'string' ||
++        journal.id === '' ||
++        phases.includes(journal.phase) === false ||
++        typeof journal.beforeLocal !== 'object' ||
++        journal.beforeLocal === null ||
++        Array.isArray(journal.beforeLocal)
++    ) {
++        throw new Error(`Invalid ${label} journal`);
++    }
++    return journal.beforeLocal;
++}
++
++export function committedSettingsRestoreSnapshot(journal) {
++    return committedJournalSnapshot(journal, 'settings restore', [
++        'applying',
++        'committingForeground',
++        'rollingBack',
++    ]);
++}
++
++export function committedCustomFilterMutationSnapshot(journal) {
++    return committedJournalSnapshot(journal, 'custom-filter mutation', [
++        'applying',
++        'rollingBack',
++    ]);
++}
++
++function customFilterMapFromStorageSnapshot(snapshot) {
++    if (
++        typeof snapshot !== 'object' ||
++        snapshot === null ||
++        Array.isArray(snapshot)
++    ) {
++        throw new Error('Invalid custom-filter storage snapshot');
++    }
++    const out = new Map();
++    for ( const [ key, selectors ] of Object.entries(snapshot) ) {
++        if ( key.startsWith('site.') === false ) { continue; }
++        const hostname = key.slice(5);
++        if (
++            hostname === '' ||
++            Array.isArray(selectors) === false ||
++            selectors.some(selector => typeof selector !== 'string')
++        ) {
++            throw new Error('Invalid custom-filter selector snapshot');
++        }
++        out.set(hostname, selectors.slice());
++    }
++    return out;
++}
++
++function customFilterStorageSnapshot(entries) {
++    return Object.fromEntries(entries.map(([ hostname, selectors ]) => [
++        `site.${hostname}`,
++        selectors.slice(),
++    ]));
++}
++
++function serializedModeSets(details) {
++    const source = details ?? {
++        none: [],
++        basic: [],
++        optimal: [ 'all-urls' ],
++        complete: [],
++    };
++    if (
++        typeof source !== 'object' ||
++        source === null ||
++        Array.isArray(source)
++    ) {
++        throw new Error('Invalid filtering-mode storage snapshot');
++    }
++    const aliases = {
++        none: 'none',
++        basic: source.basic === undefined ? 'network' : 'basic',
++        optimal: source.optimal === undefined
++            ? 'extendedSpecific'
++            : 'optimal',
++        complete: source.complete === undefined
++            ? 'extendedGeneric'
++            : 'complete',
++    };
++    const out = {};
++    for ( const [ name, sourceName ] of Object.entries(aliases) ) {
++        const values = source[sourceName];
++        if (
++            Array.isArray(values) === false ||
++            values.some(value => typeof value !== 'string' || value === '')
++        ) {
++            throw new Error('Invalid filtering-mode storage snapshot');
++        }
++        out[name] = new Set(values);
++    }
++    return out;
++}
++
++function broaderHostnameInSet(hostname, set) {
++    if ( set.has('*') ) { return true; }
++    let hn = hostname;
++    for (;;) {
++        if ( set.has(hn) ) { return true; }
++        const pos = hn.indexOf('.');
++        if ( pos === -1 ) { return false; }
++        hn = hn.slice(pos + 1);
++    }
++}
++
++function lookupMode(modes, hostname) {
++    if ( hostname === 'all-urls' ) {
++        for ( const name of [ 'none', 'basic', 'optimal', 'complete' ] ) {
++            if ( modes[name].has('all-urls') ) { return name; }
++        }
++        return 'basic';
++    }
++    for ( const name of [ 'none', 'basic', 'optimal', 'complete' ] ) {
++        if ( modes[name].has(hostname) ) { return name; }
++        if (
++            modes[name].has('all-urls') === false &&
++            broaderHostnameInSet(hostname, modes[name])
++        ) {
++            return name;
++        }
++    }
++    return lookupMode(modes, 'all-urls');
++}
++
++function pruneDescendants(hostname, set) {
++    for ( const candidate of set ) {
++        if (
++            candidate !== hostname &&
++            candidate.endsWith(`.${hostname}`)
++        ) {
++            set.delete(candidate);
++        }
++    }
++}
++
++function pruneHostname(hostname, set) {
++    let hn = hostname;
++    for (;;) {
++        set.delete(hn);
++        const pos = hn.indexOf('.');
++        if ( pos === -1 ) { return; }
++        hn = hn.slice(pos + 1);
++    }
++}
++
++function applyMode(modes, hostname, afterMode) {
++    const beforeMode = lookupMode(modes, hostname);
++    if ( beforeMode === afterMode ) { return; }
++    if ( hostname === 'all-urls' ) {
++        modes[afterMode].clear();
++        modes[afterMode].add('all-urls');
++        modes[beforeMode].delete('all-urls');
++        return;
++    }
++    pruneHostname(hostname, modes[beforeMode]);
++    if ( afterMode === lookupMode(modes, 'all-urls') ) { return; }
++    if ( broaderHostnameInSet(hostname, modes[afterMode]) === false ) {
++        modes[afterMode].add(hostname);
++        pruneDescendants(hostname, modes[afterMode]);
++    }
++}
++
++function adminData(snapshot, key) {
++    const envelope = snapshot[key];
++    if ( envelope === undefined ) { return; }
++    if (
++        typeof envelope !== 'object' ||
++        envelope === null ||
++        Array.isArray(envelope)
++    ) {
++        throw new Error('Invalid administrator filtering-mode snapshot');
++    }
++    return envelope.data;
++}
++
++export function customFilteringEnabledFromStorageSnapshot(snapshot, hostname) {
++    if (
++        typeof snapshot !== 'object' ||
++        snapshot === null ||
++        Array.isArray(snapshot) ||
++        typeof hostname !== 'string' ||
++        hostname === ''
++    ) {
++        throw new Error('Invalid filtering-mode storage snapshot');
++    }
++    const modes = serializedModeSets(snapshot.filteringModeDetails);
++    const adminDefault = adminData(snapshot, 'admin.defaultFiltering');
++    if ([ 'none', 'basic', 'optimal', 'complete' ].includes(adminDefault)) {
++        applyMode(modes, 'all-urls', adminDefault);
++    }
++    const adminNone = adminData(snapshot, 'admin.noFiltering');
++    if ( Array.isArray(adminNone) && adminNone.length !== 0 ) {
++        if ( adminNone.some(value => typeof value !== 'string') ) {
++            throw new Error('Invalid administrator filtering-mode snapshot');
++        }
++        if ( adminNone.includes('-*') ) { modes.none.clear(); }
++        for ( const value of adminNone ) {
++            if ( value.startsWith('-') ) {
++                modes.none.delete(value.slice(1));
++            } else if ( value !== '' ) {
++                applyMode(modes, value, 'none');
++            }
++        }
++    }
++    return lookupMode(modes, hostname) !== 'none';
++}
++
+@@ -47,2 +270 @@ async function keysFromStorage() {
 -    pendingStorageOp = pendingStorageOp.then(( ) => localKeys());
 -    return pendingStorageOp;
 +    return queueStorageOperation(( ) => localKeys());
-@@ -52,2 +51 @@ async function readFromStorage(key) {
+@@ -52,2 +274 @@ async function readFromStorage(key) {
 -    pendingStorageOp = pendingStorageOp.then(( ) => localRead(key));
 -    return pendingStorageOp;
 +    return queueStorageOperation(( ) => localRead(key));
-@@ -57,2 +55 @@ async function writeToStorage(key, value) {
+@@ -57,2 +278 @@ async function writeToStorage(key, value) {
 -    pendingStorageOp = pendingStorageOp.then(( ) => localWrite(key, value));
 -    return pendingStorageOp;
 +    return queueStorageOperation(( ) => localWrite(key, value));
-@@ -62,2 +59 @@ async function removeFromStorage(key) {
+@@ -62,2 +282 @@ async function removeFromStorage(key) {
 -    pendingStorageOp = pendingStorageOp.then(( ) => localRemove(key));
 -    return pendingStorageOp;
 +    return queueStorageOperation(( ) => localRemove(key));
-@@ -67,0 +64,8 @@ let pendingStorageOp = Promise.resolve();
+@@ -67,0 +287,8 @@ let pendingStorageOp = Promise.resolve();
 +function queueStorageOperation(callback) {
 +    const operation = pendingStorageOp.then(callback);
 +    // A failed write must reject its caller without poisoning the serialized
@@ -3913,26 +5085,212 @@ index 0eed1c2..dd296b8 100644
 +    return operation;
 +}
 +
-@@ -227 +231 @@ export async function addCustomFilters(hostname, toAdd) {
--    writeToStorage(key, selectors);
-+    await writeToStorage(key, selectors);
-@@ -238 +242 @@ export async function removeAllCustomFilters(hostname) {
--            removeFromStorage(key);
-+            await removeFromStorage(key);
-@@ -244 +248 @@ export async function removeAllCustomFilters(hostname) {
--    removeFromStorage(key);
-+    await removeFromStorage(key);
-@@ -273 +277,40 @@ async function removeCustomFiltersByKey(key, toRemove) {
--        writeToStorage(key, selectors);
-+        await writeToStorage(key, selectors);
-+    } else {
-+        await removeFromStorage(key);
-+    }
-+    return true;
+@@ -70,2 +297,2 @@ let pendingStorageOp = Promise.resolve();
+-export async function customFiltersFromHostname(hostname) {
+-    const promises = [];
++export function customFilterStorageKeys(hostname) {
++    const out = [];
+@@ -74 +301 @@ export async function customFiltersFromHostname(hostname) {
+-        promises.push(readFromStorage(`site.${hn}`));
++        out.push(`site.${hn}`);
+@@ -78,0 +306,8 @@ export async function customFiltersFromHostname(hostname) {
++    return out;
 +}
 +
 +/******************************************************************************/
 +
++export async function customFiltersFromHostname(hostname) {
++    const keys = customFilterStorageKeys(hostname);
++    const promises = keys.map(key => readFromStorage(key));
+@@ -92,0 +328,43 @@ export async function customFiltersFromHostname(hostname) {
++export function customFiltersFromSnapshot(hostname, snapshot) {
++    if (
++        typeof snapshot !== 'object' ||
++        snapshot === null ||
++        Array.isArray(snapshot)
++    ) {
++        throw new Error('Invalid custom-filter storage snapshot');
++    }
++    const out = [];
++    for ( const key of customFilterStorageKeys(hostname) ) {
++        const selectors = snapshot[key];
++        if ( selectors !== undefined ) {
++            if (
++                Array.isArray(selectors) === false ||
++                selectors.some(selector => typeof selector !== 'string')
++            ) {
++                throw new Error('Invalid custom-filter selector snapshot');
++            }
++            out.push(...selectors);
++        }
++    }
++    return out.sort();
++}
++
++/******************************************************************************/
++
++export function assertSuccessfulScriptInjection(results, operation) {
++    if ( Array.isArray(results) === false || results.length === 0 ) {
++        throw new Error(`${operation} returned no injection results`);
++    }
++    for ( const result of results ) {
++        if ( typeof result !== 'object' || result === null ) {
++            throw new Error(`${operation} returned a malformed injection result`);
++        }
++        if ( result.error !== undefined ) {
++            throw new Error(`${operation}: ${result.error}`);
++        }
++    }
++    return results;
++}
++
++/******************************************************************************/
++
+@@ -141,4 +419,4 @@ export function terminateCustomFilters(tabId, frameId) {
+-export async function injectCustomFilters(tabId, frameId, hostname) {
+-    const selectors = await customFiltersFromHostname(hostname);
+-    if ( selectors.length === 0 ) { return; }
+-    const promises = [];
++export async function injectCustomFilters(target, hostname, storageSnapshot) {
++    const selectors = storageSnapshot === undefined
++        ? await customFiltersFromHostname(hostname)
++        : customFiltersFromSnapshot(hostname, storageSnapshot);
+@@ -147,9 +425,5 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
+-        promises.push(
+-            browser.scripting.insertCSS({
+-                css: `${plainSelectors.join(',\n')}{display:none!important;}`,
+-                origin: 'USER',
+-                target: { tabId, frameIds: [ frameId ] },
+-            }).catch(reason => {
+-                ubolErr(`injectCustomFilters/insertCSS/${reason}`);
+-            })
+-        );
++        await browser.scripting.insertCSS({
++            css: `${plainSelectors.join(',\n')}{display:none!important;}`,
++            origin: 'USER',
++            target,
++        });
+@@ -158,15 +431,0 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
+-    if ( proceduralSelectors.length !== 0 ) {
+-        promises.push(
+-            browser.scripting.executeScript({
+-                files: [
+-                    '/js/scripting/css-api.js',
+-                    '/js/scripting/css-procedural-api.js',
+-                ],
+-                target: { tabId, frameIds: [ frameId ] },
+-                injectImmediately: true,
+-            }).catch(reason => {
+-                ubolErr(`injectCustomFilters/executeScript/${reason}`);
+-            })
+-        );
+-    }
+-    await Promise.all(promises);
+@@ -179 +438,27 @@ export async function registerCustomFilters(context) {
+-    const customFilters = new Map(await getAllCustomFilters());
++    let customFilters;
++    if ( context.localStorageSnapshot === undefined ) {
++        customFilters = new Map(await getAllCustomFilters());
++    } else {
++        const snapshots = [ context.localStorageSnapshot ];
++        for ( const [ key, readJournal ] of [
++            [ settingsRestoreJournalKey, committedSettingsRestoreSnapshot ],
++            [
++                customFilterMutationJournalKey,
++                committedCustomFilterMutationSnapshot,
++            ],
++        ] ) {
++            const snapshot = readJournal(context.localStorageSnapshot[key]);
++            if ( snapshot !== undefined ) { snapshots.push(snapshot); }
++        }
++        customFilters = new Map();
++        for ( const snapshot of snapshots ) {
++            for ( const [ hostname, selectors ] of
++                customFilterMapFromStorageSnapshot(snapshot) ) {
++                const existing = customFilters.get(hostname) || [];
++                customFilters.set(
++                    hostname,
++                    Array.from(new Set([ ...existing, ...selectors ])).sort()
++                );
++            }
++        }
++    }
+@@ -182,13 +467,4 @@ export async function registerCustomFilters(context) {
+-    const { none } = context.filteringModeDetails;
+-    let hostnames = Array.from(customFilters.keys());
+-    let excludeHostnames = [];
+-    if ( none.has('all-urls') ) {
+-        const { basic, optimal, complete } = context.filteringModeDetails;
+-        hostnames = intersectHostnameIters(hostnames, [
+-            ...basic, ...optimal, ...complete
+-        ]);
+-    } else if ( none.size !== 0 ) {
+-        hostnames = [ ...subtractHostnameIters(hostnames, none) ];
+-        excludeHostnames = Array.from(none);
+-    }
+-    hostnames = hostnames.filter(a =>
++    // Register every stored root and enforce the effective mode when selectors
++    // are read. This covers an enabled child inheriting a parent filter under a
++    // default-none policy and is safe if Safari briefly retains a broader row.
++    const hostnames = Array.from(customFilters.keys()).filter(a =>
+@@ -198,0 +475,21 @@ export async function registerCustomFilters(context) {
++    const js = [ '/js/scripting/css-user.js' ];
++    const hasInheritedProceduralFilter = hostname => {
++        let hn = hostname;
++        while ( hn !== '' ) {
++            if ( customFilters.get(hn)?.some(isProcedural) ) { return true; }
++            const pos = hn.indexOf('.');
++            if ( pos === -1 ) { break; }
++            hn = hn.slice(pos + 1);
++        }
++        return false;
++    };
++    if ( hostnames.some(hasInheritedProceduralFilter) ) {
++        // WebKit does not apply matchOriginAsFallback when executeScript checks
++        // access to about:blank/about:srcdoc. Preload the API in css-user's
++        // registered isolated world, including filters inherited from a parent
++        // hostname. css-user retains a lazy fallback for ordinary web frames.
++        js.unshift(
++            '/js/scripting/css-api.js',
++            '/js/scripting/css-procedural-api.js'
++        );
++    }
+@@ -201 +498 @@ export async function registerCustomFilters(context) {
+-        js: [ '/js/scripting/css-user.js' ],
++        js,
+@@ -207,2 +504,3 @@ export async function registerCustomFilters(context) {
+-    if ( excludeHostnames.length !== 0 ) {
+-        directive.excludeMatches = matchesFromHostnames(excludeHostnames);
++    const idleJS = js.slice();
++    if ( idleJS.includes('/js/scripting/css-api.js') === false ) {
++        idleJS.unshift('/js/scripting/css-api.js');
+@@ -210,2 +508,8 @@ export async function registerCustomFilters(context) {
+-
+-    context.toAdd.push(directive);
++    idleJS.unshift('/js/scripting/css-user-idle-prelude.js');
++    idleJS.splice(idleJS.length - 1, 0, '/js/scripting/css-user-idle.js');
++    context.toAdd.push(directive, {
++        ...directive,
++        id: 'css-user-idle',
++        js: idleJS,
++        runAt: 'document_idle',
++    });
+@@ -227 +531 @@ export async function addCustomFilters(hostname, toAdd) {
+-    writeToStorage(key, selectors);
++    await writeToStorage(key, selectors);
+@@ -238 +542 @@ export async function removeAllCustomFilters(hostname) {
+-            removeFromStorage(key);
++            await removeFromStorage(key);
+@@ -244 +548 @@ export async function removeAllCustomFilters(hostname) {
+-    removeFromStorage(key);
++    await removeFromStorage(key);
+@@ -273 +577 @@ async function removeCustomFiltersByKey(key, toRemove) {
+-        writeToStorage(key, selectors);
++        await writeToStorage(key, selectors);
+@@ -275 +579 @@ async function removeCustomFiltersByKey(key, toRemove) {
+-        removeFromStorage(key);
++        await removeFromStorage(key);
+@@ -281,0 +586,175 @@ async function removeCustomFiltersByKey(key, toRemove) {
 +async function writeCustomFilterSnapshot(entries) {
 +    const desired = new Map(entries.map(([ hostname, selectors ]) => [
 +        hostname,
@@ -3954,6 +5312,86 @@ index 0eed1c2..dd296b8 100644
 +    }
 +}
 +
++let pendingCustomFilterMutation = Promise.resolve();
++
++function queueCustomFilterMutation(callback) {
++    const operation = pendingCustomFilterMutation
++        .catch(( ) => undefined)
++        .then(callback);
++    pendingCustomFilterMutation = operation.catch(( ) => undefined);
++    return operation;
++}
++
++async function recoverCustomFilterMutationNow() {
++    const journal = await readFromStorage(customFilterMutationJournalKey);
++    const beforeLocal = committedCustomFilterMutationSnapshot(journal);
++    if ( beforeLocal === undefined ) { return false; }
++    await writeCustomFilterSnapshot(
++        Array.from(customFilterMapFromStorageSnapshot(beforeLocal))
++    );
++    await removeFromStorage(customFilterMutationJournalKey);
++    return true;
++}
++
++export function recoverCustomFilterMutation() {
++    return queueCustomFilterMutation(recoverCustomFilterMutationNow);
++}
++
++async function runCustomFilterMutation(
++    mutation,
++    applyRegistrations,
++    rollbackFailureMessage
++) {
++    await recoverCustomFilterMutationNow();
++    const snapshot = await getAllCustomFilters();
++    const id = globalThis.crypto?.randomUUID?.() ||
++        `${Date.now()}-${Math.random()}`;
++    const journal = {
++        version: 1,
++        id,
++        phase: 'applying',
++        beforeLocal: customFilterStorageSnapshot(snapshot),
++    };
++    await writeToStorage(customFilterMutationJournalKey, journal);
++    try {
++        const modified = await mutation(snapshot);
++        if ( modified === false ) {
++            await removeFromStorage(customFilterMutationJournalKey);
++            return false;
++        }
++        // While the journal exists registration is the union of last-committed
++        // and live roots, while selector reads remain pinned to last-committed.
++        await applyRegistrations();
++        await removeFromStorage(customFilterMutationJournalKey);
++        // Extra rows are functionally safe because every selector read is mode
++        // gated. Narrow them promptly, but do not roll back a published change
++        // merely because Safari rejected this redundant cleanup attempt.
++        await applyRegistrations().catch(reason => {
++            ubolErr(`narrowCustomFilterRegistrations/${reason}`);
++        });
++        return modified;
++    } catch(reason) {
++        try {
++            await writeToStorage(customFilterMutationJournalKey, {
++                ...journal,
++                phase: 'rollingBack',
++            });
++            await writeCustomFilterSnapshot(snapshot);
++            await applyRegistrations();
++            await removeFromStorage(customFilterMutationJournalKey);
++            await applyRegistrations().catch(narrowReason => {
++                ubolErr(`narrowCustomFilterRegistrations/${narrowReason}`);
++            });
++        } catch(rollbackReason) {
++            throw new AggregateError(
++                [ reason, rollbackReason ],
++                rollbackFailureMessage
++            );
++        }
++        throw reason;
++    }
++}
++
 +function replaceCustomFilterData(entries, before, after) {
 +    const output = new Map(entries.map(([ hostname, selectors ]) => [
 +        hostname,
@@ -3964,8 +5402,7 @@ index 0eed1c2..dd296b8 100644
 +    const remaining = beforeSelectors.filter(selector => !toRemove.has(selector));
 +    if ( remaining.length === 0 ) {
 +        output.delete(before.hostname);
-@@ -275 +318,84 @@ async function removeCustomFiltersByKey(key, toRemove) {
--        removeFromStorage(key);
++    } else {
 +        output.set(before.hostname, remaining);
 +    }
 +    const afterSelectors = output.get(after.hostname) || [];
@@ -3984,78 +5421,57 @@ index 0eed1c2..dd296b8 100644
 +    after,
 +    applyRegistrations
 +) {
-+    const snapshot = await getAllCustomFilters();
-+    const replacement = replaceCustomFilterData(snapshot, before, after);
-+    if ( JSON.stringify(snapshot) === JSON.stringify(replacement) ) {
-+        return false;
-+    }
-+    try {
-+        await writeCustomFilterSnapshot(replacement);
-+        await applyRegistrations();
-+    } catch(reason) {
-+        try {
-+            await writeCustomFilterSnapshot(snapshot);
-+            await applyRegistrations();
-+        } catch(rollbackReason) {
-+            throw new AggregateError(
-+                [ reason, rollbackReason ],
-+                'Custom-filter mutation and rollback both failed'
++    return queueCustomFilterMutation(( ) => runCustomFilterMutation(
++        async snapshot => {
++            const replacement = replaceCustomFilterData(
++                snapshot,
++                before,
++                after
 +            );
-+        }
-+        throw reason;
-+    }
-+    return true;
++            if ( JSON.stringify(snapshot) === JSON.stringify(replacement) ) {
++                return false;
++            }
++            await writeCustomFilterSnapshot(replacement);
++            return true;
++        },
++        applyRegistrations,
++        'Custom-filter mutation and rollback both failed'
++    ));
 +}
 +
 +export async function mutateCustomFiltersAtomically(
 +    mutation,
 +    applyRegistrations
 +) {
-+    const snapshot = await getAllCustomFilters();
-+    try {
-+        const modified = await mutation();
-+        if ( modified !== true ) { return false; }
-+        await applyRegistrations();
-+    } catch(reason) {
-+        try {
-+            await writeCustomFilterSnapshot(snapshot);
-+            await applyRegistrations();
-+        } catch(rollbackReason) {
-+            throw new AggregateError(
-+                [ reason, rollbackReason ],
-+                'Custom-filter mutation and rollback both failed'
-+            );
-+        }
-+        throw reason;
-+    }
-+    return true;
++    return queueCustomFilterMutation(( ) => runCustomFilterMutation(
++        async ( ) => await mutation() === true,
++        applyRegistrations,
++        'Custom-filter mutation and rollback both failed'
++    ));
 +}
 +
 +export async function replaceAllCustomFiltersAtomically(
 +    replacement,
 +    applyRegistrations
 +) {
-+    const snapshot = await getAllCustomFilters();
-+    try {
-+        await writeCustomFilterSnapshot(replacement);
-+        await applyRegistrations();
-+    } catch(reason) {
-+        try {
-+            await writeCustomFilterSnapshot(snapshot);
-+            await applyRegistrations();
-+        } catch(rollbackReason) {
-+            throw new AggregateError(
-+                [ reason, rollbackReason ],
-+                'Custom-filter replacement and rollback both failed'
-+            );
-+        }
-+        throw reason;
++    return queueCustomFilterMutation(( ) => runCustomFilterMutation(
++        async ( ) => {
++            await writeCustomFilterSnapshot(replacement);
++            return true;
++        },
++        applyRegistrations,
++        'Custom-filter replacement and rollback both failed'
++    ));
++}
++
++/******************************************************************************/
++
 diff --git a/js/floorp-reconcile.js b/js/floorp-reconcile.js
 new file mode 100644
-index 0000000..7b33095
+index 0000000..7c98168
 --- /dev/null
 +++ b/js/floorp-reconcile.js
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,124 @@
 +/*******************************************************************************
 +
 +    uBlock Origin Lite - a comprehensive, MV3-compliant content blocker
@@ -4087,8 +5503,31 @@ index 0000000..7b33095
 +} from './ruleset-manager.js';
 +
 +let reconciliationTail = Promise.resolve();
++const settingsRestoreLockName = 'floorp.ubol.settings-restore.v1';
++
++function withSettingsRestoreLock(operation) {
++    const lockManager = globalThis.navigator?.locks;
++    if ( typeof lockManager?.request !== 'function' ) {
++        if ( runtime.getURL('').startsWith('safari-web-extension:') ) {
++            throw new Error('Settings restore lock is unavailable');
++        }
++        return operation();
++    }
++    return lockManager.request(
++        settingsRestoreLockName,
++        { mode: 'exclusive' },
++        operation
++    );
++}
 +
 +async function reconcileProtectionNow(options = {}) {
++    const authorization = assertSuccessfulMessageResponse(await runtime.sendMessage({
++        what: 'floorpAuthorizeForegroundReconciliation',
++        settingsRestoreId: options.settingsRestoreId,
++    }));
++    if ( authorization?.authorized !== true ) {
++        throw new Error('Foreground reconciliation was not authorized');
++    }
 +    await loadRulesetConfig();
 +    const version = runtime.getManifest().version;
 +    if ( rulesetConfig.version !== version ) {
@@ -4124,6 +5563,7 @@ index 0000000..7b33095
 +    const finalized = assertSuccessfulMessageResponse(
 +        await runtime.sendMessage({
 +            what: 'floorpFinalizeForegroundReconciliation',
++            settingsRestoreId: options.settingsRestoreId,
 +        })
 +    );
 +    if ( finalized?.ready !== true ) {
@@ -4135,6 +5575,7 @@ index 0000000..7b33095
 +        ready: true,
 +        version,
 +        foregroundReconciliationRequired: false,
++        committed: finalized?.committed === true,
 +        rolledBack: finalized?.rolledBack === true,
 +    };
 +}
@@ -4142,7 +5583,9 @@ index 0000000..7b33095
 +export function reconcileProtection(options = {}) {
 +    const operation = reconciliationTail
 +        .catch(( ) => undefined)
-+        .then(( ) => reconcileProtectionNow(options));
++        .then(( ) => withSettingsRestoreLock(
++            ( ) => reconcileProtectionNow(options)
++        ));
 +    reconciliationTail = operation.catch(( ) => undefined);
 +    return operation.catch(reason => ({
 +        ready: false,
@@ -4175,10 +5618,16 @@ index 1378990..ce3252f 100644
 +    }
 +    await scheduleImportedListsUpdate(lists);
 diff --git a/js/mode-manager.js b/js/mode-manager.js
-index 8a7831a..335baad 100644
+index 8a7831a..556e332 100644
 --- a/js/mode-manager.js
 +++ b/js/mode-manager.js
-@@ -224,2 +224,5 @@ function applyFilteringMode(filteringModes, hostname, afterLevel) {
+@@ -104,2 +103,0 @@ const unserializeModeDetails = details => {
+-/******************************************************************************/
+-
+@@ -134,2 +131,0 @@ function lookupFilteringMode(filteringModes, hostname) {
+-/******************************************************************************/
+-
+@@ -224,2 +220,5 @@ function applyFilteringMode(filteringModes, hostname, afterLevel) {
 -export async function readFilteringModeDetails(bypassCache = false) {
 -    if ( bypassCache === false ) {
 +export async function readFilteringModeDetails(
@@ -4186,21 +5635,21 @@ index 8a7831a..335baad 100644
 +    startupFresh = false
 +) {
 +    if ( bypassCache === false && startupFresh === false ) {
-@@ -241,2 +244,2 @@ export async function readFilteringModeDetails(bypassCache = false) {
+@@ -241,2 +240,2 @@ export async function readFilteringModeDetails(bypassCache = false) {
 -        adminReadEx('defaultFiltering'),
 -        adminReadEx('noFiltering'),
 +        adminReadEx('defaultFiltering', startupFresh),
 +        adminReadEx('noFiltering', startupFresh),
-@@ -269,2 +272,2 @@ export async function readFilteringModeDetails(bypassCache = false) {
+@@ -269,2 +268,2 @@ export async function readFilteringModeDetails(bypassCache = false) {
 -    filteringModesToDNR(userModes);
 -    sessionWrite('filteringModeDetails', serializeModeDetails(userModes));
 +    await filteringModesToDNR(userModes, startupFresh);
 +    await sessionWrite('filteringModeDetails', serializeModeDetails(userModes));
-@@ -277,2 +280 @@ export async function readFilteringModeDetails(bypassCache = false) {
+@@ -277,2 +276 @@ export async function readFilteringModeDetails(bypassCache = false) {
 -async function writeFilteringModeDetails(afterDetails) {
 -    await filteringModesToDNR(afterDetails);
 +async function writeFilteringModeDetails(afterDetails, throwOnDNRError = false) {
-@@ -280,2 +282,11 @@ async function writeFilteringModeDetails(afterDetails) {
+@@ -280,2 +278,11 @@ async function writeFilteringModeDetails(afterDetails) {
 -    localWrite('filteringModeDetails', data);
 -    sessionWrite('filteringModeDetails', data);
 +    // The durable target is authoritative. If WebKit kills the background
@@ -4214,10 +5663,10 @@ index 8a7831a..335baad 100644
 +        await sessionRemove('filteringModeDetails').catch(( ) => undefined);
 +        throw reason;
 +    }
-@@ -283 +294 @@ async function writeFilteringModeDetails(afterDetails) {
+@@ -283 +290 @@ async function writeFilteringModeDetails(afterDetails) {
 -    return Promise.all([
 +    const [ defaultFilteringMode, hasOmnipotence ] = await Promise.all([
-@@ -286,8 +297,5 @@ async function writeFilteringModeDetails(afterDetails) {
+@@ -286,8 +293,5 @@ async function writeFilteringModeDetails(afterDetails) {
 -        localWrite('filteringModeDetails', data),
 -        sessionWrite('filteringModeDetails', data),
 -    ]).then(results => {
@@ -4231,7 +5680,7 @@ index 8a7831a..335baad 100644
 +        defaultFilteringMode,
 +        hasOmnipotence,
 +        filteringModeDetails: readFilteringModeDetails.cache,
-@@ -299,2 +307,5 @@ async function writeFilteringModeDetails(afterDetails) {
+@@ -299,2 +303,5 @@ async function writeFilteringModeDetails(afterDetails) {
 -export async function getFilteringModeDetails(serializable = false) {
 -    const actualDetails = await readFilteringModeDetails();
 +export async function getFilteringModeDetails(
@@ -4239,7 +5688,7 @@ index 8a7831a..335baad 100644
 +    startupFresh = false
 +) {
 +    const actualDetails = await readFilteringModeDetails(false, startupFresh);
-@@ -310,3 +321,5 @@ export async function getFilteringModeDetails(serializable = false) {
+@@ -310,3 +317,5 @@ export async function getFilteringModeDetails(serializable = false) {
 -export async function setFilteringModeDetails(details) {
 -    await localWrite('filteringModeDetails', serializeModeDetails(details));
 -    await readFilteringModeDetails(true);
@@ -4248,43 +5697,43 @@ index 8a7831a..335baad 100644
 +        unserializeModeDetails(serializeModeDetails(details)),
 +        throwOnDNRError
 +    );
-@@ -317,2 +330,2 @@ export async function setFilteringModeDetails(details) {
+@@ -317,2 +326,2 @@ export async function setFilteringModeDetails(details) {
 -export async function getFilteringMode(hostname) {
 -    const filteringModes = await getFilteringModeDetails();
 +export async function getFilteringMode(hostname, startupFresh = false) {
 +    const filteringModes = await getFilteringModeDetails(false, startupFresh);
-@@ -322 +335 @@ export async function getFilteringMode(hostname) {
+@@ -322 +331 @@ export async function getFilteringMode(hostname) {
 -export async function setFilteringMode(hostname, afterLevel) {
 +export async function setFilteringMode(hostname, afterLevel, throwOnDNRError = false) {
-@@ -325 +338 @@ export async function setFilteringMode(hostname, afterLevel) {
+@@ -325 +334 @@ export async function setFilteringMode(hostname, afterLevel) {
 -    await writeFilteringModeDetails(filteringModes);
 +    await writeFilteringModeDetails(filteringModes, throwOnDNRError);
-@@ -331,2 +344,2 @@ export async function setFilteringMode(hostname, afterLevel) {
+@@ -331,2 +340,2 @@ export async function setFilteringMode(hostname, afterLevel) {
 -export function getDefaultFilteringMode() {
 -    return getFilteringMode('all-urls');
 +export function getDefaultFilteringMode(startupFresh = false) {
 +    return getFilteringMode('all-urls', startupFresh);
-@@ -335,2 +348,2 @@ export function getDefaultFilteringMode() {
+@@ -335,2 +344,2 @@ export function getDefaultFilteringMode() {
 -export function setDefaultFilteringMode(afterLevel) {
 -    return setFilteringMode('all-urls', afterLevel);
 +export function setDefaultFilteringMode(afterLevel, throwOnDNRError = false) {
 +    return setFilteringMode('all-urls', afterLevel, throwOnDNRError);
-@@ -354 +367 @@ export async function persistHostPermissions(iter) {
+@@ -354 +363 @@ export async function persistHostPermissions(iter) {
 -export async function syncWithBrowserPermissions() {
 +export async function syncWithBrowserPermissions(startupFresh = false) {
-@@ -362 +375 @@ export async function syncWithBrowserPermissions() {
+@@ -362 +371 @@ export async function syncWithBrowserPermissions() {
 -        getDefaultFilteringMode(),
 +        getDefaultFilteringMode(startupFresh),
-@@ -372 +385 @@ export async function syncWithBrowserPermissions() {
+@@ -372 +381 @@ export async function syncWithBrowserPermissions() {
 -        await setDefaultFilteringMode(MODE_BASIC);
 +        await setDefaultFilteringMode(MODE_BASIC, startupFresh);
-@@ -375 +388 @@ export async function syncWithBrowserPermissions() {
+@@ -375 +384 @@ export async function syncWithBrowserPermissions() {
 -        await setDefaultFilteringMode(MODE_OPTIMAL);
 +        await setDefaultFilteringMode(MODE_OPTIMAL, startupFresh);
-@@ -380 +393 @@ export async function syncWithBrowserPermissions() {
+@@ -380 +389 @@ export async function syncWithBrowserPermissions() {
 -        saveRulesetConfig();
 +        await saveRulesetConfig();
-@@ -401 +414 @@ export async function syncWithBrowserPermissions() {
+@@ -401 +410 @@ export async function syncWithBrowserPermissions() {
 -            await writeFilteringModeDetails(filteringModes);
 +            await writeFilteringModeDetails(filteringModes, startupFresh);
 diff --git a/js/popup.js b/js/popup.js
@@ -5194,43 +6643,22 @@ index ea0db34..fb1461a 100644
 @@ -833,0 +1143 @@ export {
 +    validateUserDnrRules,
 diff --git a/js/rw-dnr-editor.js b/js/rw-dnr-editor.js
-index b559beb..f58715d 100644
+index b559beb..f0ded59 100644
 --- a/js/rw-dnr-editor.js
 +++ b/js/rw-dnr-editor.js
-@@ -287,7 +287,24 @@ export class ReadWriteDNREditor extends DNREditor {
+@@ -25,2 +24,0 @@ import {
+-    localRemove,
+-    localWrite,
+@@ -287,5 +285,4 @@ export class ReadWriteDNREditor extends DNREditor {
 -        await (text.length !== 0
 -            ? localWrite('userDnrRules', text)
 -            : localRemove('userDnrRules')
 -        );
 -        const response = await sendMessage({ what: 'updateUserDnrRules' })
--        if ( response instanceof Object ) {
--            this.updateFeedbackPanel(editor, response);
-+        const previousText = await localRead('userDnrRules');
-+        try {
-+            await (text.length !== 0
-+                ? localWrite('userDnrRules', text)
-+                : localRemove('userDnrRules')
-+            );
-+            const response = await sendMessage({ what: 'updateUserDnrRules' });
-+            if ( response instanceof Object ) {
-+                this.updateFeedbackPanel(editor, response);
-+            }
-+            return true;
-+        } catch(reason) {
-+            try {
-+                await (typeof previousText === 'string' && previousText !== ''
-+                    ? localWrite('userDnrRules', previousText)
-+                    : localRemove('userDnrRules')
-+                );
-+            } catch(rollbackReason) {
-+                throw new AggregateError(
-+                    [ reason, rollbackReason ],
-+                    'User-rule update and storage rollback both failed'
-+                );
-+            }
-+            throw reason;
-@@ -295 +311,0 @@ export class ReadWriteDNREditor extends DNREditor {
--        return true;
++        const response = await sendMessage({
++            what: 'replaceUserDnrRules',
++            text,
++        });
 diff --git a/js/safari-dnr-normalizer.js b/js/safari-dnr-normalizer.js
 new file mode 100644
 index 0000000..9002179
@@ -5821,9 +7249,12 @@ index 0000000..be24df2
 +
 +'use strict';
 diff --git a/js/scripting-manager.js b/js/scripting-manager.js
-index e0b8aae..72a20ab 100644
+index e0b8aae..638a326 100644
 --- a/js/scripting-manager.js
 +++ b/js/scripting-manager.js
+@@ -26 +26 @@ import {
+-    localKeys, localRemove, localWrite,
++    localKeys, localRemove, localSnapshot, localWrite,
 @@ -42,0 +43,106 @@ const resourceDetailPromises = new Map();
 +const safariRegistrationSentinelId = 'floorp-safari-registration-sentinel';
 +
@@ -5988,11 +7419,17 @@ index e0b8aae..72a20ab 100644
 @@ -318 +445 @@ registerContentScripts.pendingOp = Promise.resolve();
 -registerContentScripts.register = async function register() {
 +registerContentScripts.register = async function register(throwOnError = false) {
-@@ -329,0 +457,3 @@ registerContentScripts.register = async function register() {
+@@ -323,0 +451 @@ registerContentScripts.register = async function register() {
++        localStorageSnapshot,
+@@ -328,0 +457 @@ registerContentScripts.register = async function register() {
++        localSnapshot(),
+@@ -329,0 +459,3 @@ registerContentScripts.register = async function register() {
 +    // WebExtension APIs do not guarantee enabled-ruleset enumeration order.
 +    // Keep generated script arrays stable across cold starts and updates.
 +    rulesetsDetails.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-@@ -346,5 +476,11 @@ registerContentScripts.register = async function register() {
+@@ -333,0 +466 @@ registerContentScripts.register = async function register() {
++        localStorageSnapshot,
+@@ -346,5 +479,11 @@ registerContentScripts.register = async function register() {
 -    ubolLog(`Unregistered all content (css/js)`);
 -    try {
 -        await browser.scripting.unregisterContentScripts();
@@ -6009,7 +7446,7 @@ index e0b8aae..72a20ab 100644
 +            persistAcrossSessions: true,
 +            runAt: 'document_start',
 +        });
-@@ -353,6 +489,16 @@ registerContentScripts.register = async function register() {
+@@ -353,6 +492,16 @@ registerContentScripts.register = async function register() {
 -    if ( toAdd.length !== 0 ) {
 -        ubolLog(`Registered ${toAdd.map(v => v.id)} content (css/js)`);
 -        try {
@@ -6032,19 +7469,22 @@ index e0b8aae..72a20ab 100644
 +                ubolLog(`Registered ${toAdd.map(v => v.id)} content (css/js)`);
 +                await browser.scripting.registerContentScripts(toAdd);
 +            }
-@@ -359,0 +506,3 @@ registerContentScripts.register = async function register() {
+@@ -359,0 +509,3 @@ registerContentScripts.register = async function register() {
 +    } catch(reason) {
 +        ubolErr(`registerContentScripts/${reason}`);
 +        if ( webextFlavor === 'safari' || throwOnError ) { throw reason; }
 diff --git a/js/scripting/css-api.js b/js/scripting/css-api.js
-index 88c7b27..3186c64 100644
+index 88c7b27..b0b8d7b 100644
 --- a/js/scripting/css-api.js
 +++ b/js/scripting/css-api.js
-@@ -23 +23,10 @@
+@@ -23 +23,13 @@
 -    if ( typeof api === 'object' ) { return; }
++    const floorpOriginFallbackReplay =
++        self.floorpCSSUserAPIIdleReplay === true;
 +    const documentElement = document.documentElement;
 +    const documentTimeOrigin = performance.timeOrigin;
 +    if (
++        floorpOriginFallbackReplay === false &&
 +        typeof api === 'object' &&
 +        api.documentElement === documentElement &&
 +        api.documentTimeOrigin === documentTimeOrigin
@@ -6052,7 +7492,7 @@ index 88c7b27..3186c64 100644
 +    if ( typeof api?.pageRevealHandler === 'function' ) {
 +        self.removeEventListener('pagereveal', api.pageRevealHandler);
 +    }
-@@ -26,0 +36,8 @@
+@@ -26,0 +39,8 @@
 +    const pageRevealHandler = ( ) => {
 +        chrome.runtime.sendMessage({
 +            what: 'insertCSS',
@@ -6061,11 +7501,11 @@ index 88c7b27..3186c64 100644
 +        });
 +    };
 +
-@@ -27,0 +45,3 @@
+@@ -27,0 +48,3 @@
 +        documentElement,
 +        documentTimeOrigin,
 +        pageRevealHandler,
-@@ -38,7 +58 @@
+@@ -38,7 +61 @@
 -    self.addEventListener('pagereveal', ( ) => {
 -        chrome.runtime.sendMessage({
 -            what: 'insertCSS',
@@ -6074,8 +7514,57 @@ index 88c7b27..3186c64 100644
 -        });
 -    });
 +    self.addEventListener('pagereveal', pageRevealHandler);
+diff --git a/js/scripting/css-procedural-api.js b/js/scripting/css-procedural-api.js
+index 45656d3..2deebb0 100644
+--- a/js/scripting/css-procedural-api.js
++++ b/js/scripting/css-procedural-api.js
+@@ -26,3 +26,9 @@
+-if ( self.ProceduralFiltererAPI !== undefined ) {
+-    if ( self.ProceduralFiltererAPI instanceof Promise === false ) { return; }
+-}
++const proceduralDocumentElement = document.documentElement;
++const proceduralDocumentTimeOrigin = performance.timeOrigin;
++const existingProceduralAPI = self.ProceduralFiltererAPI;
++if (
++    self.floorpCSSUserAPIIdleReplay !== true &&
++    typeof existingProceduralAPI === 'function' &&
++    existingProceduralAPI.documentElement === proceduralDocumentElement &&
++    existingProceduralAPI.documentTimeOrigin === proceduralDocumentTimeOrigin
++) { return; }
+@@ -597 +603,2 @@ class ProceduralFilterer {
+-    async reset() {
++    async reset(options = {}) {
++        const removeCSS = options.removeCSS !== false;
+@@ -612,3 +619,5 @@ class ProceduralFilterer {
+-            promises.push(
+-                chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
+-            );
++            if ( removeCSS ) {
++                promises.push(
++                    chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
++                );
++            }
+@@ -764 +773,2 @@ self.ProceduralFiltererAPI = class {
+-    async reset() {
++    async reset(options = {}) {
++        const removeCSS = options.removeCSS !== false;
+@@ -772 +782 @@ self.ProceduralFiltererAPI = class {
+-            promises.push(this.proceduralFilterer.reset());
++            promises.push(this.proceduralFilterer.reset(options));
+@@ -776,3 +786,5 @@ self.ProceduralFiltererAPI = class {
+-            promises.push(
+-                chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
+-            );
++            if ( removeCSS ) {
++                promises.push(
++                    chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
++                );
++            }
+@@ -861,0 +874,2 @@ self.ProceduralFiltererAPI = class {
++self.ProceduralFiltererAPI.documentElement = proceduralDocumentElement;
++self.ProceduralFiltererAPI.documentTimeOrigin = proceduralDocumentTimeOrigin;
 diff --git a/js/scripting/css-specific.js b/js/scripting/css-specific.js
-index c28930c..c2d74e1 100644
+index c28930c..9e89e75 100644
 --- a/js/scripting/css-specific.js
 +++ b/js/scripting/css-specific.js
 @@ -30,0 +31,18 @@ self.specificImports = undefined;
@@ -6087,7 +7576,7 @@ index c28930c..c2d74e1 100644
 +const cssSpecificResetTail = Promise.resolve(previousResetTail)
 +    .catch(( ) => undefined)
 +    .then(( ) => previousListsProceduralFilterer instanceof Object
-+        ? previousListsProceduralFilterer.reset()
++        ? previousListsProceduralFilterer.reset({ removeCSS: false })
 +        : undefined
 +    )
 +    .catch(( ) => undefined);
@@ -6103,14 +7592,53 @@ index c28930c..c2d74e1 100644
 +    if ( isCurrentDocument() === false ) { return; }
 @@ -165,0 +186 @@ await self.ProceduralFiltererAPI;
 +if ( isCurrentDocument() === false ) { return; }
+diff --git a/js/scripting/css-user-idle-prelude.js b/js/scripting/css-user-idle-prelude.js
+new file mode 100644
+index 0000000..e0690f9
+--- /dev/null
++++ b/js/scripting/css-user-idle-prelude.js
+@@ -0,0 +1,7 @@
++'use strict';
++
++// Run before the API files in the document_idle registration. WebKit can
++// preserve their isolated-world document identity across the transient
++// about:blank -> final about:srcdoc commit, so origin-fallback documents must
++// rebuild those APIs even when their normal identity guards still match.
++self.floorpCSSUserAPIIdleReplay = document.location.hostname === '';
+diff --git a/js/scripting/css-user-idle.js b/js/scripting/css-user-idle.js
+new file mode 100644
+index 0000000..955512f
+--- /dev/null
++++ b/js/scripting/css-user-idle.js
+@@ -0,0 +1,7 @@
++'use strict';
++
++// WebKit can run document_start in a transient about:blank wrapper before an
++// iframe commits its final origin-fallback document. Mark the document_idle
++// registration so css-user can replay only those hostname-less documents.
++self.floorpCSSUserIdleReplay = true;
++self.floorpCSSUserAPIIdleReplay = undefined;
 diff --git a/js/scripting/css-user.js b/js/scripting/css-user.js
-index ceb96e5..b58aa63 100644
+index ceb96e5..7440052 100644
 --- a/js/scripting/css-user.js
 +++ b/js/scripting/css-user.js
-@@ -23,7 +23,37 @@
-
- /******************************************************************************/
-
+@@ -26,2 +26,12 @@
+-async function uBOL_cssUserActivate() {
+-    if ( self.customFilters ) { return; }
++const floorpIdleReplay = self.floorpCSSUserIdleReplay === true;
++self.floorpCSSUserIdleReplay = undefined;
++const floorpOriginFallbackDocument = document.location.hostname === '';
++const floorpOriginFallbackReplay =
++    floorpIdleReplay && floorpOriginFallbackDocument;
++// The document_start registration already covers ordinary HTTP(S) documents.
++// WebKit can reuse the same Document wrapper and time origin when a transient
++// about:blank frame commits its final about:srcdoc document, so identity-based
++// de-duplication loses the final activation. Re-run every hostname-less final
++// document instead; the idle marker is placed immediately before this file and
++// is never set by live, programmatic custom-filter refreshes.
++if ( floorpIdleReplay && floorpOriginFallbackReplay === false ) { return; }
+@@ -29 +39,25 @@ async function uBOL_cssUserActivate() {
+-    const docURL = new URL(document.baseURI);
 +// Safari can reuse an isolated-world global when the tab commits a new
 +// document. Keep the custom-filter guard and its serialized operation scoped
 +// to the document that created them, otherwise a later navigation can inherit
@@ -6122,71 +7650,622 @@ index ceb96e5..b58aa63 100644
 +    self.removeEventListener('pagereveal', self.cssUserStartHandler);
 +}
 +const previousProceduralFilterer = self.customProceduralFiltererAPI;
-+const previousPendingOp = self.cssUserPendingOp;
 +self.cssUserDocumentGeneration = cssUserDocumentGeneration;
 +self.customFilters = undefined;
 +self.customProceduralFiltererAPI = undefined;
-+const cssUserCleanupOp = Promise.resolve(previousPendingOp)
-+    .catch(( ) => undefined)
++// Do not chain this document behind the previous document's pending runtime
++// message. Safari can orphan that promise during navigation; the generation
++// checks below prevent a late old result from mutating this script's
++// generation-scoped state or applying its returned selectors.
++const cssUserCleanupOp = Promise.resolve()
 +    .then(( ) => previousProceduralFilterer instanceof Object
-+        ? previousProceduralFilterer.reset()
++        ? previousProceduralFilterer.reset({ removeCSS: false })
 +        : undefined
 +    )
 +    .catch(( ) => undefined);
 +self.cssUserPendingOp = cssUserCleanupOp;
-+
+@@ -31,7 +65,18 @@ async function uBOL_cssUserActivate() {
+-    const details = await chrome.runtime.sendMessage({
+-        what: 'injectCustomFilters',
+-        hostname: docURL.hostname,
+-    }).catch(( ) => {
+-    });
+-    self.customFilters = details;
+-    if ( Boolean(details) === false ) { return; }
 +self.cssUserStartHandler = uBOL_cssUserStart;
 +const isCurrentDocument = ( ) =>
 +    self.cssUserDocumentGeneration === cssUserDocumentGeneration &&
 +    self.cssUserStartHandler === uBOL_cssUserStart;
 +
- async function uBOL_cssUserActivate() {
-+    if ( isCurrentDocument() === false ) { return; }
-     if ( self.customFilters ) { return; }
-
-     const docURL = new URL(document.baseURI);
-@@ -33,6 +63,7 @@ async function uBOL_cssUserActivate() {
-         hostname: docURL.hostname,
-     }).catch(( ) => {
-     });
-+    if ( isCurrentDocument() === false ) { return; }
-     self.customFilters = details;
-     if ( Boolean(details) === false ) { return; }
-
-@@ -44,6 +75,7 @@ async function uBOL_cssUserActivate() {
-             });
-         }
-         await self.ProceduralFiltererAPI;
-+        if ( isCurrentDocument() === false ) { return; }
-         self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
-         const selectors = details.proceduralSelectors.map(a => JSON.parse(a));
-         const declaratives = selectors.filter(a => a.cssable);
-@@ -63,17 +95,20 @@ async function uBOL_cssUserActivate() {
- }
-
- async function uBOL_cssUserStart() {
-+    if ( isCurrentDocument() === false ) { return; }
++const customFilterMessageSchema = 1;
++const customFilterMutationJournalKey =
++    'floorp.customFilterMutationJournal.v1';
++const customFilterModeStorageKeys = [
++    'filteringModeDetails',
++    'admin.defaultFiltering',
++    'admin.noFiltering',
++];
++const settingsRestoreJournalKey = 'floorp.settingsRestoreJournal.v1';
++const customFilterReplyTimeout = 2000;
++const customFilterUndefinedRetryDelay = 100;
++const customFilterRequestId = globalThis.crypto?.randomUUID?.() ||
++    `${Date.now()}-${Math.random()}`;
+@@ -39,6 +84,7 @@ async function uBOL_cssUserActivate() {
+-    if ( details?.proceduralSelectors?.length ) {
+-        if ( self.ProceduralFiltererAPI === undefined ) {
+-            self.ProceduralFiltererAPI = chrome.runtime.sendMessage({
+-                what: 'injectCSSProceduralAPI'
+-            }).catch(( ) => {
+-            });
++function hostnameFromURL(value) {
++    if ( typeof value !== 'string' || value === '' ) { return ''; }
++    try {
++        const url = new URL(value);
++        if ( url.hostname !== '' ) { return url.hostname; }
++        if ( url.origin !== 'null' ) {
++            return new URL(url.origin).hostname;
+@@ -46,6 +92,14 @@ async function uBOL_cssUserActivate() {
+-        await self.ProceduralFiltererAPI;
+-        self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+-        const selectors = details.proceduralSelectors.map(a => JSON.parse(a));
+-        const declaratives = selectors.filter(a => a.cssable);
+-        if ( declaratives.length !== 0 ) {
+-            self.customProceduralFiltererAPI.addDeclaratives(declaratives);
++    } catch {
++    }
++    return '';
++}
++
++function hostnameFromHTTPURL(value) {
++    if ( typeof value !== 'string' || value === '' ) { return ''; }
++    try {
++        const url = new URL(value);
++        if (
++            (url.protocol === 'http:' || url.protocol === 'https:') &&
++            url.hostname !== ''
++        ) {
++            return url.hostname.toLowerCase();
+@@ -53,3 +107,27 @@ async function uBOL_cssUserActivate() {
+-        const procedurals = selectors.filter(a => !a.cssable);
+-        if ( procedurals.length !== 0 ) {
+-            self.customProceduralFiltererAPI.addProcedurals(procedurals);
++    } catch {
++    }
++    return '';
++}
++
++function originFallbackHostname() {
++    // WebKit matches about:, data:, and blob: registrations against the
++    // immediate parent's URL, even when a blob URL serializes a different
++    // HTTP(S) origin. Mirror that exact authority and never select the blob's
++    // embedded origin or a more distant ancestor.
++    try {
++        if ( self.parent === self ) { return ''; }
++    } catch {
++        return '';
++    }
++    let ancestorHostname = '';
++    try {
++        ancestorHostname = hostnameFromHTTPURL(
++            document.location.ancestorOrigins?.[0]
++        );
++    } catch {
++    }
++    let parentHostname = '';
++    try {
++        if ( self.parent !== self ) {
++            parentHostname = hostnameFromHTTPURL(self.parent.location.origin) ||
++                hostnameFromHTTPURL(self.parent.location.href);
+@@ -56,0 +135,8 @@ async function uBOL_cssUserActivate() {
++    } catch {
++    }
++    if (
++        ancestorHostname !== '' &&
++        parentHostname !== '' &&
++        ancestorHostname !== parentHostname
++    ) {
++        return '';
+@@ -57,0 +144,2 @@ async function uBOL_cssUserActivate() {
++    return ancestorHostname || parentHostname;
++}
+@@ -59,3 +147,8 @@ async function uBOL_cssUserActivate() {
+-    if ( details?.plainSelectors?.length ) {
+-        const selectors = details.plainSelectors;
+-        self.cssAPI.insert(`${selectors.join(',\n')}{display:none!important;}`);
++function customFilterStorageKeys(hostname) {
++    const out = [];
++    let hn = hostname;
++    while ( hn !== '' ) {
++        out.push(`site.${hn}`);
++        const pos = hn.indexOf('.');
++        if ( pos === -1 ) { break; }
++        hn = hn.slice(pos + 1);
+@@ -62,0 +156 @@ async function uBOL_cssUserActivate() {
++    return out;
+@@ -65,3 +159,428 @@ async function uBOL_cssUserActivate() {
+-async function uBOL_cssUserStart() {
 -    if ( self.cssUserPendingOp === undefined ) {
 -        self.cssUserPendingOp = Promise.resolve();
--    }
++function committedJournalSnapshot(journal, label, phases) {
++    if ( journal === undefined ) { return; }
++    if (
++        typeof journal !== 'object' ||
++        journal === null ||
++        Array.isArray(journal) ||
++        journal.version !== 1 ||
++        typeof journal.id !== 'string' ||
++        journal.id === '' ||
++        phases.includes(journal.phase) === false ||
++        typeof journal.beforeLocal !== 'object' ||
++        journal.beforeLocal === null ||
++        Array.isArray(journal.beforeLocal)
++    ) {
++        throw new Error(`Invalid ${label} journal`);
++    }
++    return journal.beforeLocal;
++}
++
++function broaderHostnameInSet(hostname, set) {
++    if ( set.has('*') ) { return true; }
++    let hn = hostname;
++    for (;;) {
++        if ( set.has(hn) ) { return true; }
++        const pos = hn.indexOf('.');
++        if ( pos === -1 ) { return false; }
++        hn = hn.slice(pos + 1);
++    }
++}
++
++function serializedModeSets(details) {
++    const source = details ?? {
++        none: [],
++        basic: [],
++        optimal: [ 'all-urls' ],
++        complete: [],
++    };
++    if (
++        typeof source !== 'object' ||
++        source === null ||
++        Array.isArray(source)
++    ) {
++        throw new Error('Invalid filtering-mode storage snapshot');
++    }
++    const aliases = {
++        none: 'none',
++        basic: source.basic === undefined ? 'network' : 'basic',
++        optimal: source.optimal === undefined
++            ? 'extendedSpecific'
++            : 'optimal',
++        complete: source.complete === undefined
++            ? 'extendedGeneric'
++            : 'complete',
++    };
++    const modes = {};
++    for ( const [ name, sourceName ] of Object.entries(aliases) ) {
++        const values = source[sourceName];
++        if (
++            Array.isArray(values) === false ||
++            values.some(value => typeof value !== 'string' || value === '')
++        ) {
++            throw new Error('Invalid filtering-mode storage snapshot');
++        }
++        modes[name] = new Set(values);
++    }
++    return modes;
++}
++
++function lookupMode(modes, hostname) {
++    if ( hostname === 'all-urls' ) {
++        for ( const name of [ 'none', 'basic', 'optimal', 'complete' ] ) {
++            if ( modes[name].has('all-urls') ) { return name; }
++        }
++        return 'basic';
++    }
++    for ( const name of [ 'none', 'basic', 'optimal', 'complete' ] ) {
++        if ( modes[name].has(hostname) ) { return name; }
++        if (
++            modes[name].has('all-urls') === false &&
++            broaderHostnameInSet(hostname, modes[name])
++        ) {
++            return name;
++        }
++    }
++    return lookupMode(modes, 'all-urls');
++}
++
++function pruneDescendants(hostname, set) {
++    for ( const candidate of set ) {
++        if (
++            candidate !== hostname &&
++            candidate.endsWith(`.${hostname}`)
++        ) {
++            set.delete(candidate);
++        }
++    }
++}
++
++function pruneHostname(hostname, set) {
++    let hn = hostname;
++    for (;;) {
++        set.delete(hn);
++        const pos = hn.indexOf('.');
++        if ( pos === -1 ) { return; }
++        hn = hn.slice(pos + 1);
++    }
++}
++
++function applyMode(modes, hostname, afterMode) {
++    const beforeMode = lookupMode(modes, hostname);
++    if ( beforeMode === afterMode ) { return; }
++    if ( hostname === 'all-urls' ) {
++        modes[afterMode].clear();
++        modes[afterMode].add('all-urls');
++        modes[beforeMode].delete('all-urls');
++        return;
++    }
++    pruneHostname(hostname, modes[beforeMode]);
++    if ( afterMode === lookupMode(modes, 'all-urls') ) { return; }
++    if ( broaderHostnameInSet(hostname, modes[afterMode]) === false ) {
++        modes[afterMode].add(hostname);
++        pruneDescendants(hostname, modes[afterMode]);
++    }
++}
++
++function adminData(snapshot, key) {
++    const envelope = snapshot[key];
++    if ( envelope === undefined ) { return; }
++    if (
++        typeof envelope !== 'object' ||
++        envelope === null ||
++        Array.isArray(envelope)
++    ) {
++        throw new Error('Invalid administrator filtering-mode snapshot');
++    }
++    return envelope.data;
++}
++
++function customFilteringEnabled(snapshot, hostname) {
++    const modes = serializedModeSets(snapshot.filteringModeDetails);
++    const adminDefault = adminData(snapshot, 'admin.defaultFiltering');
++    if ([ 'none', 'basic', 'optimal', 'complete' ].includes(adminDefault)) {
++        applyMode(modes, 'all-urls', adminDefault);
++    }
++    const adminNone = adminData(snapshot, 'admin.noFiltering');
++    if ( Array.isArray(adminNone) && adminNone.length !== 0 ) {
++        if ( adminNone.some(value => typeof value !== 'string') ) {
++            throw new Error('Invalid administrator filtering-mode snapshot');
++        }
++        if ( adminNone.includes('-*') ) { modes.none.clear(); }
++        for ( const value of adminNone ) {
++            if ( value.startsWith('-') ) {
++                modes.none.delete(value.slice(1));
++            } else if ( value !== '' ) {
++                applyMode(modes, value, 'none');
++            }
++        }
++    }
++    return lookupMode(modes, hostname) !== 'none';
++}
++
++function selectorsFromStorageSnapshot(hostname, snapshot) {
++    if (
++        typeof snapshot !== 'object' ||
++        snapshot === null ||
++        Array.isArray(snapshot)
++    ) {
++        throw new Error('Invalid custom-filter storage snapshot');
++    }
++    const selectors = [];
++    for ( const key of customFilterStorageKeys(hostname) ) {
++        const values = snapshot[key];
++        if ( values === undefined ) { continue; }
++        if (
++            Array.isArray(values) === false ||
++            values.some(value => typeof value !== 'string')
++        ) {
++            throw new Error('Invalid custom-filter selector snapshot');
++        }
++        selectors.push(...values);
++    }
++    selectors.sort();
++    return {
++        plainSelectors: selectors.filter(selector =>
++            selector.startsWith('{') === false &&
++            selector.startsWith('+js') === false
++        ),
++        proceduralSelectors: selectors.filter(selector =>
++            selector.startsWith('{')
++        ),
++    };
++}
++
++async function readOriginFallbackCustomFilters() {
++    const hostname = originFallbackHostname();
++    if ( hostname === '' ) { return; }
++    const keys = [
++        settingsRestoreJournalKey,
++        customFilterMutationJournalKey,
++        ...customFilterModeStorageKeys,
++        ...customFilterStorageKeys(hostname),
++    ];
++    let localState;
++    try {
++        localState = await chrome.storage.local.get(keys);
++    } catch {
++        return;
++    }
++    if (
++        typeof localState !== 'object' ||
++        localState === null ||
++        Array.isArray(localState)
++    ) {
++        throw new Error('Invalid local-storage snapshot');
++    }
++    const settingsSnapshot = committedJournalSnapshot(
++        localState[settingsRestoreJournalKey],
++        'settings restore',
++        [ 'applying', 'committingForeground', 'rollingBack' ]
++    );
++    const mutationSnapshot = committedJournalSnapshot(
++        localState[customFilterMutationJournalKey],
++        'custom-filter mutation',
++        [ 'applying', 'rollingBack' ]
++    );
++    let authoritativeState = localState;
++    if ( settingsSnapshot !== undefined ) {
++        // Settings restore owns user modes/selectors, while administrator
++        // policy can change independently and must remain immediately
++        // authoritative even during apply or rollback.
++        authoritativeState = {
++            ...settingsSnapshot,
++            'admin.defaultFiltering': localState['admin.defaultFiltering'],
++            'admin.noFiltering': localState['admin.noFiltering'],
++        };
++    } else if ( mutationSnapshot !== undefined ) {
++        authoritativeState = {
++            ...Object.fromEntries(customFilterModeStorageKeys.map(key => [
++                key,
++                localState[key],
++            ])),
++            ...mutationSnapshot,
++        };
++    }
++    const details = customFilteringEnabled(authoritativeState, hostname)
++        ? selectorsFromStorageSnapshot(hostname, authoritativeState)
++        : { plainSelectors: [], proceduralSelectors: [] };
++    return {
++        ok: true,
++        schema: customFilterMessageSchema,
++        requestId: customFilterRequestId,
++        ...details,
++    };
++}
++
++// matchOriginAsFallback runs this script in about:, data:, blob:, and srcdoc
++// frames whose own URL has no hostname. The direct path below mirrors WebKit's
++// immediate-parent authority. document.baseURI is page-controlled and must not
++// select which site's custom-filter document is returned.
++const customFilterHostname = document.location.hostname ||
++    hostnameFromURL(document.location.origin);
++const customFilterRequest = {
++    what: 'injectCustomFilters',
++    schema: customFilterMessageSchema,
++    requestId: customFilterRequestId,
++    hostname: customFilterHostname,
++};
++const isMainFrame = (() => {
++    try {
++        return self.top === self;
++    } catch {
++        return false;
++    }
++})();
++let customFilterRequestInFlight;
++let customFilterRequestTimedOut = false;
++let customFilterLateReplyHandlerAttached = false;
++let customFilterUndefinedRetryUsed = false;
++let proceduralAPIRequest;
++
++function waitForTimeout(delay) {
++    return new Promise(resolve => setTimeout(resolve, delay));
++}
++
++async function waitForMessageReply(operation) {
++    let timeoutId;
++    try {
++        return await Promise.race([
++            operation.then(
++                value => ({ status: 'resolved', value }),
++                reason => ({ status: 'rejected', reason })
++            ),
++            new Promise(resolve => {
++                timeoutId = setTimeout(
++                    () => resolve({ status: 'timeout' }),
++                    customFilterReplyTimeout
++                );
++            }),
++        ]);
++    } finally {
++        clearTimeout(timeoutId);
++    }
++}
++
++async function sendCustomFilterRequest() {
++    if ( customFilterRequestInFlight === undefined ) {
++        const operation = Promise.resolve().then(( ) =>
++            chrome.runtime.sendMessage(customFilterRequest)
++        );
++        customFilterRequestInFlight = operation;
++        customFilterLateReplyHandlerAttached = false;
++    }
++    const operation = customFilterRequestInFlight;
++    const outcome = await waitForMessageReply(operation);
++    if ( outcome.status === 'timeout' ) {
++        customFilterRequestTimedOut = true;
++        if ( customFilterLateReplyHandlerAttached === false ) {
++            customFilterLateReplyHandlerAttached = true;
++            operation.then(value => {
++                if (
++                    customFilterRequestInFlight === operation &&
++                    customFilterRequestTimedOut &&
++                    (
++                        value === undefined ||
++                        isValidCustomFilterAck(value, customFilterRequestId)
++                    )
++                ) {
++                    void uBOL_cssUserStart();
++                }
++            }, ( ) => undefined);
++        }
++    } else if ( customFilterRequestInFlight === operation ) {
++        customFilterRequestInFlight = undefined;
++        customFilterRequestTimedOut = false;
++        customFilterLateReplyHandlerAttached = false;
++    }
++    return outcome;
++}
++
++function isValidCustomFilterAck(details, requestId) {
++    return typeof details === 'object' &&
++        details !== null &&
++        details.ok === true &&
++        details.schema === customFilterMessageSchema &&
++        details.requestId === requestId &&
++        Array.isArray(details.plainSelectors) &&
++        details.plainSelectors.every(selector => typeof selector === 'string') &&
++        Array.isArray(details.proceduralSelectors) &&
++        details.proceduralSelectors.every(selector => typeof selector === 'string');
++}
++
++async function requestCustomFilters() {
++    if ( floorpOriginFallbackDocument ) {
++        // MessageSender.url/origin describe the child document and can expose
++        // a blob's embedded origin rather than the parent URL WebKit matched.
++        // Use the bounded storage read exclusively; unavailable or ambiguous
++        // parent provenance fails closed instead of switching authority.
++        return readOriginFallbackCustomFilters();
++    }
++    let outcome = await sendCustomFilterRequest();
++    if ( isCurrentDocument() === false ) { return; }
++    if (
++        outcome.status === 'resolved' &&
++        outcome.value === undefined &&
++        isMainFrame &&
++        customFilterUndefinedRetryUsed === false
++    ) {
++        customFilterUndefinedRetryUsed = true;
++        await waitForTimeout(customFilterUndefinedRetryDelay);
++        if ( isCurrentDocument() === false ) { return; }
++        outcome = await sendCustomFilterRequest();
++    }
++    if ( outcome.status !== 'resolved' ) { return; }
++    if (
++        isValidCustomFilterAck(
++            outcome.value,
++            customFilterRequestId
++        ) === false
++    ) {
++        return;
++    }
++    return outcome.value;
++}
++
++async function ensureProceduralAPI() {
++    if ( typeof self.ProceduralFiltererAPI === 'function' ) { return true; }
++    const requestId = `${customFilterRequestId}:procedural`;
++    if ( proceduralAPIRequest === undefined ) {
++        const operation = Promise.resolve().then(( ) =>
++            chrome.runtime.sendMessage({
++                what: 'injectCSSProceduralAPI',
++                schema: customFilterMessageSchema,
++                requestId,
++            })
++        );
++        proceduralAPIRequest = operation;
++        self.ProceduralFiltererAPI = operation;
++        operation.catch(( ) => undefined);
++    }
++    const operation = proceduralAPIRequest;
++    const outcome = await waitForMessageReply(operation);
++    if ( isCurrentDocument() === false ) { return false; }
++    if ( outcome.status === 'timeout' ) { return false; }
++    if (
++        outcome.status !== 'resolved' ||
++        isValidCustomFilterAck(outcome.value, requestId) === false ||
++        typeof self.ProceduralFiltererAPI !== 'function'
++    ) {
++        if ( proceduralAPIRequest === operation ) {
++            proceduralAPIRequest = undefined;
++        }
++        if ( self.ProceduralFiltererAPI === operation ) {
++            self.ProceduralFiltererAPI = undefined;
++        }
++        return false;
++    }
++    return true;
++}
++
++async function uBOL_cssUserActivate() {
++    if ( isCurrentDocument() === false ) { return; }
++    if ( self.customFilters ) { return; }
++
++    let details;
++    try {
++        details = await requestCustomFilters();
++    } catch {
++        return;
+@@ -69,2 +588,47 @@ async function uBOL_cssUserStart() {
 -    self.cssUserPendingOp = self.cssUserPendingOp.then(uBOL_cssUserActivate);
 -    await self.cssUserPendingOp;
++    if ( isCurrentDocument() === false ) { return; }
++    if ( Boolean(details) === false ) { return; }
++    self.customFilters = details;
++
++    try {
++        if ( details.proceduralSelectors.length ) {
++            if ( await ensureProceduralAPI() === false ) {
++                self.customFilters = undefined;
++                return;
++            }
++            if ( isCurrentDocument() === false ) { return; }
++            self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
++            const selectors = details.proceduralSelectors.map(a => JSON.parse(a));
++            const declaratives = selectors.filter(a => a.cssable);
++            if ( declaratives.length !== 0 ) {
++                self.customProceduralFiltererAPI.addDeclaratives(declaratives);
++            }
++            const procedurals = selectors.filter(a => !a.cssable);
++            if ( procedurals.length !== 0 ) {
++                self.customProceduralFiltererAPI.addProcedurals(procedurals);
++            }
++        }
++
++        if (
++            details.plainSelectors.length &&
++            typeof self.cssAPI?.insert === 'function'
++        ) {
++            const selectors = details.plainSelectors;
++            self.cssAPI.insert(
++                `${selectors.join(',\n')}{display:none!important;}`
++            );
++        }
++    } catch {
++        if ( isCurrentDocument() ) {
++            self.customFilters = undefined;
++        }
++    }
++}
++
++async function uBOL_cssUserStart() {
++    if ( isCurrentDocument() === false ) { return; }
 +    const pendingOp = Promise.resolve(self.cssUserPendingOp)
 +        .catch(( ) => undefined)
 +        .then(uBOL_cssUserActivate);
 +    self.cssUserPendingOp = pendingOp.catch(( ) => undefined);
 +    await pendingOp;
 +    if ( isCurrentDocument() === false ) { return; }
-     if ( Boolean(self.customFilters) === false ) { return; }
-     self.removeEventListener('pagereveal', uBOL_cssUserStart);
- }
-
- await uBOL_cssUserStart();
-
+@@ -76,0 +641 @@ await uBOL_cssUserStart();
 +if ( isCurrentDocument() === false ) { return; }
- if ( self.customFilters ) { return; }
- self.addEventListener('pagereveal', uBOL_cssUserStart);
-
 diff --git a/js/scripting/isolated-api.js b/js/scripting/isolated-api.js
 index 090ad41..92a7cfb 100644
 --- a/js/scripting/isolated-api.js

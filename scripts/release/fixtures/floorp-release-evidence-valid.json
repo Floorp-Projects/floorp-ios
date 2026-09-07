@@ -1,14 +1,16 @@
 {
   "schema_version": 1,
+  "archive_only": false,
   "source_sha256": "af20a1926e553efceaf861ff730a500a3d0ede7d",
   "marketing_version": "0.1.0",
   "build_number": "3",
   "bundle_id": "app.floorp.Floorp",
   "team_id": "DV2U35YBHT",
   "archive_path": "/tmp/Floorp.xcarchive",
+  "archive_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "ipa_path": "/tmp/Floorp.ipa",
   "ipa_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "signing_identity": "Apple Distribution: Floorp (ABCDEF1234)",
+  "signing_identity": "Apple Distribution: Floorp (DV2U35YBHT)",
   "archive_info": {
     "marketing_version": "0.1.0",
     "build_number": "3",
@@ -26,8 +28,8 @@
     "com.apple.security.application-groups": ["group.app.floorp.Floorp.DV2U35YBHT"]
   },
   "dsym_inventory": [
-    {"uuid": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "path": "/tmp/Client.app.dSYM"},
-    {"uuid": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "path": "/tmp/App.framework.dSYM"}
+    {"uuid": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "path": "/tmp/Client.app.dSYM/Contents/Resources/DWARF/Client"},
+    {"uuid": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "path": "/tmp/App.framework.dSYM/Contents/Resources/DWARF/App"}
   ],
   "app_store_connect_build_id": null,
   "ci_run_url": null,

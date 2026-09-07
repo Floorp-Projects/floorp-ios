@@ -356,8 +356,8 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         XCTAssertFalse(host.consumePreparedNavigation(supersededAfterPreparation))
     }
 
-    // swiftlint:disable:next function_body_length
     @MainActor
+    // swiftlint:disable:next function_body_length
     func testCommittedExtensionTabGatesDocumentReplacementButNotFragmentOrSubframe() async throws {
         let fixture = try makeIsolatedNativeExtensionProfile(prefix: "surface-departure")
         let isolatedProfile = fixture.profile
@@ -420,11 +420,124 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
             type: .linkActivated
         )
         let fragmentDecision = expectation(description: "Fragment navigation resolved")
-        subject.webView(extensionWebView, decidePolicyFor: fragmentAction) { _ in
+        subject.webView(extensionWebView, decidePolicyFor: fragmentAction) { policy in
+            XCTAssertEqual(policy, .allow)
             fragmentDecision.fulfill()
         }
         await fulfillment(of: [fragmentDecision], timeout: 2)
         XCTAssertEqual(closePreparationCount, 0)
+
+        var sameExtensionComponents = try XCTUnwrap(
+            URLComponents(url: optionsURL, resolvingAgainstBaseURL: false)
+        )
+        sameExtensionComponents.queryItems = [
+            URLQueryItem(name: "shortcut", value: "same-extension"),
+        ]
+        let sameExtensionURL = try XCTUnwrap(sameExtensionComponents.url)
+        var forwardComponents = sameExtensionComponents
+        forwardComponents.queryItems = [
+            URLQueryItem(name: "history", value: "forward"),
+        ]
+        let forwardURL = try XCTUnwrap(forwardComponents.url)
+        tab.recordFloorpNativeSurfaceTransition(
+            toContextIdentifier: item.identifier,
+            url: forwardURL
+        )
+        XCTAssertNotNil(tab.moveFloorpNativeSurfaceHistoryBack())
+        XCTAssertEqual(tab.floorpNativeSurfaceForwardTarget?.url, forwardURL)
+
+        let commandPress = MockPress(
+            mockKey: MockKey(keyCode: .keyboardLeftGUI)
+        )
+        let keyboardHandler = subject.keyboardPressesHandler()
+        keyboardHandler.handlePressesBegan(Set([commandPress]), with: nil)
+        let shortcutAction = MockNavigationAction(
+            url: try XCTUnwrap(fragmentComponents.url),
+            type: .linkActivated
+        )
+        let shortcutDecision = expectation(
+            description: "Extension link shortcut opens a background tab"
+        )
+        subject.webView(extensionWebView, decidePolicyFor: shortcutAction) { policy in
+            XCTAssertEqual(policy, .cancel)
+            shortcutDecision.fulfill()
+        }
+        await fulfillment(of: [shortcutDecision], timeout: 2)
+        keyboardHandler.handlePressesEnded(Set([commandPress]), with: nil)
+        XCTAssertTrue(tabManager.addTabWasCalled)
+        XCTAssertTrue(tabManager.lastSelectedTabs.isEmpty)
+        XCTAssertEqual(closePreparationCount, 0)
+        XCTAssertEqual(tab.floorpNativeSurfaceForwardTarget?.url, forwardURL)
+
+        tabManager.addTabWasCalled = false
+        let sameExtensionCommandPress = MockPress(
+            mockKey: MockKey(keyCode: .keyboardLeftGUI)
+        )
+        keyboardHandler.handlePressesBegan(Set([sameExtensionCommandPress]), with: nil)
+        let sameExtensionShortcutDecision = expectation(
+            description: "Non-fragment extension shortcut opens a background tab"
+        )
+        subject.webView(
+            extensionWebView,
+            decidePolicyFor: MockNavigationAction(url: sameExtensionURL, type: .linkActivated)
+        ) { policy in
+            XCTAssertEqual(policy, .cancel)
+            sameExtensionShortcutDecision.fulfill()
+        }
+        await fulfillment(of: [sameExtensionShortcutDecision], timeout: 2)
+        keyboardHandler.handlePressesEnded(Set([sameExtensionCommandPress]), with: nil)
+        XCTAssertTrue(tabManager.addTabWasCalled)
+        XCTAssertEqual(closePreparationCount, 0)
+        XCTAssertEqual(tab.floorpNativeSurfaceForwardTarget?.url, forwardURL)
+
+        tabManager.addTabWasCalled = false
+        let externalURL = try XCTUnwrap(URL(string: "https://example.com/u-bol-documentation"))
+        let externalCommandPress = MockPress(
+            mockKey: MockKey(keyCode: .keyboardLeftGUI)
+        )
+        keyboardHandler.handlePressesBegan(Set([externalCommandPress]), with: nil)
+        let externalShortcutDecision = expectation(
+            description: "External extension shortcut opens a background tab"
+        )
+        subject.webView(
+            extensionWebView,
+            decidePolicyFor: MockNavigationAction(url: externalURL, type: .linkActivated)
+        ) { policy in
+            XCTAssertEqual(policy, .cancel)
+            externalShortcutDecision.fulfill()
+        }
+        await fulfillment(of: [externalShortcutDecision], timeout: 2)
+        keyboardHandler.handlePressesEnded(Set([externalCommandPress]), with: nil)
+        XCTAssertTrue(tabManager.addTabWasCalled)
+        XCTAssertEqual(closePreparationCount, 0)
+        XCTAssertEqual(tab.floorpNativeSurfaceForwardTarget?.url, forwardURL)
+
+        tabManager.addTabWasCalled = false
+        tabManager.lastSelectedTabs.removeAll()
+        let shiftedCommandPress = MockPress(
+            mockKey: MockKey(keyCode: .keyboardLeftGUI)
+        )
+        let shiftPress = MockPress(
+            mockKey: MockKey(keyCode: .keyboardLeftShift)
+        )
+        let shiftedPresses = Set([shiftedCommandPress, shiftPress])
+        keyboardHandler.handlePressesBegan(shiftedPresses, with: nil)
+        let foregroundShortcutDecision = expectation(
+            description: "Shift-command extension shortcut selects the new tab"
+        )
+        subject.webView(
+            extensionWebView,
+            decidePolicyFor: MockNavigationAction(url: externalURL, type: .linkActivated)
+        ) { policy in
+            XCTAssertEqual(policy, .cancel)
+            foregroundShortcutDecision.fulfill()
+        }
+        await fulfillment(of: [foregroundShortcutDecision], timeout: 2)
+        keyboardHandler.handlePressesEnded(shiftedPresses, with: nil)
+        XCTAssertTrue(tabManager.addTabWasCalled)
+        XCTAssertEqual(tabManager.lastSelectedTabs.count, 1)
+        XCTAssertEqual(closePreparationCount, 0)
+        XCTAssertEqual(tab.floorpNativeSurfaceForwardTarget?.url, forwardURL)
 
         subject.mockIsMainFrameNavigation = false
         let subframeAction = MockNavigationAction(
@@ -440,16 +553,586 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         XCTAssertEqual(closePreparationCount, 0)
 
         subject.mockIsMainFrameNavigation = true
+        let replacementAction = MockNavigationAction(
+            url: sameExtensionURL,
+            type: .linkActivated
+        )
+        let replacementDecision = expectation(
+            description: "Ordinary extension navigation waits for close preparation"
+        )
+        subject.webView(extensionWebView, decidePolicyFor: replacementAction) { policy in
+            XCTAssertEqual(policy, .allow)
+            replacementDecision.fulfill()
+        }
+        await fulfillment(of: [replacementDecision], timeout: 2)
+        XCTAssertEqual(closePreparationCount, 1)
+
         let reloadAction = MockNavigationAction(url: optionsURL, type: .reload)
         let reloadDecision = expectation(description: "Reload waits for close preparation")
-        subject.webView(extensionWebView, decidePolicyFor: reloadAction) { _ in
+        subject.webView(extensionWebView, decidePolicyFor: reloadAction) { policy in
+            XCTAssertEqual(policy, .allow)
             reloadDecision.fulfill()
         }
         await fulfillment(of: [reloadDecision], timeout: 2)
-        XCTAssertEqual(closePreparationCount, 1)
+        XCTAssertEqual(closePreparationCount, 2)
         XCTAssertTrue(extensionWebView.isUserInteractionEnabled)
 
+        host.setContextReadyForTesting(false, identifier: item.identifier)
+        XCTAssertTrue(
+            host.routeNavigationIfNeeded(
+                tab: tab,
+                url: optionsURL,
+                navigationType: .reload
+            )
+        )
+        XCTAssertFalse(host.isCurrentExtensionSurfaceURL(optionsURL, in: tab))
+        host.setContextReadyForTesting(true, identifier: item.identifier)
+        XCTAssertTrue(host.isCurrentExtensionSurfaceURL(optionsURL, in: tab))
+
         await tab.close()
+    }
+
+    @MainActor
+    // swiftlint:disable:next function_body_length
+    func testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState() async throws {
+        let fixture = try makeIsolatedNativeExtensionProfile(prefix: "surface-download")
+        let isolatedProfile = fixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: isolatedProfile)
+        defer { fixture.cleanup() }
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        let subject = MockBrowserViewController(
+            profile: isolatedProfile,
+            tabManager: tabManager,
+            userInitiatedQueue: MockDispatchQueue()
+        )
+        subject.mockIsMainFrameNavigation = true
+        trackForMemoryLeaks(subject)
+        let tab = Tab(
+            profile: isolatedProfile,
+            isPrivate: false,
+            windowUUID: .XCTestDefaultUUID,
+            fileManager: fileManager
+        )
+        tab.tabDelegate = subject
+        let configuration = WKWebViewConfiguration()
+        host.attach(to: configuration)
+        tab.createWebview(configuration: configuration)
+        tabManager.tabs = [tab]
+        tabManager.normalTabs = [tab]
+        tabManager.selectedTab = tab
+        host.register(tabManager: tabManager)
+        defer { host.unregister(windowUUID: tabManager.windowUUID) }
+
+        let optionsURL = try XCTUnwrap(context.optionsPageURL)
+        host.load(url: optionsURL, in: tab)
+        var extensionWebView = try XCTUnwrap(tab.webView)
+        for _ in 0..<80 where extensionWebView.url != optionsURL {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            extensionWebView = try XCTUnwrap(tab.webView)
+        }
+        XCTAssertEqual(extensionWebView.url, optionsURL)
+        tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
+        host.setNavigationReadinessVerifiedForTesting(
+            identifier: item.identifier,
+            isPrivate: false
+        )
+        var closePreparationCount = 0
+        host.extensionSurfaceClosePreparationHookForTesting = { _, _ in
+            closePreparationCount += 1
+            return true
+        }
+        defer { host.extensionSurfaceClosePreparationHookForTesting = nil }
+        let restoreExtensionSurface: @MainActor () async throws -> TabWebView = {
+            host.load(url: optionsURL, in: tab)
+            for _ in 0..<80 where tab.webView?.url != optionsURL {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let restoredWebView = try XCTUnwrap(tab.webView)
+            XCTAssertEqual(restoredWebView.url, optionsURL)
+            tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
+            restoredWebView.navigationDelegate = nil
+            return restoredWebView
+        }
+
+        // Drive the synthetic follow-up policy calls explicitly. This keeps
+        // the test deterministic while still verifying that Option starts the
+        // same real WKWebView load used in production.
+        extensionWebView.navigationDelegate = nil
+        let keyboardHandler = subject.keyboardPressesHandler()
+        var sameExtensionComponents = try XCTUnwrap(
+            URLComponents(url: optionsURL, resolvingAgainstBaseURL: false)
+        )
+        sameExtensionComponents.queryItems = [
+            URLQueryItem(name: "download", value: "same-extension"),
+        ]
+        let sameExtensionURL = try XCTUnwrap(sameExtensionComponents.url)
+        let externalURL = try XCTUnwrap(URL(string: "https://example.invalid/u-bol-download"))
+
+        for targetURL in [sameExtensionURL, externalURL] {
+            let optionPress = MockPress(
+                mockKey: MockKey(keyCode: .keyboardLeftAlt)
+            )
+            keyboardHandler.handlePressesBegan(Set([optionPress]), with: nil)
+            XCTAssertTrue(keyboardHandler.isOnlyOptionPressed)
+            XCTAssertTrue(tab.floorpNativeHasCommittedDocument)
+            XCTAssertTrue(
+                host.isCurrentExtensionSurfaceURL(
+                    try XCTUnwrap(extensionWebView.url),
+                    in: tab
+                )
+            )
+            var initialPolicy: WKNavigationActionPolicy?
+            let initialDecision = expectation(
+                description: "Option extension link starts a forced download"
+            )
+            subject.webView(
+                extensionWebView,
+                decidePolicyFor: MockNavigationAction(
+                    url: targetURL,
+                    type: .linkActivated
+                )
+            ) { policy in
+                initialPolicy = policy
+                initialDecision.fulfill()
+            }
+            keyboardHandler.handlePressesEnded(Set([optionPress]), with: nil)
+            await fulfillment(of: [initialDecision], timeout: 2)
+
+            XCTAssertEqual(initialPolicy, .cancel)
+            var pendingDownload = try XCTUnwrap(
+                subject.pendingDownloadState(for: extensionWebView)
+            )
+            XCTAssertTrue(pendingDownload.webView === extensionWebView)
+            XCTAssertEqual(pendingDownload.initiatingRequest.url, targetURL)
+            XCTAssertEqual(
+                pendingDownload.sourceExtensionContextIdentifier,
+                item.identifier
+            )
+            XCTAssertEqual(closePreparationCount, 0)
+
+            let syntheticRequest = URLRequest(url: targetURL)
+            var syntheticPolicy: WKNavigationActionPolicy?
+            subject.webView(
+                extensionWebView,
+                decidePolicyFor: MockNavigationAction(url: targetURL, type: .other)
+            ) { policy in
+                syntheticPolicy = policy
+            }
+
+            XCTAssertEqual(syntheticPolicy, .allow)
+            pendingDownload = try XCTUnwrap(subject.pendingDownloadState(for: extensionWebView))
+            XCTAssertTrue(pendingDownload.hasStartedNavigationPolicy)
+            XCTAssertEqual(subject.pendingRequest(for: targetURL, in: extensionWebView), syntheticRequest)
+            XCTAssertEqual(tab.floorpNativeWebExtensionContextIdentifier, item.identifier)
+            XCTAssertTrue(tab.webView === extensionWebView)
+            XCTAssertEqual(closePreparationCount, 0)
+
+            subject.clearPendingDownload(for: extensionWebView)
+            extensionWebView.stopLoading()
+            extensionWebView = try await restoreExtensionSurface()
+
+            if targetURL == sameExtensionURL {
+                var unexpectedComponents = sameExtensionComponents
+                unexpectedComponents.queryItems = [
+                    URLQueryItem(name: "download", value: "unexpected-navigation"),
+                ]
+                let unexpectedURL = try XCTUnwrap(unexpectedComponents.url)
+                subject.beginPendingDownload(URLRequest(url: sameExtensionURL), in: extensionWebView)
+                var unexpectedPolicy: WKNavigationActionPolicy?
+                let unexpectedDecision = expectation(
+                    description: "Mismatched synthetic navigation follows ordinary policy"
+                )
+                subject.webView(
+                    extensionWebView,
+                    decidePolicyFor: MockNavigationAction(url: unexpectedURL, type: .other)
+                ) { policy in
+                    unexpectedPolicy = policy
+                    unexpectedDecision.fulfill()
+                }
+                await fulfillment(of: [unexpectedDecision], timeout: 2)
+                XCTAssertEqual(unexpectedPolicy, .allow)
+                XCTAssertNil(subject.pendingDownloadState(for: extensionWebView))
+                XCTAssertEqual(closePreparationCount, 1)
+                closePreparationCount = 0
+            }
+        }
+
+        // Two extension tabs may reach response policy concurrently. Their
+        // trust-boundary markers and DownloadHelpers must remain independent,
+        // including across a process-wide blob notification and an unrelated
+        // policy callback on the first surface.
+        let secondTab = Tab(
+            profile: isolatedProfile,
+            isPrivate: false,
+            windowUUID: .XCTestDefaultUUID,
+            fileManager: fileManager
+        )
+        secondTab.tabDelegate = subject
+        let secondConfiguration = WKWebViewConfiguration()
+        host.attach(to: secondConfiguration)
+        secondTab.createWebview(configuration: secondConfiguration)
+        tabManager.tabs = [tab, secondTab]
+        tabManager.normalTabs = [tab, secondTab]
+        host.announceTabIfNeeded(secondTab)
+        host.load(url: optionsURL, in: secondTab)
+        var secondWebView = try XCTUnwrap(secondTab.webView)
+        for _ in 0..<80 where secondWebView.url != optionsURL {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            secondWebView = try XCTUnwrap(secondTab.webView)
+        }
+        XCTAssertEqual(secondWebView.url, optionsURL)
+        secondTab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
+        secondWebView.navigationDelegate = nil
+
+        let backgroundShortcutURL = try XCTUnwrap(
+            URL(string: "https://example.invalid/background-shortcut")
+        )
+        let backgroundOptionPress = MockPress(
+            mockKey: MockKey(keyCode: .keyboardLeftAlt)
+        )
+        keyboardHandler.handlePressesBegan(Set([backgroundOptionPress]), with: nil)
+        XCTAssertFalse(
+            subject.navigateLinkShortcutIfNeeded(
+                url: backgroundShortcutURL,
+                sourceTab: secondTab
+            )
+        )
+        keyboardHandler.handlePressesEnded(Set([backgroundOptionPress]), with: nil)
+        XCTAssertNil(subject.pendingDownloadState(for: secondWebView))
+        XCTAssertEqual(secondWebView.url, optionsURL)
+
+        let concurrentURLA = try XCTUnwrap(
+            URL(string: "https://example.invalid/concurrent-download-a")
+        )
+        let concurrentURLB = try XCTUnwrap(
+            URL(string: "https://example.invalid/concurrent-download-b")
+        )
+        subject.beginPendingDownload(URLRequest(url: concurrentURLA), in: extensionWebView)
+        subject.beginPendingDownload(URLRequest(url: concurrentURLB), in: secondWebView)
+
+        subject.handleNotifications(Notification(name: .PendingBlobDownloadAddedToQueue))
+        await Task.yield()
+        subject.mockIsMainFrameNavigation = false
+        subject.mockIsTopLevelNavigation = true
+        let preStartSubframeDecision = expectation(
+            description: "Pre-start new-window policy preserves forced download"
+        )
+        subject.webView(
+            extensionWebView,
+            decidePolicyFor: MockNavigationAction(
+                url: try XCTUnwrap(URL(string: "https://example.invalid/pre-start-subframe")),
+                type: .other
+            )
+        ) { _ in preStartSubframeDecision.fulfill() }
+        await fulfillment(of: [preStartSubframeDecision], timeout: 2)
+        subject.mockIsTopLevelNavigation = nil
+        subject.mockIsMainFrameNavigation = true
+        XCTAssertEqual(subject.pendingDownloads.count, 2)
+
+        let optionPress = MockPress(mockKey: MockKey(keyCode: .keyboardLeftAlt))
+        keyboardHandler.handlePressesBegan(Set([optionPress]), with: nil)
+        var secondOptionPolicy: WKNavigationActionPolicy?
+        subject.webView(
+            extensionWebView,
+            decidePolicyFor: MockNavigationAction(
+                url: try XCTUnwrap(URL(string: "https://example.invalid/rejected-second-download")),
+                type: .linkActivated
+            )
+        ) { secondOptionPolicy = $0 }
+        keyboardHandler.handlePressesEnded(Set([optionPress]), with: nil)
+        XCTAssertEqual(secondOptionPolicy, .cancel)
+        XCTAssertEqual(
+            subject.pendingDownloadState(for: extensionWebView)?.initiatingRequest.url,
+            concurrentURLA
+        )
+
+        for (webView, targetURL) in [
+            (extensionWebView, concurrentURLA),
+            (secondWebView, concurrentURLB),
+        ] {
+            var policy: WKNavigationActionPolicy?
+            subject.webView(
+                webView,
+                decidePolicyFor: MockNavigationAction(
+                    url: targetURL,
+                    type: .other
+                )
+            ) { policy = $0 }
+            XCTAssertEqual(policy, .allow)
+            XCTAssertTrue(
+                try XCTUnwrap(subject.pendingDownloadState(for: webView))
+                    .hasStartedNavigationPolicy
+            )
+        }
+        XCTAssertEqual(subject.pendingDownloads.count, 2)
+
+        subject.handleNotifications(Notification(name: .PendingBlobDownloadAddedToQueue))
+        await Task.yield()
+        subject.mockIsMainFrameNavigation = false
+        let unrelatedDecision = expectation(
+            description: "Unrelated policy preserves both forced downloads"
+        )
+        subject.webView(
+            extensionWebView,
+            decidePolicyFor: MockNavigationAction(
+                url: try XCTUnwrap(URL(string: "https://example.invalid/subframe")),
+                type: .linkActivated
+            )
+        ) { _ in unrelatedDecision.fulfill() }
+        await fulfillment(of: [unrelatedDecision], timeout: 2)
+        subject.mockIsMainFrameNavigation = true
+        XCTAssertEqual(subject.pendingDownloads.count, 2)
+
+        let dispositionA = subject.pendingDownloadResponseDisposition(
+            for: concurrentURLA,
+            isForMainFrame: true,
+            in: extensionWebView
+        )
+        let dispositionB = subject.pendingDownloadResponseDisposition(
+            for: concurrentURLB,
+            isForMainFrame: true,
+            in: secondWebView
+        )
+        XCTAssertFalse(dispositionA.shouldCancel)
+        XCTAssertFalse(dispositionB.shouldCancel)
+        XCTAssertTrue(dispositionA.forceDownload)
+        XCTAssertTrue(dispositionB.forceDownload)
+        XCTAssertEqual(dispositionA.request?.url, concurrentURLA)
+        XCTAssertEqual(dispositionB.request?.url, concurrentURLB)
+        XCTAssertNil(subject.pendingDownloadState(for: extensionWebView))
+        XCTAssertNil(subject.pendingDownloadState(for: secondWebView))
+
+        let helperA = try XCTUnwrap(DownloadHelper(
+            request: dispositionA.request,
+            response: URLResponse(
+                url: concurrentURLA,
+                mimeType: MIMEType.HTML,
+                expectedContentLength: 0,
+                textEncodingName: "utf-8"
+            ),
+            cookieStore: extensionWebView.configuration.websiteDataStore.httpCookieStore
+        ))
+        let helperB = try XCTUnwrap(DownloadHelper(
+            request: dispositionB.request,
+            response: URLResponse(
+                url: concurrentURLB,
+                mimeType: MIMEType.HTML,
+                expectedContentLength: 0,
+                textEncodingName: "utf-8"
+            ),
+            cookieStore: secondWebView.configuration.websiteDataStore.httpCookieStore
+        ))
+        subject.storeDownloadHelper(helperA, for: extensionWebView)
+        subject.storeDownloadHelper(helperB, for: secondWebView)
+        XCTAssertTrue(
+            subject.downloadHelpers[ObjectIdentifier(extensionWebView)] === helperA
+        )
+        XCTAssertTrue(
+            subject.downloadHelpers[ObjectIdentifier(secondWebView)] === helperB
+        )
+        XCTAssertFalse(helperA === helperB)
+        XCTAssertTrue(subject.takeDownloadHelper(for: secondWebView) === helperB)
+        XCTAssertTrue(subject.takeDownloadHelper(for: extensionWebView) === helperA)
+
+        let processTerminationURL = try XCTUnwrap(
+            URL(string: "https://example.invalid/process-termination-download")
+        )
+        let processTerminationRequest = URLRequest(url: processTerminationURL)
+        let processTerminationHelper = try XCTUnwrap(DownloadHelper(
+            request: processTerminationRequest,
+            response: URLResponse(
+                url: processTerminationURL,
+                mimeType: MIMEType.HTML,
+                expectedContentLength: 0,
+                textEncodingName: "utf-8"
+            ),
+            cookieStore: secondWebView.configuration.websiteDataStore.httpCookieStore
+        ))
+        subject.beginPendingDownload(processTerminationRequest, in: secondWebView)
+        subject.recordPendingRequest(processTerminationRequest, for: secondWebView)
+        subject.storeDownloadHelper(processTerminationHelper, for: secondWebView)
+        subject.webViewWebContentProcessDidTerminate(secondWebView)
+        XCTAssertNil(subject.pendingDownloadState(for: secondWebView))
+        XCTAssertNil(subject.pendingRequest(for: processTerminationURL, in: secondWebView))
+        XCTAssertNil(subject.downloadHelpers[ObjectIdentifier(secondWebView)])
+
+        let deletedWebViewURL = try XCTUnwrap(
+            URL(string: "https://example.invalid/deleted-webview-download")
+        )
+        let deletedWebViewRequest = URLRequest(url: deletedWebViewURL)
+        let deletedWebViewHelper = try XCTUnwrap(DownloadHelper(
+            request: deletedWebViewRequest,
+            response: URLResponse(
+                url: deletedWebViewURL,
+                mimeType: MIMEType.HTML,
+                expectedContentLength: 0,
+                textEncodingName: "utf-8"
+            ),
+            cookieStore: secondWebView.configuration.websiteDataStore.httpCookieStore
+        ))
+        subject.beginPendingDownload(deletedWebViewRequest, in: secondWebView)
+        subject.recordPendingRequest(deletedWebViewRequest, for: secondWebView)
+        subject.storeDownloadHelper(deletedWebViewHelper, for: secondWebView)
+        await secondTab.close()
+        XCTAssertNil(subject.pendingDownloadState(for: secondWebView))
+        XCTAssertNil(subject.pendingRequest(for: deletedWebViewURL, in: secondWebView))
+        XCTAssertNil(subject.downloadHelpers[ObjectIdentifier(secondWebView)])
+
+        let failureRequest = URLRequest(url: externalURL)
+        subject.beginPendingDownload(failureRequest, in: extensionWebView)
+        subject.webView(
+            extensionWebView,
+            didFail: nil,
+            withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+        )
+        XCTAssertNil(subject.pendingDownloadState(for: extensionWebView))
+
+        subject.beginPendingDownload(failureRequest, in: extensionWebView)
+        subject.webView(
+            extensionWebView,
+            didFailProvisionalNavigation: nil,
+            withError: NSError(domain: "WebKitErrorDomain", code: 102)
+        )
+        XCTAssertNil(subject.pendingDownloadState(for: extensionWebView))
+
+        // Same-document fragments and empty responses may finish without a
+        // navigation-response policy callback. Their marker must not affect
+        // the next link handled by this extension surface.
+        subject.beginPendingDownload(failureRequest, in: extensionWebView)
+        subject.webView(extensionWebView, didFinish: nil)
+        XCTAssertNil(subject.pendingDownloadState(for: extensionWebView))
+
+        await tab.close()
+    }
+
+    @MainActor
+    func testNormalWebOptionDownloadKeepsForcedDownloadMarkerUntilResponse() async throws {
+        let subject = MockBrowserViewController(
+            profile: profile,
+            tabManager: tabManager,
+            userInitiatedQueue: MockDispatchQueue()
+        )
+        subject.mockIsMainFrameNavigation = true
+        trackForMemoryLeaks(subject)
+        let tab = Tab(
+            profile: profile,
+            isPrivate: false,
+            windowUUID: .XCTestDefaultUUID,
+            fileManager: fileManager
+        )
+        tab.tabDelegate = subject
+        tab.createWebview(configuration: WKWebViewConfiguration())
+        let webView = try XCTUnwrap(tab.webView)
+        webView.navigationDelegate = nil
+        tabManager.tabs = [tab]
+        tabManager.normalTabs = [tab]
+        tabManager.selectedTab = tab
+        let targetURL = try XCTUnwrap(URL(string: "https://example.com/download"))
+        let keyboardHandler = subject.keyboardPressesHandler()
+        let optionPress = MockPress(
+            mockKey: MockKey(keyCode: .keyboardLeftAlt)
+        )
+
+        keyboardHandler.handlePressesBegan(Set([optionPress]), with: nil)
+        var initialPolicy: WKNavigationActionPolicy?
+        subject.webView(
+            webView,
+            decidePolicyFor: MockNavigationAction(url: targetURL, type: .linkActivated)
+        ) { policy in
+            initialPolicy = policy
+        }
+        keyboardHandler.handlePressesEnded(Set([optionPress]), with: nil)
+
+        XCTAssertEqual(initialPolicy, .cancel)
+        var pendingDownload = try XCTUnwrap(subject.pendingDownloadState(for: webView))
+        XCTAssertTrue(pendingDownload.webView === webView)
+        XCTAssertEqual(pendingDownload.initiatingRequest.url, targetURL)
+        XCTAssertNil(pendingDownload.sourceExtensionContextIdentifier)
+
+        var syntheticPolicy: WKNavigationActionPolicy?
+        subject.webView(
+            webView,
+            decidePolicyFor: MockNavigationAction(url: targetURL, type: .other)
+        ) { policy in
+            syntheticPolicy = policy
+        }
+
+        XCTAssertNotNil(syntheticPolicy)
+        XCTAssertNotEqual(syntheticPolicy, .cancel)
+        pendingDownload = try XCTUnwrap(subject.pendingDownloadState(for: webView))
+        XCTAssertTrue(pendingDownload.webView === webView)
+        XCTAssertEqual(pendingDownload.initiatingRequest.url, targetURL)
+        XCTAssertEqual(subject.pendingRequest(for: targetURL, in: webView)?.url, targetURL)
+        subject.clearPendingDownload(for: webView)
+        webView.stopLoading()
+
+        let trackedURL = try XCTUnwrap(URL(string: "https://example.invalid/tracked-download"))
+        subject.startPendingDownload(URLRequest(url: trackedURL), in: webView)
+        let trackedState = try XCTUnwrap(subject.pendingDownloadState(for: webView))
+        let trackedNavigation = try XCTUnwrap(trackedState.navigation)
+        subject.webView(webView, didStartProvisionalNavigation: trackedNavigation)
+        XCTAssertTrue(subject.pendingDownloadState(for: webView) === trackedState)
+        subject.webView(webView, didReceiveServerRedirectForProvisionalNavigation: trackedNavigation)
+        XCTAssertTrue(trackedState.hasReceivedServerRedirect)
+
+        let competingURL = try XCTUnwrap(URL(string: "https://example.invalid/competing-navigation"))
+        let competingNavigation = try XCTUnwrap(webView.load(URLRequest(url: competingURL)))
+        XCTAssertFalse(trackedNavigation === competingNavigation)
+        subject.webView(webView, didStartProvisionalNavigation: competingNavigation)
+        XCTAssertNil(subject.pendingDownloadState(for: webView))
+        webView.stopLoading()
+        await tab.close()
+    }
+
+    @MainActor
+    func testForcedDownloadResponseRecoversRequestAndFailsClosedWhenMissing() throws {
+        let subject = createSubject()
+        let tab = createTab()
+        let webView = try XCTUnwrap(tab.webView)
+        tabManager.tabs = [tab]
+        tabManager.normalTabs = [tab]
+        tabManager.selectedTab = tab
+        let targetURL = try XCTUnwrap(URL(string: "https://example.com/download"))
+
+        let unrelatedURL = try XCTUnwrap(URL(string: "https://example.com/unrelated"))
+        subject.beginPendingDownload(URLRequest(url: unrelatedURL), in: webView)
+        let missingRequestDisposition = subject.pendingDownloadResponseDisposition(
+            for: targetURL,
+            isForMainFrame: true,
+            in: webView
+        )
+        XCTAssertTrue(missingRequestDisposition.shouldCancel)
+        XCTAssertFalse(missingRequestDisposition.forceDownload)
+        XCTAssertNil(missingRequestDisposition.request)
+        XCTAssertNotNil(subject.pendingDownloadState(for: webView))
+        subject.clearPendingDownload(for: webView)
+
+        subject.beginPendingDownload(URLRequest(url: targetURL), in: webView)
+        let recoveredRequestDisposition = subject.pendingDownloadResponseDisposition(
+            for: targetURL,
+            isForMainFrame: true,
+            in: webView
+        )
+        XCTAssertFalse(recoveredRequestDisposition.shouldCancel)
+        XCTAssertTrue(recoveredRequestDisposition.forceDownload)
+        XCTAssertEqual(recoveredRequestDisposition.request?.url, targetURL)
+        XCTAssertNil(subject.pendingDownloadState(for: webView))
+
+        let redirectSourceURL = try XCTUnwrap(URL(string: "https://example.com/redirect"))
+        let redirectDestinationURL = try XCTUnwrap(URL(string: "https://cdn.example.com/file"))
+        subject.beginPendingDownload(URLRequest(url: redirectSourceURL), in: webView)
+        subject.webView(webView, didReceiveServerRedirectForProvisionalNavigation: nil)
+        let redirectedResponseDisposition = subject.pendingDownloadResponseDisposition(
+            for: redirectDestinationURL,
+            isForMainFrame: true,
+            in: webView
+        )
+        XCTAssertFalse(redirectedResponseDisposition.shouldCancel)
+        XCTAssertTrue(redirectedResponseDisposition.forceDownload)
+        XCTAssertEqual(redirectedResponseDisposition.request?.url, redirectSourceURL)
+        XCTAssertNil(subject.pendingDownloadState(for: webView))
     }
 
     @MainActor
@@ -679,7 +1362,7 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
                         decidePolicyFor: MockNavigationAction(url: url,
                                                               type: .linkActivated)) { _ in
             ensureMainThread {
-                XCTAssertNotNil(subject.pendingRequests[url.absoluteString])
+                XCTAssertNotNil(subject.pendingRequest(for: url, in: tab.webView!))
                 expectation.fulfill()
             }
         }

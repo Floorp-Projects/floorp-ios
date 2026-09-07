@@ -397,7 +397,11 @@ extension BrowserViewController: WKUIDelegate {
         }
 
         if !isJavascriptScheme {
-            actionBuilder.addDownload(url: url, currentTab: currentTab, assignWebView: assignWebView)
+            actionBuilder.addDownload(
+                url: url,
+                currentTab: currentTab,
+                startDownload: startPendingDownload
+            )
         }
 
         actionBuilder.addCopyLink(url: url)
@@ -466,8 +470,156 @@ extension BrowserViewController: WKUIDelegate {
                                             httpStatusCode: search.httpStatusCode)
     }
 
-    func assignWebView(_ webView: WKWebView?) {
-        pendingDownloadWebView = webView
+    @MainActor
+    func startPendingDownload(_ request: URLRequest, in webView: WKWebView?) {
+        guard let webView,
+              let state = beginPendingDownload(request, in: webView) else { return }
+        guard let navigation = webView.load(request) else {
+            if pendingDownloadState(for: webView) === state {
+                clearPendingDownload(for: webView)
+            }
+            return
+        }
+        if pendingDownloadState(for: webView) === state {
+            state.navigation = navigation
+        }
+    }
+
+    @discardableResult
+    @MainActor
+    func beginPendingDownload(
+        _ request: URLRequest,
+        in webView: WKWebView?
+    ) -> PendingDownloadState? {
+        guard let webView else { return nil }
+        if pendingDownloadState(for: webView) != nil {
+            // Loading a second forced request would make a late response from
+            // the first transaction indistinguishable from the replacement.
+            return nil
+        }
+
+        let sourceExtensionContextIdentifier: String?
+        if let tab = tabManager[webView],
+           tab.floorpNativeHasCommittedDocument,
+           let sourceURL = webView.url,
+           let host = FloorpNativeWebExtensionHost.host(for: profile.localName()),
+           host.isCurrentExtensionSurfaceURL(sourceURL, in: tab) {
+            sourceExtensionContextIdentifier = tab.floorpNativeWebExtensionContextIdentifier
+        } else {
+            sourceExtensionContextIdentifier = nil
+        }
+        let state = PendingDownloadState(
+            webView: webView,
+            initiatingRequest: request,
+            sourceExtensionContextIdentifier: sourceExtensionContextIdentifier
+        )
+        pendingDownloads[ObjectIdentifier(webView)] = state
+        return state
+    }
+
+    @MainActor
+    func pendingDownloadState(for webView: WKWebView) -> PendingDownloadState? {
+        let identifier = ObjectIdentifier(webView)
+        guard let state = pendingDownloads[identifier] else { return nil }
+        guard state.webView === webView else {
+            pendingDownloads.removeValue(forKey: identifier)
+            return nil
+        }
+        return state
+    }
+
+    @MainActor
+    func recordPendingRequest(_ request: URLRequest, for webView: WKWebView) {
+        guard let url = request.url else { return }
+        let identifier = ObjectIdentifier(webView)
+        pendingRequests[identifier, default: [:]][url.absoluteString] = request
+    }
+
+    @MainActor
+    func pendingRequest(for url: URL, in webView: WKWebView) -> URLRequest? {
+        return pendingRequests[ObjectIdentifier(webView)]?[url.absoluteString]
+    }
+
+    @MainActor
+    func takePendingRequest(for url: URL, in webView: WKWebView) -> URLRequest? {
+        let identifier = ObjectIdentifier(webView)
+        let request = pendingRequests[identifier]?.removeValue(forKey: url.absoluteString)
+        if pendingRequests[identifier]?.isEmpty == true {
+            pendingRequests.removeValue(forKey: identifier)
+        }
+        return request
+    }
+
+    @MainActor
+    func clearPendingDownload(for webView: WKWebView) {
+        let identifier = ObjectIdentifier(webView)
+        if let state = pendingDownloadState(for: webView) {
+            for url in state.requestsByURL.keys {
+                pendingRequests[identifier]?.removeValue(forKey: url)
+            }
+            if pendingRequests[identifier]?.isEmpty == true {
+                pendingRequests.removeValue(forKey: identifier)
+            }
+        }
+        pendingDownloads.removeValue(forKey: identifier)
+    }
+
+    @MainActor
+    func clearPendingNavigationState(for webView: WKWebView) {
+        clearPendingDownload(for: webView)
+        let identifier = ObjectIdentifier(webView)
+        pendingRequests.removeValue(forKey: identifier)
+        downloadHelpers.removeValue(forKey: identifier)
+    }
+
+    @MainActor
+    func pendingDownloadResponseDisposition(
+        for responseURL: URL?,
+        isForMainFrame: Bool,
+        in webView: WKWebView
+    ) -> PendingDownloadResponseDisposition {
+        guard isForMainFrame,
+              let pendingDownload = pendingDownloadState(for: webView) else {
+            let request = responseURL.flatMap { takePendingRequest(for: $0, in: webView) }
+            return PendingDownloadResponseDisposition(
+                shouldCancel: false,
+                forceDownload: false,
+                request: request
+            )
+        }
+
+        // A response must belong to this WebView's exact transaction. A
+        // recorded URL covers the initiating request and policy-visible
+        // redirects; `webView.url` covers a server redirect that WebKit
+        // exposes only at response time. Anything else fails closed while
+        // keeping the live transaction marker intact.
+        guard let responseURL,
+              let forcedRequest = pendingDownload.request(for: responseURL)
+                ?? (webView.url == responseURL || pendingDownload.hasReceivedServerRedirect
+                    ? pendingDownload.initiatingRequest
+                    : nil) else {
+            return PendingDownloadResponseDisposition(
+                shouldCancel: true,
+                forceDownload: false,
+                request: nil
+            )
+        }
+        clearPendingDownload(for: webView)
+        return PendingDownloadResponseDisposition(
+            shouldCancel: false,
+            forceDownload: true,
+            request: forcedRequest
+        )
+    }
+
+    @MainActor
+    func storeDownloadHelper(_ downloadHelper: DownloadHelper, for webView: WKWebView) {
+        downloadHelpers[ObjectIdentifier(webView)] = downloadHelper
+    }
+
+    @MainActor
+    func takeDownloadHelper(for webView: WKWebView) -> DownloadHelper? {
+        return downloadHelpers.removeValue(forKey: ObjectIdentifier(webView))
     }
 
     func writeToPhotoAlbum(image: UIImage) {
@@ -499,6 +651,7 @@ extension BrowserViewController: WKNavigationDelegate {
     /// Called when the WKWebView's content process has gone away. If this happens for the currently selected tab
     /// then we immediately reload it.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        clearPendingNavigationState(for: webView)
         if let tab = tabManager.selectedTab, tab.webView == webView {
             tab.consecutiveCrashes += 1
 
@@ -519,6 +672,14 @@ extension BrowserViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation?) {
+        if let pendingDownload = pendingDownloadState(for: webView),
+           navigation.map({ pendingDownload.navigation === $0 })
+            ?? (pendingDownload.navigation == nil) {
+            pendingDownload.hasReceivedServerRedirect = true
+            if let redirectedURL = webView.url {
+                pendingDownload.record(URLRequest(url: redirectedURL))
+            }
+        }
         guard let tab = tabManager[webView] else { return }
 
         if !tab.adsTelemetryUrlList.isEmpty,
@@ -529,6 +690,16 @@ extension BrowserViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
+        if let pendingDownload = pendingDownloadState(for: webView),
+           let pendingNavigation = pendingDownload.navigation,
+           let navigation,
+           pendingNavigation !== navigation {
+            // HTTP redirects keep the same WKNavigation identity. A different
+            // identity is a competing top-level load and must not inherit the
+            // forced-download transaction's response handling.
+            clearPendingDownload(for: webView)
+            webView.stopLoading()
+        }
         if let tab = tabManager[webView] {
             dismissNavigationProtectionFailureAlert(for: tab, animated: false)
             FloorpNativeWebExtensionHost.host(for: profile.localName())?
@@ -556,6 +727,7 @@ extension BrowserViewController: WKNavigationDelegate {
     // This is the place where we decide what to do with a new navigation action. There are a number of special schemes
     // and http(s) urls that need to be handled in a different way. All the logic for that is inside this delegate
     // method.
+    // swiftlint:disable:next function_body_length
     @MainActor
     func webView(
         _ webView: WKWebView,
@@ -570,9 +742,48 @@ extension BrowserViewController: WKNavigationDelegate {
             return
         }
 
-        let isTopLevelNavigation = navigationAction.targetFrame?.isMainFrame != false
+        let isTopLevelNavigation = isTopLevelNavigationAction(navigationAction)
         if isTopLevelNavigation {
             dismissNavigationProtectionFailureAlert(for: tab, animated: false)
+        }
+
+        let host = FloorpNativeWebExtensionHost.host(for: profile.localName())
+        let isPendingExtensionDownload = host.map {
+            isPendingExtensionSurfaceDownloadNavigation(
+                webView,
+                navigationAction: navigationAction,
+                tab: tab,
+                host: $0
+            )
+        } ?? false
+        if isPendingExtensionDownload {
+            pendingDownloadState(for: webView)?.hasStartedNavigationPolicy = true
+        }
+        if let pendingDownload = pendingDownloadState(for: webView),
+           pendingDownload.sourceExtensionContextIdentifier != nil,
+           !pendingDownload.hasStartedNavigationPolicy,
+           isMainFrameNavigation(navigationAction),
+           navigationAction.navigationType == .other,
+           !isPendingExtensionDownload {
+            // Before WebKit accepts the initiating load, a mismatched synthetic
+            // main-frame callback means the marker is stale. User links and
+            // subframes can interleave here and must not replace it. Once
+            // accepted it remains sticky until the exact transaction responds,
+            // fails, or its WebView is destroyed.
+            clearPendingDownload(for: webView)
+        }
+
+        if isTopLevelNavigation,
+           navigationAction.navigationType == .linkActivated,
+           let host,
+           isCommittedExtensionSurface(webView, tab: tab, host: host),
+           isExtensionSurfaceShortcutDestination(url, tab: tab, host: host),
+           navigateLinkShortcutIfNeeded(url: url, sourceTab: tab) {
+            // Resolve keyboard intent while the key state and source document
+            // are still current. Waiting for readiness or close preparation
+            // can release the key and must not destroy the source surface.
+            decisionHandler(.cancel)
+            return
         }
 
         // A nil target frame is a new top-level browsing context
@@ -581,7 +792,8 @@ extension BrowserViewController: WKNavigationDelegate {
         // `createWebViewWith`, so it must cross the blocker-readiness barrier
         // before popup creation too.
         if isTopLevelNavigation,
-           let host = FloorpNativeWebExtensionHost.host(for: profile.localName()) {
+           !isPendingExtensionDownload,
+           let host {
             let wasPrepared = host.consumePreparedNavigation(navigationAction)
             let generation = wasPrepared ? nil : host.beginNavigationPreparation(for: tab)
             guard !wasPrepared,
@@ -898,18 +1110,36 @@ extension BrowserViewController: WKNavigationDelegate {
             return
         }
 
+        let host = FloorpNativeWebExtensionHost.host(for: profile.localName())
+        let isPendingExtensionDownload = host.map {
+            isPendingExtensionSurfaceDownloadNavigation(
+                webView,
+                navigationAction: navigationAction,
+                tab: tab,
+                host: $0
+            )
+        } ?? false
+
+        if isPendingExtensionDownload {
+            // Same-extension resources do not reach handleWebURLNavigation,
+            // but DownloadHelper still needs the exact initiating request.
+            recordPendingRequest(navigationAction.request, for: webView)
+            pendingDownloadState(for: webView)?.record(navigationAction.request)
+        }
+
         // A committed extension document may still be persisting state when
         // WebKit asks to replace its main-frame JS context. `beforeunload`
         // cannot await that work, so hold this exact navigation until the
         // extension's bounded close hook succeeds. Fragment-only changes do
         // not replace the document and subframes never own this tab surface.
         if !extensionSurfaceDeparturePrepared,
+           !isPendingExtensionDownload,
            isMainFrameNavigation(navigationAction),
            navigationReplacesCurrentDocument(
                from: webView.url,
                to: url
            ),
-           let host = FloorpNativeWebExtensionHost.host(for: profile.localName()),
+           let host,
            host.prepareExtensionTabSurfaceForDestruction(
                in: tab,
                expectedWebView: webView,
@@ -943,14 +1173,20 @@ extension BrowserViewController: WKNavigationDelegate {
         // supplied by WKWebExtensionContext. Crossing that trust boundary
         // rebuilds the surface before the main-frame navigation begins.
         if isMainFrameNavigation(navigationAction),
-           FloorpNativeWebExtensionHost.host(for: profile.localName())?
-            .routeNavigationIfNeeded(
+           let host {
+            if !isPendingExtensionDownload,
+               host.routeNavigationIfNeeded(
                 tab: tab,
                 url: url,
                 navigationType: navigationAction.navigationType
-            ) == true {
-            decisionHandler(.cancel)
-            return
+            ) {
+                decisionHandler(.cancel)
+                return
+            }
+            if host.isCurrentExtensionSurfaceURL(url, in: tab) {
+                decisionHandler(.allow)
+                return
+            }
         }
 
         if tab == tabManager.selectedTab,
@@ -1016,7 +1252,8 @@ extension BrowserViewController: WKNavigationDelegate {
         }
 
         // Handle keyboard shortcuts on link presses from webpage navigation (ex: Cmd + Tap on Link)
-        if navigationAction.navigationType == .linkActivated, navigateLinkShortcutIfNeeded(url: url) {
+        if navigationAction.navigationType == .linkActivated,
+           navigateLinkShortcutIfNeeded(url: url, sourceTab: tab) {
             decisionHandler(.cancel)
             return
         }
@@ -1058,6 +1295,68 @@ extension BrowserViewController: WKNavigationDelegate {
         current?.fragment = nil
         destination?.fragment = nil
         return !(changesOnlyFragment && current == destination)
+    }
+
+    @MainActor
+    private func isCommittedExtensionSurface(
+        _ webView: WKWebView,
+        tab: Tab,
+        host: FloorpNativeWebExtensionHost
+    ) -> Bool {
+        guard tab.webView === webView,
+              tab.floorpNativeHasCommittedDocument,
+              let sourceURL = webView.url else { return false }
+        return host.isCurrentExtensionSurfaceURL(sourceURL, in: tab)
+    }
+
+    @MainActor
+    private func isExtensionSurfaceShortcutDestination(
+        _ url: URL,
+        tab: Tab,
+        host: FloorpNativeWebExtensionHost
+    ) -> Bool {
+        if host.isCurrentExtensionSurfaceURL(url, in: tab) {
+            return true
+        }
+        guard let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              !InternalURL.isValid(url: url),
+              !isStoreURL(url),
+              !isFirefoxUniversalWallpaperSetting(url) else { return false }
+        return true
+    }
+
+    @MainActor
+    private func isPendingExtensionSurfaceDownloadNavigation(
+        _ webView: WKWebView,
+        navigationAction: WKNavigationAction,
+        tab: Tab,
+        host: FloorpNativeWebExtensionHost
+    ) -> Bool {
+        guard let pendingDownload = pendingDownloadState(for: webView) else {
+            return false
+        }
+        guard isMainFrameNavigation(navigationAction),
+              navigationAction.navigationType == .other,
+              let pendingURL = pendingDownload.initiatingRequest.url,
+              let sourceIdentifier = pendingDownload.sourceExtensionContextIdentifier,
+              tab.webView === webView,
+              tab.floorpNativeHasCommittedDocument,
+              tab.floorpNativeWebExtensionContextIdentifier == sourceIdentifier,
+              let destinationURL = navigationAction.request.url,
+              isExtensionSurfaceShortcutDestination(pendingURL, tab: tab, host: host),
+              isExtensionSurfaceShortcutDestination(destinationURL, tab: tab, host: host) else {
+            return false
+        }
+        if pendingDownload.hasStartedNavigationPolicy {
+            // Once WebKit has accepted the exact initiating load, permit its
+            // ordinary HTTP(S) redirect chain until response or failure.
+            return true
+        }
+        // The first synthetic policy callback must be for the URL we loaded.
+        // This prevents an unrelated automatic navigation from consuming a
+        // live forced-download marker and crossing the extension boundary.
+        return destinationURL == pendingURL
     }
 
     private func handleAdsTelemetryForNavigation(url: URL, tab: Tab) {
@@ -1171,7 +1470,7 @@ extension BrowserViewController: WKNavigationDelegate {
             tab.changedUserAgent = Tab.ChangeUserAgent.contains(url: url, isPrivate: tab.isPrivate)
         }
 
-        pendingRequests[url.absoluteString] = navigationAction.request
+        recordPendingRequest(navigationAction.request, for: webView)
 
         if tab.changedUserAgent {
             let platformSpecificUserAgent = UserAgent.oppositeUserAgent(domain: url.baseDomain ?? "")
@@ -1214,7 +1513,7 @@ extension BrowserViewController: WKNavigationDelegate {
 
     private func handleCustomSchemeURLNavigation(url: URL, navigationAction: WKNavigationAction) {
         // Try to open the custom scheme URL, if it doesn't work we show an error alert
-        UIApplication.shared.open(url, options: [:]) { openedURL in
+        UIApplication.shared.open(url, options: [:]) { [weak self] openedURL in
             // Do not show error message for JS navigated links or
             // redirect as it's not the result of a user action.
             if !openedURL, navigationAction.navigationType == .linkActivated {
@@ -1224,13 +1523,13 @@ extension BrowserViewController: WKNavigationDelegate {
                     preferredStyle: .alert
                 )
                 alert.addAction(UIAlertAction(title: .OKString, style: .default, handler: nil))
-                self.present(alert, animated: true, completion: nil)
+                self?.present(alert, animated: true, completion: nil)
             }
         }
     }
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        guard let downloadHelper else {
+        guard let downloadHelper = takeDownloadHelper(for: webView) else {
             logger.log("Unable to access downloadHelper, it is nil", level: .warning, category: .webview)
             return
         }
@@ -1256,15 +1555,17 @@ extension BrowserViewController: WKNavigationDelegate {
             googleLensSearches[tab.tabUUID]?.httpStatusCode = httpResponse.statusCode
         }
 
-        var request: URLRequest?
-        if let url = responseURL {
-            request = pendingRequests.removeValue(forKey: url.absoluteString)
+        let pendingDisposition = pendingDownloadResponseDisposition(
+            for: responseURL,
+            isForMainFrame: navigationResponse.isForMainFrame,
+            in: webView
+        )
+        if pendingDisposition.shouldCancel {
+            return .cancel
         }
-
-        // We can only show this content in the web view if this web view is not pending
-        // download via the context menu.
-        let canShowInWebView = navigationResponse.canShowMIMEType && (webView != pendingDownloadWebView)
-        let forceDownload = webView == pendingDownloadWebView
+        let request = pendingDisposition.request
+        let forceDownload = pendingDisposition.forceDownload
+        let canShowInWebView = navigationResponse.canShowMIMEType && !forceDownload
         let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
 
         if let mimeType = response.mimeType, OpenPassBookHelper.shouldOpenWithPassBook(
@@ -1315,7 +1616,7 @@ extension BrowserViewController: WKNavigationDelegate {
                                               isForMainFrame: navigationResponse.isForMainFrame) {
             /// FXIOS-12201: Need to hold reference to downloadHelper,
             /// so we can use this later in `webView(_:navigationResponse:didBecome:)`
-            self.downloadHelper = downloadHelper
+            storeDownloadHelper(downloadHelper, for: webView)
             return .download
         }
 
@@ -1467,10 +1768,6 @@ extension BrowserViewController: WKNavigationDelegate {
     }
 
     func handleDownloadFiles(downloadHelper: DownloadHelper) {
-        // Clear the pending download web view so that subsequent navigations from the same
-        // web view don't invoke another download.
-        pendingDownloadWebView = nil
-
         let downloadAction: @MainActor (HTTPDownload) -> Void = { [weak self] download in
             self?.downloadQueue.enqueue(download)
         }
@@ -1488,6 +1785,11 @@ extension BrowserViewController: WKNavigationDelegate {
         didFail navigation: WKNavigation?,
         withError error: Error
     ) {
+        if let pendingDownload = pendingDownloadState(for: webView),
+           navigation.map({ pendingDownload.navigation === $0 })
+            ?? (pendingDownload.navigation == nil) {
+            clearPendingDownload(for: webView)
+        }
         logger.log("Error occurred during navigation.",
                    level: .warning,
                    category: .webview)
@@ -1507,6 +1809,11 @@ extension BrowserViewController: WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: Error
     ) {
+        if let pendingDownload = pendingDownloadState(for: webView),
+           navigation.map({ pendingDownload.navigation === $0 })
+            ?? (pendingDownload.navigation == nil) {
+            clearPendingDownload(for: webView)
+        }
         logger.log("Error occurred during the early navigation process.",
                    level: .warning,
                    category: .webview)
@@ -1708,6 +2015,14 @@ extension BrowserViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        if let pendingDownload = pendingDownloadState(for: webView),
+           navigation.map({ pendingDownload.navigation === $0 })
+            ?? (pendingDownload.navigation == nil) {
+            // A same-document navigation or an empty (for example 204)
+            // response can finish without reaching response policy. Do not
+            // let its forced-download marker leak into the next navigation.
+            clearPendingDownload(for: webView)
+        }
         webviewTelemetry.stop()
         recordGoogleLensSearchCompletedIfNeeded(for: tabManager[webView], succeeded: true)
 

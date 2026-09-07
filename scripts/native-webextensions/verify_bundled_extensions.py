@@ -162,7 +162,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "ea4367b6a41087b921d8ef1bb8ae5b6f430dd2f27cd060eeb65ab434731eddfc",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "a9f1c4b1dd97d072f5c4cb416f96aa5a49212d526ef048c9536dd9373a5348ae",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -193,7 +193,7 @@ EXPECTED = (
                     ],
                 },
                 {
-                    "description": "Make startup, wake, permission, filtering-mode, static/derived/user DNR, imported-list, content-script, and user-script reconciliation durable and fail closed: use an immutable registered-content sentinel, case-normalize WebKit registration readback, and apply bounded ID-diff convergence; validate resources before mutation; use atomic or rollback-verified DNR updates; reconcile all protection surfaces from durable state before ready; and request a visible extension-page foreground reconciliation when WebKit rejects static ruleset updates from an MV3 background page.",
+                    "description": "Make startup, wake, permission, administrator-policy, filtering-mode, static/derived/user DNR, imported-list, content-script, and user-script reconciliation durable and fail closed: use an immutable registered-content sentinel, case-normalize WebKit registration readback, and apply bounded ID-diff convergence; validate resources before mutation; use atomic or rollback-verified DNR updates; retain the first protected mutation error until a full recovery succeeds; serialize managed changes through the settings Web Lock and background queue, preserve changes arriving during awaits, retry idempotent native side effects even after their config value was saved, and defer persistent failures without a background wake loop; reconcile all protection surfaces and managed popup, badge, and strict-block side effects from durable state before ready; and request a crash-resumable visible extension-page foreground reconciliation when WebKit rejects static ruleset updates from an MV3 background page.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/admin.js",
@@ -209,7 +209,7 @@ EXPECTED = (
                     ],
                 },
                 {
-                    "description": "Protect settings restore/reset and live user-DNR/custom-filter edits with snapshots, durable recovery journals, strict commit/rollback responses, foreground-completed Safari static-ruleset rollback/readback, restored badge/alarm side effects, authoritative state rebroadcast across concurrent dashboards, and retryable queues; preserve incomplete parser drafts but reject effective Safari-incompatible live or imported user DNR before native mutation without removing installed rules, and keep Safari static-ruleset transitions after dynamic-rule validation; track delayed FileReader, editor, filter-list, and dashboard writes to a fixed point so a failed or interrupted operation cannot be reported as saved.",
+                    "description": "Protect settings restore/reset and live user-DNR/custom-filter edits with snapshots, separate versioned and schema-validated durable recovery journals, an owner ID, a shared cross-realm Web Lock, union-safe script registration, strict commit/rollback responses, a durable foreground target phase, best-effort post-commit registration narrowing, foreground-completed Safari static-ruleset rollback/readback, restored badge/alarm side effects, authoritative state rebroadcast across concurrent dashboards, and retryable queues; preserve live admin.* policy across replacement and fail closed without deleting local state when a journal is malformed; keep current administrator filtering policy authoritative while a user-settings journal supplies last-committed modes and selectors; preserve incomplete parser drafts but reject effective Safari-incompatible live or imported user DNR before native mutation without removing installed rules, and keep Safari static-ruleset transitions after dynamic-rule validation; track delayed FileReader, editor, filter-list, and dashboard writes to a fixed point so a failed or interrupted operation cannot be reported as saved.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/background.js",
@@ -226,13 +226,20 @@ EXPECTED = (
                     ],
                 },
                 {
-                    "description": "Scope the CSS API's inserted-state and page-reveal handler plus isolated hostname contexts to the current document; serialize cleanup of replaced list/custom procedural filterers before later-document injection; and guard per-execution asynchronous cosmetic work so Safari isolated-world and document-wrapper reuse cannot leak prior-host CSS or skip custom/procedural reinjection after normal, cross-host, or private navigation.",
+                    "description": "Scope the CSS API's inserted-state and page-reveal handler plus isolated hostname contexts to the current document; bind background-served custom-filter CSS and ordinary-frame procedural fallback injection to a non-empty WebKit document ID and an HTTP(S) sender hostname; for hostname-less about, data, blob, and srcdoc fallback frames derive authority only from the immediate WebKit fallback parent, require accessible-parent and ancestor-origin agreement when both are available, fail closed on ambiguity or missing parent authority, then read both recovery journals, user and administrator filtering modes, and only that hostname ancestry's site-filter keys in one bounded local snapshot; use last-committed user modes/selectors during settings apply or rollback while preserving live administrator policy; preload fresh CSS and procedural APIs in same-world document-start and document-idle registered scripts whenever direct or inherited procedural selectors exist, and apply committed hostname-less snapshots locally without depending on WebKit's unsupported dynamic script injection into about:blank/about:srcdoc; keep background replies schema- and request-bound and await required background CSS insertion before acknowledging success; reuse an in-flight request across timeout and permit one short retry only for an undefined main-frame reply; synchronously abandon replaced list/custom procedural filterers without sending stale-document CSS removals or awaiting an orphanable prior-document runtime message; serve custom-filter requests before full startup reconciliation when Safari wakes the nonpersistent background; and guard per-execution asynchronous cosmetic state so Safari isolated-world and document-wrapper reuse cannot let a late prior-document result mutate the current script state or skip custom/procedural reinjection after normal, cross-host, private, or origin-fallback navigation.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/scripting/css-api.js",
+                        "js/scripting/css-procedural-api.js",
                         "js/scripting/css-specific.js",
+                        "js/scripting/css-user-idle-prelude.js",
+                        "js/scripting/css-user-idle.js",
                         "js/scripting/css-user.js",
                         "js/scripting/isolated-api.js",
+                        "js/background.js",
+                        "js/ext.js",
+                        "js/filter-manager.js",
+                        "js/scripting-manager.js",
                     ],
                 },
                 {
@@ -255,7 +262,7 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e",
+            "sha256": "4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
@@ -284,6 +291,8 @@ EXPECTED = (
         "archive_required_members": (
             "js/safari-dnr-normalizer.js",
             "js/safari-regex-normalizer.js",
+            "js/scripting/css-user-idle-prelude.js",
+            "js/scripting/css-user-idle.js",
         ),
         "archive_text_requirements": {
             "js/popup.js": (
@@ -387,15 +396,12 @@ EXPECTED = (
                 "return updateUserRules(true);",
                 "setDefaultFilteringMode(MODE_BASIC, true)",
                 "await browser.userScripts.configureWorld({ messaging: true })",
-                "const sessionResult = await startSession(webextFlavor !== 'safari');",
+                "const sessionResult = await startSession(",
                 "foregroundRulesetReconciliationRequired = true;",
                 "what === 'floorpFinalizeForegroundReconciliation'",
                 "reconcileSettingsState({\n                    reloadStorage: true,\n                    fullDNR: true,\n                    allowStaticMutation: false,",
-                "const reconcileResult = await reconcileSettingsState({\n"
-                "        reloadStorage: true,\n"
-                "        fullDNR: true,\n"
-                "    });",
-                "const SETTINGS_RESTORE_JOURNAL_KEY = 'floorp.settingsRestoreJournal.v1';",
+                "const reconcileResult = await reconcileSettingsState({",
+                "const SETTINGS_RESTORE_JOURNAL_KEY = settingsRestoreJournalKey;",
                 "case 'validateSettingsRestore':",
                 "targetConfig.developerMode === true",
                 "async function restoreRolledBackSettingsSideEffects()",
@@ -404,17 +410,44 @@ EXPECTED = (
                 "rollback?.foregroundReconciliationRequired === true",
                 "if ( rollback?.rolledBack !== true )",
                 "Interrupted settings rollback response was invalid",
-                "async function commitSettingsRestore(id)",
+                "async function commitSettingsRestore(id, requestedRulesets)",
                 "if ( journal?.id !== id )",
                 "return { committed: true };",
                 "async function rollbackSettingsRestore(id)",
                 "phase: 'rollingBack',",
-                "await localReplace(journal.beforeLocal, [ SETTINGS_RESTORE_JOURNAL_KEY ]);",
+                "SETTINGS_RESTORE_PRESERVED_PREFIXES",
                 "await restoreRolledBackSettingsSideEffects();",
                 "return { rolledBack: true };",
                 "if ( journal?.phase === 'rollingBack' )",
                 "rolledBack: result?.rolledBack === true,",
                 "enabledRulesets: confirmedRulesets",
+                "const CUSTOM_FILTER_MESSAGE_SCHEMA = 1;",
+                "function documentTargetFromSender(sender)",
+                "typeof documentId !== 'string'",
+                "return { tabId, documentIds: [ documentId ] };",
+                "function customFilterAck(requestId, details, reason)",
+                "response.plainSelectors = details.plainSelectors;",
+                "function customFilterHostname(request, sender)",
+                "request.hostname.length > 253",
+                "senderURL.protocol === 'http:' || senderURL.protocol === 'https:'",
+                "if ( senderHostname === '' )",
+                "senderHostname !== hostname",
+                "function authoritativeCustomFilterSnapshot(localState)",
+                "const settingsSnapshot = committedSettingsRestoreSnapshot(",
+                "const mutationSnapshot = committedCustomFilterMutationSnapshot(",
+                "'admin.defaultFiltering': localState['admin.defaultFiltering']",
+                "'admin.noFiltering': localState['admin.noFiltering']",
+                "case 'injectCSSProceduralAPI': {",
+                "assertSuccessfulScriptInjection(\n                results,",
+                "case 'injectCustomFilters': {",
+                "const localState = await localSnapshot([], [",
+                "customFilterMutationJournalKey,",
+                "...customFilterModeStorageKeys,",
+                "...customFilterStorageKeys(hostname),",
+                "const storageSnapshot = authoritativeCustomFilterSnapshot(localState);",
+                "customFilteringEnabledFromStorageSnapshot(",
+                "documentTarget,\n                hostname,\n                storageSnapshot",
+                "return customFilterAck(requestId, details);",
             ),
             "js/config.js": (
                 "const CONFIG_ENVELOPE_VERSION = 1;",
@@ -436,6 +469,9 @@ EXPECTED = (
                 "key => key !== safariLocalStorageSentinelKey",
                 "runStorageOperation('local'",
                 "runStorageOperation('session'",
+                "export async function localSnapshot(excludedKeys = [], requestedKeys = null)",
+                "browser.storage.local.get(requestedKeys)",
+                "Invalid local-storage snapshot keys",
                 "if ( webextFlavor === 'safari' ) { throw reason; }",
                 "export function recordOptionsOperationError(reason)",
                 "recordOptionsOperationError(reason);",
@@ -507,6 +543,12 @@ EXPECTED = (
                 "registerContentScripts(true)",
                 "const result = await setStrictBlockMode(strictBlockMode, true);",
                 "if ( result?.error ) { throw new Error(result.error); }",
+                "export function setAdminSettingsMutationRunner(runner)",
+                "if ( apply ) { toApply.push(key); }",
+                "if ( modified ) { await saveRulesetConfig(); }",
+                "const snapshot = new Map(this.keys);",
+                "if ( this.keys.get(key) === entry ) { this.keys.delete(key); }",
+                "export function resumeAdminSettingsProcessing()",
             ),
             "js/ruleset-manager.js": (
                 "await localWrite('defaultRulesetIds', newDefaultIds)",
@@ -597,7 +639,7 @@ EXPECTED = (
                 "/unknown error/i.test(message) === false",
                 "runStorageOperation('session', ( ) =>\n"
                 "    webext.storage.session.get('safari.seenRealms')",
-                "webext.storage.session.set({ 'safari.seenRealms': nextSeenRealms })",
+                "'safari.seenRealms': nextSeenRealms,",
                 "runStorageOperation('session', ( ) =>\n"
                 "                webext.storage.session.remove('safari.seenRealms')",
                 "throwOnError = false",
@@ -768,27 +810,79 @@ EXPECTED = (
                 "self.listsProceduralFiltererAPI = undefined;",
                 "const cssSpecificResetTail = Promise.resolve(previousResetTail)",
                 ".then(( ) => previousListsProceduralFilterer instanceof Object",
-                "? previousListsProceduralFilterer.reset()",
+                "? previousListsProceduralFilterer.reset({ removeCSS: false })",
                 "self.cssSpecificResetTail = cssSpecificResetTail;",
                 "await cssSpecificResetTail;",
                 "self.cssSpecificDocumentGeneration === cssSpecificDocumentGeneration;",
                 "if ( isCurrentDocument() === false ) { return; }",
+            ),
+            "js/scripting/css-procedural-api.js": (
+                "async reset(options = {})",
+                "const removeCSS = options.removeCSS !== false;",
+                "if ( removeCSS ) {",
+                "this.proceduralFilterer.reset(options)",
             ),
             "js/scripting/css-user.js": (
                 "const cssUserDocumentGeneration = {};",
                 "self.removeEventListener('pagereveal', self.cssUserStartHandler);",
                 "self.cssUserDocumentGeneration = cssUserDocumentGeneration;",
                 "const previousProceduralFilterer = self.customProceduralFiltererAPI;",
-                "const previousPendingOp = self.cssUserPendingOp;",
-                "const cssUserCleanupOp = Promise.resolve(previousPendingOp)",
+                "const cssUserCleanupOp = Promise.resolve()",
                 ".then(( ) => previousProceduralFilterer instanceof Object",
-                "? previousProceduralFilterer.reset()",
+                "? previousProceduralFilterer.reset({ removeCSS: false })",
                 "self.cssUserPendingOp = cssUserCleanupOp;",
                 "const pendingOp = Promise.resolve(self.cssUserPendingOp)",
                 "self.cssUserPendingOp = pendingOp.catch(( ) => undefined);",
                 "self.cssUserDocumentGeneration === cssUserDocumentGeneration &&",
                 "self.cssUserStartHandler === uBOL_cssUserStart;",
                 "if ( isCurrentDocument() === false ) { return; }",
+                "const customFilterMessageSchema = 1;",
+                "const customFilterMutationJournalKey =",
+                "const customFilterModeStorageKeys = [",
+                "const settingsRestoreJournalKey = 'floorp.settingsRestoreJournal.v1';",
+                "function hostnameFromURL(value)",
+                "function hostnameFromHTTPURL(value)",
+                "function originFallbackHostname()",
+                "document.location.ancestorOrigins?.[0]",
+                "hostnameFromHTTPURL(self.parent.location.origin)",
+                "ancestorHostname !== parentHostname",
+                "function committedJournalSnapshot(journal, label, phases)",
+                "function customFilteringEnabled(snapshot, hostname)",
+                "function selectorsFromStorageSnapshot(hostname, snapshot)",
+                "async function readOriginFallbackCustomFilters()",
+                "const hostname = originFallbackHostname();",
+                "localState = await chrome.storage.local.get(keys);",
+                "localState[settingsRestoreJournalKey]",
+                "localState[customFilterMutationJournalKey]",
+                "'admin.defaultFiltering': localState['admin.defaultFiltering']",
+                "'admin.noFiltering': localState['admin.noFiltering']",
+                "const details = customFilteringEnabled(authoritativeState, hostname)",
+                "hostnameFromURL(document.location.origin)",
+                "hostname: customFilterHostname,",
+                "const customFilterUndefinedRetryDelay = 100;",
+                "requestId: customFilterRequestId,",
+                "let customFilterRequestInFlight;",
+                "customFilterRequestInFlight = operation;",
+                "const outcome = await waitForMessageReply(operation);",
+                "outcome.status === 'timeout'",
+                "customFilterRequestInFlight === operation &&",
+                "isValidCustomFilterAck(value, customFilterRequestId)",
+                "outcome.value === undefined &&",
+                "isMainFrame &&",
+                "customFilterUndefinedRetryUsed === false",
+                "details.ok === true &&",
+                "details.requestId === requestId &&",
+                "Array.isArray(details.plainSelectors)",
+                "Array.isArray(details.proceduralSelectors)",
+                "if ( Boolean(details) === false ) { return; }",
+                "self.customFilters = details;",
+            ),
+            "js/scripting/css-user-idle-prelude.js": (
+                "self.floorpCSSUserAPIIdleReplay = document.location.hostname === '';",
+            ),
+            "js/scripting/css-user-idle.js": (
+                "self.floorpCSSUserIdleReplay = true;",
+                "self.floorpCSSUserAPIIdleReplay = undefined;",
             ),
             "js/scripting/isolated-api.js": (
                 "const documentElement = document.documentElement;",
@@ -803,6 +897,8 @@ EXPECTED = (
             ),
             "js/floorp-reconcile.js": (
                 "globalThis.floorpReconcileProtection = reconcileProtection;",
+                "const settingsRestoreLockName = 'floorp.ubol.settings-restore.v1';",
+                "settingsRestoreId: options.settingsRestoreId,",
                 "await saveRulesetConfig();",
                 "await enableRulesets(",
                 "Foreground static ruleset readback mismatch",
@@ -824,7 +920,40 @@ EXPECTED = (
             ),
             "js/filter-manager.js": (
                 "pendingStorageOp = operation.catch(( ) => undefined);",
+                "export const customFilterMutationJournalKey =",
+                "export const settingsRestoreJournalKey = 'floorp.settingsRestoreJournal.v1';",
+                "export const customFilterModeStorageKeys = [",
+                "function committedJournalSnapshot(journal, label, phases)",
+                "export function committedSettingsRestoreSnapshot(journal)",
+                "export function committedCustomFilterMutationSnapshot(journal)",
+                "export function customFilterStorageKeys(hostname)",
+                "out.push(`site.${hn}`);",
+                "export function customFiltersFromSnapshot(hostname, snapshot)",
+                "throw new Error('Invalid custom-filter selector snapshot');",
+                "const js = [ '/js/scripting/css-user.js' ];",
+                "const snapshots = [ context.localStorageSnapshot ];",
+                "[ settingsRestoreJournalKey, committedSettingsRestoreSnapshot ]",
+                "customFilterMutationJournalKey,",
+                "committedCustomFilterMutationSnapshot,",
+                "const hasInheritedProceduralFilter = hostname => {",
+                "customFilters.get(hn)?.some(isProcedural)",
+                "hostnames.some(hasInheritedProceduralFilter)",
+                "js.unshift(\n            '/js/scripting/css-api.js',\n            '/js/scripting/css-procedural-api.js'",
+                "const idleJS = js.slice();",
+                "idleJS.unshift('/js/scripting/css-user-idle-prelude.js');",
+                "idleJS.splice(idleJS.length - 1, 0, '/js/scripting/css-user-idle.js');",
+                "id: 'css-user-idle',",
+                "runAt: 'document_idle',",
+                "export function assertSuccessfulScriptInjection(results, operation)",
+                "if ( result.error !== undefined )",
+                "export async function injectCustomFilters(target, hostname, storageSnapshot)",
+                "? await customFiltersFromHostname(hostname)",
+                ": customFiltersFromSnapshot(hostname, storageSnapshot);",
+                "await browser.scripting.insertCSS({",
+                "const proceduralSelectors = selectors.filter(a => isProcedural(a));",
+                "return { plainSelectors, proceduralSelectors };",
                 "export async function mutateCustomFiltersAtomically(",
+                "export function recoverCustomFilterMutation()",
                 "Custom-filter mutation and rollback both failed",
             ),
             "js/backup-restore.js": (
@@ -837,7 +966,9 @@ EXPECTED = (
                 "commit?.committed !== true",
                 "what: 'rollbackSettingsRestore'",
                 "rollback?.foregroundReconciliationRequired === true",
-                "const reconciliation = await reconcileProtection();",
+                "settingsRestoreId: transaction.id,",
+                "settingsRestoreId: commit.settingsRestoreId,",
+                "settingsRestoreId: rollback.settingsRestoreId,",
                 "if ( reconciliation.rolledBack === true )",
                 "rollback = { rolledBack: true };",
                 "if ( rollback?.rolledBack !== true )",
@@ -851,6 +982,23 @@ EXPECTED = (
                 "return queuePopupMutation(( ) => commitFilteringModeNow(",
             ),
         },
+        "archive_text_unique_order_requirement_groups": {
+            "js/background.js": (
+                (
+                    "async function onMessage(request, sender) {",
+                    "    case 'injectCustomFilters': {",
+                    (
+                        "    // Requires extension to be fully initialized\n\n"
+                        "    await ensureFullyInitialized();"
+                    ),
+                    (
+                        "\n}\n\n/*******************************************************"
+                        "***********************/\n\n"
+                        "function onCommand(command, tab) {"
+                    ),
+                ),
+            ),
+        },
         "archive_text_order_requirement_groups": {
             "js/popup.js": (
                 (
@@ -860,66 +1008,6 @@ EXPECTED = (
                 (
                     "await trackPopupRoute((async ( ) => {",
                     "self.close();",
-                ),
-            ),
-            "js/backup-restore.js": (
-                (
-                    "what: 'validateSettingsRestore'",
-                    "what: 'beginSettingsRestore'",
-                ),
-                (
-                    "what: 'updateUserDnrRules'",
-                    "const reconciliation = await reconcileProtection({\n"
-                    "        enabledRulesets: Array.from(enabledRulesets),",
-                ),
-                (
-                    "let transaction = await sendMessage({ what: 'beginSettingsRestore' });",
-                    "if ( transaction?.foregroundReconciliationRequired === true )",
-                    "\n        transaction = await sendMessage({ "
-                    "what: 'beginSettingsRestore' });",
-                    "if ( typeof transaction?.id !== 'string' || transaction.id === '' )",
-                ),
-                (
-                    "let commit = await sendMessage({",
-                    "if ( commit?.foregroundReconciliationRequired === true )",
-                    "            commit = await sendMessage({",
-                    "if ( commit?.committed !== true )",
-                ),
-                (
-                    "let rollback = await sendMessage({\n"
-                    "                what: 'rollbackSettingsRestore',",
-                    "if ( rollback?.foregroundReconciliationRequired === true ) {\n"
-                    "                const reconciliation = await reconcileProtection();",
-                    "if ( reconciliation.rolledBack === true )",
-                    "rollback = { rolledBack: true };",
-                    "rollback = await sendMessage({\n"
-                    "                        what: 'rollbackSettingsRestore',",
-                    "if ( rollback?.rolledBack !== true )",
-                    "const readiness = await sendMessage({ what: 'floorpReadiness' });",
-                ),
-            ),
-            "js/background.js": (
-                (
-                    "async function commitSettingsRestore(id)",
-                    "if ( journal?.id !== id )",
-                    "const result = await reconcileSettingsState({",
-                    "await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);",
-                    "return { committed: true };",
-                ),
-                (
-                    "async function rollbackSettingsRestore(id)",
-                    "phase: 'rollingBack',",
-                    "await localReplace(journal.beforeLocal, [ SETTINGS_RESTORE_JOURNAL_KEY ]);",
-                    "const result = await reconcileSettingsState({ resetSession: true });",
-                    "await restoreRolledBackSettingsSideEffects();",
-                    "await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);\n"
-                    "    return { rolledBack: true };",
-                ),
-                (
-                    "if ( request.what === 'floorpFinalizeForegroundReconciliation' )",
-                    "if ( journal?.phase === 'rollingBack' )",
-                    "result = await rollbackSettingsRestore(journal.id);",
-                    "rolledBack: result?.rolledBack === true,",
                 ),
             ),
             "js/ruleset-manager.js": (
@@ -952,6 +1040,10 @@ EXPECTED = (
         },
         "archive_text_forbidden_requirements": {
             "js/background.js": ("    'validateSettingsRestore',",),
+            "js/scripting/css-user.js": (
+                "const previousPendingOp = self.cssUserPendingOp;",
+                "Promise.resolve(previousPendingOp)",
+            ),
             "js/ext-compat.js": (
                 "const isSupportedRule = r => {",
                 "structuredClone(addRules).filter(isSupportedRule)",
@@ -969,7 +1061,7 @@ EXPECTED = (
             "Floorp-derived",
             "declarativeNetRequestFeedback",
             "floorp.invalid",
-            "hidden DNR keeper",
+            "hidden DNR keeper slots",
             "incognito",
             "deterministic startup",
             "uBOLite-floorp-ios-2026.825.1619.patch",
@@ -1308,6 +1400,945 @@ def verify_ubol_safari_dnr_keeper(
     )
 
 
+def verify_ubol_custom_filter_origin_fallback_path(
+    package: zipfile.ZipFile,
+    archive_name: str,
+) -> None:
+    source = package.read("js/filter-manager.js").decode("utf-8")
+
+    def reviewed_section(
+        member_source: str,
+        start: str,
+        end: str,
+        label: str,
+    ) -> str:
+        if member_source.count(start) != 1 or member_source.count(end) != 1:
+            fail(
+                f"{archive_name} does not expose one reviewed {label} "
+                "custom-filter section"
+            )
+        start_index = member_source.index(start)
+        end_index = member_source.index(end, start_index + len(start))
+        if end_index <= start_index:
+            fail(f"{archive_name} orders the reviewed {label} section incorrectly")
+        return member_source[start_index:end_index]
+
+    def require_ordered(label: str, body: str, values: tuple[str, ...]) -> None:
+        cursor = 0
+        for value in values:
+            position = body.find(value, cursor)
+            if position == -1:
+                fail(
+                    f"{archive_name} omits or reorders the reviewed {label} "
+                    f"custom-filter path: {value}"
+                )
+            cursor = position + len(value)
+
+    start_marker = (
+        "export async function injectCustomFilters(target, hostname, "
+        "storageSnapshot) {"
+    )
+    end_marker = "\n}\n\n/" + "*" * 78 + "/"
+    start = source.find(start_marker)
+    end = source.find(end_marker, start)
+    if start == -1 or end == -1:
+        fail(
+            f"{archive_name} does not expose one reviewed custom-filter "
+            "injection path"
+        )
+    body = source[start:end]
+    if "browser.scripting.executeScript" in body:
+        fail(
+            f"{archive_name} dynamically injects a script while preparing "
+            "origin-fallback custom-filter selectors"
+        )
+    if body.count("browser.scripting.insertCSS") != 1:
+        fail(
+            f"{archive_name} does not expose exactly one reviewed plain-CSS "
+            "custom-filter injection"
+        )
+
+    registration = reviewed_section(
+        source,
+        "export async function registerCustomFilters(context) {",
+        "export async function addCustomFilters(hostname, toAdd) {",
+        "registered-script",
+    )
+    require_ordered(
+        "registered-script",
+        registration,
+        (
+            "const snapshots = [ context.localStorageSnapshot ];",
+            "[ settingsRestoreJournalKey, committedSettingsRestoreSnapshot ]",
+            "customFilterMutationJournalKey,",
+            "committedCustomFilterMutationSnapshot,",
+            "for ( const snapshot of snapshots ) {",
+            "const js = [ '/js/scripting/css-user.js' ];",
+            "hostnames.some(hasInheritedProceduralFilter)",
+            "js.unshift(\n            '/js/scripting/css-api.js',\n"
+            "            '/js/scripting/css-procedural-api.js'",
+            "id: 'css-user',",
+            "allFrames: true,",
+            "matchOriginAsFallback: true,",
+            "runAt: 'document_start',",
+            "const idleJS = js.slice();",
+            "if ( idleJS.includes('/js/scripting/css-api.js') === false ) {",
+            "idleJS.unshift('/js/scripting/css-user-idle-prelude.js');",
+            "idleJS.splice(idleJS.length - 1, 0, '/js/scripting/css-user-idle.js');",
+            "id: 'css-user-idle',",
+            "js: idleJS,",
+            "runAt: 'document_idle',",
+        ),
+    )
+    if "snapshots.slice(" in registration:
+        fail(
+            f"{archive_name} truncates the live/restore custom-filter "
+            "registration union"
+        )
+
+    css_user_source = package.read("js/scripting/css-user.js").decode("utf-8")
+    css_user_code = javascript_without_comments(css_user_source)
+    if "document.baseURI" in css_user_code:
+        fail(
+            f"{archive_name} trusts page-controlled baseURI for an "
+            "origin-fallback custom-filter document"
+        )
+    authority = reviewed_section(
+        css_user_source,
+        "function originFallbackHostname() {",
+        "function customFilterStorageKeys(hostname) {",
+        "origin authority",
+    )
+    require_ordered(
+        "origin authority",
+        authority,
+        (
+            "if ( self.parent === self ) { return ''; }",
+            "document.location.ancestorOrigins?.[0]",
+            "hostnameFromHTTPURL(self.parent.location.origin)",
+            "ancestorHostname !== parentHostname",
+            "return ancestorHostname || parentHostname;",
+        ),
+    )
+    direct_read = reviewed_section(
+        css_user_source,
+        "async function readOriginFallbackCustomFilters() {",
+        "// matchOriginAsFallback runs this script",
+        "bounded origin-fallback read",
+    )
+    if direct_read.count("chrome.storage.local.get(keys)") != 1:
+        fail(
+            f"{archive_name} must perform exactly one bounded origin-fallback "
+            "local-storage read"
+        )
+    if re.search(r"chrome\.storage\.local\.get\s*\(\s*(?:\)|null\s*\))", direct_read):
+        fail(f"{archive_name} performs an unbounded origin-fallback storage read")
+    require_ordered(
+        "bounded origin-fallback read",
+        direct_read,
+        (
+            "settingsRestoreJournalKey,",
+            "customFilterMutationJournalKey,",
+            "...customFilterModeStorageKeys,",
+            "...customFilterStorageKeys(hostname),",
+            "localState = await chrome.storage.local.get(keys);",
+            "localState[settingsRestoreJournalKey]",
+            "localState[customFilterMutationJournalKey]",
+            "if ( settingsSnapshot !== undefined ) {",
+            "'admin.defaultFiltering': localState['admin.defaultFiltering']",
+            "'admin.noFiltering': localState['admin.noFiltering']",
+            "customFilteringEnabled(authoritativeState, hostname)",
+            "selectorsFromStorageSnapshot(hostname, authoritativeState)",
+        ),
+    )
+
+    request_path = reviewed_section(
+        css_user_source,
+        "async function requestCustomFilters() {",
+        "async function ensureProceduralAPI() {",
+        "origin-fallback request dispatch",
+    )
+    require_ordered(
+        "origin-fallback request dispatch",
+        request_path,
+        (
+            "if ( floorpOriginFallbackDocument ) {",
+            "return readOriginFallbackCustomFilters();",
+            "let outcome = await sendCustomFilterRequest();",
+        ),
+    )
+
+    background_source = package.read("js/background.js").decode("utf-8")
+    background_hostname = reviewed_section(
+        background_source,
+        "function customFilterHostname(request, sender) {",
+        "function authoritativeCustomFilterSnapshot(localState) {",
+        "background sender authority",
+    )
+    require_ordered(
+        "background sender authority",
+        background_hostname,
+        (
+            "const senderURL = new URL(sender?.url);",
+            "senderURL.protocol === 'http:' || senderURL.protocol === 'https:'",
+            "senderHostname = senderURL.hostname.toLowerCase();",
+            "if ( senderHostname === '' ) {",
+            "const hostname = requestedURL.hostname.toLowerCase();",
+            "hostname === '' || senderHostname !== hostname",
+        ),
+    )
+    background_snapshot = reviewed_section(
+        background_source,
+        "function authoritativeCustomFilterSnapshot(localState) {",
+        "/" + "*" * 78 + "/\n\nasync function onMessage",
+        "background committed snapshot",
+    )
+    require_ordered(
+        "background committed snapshot",
+        background_snapshot,
+        (
+            "const settingsSnapshot = committedSettingsRestoreSnapshot(",
+            "if ( settingsSnapshot !== undefined ) {",
+            "'admin.defaultFiltering': localState['admin.defaultFiltering']",
+            "const mutationSnapshot = committedCustomFilterMutationSnapshot(",
+        ),
+    )
+
+    marker_expectations = {
+        "js/scripting/css-user-idle-prelude.js": (
+            "'use strict'; self.floorpCSSUserAPIIdleReplay = "
+            "document.location.hostname === '';"
+        ),
+        "js/scripting/css-user-idle.js": (
+            "'use strict'; self.floorpCSSUserIdleReplay = true; "
+            "self.floorpCSSUserAPIIdleReplay = undefined;"
+        ),
+    }
+    for member, expected_code in marker_expectations.items():
+        marker_source = package.read(member).decode("utf-8")
+        marker_code = " ".join(javascript_without_comments(marker_source).split())
+        if marker_code != expected_code:
+            fail(f"{archive_name} changed the reviewed idle marker in {member}")
+
+    css_api = package.read("js/scripting/css-api.js").decode("utf-8")
+    procedural_api = package.read(
+        "js/scripting/css-procedural-api.js"
+    ).decode("utf-8")
+    if (
+        "self.floorpCSSUserAPIIdleReplay === true" not in css_api or
+        "floorpOriginFallbackReplay === false &&" not in css_api or
+        "self.floorpCSSUserAPIIdleReplay !== true" not in procedural_api
+    ):
+        fail(
+            f"{archive_name} does not rebuild origin-fallback CSS APIs during "
+            "the document-idle replay"
+        )
+
+
+def verify_ubol_settings_restore_guards(
+    package: zipfile.ZipFile,
+    archive_name: str,
+) -> None:
+    sources = {
+        member: package.read(member).decode("utf-8")
+        for member in (
+            "js/admin.js",
+            "js/background.js",
+            "js/backup-restore.js",
+            "js/ext-compat.js",
+            "js/floorp-reconcile.js",
+        )
+    }
+
+    def reviewed_section(
+        member: str,
+        start: str,
+        end: str,
+        label: str,
+    ) -> str:
+        source = sources[member]
+        if source.count(start) != 1:
+            fail(
+                f"{archive_name} does not expose one reviewed {label} "
+                f"section in {member}"
+            )
+        start_index = source.index(start)
+        end_index = source.find(end, start_index + len(start))
+        if end_index <= start_index:
+            fail(f"{archive_name} orders the reviewed {label} section incorrectly")
+        return source[start_index:end_index]
+
+    def require_ordered(label: str, body: str, values: tuple[str, ...]) -> None:
+        cursor = 0
+        for value in values:
+            position = body.find(value, cursor)
+            if position == -1:
+                fail(
+                    f"{archive_name} omits or reorders the reviewed {label} "
+                    f"guard: {value}"
+                )
+            cursor = position + len(value)
+
+    background = sources["js/background.js"]
+    if background.count(
+        "const SETTINGS_RESTORE_LOCK_NAME = 'floorp.ubol.settings-restore.v1';"
+    ) != 1:
+        fail(f"{archive_name} changes the reviewed background settings lock name")
+
+    validator = reviewed_section(
+        "js/background.js",
+        "function validateSettingsRestoreJournal(journal) {",
+        "async function readSettingsRestoreJournal() {",
+        "settings journal validator",
+    )
+    require_ordered(
+        "settings journal validator",
+        validator,
+        (
+            "const isPlainObject = value => {",
+            "const prototype = Object.getPrototypeOf(value);",
+            "prototype === Object.prototype || prototype === null;",
+            "isPlainObject(journal) === false",
+            "[ 'applying', 'committingForeground', 'rollingBack' ]",
+            "isPlainObject(journal.beforeLocal) === false",
+            "Object.hasOwn(journal.beforeLocal, SETTINGS_RESTORE_JOURNAL_KEY)",
+            "if ( journal.phase === 'committingForeground' ) {",
+            "validatedSettingsRestoreRulesets(journal.targetEnabledRulesets);",
+            "return journal;",
+        ),
+    )
+    journal_reader = reviewed_section(
+        "js/background.js",
+        "async function readSettingsRestoreJournal() {",
+        "function withSettingsRestoreLock(operation) {",
+        "settings journal reader",
+    )
+    require_ordered(
+        "settings journal reader",
+        journal_reader,
+        (
+            "const journal = await localRead(SETTINGS_RESTORE_JOURNAL_KEY);",
+            "if ( journal === undefined ) { return; }",
+            "return validateSettingsRestoreJournal(journal);",
+        ),
+    )
+
+    background_lock = reviewed_section(
+        "js/background.js",
+        "function withSettingsRestoreLock(operation) {",
+        "async function foregroundReconciliationReadiness() {",
+        "background settings lock",
+    )
+    require_ordered(
+        "background settings lock",
+        background_lock,
+        (
+            "const lockManager = globalThis.navigator?.locks;",
+            "return lockManager.request(",
+            "SETTINGS_RESTORE_LOCK_NAME,",
+            "{ mode: 'exclusive' },",
+            "operation",
+            "if ( webextFlavor === 'safari' ) {",
+            "throw new Error('Settings restore lock is unavailable');",
+            "const current = settingsRestoreLockTail",
+        ),
+    )
+
+    mutation_queue = reviewed_section(
+        "js/background.js",
+        "function queueBackgroundMutation(operation) {",
+        "async function waitForBackgroundMutations() {",
+        "background mutation queue",
+    )
+    require_ordered(
+        "background mutation queue",
+        mutation_queue,
+        (
+            "const result = backgroundMutationTail",
+            ".catch(( ) => undefined)",
+            ".then(operation);",
+            "backgroundMutationTail = result.then(",
+            "( ) => undefined,",
+            "reason => {",
+            "reason instanceof SettingsRestoreConflictError === false",
+            "backgroundMutationError = reason;",
+            "return result;",
+        ),
+    )
+    if "backgroundMutationError = undefined;" in mutation_queue:
+        fail(
+            f"{archive_name} clears a retained background mutation error "
+            "after an unrelated queued success"
+        )
+
+    commit = reviewed_section(
+        "js/background.js",
+        "async function commitSettingsRestore(id, requestedRulesets) {",
+        "async function rollbackSettingsRestore(id) {",
+        "settings commit",
+    )
+    require_ordered(
+        "settings commit",
+        commit,
+        (
+            "const journal = await readSettingsRestoreJournal();",
+            "if ( journal?.id !== id ) {",
+            "if ( journal.phase === 'applying' ) {",
+            "targetEnabledRulesets = validatedSettingsRestoreRulesets(",
+            "requestedRulesets",
+            "await localWrite(SETTINGS_RESTORE_JOURNAL_KEY, {",
+            "phase: 'committingForeground',",
+            "targetEnabledRulesets,",
+            "} else if ( journal.phase === 'committingForeground' ) {",
+            "journal.targetEnabledRulesets",
+            "if ( requestedRulesets !== undefined ) {",
+            "requestedRulesets",
+            "Settings restore ruleset target does not match",
+            "await loadRulesetConfig();",
+            "rulesetConfig.enabledRulesets = targetEnabledRulesets;",
+            "await saveRulesetConfig();",
+            "const result = await reconcileSettingsState({",
+            "return { ...result, settingsRestoreId: id };",
+            "await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);",
+            "activeSettingsRestoreId = undefined;",
+            "await narrowCommittedCustomFilterRegistrations();",
+            "return { committed: true };",
+        ),
+    )
+
+    rollback = reviewed_section(
+        "js/background.js",
+        "async function rollbackSettingsRestore(id) {",
+        "async function reconcileDashboardState() {",
+        "settings rollback",
+    )
+    require_ordered(
+        "settings rollback",
+        rollback,
+        (
+            "const journal = await readSettingsRestoreJournal();",
+            "journal.id !== id",
+            "await localWrite(SETTINGS_RESTORE_JOURNAL_KEY, {",
+            "phase: 'rollingBack',",
+            "await localReplace(",
+            "journal.beforeLocal,",
+            "SETTINGS_RESTORE_PRESERVED_KEYS,",
+            "SETTINGS_RESTORE_PRESERVED_PREFIXES",
+            "const result = await reconcileSettingsState({ resetSession: true });",
+            "return { ...result, settingsRestoreId: id };",
+            "await restoreRolledBackSettingsSideEffects();",
+            "await localRemove(SETTINGS_RESTORE_JOURNAL_KEY);",
+            "activeSettingsRestoreId = undefined;",
+            "await narrowCommittedCustomFilterRegistrations();",
+            "return { rolledBack: true };",
+        ),
+    )
+    if (
+        "const SETTINGS_RESTORE_PRESERVED_PREFIXES = [ 'admin.', 'admin_' ];"
+        not in background
+    ):
+        fail(f"{archive_name} does not preserve live administrator policy on rollback")
+
+    initialization = reviewed_section(
+        "js/background.js",
+        "let initializationRecovery;",
+        "setAdminSettingsMutationRunner(async operation => {",
+        "initialization recovery",
+    )
+    require_ordered(
+        "initialization recovery",
+        initialization,
+        (
+            "if ( initializationRecovery === undefined ) {",
+            "initializationRecovery = recoverProtectionState();",
+            "const recovery = initializationRecovery;",
+            "await recovery;",
+            "if ( initializationRecovery === recovery ) {",
+            "initializationRecovery = undefined;",
+            "throw reason;",
+            "return false;",
+        ),
+    )
+
+    admin_runner = reviewed_section(
+        "js/background.js",
+        "setAdminSettingsMutationRunner(async operation => {",
+        "const backgroundMutationMessages = new Set([",
+        "managed settings mutation runner",
+    )
+    require_ordered(
+        "managed settings mutation runner",
+        admin_runner,
+        (
+            "await ensureFullyInitialized();",
+            "return withSettingsRestoreLock(( ) =>",
+            "queueBackgroundMutation(async ( ) => {",
+            "const journal = await readSettingsRestoreJournal();",
+            "journal instanceof Object ||",
+            "foregroundRulesetReconciliationRequired",
+            "return false;",
+            "const result = await operation();",
+            "result?.foregroundReconciliationRequired",
+            "foregroundRulesetReconciliationRequired = true;",
+            "return true;",
+        ),
+    )
+
+    owner = reviewed_section(
+        "js/background.js",
+        "async function assertSettingsRestoreMutationOwner(request) {",
+        "function dispatchMessage(request, sender) {",
+        "settings owner protocol",
+    )
+    require_ordered(
+        "settings owner protocol",
+        owner,
+        (
+            "const isTerminalRequest = request.what === 'commitSettingsRestore' ||",
+            "? request.id",
+            ": request.settingsRestoreId;",
+            "request.settingsRestoreId !== request.id ||",
+            "request.id !== journal.id",
+            "const liveOwner = activeSettingsRestoreId === journal.id;",
+            "const ownedRequest = ownerId === journal.id;",
+            "const isForegroundMessage =",
+            "request.what === 'floorpAuthorizeForegroundReconciliation' ||",
+            "request.what === 'floorpFinalizeForegroundReconciliation';",
+            "journal.phase === 'applying' &&",
+            "liveOwner &&",
+            "ownedRequest &&",
+            "isOwnedMutation",
+            "isForegroundMessage === false",
+            "journal.phase === 'committingForeground' && ownedRequest",
+            "isForegroundMessage ||",
+            "liveOwner && isTerminalRequest",
+            "journal.phase === 'rollingBack'",
+            "activeSettingsRestoreId === undefined &&",
+            "ownerId === undefined &&",
+            "throw new SettingsRestoreConflictError('Settings restore is in progress');",
+        ),
+    )
+
+    dispatch = reviewed_section(
+        "js/background.js",
+        "function dispatchMessage(request, sender) {",
+        "runtime.onMessage.addListener((request, sender, callback) => {",
+        "settings dispatch",
+    )
+    require_ordered(
+        "settings dispatch",
+        dispatch,
+        (
+            "if ( request.what === 'beginSettingsRestore' ) {",
+            "return ensureFullyInitialized().then(( ) =>",
+            "withSettingsRestoreLock(( ) =>",
+            "queueBackgroundMutation(async ( ) => {",
+            "if ( backgroundMutationMessages.has(request.what) ) {",
+            "const enqueue = ( ) => queueBackgroundMutation(async ( ) => {",
+            "request.what === 'floorpAuthorizeForegroundReconciliation' ||",
+            "request.what === 'floorpFinalizeForegroundReconciliation'",
+            "return enqueue();",
+            "return ensureFullyInitialized().then(( ) =>",
+            "withSettingsRestoreLock(enqueue)",
+        ),
+    )
+
+    authorization = reviewed_section(
+        "js/background.js",
+        "    if ( request.what === 'floorpAuthorizeForegroundReconciliation' ) {",
+        "    if ( request.what === 'floorpFinalizeForegroundReconciliation' ) {",
+        "foreground reconciliation authorization",
+    )
+    require_ordered(
+        "foreground reconciliation authorization",
+        authorization,
+        (
+            "if ( sender?.id !== runtime.id ) { return false; }",
+            "if ( sender?.origin?.toLowerCase() !== UBOL_ORIGIN ) { return false; }",
+            "foregroundRulesetReconciliationRequired = true;",
+            "return { authorized: true };",
+        ),
+    )
+
+    reconciliation = reviewed_section(
+        "js/background.js",
+        "async function reconcileSettingsState({",
+        "async function validateSettingsRestore(targetConfig) {",
+        "full settings reconciliation",
+    )
+    dashboard_reconciliation = reviewed_section(
+        "js/background.js",
+        "async function reconcileDashboardState() {",
+        "let protectionRecoveryTail = Promise.resolve();",
+        "dashboard settings reconciliation",
+    )
+    recovery = reviewed_section(
+        "js/background.js",
+        "function recoverProtectionState() {",
+        "async function mutateFilteringModeAndScripts(mutation) {",
+        "protection recovery",
+    )
+    finalization = reviewed_section(
+        "js/background.js",
+        "    if ( request.what === 'floorpFinalizeForegroundReconciliation' ) {",
+        "    switch ( request.what ) {",
+        "foreground reconciliation finalizer",
+    )
+    retained_error_clear_sections = (
+        reconciliation,
+        dashboard_reconciliation,
+        recovery,
+        finalization,
+    )
+    if (
+        background.count("backgroundMutationError = undefined;") != 4 or
+        any(
+            section.count("backgroundMutationError = undefined;") != 1
+            for section in retained_error_clear_sections
+        )
+    ):
+        fail(
+            f"{archive_name} changes the reviewed full-reconciliation-only "
+            "background mutation error reset surface"
+        )
+
+    permission = reviewed_section(
+        "js/background.js",
+        "async function onPermissionsChanged(op, permissions) {",
+        "/" + "*" * 78 + "/\n\nasync function applyRulesets",
+        "permission mutation",
+    )
+    require_ordered(
+        "permission mutation",
+        permission,
+        (
+            "const pendingJournal = await readSettingsRestoreJournal();",
+            "await ensureFullyInitialized();",
+            "return withSettingsRestoreLock(( ) =>",
+            "queueBackgroundMutation(async ( ) => {",
+            "const journal = await readSettingsRestoreJournal();",
+        ),
+    )
+    for label, marker in (
+        ("command", "browser.commands.onCommand.addListener((...args) => {"),
+        ("alarm", "browser.alarms.onAlarm.addListener(alarm => {"),
+    ):
+        listener = reviewed_section(
+            "js/background.js",
+            marker,
+            "\n});",
+            f"{label} mutation",
+        )
+        require_ordered(
+            f"{label} mutation",
+            listener,
+            (
+                "ensureFullyInitialized().then(( ) =>",
+                "withSettingsRestoreLock(( ) =>",
+                "queueBackgroundMutation(async ( ) => {",
+                "SETTINGS_RESTORE_JOURNAL_KEY",
+            ),
+        )
+
+    admin = sources["js/admin.js"]
+    admin_load = reviewed_section(
+        "js/admin.js",
+        "export async function loadAdminConfig(apply = false) {",
+        "async function applyAdminConfig(config, apply = false) {",
+        "managed settings load",
+    )
+    for key in ("popupBlockMode", "showBlockedCount", "strictBlockMode"):
+        if f"adminReadEx('{key}', true)" not in admin_load:
+            fail(f"{archive_name} does not freshly load managed {key}")
+    if (
+        "await applyAdminConfig(\n"
+        "        { popupBlockMode, showBlockedCount, strictBlockMode },\n"
+        "        apply\n"
+        "    );"
+        not in admin_load
+    ):
+        fail(f"{archive_name} does not await managed config persistence")
+    if (
+        "await loadAdminConfig(true);" not in background or
+        "await loadAdminConfig();" not in background
+    ):
+        fail(
+            f"{archive_name} does not apply managed side effects during "
+            "protection reconciliation"
+        )
+
+    admin_apply = reviewed_section(
+        "js/admin.js",
+        "async function applyAdminConfig(config, apply = false) {",
+        "let runAdminSettingsMutation = async operation => {",
+        "managed settings apply",
+    )
+    require_ordered(
+        "managed settings apply",
+        admin_apply,
+        (
+            "if ( apply ) { toApply.push(key); }",
+            "if ( val === rulesetConfig[key] ) { continue; }",
+            "modified = true;",
+            "if ( modified ) { await saveRulesetConfig(); }",
+            "if ( apply !== true ) { return; }",
+            "await setPopupBlockMode(popupBlockMode, true);",
+            "await dnr.setExtensionActionOptions({",
+            "const result = await setStrictBlockMode(strictBlockMode, true);",
+            "if ( result?.error ) { throw new Error(result.error); }",
+        ),
+    )
+
+    admin_queue = reviewed_section(
+        "js/admin.js",
+        "const adminSettings = {",
+        "export function resumeAdminSettingsProcessing() {",
+        "managed settings queue",
+    )
+    require_ordered(
+        "managed settings queue",
+        admin_queue,
+        (
+            "this.keys.set(key, { token: {}, value });",
+            "this.deferred = false;",
+            "const snapshot = new Map(this.keys);",
+            "const completed = await runAdminSettingsMutation(async ( ) => {",
+            "if ( completed !== true ) {",
+            "this.deferred = true;",
+            "if ( this.keys.get(key) === entry ) { this.keys.delete(key); }",
+        ),
+    )
+    if "this.keys.clear()" in admin_queue:
+        fail(f"{archive_name} clears managed changes which arrived during apply")
+    if (
+        "export function setAdminSettingsMutationRunner(runner)" not in admin or
+        "export function resumeAdminSettingsProcessing()" not in admin or
+        "resumeAdminSettingsProcessing();" not in background
+    ):
+        fail(f"{archive_name} does not connect managed settings to recovery")
+
+    backup = sources["js/backup-restore.js"]
+    apply_restore = reviewed_section(
+        "js/backup-restore.js",
+        "async function applyFromObject(targetConfig, settingsRestoreId) {",
+        "export async function restoreFromObject(targetConfig) {",
+        "settings restore apply",
+    )
+    owned_messages = (
+        "setAutoReload",
+        "setShowBlockedCount",
+        "setDeveloperMode",
+        "setStrictBlockMode",
+        "setPopupBlockMode",
+        "replaceSettingsRestoreImportedLists",
+        "setFilteringModeDetails",
+        "replaceAllCustomFilters",
+        "setSandboxFilters",
+        "replaceUserDnrRules",
+    )
+    for what in owned_messages:
+        pattern = re.compile(
+            rf"await sendMessage\(\{{\s*what: '{re.escape(what)}',\s*"
+            r"settingsRestoreId,"
+        )
+        if len(pattern.findall(apply_restore)) != 1:
+            fail(
+                f"{archive_name} does not bind restored {what} to its "
+                "settings owner"
+            )
+    if apply_restore.find("what: 'setFilteringModeDetails'") > apply_restore.find(
+        "what: 'replaceAllCustomFilters'"
+    ):
+        fail(f"{archive_name} restores custom filters before their filtering mode")
+    require_ordered(
+        "settings restore apply",
+        apply_restore,
+        (
+            "what: 'replaceUserDnrRules',",
+            "settingsRestoreId,",
+            "return Array.from(enabledRulesets);",
+        ),
+    )
+
+    restore = reviewed_section(
+        "js/backup-restore.js",
+        "export async function restoreFromObject(targetConfig) {",
+        "\n}\n",
+        "settings restore coordinator",
+    )
+    require_ordered(
+        "settings restore coordinator",
+        restore,
+        (
+            "what: 'validateSettingsRestore',",
+            "what: 'beginSettingsRestore'",
+            "settingsRestoreId: transaction.settingsRestoreId,",
+            "transaction = await sendMessage({ what: 'beginSettingsRestore' });",
+            "const enabledRulesets = await applyFromObject(",
+            "transaction.id",
+            "what: 'commitSettingsRestore',",
+            "id: transaction.id,",
+            "settingsRestoreId: transaction.id,",
+            "enabledRulesets,",
+            "settingsRestoreId: commit.settingsRestoreId,",
+            "what: 'rollbackSettingsRestore',",
+            "id: transaction.id,",
+            "settingsRestoreId: transaction.id,",
+            "settingsRestoreId: rollback.settingsRestoreId,",
+        ),
+    )
+    if backup.count("settingsRestoreId") != 21:
+        fail(f"{archive_name} changes the reviewed settings owner propagation surface")
+
+    foreground = sources["js/floorp-reconcile.js"]
+    if foreground.count(
+        "const settingsRestoreLockName = 'floorp.ubol.settings-restore.v1';"
+    ) != 1:
+        fail(f"{archive_name} changes the reviewed foreground settings lock name")
+    foreground_lock = reviewed_section(
+        "js/floorp-reconcile.js",
+        "function withSettingsRestoreLock(operation) {",
+        "async function reconcileProtectionNow(options = {}) {",
+        "foreground settings lock",
+    )
+    require_ordered(
+        "foreground settings lock",
+        foreground_lock,
+        (
+            "const lockManager = globalThis.navigator?.locks;",
+            "runtime.getURL('').startsWith('safari-web-extension:')",
+            "throw new Error('Settings restore lock is unavailable');",
+            "return lockManager.request(",
+            "settingsRestoreLockName,",
+            "{ mode: 'exclusive' },",
+        ),
+    )
+    foreground_reconcile = reviewed_section(
+        "js/floorp-reconcile.js",
+        "async function reconcileProtectionNow(options = {}) {",
+        "export function reconcileProtection(options = {}) {",
+        "foreground settings reconciliation",
+    )
+    require_ordered(
+        "foreground settings reconciliation",
+        foreground_reconcile,
+        (
+            "what: 'floorpAuthorizeForegroundReconciliation',",
+            "settingsRestoreId: options.settingsRestoreId,",
+            "await loadRulesetConfig();",
+            "if ( Array.isArray(options.enabledRulesets) ) {",
+            "await saveRulesetConfig();",
+            "const result = await enableRulesets(",
+            "if ( await enabledRulesetsMatch(rulesetConfig.enabledRulesets) === false )",
+            "what: 'floorpFinalizeForegroundReconciliation',",
+            "settingsRestoreId: options.settingsRestoreId,",
+        ),
+    )
+
+    ext_compat = sources["js/ext-compat.js"]
+    realm_refresh = reviewed_section(
+        "js/ext-compat.js",
+        "async function forceEnableRulesets(currentRealm) {",
+        "let realmRulesetUpdates = Promise.resolve();",
+        "realm refresh marker",
+    )
+    require_ordered(
+        "realm refresh marker",
+        realm_refresh,
+        (
+            "return runSafariDNROperation(async ( ) => {",
+            "webext.storage.session.get('safari.seenRealms')",
+            "seenRealms = marker?.['safari.seenRealms'] ?? 0;",
+            "await updateNativeEnabledRulesets({",
+            "const confirmedIds = await readNativeEnabledRulesetsNow();",
+            "const nextSeenRealms = seenRealms | currentRealm;",
+            "webext.storage.session.set({",
+            "'safari.seenRealms': nextSeenRealms,",
+            "seenRealms = nextSeenRealms;",
+        ),
+    )
+    static_update = reviewed_section(
+        "js/ext-compat.js",
+        "async function updateEnabledRulesetsAndResetRealms(options) {",
+        "const prepareUpdateRules = optionsBefore => {",
+        "static ruleset realm marker",
+    )
+    require_ordered(
+        "static ruleset realm marker",
+        static_update,
+        (
+            "return runSafariDNROperation(async ( ) => {",
+            "webext.storage.session.get('safari.seenRealms')",
+            "seenRealms = marker?.['safari.seenRealms'] ?? 0;",
+            "const rulesetSnapshot = await readNativeEnabledRulesetsNow();",
+            "const seenRealmsSnapshot = seenRealms;",
+            "webext.storage.session.remove('safari.seenRealms')",
+            "await updateNativeEnabledRulesets(options);",
+            "const confirmedRulesets = await readNativeEnabledRulesetsNow();",
+            "await restoreEnabledRulesets(rulesetSnapshot);",
+            "seenRealms = seenRealmsSnapshot;",
+            "seenRealmsSnapshot === 0",
+            "'safari.seenRealms': seenRealmsSnapshot,",
+            "Static ruleset update and rollback both failed",
+        ),
+    )
+
+
+def verify_ubol_procedural_reset_guards(
+    package: zipfile.ZipFile,
+    archive_name: str,
+) -> None:
+    source = package.read("js/scripting/css-procedural-api.js").decode("utf-8")
+
+    def unique_region(start: str, end: str, label: str) -> str:
+        if source.count(start) != 1 or source.count(end) != 1:
+            fail(
+                f"{archive_name} does not expose one reviewed {label} "
+                "procedural reset region"
+            )
+        start_index = source.index(start)
+        end_index = source.index(end, start_index)
+        if end_index <= start_index:
+            fail(f"{archive_name} orders the reviewed {label} reset incorrectly")
+        return source[start_index:end_index]
+
+    inner_reset = unique_region(
+        "class ProceduralFilterer {",
+        "\n    addSelectors(selectors) {",
+        "style-token",
+    )
+    outer_reset = unique_region(
+        "self.ProceduralFiltererAPI = class {",
+        "\n    addDeclaratives(selectors) {",
+        "stylesheet",
+    )
+    guarded_removal = (
+        "            if ( removeCSS ) {\n"
+        "                promises.push(\n"
+        "                    chrome.runtime.sendMessage({ what: 'removeCSS', css })"
+        ".catch(( ) => { })\n"
+        "                );\n"
+        "            }"
+    )
+    for label, reset in (
+        ("style-token", inner_reset),
+        ("stylesheet", outer_reset),
+    ):
+        if (
+            reset.count("async reset(options = {})") != 1 or
+            reset.count("const removeCSS = options.removeCSS !== false;") != 1 or
+            reset.count(guarded_removal) != 1
+        ):
+            fail(
+                f"{archive_name} omits the scoped {label} procedural CSS reset guard"
+            )
+    if outer_reset.count("this.proceduralFilterer.reset(options)") != 1:
+        fail(
+            f"{archive_name} does not propagate the procedural CSS reset policy "
+            "to its style-token inventory"
+        )
+
+
 def verify_archive(
     entry: dict[str, object],
     bundle_root: Path,
@@ -1438,7 +2469,26 @@ def verify_archive(
                             f"{archive.name} orders compatibility code incorrectly in "
                             f"{member}: {ordered_values}"
                         )
+            for member, ordered_groups in entry.get(
+                "archive_text_unique_order_requirement_groups", {}
+            ).items():
+                source = package.read(str(member)).decode("utf-8")
+                for ordered_values in ordered_groups:
+                    positions = [source.find(value) for value in ordered_values]
+                    if (
+                        any(source.count(value) != 1 for value in ordered_values) or
+                        positions != sorted(positions)
+                    ):
+                        fail(
+                            f"{archive.name} orders compatibility code incorrectly in "
+                            f"{member}: {ordered_values}"
+                        )
             if entry["display_name"] == "uBlock Origin Lite":
+                verify_ubol_custom_filter_origin_fallback_path(
+                    package, archive.name
+                )
+                verify_ubol_settings_restore_guards(package, archive.name)
+                verify_ubol_procedural_reset_guards(package, archive.name)
                 verify_ubol_safari_dnr_keeper(package, names, archive.name)
             bad_member = package.testzip()
             if bad_member is not None:

@@ -22,7 +22,12 @@ GitHub Actions never receives signing certificates or provisioning profiles for 
 
 On August 1, 2026, Floorp `0.1.0 (2)` was signed by Team `DV2U35YBHT`, uploaded to App Store Connect app `6796708699`, processed successfully, assigned to the `Floorp Internal` group, and installed by an internal tester. App Store Connect read `ITSAppUsesNonExemptEncryption=false` as “Uses non-exempt encryption: No.”
 
-The upload reported a non-blocking missing dSYM warning for `Glean.framework`. Resolve that warning before relying on production crash symbolication.
+The upload reported a non-blocking missing dSYM warning for `Glean.framework`.
+`FloorpRelease` archives now generate and retain a UUID-matched Glean dSYM
+companion after embedding the framework, and fail the archive if the UUID set
+does not match. Confirm that the warning is absent on the next signed upload.
+The upstream Glean 69 binary contains no source-level DWARF, so this companion
+cannot restore source/line symbolication that upstream did not publish.
 
 ## CI contract
 
@@ -38,7 +43,7 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 8. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
 9. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
 
-`FloorpCI.xctestplan` has 16 target entries: 14 currently reliable broad suites plus explicit allowlists from `AccountTests` and `ClientTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
+`FloorpCI.xctestplan` has 17 target entries: 14 currently reliable broad suites plus explicit allowlists from `AccountTests`, `ClientTests`, and `MozillaRustComponentsTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
 SwiftPM checkouts and Derived Data use job-local directories. This avoids shared-cache corruption and keeps untrusted pull-request code out of persistent caches.
 
@@ -146,7 +151,7 @@ The Floorp release entitlement continues to omit `com.apple.developer.browser.ap
 
 ### Versioning
 
-The last validated Internal TestFlight baseline is `0.1.0 (2)`, and the checked-in Web panel sidebar candidate is `0.1.0 (3)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
+The last validated Internal TestFlight baseline is `0.1.0 (2)`, and the checked-in native WebExtensions release candidate is `0.3.0 (4)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
 
 ### Floorp-owned services and App Store ID
 
@@ -185,24 +190,47 @@ Complete the remaining unchecked steps before broad public distribution:
 - [x] Create the `Floorp Internal` TestFlight group and add the initial tester.
 - [ ] Assign an owner and safe client-side value for each external service setting used by the release configuration.
 - [x] Produce a signed `Floorp` archive, upload it, and install the processed build through Internal TestFlight.
-- [ ] Add `APPLE_DEVELOPER_API_KEY_JSON` to the `floorp-testflight` GitHub Environment for the Actions-to-Xcode-Cloud trigger; keep signing certificates and profiles out of GitHub.
+- [x] Add `APPLE_DEVELOPER_API_KEY_JSON` to the `floorp-testflight` GitHub Environment for the Actions-to-Xcode-Cloud trigger; keep signing certificates and profiles out of GitHub.
 
 Do not commit certificates, provisioning profiles, `.p8` API keys, `.p12` files, or passwords.
 
 ## Xcode Cloud rollout
 
-The repository includes `firefox-ios/ci_scripts/ci_post_clone.sh`. Xcode Cloud discovers it next to `Client.xcodeproj`; it downloads the `.nvmrc` Node.js release with a pinned checksum and runs the root bootstrap in the clean clone. `.nvmrc` and `.xcode-version` are declarations for developers and GitHub Actions, not settings that Xcode Cloud applies automatically.
+The repository includes `firefox-ios/ci_scripts/ci_post_clone.sh` and
+`ci_pre_xcodebuild.sh`. Xcode Cloud discovers them next to `Client.xcodeproj`;
+the post-clone script downloads the `.nvmrc` Node.js release with a pinned
+checksum and runs the root bootstrap in the clean clone. Before a `Floorp`
+archive only, the pre-build script requires the exact protected catalog tag in
+both `CI_TAG` and canonical `CI_GIT_REF`, requires `CI_COMMIT` to match the
+checked-out Git `HEAD`, and atomically injects that SHA into the single empty
+`FLOORP_SOURCE_SHA` release setting. Other schemes and non-archive actions do
+not mutate the setting. `.nvmrc` and `.xcode-version` are declarations for
+developers and GitHub Actions, not settings that Xcode Cloud applies
+automatically.
+
+Immediately after verifying source identity, the GitHub Actions bridge runs
+`validate-floorp-privacy.py` against the checked-in endpoint matrix and App
+Store Connect privacy/export declarations. This happens before a protected
+GitHub token or App Store Connect credential is exposed to a
+repository-controlled release command, and before any external release
+mutation. The initial checkout necessarily authenticates the exact source
+fetch, but uses `persist-credentials: false`. This is a declaration-consistency
+gate, not runtime network evidence: the deployment does not fabricate or pass
+a `--trace` or `--static-endpoints` artifact. Those optional checks run only
+when real evidence is explicitly provided, and an explicitly named but missing
+file is rejected as malformed. IPA identity and signature verification belong
+to the release-evidence gate; the privacy validator has no `--ipa` input.
 
 The shared `Floorp` scheme now archives with `FloorpRelease` in Xcode Cloud. The existing workflow is manually started in App Store Connect, and the repository also provides a GitHub Actions bridge for the same explicit operation:
 
 1. In Signing & Capabilities, explicitly confirm the main `app.floorp.Floorp` bundle ID once before initial setup because the project derives it from an `.xcconfig` file. Register extension IDs only when those targets return to the release.
 2. Connect `Floorp-Projects/Floorp-iOS` to Xcode Cloud from Xcode's Report navigator. A GitHub organization owner must authorize the first connection.
-3. Keep `Floorp TestFlight Manual` manually started in Xcode Cloud, but start public-release candidates only through the GitHub Actions bridge. A direct App Store Connect start does not produce the source-bound release receipt and is not eligible for submission. Release builds use a protected immutable `floorp-catalog-<40-character merged SHA>` tag that points at the exact reviewed `main` commit.
+3. Keep `Floorp TestFlight Manual` manually started in Xcode Cloud, but start public-release candidates only through the GitHub Actions bridge. A direct App Store Connect start does not produce the source-bound release receipt and is not eligible for submission. Release builds use a protected immutable `floorp-catalog-<40-character merged SHA>` lightweight tag whose ref points directly at the exact reviewed `main` commit; annotated tags are rejected by the source-identity gate. Never delete or retarget a candidate tag after creating it, including when its build fails. Xcode Cloud supplies the tag/ref/commit values embedded by the pre-build script; the bridge and retained receipt remain responsible for resolving the live App Store Connect tag reference and proving that it points to that commit. A local `refs/tags/*` ref is not assumed in Xcode Cloud's detached checkout.
 4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml`. It verifies the immutable tag and exact-source CI acceptance, validates the workflow repository and product against App Store Connect app `6796708699` / bundle `app.floorp.Floorp`, snapshots the current maximum build number, and starts the tagged run through `POST /v1/ciBuildRuns`.
 5. The bridge always waits for `COMPLETE` / `SUCCEEDED`, rechecks the exact source commit and workflow, and requires exactly one nonpaginated run-to-build linkage. The linked build must be a new, larger build number for Floorp `0.3.0` on iOS, `VALID`, `APP_STORE_ELIGIBLE`, unexpired, non-exempt-encryption false, and minimum OS `18.4`.
-6. Retain the emitted `floorp-xcode-cloud-build-receipt.json`. The workflow also materializes a notes-only App Review payload from that receipt; it rejects placeholders, a missing immutable public source URL or GPL disclosure, and content over 4,000 bytes.
+6. The bridge downloads the unique `ARCHIVE` and `ARCHIVE_EXPORT` resources from the same successful archive action through the authenticated App Store Connect API. It verifies the recorded resource IDs, types, sizes, and SHA-256 values, safely materializes the `.xcarchive` and `.ipa`, and emits `floorp-xcode-cloud-artifact-manifest.json`. Retain that manifest together with `floorp-xcode-cloud-build-receipt.json`. The workflow also materializes a notes-only App Review payload from the receipt; it rejects placeholders, a missing immutable public source URL or GPL disclosure, and content over 4,000 bytes.
 7. Before any external-beta write, `submit-floorp-external-beta.sh` re-reads the run, run-to-build linkage, build, and group. It requires the receipt and all expected source/build values, and requires the selected group to be external and belong to the same app. Contact fields must be complete; demo credentials are required only when App Store Connect reports `demoAccountRequired=true`. The client never creates groups or writes contact/demo credentials.
-8. Let Xcode Cloud manage signing; verify the Client-only app is signed by the Floorp team and inspect its production entitlements. Confirm `firefox-ios/TestFlight/WhatToTest.en-US.txt`, then retain each shipped archive and dSYMs outside Xcode Cloud; Xcode Cloud artifacts are available for only 30 days.
+8. Let Xcode Cloud manage signing; verify the Client-only app is signed by the Floorp team and inspect its production entitlements. Confirm `firefox-ios/TestFlight/WhatToTest.en-US.txt`. The bridge retains the raw downloads, materialized archive/IPA, manifest, evidence, and dSYMs in one binary-evidence artifact and retains the deployment receipt in a separate receipt artifact; both use 90-day retention. Xcode Cloud itself retains artifacts for only 30 days.
 
 ## Later hardening
 
@@ -226,12 +254,102 @@ run/workflow IDs, App Store Connect app/build IDs, marketing version, platform,
 and build number in the retained receipt.
 
 `scripts/release/collect-floorp-release-evidence.sh` binds each candidate to
-its source SHA, archived marketing version/build, signing identity,
-entitlements, archive and IPA digests, and the dSYM UUID inventory.
+its source SHA (also embedded as `MozFloorpSourceSHA` in the archive and IPA),
+archived marketing version/build, signing identity,
+entitlements, a deterministic full-tree archive SHA-256 (regular-file bytes,
+relative paths, entry types, and symbolic-link targets), the IPA digest, and
+the dSYM UUID inventory. IPA extraction is mandatory for a local export;
+archive-only evidence deliberately leaves every IPA field empty.
 `scripts/release/validate-floorp-release-evidence.py` re-verifies the document
 against `scripts/release/floorp-release-evidence.schema.json` and rejects mixed
 build IDs, a missing default-browser entitlement, forbidden entitlements, missing
-dSYMs, and digest mismatches.
+dSYMs, fake dSYM paths, and digest mismatches. It re-runs `dwarfdump` over both
+the retained dSYMs and every shipped app, framework, and app-extension binary.
+It also re-reads the real archive and IPA Info.plists, verifies the actual code
+signatures against the Apple trust anchor and Floorp team, and requires the recorded entitlements to exactly match the signed
+artifact selected by `--artifact-kind`. For `archive-only`, that artifact is
+the signed app in the archive; for `local-export`, it is the single direct
+`Payload/*.app` in the IPA. An unsigned archive is not valid release evidence,
+even during pre-upload validation. A local export must use an Apple Distribution
+leaf certificate and an Apple-verified embedded App Store provisioning profile
+whose team, application identifier, and authorized leaf certificate match the
+signature. For a local export, every app, framework,
+and app-extension executable must have the same bundle-relative path and
+Mach-O UUID set as the archive, and those IPA UUIDs must also be covered by the
+retained dSYMs.
+
+Validation is phase- and artifact-specific. A pre-upload check accepts either
+`--artifact-kind archive-only` or `--artifact-kind local-export`; the latter
+also requires `--expected-export-status ready-for-upload`. A publication check
+requires `--phase publication` with expected export state
+`uploaded-and-processed`, `--artifact-kind local-export`, the expected GitHub
+Actions run URL and App Store
+Connect build ID, plus the retained Xcode Cloud receipt, authenticated artifact
+manifest, and their externally
+known run/workflow/app/platform/minimum-OS identity. The receipt is passed back
+through `floorp_xcode_cloud_build_receipt.validate_receipt` and cross-checked
+with the release evidence. The artifact manifest must name the same run and
+successful archive action, two distinct `ARCHIVE` / `ARCHIVE_EXPORT` resource
+IDs, retained download bytes, and the exact materialized archive tree and IPA
+digests recorded by the evidence. Source SHA, marketing version, build number, bundle
+ID, CI/Xcode run IDs, App Store Connect IDs, and export state must come from the
+trusted release invocation or live API lookup; never copy them out of the
+evidence or receipt being checked. The old evidence/schema-only CLI invocation
+is intentionally rejected with exit status 2. Publication with
+`archive-only` is rejected. The supported Xcode Cloud publication path is the
+bridge's authenticated download of the exact run's `ARCHIVE` and
+`ARCHIVE_EXPORT`, followed by safe materialization and local-export validation;
+a receipt-only direct submission remains ineligible.
+
+The evidence is also path-bound within the same publication job: archive and IPA paths are canonical absolute
+paths, and the collector refuses to create evidence inside the archive,
+overwrite the IPA, or overwrite an existing evidence document. Retain the
+raw authenticated downloads, archive, IPA (when present), dSYMs, artifact
+manifest, and evidence JSON as one binary-evidence artifact, and retain the
+deployment receipt artifact beside it under the same immutable retention
+policy. Absolute paths bind the same publication job and are not portable
+across machines; later audits can re-materialize a fresh bundle from the
+retained raw downloads and recompute the digests. The tree digest detects a
+changed artifact; it does not make a rewritten evidence JSON trustworthy on
+its own.
+
+An archive-only pre-upload gate therefore has this minimum shape:
+
+```sh
+scripts/release/validate-floorp-release-evidence.py \
+  --evidence "$EVIDENCE" \
+  --schema scripts/release/floorp-release-evidence.schema.json \
+  --phase pre-upload \
+  --artifact-kind archive-only \
+  --expected-source-sha "$SOURCE_SHA" \
+  --expected-marketing-version "$MARKETING_VERSION" \
+  --expected-build-number "$BUILD_NUMBER" \
+  --expected-bundle-id app.floorp.Floorp
+```
+
+At publication, add the externally obtained identity and receipt:
+
+```sh
+scripts/release/validate-floorp-release-evidence.py \
+  --evidence "$EVIDENCE" \
+  --schema scripts/release/floorp-release-evidence.schema.json \
+  --phase publication \
+  --artifact-kind local-export \
+  --expected-source-sha "$SOURCE_SHA" \
+  --expected-marketing-version "$MARKETING_VERSION" \
+  --expected-build-number "$BUILD_NUMBER" \
+  --expected-bundle-id app.floorp.Floorp \
+  --expected-ci-run-url "$CI_RUN_URL" \
+  --expected-export-status uploaded-and-processed \
+  --expected-app-store-connect-build-id "$ASC_BUILD_ID" \
+  --xcode-cloud-build-receipt "$XCODE_CLOUD_RECEIPT" \
+  --xcode-cloud-artifact-manifest "$XCODE_CLOUD_ARTIFACT_MANIFEST" \
+  --expected-xcode-cloud-run-id "$XCODE_CLOUD_RUN_ID" \
+  --expected-xcode-cloud-workflow-id "$XCODE_CLOUD_WORKFLOW_ID" \
+  --expected-app-id 6796708699 \
+  --expected-platform IOS \
+  --expected-min-os-version 18.4
+```
 
 `scripts/release/app-store-connect-api.py` is the only App Store Connect
 surface. Its read allowlist covers the required workflow, repository, and Git
@@ -256,6 +374,7 @@ Actions, uploads the signed archive.
 - [Triggering a workflow with `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
 - [GitHub-hosted macOS runner images](https://github.com/actions/runner-images)
 - [Writing Xcode Cloud custom build scripts](https://developer.apple.com/documentation/xcode/writing-custom-build-scripts)
+- [Xcode Cloud environment variable reference](https://developer.apple.com/documentation/xcode/environment-variable-reference)
 - [Making dependencies available to Xcode Cloud](https://developer.apple.com/documentation/xcode/making-dependencies-available-to-xcode-cloud)
 - [Configuring the first Xcode Cloud workflow](https://developer.apple.com/documentation/xcode/configuring-your-first-xcode-cloud-workflow)
 - [Including TestFlight notes](https://developer.apple.com/documentation/xcode/including-notes-for-testers-with-a-beta-release-of-your-app)

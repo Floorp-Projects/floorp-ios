@@ -21,7 +21,10 @@ class MockNavigationAction: WKNavigationAction {
         return urlRequest
     }
 
-    init(url: URL, type: WKNavigationType? = nil) {
+    init(
+        url: URL,
+        type: WKNavigationType? = nil
+    ) {
         self.type = type
         self.urlRequest = URLRequest(url: url)
     }

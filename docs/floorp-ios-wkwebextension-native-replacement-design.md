@@ -1,12 +1,12 @@
 # Floorp iOS `WKWebExtension` ネイティブ置換設計
 
-- Date: 2026-09-04
-- Status: Implemented / physical-device release validation pending
+- Date: 2026-09-08
+- Status: Implemented / simulator release acceptance passed / physical-device validation pending
 - Product floor: iOS / iPadOS 18.4 以降
 - Runtime: WebKit の公開 `WKWebExtension` API のみ
 - Legacy policy: 旧 Floorp WebExtension runtime、互換レイヤー、永続データ、切替フラグを最終成果物から全面削除
 
-## 0. 実装状況（2026-09-03）
+## 0. 実装状況（2026-09-08）
 
 ネイティブ host、adapter、installer、registry v2、transaction/rollback、権限 UI、
 action/options、通常・プライベート分離、extension URL surface history、旧 runtime の
@@ -42,7 +42,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e`、
+派生 SHA-256 は `4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -54,8 +54,36 @@ Dashboard の各 route は close handshake の pending 集合へ登録して Web
 待ち、失敗なら popup 内にエラーを残す。
 host は popup が明示的に close されるまで選択・presentation を保留し、close 後に一度だけ確定する。
 CSS 挿入履歴／hostname cache と custom cosmetic／procedural filter の状態・直列化処理は
-document ごとに更新し、Safari が isolated-world global を navigation 間で再利用しても
-cross-host／通常／プライベート tab の再注入を省略せず、前 document の CSS を持ち越さない。
+document ごとに更新する。Safari が navigation で前 document の runtime message を未完了のまま
+破棄しても新 document はそれを待たない。旧 procedural filterer は runtime 経由の CSS 削除を
+送らず同期的に破棄し、遅延した削除が新 document の同一 CSS を消す競合も避ける。generation
+guard で遅れて返った selector が現行の script state を変更・適用することも防ぐ。
+isolated-world global が navigation 間で再利用されても cross-host／通常／プライベート tab の
+再注入を省略せず、前 document の CSS を持ち越さない。
+`document_start` の `injectCustomFilters` は、nonpersistent background が cold wake した場合も
+`ensureFullyInitialized()` による DNR／登録 script の全体整合を待たず、直列化済みの永続
+custom-filter storage から応答する。background 経路は sender の非空 `documentId` と HTTP(S)
+URL の hostname を検証し、plain CSS 挿入と通常 web frame 向け procedural fallback を
+`{ tabId, documentIds: [documentId] }` へ限定する。procedural selector が直接または親 hostname から
+継承される custom-filter 登録では、`css-api.js` と `css-procedural-api.js` を `css-user.js` より前に
+同じ registered isolated-world script として読み込む。WebKit は `executeScript` の権限判定で
+`matchOriginAsFallback` を適用しないため、`about:blank`／`about:srcdoc` の selector 応答を動的注入の
+成功に依存させず、登録済み API で procedural filter を適用する。hostname を持たない
+`about:`／`data:`／`blob:`／srcdoc document は、WebKit が fallback match に使う直近 parent の
+origin だけを authority とし、参照可能な `parent.location` と `ancestorOrigins[0]` の双方がある場合は
+一致を必須にする。曖昧・親なし・非 HTTP(S) は fail closed とし、grandparent へは遡らない。
+設定復元 journal と対象 hostname 階層に必要な
+`site.*` key だけを1回の bounded local snapshot で読み、journal が `applying` または
+`committingForeground` または `rollingBack` なら `beforeLocal` の最終 commit 済み snapshot だけを使う。
+background 応答は schema／request ID を結び付け、必要な plain CSS 挿入の失敗を伝播する。
+hostname-less fallback は同じ bounded snapshot を登録済み API でローカル適用するため、background の
+CSS 挿入 acknowledgement を主張しない。
+これにより初回 document の cosmetic filter を全体初期化から分離しつつ、設定変更や DNR 操作の
+startup gate は維持する。WebKit の background wake と storage
+応答を含む end-to-end の5秒 SLA は保証せず、release acceptance では extension page を解放して
+35秒の idle／suspension opportunity を設けた後、明示的な prewake を行わない最初の document に
+plain／procedural custom filter が適用されることを実動作で確認する。公開 API から実際の
+background eviction 状態は観測できないため、各 run で停止済みだったとは断言しない。
 Page Action の初期化では active tab の整数 ID／window ID と incognito、popup panel の boolean、
 disabled-features 配列、非負整数の custom-filter count、0〜3 の blocking level を検証する。初回 admin cache 未構築による
 `disabledFeatures` の未提供だけは空配列へ正規化し、null、非配列、非文字列要素を含む応答は
@@ -130,11 +158,25 @@ readback まで収束させた後だけ background finalize と `{ ready: true }
 `scripts/package-ubol-ios.sh` がこの監査済み差分を再現する。Floorp 派生 package の宣言どおり iOS 26.0
 未満では利用不可にする。
 
-2026-09-03 の full acceptance は、既定 113,100 static rules、日本語 1,906 rules、
-network・dynamic・session blocking、通常・プライベート、generic cosmetic、custom /
-procedural cosmetic、stock scriptlet、ruleset 更新、background suspension/wake 後の状態復元を含めて
-162.250秒で合格した。公式 Safari build が無効化している strict-block interstitial は
+2026-09-08 に、最終派生 ZIP
+`4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573` を含む同一の
+FloorpCI build を iPhone 17 / iOS 26.2 Simulator / WebKit bundle
+`8623.1.14.10.9` で固定し、`testOfficialUBOLReleaseAcceptanceGates` を独立 context で
+3回連続実行した。既定 113,100 static rules、日本語 1,906 rules、network・dynamic・session
+blocking、通常・プライベート、generic cosmetic、custom / procedural cosmetic、stock
+scriptlet、ruleset 更新、35秒の background idle window 後の document-start 復帰経路を含め、
+XCTest case 実測 164.060秒、278.192秒、252.510秒で全回合格（failed / skipped とも0）した。
+`testBundledUBOLBlocksProductionHostTabsAndRendersDashboard` も同じ build の製品 host 経路で
+234.598秒、0失敗で合格した。公式 Safari build が無効化している strict-block interstitial は
 既知の upstream WebKit 制約として検出し、通常の遮断機能とは別に扱う。
+
+同じ build で Dark Reader の `testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup` を
+独立 context で2回連続実行し、初回 navigation のテーマ適用、Page Action popup の描画・操作、
+状態反映を42.040秒、42.172秒で全回合格（failed / skipped とも0）した。拡張画面からの
+Cmd / Shift-Cmd / Option link、`targetFrame == nil` の新規 window、強制 download の
+per-WebView 分離、別 navigation の割り込み、失敗・完了・process 終了・WebView 削除時の
+cleanup を含む `BrowserViewControllerWebViewDelegateTests` は、変更後の同一 build で
+44件すべて合格した（XCTest 実行 16.185秒、failed / skipped とも0）。
 
 リリース前に残る外部ゲートは実機回帰と App Review である。GPL は Floorp の公開ソースと
 審査メモへの明示を条件とし、技術的不合格には扱わない。
@@ -974,10 +1016,10 @@ Simulator / WebKit 8624.2.5.10.4 で次を確認した。
 - 日本語 ruleset 追加時に uBOL 自身が regex 上限保護のため session rules をいったん
   clear する公式挙動を確認。その後 session rule を再追加し、再び遮断できることを確認
 - filtering level 3、日本語 ruleset、custom filters、private access、登録 content scripts が
-  background suspension/wake 後も復元された
-- `WKWebView.callAsyncJavaScript` と navigation に期限を設け、初回 DNR compile 中に
-  WebKit が extension page を入れ替えた場合は新しい制御 page で background readiness を
-  再確認する。callback 消失を無期限待機や合格として扱わない
+  extension page 解放後の35秒 idle／suspension opportunity を経た document-start 経路でも復元された
+- `WKWebView.callAsyncJavaScript` と navigation に期限を設ける。native callback が未完了の
+  extension page は stop／detach／置換せず process lifetime まで保持し、同じ readiness lifecycle
+  で新しい制御 page を作らない。callback 消失を無期限待機や合格として扱わない
 
 Safari 26 の DNR 変換でも `regexFilter` と `requestDomains` の併用時に request domain 条件が
 無視される。公式 ruleset の該当53件のうち38件は WebKit の regex support probe でもともと

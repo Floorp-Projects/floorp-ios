@@ -93,6 +93,185 @@ class FloorpCIPythonContractTests(unittest.TestCase):
         ):
             self.assertLess(workflow.index(producer), workflow.index(guard_name))
 
+    def test_ubol_acceptance_uses_one_owned_page_per_readiness_lifecycle(self):
+        source = (
+            ROOT
+            / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
+            "FloorpUBOLWebKitDiagnosticsTests.swift"
+        ).read_text()
+        session = source.split(
+            "private final class FloorpUBOLReleaseAcceptanceSession {\n", 1
+        )[1].split("\nprivate enum FloorpUBOLDNRDiagnosticError", 1)[0]
+        run = session.split(
+            "    func run() async throws -> FloorpUBOLReleaseAcceptanceReport {\n", 1
+        )[1].split("\n    private func inspectActionPopup", 1)[0]
+        initial_readiness = session.split(
+            "    private func prepareInitialExtensionPage() async throws {\n", 1
+        )[1].split("\n    private func inspectActionPopup", 1)[0].split(
+            '        print("FLOORP_UBOL_RELEASE_GATE context-loaded")\n', 1
+        )[1]
+        warm_readiness = session.split(
+            "    private func verifyBackgroundWakePreservesState() async throws\n", 1
+        )[1].split("\n    private static func makeContext", 1)[0]
+        page_factory = session.split(
+            "    private static func makeExtensionPage(\n", 1
+        )[1].split("\n    private static func waitUntilBackgroundIsReady", 1)[0]
+        navigation_waiter = source.split(
+            "private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {\n",
+            1,
+        )[1].split("\n@MainActor\nprivate final class FloorpUBOLDiagnosticControllerDelegate", 1)[0]
+
+        self.assertNotIn("makeReadyExtensionPage", session)
+        self.assertNotIn("extension-page-attempt", session)
+        self.assertEqual(page_factory.count("WKWebView(frame:"), 1)
+        self.assertNotIn("for attempt in", page_factory)
+        self.assertNotIn("floorpTearDownDiagnosticWebViewIfSafe", page_factory)
+
+        lifecycle_tokens = (
+            "makeExtensionPage(context: context)",
+            "retainedExtensionWebView = readyPage.webView",
+            "extensionNavigationWaiter = readyPage.waiter",
+            "readyPage.waiter.load(",
+            "Self.loadBackgroundContent(",
+            "Self.waitUntilBackgroundIsReady(",
+        )
+        for lifecycle in (initial_readiness, warm_readiness):
+            positions = [lifecycle.index(token) for token in lifecycle_tokens]
+            self.assertEqual(positions, sorted(positions))
+            self.assertIn("remainingReadinessTimeout(until: readinessDeadline)", lifecycle)
+            self.assertEqual(lifecycle.count("makeExtensionPage(context: context)"), 1)
+            self.assertEqual(
+                lifecycle.count("timeoutPolicy: .preserveWebViewForProcessLifetime"),
+                1,
+            )
+
+            navigation = lifecycle.split("readyPage.waiter.load(", 1)[1].split(
+                "timeoutPolicy: .preserveWebViewForProcessLifetime", 1
+            )[0]
+            self.assertEqual(navigation.count("5_000_000_000"), 1)
+            self.assertIn(
+                "try Self.remainingReadinessTimeout(until: readinessDeadline)",
+                navigation,
+            )
+
+        preserve_timeout = navigation_waiter.split(
+            "case .preserveWebViewForProcessLifetime:\n", 1
+        )[1].split("self.complete(.failure", 1)[0]
+        self.assertIn(
+            "FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)",
+            preserve_timeout,
+        )
+        self.assertNotIn("stopLoading()", preserve_timeout)
+        self.assertNotIn("navigationDelegate = nil", preserve_timeout)
+
+        japanese_markers = (
+            "japanese-enable-rulesets",
+            "japanese-count-rules",
+            "japanese-restore-session",
+            "japanese-wait-scripts",
+            "japanese-inspect-registrations",
+            "japanese-load-page",
+            "japanese-complete",
+        )
+        marker_positions = [run.index(marker) for marker in japanese_markers]
+        self.assertEqual(marker_positions, sorted(marker_positions))
+        for marker in japanese_markers:
+            self.assertEqual(run.count(marker), 1)
+
+    def test_ubol_ruleset_acceptance_uses_the_shipping_foreground_transaction(self):
+        source = (
+            ROOT
+            / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
+            "FloorpUBOLWebKitDiagnosticsTests.swift"
+        ).read_text()
+        apply_rulesets = source.split(
+            "    private func applyRulesets(_ identifiers: [String]) async throws -> [String] {\n",
+            1,
+        )[1].split("\n    private func setDefaultFilteringMode", 1)[0]
+
+        self.assertIn("browser.runtime.getURL('js/floorp-reconcile.js')", apply_rulesets)
+        self.assertIn("module.reconcileProtection({", apply_rulesets)
+        self.assertIn("response?.ready !== true", apply_rulesets)
+        self.assertIn(
+            "timeoutNanoseconds: Self.coldBackgroundReadinessTimeoutNanoseconds",
+            apply_rulesets,
+        )
+        self.assertNotIn("rulesets.enableRulesets", apply_rulesets)
+
+    def test_ubol_release_acceptance_exercises_cold_document_start_before_prewake(self):
+        source = (
+            ROOT
+            / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
+            "FloorpUBOLWebKitDiagnosticsTests.swift"
+        ).read_text()
+        session = source.split(
+            "private final class FloorpUBOLReleaseAcceptanceSession {\n", 1
+        )[1].split("\nprivate enum FloorpUBOLDNRDiagnosticError", 1)[0]
+        run = session.split(
+            "    func run() async throws -> FloorpUBOLReleaseAcceptanceReport {\n", 1
+        )[1].split("\n    private func prepareInitialExtensionPage", 1)[0]
+        cold_document_start = session.split(
+            "    private func verifyDocumentStartAfterBackgroundIdleWindow(\n", 1
+        )[1].split("\n    private func verifyBackgroundWakePreservesState", 1)[0]
+        report = source.split(
+            "private struct FloorpUBOLReleaseAcceptanceReport: Codable {\n", 1
+        )[1].split("\nprivate struct FloorpUBOLPopupAcceptance", 1)[0]
+
+        run_tokens = (
+            "try await removeAcceptanceDNRRules()",
+            "verifyDocumentStartAfterBackgroundIdleWindow(",
+            "verifyBackgroundWakePreservesState()",
+        )
+        positions = [run.index(token) for token in run_tokens]
+        self.assertEqual(positions, sorted(positions))
+
+        cold_tokens = (
+            "retainedExtensionWebView?.floorpTearDownDiagnosticWebViewIfSafe()",
+            "try await Task.sleep(nanoseconds: 35_000_000_000)",
+            'print("FLOORP_UBOL_RELEASE_GATE background-wake-document-start")',
+            "let result = try await loadAndInspect(",
+            "navigationTimeoutPolicy: .preserveWebViewForProcessLifetime",
+        )
+        positions = [cold_document_start.index(token) for token in cold_tokens]
+        self.assertEqual(positions, sorted(positions))
+        for forbidden in (
+            "makeExtensionPage(",
+            "loadBackgroundContent(",
+            "waitUntilBackgroundIsReady(",
+        ):
+            self.assertNotIn(forbidden, cold_document_start)
+
+        self.assertIn("let coldDocumentStart: FloorpUBOLPageAcceptance", report)
+        self.assertIn("coldDocumentStart.customCosmeticHidden", report)
+        self.assertIn("coldDocumentStart.proceduralCosmeticHidden", report)
+        self.assertIn("coldDocumentStart.originFallbackCustomCosmeticHidden", report)
+        self.assertIn("coldDocumentStart.originFallbackProceduralCosmeticHidden", report)
+
+    def test_ubol_release_acceptance_exercises_origin_fallback_frames(self):
+        source = (
+            ROOT
+            / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
+            "FloorpUBOLWebKitDiagnosticsTests.swift"
+        ).read_text()
+        session = source.split(
+            "private final class FloorpUBOLReleaseAcceptanceSession {\n", 1
+        )[1].split("\nprivate enum FloorpUBOLDNRDiagnosticError", 1)[0]
+        report = source.split(
+            "private struct FloorpUBOLReleaseAcceptanceReport: Codable {\n", 1
+        )[1].split("\nprivate struct FloorpUBOLPopupAcceptance", 1)[0]
+
+        self.assertIn('id="floorp-origin-fallback-frame" srcdoc=', session)
+        self.assertIn("originFallbackCustom: hidden(", session)
+        self.assertIn("originFallbackProcedural: hidden(", session)
+        self.assertIn("originFallbackCustomCosmeticHidden: hidden(", session)
+        self.assertIn("originFallbackProceduralCosmeticHidden: hidden(", session)
+        for page in ("optimal", "crossHostReturn", "privateBrowsing", "coldDocumentStart"):
+            self.assertIn(f"{page}.originFallbackCustomCosmeticHidden", report)
+            self.assertIn(f"{page}.originFallbackProceduralCosmeticHidden", report)
+        self.assertIn("!crossHost.originFallbackCustomCosmeticHidden", report)
+        self.assertIn("!crossHost.originFallbackProceduralCosmeticHidden", report)
+        self.assertIn("private static let dynamicRuleID = 7_000_001", session)
+
     def test_webkit_lifecycle_guard_handles_logs_and_grep_failures(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         _, guard = self._webkit_lifecycle_guard(workflow)

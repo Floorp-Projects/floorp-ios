@@ -104,6 +104,12 @@ enum FloorpNativeWebExtensionCatalog {
         "8f7a43ac13ad09531af2e20023fddcd5354fd737ac6839b85d48f9d041ab429f"
     static let preCrossDocumentCosmeticUBlockOriginLiteSHA256 =
         "cfd521ed8a139ace31c00a0f5047caaa3fe15f61cfe2e3672981cafc373f4057"
+    static let preOriginFallbackCustomFilterUBlockOriginLiteSHA256 =
+        "b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e"
+    static let preBoundedOriginFallbackUBlockOriginLiteSHA256 =
+        "9253550e484ccd98c48a2143e6c4b03345f10eb9b16631b6e990f5ae7d2899f4"
+    static let preTransactionHardeningUBlockOriginLiteSHA256 =
+        "d50c4f26521461ae7b83a9645955ba6853d2c59f71c6f9f00a9b8a940c5b1622"
 
     static let darkReader = FloorpNativeWebExtensionCatalogItem(
         identifier: "floorp.bundled.darkreader",
@@ -140,7 +146,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.ublock-origin-lite",
         resourceName: "uBOLite-floorp-ios-2026.825.1619",
         resourceExtension: "zip",
-        expectedSHA256: "b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e",
+        expectedSHA256: "4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573",
         expectedVersion: "2026.825.1619",
         contextIdentifier: "org.ublockorigin.lite.floorp-ios",
         baseURLScheme: "safari-web-extension",
@@ -214,7 +220,10 @@ enum FloorpNativeWebExtensionCatalog {
                     preUserDNRFailClosedUBlockOriginLiteSHA256,
                     preSafariDNRKeeperUBlockOriginLiteSHA256,
                     preSafariDNRPerStoreCapacityGuardUBlockOriginLiteSHA256,
-                    preCrossDocumentCosmeticUBlockOriginLiteSHA256
+                    preCrossDocumentCosmeticUBlockOriginLiteSHA256,
+                    preOriginFallbackCustomFilterUBlockOriginLiteSHA256,
+                    preBoundedOriginFallbackUBlockOriginLiteSHA256,
+                    preTransactionHardeningUBlockOriginLiteSHA256
                 ].contains(record.sha256)
             return isOfficialPackage || isPreviousFloorpPackage ? uBlockOriginLite : nil
         }

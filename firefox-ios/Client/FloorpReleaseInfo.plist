@@ -99,6 +99,8 @@
 	<string>$(MOZ_ALLOW_QUICK_ANSWERS)</string>
 	<key>MozAllowRemotePushNotifications</key>
 	<string>$(MOZ_ALLOW_REMOTE_PUSH_NOTIFICATIONS)</string>
+	<key>MozFloorpSourceSHA</key>
+	<string>$(FLOORP_SOURCE_SHA)</string>
 	<key>MozFloorpNotesSyncBuildMode</key>
 	<string>$(FLOORP_NOTES_SYNC_BUILD_MODE)</string>
 	<key>MozFloorpNotesSyncSourceSHA</key>

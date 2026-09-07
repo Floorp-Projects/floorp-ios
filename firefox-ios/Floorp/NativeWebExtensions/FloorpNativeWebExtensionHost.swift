@@ -838,6 +838,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
         verifiedNavigationReadinessRealms[identifier, default: []].insert(isPrivate)
     }
 
+    func setContextReadyForTesting(_ isReady: Bool, identifier: String) {
+        setContextReady(isReady, identifier: identifier)
+    }
+
     func isNavigationReadinessVerifiedForTesting(
         identifier: String,
         isPrivate: Bool
@@ -3885,6 +3889,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
 
         guard currentIdentifier != destinationIdentifier else {
+            if let destination,
+               currentReadyIdentifier(for: destination) != currentIdentifier {
+                return true
+            }
             if tab.consumeFloorpNativePreserveForwardNavigation() {
                 return false
             }
@@ -3920,6 +3928,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
             )
             self.switchSurface(in: tab, to: currentDestination, loading: url)
         }
+        return true
+    }
+
+    func isCurrentExtensionSurfaceURL(_ url: URL, in tab: Tab) -> Bool {
+        guard isManagedTab(tab),
+              let currentIdentifier = tab.floorpNativeWebExtensionContextIdentifier,
+              let destination = controller.extensionContext(for: url),
+              identifier(for: destination) == currentIdentifier,
+              currentReadyIdentifier(for: destination) == currentIdentifier,
+              !tab.isPrivate || destination.hasAccessToPrivateData else { return false }
         return true
     }
 
@@ -4495,7 +4513,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 return initial;
             }
             const module = await import(browser.runtime.getURL('js/floorp-reconcile.js'));
-            const reconciled = await module.reconcileProtection();
+            const reconcileOptions = typeof initial?.settingsRestoreId === 'string'
+                ? { settingsRestoreId: initial.settingsRestoreId }
+                : {};
+            const reconciled = await module.reconcileProtection(reconcileOptions);
             if (reconciled?.ready !== true) {
                 return reconciled;
             }

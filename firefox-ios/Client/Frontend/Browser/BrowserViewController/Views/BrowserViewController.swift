@@ -44,6 +44,42 @@ class BrowserViewController: UIViewController,
                              BrowserStatusBarScrollDelegate,
                              LegacyTabScrollController.Delegate,
                              SearchEngineDelegate {
+    final class PendingDownloadState {
+        weak var webView: WKWebView?
+        let initiatingRequest: URLRequest
+        let sourceExtensionContextIdentifier: String?
+        var navigation: WKNavigation?
+        var hasStartedNavigationPolicy = false
+        var hasReceivedServerRedirect = false
+        private(set) var requestsByURL = [String: URLRequest]()
+
+        init(
+            webView: WKWebView,
+            initiatingRequest: URLRequest,
+            sourceExtensionContextIdentifier: String?
+        ) {
+            self.webView = webView
+            self.initiatingRequest = initiatingRequest
+            self.sourceExtensionContextIdentifier = sourceExtensionContextIdentifier
+            record(initiatingRequest)
+        }
+
+        func record(_ request: URLRequest) {
+            guard let url = request.url else { return }
+            requestsByURL[url.absoluteString] = request
+        }
+
+        func request(for url: URL) -> URLRequest? {
+            return requestsByURL[url.absoluteString]
+        }
+    }
+
+    struct PendingDownloadResponseDisposition {
+        let shouldCancel: Bool
+        let forceDownload: Bool
+        let request: URLRequest?
+    }
+
     final class NavigationProtectionFailureAlertState {
         weak var host: FloorpNativeWebExtensionHost?
         weak var tab: Tab?
@@ -135,7 +171,7 @@ class BrowserViewController: UIViewController,
     nonisolated let logger: Logger
     var zoomManager: ZoomPageManager
     let documentLogger: DocumentLogger
-    var downloadHelper: DownloadHelper?
+    var downloadHelpers = [ObjectIdentifier: DownloadHelper]()
 
     // MARK: Optional UI elements
 
@@ -457,11 +493,12 @@ class BrowserViewController: UIViewController,
     // Keep track of allowed `URLRequest`s from `webView(_:decidePolicyFor:decisionHandler:)` so
     // that we can obtain the originating `URLRequest` when a `URLResponse` is received. This will
     // allow us to re-trigger the `URLRequest` if the user requests a file to be downloaded.
-    var pendingRequests = [String: URLRequest]()
+    var pendingRequests = [ObjectIdentifier: [String: URLRequest]]()
 
-    // This is set when the user taps "Download Link" from the context menu. We then force a
-    // download of the next request through the `WKNavigationDelegate` that matches this web view.
-    weak var pendingDownloadWebView: WKWebView?
+    // Each WebView owns its forced-download transaction. A controller-wide singleton lets an
+    // unrelated tab or window overwrite the marker after the extension trust-boundary bypass
+    // has been granted, which could allow the first response to commit as ordinary content.
+    var pendingDownloads = [ObjectIdentifier: PendingDownloadState]()
 
     let downloadQueue: DownloadQueue
     let userInitiatedQueue: DispatchQueueInterface
@@ -605,7 +642,8 @@ class BrowserViewController: UIViewController,
     }
 
     private func didAddPendingBlobDownloadToQueue() {
-        pendingDownloadWebView = nil
+        // Blob downloads never create a forced WebView navigation. In particular, this
+        // process-wide notification must not clear an unrelated tab's HTTP download marker.
     }
 
     /// If user manually opens the keyboard and presses undo, the app switches to the last
@@ -3566,6 +3604,13 @@ class BrowserViewController: UIViewController,
         return navigationAction.targetFrame?.isMainFrame ?? false
     }
 
+    // A nil target frame represents a new top-level browsing context such as
+    // window.open or target=_blank. Keep this overridable so tests do not need
+    // to subclass WebKit's opaque WKFrameInfo implementation.
+    public func isTopLevelNavigationAction(_ navigationAction: WKNavigationAction) -> Bool {
+        return navigationAction.targetFrame?.isMainFrame != false
+    }
+
     // MARK: Opening New Tabs
 
     /// ⚠️ !! WARNING !! ⚠️
@@ -4190,7 +4235,7 @@ class BrowserViewController: UIViewController,
 
         // Handle keyboard shortcuts from homepage with url selection
         // (ex: Cmd + Tap on Link; which is a cell in this case)
-        if navigateLinkShortcutIfNeeded(url: url) {
+        if navigateLinkShortcutIfNeeded(url: url, sourceTab: tab) {
             return
         }
         finishEditingAndSubmit(url, visitType: visitType, forTab: tab)
@@ -4657,6 +4702,7 @@ extension BrowserViewController: LegacyTabDelegate {
     }
 
     func tab(_ tab: Tab, willDeleteWebView webView: WKWebView) {
+        clearPendingNavigationState(for: webView)
         tab.cancelQueuedAlerts()
         stopObserving(webView: webView)
         scrollController.stopObserving(scrollView: webView.scrollView)
@@ -4732,7 +4778,7 @@ extension BrowserViewController {
 
         // Handle keyboard shortcuts from homepage with url selection
         // (ex: Cmd + Tap on Link; which is a cell in this case)
-        if navigateLinkShortcutIfNeeded(url: url) {
+        if navigateLinkShortcutIfNeeded(url: url, sourceTab: tab) {
             return
         }
 
