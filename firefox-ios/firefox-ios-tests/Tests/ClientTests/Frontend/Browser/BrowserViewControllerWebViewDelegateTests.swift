@@ -356,8 +356,8 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         XCTAssertFalse(host.consumePreparedNavigation(supersededAfterPreparation))
     }
 
-    // swiftlint:disable:next function_body_length
     @MainActor
+    // swiftlint:disable:next function_body_length
     func testCommittedExtensionTabGatesDocumentReplacementButNotFragmentOrSubframe() async throws {
         let fixture = try makeIsolatedNativeExtensionProfile(prefix: "surface-departure")
         let isolatedProfile = fixture.profile
@@ -592,8 +592,8 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         await tab.close()
     }
 
-    // swiftlint:disable:next function_body_length
     @MainActor
+    // swiftlint:disable:next function_body_length
     func testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState() async throws {
         let fixture = try makeIsolatedNativeExtensionProfile(prefix: "surface-download")
         let isolatedProfile = fixture.profile
