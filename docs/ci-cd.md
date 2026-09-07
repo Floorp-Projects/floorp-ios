@@ -43,7 +43,7 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 8. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
 9. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
 
-`FloorpCI.xctestplan` has 16 target entries: 14 currently reliable broad suites plus explicit allowlists from `AccountTests` and `ClientTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
+`FloorpCI.xctestplan` has 17 target entries: 14 currently reliable broad suites plus explicit allowlists from `AccountTests`, `ClientTests`, and `MozillaRustComponentsTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
 SwiftPM checkouts and Derived Data use job-local directories. This avoids shared-cache corruption and keeps untrusted pull-request code out of persistent caches.
 
@@ -151,7 +151,7 @@ The Floorp release entitlement continues to omit `com.apple.developer.browser.ap
 
 ### Versioning
 
-The last validated Internal TestFlight baseline is `0.1.0 (2)`, and the checked-in Web panel sidebar candidate is `0.1.0 (3)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
+The last validated Internal TestFlight baseline is `0.1.0 (2)`, and the checked-in native WebExtensions release candidate is `0.3.0 (4)`. The main app and all extension Info.plists consume the shared marketing version and build number. Approve the independent Floorp marketing-version policy; Xcode Cloud can assign monotonically increasing distribution build numbers after its TestFlight workflow is configured.
 
 ### Floorp-owned services and App Store ID
 
@@ -190,7 +190,7 @@ Complete the remaining unchecked steps before broad public distribution:
 - [x] Create the `Floorp Internal` TestFlight group and add the initial tester.
 - [ ] Assign an owner and safe client-side value for each external service setting used by the release configuration.
 - [x] Produce a signed `Floorp` archive, upload it, and install the processed build through Internal TestFlight.
-- [ ] Add `APPLE_DEVELOPER_API_KEY_JSON` to the `floorp-testflight` GitHub Environment for the Actions-to-Xcode-Cloud trigger; keep signing certificates and profiles out of GitHub.
+- [x] Add `APPLE_DEVELOPER_API_KEY_JSON` to the `floorp-testflight` GitHub Environment for the Actions-to-Xcode-Cloud trigger; keep signing certificates and profiles out of GitHub.
 
 Do not commit certificates, provisioning profiles, `.p8` API keys, `.p12` files, or passwords.
 
