@@ -644,15 +644,16 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
             return true
         }
         defer { host.extensionSurfaceClosePreparationHookForTesting = nil }
-        let restoreExtensionSurface: @MainActor () async throws -> Void = {
+        let restoreExtensionSurface: @MainActor () async throws -> TabWebView = {
             host.load(url: optionsURL, in: tab)
             for _ in 0..<80 where tab.webView?.url != optionsURL {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
-            extensionWebView = try XCTUnwrap(tab.webView)
-            XCTAssertEqual(extensionWebView.url, optionsURL)
+            let restoredWebView = try XCTUnwrap(tab.webView)
+            XCTAssertEqual(restoredWebView.url, optionsURL)
             tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
-            extensionWebView.navigationDelegate = nil
+            restoredWebView.navigationDelegate = nil
+            return restoredWebView
         }
 
         // Drive the synthetic follow-up policy calls explicitly. This keeps
@@ -730,7 +731,7 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
 
             subject.clearPendingDownload(for: extensionWebView)
             extensionWebView.stopLoading()
-            try await restoreExtensionSurface()
+            extensionWebView = try await restoreExtensionSurface()
 
             if targetURL == sameExtensionURL {
                 var unexpectedComponents = sameExtensionComponents
