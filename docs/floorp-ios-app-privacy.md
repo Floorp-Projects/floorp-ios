@@ -3,6 +3,8 @@
 - Owner: Floorp release manager
 - Applies to: `app.floorp.Floorp`
 - Last source audit: 2026-09-04
+- Last live-policy verification: 2026-09-07T01:04:17Z
+- Verified public deployment: `34046000192-1`
 - Canonical machine-readable declaration: `docs/app-store-connect-metadata.json`
 
 This is the release checklist for the App Store Privacy Nutrition Label and the public
@@ -85,13 +87,9 @@ which Apple explicitly distinguishes from app data collection.
 
 ## Public privacy-policy release gate
 
-As of the audit date, `https://floorp.app/privacy` is not sufficient for this iOS release. It
-mentions Sync only generally and does not enumerate the data types above, identify Mozilla as
-the retained account/Sync service partner, or explain concrete retention/deletion and consent
-revocation behavior. It also says telemetry and crash reports are opt-in even though this
-shipping Floorp configuration disables them.
-
-Before marking the App Privacy confirmation in a release workflow, publish a policy update that:
+The live `https://floorp.app/privacy` response was verified on 2026-09-07 against this exact
+declaration. The page identifies itself as last updated on 2026-09-04, and the verified response
+carried the Floorp deployment identifier `34046000192-1`. It now:
 
 1. identifies every account, operational, and Sync category in the table;
 2. identifies Mozilla Account and Mozilla Sync as service providers and explains that Sync
@@ -103,6 +101,10 @@ Before marking the App Privacy confirmation in a release workflow, publish a pol
 5. explains how users revoke ongoing Sync consent and where they can exercise deletion/privacy
    rights; and
 6. states that none of the declared data is used for tracking.
+
+This resolves the publication requirement recorded by the 2026-09-04 source audit. Immediately
+before marking the App Privacy confirmation in a release workflow, re-read the live response and
+the App Store Connect answers. Stop the submission if either has drifted from this declaration.
 
 Apple's [App Review Guidelines, section 5.1.1][apple-review-guidelines] require the public policy
 to identify collection and use, third-party access/protection, retention/deletion, and consent
