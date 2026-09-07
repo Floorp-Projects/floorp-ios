@@ -391,6 +391,7 @@ FLOORP_SCHEME_FILE="firefox-ios/Client.xcodeproj/xcshareddata/xcschemes/Floorp.x
 RELEASE_CONFIG="firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
 RELEASE_PLIST="firefox-ios/Client/FloorpReleaseInfo.plist"
 RELEASE_ENTITLEMENTS="firefox-ios/Client/Entitlements/FloorpReleaseApplication.entitlements"
+CI_PRE_XCODEBUILD="firefox-ios/ci_scripts/ci_pre_xcodebuild.sh"
 TERMS_LINK_FILE="firefox-ios/Client/Frontend/Browser/TermsOfUse/TermsOfUseStrings.swift"
 CREDENTIAL_STORYBOARD="firefox-ios/CredentialProvider/CredentialList.storyboard"
 BOOTSTRAPPER_FILE="firefox-ios/Floorp/FloorpBootstrapper.swift"
@@ -855,6 +856,12 @@ require_fixed "$RELEASE_CONFIG" "MOZ_BUNDLE_ID = app.floorp.Floorp" "Release bun
 require_fixed "$RELEASE_CONFIG" "MOZ_PRODUCT_NAME = Floorp" "Release product name is Floorp"
 require_fixed "$RELEASE_CONFIG" "MOZ_PUBLIC_URL_SCHEME = floorp" "Public URL scheme is fixed"
 require_fixed "$RELEASE_CONFIG" "MOZ_INTERNAL_URL_SCHEME = floorp-internal" "Internal URL scheme is fixed"
+if [[ "$(grep -Ec '^FLOORP_SOURCE_SHA =$' "$RELEASE_CONFIG")" == "1" ]] \
+    && [[ "$(grep -Ec '^FLOORP_SOURCE_SHA[[:space:]]*=' "$RELEASE_CONFIG")" == "1" ]]; then
+    pass "Floorp source SHA has one empty Xcode Cloud injection point"
+else
+    fail "FloorpRelease must contain exactly one empty FLOORP_SOURCE_SHA assignment"
+fi
 
 require_fixed "$RELEASE_ENTITLEMENTS" "\$(AppIdentifierPrefix)app.floorp.Floorp" "Floorp keychain group is fixed"
 require_plist_true_value \
@@ -872,6 +879,19 @@ require_fixed "$RELEASE_PLIST" "app.floorp.surface.notification.refresh" "Notifi
 require_fixed "$RELEASE_PLIST" "app.floorp.suggest.ingest" "Suggest ingestion task is fixed"
 require_fixed "$RELEASE_PLIST" "\$(PRODUCT_BUNDLE_IDENTIFIER).browsing" "Browsing user activity identifier follows the release bundle ID"
 require_fixed "$RELEASE_PLIST" "\$(PRODUCT_BUNDLE_IDENTIFIER).newTab" "New-tab user activity identifier follows the release bundle ID"
+require_fixed "$RELEASE_PLIST" "MozFloorpSourceSHA" "Release plist embeds the general Floorp source SHA"
+require_fixed "$RELEASE_PLIST" "\$(FLOORP_SOURCE_SHA)" "Release plist resolves the source SHA from its dedicated build setting"
+
+if require_file "$CI_PRE_XCODEBUILD"; then
+    if [[ -x "$CI_PRE_XCODEBUILD" ]]; then
+        pass "Xcode Cloud pre-build source-binding script is executable"
+    else
+        fail "Xcode Cloud pre-build source-binding script must be executable"
+    fi
+    require_fixed "$CI_PRE_XCODEBUILD" 'CI_XCODEBUILD_ACTION:-}" != "archive"' "Source binding is limited to archive actions"
+    require_fixed "$CI_PRE_XCODEBUILD" 'CI_GIT_REF must be the canonical CI_TAG reference' "Source binding requires the canonical tag ref"
+    require_fixed "$CI_PRE_XCODEBUILD" 'CI_COMMIT does not match the checked-out Git HEAD' "Source binding checks the actual checkout"
+fi
 
 if require_file "$FLOORP_SCHEME_FILE"; then
     if archive_uses_configuration "$FLOORP_SCHEME_FILE" "FloorpRelease"; then

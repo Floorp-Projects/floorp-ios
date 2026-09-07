@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Validates Floorp release privacy boundaries (Todo 14).
 
-Consumes the runtime endpoint matrix (docs/floorp-release-endpoints.json),
-the captured network metadata, the static endpoint scan, the archive dSYM
-UUID inventory, the signed entitlements, and the App Store Connect metadata
-artifact, and rejects:
+Always consumes the runtime endpoint matrix
+(docs/floorp-release-endpoints.json) and App Store Connect metadata artifact.
+When explicitly supplied, it also consumes captured network metadata, a static
+endpoint scan, an archive dSYM UUID inventory, and signed entitlements. Named
+trace or static-scan inputs must exist; omitting one makes no claim that its
+corresponding dynamic or static check ran. The validator rejects:
 
   - any traced or statically referenced host outside the matrix, and any
     disabled-service host that appears in a trace;
-  - missing dSYM UUIDs for frameworks embedded in the archive;
+  - missing dSYM UUIDs for the app, app extensions, or embedded frameworks;
   - a missing default-browser entitlement, or forbidden APNs and browser
     app-installation entitlements;
   - internally inconsistent App Privacy / export-compliance metadata.
@@ -21,10 +23,14 @@ Exit codes:
 
 import argparse
 import json
+import os
 import plistlib
 import re
+import stat
+import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 class PrivacyError(Exception):
@@ -33,6 +39,10 @@ class PrivacyError(Exception):
 
 class MalformedError(PrivacyError):
     pass
+
+
+MATRIX_FIELDS = {"schema_version", "note", "endpoints"}
+ENDPOINT_FIELDS = {"host", "purpose", "owner", "status", "service"}
 
 
 def load_json(path: Path):
@@ -45,6 +55,53 @@ def load_json(path: Path):
 def check(condition: bool, message: str) -> None:
     if not condition:
         raise PrivacyError(message)
+
+
+def malformed(condition: bool, message: str) -> None:
+    if not condition:
+        raise MalformedError(message)
+
+
+def validate_endpoint_matrix(matrix: dict) -> None:
+    malformed(isinstance(matrix, dict), "endpoint matrix root must be an object")
+    malformed(set(matrix) == MATRIX_FIELDS, "endpoint matrix fields are not exact")
+    malformed(
+        type(matrix["schema_version"]) is int and matrix["schema_version"] == 1,
+        "endpoint matrix schema_version must be integer 1",
+    )
+    malformed(
+        isinstance(matrix["note"], str) and bool(matrix["note"].strip()),
+        "endpoint matrix note must be a non-empty string",
+    )
+    endpoints = matrix["endpoints"]
+    malformed(
+        isinstance(endpoints, list) and bool(endpoints),
+        "endpoint matrix endpoints must be a non-empty array",
+    )
+    observed_hosts = set()
+    for index, entry in enumerate(endpoints):
+        malformed(
+            isinstance(entry, dict) and set(entry) == ENDPOINT_FIELDS,
+            f"endpoint matrix entry {index} fields are not exact",
+        )
+        for field in ENDPOINT_FIELDS:
+            malformed(
+                isinstance(entry[field], str) and bool(entry[field].strip()),
+                f"endpoint matrix entry {index} {field} must be a non-empty string",
+            )
+        host = entry["host"]
+        malformed(
+            host == host.strip().lower()
+            and re.fullmatch(r"[a-z0-9.-]+", host) is not None
+            and ".." not in host,
+            f"endpoint matrix entry {index} host is not normalized",
+        )
+        malformed(
+            entry["status"] in {"enabled", "disabled"},
+            f"endpoint matrix entry {index} status is invalid",
+        )
+        malformed(host not in observed_hosts, f"duplicate endpoint matrix host: {host}")
+        observed_hosts.add(host)
 
 
 def load_entitlements(path: Path) -> dict:
@@ -121,31 +178,176 @@ EXPECTED_PRIVACY_DISCLOSURES = {
 def validate_static_endpoints(matrix: dict, static_path: Path) -> None:
     hosts = {entry["host"] for entry in matrix["endpoints"]}
     if not static_path.is_file():
-        return
-    text = static_path.read_text()
+        raise MalformedError(f"static endpoint input does not exist: {static_path}")
+    try:
+        text = static_path.read_text()
+    except OSError as error:
+        raise MalformedError(
+            f"{static_path}: could not read static endpoint input ({error})"
+        ) from error
     found = set(re.findall(r"https?://([a-zA-Z0-9._\-]+)", text))
     unknown = sorted(host for host in found
                      if host not in hosts and host not in DOCUMENTATION_HOSTS)
     check(not unknown, f"static endpoints outside matrix/doc allowlist: {unknown}")
 
 
-def validate_dsym_inventory(archive: Path, inventory_path: Path) -> None:
-    if not archive.is_dir() or not inventory_path.is_file():
-        return
-    inventory_text = inventory_path.read_text()
-    inventory_uuids = set(re.findall(r"UUID: ([0-9A-F]{32})", inventory_text))
-    frameworks_dir = archive / "Products" / "Applications" / "Client.app" / "Frameworks"
-    if not frameworks_dir.is_dir():
-        return
-    missing = []
-    for framework in frameworks_dir.glob("*.framework"):
-        result = __import__("subprocess").run(
-            ["dwarfdump", "--uuid", str(framework)], capture_output=True, text=True
+def normalize_uuid(value: str, context: str) -> str:
+    normalized = value.replace("-", "").upper()
+    check(
+        re.fullmatch(r"[0-9A-F]{32}", normalized) is not None,
+        f"invalid UUID in {context}: {value}",
+    )
+    return normalized
+
+
+def parse_dwarfdump_output(output: str, context: str) -> set[str]:
+    uuid_lines = [line for line in output.splitlines() if line.lstrip().startswith("UUID:")]
+    check(bool(uuid_lines), f"dwarfdump returned no UUID for {context}")
+    uuids = set()
+    for line in uuid_lines:
+        match = re.fullmatch(r"\s*UUID:\s+([^\s]+)\s+\([^)]+\)\s+.+\s*", line)
+        check(match is not None, f"could not parse dwarfdump output for {context}: {line}")
+        uuids.add(normalize_uuid(match.group(1), context))
+    return uuids
+
+
+def load_dsym_inventory(inventory_path: Optional[Path]) -> set[str]:
+    check(inventory_path is not None, "dSYM inventory path is required with an archive")
+    check(inventory_path.is_file(), f"dSYM inventory does not exist: {inventory_path}")
+    try:
+        inventory_text = inventory_path.read_text()
+    except OSError as error:
+        raise MalformedError(f"{inventory_path}: could not read dSYM inventory ({error})") from error
+
+    # Accept either the collector's evidence JSON (or its dsym_inventory array)
+    # or a retained raw `dwarfdump --uuid` inventory.
+    try:
+        document = json.loads(inventory_text)
+    except json.JSONDecodeError:
+        return parse_dwarfdump_output(inventory_text, str(inventory_path))
+
+    entries = document.get("dsym_inventory") if isinstance(document, dict) else document
+    check(isinstance(entries, list) and bool(entries), "dSYM inventory is empty or malformed")
+    uuids = set()
+    for index, entry in enumerate(entries):
+        check(isinstance(entry, dict), f"dSYM inventory item {index} must be an object")
+        uuid = entry.get("uuid")
+        check(isinstance(uuid, str), f"dSYM inventory item {index} has no UUID")
+        uuids.add(normalize_uuid(uuid, f"dSYM inventory item {index}"))
+    return uuids
+
+
+def bundle_executable(bundle: Path) -> Path:
+    check(
+        bundle.is_dir() and not bundle.is_symlink(),
+        f"bundle is not a real directory: {bundle}",
+    )
+    info_path = bundle / "Info.plist"
+    check(
+        info_path.is_file()
+        and not info_path.is_symlink()
+        and stat.S_ISREG(info_path.lstat().st_mode),
+        f"bundle Info.plist is missing or not a real regular file: {bundle}",
+    )
+    try:
+        with info_path.open("rb") as handle:
+            info = plistlib.load(handle)
+    except Exception as error:
+        raise MalformedError(f"{info_path}: invalid bundle Info.plist ({error})") from error
+    executable_name = info.get("CFBundleExecutable")
+    check(
+        isinstance(executable_name, str)
+        and bool(executable_name)
+        and executable_name not in {".", ".."}
+        and "/" not in executable_name
+        and "\\" not in executable_name
+        and Path(executable_name).name == executable_name,
+        f"CFBundleExecutable is missing or unsafe: {bundle}",
+    )
+    executable = bundle / executable_name
+    check(
+        executable.is_file()
+        and not executable.is_symlink()
+        and stat.S_ISREG(executable.lstat().st_mode),
+        f"bundle executable is missing or not a real regular file: {executable}",
+    )
+    check(
+        executable.resolve().parent == bundle.resolve(),
+        f"bundle executable resolves outside its bundle: {executable}",
+    )
+    return executable
+
+
+def distributed_bundle_executables(app: Path) -> dict[str, Path]:
+    """Return every shipped app/framework/appex executable by bundle-relative path."""
+    check(
+        app.is_dir() and not app.is_symlink(),
+        f"archived app does not exist or is not a real directory: {app}",
+    )
+    bundles = {".": app}
+    candidates = []
+    for current_root, directory_names, _file_names in os.walk(
+        app, topdown=True, followlinks=False
+    ):
+        current = Path(current_root)
+        for directory_name in directory_names:
+            directory = current / directory_name
+            check(
+                not directory.is_symlink(),
+                f"distributed app contains a symbolic-link directory: {directory}",
+            )
+            if directory.suffix in {".app", ".framework", ".appex"}:
+                candidates.append(directory)
+    candidates.sort()
+    for bundle in candidates:
+        check(
+            bundle.is_dir() and not bundle.is_symlink(),
+            f"bundle is not a real directory: {bundle}",
         )
-        framework_uuids = set(re.findall(r"UUID: ([0-9A-F]{32})", result.stdout))
-        if framework_uuids and not framework_uuids.issubset(inventory_uuids):
-            missing.append(framework.name)
-    check(not missing, f"embedded frameworks missing dSYM UUIDs: {missing}")
+        relative = bundle.relative_to(app).as_posix()
+        check(relative not in bundles, f"duplicate distributed bundle path: {relative}")
+        bundles[relative] = bundle
+    return {
+        relative: bundle_executable(bundle)
+        for relative, bundle in sorted(bundles.items())
+    }
+
+
+def macho_uuids(binary: Path) -> set[str]:
+    try:
+        result = subprocess.run(
+            ["dwarfdump", "--uuid", str(binary)], capture_output=True, text=True
+        )
+    except OSError as error:
+        raise PrivacyError(f"failed to run dwarfdump for {binary}: {error}") from error
+    detail = result.stderr.strip() or f"exit status {result.returncode}"
+    check(result.returncode == 0, f"dwarfdump failed for {binary}: {detail}")
+    return parse_dwarfdump_output(result.stdout, str(binary))
+
+
+def validate_dsym_inventory(archive: Path, inventory_path: Optional[Path]) -> None:
+    check(
+        archive.is_dir() and not archive.is_symlink(),
+        f"archive does not exist or is not a real directory: {archive}",
+    )
+    inventory_uuids = load_dsym_inventory(inventory_path)
+    app = archive / "Products" / "Applications" / "Client.app"
+    check(
+        app.resolve() == archive.resolve() / "Products" / "Applications" / "Client.app",
+        f"archived app resolves outside the archive: {app}",
+    )
+    executables = distributed_bundle_executables(app)
+    # A dSYM may legitimately contain an unshipped architecture slice or a
+    # build-tool binary, so require complete archive coverage without rejecting
+    # such additional retained symbols.
+    missing = []
+    for relative, executable in executables.items():
+        binary_uuids = macho_uuids(executable)
+        absent = sorted(binary_uuids - inventory_uuids)
+        if absent:
+            bundle_label = app.name if relative == "." else Path(relative).name
+            missing.append(f"{bundle_label}: {','.join(absent)}")
+    check(not missing, f"archive binaries missing dSYM UUIDs: {missing}")
 
 
 def validate_entitlements(entitlements_path: Path) -> None:
@@ -228,7 +430,6 @@ def main(argv=None) -> int:
     arguments.add_argument("--matrix", required=True, type=Path)
     arguments.add_argument("--trace", type=Path)
     arguments.add_argument("--archive", type=Path)
-    arguments.add_argument("--ipa", type=Path)
     arguments.add_argument("--static-endpoints", type=Path)
     arguments.add_argument("--dsym-inventory", type=Path)
     arguments.add_argument("--entitlements", type=Path)
@@ -236,8 +437,9 @@ def main(argv=None) -> int:
     parsed = arguments.parse_args(argv)
     try:
         matrix = load_json(parsed.matrix)
+        validate_endpoint_matrix(matrix)
         metadata = load_json(parsed.metadata)
-        if parsed.trace and parsed.trace.is_file():
+        if parsed.trace:
             validate_trace(matrix, load_json(parsed.trace))
         if parsed.static_endpoints:
             validate_static_endpoints(matrix, parsed.static_endpoints)

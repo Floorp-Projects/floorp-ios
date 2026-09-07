@@ -1,20 +1,24 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Floorp release candidate evidence",
-  "description": "Binds a release candidate to its exact source, version/build authority, signing identity, entitlements, archive, IPA digest, dSYM inventory, and App Store Connect identity. Produced by collect-floorp-release-evidence.sh and validated by validate-floorp-release-evidence.py.",
+  "description": "Binds a release candidate to its exact source, version/build authority, signing identity, entitlements, canonical archive tree digest, IPA digest, dSYM inventory, and App Store Connect identity. Produced by collect-floorp-release-evidence.sh and validated by validate-floorp-release-evidence.py.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
+    "archive_only",
     "source_sha256",
     "marketing_version",
     "build_number",
     "bundle_id",
     "team_id",
     "archive_path",
+    "archive_sha256",
     "ipa_path",
     "ipa_sha256",
     "signing_identity",
+    "archive_info",
+    "ipa_info",
     "entitlements",
     "dsym_inventory",
     "app_store_connect_build_id",
@@ -24,6 +28,7 @@
   ],
   "properties": {
     "schema_version": {
+      "type": "integer",
       "const": 1
     },
     "archive_only": {
@@ -50,10 +55,15 @@
     },
     "archive_path": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^/[^\\u0000-\\u001f\\u007f]*$"
+    },
+    "archive_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
     },
     "ipa_path": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^$|^/[^\\u0000-\\u001f\\u007f]*$"
     },
     "ipa_sha256": {
       "type": "string",
@@ -100,22 +110,26 @@
             "pattern": "^[0-9A-F]{32}$"
           },
           "path": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^/.+\\.dSYM/Contents/Resources/DWARF/[^/]+$"
           }
         }
       }
     },
     "app_store_connect_build_id": {
-      "type": ["string", "null"]
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9._-]+$"
     },
     "ci_run_url": {
-      "type": ["string", "null"]
+      "type": ["string", "null"],
+      "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[1-9][0-9]*$"
     },
     "xcresult_path": {
       "type": ["string", "null"]
     },
     "export_status": {
-      "type": ["string", "null"]
+      "type": ["string", "null"],
+      "pattern": "^(ready-for-upload|uploaded-and-processed)$"
     }
   }
 }

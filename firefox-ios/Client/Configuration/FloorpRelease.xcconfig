@@ -12,6 +12,8 @@ FLOORP_DEVELOPMENT_TEAM = DV2U35YBHT
 // Release identity for the first native WKWebExtension build.
 FLOORP_MARKETING_VERSION = 0.3.0
 FLOORP_BUILD_NUMBER = 4
+// Injected only by ci_pre_xcodebuild.sh for a source-bound Floorp archive.
+FLOORP_SOURCE_SHA =
 // Keep empty until the public listing is live; otherwise Settings exposes a dead rating link.
 FLOORP_APP_STORE_ID =
 // Team-scoped because the shorter App Group is owned outside this Apple Developer team.

@@ -3,6 +3,7 @@
 import importlib.util
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -720,16 +721,59 @@ class ClientBehaviorTests(unittest.TestCase):
                     asc.time.sleep = original_sleep
 
     def test_download_ci_artifact_resolves_actions_then_artifacts(self):
-        # Artifacts hang off ciBuildActions: list actions, then the action's
-        # artifacts, and pick the one whose fileType matches the relationship.
+        payload = b"archive-bytes"
         responses = {
-            "/v1/ciBuildRuns/run-1/actions": {
-                "data": [{"id": "action-1", "type": "ciBuildActions"}]
+            "/v1/ciBuildRuns/run-1/actions?limit=200": {
+                "data": [{
+                    "id": "action-1",
+                    "type": "ciBuildActions",
+                    "attributes": {
+                        "name": "Archive",
+                        "actionType": "ARCHIVE",
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCEEDED",
+                    },
+                }]
             },
-            "/v1/ciBuildActions/action-1/artifacts": {
+            "/v1/ciBuildActions/action-1?include=buildRun": {
+                "data": {
+                    "id": "action-1",
+                    "type": "ciBuildActions",
+                    "attributes": {
+                        "name": "Archive",
+                        "actionType": "ARCHIVE",
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCEEDED",
+                    },
+                    "relationships": {
+                        "buildRun": {
+                            "data": {"type": "ciBuildRuns", "id": "run-1"}
+                        }
+                    },
+                }
+            },
+            "/v1/ciBuildActions/action-1/artifacts?limit=200": {
                 "data": [
-                    {"id": "a1", "attributes": {"fileType": "LOG_BUNDLE", "downloadUrl": "https://x/log"}},
-                    {"id": "a2", "attributes": {"fileType": "ARCHIVE", "downloadUrl": "https://x/archive"}},
+                    {
+                        "id": "a1",
+                        "type": "ciArtifacts",
+                        "attributes": {
+                            "fileType": "LOG_BUNDLE",
+                            "fileName": "logs.zip",
+                            "fileSize": 1,
+                            "downloadUrl": "https://artifacts.example/log",
+                        },
+                    },
+                    {
+                        "id": "a2",
+                        "type": "ciArtifacts",
+                        "attributes": {
+                            "fileType": "ARCHIVE",
+                            "fileName": "Floorp.xcarchive.zip",
+                            "fileSize": len(payload),
+                            "downloadUrl": "https://artifacts.example/archive",
+                        },
+                    },
                 ]
             },
         }
@@ -742,32 +786,183 @@ class ClientBehaviorTests(unittest.TestCase):
         original_urlopen = asc.urllib.request.urlopen
 
         class FakeResponse:
+            def __init__(self):
+                self.remaining = payload
+                self.headers = {"Content-Length": str(len(payload))}
+
             def __enter__(self):
                 return self
 
             def __exit__(self, *args):
                 return False
 
-            def read(self):
-                return b"archive-bytes"
+            def geturl(self):
+                return "https://artifacts.example/archive"
+
+            def read(self, size=-1):
+                value, self.remaining = self.remaining, b""
+                return value
 
         asc.urllib.request.urlopen = lambda request, timeout=300: FakeResponse()
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 out = Path(tmp) / "a.zip"
                 sha = Path(tmp) / "a.zip.sha256"
-                asc.download_ci_artifact(client, "run-1", "archives", out, sha, dry_run=False)
-                self.assertEqual(out.read_bytes(), b"archive-bytes")
+                metadata = Path(tmp) / "a.metadata.json"
+                asc.download_ci_artifact(
+                    client,
+                    "run-1",
+                    "archives",
+                    out,
+                    sha,
+                    dry_run=False,
+                    metadata_output=metadata,
+                )
+                self.assertEqual(out.read_bytes(), payload)
                 self.assertEqual(
                     sha.read_text().strip(),
-                    hashlib.sha256(b"archive-bytes").hexdigest(),
+                    hashlib.sha256(payload).hexdigest(),
                 )
+                recorded = json.loads(metadata.read_text())
+                self.assertEqual(recorded["run_id"], "run-1")
+                self.assertEqual(recorded["action"]["id"], "action-1")
+                self.assertEqual(recorded["artifact"]["id"], "a2")
+                self.assertEqual(recorded["artifact"]["downloaded_size"], len(payload))
                 self.assertEqual(calls, [
-                    "/v1/ciBuildRuns/run-1/actions",
-                    "/v1/ciBuildActions/action-1/artifacts",
+                    "/v1/ciBuildRuns/run-1/actions?limit=200",
+                    "/v1/ciBuildActions/action-1?include=buildRun",
+                    "/v1/ciBuildActions/action-1/artifacts?limit=200",
                 ])
         finally:
             asc.urllib.request.urlopen = original_urlopen
+
+    def test_download_ci_artifact_rejects_ambiguous_archive_actions(self):
+        actions = []
+        for action_id in ("action-1", "action-2"):
+            actions.append({
+                "id": action_id,
+                "type": "ciBuildActions",
+                "attributes": {
+                    "actionType": "ARCHIVE",
+                    "executionProgress": "COMPLETE",
+                    "completionStatus": "SUCCEEDED",
+                },
+            })
+
+        def client(method, path, dry_run=False):
+            return {"data": actions}
+
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(asc.AllowlistError):
+            root = Path(tmp)
+            asc.download_ci_artifact(
+                client,
+                "run-1",
+                "archive",
+                root / "archive.zip",
+                root / "archive.sha256",
+                dry_run=False,
+            )
+
+    def test_download_ci_artifact_rejects_wrong_action_backlink(self):
+        responses = {
+            "/v1/ciBuildRuns/run-1/actions?limit=200": {
+                "data": [{
+                    "id": "action-1",
+                    "type": "ciBuildActions",
+                    "attributes": {
+                        "actionType": "ARCHIVE",
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCEEDED",
+                    },
+                }]
+            },
+            "/v1/ciBuildActions/action-1?include=buildRun": {
+                "data": {
+                    "id": "action-1",
+                    "type": "ciBuildActions",
+                    "attributes": {
+                        "actionType": "ARCHIVE",
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCEEDED",
+                    },
+                    "relationships": {
+                        "buildRun": {
+                            "data": {"type": "ciBuildRuns", "id": "run-other"}
+                        }
+                    },
+                }
+            },
+        }
+
+        def client(method, path, dry_run=False):
+            return responses[path]
+
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(asc.AllowlistError):
+            root = Path(tmp)
+            asc.download_ci_artifact(
+                client,
+                "run-1",
+                "archive",
+                root / "archive.zip",
+                root / "archive.sha256",
+                dry_run=False,
+            )
+
+    def test_download_ci_artifact_rejects_partial_paginated_action_list(self):
+        def client(method, path, dry_run=False):
+            return {
+                "data": [],
+                "links": {"next": "https://api.appstoreconnect.apple.com/next"},
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(asc.AllowlistError):
+            root = Path(tmp)
+            asc.download_ci_artifact(
+                client,
+                "run-1",
+                "archive",
+                root / "archive.zip",
+                root / "archive.sha256",
+                dry_run=False,
+            )
+
+    def test_download_ci_artifact_dry_run_needs_no_credentials_or_network(self):
+        environment = os.environ.copy()
+        for name in (
+            "APP_STORE_CONNECT_ISSUER_ID",
+            "APP_STORE_CONNECT_KEY_ID",
+            "APP_STORE_CONNECT_PRIVATE_KEY_PATH",
+            "APP_STORE_CONNECT_PRIVATE_KEY",
+        ):
+            environment.pop(name, None)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            result = subprocess.run(
+                [
+                    str(Path(__file__).parent.parent / "app-store-connect-api.py"),
+                    "download-ci-artifact",
+                    "--dry-run",
+                    "--run-id",
+                    "run-1",
+                    "--relationship",
+                    "ARCHIVE",
+                    "--output",
+                    str(root / "archive.download"),
+                    "--sha256-output",
+                    str(root / "archive.sha256"),
+                    "--metadata-output",
+                    str(root / "archive.metadata.json"),
+                ],
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("DRY_RUN GET", result.stdout)
+            self.assertFalse((root / "archive.download").exists())
+            self.assertTrue((root / "archive.sha256").is_file())
+            self.assertTrue((root / "archive.metadata.json").is_file())
 
 
 class CryptoTests(unittest.TestCase):

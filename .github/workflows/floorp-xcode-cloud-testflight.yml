@@ -36,10 +36,13 @@ jobs:
       xcode_cloud_run_id: ${{ steps.xcode_cloud.outputs.run_id }}
       app_store_connect_build_id: ${{ steps.xcode_cloud.outputs.build_id }}
       app_store_connect_build_number: ${{ steps.xcode_cloud.outputs.build_number }}
-    runs-on: ubuntu-latest
+    # Artifact verification needs Apple's codesign, security, plutil, and
+    # dwarfdump tools after Xcode Cloud finishes the signed export.
+    runs-on: macos-26
     # The client permits up to 180 minutes for Xcode Cloud plus 60 minutes for
-    # the linked App Store Connect build to finish processing.
-    timeout-minutes: 260
+    # App Store processing; allow another 90 minutes to download, verify, and
+    # retain both signed distribution artifacts without weakening either wait.
+    timeout-minutes: 330
     environment: floorp-testflight
 
     steps:
@@ -62,6 +65,13 @@ jobs:
               | awk 'NR == 1 { print $1 } END { if (NR != 1) exit 1 }'
           )"
           test "$remote_tag_sha" = "$GITHUB_SHA"
+
+      - name: Validate checked-in release privacy declarations
+        run: |
+          set -euo pipefail
+          python3 scripts/release/validate-floorp-privacy.py \
+            --matrix docs/floorp-release-endpoints.json \
+            --metadata docs/app-store-connect-metadata.json
 
       - name: Verify source-bound CI and uBO acceptance
         env:
@@ -187,6 +197,151 @@ jobs:
               output.write(f"build_number={build['number']}\n")
           PY
 
+      - name: Download and verify exact Xcode Cloud distribution artifacts
+        env:
+          FLOORP_XCODE_CLOUD_RUN_ID: ${{ steps.xcode_cloud.outputs.run_id }}
+          FLOORP_ASC_BUILD_ID: ${{ steps.xcode_cloud.outputs.build_id }}
+          FLOORP_ASC_BUILD_NUMBER: ${{ steps.xcode_cloud.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          artifact_root="$RUNNER_TEMP/floorp-xcode-cloud-artifacts"
+          download_root="$artifact_root/downloads"
+          # Keep the verified archive/IPA beside their original Apple downloads
+          # so the retained GitHub artifact is a self-contained evidence bundle.
+          materialized_root="$artifact_root/materialized"
+          manifest="$artifact_root/floorp-xcode-cloud-artifact-manifest.json"
+          evidence="$artifact_root/floorp-release-evidence.json"
+          ci_run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          mkdir -p "$download_root"
+
+          python3 scripts/release/app-store-connect-api.py download-ci-artifact \
+            --run-id "$FLOORP_XCODE_CLOUD_RUN_ID" \
+            --relationship ARCHIVE \
+            --output "$download_root/archive.download" \
+            --sha256-output "$download_root/archive.sha256" \
+            --metadata-output "$download_root/archive.metadata.json"
+          python3 scripts/release/app-store-connect-api.py download-ci-artifact \
+            --run-id "$FLOORP_XCODE_CLOUD_RUN_ID" \
+            --relationship ARCHIVE_EXPORT \
+            --output "$download_root/archive-export.download" \
+            --sha256-output "$download_root/archive-export.sha256" \
+            --metadata-output "$download_root/archive-export.metadata.json"
+
+          python3 scripts/release/materialize-floorp-xcode-cloud-artifacts.py \
+            --expected-run-id "$FLOORP_XCODE_CLOUD_RUN_ID" \
+            --archive-download "$download_root/archive.download" \
+            --archive-metadata "$download_root/archive.metadata.json" \
+            --export-download "$download_root/archive-export.download" \
+            --export-metadata "$download_root/archive-export.metadata.json" \
+            --output-root "$materialized_root" \
+            --manifest-output "$manifest"
+
+          archive="$(python3 - "$manifest" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          print(manifest["materialized"]["archive_path"])
+          PY
+          )"
+          ipa="$(python3 - "$manifest" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          print(manifest["materialized"]["ipa_path"])
+          PY
+          )"
+
+          scripts/release/collect-floorp-release-evidence.sh \
+            --archive "$archive" \
+            --ipa "$ipa" \
+            --source-sha "$GITHUB_SHA" \
+            --ci-run-url "$ci_run_url" \
+            --app-store-connect-build-id "$FLOORP_ASC_BUILD_ID" \
+            --export-status uploaded-and-processed \
+            --output "$evidence"
+          python3 scripts/release/validate-floorp-release-evidence.py \
+            --evidence "$evidence" \
+            --schema scripts/release/floorp-release-evidence.schema.json \
+            --phase publication \
+            --artifact-kind local-export \
+            --expected-source-sha "$GITHUB_SHA" \
+            --expected-marketing-version "$FLOORP_MARKETING_VERSION" \
+            --expected-build-number "$FLOORP_ASC_BUILD_NUMBER" \
+            --expected-bundle-id "$FLOORP_BUNDLE_ID" \
+            --expected-ci-run-url "$ci_run_url" \
+            --expected-export-status uploaded-and-processed \
+            --expected-app-store-connect-build-id "$FLOORP_ASC_BUILD_ID" \
+            --xcode-cloud-build-receipt "$FLOORP_XCODE_CLOUD_BUILD_RECEIPT" \
+            --xcode-cloud-artifact-manifest "$manifest" \
+            --expected-xcode-cloud-run-id "$FLOORP_XCODE_CLOUD_RUN_ID" \
+            --expected-xcode-cloud-workflow-id "$FLOORP_XCODE_CLOUD_WORKFLOW_ID" \
+            --expected-app-id "$FLOORP_APP_ID" \
+            --expected-platform "$FLOORP_PLATFORM" \
+            --expected-min-os-version "$FLOORP_MIN_OS_VERSION"
+          {
+            printf 'FLOORP_RELEASE_ARTIFACT_ROOT=%s\n' "$artifact_root"
+            printf 'FLOORP_RELEASE_EVIDENCE=%s\n' "$evidence"
+            printf 'FLOORP_XCODE_CLOUD_ARTIFACT_MANIFEST=%s\n' "$manifest"
+          } >> "$GITHUB_ENV"
+
+      - name: Retain exact Xcode Cloud distribution artifacts
+        id: binary_retention
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-xcode-cloud-distribution-${{ github.run_id }}
+          path: ${{ runner.temp }}/floorp-xcode-cloud-artifacts
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          # This isolated tree contains only authenticated Apple artifacts;
+          # retain any dotfiles from the .xcarchive instead of silently losing bytes.
+          include-hidden-files: true
+
+      - name: Record immutable artifact retention identity
+        env:
+          FLOORP_XCODE_CLOUD_RUN_ID: ${{ steps.xcode_cloud.outputs.run_id }}
+          FLOORP_ASC_BUILD_ID: ${{ steps.xcode_cloud.outputs.build_id }}
+          FLOORP_RETAINED_ARTIFACT_ID: ${{ steps.binary_retention.outputs.artifact-id }}
+          FLOORP_RETAINED_ARTIFACT_URL: ${{ steps.binary_retention.outputs.artifact-url }}
+          FLOORP_RETAINED_ARTIFACT_DIGEST: ${{ steps.binary_retention.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          retention_receipt="$RUNNER_TEMP/floorp-xcode-cloud-artifact-retention.json"
+          python3 - "$retention_receipt" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          digest = os.environ["FLOORP_RETAINED_ARTIFACT_DIGEST"]
+          if re.fullmatch(r"[0-9a-f]{64}", digest):
+              digest = f"sha256:{digest}"
+          if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+              raise SystemExit("GitHub artifact digest is missing or malformed")
+          value = {
+              "schema_version": 1,
+              "github": {
+                  "repository": os.environ["GITHUB_REPOSITORY"],
+                  "run_id": os.environ["GITHUB_RUN_ID"],
+                  "artifact_id": os.environ["FLOORP_RETAINED_ARTIFACT_ID"],
+                  "artifact_url": os.environ["FLOORP_RETAINED_ARTIFACT_URL"],
+                  "artifact_digest": digest,
+              },
+              "xcode_cloud_run_id": os.environ["FLOORP_XCODE_CLOUD_RUN_ID"],
+              "app_store_connect_build_id": os.environ["FLOORP_ASC_BUILD_ID"],
+              "source_sha": os.environ["GITHUB_SHA"],
+          }
+          Path(sys.argv[1]).write_text(
+              json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          printf 'FLOORP_ARTIFACT_RETENTION_RECEIPT=%s\n' "$retention_receipt" >> "$GITHUB_ENV"
+
       - name: Materialize source-bound App Review notes
         run: |
           set -euo pipefail
@@ -206,6 +361,7 @@ jobs:
             ${{ runner.temp }}/ci-release-gate.json
             ${{ runner.temp }}/floorp-xcode-cloud-run.json
             ${{ runner.temp }}/floorp-xcode-cloud-build-receipt.json
+            ${{ runner.temp }}/floorp-xcode-cloud-artifact-retention.json
             ${{ runner.temp }}/floorp-app-review-notes.json
           if-no-files-found: error
           retention-days: 90

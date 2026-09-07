@@ -27,6 +27,26 @@ class FloorpXcodeCloudTestFlightWorkflowTests(unittest.TestCase):
         self.assertIn("validate-floorp-ci-release-gate.py", self.text)
         self.assertIn("floorp-ubol-release-acceptance-$run_id", self.text)
 
+    def test_validates_checked_in_privacy_declarations_before_credentials(self):
+        source = self.text.index("Verify source identity")
+        privacy = self.text.index("Validate checked-in release privacy declarations")
+        ci_gate = self.text.index("Verify source-bound CI and uBO acceptance")
+        credentials = self.text.index("Prepare App Store Connect API key")
+        trigger = self.text.index("Start Xcode Cloud and wait for completion")
+        self.assertLess(source, privacy)
+        self.assertLess(privacy, ci_gate)
+        self.assertLess(privacy, credentials)
+        self.assertLess(privacy, trigger)
+
+        block = self.text.split(
+            "      - name: Validate checked-in release privacy declarations\n", 1
+        )[1].split("\n      - name:", 1)[0]
+        self.assertIn("scripts/release/validate-floorp-privacy.py", block)
+        self.assertIn("--matrix docs/floorp-release-endpoints.json", block)
+        self.assertIn("--metadata docs/app-store-connect-metadata.json", block)
+        for unsupported_claim in ("--trace", "--static-endpoints", "--ipa"):
+            self.assertNotIn(unsupported_claim, block)
+
     def test_xcode_cloud_uses_immutable_tag_not_mutable_branch(self):
         self.assertIn('--source-tag "$FLOORP_SOURCE_TAG"', self.text)
         self.assertNotIn('--branch "$FLOORP_XCODE_CLOUD_BRANCH"', self.text)
@@ -78,6 +98,29 @@ class FloorpXcodeCloudTestFlightWorkflowTests(unittest.TestCase):
         self.assertIn("floorp-xcode-cloud-build-receipt.json", self.text)
         self.assertIn("render-floorp-app-review-notes.py", self.text)
         self.assertIn("floorp-app-review-notes.json", self.text)
+
+    def test_exact_xcode_cloud_binaries_are_downloaded_verified_and_retained(self):
+        trigger = self.text.index("Start Xcode Cloud and wait for completion")
+        verify = self.text.index(
+            "Download and verify exact Xcode Cloud distribution artifacts"
+        )
+        retain = self.text.index("Retain exact Xcode Cloud distribution artifacts")
+        notes = self.text.index("Materialize source-bound App Review notes")
+        self.assertLess(trigger, verify)
+        self.assertLess(verify, retain)
+        self.assertLess(retain, notes)
+        self.assertIn("    runs-on: macos-26", self.text)
+        self.assertIn("--relationship ARCHIVE", self.text)
+        self.assertIn("--relationship ARCHIVE_EXPORT", self.text)
+        self.assertIn("materialize-floorp-xcode-cloud-artifacts.py", self.text)
+        self.assertIn("collect-floorp-release-evidence.sh", self.text)
+        self.assertIn("--phase publication", self.text)
+        self.assertIn("--artifact-kind local-export", self.text)
+        self.assertIn("--xcode-cloud-artifact-manifest", self.text)
+        self.assertIn("floorp-xcode-cloud-distribution-${{ github.run_id }}", self.text)
+        self.assertIn("compression-level: 0", self.text)
+        self.assertIn("include-hidden-files: true", self.text)
+        self.assertIn("artifact-digest", self.text)
 
     def test_obsolete_manual_signing_workflow_is_removed(self):
         self.assertFalse(OBSOLETE_WORKFLOW.exists())

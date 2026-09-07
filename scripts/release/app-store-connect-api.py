@@ -13,8 +13,9 @@ Read allowlist (GET):
   /v1/builds/{id},
   /v1/preReleaseVersions/{id},
   /v1/ciProducts, /v1/ciProducts/{id}, /v1/ciWorkflows,
-  /v1/ciBuildRuns, /v1/ciRuns,
-  /v1/ciRuns/{id}/artifacts, /v1/betaGroups, /v1/betaGroups/{id},
+  /v1/ciBuildRuns/{id}, /v1/ciBuildRuns/{id}/actions,
+  /v1/ciBuildActions/{id}, /v1/ciBuildActions/{id}/artifacts,
+  /v1/betaGroups, /v1/betaGroups/{id},
   /v1/betaGroups/{id}/builds,
   /v1/betaBuildLocalizations, /v1/betaAppReviewDetails,
   /v1/betaAppReviewSubmissions, /v1/scmRepositories/{id},
@@ -41,6 +42,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -49,6 +51,7 @@ from typing import Optional
 
 
 API_BASE = "https://api.appstoreconnect.apple.com"
+MAX_CI_ARTIFACT_BYTES = 5 * 1024 * 1024 * 1024
 _OPENSSL_CANDIDATES = (
     os.environ.get("FLOORP_OPENSSL3"),
     "/opt/homebrew/opt/openssl@3/bin/openssl",
@@ -635,38 +638,296 @@ def build_polling_client(issuer_id: str, key_id: str, private_key_path: Path,
     return client
 
 
-def download_ci_artifact(client, run_id: str, relationship: str, output: Path,
-                         sha256_output: Path, dry_run: bool) -> None:
-    actions_response = client("GET", f"/v1/ciBuildRuns/{run_id}/actions", dry_run=dry_run)
-    if dry_run:
-        write_output(sha256_output, {"dry_run": True})
-        return
-    actions = actions_response.get("data", [])
-    if not actions:
-        raise AllowlistError(f"no ciBuildActions on run {run_id}")
-    action_id = actions[0].get("id")
-    response = client("GET", f"/v1/ciBuildActions/{action_id}/artifacts", dry_run=dry_run)
-    artifacts = response.get("data", [])
-    wanted = relationship.rstrip("s").lower()
-    match = next(
-        (item for item in artifacts
-         if (item.get("attributes", {}).get("fileType") or "").lower().rstrip("s") == wanted),
-        None,
-    )
-    if match is None:
-        raise AllowlistError(
-            f"no artifact with fileType {relationship} on run {run_id} "
-            f"(found {[a.get('attributes', {}).get('fileType') for a in artifacts]})"
-        )
-    download_url = match.get("attributes", {}).get("downloadUrl")
-    if not download_url:
+def _strict_collection(response: object, resource_type: str, context: str) -> list[dict]:
+    if not isinstance(response, dict):
+        raise AllowlistError(f"{context} response is not an object")
+    links = response.get("links")
+    if links is not None and not isinstance(links, dict):
+        raise AllowlistError(f"{context} pagination metadata is malformed")
+    if isinstance(links, dict) and links.get("next") not in (None, ""):
+        raise AllowlistError(f"{context} response is paginated")
+    rows = response.get("data")
+    if not isinstance(rows, list):
+        raise AllowlistError(f"{context} data is not an array")
+    result = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("type") != resource_type:
+            raise AllowlistError(f"{context} contains a non-{resource_type} resource")
+        resource_id = row.get("id")
+        if not isinstance(resource_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", resource_id):
+            raise AllowlistError(f"{context} contains an invalid resource ID")
+        if resource_id in seen:
+            raise AllowlistError(f"{context} contains duplicate resource ID {resource_id}")
+        seen.add(resource_id)
+        result.append(row)
+    return result
+
+
+def _require_https_download_url(value: object) -> str:
+    if not isinstance(value, str) or not value:
         raise AllowlistError("artifact has no downloadUrl")
-    request = urllib.request.Request(download_url, method="GET")
-    with urllib.request.urlopen(request, timeout=300) as response_handle:
-        data = response_handle.read()
-    output.write_bytes(data)
-    digest = hashlib.sha256(data).hexdigest()
-    sha256_output.write_text(digest + "\n")
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise AllowlistError("artifact downloadUrl must be an authenticated HTTPS URL")
+    return value
+
+
+def _exclusive_output_path(path: Path, context: str) -> Path:
+    if not path.is_absolute():
+        raise AllowlistError(f"{context} path must be absolute")
+    if path.is_symlink() or path.exists():
+        raise AllowlistError(f"refusing to overwrite {context}: {path}")
+    try:
+        parent = path.parent.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise AllowlistError(f"{context} parent does not exist: {path.parent}") from error
+    if not parent.is_dir() or parent.is_symlink():
+        raise AllowlistError(f"{context} parent is not a real directory: {parent}")
+    return parent / path.name
+
+
+def _write_exclusive_text(path: Path, value: str, context: str) -> None:
+    destination = _exclusive_output_path(path, context)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary_name, destination)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
+def download_ci_artifact(
+    client,
+    run_id: str,
+    relationship: str,
+    output: Path,
+    sha256_output: Path,
+    dry_run: bool,
+    metadata_output: Optional[Path] = None,
+    max_bytes: int = MAX_CI_ARTIFACT_BYTES,
+) -> None:
+    """Download one exact artifact from one successful archive action.
+
+    The authenticated run-to-action, action-to-run, and action-to-artifact
+    relationships are all checked before following Apple's short-lived URL.
+    """
+
+    if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+        raise AllowlistError("CI run ID is invalid")
+    aliases = {
+        "archive": "ARCHIVE",
+        "archives": "ARCHIVE",
+        "archive_export": "ARCHIVE_EXPORT",
+        "archive_exports": "ARCHIVE_EXPORT",
+    }
+    wanted = aliases.get(relationship.lower())
+    if wanted is None:
+        raise AllowlistError("CI artifact file type must be ARCHIVE or ARCHIVE_EXPORT")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+        raise AllowlistError("maximum artifact size must be a positive integer")
+
+    actions_response = client(
+        "GET", f"/v1/ciBuildRuns/{run_id}/actions?limit=200", dry_run=dry_run
+    )
+    if dry_run:
+        _write_exclusive_text(
+            sha256_output,
+            json.dumps({"dry_run": True}, sort_keys=True) + "\n",
+            "artifact SHA-256 output",
+        )
+        if metadata_output is not None:
+            _write_exclusive_text(
+                metadata_output,
+                json.dumps({"dry_run": True}, sort_keys=True) + "\n",
+                "artifact metadata output",
+            )
+        return
+
+    actions = _strict_collection(actions_response, "ciBuildActions", "CI build actions")
+    archive_actions = []
+    for action in actions:
+        attributes = action.get("attributes")
+        if not isinstance(attributes, dict):
+            raise AllowlistError("CI build action attributes are missing")
+        if (
+            attributes.get("actionType") == "ARCHIVE"
+            and attributes.get("executionProgress") == "COMPLETE"
+            and attributes.get("completionStatus") == "SUCCEEDED"
+        ):
+            archive_actions.append(action)
+    if len(archive_actions) != 1:
+        raise AllowlistError(
+            "expected exactly one completed successful ARCHIVE action on "
+            f"run {run_id}; found {len(archive_actions)}"
+        )
+    action = archive_actions[0]
+    action_id = action["id"]
+
+    detail = client(
+        "GET", f"/v1/ciBuildActions/{action_id}?include=buildRun", dry_run=dry_run
+    )
+    if not isinstance(detail, dict) or not isinstance(detail.get("data"), dict):
+        raise AllowlistError("CI build action detail is malformed")
+    detail_action = detail["data"]
+    if detail_action.get("type") != "ciBuildActions" or detail_action.get("id") != action_id:
+        raise AllowlistError("CI build action detail identity does not match")
+    detail_attributes = detail_action.get("attributes")
+    if not isinstance(detail_attributes, dict) or any(
+        detail_attributes.get(key) != value
+        for key, value in (
+            ("actionType", "ARCHIVE"),
+            ("executionProgress", "COMPLETE"),
+            ("completionStatus", "SUCCEEDED"),
+        )
+    ):
+        raise AllowlistError("CI build action detail is not a successful archive")
+    action_name = detail_attributes.get("name")
+    if not isinstance(action_name, str) or not action_name:
+        raise AllowlistError("CI build action name is missing")
+    relationships = detail_action.get("relationships")
+    build_run = relationships.get("buildRun") if isinstance(relationships, dict) else None
+    linkage = build_run.get("data") if isinstance(build_run, dict) else None
+    if (
+        not isinstance(linkage, dict)
+        or linkage.get("type") != "ciBuildRuns"
+        or linkage.get("id") != run_id
+    ):
+        raise AllowlistError("CI build action does not link back to the requested run")
+
+    response = client(
+        "GET", f"/v1/ciBuildActions/{action_id}/artifacts?limit=200", dry_run=dry_run
+    )
+    artifacts = _strict_collection(response, "ciArtifacts", "CI build artifacts")
+    matches = [
+        item
+        for item in artifacts
+        if isinstance(item.get("attributes"), dict)
+        and item["attributes"].get("fileType") == wanted
+    ]
+    if len(matches) != 1:
+        found = [
+            item.get("attributes", {}).get("fileType")
+            for item in artifacts
+            if isinstance(item.get("attributes"), dict)
+        ]
+        raise AllowlistError(
+            f"expected exactly one artifact with fileType {wanted} on run {run_id}; "
+            f"found {len(matches)} (all file types: {found})"
+        )
+    match = matches[0]
+    attributes = match["attributes"]
+    file_name = attributes.get("fileName")
+    if (
+        not isinstance(file_name, str)
+        or not file_name
+        or file_name in {".", ".."}
+        or "/" in file_name
+        or "\\" in file_name
+        or any(ord(character) < 32 or ord(character) == 127 for character in file_name)
+    ):
+        raise AllowlistError("artifact fileName is invalid")
+    file_size = attributes.get("fileSize")
+    if (
+        isinstance(file_size, bool)
+        or not isinstance(file_size, int)
+        or file_size <= 0
+        or file_size > max_bytes
+    ):
+        raise AllowlistError(
+            f"artifact fileSize must be between 1 and {max_bytes} bytes"
+        )
+    download_url = _require_https_download_url(attributes.get("downloadUrl"))
+
+    destination = _exclusive_output_path(output, "artifact output")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".download", dir=destination.parent
+    )
+    digest = hashlib.sha256()
+    downloaded_size = 0
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            request = urllib.request.Request(download_url, method="GET")
+            with urllib.request.urlopen(request, timeout=300) as response_handle:
+                final_url = response_handle.geturl()
+                _require_https_download_url(final_url)
+                content_length = response_handle.headers.get("Content-Length")
+                try:
+                    response_size = int(content_length)
+                except (TypeError, ValueError) as error:
+                    raise AllowlistError(
+                        "artifact response has no valid Content-Length"
+                    ) from error
+                if response_size != file_size:
+                    raise AllowlistError(
+                        f"artifact Content-Length {response_size} != declared {file_size}"
+                    )
+                while True:
+                    chunk = response_handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    downloaded_size += len(chunk)
+                    if downloaded_size > file_size or downloaded_size > max_bytes:
+                        raise AllowlistError("artifact download exceeds its declared size")
+                    digest.update(chunk)
+                    handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if downloaded_size != file_size:
+            raise AllowlistError(
+                f"artifact download size {downloaded_size} != declared {file_size}"
+            )
+        os.link(temporary_name, destination)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+    digest_value = digest.hexdigest()
+    _write_exclusive_text(
+        sha256_output, digest_value + "\n", "artifact SHA-256 output"
+    )
+    if metadata_output is not None:
+        metadata = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "action": {
+                "id": action_id,
+                "name": action_name,
+                "action_type": "ARCHIVE",
+                "execution_progress": "COMPLETE",
+                "completion_status": "SUCCEEDED",
+            },
+            "artifact": {
+                "id": match["id"],
+                "file_type": wanted,
+                "file_name": file_name,
+                "file_size": file_size,
+                "downloaded_size": downloaded_size,
+                "sha256": digest_value,
+            },
+            "download_path": str(destination),
+        }
+        _write_exclusive_text(
+            metadata_output,
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+            "artifact metadata output",
+        )
 
 
 def main(argv=None) -> int:
@@ -719,6 +980,10 @@ def main(argv=None) -> int:
     download_parser.add_argument("--relationship", required=True)
     download_parser.add_argument("--output", required=True, type=Path)
     download_parser.add_argument("--sha256-output", required=True, type=Path)
+    download_parser.add_argument("--metadata-output", type=Path)
+    download_parser.add_argument(
+        "--max-bytes", type=int, default=MAX_CI_ARTIFACT_BYTES
+    )
     add_credentials(download_parser)
 
     fingerprint_parser = subparsers.add_parser("fingerprint-state")
@@ -782,8 +1047,11 @@ def main(argv=None) -> int:
                         arguments.output, arguments.dry_run)
             return 0
         if arguments.command == "download-ci-artifact":
-            issuer, key_id, key_path = load_credentials(arguments)
-            jwt = make_jwt(issuer, key_id, key_path, int(time.time()))
+            if arguments.dry_run:
+                jwt = ""
+            else:
+                issuer, key_id, key_path = load_credentials(arguments)
+                jwt = make_jwt(issuer, key_id, key_path, int(time.time()))
             download_ci_artifact(
                 lambda method, path, dry_run=arguments.dry_run: api_call(
                     method, path, jwt, dry_run=dry_run
@@ -793,6 +1061,8 @@ def main(argv=None) -> int:
                 arguments.output,
                 arguments.sha256_output,
                 arguments.dry_run,
+                metadata_output=arguments.metadata_output,
+                max_bytes=arguments.max_bytes,
             )
             return 0
     except (AllowlistError, CredentialError, json.JSONDecodeError, ValueError) as error:
