@@ -100,7 +100,11 @@ class WebContextMenuActionsProvider {
     }
 
     @MainActor
-    func addDownload(url: URL, currentTab: Tab, assignWebView: @escaping (WKWebView?) -> Void) {
+    func addDownload(
+        url: URL,
+        currentTab: Tab,
+        startDownload: @escaping (URLRequest, WKWebView?) -> Void
+    ) {
         let origin = telemetryOrigin
         actions.append(UIAction(
             title: .ContextMenuDownloadLink,
@@ -113,12 +117,11 @@ class WebContextMenuActionsProvider {
                 guard let currentTab else { return }
                 // This checks if download is a blob, if yes, begin blob download process
                 if !DownloadContentScript.requestBlobDownload(url: url, tab: currentTab) {
-                    // if not a blob, set pendingDownloadWebView and load the request in
-                    // the webview, which will trigger the WKWebView navigationResponse
+                    // if not a blob, start a per-WebView pending transaction and load
+                    // the request, which will trigger the WKWebView navigationResponse
                     // delegate function and eventually downloadHelper.open()
-                    assignWebView(currentTab.webView)
                     let request = URLRequest(url: url)
-                    currentTab.webView?.load(request)
+                    startDownload(request, currentTab.webView)
                     Self.recordOptionSelectedTelemetry(option: .downloadLink, originExtra: origin)
                 }
             }

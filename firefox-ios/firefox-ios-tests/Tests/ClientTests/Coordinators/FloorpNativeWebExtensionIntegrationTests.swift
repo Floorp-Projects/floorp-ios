@@ -2025,6 +2025,33 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
+        var preOriginFallbackCustomFilterRecord = legacyRecord
+        preOriginFallbackCustomFilterRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preOriginFallbackCustomFilterUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preOriginFallbackCustomFilterRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preBoundedOriginFallbackRecord = legacyRecord
+        preBoundedOriginFallbackRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preBoundedOriginFallbackUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preBoundedOriginFallbackRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preTransactionHardeningRecord = legacyRecord
+        preTransactionHardeningRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preTransactionHardeningUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preTransactionHardeningRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
         let originalContextIdentifier = legacyRecord.contextIdentifier
         let originalBaseURLHost = legacyRecord.baseURLHost
         try store.save(FloorpNativeWebExtensionRegistry(extensions: [legacyRecord]))
@@ -5600,7 +5627,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e"
+            "4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
@@ -5706,7 +5733,10 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     const module = await import(
                         browser.runtime.getURL('js/floorp-reconcile.js')
                     );
-                    reconciliation = await module.reconcileProtection();
+                    const options = typeof initialReadiness.settingsRestoreId === 'string'
+                        ? { settingsRestoreId: initialReadiness.settingsRestoreId }
+                        : {};
+                    reconciliation = await module.reconcileProtection(options);
                 }
                 const readiness = reconciliation?.ready === true
                     ? await browser.runtime.sendMessage({ what: 'floorpReadiness' })
@@ -6334,6 +6364,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 excludeMatches: script.excludeMatches || [],
                 js: script.js || [],
                 allFrames: script.allFrames === true,
+                matchOriginAsFallback: script.matchOriginAsFallback === true,
                 runAt: script.runAt || 'document_idle',
                 world: script.world || 'ISOLATED',
             });
@@ -6619,6 +6650,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
         let interruptedRestoreRecovery: [String: Any]?
         var interruptedSnapshot: [String: Any]?
+        var interruptedRestoreId: String?
         var interruptedRestoreOperation = "setup"
         do {
             let setup = try await optionsWebView.floorpCallAsyncJavaScript(
@@ -6659,23 +6691,30 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 ) {
                     throw new Error('Options document changed before restore staging');
                 }
-                const reconciler = await import(
-                    browser.runtime.getURL('js/floorp-reconcile.js')
-                );
                 const journalKey = 'floorp.settingsRestoreJournal.v1';
                 const interrupted = await browser.runtime.sendMessage({
                     what: 'beginSettingsRestore',
                 });
-                const result = await reconciler.reconcileProtection({
+                const result = await browser.runtime.sendMessage({
+                    what: 'commitSettingsRestore',
+                    id: interrupted.id,
+                    settingsRestoreId: interrupted.id,
                     enabledRulesets: alternateEnabled,
                 });
-                if (result.ready !== true) {
-                    throw new Error(result.error || 'Failed to stage interrupted restore');
+                if (
+                    result.foregroundReconciliationRequired !== true ||
+                    result.settingsRestoreId !== interrupted.id
+                ) {
+                    throw new Error(
+                        result.error || 'Failed to stage foreground restore handoff'
+                    );
                 }
                 const whileInterrupted = await browser.storage.local.get(journalKey);
                 return {
+                    interruptedId: interrupted.id,
                     interruptedJournalRetained:
-                        whileInterrupted[journalKey]?.id === interrupted.id,
+                        whileInterrupted[journalKey]?.id === interrupted.id &&
+                        whileInterrupted[journalKey]?.phase === 'committingForeground',
                     stagedChanged:
                         JSON.stringify([...alternateEnabled].sort()) !==
                         JSON.stringify([...initialEnabled].sort()),
@@ -6690,6 +6729,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 timeoutNanoseconds: 90_000_000_000
             ) as? [String: Any]
             let stagedState = try XCTUnwrap(staged)
+            interruptedRestoreId = stagedState["interruptedId"] as? String
 
             interruptedRestoreOperation = "restore"
             interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
@@ -6701,7 +6741,18 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     throw new Error('Options document changed before restore recovery');
                 }
                 const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const reconciler = await import(
+                    browser.runtime.getURL('js/floorp-reconcile.js')
+                );
                 const journalKey = 'floorp.settingsRestoreJournal.v1';
+                const resumed = await reconciler.reconcileProtection({
+                    settingsRestoreId: interruptedId,
+                });
+                if (resumed.ready !== true || resumed.committed !== true) {
+                    throw new Error(
+                        resumed.error || 'Failed to resume foreground restore handoff'
+                    );
+                }
                 await backup.restoreFromObject(snapshot);
                 const finalEnabled = await browser.runtime.sendMessage({
                     what: 'getEnabledRulesets',
@@ -6718,6 +6769,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 return {
                     interruptedJournalRetained,
                     stagedChanged,
+                    resumedCommitted: resumed.committed === true,
                     initialEnabled,
                     finalEnabled,
                     journalRemoved: finalStorage[journalKey] === undefined,
@@ -6728,6 +6780,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     "documentToken": documentToken,
                     "snapshot": snapshot,
                     "initialEnabled": initialEnabled,
+                    "interruptedId": stagedState["interruptedId"] as? String ?? "",
                     "interruptedJournalRetained":
                         stagedState["interruptedJournalRetained"] as? Bool ?? false,
                     "stagedChanged": stagedState["stagedChanged"] as? Bool ?? false,
@@ -6737,6 +6790,28 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ) as? [String: Any]
         } catch {
             let operationError = error
+            if let interruptedRestoreId {
+                _ = try? await optionsWebView.floorpCallAsyncJavaScript(
+                    """
+                    const rollback = await browser.runtime.sendMessage({
+                        what: 'rollbackSettingsRestore',
+                        id: interruptedId,
+                        settingsRestoreId: interruptedId,
+                    });
+                    if (rollback?.foregroundReconciliationRequired === true) {
+                        const reconciler = await import(
+                            browser.runtime.getURL('js/floorp-reconcile.js')
+                        );
+                        await reconciler.reconcileProtection({
+                            settingsRestoreId: interruptedId,
+                        });
+                    }
+                    """,
+                    arguments: ["interruptedId": interruptedRestoreId],
+                    contentWorld: .page,
+                    timeoutNanoseconds: 90_000_000_000
+                )
+            }
             if let interruptedSnapshot {
                 _ = try? await optionsWebView.floorpCallAsyncJavaScript(
                     """
@@ -6765,6 +6840,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let interruptedState = try XCTUnwrap(interruptedRestoreRecovery)
         XCTAssertEqual(interruptedState["interruptedJournalRetained"] as? Bool, true)
         XCTAssertEqual(interruptedState["stagedChanged"] as? Bool, true)
+        XCTAssertEqual(interruptedState["resumedCommitted"] as? Bool, true)
         XCTAssertEqual(
             Set(interruptedState["finalEnabled"] as? [String] ?? []),
             Set(interruptedState["initialEnabled"] as? [String] ?? [])
@@ -7034,6 +7110,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             );
             await browser.runtime.sendMessage({
                 what: 'setShowBlockedCount',
+                settingsRestoreId: transaction.id,
                 state: !beforeConfig.showBlockedCount,
             });
             await browser.storage.local.remove('deferredJobs');
@@ -7041,6 +7118,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             const rollback = await browser.runtime.sendMessage({
                 what: 'rollbackSettingsRestore',
                 id: transaction.id,
+                settingsRestoreId: transaction.id,
             });
             const rollbackVisible = await readLocalUntil(state =>
                 state[journalKey] === undefined
@@ -7057,6 +7135,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 await browser.runtime.sendMessage({
                     what: 'commitSettingsRestore',
                     id: verificationTransaction.id,
+                    settingsRestoreId: verificationTransaction.id,
+                    enabledRulesets: beforeConfig.enabledRulesets,
                 });
             }
             const committedVerification = await readLocalUntil(state =>

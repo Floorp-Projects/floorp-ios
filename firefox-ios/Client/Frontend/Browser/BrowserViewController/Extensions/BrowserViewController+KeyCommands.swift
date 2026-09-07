@@ -407,27 +407,29 @@ extension BrowserViewController {
 
     // MARK: Keyboards + Link click shortcuts
     @available(iOS 13.4, *)
-    func navigateLinkShortcutIfNeeded(url: URL) -> Bool {
+    func navigateLinkShortcutIfNeeded(url: URL, sourceTab: Tab) -> Bool {
+        // Keyboard state is global to the scene. A delayed callback from a
+        // background tab must not consume the foreground tab's shortcut.
+        guard tabManager.selectedTab === sourceTab else { return false }
         var shouldCancelHandler = false
 
         // Open tab in background || Open in new tab
         if keyboardPressesHandler().isOnlyCmdPressed || keyboardPressesHandler().isCmdAndShiftPressed {
-            guard let isPrivate = tabManager.selectedTab?.isPrivate else { return shouldCancelHandler }
+            let isPrivate = sourceTab.isPrivate
             let selectNewTab = !keyboardPressesHandler().isOnlyCmdPressed
                                && keyboardPressesHandler().isCmdAndShiftPressed
             homePanelDidRequestToOpenInNewTab(url, isPrivate: isPrivate, selectNewTab: selectNewTab)
             shouldCancelHandler = true
 
         // Download Link
-        } else if keyboardPressesHandler().isOnlyOptionPressed, let currentTab = tabManager.selectedTab {
+        } else if keyboardPressesHandler().isOnlyOptionPressed {
             // This checks if download is a blob, if yes, begin blob download process
-            if !DownloadContentScript.requestBlobDownload(url: url, tab: currentTab) {
-                // if not a blob, set pendingDownloadWebView and load the request in
-                // the webview, which will trigger the WKWebView navigationResponse
+            if !DownloadContentScript.requestBlobDownload(url: url, tab: sourceTab) {
+                // if not a blob, start a per-WebView pending transaction and load
+                // the request, which will trigger the WKWebView navigationResponse
                 // delegate function and eventually downloadHelper.open()
-                self.pendingDownloadWebView = currentTab.webView
                 let request = URLRequest(url: url)
-                currentTab.webView?.load(request)
+                startPendingDownload(request, in: sourceTab.webView)
             }
             shouldCancelHandler = true
         }

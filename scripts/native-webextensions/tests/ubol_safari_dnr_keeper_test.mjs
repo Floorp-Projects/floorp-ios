@@ -15,7 +15,16 @@ let importSerial = 0;
 const clone = value => structuredClone(value);
 const nextTask = ( ) => new Promise(resolveTask => setTimeout(resolveTask, 2));
 
-function createStorageArea(data) {
+function createStorageArea(data, state, areaName) {
+    const recordRealmMarkerMutation = (operation, value) => {
+        if ( areaName !== 'session' ) { return; }
+        state.realmMarkerMutations.push({
+            operation,
+            value,
+            dnrLockHeld:
+                (state.activeLockNames.get('floorp.ubol.safari-dnr.v1') || 0) > 0,
+        });
+    };
     return {
         async get(keys) {
             if ( keys === null || keys === undefined ) { return clone(data); }
@@ -29,10 +38,16 @@ function createStorageArea(data) {
             return out;
         },
         async set(values) {
+            if ( Object.hasOwn(values, 'safari.seenRealms') ) {
+                recordRealmMarkerMutation('set', values['safari.seenRealms']);
+            }
             Object.assign(data, clone(values));
         },
         async remove(keys) {
             for ( const key of Array.isArray(keys) ? keys : [ keys ] ) {
+                if ( key === 'safari.seenRealms' ) {
+                    recordRealmMarkerMutation('remove');
+                }
                 delete data[key];
             }
         },
@@ -49,9 +64,19 @@ function createLockManager(state) {
                 .catch(( ) => undefined)
                 .then(async ( ) => {
                     state.activeLocks += 1;
+                    state.activeLockNames.set(
+                        name,
+                        (state.activeLockNames.get(name) || 0) + 1
+                    );
                     try {
                         return await callback({ name, mode: options.mode });
                     } finally {
+                        const remaining = state.activeLockNames.get(name) - 1;
+                        if ( remaining === 0 ) {
+                            state.activeLockNames.delete(name);
+                        } else {
+                            state.activeLockNames.set(name, remaining);
+                        }
                         state.activeLocks -= 1;
                     }
                 });
@@ -69,6 +94,7 @@ function createEnvironment({
     initialDynamicRules = [],
     initialSessionRules = [],
     promiseOnlyDNR = false,
+    staticUpdateFailures = 0,
 } = {}) {
     const state = {
         dynamicRules: clone(initialDynamicRules),
@@ -76,13 +102,17 @@ function createEnvironment({
         enabledRulesets: [],
         localStorage: {},
         sessionStorage: {},
+        staticUpdateFailures,
         activeUpdates: 0,
         activeLocks: 0,
+        activeLockNames: new Map(),
         maxActiveUpdates: 0,
         emptyTransitions: [],
         lockRequests: [],
         nativeCalls: [],
+        realmMarkerMutations: [],
         updates: [],
+        focusListeners: [],
     };
 
     const ruleUpdate = async (storageType, options) => {
@@ -153,11 +183,18 @@ function createEnvironment({
         state.updates.push(event);
         try {
             await nextTask();
+            if ( state.staticUpdateFailures !== 0 ) {
+                state.staticUpdateFailures -= 1;
+                throw new Error('injected static update failure');
+            }
             const enabled = new Set(state.enabledRulesets);
             for ( const id of options.disableRulesetIds || [] ) { enabled.delete(id); }
             for ( const id of options.enableRulesetIds || [] ) { enabled.add(id); }
             state.enabledRulesets = Array.from(enabled);
             event.outcome = 'resolved';
+        } catch(reason) {
+            event.outcome = 'rejected';
+            throw reason;
         } finally {
             state.activeUpdates -= 1;
         }
@@ -227,18 +264,17 @@ function createEnvironment({
         },
         async setExtensionActionOptions() {},
     };
-    const focusListeners = [];
     const browser = {
         runtime,
         declarativeNetRequest: dnr,
         storage: {
-            local: createStorageArea(state.localStorage),
-            session: createStorageArea(state.sessionStorage),
+            local: createStorageArea(state.localStorage, state, 'local'),
+            session: createStorageArea(state.sessionStorage, state, 'session'),
         },
         windows: {
             WINDOW_ID_NONE: -1,
             onFocusChanged: {
-                addListener(listener) { focusListeners.push(listener); },
+                addListener(listener) { state.focusListeners.push(listener); },
             },
             async get(windowId) { return { id: windowId, incognito: false }; },
             async getAll() { return []; },
@@ -656,6 +692,94 @@ assert.deepEqual(
 assert.equal(hasRule(doubledLimitSafari.state.dynamicRules, keeperId), true);
 assert.equal(hasRule(doubledLimitSafari.state.sessionRules, keeperId), true);
 assert.deepEqual(doubledLimitSafari.state.emptyTransitions, []);
+
+const realmMarkerSafari = createEnvironment();
+realmMarkerSafari.state.enabledRulesets = [ 'before' ];
+realmMarkerSafari.state.sessionStorage['safari.seenRealms'] = 0b01;
+const realmMarkerCompat = await importCompat(
+    realmMarkerSafari,
+    'realm-marker-lock'
+);
+realmMarkerCompat.releaseRealmRulesetStartupGate();
+await realmMarkerCompat.waitForRealmRulesetUpdates();
+realmMarkerSafari.state.realmMarkerMutations.length = 0;
+const foregroundStaticUpdate = realmMarkerCompat.dnr.updateEnabledRulesets({
+    disableRulesetIds: [ 'before' ],
+    enableRulesetIds: [ 'after' ],
+});
+for ( let i = 0; i < 50; i++ ) {
+    if ( realmMarkerSafari.state.activeLockNames.has(
+        'floorp.ubol.safari-dnr.v1'
+    ) ) {
+        break;
+    }
+    await nextTask();
+}
+assert.equal(
+    realmMarkerSafari.state.activeLockNames.has('floorp.ubol.safari-dnr.v1'),
+    true,
+    'the foreground static update must hold the shared Safari DNR lock'
+);
+assert.equal(realmMarkerSafari.state.focusListeners.length, 1);
+realmMarkerSafari.state.focusListeners[0](1);
+await foregroundStaticUpdate;
+await realmMarkerCompat.waitForRealmRulesetUpdates();
+assert.deepEqual(realmMarkerSafari.state.enabledRulesets, [ 'after' ]);
+assert.equal(
+    realmMarkerSafari.state.maxActiveUpdates,
+    1,
+    'foreground static updates and focus refreshes must serialize'
+);
+assert(
+    realmMarkerSafari.state.updates.filter(event =>
+        event.storageType === 'static'
+    ).length >= 2,
+    'a focus refresh queued behind invalidation must reload the new rulesets'
+);
+assert.deepEqual(
+    realmMarkerSafari.state.realmMarkerMutations.map(mutation =>
+        mutation.operation
+    ),
+    [ 'remove', 'set' ]
+);
+assert(
+    realmMarkerSafari.state.realmMarkerMutations.every(mutation =>
+        mutation.dnrLockHeld
+    ),
+    'realm marker invalidation and publication must share the Safari DNR lock'
+);
+
+const staleRealmRollbackSafari = createEnvironment({ staticUpdateFailures: 1 });
+staleRealmRollbackSafari.state.enabledRulesets = [ 'before' ];
+staleRealmRollbackSafari.state.sessionStorage['safari.seenRealms'] = 0b11;
+const staleRealmRollbackCompat = await importCompat(
+    staleRealmRollbackSafari,
+    'stale-realm-rollback'
+);
+staleRealmRollbackCompat.releaseRealmRulesetStartupGate();
+await staleRealmRollbackCompat.waitForRealmRulesetUpdates();
+// Model a successful static update in a second realm which invalidated the
+// durable marker after this realm cached ALL_REALMS.
+delete staleRealmRollbackSafari.state.sessionStorage['safari.seenRealms'];
+staleRealmRollbackSafari.state.realmMarkerMutations.length = 0;
+await assert.rejects(
+    staleRealmRollbackCompat.dnr.updateEnabledRulesets({
+        disableRulesetIds: [ 'before' ],
+        enableRulesetIds: [ 'after' ],
+    }),
+    /injected static update failure/
+);
+assert.deepEqual(staleRealmRollbackSafari.state.enabledRulesets, [ 'before' ]);
+assert.equal(
+    staleRealmRollbackSafari.state.sessionStorage['safari.seenRealms'],
+    undefined,
+    'rollback must not republish a stale realm-local completion marker'
+);
+assert(
+    staleRealmRollbackSafari.state.realmMarkerMutations.every(mutation =>
+        mutation.operation === 'remove' && mutation.dnrLockHeld
+    )
+);
 
 const nonSafari = createEnvironment({
     safari: false,

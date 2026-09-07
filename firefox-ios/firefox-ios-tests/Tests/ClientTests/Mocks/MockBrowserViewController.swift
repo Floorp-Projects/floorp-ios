@@ -59,6 +59,7 @@ class MockBrowserViewController: BrowserViewController {
 
     // Mock control for frame navigation
     var mockIsMainFrameNavigation = true
+    var mockIsTopLevelNavigation: Bool?
 
     var createWebViewCalled = 0
     var runJavaScriptAlertPanelCalled = 0
@@ -171,6 +172,10 @@ class MockBrowserViewController: BrowserViewController {
 
     override func isMainFrameNavigation(_ navigationAction: WKNavigationAction) -> Bool {
         return mockIsMainFrameNavigation
+    }
+
+    override func isTopLevelNavigationAction(_ navigationAction: WKNavigationAction) -> Bool {
+        return mockIsTopLevelNavigation ?? mockIsMainFrameNavigation
     }
 }
 

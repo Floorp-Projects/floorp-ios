@@ -21,6 +21,17 @@ RELEASE_CRITICAL_CLASSES = {
     "TabWebViewTests",
 }
 
+REQUIRED_EXTENSION_NAVIGATION_TESTS = {
+    "BrowserViewControllerWebViewDelegateTests/"
+    "testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState()",
+    "BrowserViewControllerWebViewDelegateTests/"
+    "testCommittedExtensionTabGatesDocumentReplacementButNotFragmentOrSubframe()",
+    "BrowserViewControllerWebViewDelegateTests/"
+    "testForcedDownloadResponseRecoversRequestAndFailsClosedWhenMissing()",
+    "BrowserViewControllerWebViewDelegateTests/"
+    "testNormalWebOptionDownloadKeepsForcedDownloadMarkerUntilResponse()",
+}
+
 
 def methods_for_class(class_name: str) -> set[str]:
     declaration = re.compile(
@@ -39,6 +50,17 @@ def methods_for_class(class_name: str) -> set[str]:
 
 
 class FloorpExtensionTestPlanTests(unittest.TestCase):
+    def test_release_critical_extension_navigation_tests_are_selected(self):
+        plan = json.loads(TEST_PLAN.read_text(encoding="utf-8"))
+        client_tests = set(
+            next(
+                target
+                for target in plan["testTargets"]
+                if target["target"]["name"] == "ClientTests"
+            )["selectedTests"]
+        )
+        self.assertEqual(REQUIRED_EXTENSION_NAVIGATION_TESTS - client_tests, set())
+
     def test_every_release_critical_selected_test_resolves_to_a_swift_method(self):
         plan = json.loads(TEST_PLAN.read_text(encoding="utf-8"))
         client_tests = next(

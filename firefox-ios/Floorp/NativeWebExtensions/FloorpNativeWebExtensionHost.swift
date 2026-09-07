@@ -4513,7 +4513,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 return initial;
             }
             const module = await import(browser.runtime.getURL('js/floorp-reconcile.js'));
-            const reconciled = await module.reconcileProtection();
+            const reconcileOptions = typeof initial?.settingsRestoreId === 'string'
+                ? { settingsRestoreId: initial.settingsRestoreId }
+                : {};
+            const reconciled = await module.reconcileProtection(reconcileOptions);
             if (reconciled?.ready !== true) {
                 return reconciled;
             }

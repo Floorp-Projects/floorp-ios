@@ -216,6 +216,464 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
+    def test_rejects_ubol_custom_filter_injection_after_initialization_gate(self) -> None:
+        fast_path = "    case 'injectCustomFilters': {"
+        initialization_gate = (
+            "    // Requires extension to be fully initialized\n\n"
+            "    await ensureFullyInitialized();"
+        )
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.move_archive_text_after(
+                files,
+                "js/background.js",
+                fast_path,
+                initialization_gate,
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "orders compatibility code incorrectly"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_custom_filter_frame_target_instead_of_document(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "return { tabId, documentIds: [ documentId ] };",
+                "return { tabId, frameIds: [ sender.frameId ?? 0 ] };",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_origin_fallback_sender_guard_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "senderURL.protocol === 'http:' || senderURL.protocol === 'https:'",
+                "true",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "background sender authority|omits required compatibility code",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_origin_fallback_dispatch_guard_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "if ( floorpOriginFallbackDocument ) {",
+                "if ( false ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "origin-fallback request dispatch"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_plain_only_idle_css_api_preload_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/filter-manager.js",
+                "if ( idleJS.includes('/js/scripting/css-api.js') === false ) {",
+                "if ( false ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "registered-script"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_truncated_restore_registration_union(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/filter-manager.js",
+                "for ( const snapshot of snapshots ) {",
+                "for ( const snapshot of snapshots.slice(0, 1) ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "registered-script|registration union"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_inverted_origin_fallback_settings_snapshot(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "if ( settingsSnapshot !== undefined ) {",
+                "if ( settingsSnapshot === undefined ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "bounded origin-fallback read"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_unvalidated_settings_journal(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "return validateSettingsRestoreJournal(journal);",
+                "return journal;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "settings journal reader"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_settings_lock_fail_open_on_safari(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "if ( webextFlavor === 'safari' ) {\n"
+                "        throw new Error('Settings restore lock is unavailable');",
+                "if ( false ) {\n"
+                "        throw new Error('Settings restore lock is unavailable');",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "background settings lock"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_commit_without_durable_foreground_phase(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "phase: 'committingForeground',",
+                "phase: 'applying',",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "settings commit"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_rollback_without_admin_key_preservation(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "        SETTINGS_RESTORE_PRESERVED_PREFIXES\n    );",
+                "        []\n    );",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "settings rollback"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_settings_owner_id_bypass(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "request.settingsRestoreId !== request.id ||",
+                "false ||",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "settings owner protocol"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_foreground_message_during_apply_phase(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "isForegroundMessage === false",
+                "isForegroundMessage === true",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "settings owner protocol"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_dispatch_that_skips_cross_realm_lock(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "withSettingsRestoreLock(enqueue)",
+                "enqueue()",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "settings dispatch"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_foreground_authorize_without_readiness_latch(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "        foregroundRulesetReconciliationRequired = true;\n"
+                "        return { authorized: true };",
+                "        return { authorized: true };",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "foreground reconciliation authorization",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_generic_success_clearing_retained_error(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "        ( ) => undefined,\n        reason => {",
+                "        ( ) => { backgroundMutationError = undefined; },\n"
+                "        reason => {",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "background mutation queue|full-reconciliation-only",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_poisoned_initialization_recovery_cache(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "initializationRecovery = undefined;",
+                "void recovery;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "initialization recovery"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_admin_retry_that_skips_saved_equal_value(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/admin.js",
+                "if ( apply ) { toApply.push(key); }",
+                "if ( apply && val !== rulesetConfig[key] ) { toApply.push(key); }",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "managed settings apply|omits required"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_admin_queue_that_clears_newer_tokens(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/admin.js",
+                "if ( this.keys.get(key) === entry ) { this.keys.delete(key); }",
+                "this.keys.clear();",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "managed settings queue|omits required"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_admin_runner_without_restore_journal_gate(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "journal instanceof Object ||",
+                "false ||",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "managed settings mutation runner"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_restore_owned_message_without_owner_id(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/backup-restore.js",
+                "what: 'setAutoReload',\n        settingsRestoreId,",
+                "what: 'setAutoReload',\n        settingsRestoreId: undefined,",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "bind restored setAutoReload"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_foreground_static_update_before_durable_config(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.move_archive_text_after(
+                files,
+                "js/floorp-reconcile.js",
+                "    await saveRulesetConfig();\n",
+                "    const result = await enableRulesets(\n",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "foreground settings reconciliation"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_realm_refresh_that_uses_stale_cached_marker(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "seenRealms = marker?.['safari.seenRealms'] ?? 0;",
+                "void marker;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "realm refresh marker"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_static_marker_invalidation_after_native_update(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.move_archive_text_after(
+                files,
+                "js/ext-compat.js",
+                "            await runStorageOperation('session', ( ) =>\n"
+                "                webext.storage.session.remove('safari.seenRealms')\n"
+                "            );\n",
+                "            await updateNativeEnabledRulesets(options);\n",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "static ruleset realm marker"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_static_marker_rollback_omission(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext-compat.js",
+                "'safari.seenRealms': seenRealmsSnapshot,",
+                "'safari.seenRealms': 0,",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "static ruleset realm marker"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_origin_fallback_client_hostname_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "hostnameFromURL(document.location.origin);",
+                "'';",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_live_storage_during_settings_restore(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "const localState = await localSnapshot([], [",
+                "const localState = await localSnapshot(); // [",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_unbounded_local_snapshot_helper(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/ext.js",
+                "browser.storage.local.get(requestedKeys)",
+                "browser.storage.local.get(null)",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_unbound_custom_filter_acknowledgement(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "details.requestId === requestId &&",
+                "true &&",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_origin_fallback_procedural_api_preload_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/filter-manager.js",
+                "hostnames.some(hasInheritedProceduralFilter)",
+                "false",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_origin_fallback_dynamic_script_preflight(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/filter-manager.js",
+                "const proceduralSelectors = selectors.filter(a => isProcedural(a));",
+                "await browser.scripting.executeScript({ target });\n"
+                "    const proceduralSelectors = selectors.filter(a => isProcedural(a));",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "dynamically injects a script",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
     def test_rejects_ubol_cross_document_custom_filter_state_drift(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",
@@ -236,12 +694,30 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting/css-user.js",
-                "const cssUserCleanupOp = Promise.resolve(previousPendingOp)",
-                "const cssUserCleanupOp = Promise.resolve()",
+                "? previousProceduralFilterer.reset({ removeCSS: false })",
+                "? undefined",
             ),
         )
 
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_cross_document_custom_filter_prior_pending_chain(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "const cssUserCleanupOp = Promise.resolve()\n"
+                "    .then(( ) => previousProceduralFilterer instanceof Object",
+                "const previousPendingOp = self.cssUserPendingOp;\n"
+                "const cssUserCleanupOp = Promise.resolve()\n"
+                "    .then(( ) => Promise.resolve(previousPendingOp))\n"
+                "    .then(( ) => previousProceduralFilterer instanceof Object",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "includes forbidden compatibility code"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_cross_document_css_api_state_drift(self) -> None:
@@ -292,12 +768,44 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting/css-specific.js",
-                "? previousListsProceduralFilterer.reset()",
+                "? previousListsProceduralFilterer.reset({ removeCSS: false })",
                 "? undefined",
             ),
         )
 
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_unguarded_style_token_css_reset(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-procedural-api.js",
+                "            const css = `[${token}]\\n{${style}}\\n`;\n"
+                "            if ( removeCSS ) {",
+                "            const css = `[${token}]\\n{${style}}\\n`;\n"
+                "            if ( true ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "scoped style-token.*reset guard"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_unguarded_stylesheet_css_reset(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-procedural-api.js",
+                "        for ( const css of this.cssSheets ) {\n"
+                "            if ( removeCSS ) {",
+                "        for ( const css of this.cssSheets ) {\n"
+                "            if ( true ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "scoped stylesheet.*reset guard"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_cross_document_isolated_context_drift(self) -> None:
@@ -520,14 +1028,9 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/ext-compat.js",
-                "return runSafariDNROperation(async ( ) => {\n"
-                "        // Static ruleset changes do not delete dynamic/session SQLite rows.\n"
-                "        // A legacy store at capacity may therefore defer its missing keepers\n"
-                "        // while still allowing the independent static update to complete.\n"
                 "        await ensureSafariDNRKeepers({ allowCapacityDeferral: true });\n"
-                "        const rulesetSnapshot",
-                "return runSafariDNROperation(async ( ) => {\n"
-                "        const rulesetSnapshot",
+                "        const rulesetSnapshot = await readNativeEnabledRulesetsNow();",
+                "        const rulesetSnapshot = await readNativeEnabledRulesetsNow();",
             ),
         )
 
@@ -1253,7 +1756,7 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "orders compatibility code incorrectly"):
+        with self.assertRaisesRegex(RuntimeError, "settings restore coordinator"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_static_ruleset_restore_before_user_dnr_validation(self) -> None:
@@ -1262,13 +1765,16 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.move_archive_text_after(
                 files,
                 "js/backup-restore.js",
-                "what: 'updateUserDnrRules'",
-                "const reconciliation = await reconcileProtection({\n"
-                "        enabledRulesets: Array.from(enabledRulesets),",
+                "    await sendMessage({\n"
+                "        what: 'replaceUserDnrRules',\n"
+                "        settingsRestoreId,\n"
+                "        text: (targetConfig.dnrRules ?? []).join('\\n'),\n"
+                "    });\n\n",
+                "return Array.from(enabledRulesets);",
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "orders compatibility code incorrectly"):
+        with self.assertRaisesRegex(RuntimeError, "settings restore apply"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_restore_preflight_as_background_mutation(self) -> None:

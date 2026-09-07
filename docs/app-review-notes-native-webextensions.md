@@ -29,8 +29,8 @@ for that binary. App Review notes must not contain placeholders or private URLs.
 Replace the bracketed build-specific values before submission.
 
 ```text
-Floorp [VERSION] ([BUILD]) optionally bundles Dark Reader and uBlock Origin Lite.
-Floorp does not download WebExtension code or accept external ZIPs/catalogs. Code, rules, licenses, and provenance
+Floorp [VERSION] ([BUILD]) bundles Dark Reader and uBlock Origin Lite.
+Floorp does not download WebExtension code or load external ZIPs. Code, rules, licenses, and provenance
 ship in-app; patches and reproducible builds are public.
 
 Implementation:
@@ -50,18 +50,18 @@ Bundled open-source components:
   Build: scripts/package-darkreader-ios.sh
   Source commit: c2a707302a39b8047543712e9c582bac07835d34
 - uBlock Origin Lite 2026.825.1619, GNU GPL v3.0 or later, Floorp-derived. Its patch adds public
-  declarativeNetRequestFeedback, incognito/window routes, deterministic startup, durable storage/DNR/script
-  readback, and document-scoped custom/procedural reinjection across hosts and normal/private navigation.
-  Safari reserves two hidden DNR keeper slots and caps each store at 14,999 for WebKit's quota check.
-  Reserved ID 7,000,000 blocks only an exact floorp.invalid URL. This avoids empty SQLite teardown, makes no
-  request, is hidden from reads/Matched rules, and rejects collisions. Legacy full stores remain readable with
-  static rules; doomed updates fail before mutation, with no automatic rule removal.
-  Native DNR operations are serialized where
-  Web Locks exist and exact-read back. Popup/Dashboard Done await readback; restore preserves drafts and
-  rolls back rejected or partial user rules. Failures stay visible and retryable.
+  declarativeNetRequestFeedback, incognito/window routes, deterministic startup, and durable readback.
+  Custom/procedural filters bind to the exact WebKit document and verified HTTP(S) host. Hostless fallback
+  frames use only WebKit's immediate parent origin and fail closed on ambiguity. Registered-world APIs avoid
+  unsupported dynamic injection into about:blank/srcdoc and prevent cross-navigation CSS.
+  Restore uses a journaled lock; managed-policy changes share that lock and retry failed native side effects.
+  Malformed journals fail closed. DNR updates are
+  serialized and read back exactly. Two hidden DNR keeper slots cap each public dynamic/session store at 14,999;
+  ID 7,000,000 matches only floorp.invalid, makes no request, is hidden from reads, and rejects collisions.
+  Legacy full stores remain readable; failed updates never auto-delete user rules. UI failures remain retryable.
   Upstream: https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip
   Upstream SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
-  Derived SHA-256: b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e
+  Derived SHA-256: 4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch
   Build: scripts/package-ubol-ios.sh
   Source commit: 080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
@@ -141,7 +141,7 @@ Reader Mode, tracking protection, Notes, or Notes Sync.
 | Extension | Catalog identifier | Version | SHA-256 | Source commit | License | Package policy | Minimum |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability, close-tracked acknowledged popup routing, and unsupported shortcut UI removal; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
-| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `b755a66e93f63dd6c18b14a264837509c8b99c8215fa5abdd794a70c0c73372e` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable DNR/script reconciliation, document-scoped custom cosmetic/procedural reinjection across cross-host/normal/private navigation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
+| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable DNR/script reconciliation, exact-document custom cosmetic/procedural reinjection with bounded committed-snapshot restore safety, direct/inherited same-registration procedural API preload and dynamic-preflight-free origin-fallback replies, and a document-idle replay across cross-host/normal/private/origin-fallback navigation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
 
 The canonical local evidence is:
 
