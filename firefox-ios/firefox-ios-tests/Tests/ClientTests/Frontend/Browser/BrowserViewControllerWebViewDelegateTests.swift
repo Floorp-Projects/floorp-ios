@@ -420,7 +420,8 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
             type: .linkActivated
         )
         let fragmentDecision = expectation(description: "Fragment navigation resolved")
-        subject.webView(extensionWebView, decidePolicyFor: fragmentAction) { _ in
+        subject.webView(extensionWebView, decidePolicyFor: fragmentAction) { policy in
+            XCTAssertEqual(policy, .allow)
             fragmentDecision.fulfill()
         }
         await fulfillment(of: [fragmentDecision], timeout: 2)
@@ -442,12 +443,25 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         subject.mockIsMainFrameNavigation = true
         let reloadAction = MockNavigationAction(url: optionsURL, type: .reload)
         let reloadDecision = expectation(description: "Reload waits for close preparation")
-        subject.webView(extensionWebView, decidePolicyFor: reloadAction) { _ in
+        subject.webView(extensionWebView, decidePolicyFor: reloadAction) { policy in
+            XCTAssertEqual(policy, .allow)
             reloadDecision.fulfill()
         }
         await fulfillment(of: [reloadDecision], timeout: 2)
         XCTAssertEqual(closePreparationCount, 1)
         XCTAssertTrue(extensionWebView.isUserInteractionEnabled)
+
+        host.setContextReadyForTesting(false, identifier: item.identifier)
+        XCTAssertTrue(
+            host.routeNavigationIfNeeded(
+                tab: tab,
+                url: optionsURL,
+                navigationType: .reload
+            )
+        )
+        XCTAssertFalse(host.isCurrentExtensionSurfaceURL(optionsURL, in: tab))
+        host.setContextReadyForTesting(true, identifier: item.identifier)
+        XCTAssertTrue(host.isCurrentExtensionSurfaceURL(optionsURL, in: tab))
 
         await tab.close()
     }

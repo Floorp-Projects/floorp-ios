@@ -943,14 +943,19 @@ extension BrowserViewController: WKNavigationDelegate {
         // supplied by WKWebExtensionContext. Crossing that trust boundary
         // rebuilds the surface before the main-frame navigation begins.
         if isMainFrameNavigation(navigationAction),
-           FloorpNativeWebExtensionHost.host(for: profile.localName())?
-            .routeNavigationIfNeeded(
+           let host = FloorpNativeWebExtensionHost.host(for: profile.localName()) {
+            if host.routeNavigationIfNeeded(
                 tab: tab,
                 url: url,
                 navigationType: navigationAction.navigationType
-            ) == true {
-            decisionHandler(.cancel)
-            return
+            ) {
+                decisionHandler(.cancel)
+                return
+            }
+            if host.isCurrentExtensionSurfaceURL(url, in: tab) {
+                decisionHandler(.allow)
+                return
+            }
         }
 
         if tab == tabManager.selectedTab,
@@ -1214,7 +1219,7 @@ extension BrowserViewController: WKNavigationDelegate {
 
     private func handleCustomSchemeURLNavigation(url: URL, navigationAction: WKNavigationAction) {
         // Try to open the custom scheme URL, if it doesn't work we show an error alert
-        UIApplication.shared.open(url, options: [:]) { openedURL in
+        UIApplication.shared.open(url, options: [:]) { [weak self] openedURL in
             // Do not show error message for JS navigated links or
             // redirect as it's not the result of a user action.
             if !openedURL, navigationAction.navigationType == .linkActivated {
@@ -1224,7 +1229,7 @@ extension BrowserViewController: WKNavigationDelegate {
                     preferredStyle: .alert
                 )
                 alert.addAction(UIAlertAction(title: .OKString, style: .default, handler: nil))
-                self.present(alert, animated: true, completion: nil)
+                self?.present(alert, animated: true, completion: nil)
             }
         }
     }
