@@ -50,7 +50,7 @@ class FloorpCIReleaseGateTests(unittest.TestCase):
             (artifact / "ubol-release-acceptance.log").write_text(
                 log
                 if log is not None
-                else "FLOORP_UBOL_RELEASE_GATE report\n** TEST SUCCEEDED **\n",
+                else "FLOORP_UBOL_RELEASE_GATE report\n** TEST EXECUTE SUCCEEDED **\n",
                 encoding="utf-8",
             )
             output = root / "receipt.json"
@@ -70,6 +70,13 @@ class FloorpCIReleaseGateTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(receipt["head_sha"], HEAD_SHA)
         self.assertEqual(receipt["ci_run_id"], RUN_ID)
+        self.assertEqual(receipt["status"], "release-gate-passed")
+
+    def test_legacy_xcodebuild_success_marker_passes(self):
+        result, receipt = self.run_gate(
+            log="FLOORP_UBOL_RELEASE_GATE report\n** TEST SUCCEEDED **\n"
+        )
+        self.assertEqual(result, 0)
         self.assertEqual(receipt["status"], "release-gate-passed")
 
     def test_different_source_sha_fails(self):
@@ -94,13 +101,36 @@ class FloorpCIReleaseGateTests(unittest.TestCase):
         self.assertIsNone(receipt)
 
     def test_acceptance_without_completion_marker_fails(self):
-        result, receipt = self.run_gate(log="** TEST SUCCEEDED **\n")
+        result, receipt = self.run_gate(log="** TEST EXECUTE SUCCEEDED **\n")
+        self.assertEqual(result, 1)
+        self.assertIsNone(receipt)
+
+    def test_acceptance_without_xcodebuild_success_marker_fails(self):
+        result, receipt = self.run_gate(log="FLOORP_UBOL_RELEASE_GATE report\n")
         self.assertEqual(result, 1)
         self.assertIsNone(receipt)
 
     def test_failed_acceptance_log_fails(self):
         result, receipt = self.run_gate(
+            log="FLOORP_UBOL_RELEASE_GATE report\n** TEST EXECUTE FAILED **\n"
+        )
+        self.assertEqual(result, 1)
+        self.assertIsNone(receipt)
+
+    def test_legacy_failure_marker_fails(self):
+        result, receipt = self.run_gate(
             log="FLOORP_UBOL_RELEASE_GATE report\n** TEST FAILED **\n"
+        )
+        self.assertEqual(result, 1)
+        self.assertIsNone(receipt)
+
+    def test_failure_marker_overrides_xcodebuild_success_marker(self):
+        result, receipt = self.run_gate(
+            log=(
+                "FLOORP_UBOL_RELEASE_GATE report\n"
+                "** TEST EXECUTE SUCCEEDED **\n"
+                "** TEST EXECUTE FAILED **\n"
+            )
         )
         self.assertEqual(result, 1)
         self.assertIsNone(receipt)
