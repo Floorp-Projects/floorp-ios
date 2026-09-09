@@ -51,6 +51,9 @@ so the job obtains exact iOS 18.4 and iOS 26.0 runtimes on demand (`universal`
 on x86_64 and `arm64` on arm64). It first preserves any existing iOS 18.4
 runtime image and deletes only other runtime images that CoreSimulator
 marks as deletable. Unknown inventory data or a failed deletion stops the job;
+because a successful `simctl runtime delete` can precede secure-storage
+removal, the job waits within a fixed bound until every explicitly deleted
+runtime UUID is absent from repeatedly validated CoreSimulator inventories;
 the job also refuses to start the iOS 18.4 phase if an iOS 26.0 runtime image
 remains in CoreSimulator storage. The post-cleanup free-space report is retained
 with the evidence. It then downloads iOS 18.4 when absent, requires exactly one
@@ -62,8 +65,9 @@ Main Menu-to-Dark Reader direct popup path, production-host theming, and the
 official Dark Reader acceptance. It also proves that uBlock Origin Lite is
 unavailable and its installation is rejected below its iOS 26.0 minimum. After
 those tests, the job deletes the iOS 18.4 simulator, uniquely re-resolves the
-deletable iOS 18.4 runtime UUID, deletes that runtime, and records the reclaimed
-space before obtaining iOS 26.0 with the same download mechanism. It again
+deletable iOS 18.4 runtime UUID, deletes that runtime, waits for that exact UUID
+to disappear from validated inventory, and records the reclaimed space before
+obtaining iOS 26.0 with the same download mechanism. It again
 requires exactly one compatible runtime before creating the iOS 26.0 simulator.
 That simulator verifies the Dark Reader/uBlock Origin Lite action picker and
 popup, uBlock Origin Lite on a production host, and the opt-in official uBlock

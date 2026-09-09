@@ -101,6 +101,14 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "{uuid: .key, runtimeIdentifier: .value.runtimeIdentifier}",
             '[[ "$runtime_identifier" == "$minimum_runtime"',
             'xcrun simctl runtime delete "$runtime_uuid"',
+            "runtime_cleanup_poll_max_attempts=180",
+            "runtime_cleanup_poll_interval_seconds=2",
+            "runtime_cleanup_complete=0",
+            "--slurpfile candidates \"$runtime_delete_candidates\"",
+            "select($candidate_uuids | index($uuid) != null)",
+            "Runtime cleanup poll %d/%d",
+            'sleep "$runtime_cleanup_poll_interval_seconds"',
+            "Timed out waiting for exact simulator runtime candidate UUIDs",
             "floorp-webextension-os-matrix-disk-before-ios-18-4-download.log",
         ):
             self.assertIn(storage_cleanup_contract, minimum_runtime)
@@ -128,6 +136,30 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             minimum_runtime.index('xcrun simctl runtime delete "$runtime_uuid"'),
             minimum_runtime.index("xcodebuild -downloadPlatform iOS"),
         )
+        initial_cleanup_poll = minimum_runtime.split(
+            "for (( runtime_cleanup_attempt = 1;", 1
+        )[1].split("\n          done", 1)[0]
+        for polling_contract in (
+            "runtime_cleanup_attempt <= runtime_cleanup_poll_max_attempts",
+            'xcrun simctl runtime list -j > "$runtime_storage_after_cleanup"',
+            '"$runtime_storage_after_cleanup" >/dev/null',
+            'remaining_candidate_uuids="$(jq -cer',
+            "select($candidate_uuids | index($uuid) != null)",
+            '[[ "$remaining_candidate_count" == "0" ]]',
+            'sleep "$runtime_cleanup_poll_interval_seconds"',
+        ):
+            self.assertIn(polling_contract, initial_cleanup_poll)
+        initial_runtime_delete = minimum_runtime.index(
+            'xcrun simctl runtime delete "$runtime_uuid"'
+        )
+        initial_absence_gate = minimum_runtime.index(
+            '[[ "$runtime_cleanup_complete" != "1" ]]'
+        )
+        minimum_download = minimum_runtime.index(
+            '-buildVersion "$WEBEXTENSION_MINIMUM_OS"'
+        )
+        self.assertLess(initial_runtime_delete, initial_absence_gate)
+        self.assertLess(initial_absence_gate, minimum_download)
         for existing_minimum_contract in (
             'minimum_runtime_count="$(jq -er',
             'case "$minimum_runtime_count" in',
@@ -204,6 +236,9 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         runtime_delete = acceptance.index(
             'xcrun simctl runtime delete "$minimum_runtime_uuid"'
         )
+        runtime_absence_gate = acceptance.index(
+            '[[ "$minimum_runtime_reclaim_complete" != "1" ]]'
+        )
         reclaimed_space = acceptance.index(
             "floorp-webextension-os-matrix-disk-after-ios-18-4-reclaim.log"
         )
@@ -227,6 +262,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
                 simulator_delete,
                 runtime_resolve,
                 runtime_delete,
+                runtime_absence_gate,
                 reclaimed_space,
                 modern_download,
                 modern_create,
@@ -241,6 +277,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
                     simulator_delete,
                     runtime_resolve,
                     runtime_delete,
+                    runtime_absence_gate,
                     reclaimed_space,
                     modern_download,
                     modern_create,
@@ -257,9 +294,35 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             'reclaim_runtime_identifier" != "$minimum_runtime"',
             'reclaim_runtime_identifier" == "$modern_runtime"',
             'xcrun simctl runtime delete "$minimum_runtime_uuid"',
+            "minimum_runtime_reclaim_poll_max_attempts=180",
+            "minimum_runtime_reclaim_poll_interval_seconds=2",
+            "minimum_runtime_reclaim_complete=0",
+            "[keys[] | select(. == $runtime_uuid)] | length",
+            "Minimum-OS runtime reclaim poll %d/%d",
+            'sleep "$minimum_runtime_reclaim_poll_interval_seconds"',
+            "Timed out waiting for exact minimum-OS runtime UUID to disappear",
             '[[ "$minimum_runtime_remaining" != "0" ]]',
         ):
             self.assertIn(exact_reclaim_contract, acceptance)
+        minimum_reclaim_poll = acceptance.split(
+            "for (( minimum_runtime_reclaim_attempt = 1;", 1
+        )[1].split("\n          done", 1)[0]
+        for polling_contract in (
+            "minimum_runtime_reclaim_attempt <= minimum_runtime_reclaim_poll_max_attempts",
+            'xcrun simctl runtime list -j > "$runtime_storage_after_reclaim"',
+            'validate_runtime_storage_inventory "$runtime_storage_after_reclaim"',
+            '--arg runtime_uuid "$minimum_runtime_uuid"',
+            "[keys[] | select(. == $runtime_uuid)] | length",
+            '[[ "$minimum_runtime_uuid_remaining" == "0" ]]',
+            'sleep "$minimum_runtime_reclaim_poll_interval_seconds"',
+        ):
+            self.assertIn(polling_contract, minimum_reclaim_poll)
+        self.assertEqual(
+            acceptance.count(
+                'xcrun simctl runtime delete "$minimum_runtime_uuid"'
+            ),
+            1,
+        )
         self.assertNotIn("|| true", acceptance)
         self.assertIn(
             'modern_runtime="com.apple.CoreSimulator.SimRuntime.iOS-'
@@ -406,6 +469,9 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "preserves any existing iOS 18.4",
             "deletes only other runtime images that CoreSimulator",
             "Unknown inventory data or a failed deletion stops the job",
+            "successful `simctl runtime delete` can precede secure-storage",
+            "waits within a fixed bound until every explicitly deleted",
+            "runtime UUID is absent from repeatedly validated",
             "refuses to start the iOS 18.4 phase",
             "if an iOS 26.0 runtime image",
             "remains in CoreSimulator storage",
@@ -416,7 +482,10 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "below its iOS 26.0 minimum",
             "uniquely re-resolves the",
             "deletable iOS 18.4 runtime UUID",
-            "space before obtaining iOS 26.0",
+            "waits for that exact UUID",
+            "to disappear from validated inventory",
+            "records the reclaimed space before",
+            "obtaining iOS 26.0 with the same download mechanism",
             "opt-in official uBlock",
             "Origin Lite acceptance.",
             "use `test-without-building` rather than rebuilding",

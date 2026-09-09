@@ -482,18 +482,56 @@ jobs:
               2>&1 | tee -a "$runtime_cleanup_log"
           done < "$runtime_delete_list"
           runtime_storage_after_cleanup="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-storage-after-initial-cleanup.json"
-          xcrun simctl runtime list -j > "$runtime_storage_after_cleanup"
-          if ! jq -e \
-            'type == "object"
-            and all(to_entries[];
-              (.key | type == "string")
-              and (.key | test("^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$"))
-              and (.value | type == "object")
-              and (.value.identifier == .key)
-              and (.value.runtimeIdentifier | type == "string")
-              and (.value.deletable | type == "boolean"))' \
-            "$runtime_storage_after_cleanup" >/dev/null; then
-            echo "::error::Post-cleanup CoreSimulator runtime inventory has an unknown schema"
+          runtime_cleanup_poll_max_attempts=180
+          runtime_cleanup_poll_interval_seconds=2
+          runtime_cleanup_complete=0
+          remaining_candidate_uuids='[]'
+          for (( runtime_cleanup_attempt = 1; runtime_cleanup_attempt <= runtime_cleanup_poll_max_attempts; runtime_cleanup_attempt++ )); do
+            xcrun simctl runtime list -j > "$runtime_storage_after_cleanup"
+            if ! jq -e \
+              'type == "object"
+              and all(to_entries[];
+                (.key | type == "string")
+                and (.key | test("^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$"))
+                and (.value | type == "object")
+                and (.value.identifier == .key)
+                and (.value.runtimeIdentifier | type == "string")
+                and (.value.deletable | type == "boolean"))' \
+              "$runtime_storage_after_cleanup" >/dev/null; then
+              echo "::error::Post-cleanup CoreSimulator runtime inventory has an unknown schema"
+              exit 1
+            fi
+            if ! remaining_candidate_uuids="$(jq -cer \
+              --slurpfile candidates "$runtime_delete_candidates" \
+              '($candidates[0] | map(.uuid)) as $candidate_uuids
+              | [keys[] as $uuid
+                | select($candidate_uuids | index($uuid) != null)
+                | $uuid]
+              | sort' \
+              "$runtime_storage_after_cleanup")"; then
+              echo "::error::Could not verify exact simulator runtime deletion candidates"
+              exit 1
+            fi
+            if ! remaining_candidate_count="$(jq -er 'length' <<< "$remaining_candidate_uuids")"; then
+              echo "::error::Could not count remaining simulator runtime deletion candidates"
+              exit 1
+            fi
+            printf 'Runtime cleanup poll %d/%d: %d candidate UUID(s) remain %s\n' \
+              "$runtime_cleanup_attempt" \
+              "$runtime_cleanup_poll_max_attempts" \
+              "$remaining_candidate_count" \
+              "$remaining_candidate_uuids" \
+              | tee -a "$runtime_cleanup_log"
+            if [[ "$remaining_candidate_count" == "0" ]]; then
+              runtime_cleanup_complete=1
+              break
+            fi
+            if (( runtime_cleanup_attempt < runtime_cleanup_poll_max_attempts )); then
+              sleep "$runtime_cleanup_poll_interval_seconds"
+            fi
+          done
+          if [[ "$runtime_cleanup_complete" != "1" ]]; then
+            echo "::error::Timed out waiting for exact simulator runtime candidate UUIDs to disappear: $remaining_candidate_uuids"
             exit 1
           fi
           if ! modern_runtime_retained="$(jq -er \
@@ -801,8 +839,38 @@ jobs:
             2>&1 | tee -a "$minimum_runtime_reclaim_log"
 
           runtime_storage_after_reclaim="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-storage-after-ios-18-4-reclaim.json"
-          xcrun simctl runtime list -j > "$runtime_storage_after_reclaim"
-          validate_runtime_storage_inventory "$runtime_storage_after_reclaim"
+          minimum_runtime_reclaim_poll_max_attempts=180
+          minimum_runtime_reclaim_poll_interval_seconds=2
+          minimum_runtime_reclaim_complete=0
+          minimum_runtime_uuid_remaining=-1
+          for (( minimum_runtime_reclaim_attempt = 1; minimum_runtime_reclaim_attempt <= minimum_runtime_reclaim_poll_max_attempts; minimum_runtime_reclaim_attempt++ )); do
+            xcrun simctl runtime list -j > "$runtime_storage_after_reclaim"
+            validate_runtime_storage_inventory "$runtime_storage_after_reclaim"
+            if ! minimum_runtime_uuid_remaining="$(jq -er \
+              --arg runtime_uuid "$minimum_runtime_uuid" \
+              '[keys[] | select(. == $runtime_uuid)] | length' \
+              "$runtime_storage_after_reclaim")"; then
+              echo "::error::Could not verify exact minimum-OS runtime UUID reclamation"
+              exit 1
+            fi
+            printf 'Minimum-OS runtime reclaim poll %d/%d: exact UUID %s present=%d\n' \
+              "$minimum_runtime_reclaim_attempt" \
+              "$minimum_runtime_reclaim_poll_max_attempts" \
+              "$minimum_runtime_uuid" \
+              "$minimum_runtime_uuid_remaining" \
+              | tee -a "$minimum_runtime_reclaim_log"
+            if [[ "$minimum_runtime_uuid_remaining" == "0" ]]; then
+              minimum_runtime_reclaim_complete=1
+              break
+            fi
+            if (( minimum_runtime_reclaim_attempt < minimum_runtime_reclaim_poll_max_attempts )); then
+              sleep "$minimum_runtime_reclaim_poll_interval_seconds"
+            fi
+          done
+          if [[ "$minimum_runtime_reclaim_complete" != "1" ]]; then
+            echo "::error::Timed out waiting for exact minimum-OS runtime UUID to disappear: $minimum_runtime_uuid"
+            exit 1
+          fi
           if ! minimum_runtime_remaining="$(jq -er \
             --arg runtime_identifier "$minimum_runtime" \
             '[to_entries[]
