@@ -25,6 +25,11 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         self.assertEqual((ROOT / ".xcode-version").read_text().strip(), "26.3")
         for declaration in (
             'WEBEXTENSION_XCODE_VERSION: "26.3"',
+            'WEBEXTENSION_XCODE_BUILD: "17C529"',
+            'WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION: "16.3"',
+            'WEBEXTENSION_MINIMUM_RUNTIME_XCODE_BUILD: "16E140"',
+            'WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION: "26.0.1"',
+            'WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD: "17A400"',
             'WEBEXTENSION_MINIMUM_OS: "18.4"',
             'WEBEXTENSION_MODERN_OS: "26.0"',
             (
@@ -57,6 +62,20 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         self.assertIn(
             'grep -Fxq "Xcode $WEBEXTENSION_XCODE_VERSION"', select_xcode
         )
+        for provider_contract in (
+            '"/Applications/Xcode_${WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION}.app/Contents/Developer"',
+            '"/Applications/Xcode_${WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION}.app/Contents/Developer"',
+            'grep -Fxq "Xcode $WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION"',
+            'grep -Fxq "Build version $WEBEXTENSION_MINIMUM_RUNTIME_XCODE_BUILD"',
+            'grep -Fxq "Xcode $WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION"',
+            'grep -Fxq "Build version $WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD"',
+            'xcrun --sdk iphonesimulator --show-sdk-version',
+            '[[ "$minimum_runtime_sdk_version" != "$WEBEXTENSION_MINIMUM_OS" ]]',
+            '[[ "$modern_runtime_sdk_version" != "$WEBEXTENSION_MODERN_OS" ]]',
+            "FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY",
+            "FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY",
+        ):
+            self.assertIn(provider_contract, select_xcode)
 
         minimum_runtime = self._step("Prepare iOS 18.4 simulator runtime")
         acceptance = self._step("Run focused WebExtension OS acceptance")
@@ -66,22 +85,22 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             minimum_runtime.count("xcodebuild -downloadPlatform iOS"), 1
         )
         self.assertEqual(acceptance.count("xcodebuild -downloadPlatform iOS"), 1)
-        self.assertIn('-buildVersion "$WEBEXTENSION_MINIMUM_OS"', minimum_runtime)
-        self.assertNotIn(
-            '-buildVersion "$WEBEXTENSION_MODERN_OS"', minimum_runtime
+        self.assertNotIn("-buildVersion", self.job)
+        self.assertIn(
+            'DEVELOPER_DIR="$FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY"',
+            minimum_runtime,
         )
-        self.assertIn('-buildVersion "$WEBEXTENSION_MODERN_OS"', acceptance)
-        self.assertNotIn('-buildVersion "$WEBEXTENSION_MINIMUM_OS"', acceptance)
+        self.assertIn(
+            'DEVELOPER_DIR="$FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY"',
+            acceptance,
+        )
         for architecture_branch in (
             "x86_64|arm64)",
             'runtime_architecture_variant="universal"',
             "Unsupported macos-15 runner architecture",
         ):
             self.assertIn(architecture_branch, minimum_runtime)
-        self.assertIn(
-            '-architectureVariant "$runtime_architecture_variant"',
-            minimum_runtime,
-        )
+        self.assertNotIn("-architectureVariant", minimum_runtime)
         self.assertIn(
             '-architectureVariant "$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT"',
             acceptance,
@@ -92,6 +111,14 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         )
         self.assertIn("x86_64:universal|arm64:universal", acceptance)
         self.assertNotIn('runtime_architecture_variant="arm64"', minimum_runtime)
+        for selected_xcode_contract in (
+            'xcode-select --print-path',
+            '"/Applications/Xcode_${WEBEXTENSION_XCODE_VERSION}.app/Contents/Developer"',
+            'grep -Fxq "Xcode $WEBEXTENSION_XCODE_VERSION"',
+            'grep -Fxq "Build version $WEBEXTENSION_XCODE_BUILD"',
+        ):
+            self.assertIn(selected_xcode_contract, minimum_runtime)
+            self.assertIn(selected_xcode_contract, acceptance)
         self.assertIn(
             'minimum_runtime="com.apple.CoreSimulator.SimRuntime.iOS-'
             '${WEBEXTENSION_MINIMUM_OS//./-}"',
@@ -160,7 +187,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             '[[ "$runtime_cleanup_complete" != "1" ]]'
         )
         minimum_download = minimum_runtime.index(
-            '-buildVersion "$WEBEXTENSION_MINIMUM_OS"'
+            'DEVELOPER_DIR="$FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY"'
         )
         self.assertLess(initial_runtime_delete, initial_absence_gate)
         self.assertLess(initial_absence_gate, minimum_download)
@@ -247,7 +274,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "floorp-webextension-os-matrix-disk-after-ios-18-4-reclaim.log"
         )
         modern_download = acceptance.index(
-            '-buildVersion "$WEBEXTENSION_MODERN_OS"'
+            'DEVELOPER_DIR="$FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY"'
         )
         modern_create = acceptance.index(
             'modern_simulator_id="$(xcrun simctl create'
@@ -470,8 +497,9 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "`macos-15` with Xcode 26.3 selected from `.xcode-version`",
             "either required simulator runtime is installed",
             "obtains exact iOS 18.4 and iOS 26.0 runtimes on demand",
-            "requests the Xcode 26.3 universal archive for both releases",
-            "iOS 18.4 catalog entry does not publish an arm64-only archive",
+            "Xcode 16.3 for iOS 18.4 and Xcode 26.0.1 for iOS 26.0",
+            "verifies each provider's exact Xcode and Simulator SDK version",
+            "Xcode 26.3 remains selected for every build and test",
             "preserves any existing iOS 18.4",
             "deletes only other runtime images that CoreSimulator",
             "Unknown inventory data or a failed deletion stops the job",

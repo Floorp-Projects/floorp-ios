@@ -23,6 +23,11 @@ env:
   SIMULATOR_NAME: iPhone 17
   SIMULATOR_OS: "26.2"
   WEBEXTENSION_XCODE_VERSION: "26.3"
+  WEBEXTENSION_XCODE_BUILD: "17C529"
+  WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION: "16.3"
+  WEBEXTENSION_MINIMUM_RUNTIME_XCODE_BUILD: "16E140"
+  WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION: "26.0.1"
+  WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD: "17A400"
   WEBEXTENSION_MINIMUM_OS: "18.4"
   WEBEXTENSION_MODERN_OS: "26.0"
   WEBEXTENSION_SIMULATOR_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-16
@@ -406,6 +411,67 @@ jobs:
             echo "::error::Selected Xcode does not match $WEBEXTENSION_XCODE_VERSION"
             exit 1
           fi
+          if ! grep -Fxq "Build version $WEBEXTENSION_XCODE_BUILD" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode.log"; then
+            echo "::error::Selected Xcode build does not match $WEBEXTENSION_XCODE_BUILD"
+            exit 1
+          fi
+
+          minimum_runtime_developer_directory="/Applications/Xcode_${WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION}.app/Contents/Developer"
+          modern_runtime_developer_directory="/Applications/Xcode_${WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION}.app/Contents/Developer"
+          if [[ ! -d "$minimum_runtime_developer_directory" ]]; then
+            echo "::error::Minimum-OS runtime provider is unavailable at $minimum_runtime_developer_directory"
+            exit 1
+          fi
+          if [[ ! -d "$modern_runtime_developer_directory" ]]; then
+            echo "::error::Modern-OS runtime provider is unavailable at $modern_runtime_developer_directory"
+            exit 1
+          fi
+          DEVELOPER_DIR="$minimum_runtime_developer_directory" xcodebuild -version \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-18-4-xcode.log"
+          if ! grep -Fxq "Xcode $WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-18-4-xcode.log"; then
+            echo "::error::Minimum-OS runtime provider does not match Xcode $WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION"
+            exit 1
+          fi
+          if ! grep -Fxq "Build version $WEBEXTENSION_MINIMUM_RUNTIME_XCODE_BUILD" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-18-4-xcode.log"; then
+            echo "::error::Minimum-OS runtime provider build does not match $WEBEXTENSION_MINIMUM_RUNTIME_XCODE_BUILD"
+            exit 1
+          fi
+          DEVELOPER_DIR="$modern_runtime_developer_directory" xcodebuild -version \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-26-0-xcode.log"
+          if ! grep -Fxq "Xcode $WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-26-0-xcode.log"; then
+            echo "::error::Modern-OS runtime provider does not match Xcode $WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION"
+            exit 1
+          fi
+          if ! grep -Fxq "Build version $WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-26-0-xcode.log"; then
+            echo "::error::Modern-OS runtime provider build does not match $WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD"
+            exit 1
+          fi
+
+          minimum_runtime_sdk_version="$(DEVELOPER_DIR="$minimum_runtime_developer_directory" xcrun --sdk iphonesimulator --show-sdk-version)"
+          modern_runtime_sdk_version="$(DEVELOPER_DIR="$modern_runtime_developer_directory" xcrun --sdk iphonesimulator --show-sdk-version)"
+          printf '%s\n' "$minimum_runtime_sdk_version" \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-18-4-sdk.log"
+          printf '%s\n' "$modern_runtime_sdk_version" \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-26-0-sdk.log"
+          if [[ "$minimum_runtime_sdk_version" != "$WEBEXTENSION_MINIMUM_OS" ]]; then
+            echo "::error::Minimum-OS runtime provider SDK does not match $WEBEXTENSION_MINIMUM_OS"
+            exit 1
+          fi
+          if [[ "$modern_runtime_sdk_version" != "$WEBEXTENSION_MODERN_OS" ]]; then
+            echo "::error::Modern-OS runtime provider SDK does not match $WEBEXTENSION_MODERN_OS"
+            exit 1
+          fi
+          {
+            printf 'FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY=%s\n' \
+              "$minimum_runtime_developer_directory"
+            printf 'FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY=%s\n' \
+              "$modern_runtime_developer_directory"
+          } >> "$GITHUB_ENV"
 
       - name: Prepare iOS 18.4 simulator runtime
         timeout-minutes: 35
@@ -572,9 +638,8 @@ jobs:
 
           case "$minimum_runtime_count" in
             0)
-              xcodebuild -downloadPlatform iOS \
-                -buildVersion "$WEBEXTENSION_MINIMUM_OS" \
-                -architectureVariant "$runtime_architecture_variant" \
+              DEVELOPER_DIR="$FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY" \
+                xcodebuild -downloadPlatform iOS \
                 2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-18-4.log"
               ;;
             1)
@@ -587,6 +652,21 @@ jobs:
               exit 1
               ;;
           esac
+
+          selected_developer_directory="/Applications/Xcode_${WEBEXTENSION_XCODE_VERSION}.app/Contents/Developer"
+          if [[ "$(xcode-select --print-path)" != "$selected_developer_directory" ]]; then
+            echo "::error::Runtime download changed the selected Xcode"
+            exit 1
+          fi
+          xcodebuild -version \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode-after-ios-18-4-download.log"
+          if ! grep -Fxq "Xcode $WEBEXTENSION_XCODE_VERSION" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode-after-ios-18-4-download.log" \
+            || ! grep -Fxq "Build version $WEBEXTENSION_XCODE_BUILD" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode-after-ios-18-4-download.log"; then
+            echo "::error::Build-and-test Xcode changed after the iOS 18.4 runtime download"
+            exit 1
+          fi
 
           runtime_inventory="$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-18-4.json"
           xcrun simctl list runtimes --json > "$runtime_inventory"
@@ -908,8 +988,8 @@ jobs:
           fi
           case "$modern_runtime_count" in
             0)
-              xcodebuild -downloadPlatform iOS \
-                -buildVersion "$WEBEXTENSION_MODERN_OS" \
+              DEVELOPER_DIR="$FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY" \
+                xcodebuild -downloadPlatform iOS \
                 -architectureVariant "$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT" \
                 2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-26-0.log"
               ;;
@@ -923,6 +1003,21 @@ jobs:
               exit 1
               ;;
           esac
+
+          selected_developer_directory="/Applications/Xcode_${WEBEXTENSION_XCODE_VERSION}.app/Contents/Developer"
+          if [[ "$(xcode-select --print-path)" != "$selected_developer_directory" ]]; then
+            echo "::error::Runtime download changed the selected Xcode"
+            exit 1
+          fi
+          xcodebuild -version \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode-after-ios-26-0-download.log"
+          if ! grep -Fxq "Xcode $WEBEXTENSION_XCODE_VERSION" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode-after-ios-26-0-download.log" \
+            || ! grep -Fxq "Build version $WEBEXTENSION_XCODE_BUILD" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode-after-ios-26-0-download.log"; then
+            echo "::error::Build-and-test Xcode changed after the iOS 26.0 runtime download"
+            exit 1
+          fi
 
           modern_runtime_inventory="$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-26-0.json"
           xcrun simctl list runtimes --json > "$modern_runtime_inventory"
