@@ -585,14 +585,16 @@ jobs:
             exit 1
           fi
 
-          printf 'FLOORP_WEBEXT_IOS184_SIMULATOR_ID=%s\n' \
-            "$minimum_simulator_id" >> "$GITHUB_ENV"
-          printf 'FLOORP_WEBEXT_IOS184_DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
-            "$minimum_simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
-          printf 'FLOORP_WEBEXT_SIMULATOR_ARCH=%s\n' \
-            "$simulator_arch" >> "$GITHUB_ENV"
-          printf 'FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT=%s\n' \
-            "$runtime_architecture_variant" >> "$GITHUB_ENV"
+          {
+            printf 'FLOORP_WEBEXT_IOS184_SIMULATOR_ID=%s\n' \
+              "$minimum_simulator_id"
+            printf 'FLOORP_WEBEXT_IOS184_DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+              "$minimum_simulator_id" "$simulator_arch"
+            printf 'FLOORP_WEBEXT_SIMULATOR_ARCH=%s\n' \
+              "$simulator_arch"
+            printf 'FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT=%s\n' \
+              "$runtime_architecture_variant"
+          } >> "$GITHUB_ENV"
 
       - name: Bootstrap generated sources
         run: ./bootstrap.sh firefox
@@ -891,10 +893,12 @@ jobs:
             exit 1
           fi
           modern_destination="platform=iOS Simulator,id=$modern_simulator_id,arch=$simulator_arch"
-          printf 'FLOORP_WEBEXT_IOS260_SIMULATOR_ID=%s\n' \
-            "$modern_simulator_id" >> "$GITHUB_ENV"
-          printf 'FLOORP_WEBEXT_IOS260_DESTINATION=%s\n' \
-            "$modern_destination" >> "$GITHUB_ENV"
+          {
+            printf 'FLOORP_WEBEXT_IOS260_SIMULATOR_ID=%s\n' \
+              "$modern_simulator_id"
+            printf 'FLOORP_WEBEXT_IOS260_DESTINATION=%s\n' \
+              "$modern_destination"
+          } >> "$GITHUB_ENV"
 
           xcrun simctl bootstatus "$modern_simulator_id" -b
           run_test \
