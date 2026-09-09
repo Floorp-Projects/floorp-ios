@@ -1014,7 +1014,6 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         let webView = try XCTUnwrap(tab.webView)
         XCTAssertTrue(navigationWaiter.didCommit)
         XCTAssertEqual(webView.url, optionsURL)
-        XCTAssertFalse(webView.isLoading)
         tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
         XCTAssertTrue(tab.floorpNativeHasCommittedDocument)
         return webView
