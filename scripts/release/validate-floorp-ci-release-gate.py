@@ -12,6 +12,14 @@ from pathlib import Path
 SHA1 = re.compile(r"^[0-9a-f]{40}$")
 EXPECTED_WORKFLOW = ".github/workflows/ci.yml"
 ACCEPTANCE_MARKER = "FLOORP_UBOL_RELEASE_GATE report"
+XCODEBUILD_SUCCESS_MARKERS = (
+    "** TEST SUCCEEDED **",
+    "** TEST EXECUTE SUCCEEDED **",
+)
+XCODEBUILD_FAILURE_MARKERS = (
+    "** TEST FAILED **",
+    "** TEST EXECUTE FAILED **",
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -66,8 +74,10 @@ def validate(arguments: argparse.Namespace) -> dict:
     log_bytes = log.read_bytes()
     log_text = log_bytes.decode("utf-8", errors="replace")
     require(ACCEPTANCE_MARKER in log_text, "uBO acceptance completion marker is missing")
-    require("** TEST SUCCEEDED **" in log_text, "uBO acceptance test did not succeed")
-    require("** TEST FAILED **" not in log_text, "uBO acceptance log records a failure")
+    require(not any(marker in log_text for marker in XCODEBUILD_FAILURE_MARKERS),
+            "uBO acceptance log records a failure")
+    require(any(marker in log_text for marker in XCODEBUILD_SUCCESS_MARKERS),
+            "uBO acceptance test did not succeed")
 
     return {
         "artifact_name": f"floorp-ubol-release-acceptance-{arguments.expected_run_id}",
