@@ -210,7 +210,12 @@ Xcode Cloud exposes `CI_TEAM_ID` as the App Store Connect team resource UUID
 identity. This is distinct from the signing Developer Team ID `DV2U35YBHT`,
 which the script independently verifies in `FloorpRelease.xcconfig` and the
 release-evidence gate verifies again from the signed app and provisioning
-profile. `.nvmrc` and `.xcode-version` are declarations for
+profile. Xcode Cloud build `05907e2a-f90d-428f-81e5-8b234d527a18` exposed
+the UUID on September 9, 2026, even though Apple's general environment-variable
+reference describes `CI_TEAM_ID` as the Apple Development team ID. Keep this
+check fail-closed and revalidate the actual build environment if Apple changes
+the value rather than accepting both identifier forms. `.nvmrc` and
+`.xcode-version` are declarations for
 developers and GitHub Actions, not settings that Xcode Cloud applies
 automatically.
 
