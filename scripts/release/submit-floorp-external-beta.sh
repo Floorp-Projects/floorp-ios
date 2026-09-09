@@ -17,7 +17,7 @@
 #     --expected-min-os-version 18.4 \
 #     --external-group-id "$EXTERNAL_GROUP_ID" \
 #     --localization docs/app-store-connect-metadata.json \
-#     --review-details "$ATTEMPT_DIR/beta-review-details.json" \
+#     --review-details "$ATTEMPT_DIR/floorp-app-review-notes.json" \
 #     --before "$ATTEMPT_DIR/asc-before.json" \
 #     --after "$ATTEMPT_DIR/asc-after.json" \
 #     [--what-to-test-en firefox-ios/TestFlight/WhatToTest.en-US.txt] \
@@ -91,8 +91,12 @@ done
 CLIENT="$(cd "$(dirname "$CLIENT")" && pwd)/$(basename "$CLIENT")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECEIPT_VALIDATOR="$SCRIPT_DIR/floorp_xcode_cloud_build_receipt.py"
+REVIEW_NOTES_RENDERER="$SCRIPT_DIR/render-floorp-app-review-notes.py"
+REVIEW_NOTES_TEMPLATE="$SCRIPT_DIR/../../docs/app-review-notes-native-webextensions.md"
 test -f "$BUILD_RECEIPT"
 test -f "$RECEIPT_VALIDATOR"
+test -f "$REVIEW_NOTES_RENDERER"
+test -f "$REVIEW_NOTES_TEMPLATE"
 
 # Read-only preflight gate: capture every resource that identifies the run,
 # build, external group, review state, and localization state before any write.
@@ -103,6 +107,11 @@ asc_get() {
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+python3 "$REVIEW_NOTES_RENDERER" \
+    --template "$REVIEW_NOTES_TEMPLATE" \
+    --receipt "$BUILD_RECEIPT" \
+    --output "$TMP_DIR/expected-review-details.json"
 
 asc_get "/v1/betaAppReviewDetails?filter[app]=$APP_ID&limit=200" "$TMP_DIR/review-details-before.json"
 asc_get "/v1/betaAppReviewSubmissions?filter[build]=$BUILD_ID&limit=200" "$TMP_DIR/submissions-before.json"
@@ -254,10 +263,11 @@ PYEOF
 python3 - \
     "$TMP_DIR/review-details-before.json" \
     "$REVIEW_DETAILS" \
+    "$TMP_DIR/expected-review-details.json" \
     "$TMP_DIR/review-details-validated.json" <<'PYEOF'
 import json, sys
 
-current_path, desired_path, output_path = sys.argv[1:]
+current_path, desired_path, expected_path, output_path = sys.argv[1:]
 payload = json.load(open(current_path))
 if not isinstance(payload, dict):
     raise SystemExit("preflight failed: betaAppReviewDetails payload is malformed")
@@ -301,6 +311,11 @@ if demo_required:
 desired = json.load(open(desired_path))
 if not isinstance(desired, dict) or set(desired) != {"notes"}:
     raise SystemExit("preflight failed: review details payload must contain only notes")
+expected = json.load(open(expected_path))
+if desired != expected:
+    raise SystemExit(
+        "preflight failed: review details do not match the source-bound App Review notes"
+    )
 notes = desired.get("notes")
 if not isinstance(notes, str) or not notes.strip():
     raise SystemExit("preflight failed: release review notes are missing")

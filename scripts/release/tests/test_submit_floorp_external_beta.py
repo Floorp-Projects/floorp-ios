@@ -1,5 +1,6 @@
 """Fixture tests for scripts/release/submit-floorp-external-beta.sh."""
 
+import importlib.util
 import json
 import subprocess
 import tempfile
@@ -10,6 +11,8 @@ from pathlib import Path
 
 RELEASE_DIR = Path(__file__).parent.parent
 SCRIPT = RELEASE_DIR / "submit-floorp-external-beta.sh"
+REVIEW_NOTES_RENDERER = RELEASE_DIR / "render-floorp-app-review-notes.py"
+REVIEW_NOTES_TEMPLATE = RELEASE_DIR.parents[1] / "docs/app-review-notes-native-webextensions.md"
 APP_ID = "6796708699"
 BUNDLE_ID = "app.floorp.Floorp"
 WORKFLOW_ID = "workflow-1"
@@ -17,6 +20,18 @@ RUN_ID = "run-1"
 BUILD_ID = "bld-1"
 BUILD_NUMBER = "96"
 SOURCE_SHA = "a" * 40
+
+
+def load_review_notes_renderer():
+    spec = importlib.util.spec_from_file_location(
+        "floorp_app_review_notes_renderer", REVIEW_NOTES_RENDERER
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+review_notes_renderer = load_review_notes_renderer()
 
 
 def receipt_value():
@@ -158,7 +173,13 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
         """))
         return stub
 
-    def run_script(self, *extra_args, state_overrides=None, receipt_overrides=None):
+    def run_script(
+        self,
+        *extra_args,
+        state_overrides=None,
+        receipt_overrides=None,
+        review_overrides=None,
+    ):
         record = self.root / "record.jsonl"
         record.write_text("")
         stub = self.stub_client()
@@ -169,9 +190,12 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             "export_compliance": {"uses_encryption": True},
         }))
         review = self.root / "review.json"
-        review.write_text(json.dumps({
-            "notes": "Internal 0.2.0 acceptance passed; external beta gated.",
-        }))
+        review_value = review_notes_renderer.render(
+            REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), receipt_value()
+        )
+        if review_overrides:
+            review_value.update(review_overrides)
+        review.write_text(json.dumps(review_value))
         wte = self.root / "WhatToTest.en-US.txt"
         wte.write_text("Test the 0.2.0 (4) candidate.")
         wtj = self.root / "WhatToTest.ja-JP.txt"
@@ -351,7 +375,9 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
         )
         self.assertEqual(
             body["data"]["attributes"],
-            {"notes": "Internal 0.2.0 acceptance passed; external beta gated."},
+            review_notes_renderer.render(
+                REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), receipt_value()
+            ),
         )
         body_text = json.dumps(body)
         for sensitive_field in (
@@ -359,6 +385,17 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             "demoAccountName", "demoAccountPassword",
         ):
             self.assertNotIn(sensitive_field, body_text)
+
+    def test_review_notes_must_match_the_source_bound_receipt_before_writes(self):
+        proc, record, _, _, _ = self.run_script(
+            "--authorize-mutation",
+            review_overrides={"notes": "GPL disclosure omitted"},
+        )
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("source-bound App Review notes", proc.stderr)
+        calls = [json.loads(line) for line in record.read_text().splitlines()]
+        self.assertFalse(any(argv[0] in ("post", "patch") for argv in calls))
 
     def test_each_localization_uses_a_fresh_guard_snapshot(self):
         proc, record, _, _, _ = self.run_script("--authorize-mutation")
