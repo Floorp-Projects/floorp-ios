@@ -47,10 +47,12 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 A separate `Native WebExtensions iOS 18.4 and 26.0 acceptance` job runs on
 `macos-15` with Xcode 26.3 selected from `.xcode-version`. Hosted-image SDK
 listings do not guarantee that either required simulator runtime is installed,
-so the job obtains exact iOS 18.4 and iOS 26.0 runtimes on demand (`universal`
-on x86_64 and `arm64` on arm64). It first preserves any existing iOS 18.4
-runtime image and deletes only other runtime images that CoreSimulator
-marks as deletable. Unknown inventory data or a failed deletion stops the job;
+so the job obtains exact iOS 18.4 and iOS 26.0 runtimes on demand. The job
+requests the Xcode 26.3 universal archive for both releases on x86_64 and arm64
+runners; the iOS 18.4 catalog entry does not publish an arm64-only archive. The
+job first preserves any existing iOS 18.4 runtime image.
+It deletes only other runtime images that CoreSimulator marks as deletable.
+Unknown inventory data or a failed deletion stops the job;
 because a successful `simctl runtime delete` can precede secure-storage
 removal, the job waits within a fixed bound until every explicitly deleted
 runtime UUID is absent from repeatedly validated CoreSimulator inventories;

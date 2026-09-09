@@ -73,10 +73,8 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         self.assertIn('-buildVersion "$WEBEXTENSION_MODERN_OS"', acceptance)
         self.assertNotIn('-buildVersion "$WEBEXTENSION_MINIMUM_OS"', acceptance)
         for architecture_branch in (
-            "x86_64)",
+            "x86_64|arm64)",
             'runtime_architecture_variant="universal"',
-            "arm64)",
-            'runtime_architecture_variant="arm64"',
             "Unsupported macos-15 runner architecture",
         ):
             self.assertIn(architecture_branch, minimum_runtime)
@@ -88,6 +86,12 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             '-architectureVariant "$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT"',
             acceptance,
         )
+        self.assertIn(
+            "$simulator_arch:$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT",
+            acceptance,
+        )
+        self.assertIn("x86_64:universal|arm64:universal", acceptance)
+        self.assertNotIn('runtime_architecture_variant="arm64"', minimum_runtime)
         self.assertIn(
             'minimum_runtime="com.apple.CoreSimulator.SimRuntime.iOS-'
             '${WEBEXTENSION_MINIMUM_OS//./-}"',
@@ -466,6 +470,8 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "`macos-15` with Xcode 26.3 selected from `.xcode-version`",
             "either required simulator runtime is installed",
             "obtains exact iOS 18.4 and iOS 26.0 runtimes on demand",
+            "requests the Xcode 26.3 universal archive for both releases",
+            "iOS 18.4 catalog entry does not publish an arm64-only archive",
             "preserves any existing iOS 18.4",
             "deletes only other runtime images that CoreSimulator",
             "Unknown inventory data or a failed deletion stops the job",

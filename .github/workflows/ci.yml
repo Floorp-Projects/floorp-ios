@@ -413,11 +413,8 @@ jobs:
           set -euo pipefail
           simulator_arch="$(uname -m)"
           case "$simulator_arch" in
-            x86_64)
+            x86_64|arm64)
               runtime_architecture_variant="universal"
-              ;;
-            arm64)
-              runtime_architecture_variant="arm64"
               ;;
             *)
               echo "::error::Unsupported macos-15 runner architecture: $simulator_arch"
@@ -784,7 +781,7 @@ jobs:
             exit 1
           fi
           case "$simulator_arch:$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT" in
-            x86_64:universal|arm64:arm64)
+            x86_64:universal|arm64:universal)
               ;;
             *)
               echo "::error::Runtime architecture variant does not match the runner"
