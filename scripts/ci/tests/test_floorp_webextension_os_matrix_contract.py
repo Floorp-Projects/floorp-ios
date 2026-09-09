@@ -319,9 +319,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         self.assertEqual(self.job.count("xcodebuild build-for-testing"), 1)
         self.assertIn("set -euo pipefail", build)
         self.assertIn('-destination "$FLOORP_WEBEXT_IOS184_DESTINATION"', build)
-        self.assertIn(
-            'IPHONEOS_DEPLOYMENT_TARGET="$WEBEXTENSION_MINIMUM_OS"', build
-        )
+        self.assertNotIn("IPHONEOS_DEPLOYMENT_TARGET=", build)
         self.assertIn('-derivedDataPath "$RUNNER_TEMP/WebExtensionDerivedData"', build)
         self.assertIn("-testPlan FloorpCI", build)
         self.assertLess(
@@ -332,10 +330,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         self.assertEqual(acceptance.count("xcodebuild test-without-building"), 1)
         self.assertNotIn("xcodebuild test ", acceptance)
         self.assertIn('-derivedDataPath "$RUNNER_TEMP/WebExtensionDerivedData"', acceptance)
-        self.assertIn(
-            'IPHONEOS_DEPLOYMENT_TARGET="$WEBEXTENSION_MINIMUM_OS"',
-            acceptance,
-        )
+        self.assertNotIn("IPHONEOS_DEPLOYMENT_TARGET=", acceptance)
 
     def test_runtime_use_is_sequential_and_minimum_runtime_reclaim_is_exact(self):
         minimum_runtime = self._step("Prepare iOS 18.4 simulator runtime")
@@ -634,6 +629,8 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "exactly one total entry for its runtime",
             "list the exact created simulator UUID",
             "as an eligible destination",
+            "does not override `IPHONEOS_DEPLOYMENT_TARGET` globally",
+            "Swift package dependencies retain their own supported floors",
             "Main Menu-to-Dark Reader direct popup path",
             "uBlock Origin Lite is",
             "below its iOS 26.0 minimum",

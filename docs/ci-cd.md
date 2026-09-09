@@ -77,6 +77,11 @@ iOS 26.0 simulator is created, preventing CoreSimulator from silently binding
 a test device to a different build with the same identifier. Before the build
 and before the iOS 26.0 tests, Xcode must list the exact created simulator UUID
 as an eligible destination.
+The build uses the deployment targets checked into the app, test, and package
+configurations. It deliberately does not override `IPHONEOS_DEPLOYMENT_TARGET`
+globally, so Swift package dependencies retain their own supported floors and
+package-specific build/link planning while the exact iOS 18.4 destination
+remains the minimum-OS gate.
 
 The iOS 18.4 simulator verifies the production
 Main Menu-to-Dark Reader direct popup path, production-host theming, and the

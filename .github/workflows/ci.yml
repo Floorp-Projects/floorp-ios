@@ -901,7 +901,6 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             -skipMacroValidation \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            IPHONEOS_DEPLOYMENT_TARGET="$WEBEXTENSION_MINIMUM_OS" \
             CODE_SIGN_IDENTITY= \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -940,7 +939,6 @@ jobs:
               -default-test-execution-time-allowance 480
               -maximum-test-execution-time-allowance 480
               -resultBundlePath "$result_path"
-              IPHONEOS_DEPLOYMENT_TARGET="$WEBEXTENSION_MINIMUM_OS"
               CODE_SIGN_IDENTITY=
               CODE_SIGNING_REQUIRED=NO
               CODE_SIGNING_ALLOWED=NO
