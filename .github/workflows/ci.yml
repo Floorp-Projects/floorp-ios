@@ -22,6 +22,10 @@ env:
   CONFIGURATION: Fennec_Testing
   SIMULATOR_NAME: iPhone 17
   SIMULATOR_OS: "26.2"
+  WEBEXTENSION_XCODE_VERSION: "26.3"
+  WEBEXTENSION_MINIMUM_OS: "18.4"
+  WEBEXTENSION_MODERN_OS: "26.0"
+  WEBEXTENSION_SIMULATOR_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-16
   UPSTREAM_REPOSITORY: https://github.com/mozilla-mobile/firefox-ios.git
 
 jobs:
@@ -365,3 +369,616 @@ jobs:
             ${{ runner.temp }}/FloorpUBOLProductionHost.xcresult
           if-no-files-found: ignore
           retention-days: 7
+
+  webextension-os-matrix:
+    name: Native WebExtensions iOS 18.4 and 26.0 acceptance
+    runs-on: macos-15
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Select pinned Xcode
+        run: |
+          set -euo pipefail
+          xcode_version="$(<.xcode-version)"
+          if [[ "$xcode_version" != "$WEBEXTENSION_XCODE_VERSION" ]]; then
+            echo "::error::.xcode-version must remain pinned to $WEBEXTENSION_XCODE_VERSION for the WebExtension OS matrix"
+            exit 1
+          fi
+          developer_directory="/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+          if [[ ! -d "$developer_directory" ]]; then
+            echo "::error::Pinned Xcode is unavailable at $developer_directory"
+            exit 1
+          fi
+          sudo xcode-select --switch "$developer_directory"
+          xcodebuild -version \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode.log"
+          if ! grep -Fxq "Xcode $WEBEXTENSION_XCODE_VERSION" \
+            "$RUNNER_TEMP/floorp-webextension-os-matrix-xcode.log"; then
+            echo "::error::Selected Xcode does not match $WEBEXTENSION_XCODE_VERSION"
+            exit 1
+          fi
+
+      - name: Prepare iOS 18.4 simulator runtime
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          simulator_arch="$(uname -m)"
+          case "$simulator_arch" in
+            x86_64)
+              runtime_architecture_variant="universal"
+              ;;
+            arm64)
+              runtime_architecture_variant="arm64"
+              ;;
+            *)
+              echo "::error::Unsupported macos-15 runner architecture: $simulator_arch"
+              exit 1
+              ;;
+          esac
+
+          minimum_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MINIMUM_OS//./-}"
+          modern_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MODERN_OS//./-}"
+          runtime_storage_before="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-storage-before.json"
+          runtime_delete_candidates="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-delete-candidates.json"
+          runtime_delete_list="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-delete-candidates.log"
+          runtime_cleanup_log="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-cleanup.log"
+          xcrun simctl runtime list -j > "$runtime_storage_before"
+          if ! jq -e \
+            'type == "object"
+            and all(to_entries[];
+              (.key | type == "string")
+              and (.key | test("^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$"))
+              and (.value | type == "object")
+              and (.value.identifier == .key)
+              and (.value.runtimeIdentifier | type == "string")
+              and (.value.deletable | type == "boolean"))' \
+            "$runtime_storage_before" >/dev/null; then
+            echo "::error::CoreSimulator runtime storage inventory has an unknown schema"
+            exit 1
+          fi
+
+          if ! jq -e \
+            --arg minimum_runtime "$minimum_runtime" \
+            '[to_entries[]
+              | select(.value.deletable == true)
+              | select(.value.runtimeIdentifier != $minimum_runtime)
+              | {uuid: .key, runtimeIdentifier: .value.runtimeIdentifier}]
+              | sort_by([.runtimeIdentifier, .uuid])' \
+            "$runtime_storage_before" > "$runtime_delete_candidates"; then
+            echo "::error::Could not enumerate deletable simulator runtimes"
+            exit 1
+          fi
+          if ! jq -r \
+            '.[] | [.uuid, .runtimeIdentifier] | @tsv' \
+            "$runtime_delete_candidates" > "$runtime_delete_list"; then
+            echo "::error::Could not materialize the simulator runtime deletion list"
+            exit 1
+          fi
+
+          printf 'Protected runtime: %s\n' \
+            "$minimum_runtime" | tee "$runtime_cleanup_log"
+          while IFS=$'\t' read -r runtime_uuid runtime_identifier; do
+            if [[ ! "$runtime_uuid" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] \
+              || [[ -z "$runtime_identifier" ]]; then
+              echo "::error::Invalid simulator runtime deletion candidate"
+              exit 1
+            fi
+            if [[ "$runtime_identifier" == "$minimum_runtime" ]]; then
+              echo "::error::Refusing to delete a protected simulator runtime: $runtime_identifier"
+              exit 1
+            fi
+            printf 'Deleting runtime %s (%s)\n' \
+              "$runtime_identifier" "$runtime_uuid" | tee -a "$runtime_cleanup_log"
+            xcrun simctl runtime delete "$runtime_uuid" \
+              2>&1 | tee -a "$runtime_cleanup_log"
+          done < "$runtime_delete_list"
+          runtime_storage_after_cleanup="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-storage-after-initial-cleanup.json"
+          xcrun simctl runtime list -j > "$runtime_storage_after_cleanup"
+          if ! jq -e \
+            'type == "object"
+            and all(to_entries[];
+              (.key | type == "string")
+              and (.key | test("^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$"))
+              and (.value | type == "object")
+              and (.value.identifier == .key)
+              and (.value.runtimeIdentifier | type == "string")
+              and (.value.deletable | type == "boolean"))' \
+            "$runtime_storage_after_cleanup" >/dev/null; then
+            echo "::error::Post-cleanup CoreSimulator runtime inventory has an unknown schema"
+            exit 1
+          fi
+          if ! modern_runtime_retained="$(jq -er \
+            --arg runtime_identifier "$modern_runtime" \
+            '[to_entries[]
+              | select(.value.runtimeIdentifier == $runtime_identifier)]
+              | length' \
+            "$runtime_storage_after_cleanup")"; then
+            echo "::error::Could not verify the initial runtime cleanup"
+            exit 1
+          fi
+          if [[ "$modern_runtime_retained" != "0" ]]; then
+            echo "::error::iOS 26.0 must not remain installed during the iOS 18.4 phase"
+            exit 1
+          fi
+          df -h "$RUNNER_TEMP" \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-disk-before-ios-18-4-download.log"
+
+          predownload_inventory="$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-before-ios-18-4-download.json"
+          xcrun simctl list runtimes --json > "$predownload_inventory"
+          if ! jq -e \
+            'type == "object" and (.runtimes | type == "array")' \
+            "$predownload_inventory" >/dev/null; then
+            echo "::error::CoreSimulator runtime inventory has an unknown schema"
+            exit 1
+          fi
+          if ! minimum_runtime_count="$(jq -er \
+            --arg identifier "$minimum_runtime" \
+            --arg architecture "$simulator_arch" \
+            --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            '[.runtimes[]
+              | select(.identifier == $identifier
+                and .isAvailable == true
+                and (.supportedArchitectures | index($architecture) != null)
+                and (.supportedDeviceTypes | any(.identifier == $device_type)))]
+              | length' \
+            "$predownload_inventory")"; then
+            echo "::error::Could not inspect the minimum-OS simulator runtime"
+            exit 1
+          fi
+
+          case "$minimum_runtime_count" in
+            0)
+              xcodebuild -downloadPlatform iOS \
+                -buildVersion "$WEBEXTENSION_MINIMUM_OS" \
+                -architectureVariant "$runtime_architecture_variant" \
+                2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-18-4.log"
+              ;;
+            1)
+              printf 'Runtime %s is already available; download skipped.\n' \
+                "$minimum_runtime" \
+                | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-18-4.log"
+              ;;
+            *)
+              echo "::error::Minimum-OS runtime inventory is ambiguous: $minimum_runtime_count entries"
+              exit 1
+              ;;
+          esac
+
+          runtime_inventory="$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-18-4.json"
+          xcrun simctl list runtimes --json > "$runtime_inventory"
+          xcrun simctl list runtimes \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-18-4.log"
+          if ! minimum_runtime_count="$(jq -er \
+            --arg identifier "$minimum_runtime" \
+            --arg architecture "$simulator_arch" \
+            --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            '[.runtimes[]
+              | select(.identifier == $identifier
+                and .isAvailable == true
+                and (.supportedArchitectures | index($architecture) != null)
+                and (.supportedDeviceTypes | any(.identifier == $device_type)))]
+              | length' \
+            "$runtime_inventory")"; then
+            echo "::error::Could not verify the minimum-OS simulator runtime"
+            exit 1
+          fi
+          if [[ "$minimum_runtime_count" != "1" ]]; then
+            echo "::error::Expected one compatible minimum-OS runtime, found $minimum_runtime_count"
+            exit 1
+          fi
+
+          minimum_simulator_id="$(xcrun simctl create \
+            "Floorp WebExtension iOS $WEBEXTENSION_MINIMUM_OS" \
+            "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            "$minimum_runtime")"
+          if [[ ! "$minimum_simulator_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+            echo "::error::CoreSimulator did not return an exact minimum-OS simulator identifier"
+            exit 1
+          fi
+
+          printf 'FLOORP_WEBEXT_IOS184_SIMULATOR_ID=%s\n' \
+            "$minimum_simulator_id" >> "$GITHUB_ENV"
+          printf 'FLOORP_WEBEXT_IOS184_DESTINATION=platform=iOS Simulator,id=%s,arch=%s\n' \
+            "$minimum_simulator_id" "$simulator_arch" >> "$GITHUB_ENV"
+          printf 'FLOORP_WEBEXT_SIMULATOR_ARCH=%s\n' \
+            "$simulator_arch" >> "$GITHUB_ENV"
+          printf 'FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT=%s\n' \
+            "$runtime_architecture_variant" >> "$GITHUB_ENV"
+
+      - name: Bootstrap generated sources
+        run: ./bootstrap.sh firefox
+        env:
+          CI: "true"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Build minimum-OS test products once
+        run: |
+          set -euo pipefail
+          xcodebuild build-for-testing -quiet \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "$FLOORP_WEBEXT_IOS184_DESTINATION" \
+            -testPlan FloorpCI \
+            -derivedDataPath "$RUNNER_TEMP/WebExtensionDerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            IPHONEOS_DEPLOYMENT_TARGET="$WEBEXTENSION_MINIMUM_OS" \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-build.log"
+
+      - name: Run focused WebExtension OS acceptance
+        timeout-minutes: 90
+        run: |
+          set -euo pipefail
+          overall_status=0
+
+          run_test() {
+            local destination="$1"
+            local test_identifier="$2"
+            local artifact_stem="$3"
+            local opt_in_ubol="$4"
+            local completion_marker="$5"
+            local test_method="${test_identifier##*/}"
+            local log_path="$RUNNER_TEMP/${artifact_stem}.log"
+            local result_path="$RUNNER_TEMP/${artifact_stem}.xcresult"
+            local command_status
+            local command=(
+              xcodebuild test-without-building
+              -project "$PROJECT_PATH"
+              -scheme "$SCHEME"
+              -configuration "$CONFIGURATION"
+              -destination "$destination"
+              -testPlan FloorpCI
+              -derivedDataPath "$RUNNER_TEMP/WebExtensionDerivedData"
+              -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+              -disableAutomaticPackageResolution
+              -onlyUsePackageVersionsFromResolvedFile
+              -skipMacroValidation
+              "-only-testing:$test_identifier"
+              -test-timeouts-enabled YES
+              -default-test-execution-time-allowance 480
+              -maximum-test-execution-time-allowance 480
+              -resultBundlePath "$result_path"
+              IPHONEOS_DEPLOYMENT_TARGET="$WEBEXTENSION_MINIMUM_OS"
+              CODE_SIGN_IDENTITY=
+              CODE_SIGNING_REQUIRED=NO
+              CODE_SIGNING_ALLOWED=NO
+            )
+
+            set +e
+            if [[ "$opt_in_ubol" == "1" ]]; then
+              TEST_RUNNER_FLOORP_RUN_UBOL_DNR_DIAGNOSTICS=1 \
+                "${command[@]}" 2>&1 | tee "$log_path"
+              command_status=${PIPESTATUS[0]}
+            else
+              "${command[@]}" 2>&1 | tee "$log_path"
+              command_status=${PIPESTATUS[0]}
+            fi
+            set -e
+
+            if [[ "$command_status" -ne 0 ]]; then
+              echo "::error::$test_identifier failed with status $command_status"
+              overall_status=1
+            fi
+            if ! grep -Fq "${test_method}]' passed" "$log_path"; then
+              echo "::error::$test_identifier did not execute and pass"
+              overall_status=1
+            fi
+            if [[ -n "$completion_marker" ]] \
+              && ! grep -Fq "$completion_marker" "$log_path"; then
+              echo "::error::$test_identifier did not reach its completion marker"
+              overall_status=1
+            fi
+          }
+
+          validate_runtime_storage_inventory() {
+            local inventory="$1"
+            if ! jq -e \
+              'type == "object"
+              and all(to_entries[];
+                (.key | type == "string")
+                and (.key | test("^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$"))
+                and (.value | type == "object")
+                and (.value.identifier == .key)
+                and (.value.runtimeIdentifier | type == "string")
+                and (.value.deletable | type == "boolean"))' \
+              "$inventory" >/dev/null; then
+              echo "::error::CoreSimulator runtime storage inventory has an unknown schema"
+              return 1
+            fi
+          }
+
+          xcrun simctl bootstatus "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" -b
+          run_test \
+            "$FLOORP_WEBEXT_IOS184_DESTINATION" \
+            "ClientTests/FloorpNativeWebExtensionIntegrationTests/testMainMenuOpensOnlyAvailableDarkReaderActionDirectlyOnMinimumOS" \
+            "floorp-webextension-os-matrix-ios-18-4-main-menu" \
+            "0" \
+            ""
+          run_test \
+            "$FLOORP_WEBEXT_IOS184_DESTINATION" \
+            "ClientTests/FloorpNativeWebExtensionIntegrationTests/testBundledUBOLIsUnavailableAndInstallFailsBelowMinimumOS" \
+            "floorp-webextension-os-matrix-ios-18-4-ubol-minimum-os-rejection" \
+            "0" \
+            ""
+          run_test \
+            "$FLOORP_WEBEXT_IOS184_DESTINATION" \
+            "ClientTests/FloorpNativeWebExtensionIntegrationTests/testBundledDarkReaderThemesProductionHostTabsInBothPrivacyRealms" \
+            "floorp-webextension-os-matrix-ios-18-4-theme" \
+            "0" \
+            ""
+          run_test \
+            "$FLOORP_WEBEXT_IOS184_DESTINATION" \
+            "ClientTests/FloorpDarkReaderWebKitAcceptanceTests/testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup" \
+            "floorp-webextension-os-matrix-ios-18-4-darkreader-acceptance" \
+            "0" \
+            "FLOORP_DARKREADER_RELEASE_GATE background-resume-popup"
+
+          minimum_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MINIMUM_OS//./-}"
+          modern_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MODERN_OS//./-}"
+          simulator_arch="$(uname -m)"
+          if [[ "$simulator_arch" != "$FLOORP_WEBEXT_SIMULATOR_ARCH" ]]; then
+            echo "::error::Runner architecture changed between WebExtension matrix steps"
+            exit 1
+          fi
+          case "$simulator_arch:$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT" in
+            x86_64:universal|arm64:arm64)
+              ;;
+            *)
+              echo "::error::Runtime architecture variant does not match the runner"
+              exit 1
+              ;;
+          esac
+
+          minimum_simulator_reclaim_log="$RUNNER_TEMP/floorp-webextension-os-matrix-ios-18-4-simulator-reclaim.log"
+          xcrun simctl shutdown "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" \
+            2>&1 | tee "$minimum_simulator_reclaim_log"
+          xcrun simctl delete "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" \
+            2>&1 | tee -a "$minimum_simulator_reclaim_log"
+
+          runtime_storage_before_reclaim="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-storage-before-ios-18-4-reclaim.json"
+          minimum_runtime_match="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-match-ios-18-4.json"
+          minimum_runtime_reclaim_log="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-reclaim-ios-18-4.log"
+          xcrun simctl runtime list -j > "$runtime_storage_before_reclaim"
+          validate_runtime_storage_inventory "$runtime_storage_before_reclaim"
+          if ! jq -e \
+            --arg runtime_identifier "$minimum_runtime" \
+            '[to_entries[]
+              | select(.value.runtimeIdentifier == $runtime_identifier)
+              | {uuid: .key,
+                  runtimeIdentifier: .value.runtimeIdentifier,
+                  deletable: .value.deletable}]
+              | sort_by(.uuid)' \
+            "$runtime_storage_before_reclaim" > "$minimum_runtime_match"; then
+            echo "::error::Could not resolve the exact minimum-OS runtime image"
+            exit 1
+          fi
+          if ! jq -e \
+            --arg runtime_identifier "$minimum_runtime" \
+            'length == 1
+              and .[0].runtimeIdentifier == $runtime_identifier
+              and .[0].deletable == true' \
+            "$minimum_runtime_match" >/dev/null; then
+            echo "::error::Minimum-OS runtime image is not uniquely deletable"
+            exit 1
+          fi
+          minimum_runtime_uuid="$(jq -er '.[0].uuid' "$minimum_runtime_match")"
+          reclaim_runtime_identifier="$(jq -er '.[0].runtimeIdentifier' "$minimum_runtime_match")"
+          if [[ ! "$minimum_runtime_uuid" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] \
+            || [[ "$reclaim_runtime_identifier" != "$minimum_runtime" ]] \
+            || [[ "$reclaim_runtime_identifier" == "$modern_runtime" ]]; then
+            echo "::error::Refusing to reclaim any runtime other than the exact minimum-OS runtime"
+            exit 1
+          fi
+          printf 'Deleting exact runtime %s (%s)\n' \
+            "$reclaim_runtime_identifier" "$minimum_runtime_uuid" \
+            | tee "$minimum_runtime_reclaim_log"
+          xcrun simctl runtime delete "$minimum_runtime_uuid" \
+            2>&1 | tee -a "$minimum_runtime_reclaim_log"
+
+          runtime_storage_after_reclaim="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-storage-after-ios-18-4-reclaim.json"
+          xcrun simctl runtime list -j > "$runtime_storage_after_reclaim"
+          validate_runtime_storage_inventory "$runtime_storage_after_reclaim"
+          if ! minimum_runtime_remaining="$(jq -er \
+            --arg runtime_identifier "$minimum_runtime" \
+            '[to_entries[]
+              | select(.value.runtimeIdentifier == $runtime_identifier)]
+              | length' \
+            "$runtime_storage_after_reclaim")"; then
+            echo "::error::Could not verify minimum-OS runtime reclamation"
+            exit 1
+          fi
+          if [[ "$minimum_runtime_remaining" != "0" ]]; then
+            echo "::error::Minimum-OS runtime remained after reclamation"
+            exit 1
+          fi
+          df -h "$RUNNER_TEMP" \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-disk-after-ios-18-4-reclaim.log"
+
+          modern_predownload_inventory="$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-before-ios-26-0-download.json"
+          xcrun simctl list runtimes --json > "$modern_predownload_inventory"
+          if ! jq -e \
+            'type == "object" and (.runtimes | type == "array")' \
+            "$modern_predownload_inventory" >/dev/null; then
+            echo "::error::CoreSimulator runtime inventory has an unknown schema"
+            exit 1
+          fi
+          if ! modern_runtime_count="$(jq -er \
+            --arg identifier "$modern_runtime" \
+            --arg architecture "$simulator_arch" \
+            --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            '[.runtimes[]
+              | select(.identifier == $identifier
+                and .isAvailable == true
+                and (.supportedArchitectures | index($architecture) != null)
+                and (.supportedDeviceTypes | any(.identifier == $device_type)))]
+              | length' \
+            "$modern_predownload_inventory")"; then
+            echo "::error::Could not inspect the iOS 26.0 simulator runtime"
+            exit 1
+          fi
+          case "$modern_runtime_count" in
+            0)
+              xcodebuild -downloadPlatform iOS \
+                -buildVersion "$WEBEXTENSION_MODERN_OS" \
+                -architectureVariant "$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT" \
+                2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-26-0.log"
+              ;;
+            1)
+              printf 'Runtime %s is already available; download skipped.\n' \
+                "$modern_runtime" \
+                | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-26-0.log"
+              ;;
+            *)
+              echo "::error::iOS 26.0 runtime inventory is ambiguous: $modern_runtime_count entries"
+              exit 1
+              ;;
+          esac
+
+          modern_runtime_inventory="$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-26-0.json"
+          xcrun simctl list runtimes --json > "$modern_runtime_inventory"
+          xcrun simctl list runtimes \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-26-0.log"
+          if ! modern_runtime_count="$(jq -er \
+            --arg identifier "$modern_runtime" \
+            --arg architecture "$simulator_arch" \
+            --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            '[.runtimes[]
+              | select(.identifier == $identifier
+                and .isAvailable == true
+                and (.supportedArchitectures | index($architecture) != null)
+                and (.supportedDeviceTypes | any(.identifier == $device_type)))]
+              | length' \
+            "$modern_runtime_inventory")"; then
+            echo "::error::Could not verify the iOS 26.0 simulator runtime"
+            exit 1
+          fi
+          if [[ "$modern_runtime_count" != "1" ]]; then
+            echo "::error::Expected one compatible iOS 26.0 runtime, found $modern_runtime_count"
+            exit 1
+          fi
+          df -h "$RUNNER_TEMP" \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-disk-after-ios-26-0-download.log"
+
+          modern_simulator_id="$(xcrun simctl create \
+            "Floorp WebExtension iOS $WEBEXTENSION_MODERN_OS" \
+            "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            "$modern_runtime")"
+          if [[ ! "$modern_simulator_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+            echo "::error::CoreSimulator did not return an exact iOS 26.0 simulator identifier"
+            exit 1
+          fi
+          modern_destination="platform=iOS Simulator,id=$modern_simulator_id,arch=$simulator_arch"
+          printf 'FLOORP_WEBEXT_IOS260_SIMULATOR_ID=%s\n' \
+            "$modern_simulator_id" >> "$GITHUB_ENV"
+          printf 'FLOORP_WEBEXT_IOS260_DESTINATION=%s\n' \
+            "$modern_destination" >> "$GITHUB_ENV"
+
+          xcrun simctl bootstatus "$modern_simulator_id" -b
+          run_test \
+            "$modern_destination" \
+            "ClientTests/FloorpNativeWebExtensionIntegrationTests/testMainMenuSelectsDarkReaderFromTwoActionPickerAndPresentsInteractivePopup" \
+            "floorp-webextension-os-matrix-ios-26-0-main-menu" \
+            "0" \
+            ""
+          run_test \
+            "$modern_destination" \
+            "ClientTests/FloorpNativeWebExtensionIntegrationTests/testBundledUBOLBlocksProductionHostTabsAndRendersDashboard" \
+            "floorp-webextension-os-matrix-ios-26-0-ubol-production-host" \
+            "0" \
+            ""
+          run_test \
+            "$modern_destination" \
+            "ClientTests/FloorpUBOLWebKitDiagnosticsTests/testOfficialUBOLReleaseAcceptanceGates" \
+            "floorp-webextension-os-matrix-ios-26-0-ubol-acceptance" \
+            "1" \
+            "FLOORP_UBOL_RELEASE_GATE report"
+
+          exit "$overall_status"
+
+      - name: Reject unsafe WebExtension matrix diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          violations=0
+          callback_signature="Completion handler for function call is no longer reach"
+          callback_signature+="able"
+          transition_signature="Invalid"
+          transition_signature+="Transition"
+          open_tab_signature="Error for open new "
+          open_tab_signature+="tab"
+          current_window_signature="Current window for "
+          current_window_signature+="page"
+          tabs_create_signature="Promise rejected: Invalid call to tabs."
+          tabs_create_signature+="create()"
+
+          check_signature() {
+            local log="$1"
+            local signature="$2"
+            local grep_status
+            if grep -Fq -- "$signature" "$log"; then
+              echo "::error::$(basename "$log") contains an unsafe WebKit lifecycle diagnostic"
+              violations=1
+            else
+              grep_status=$?
+              if [[ "$grep_status" -ne 1 ]]; then
+                echo "::error::$(basename "$log") could not be scanned (grep exited $grep_status)"
+                violations=1
+              fi
+            fi
+          }
+
+          for log in "$RUNNER_TEMP"/floorp-webextension-os-matrix-*.log; do
+            [[ -f "$log" ]] || continue
+            check_signature "$log" "$callback_signature"
+            check_signature "$log" "$transition_signature"
+            check_signature "$log" "$open_tab_signature"
+            check_signature "$log" "$current_window_signature"
+            check_signature "$log" "$tabs_create_signature"
+          done
+          exit "$violations"
+
+      - name: Upload WebExtension OS matrix evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-webextension-os-matrix-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/floorp-webextension-os-matrix-*.log
+            ${{ runner.temp }}/floorp-webextension-os-matrix-*.json
+            ${{ runner.temp }}/floorp-webextension-os-matrix-*.xcresult
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Remove WebExtension matrix simulators
+        if: always()
+        run: |
+          for simulator_id in \
+            "${FLOORP_WEBEXT_IOS184_SIMULATOR_ID:-}" \
+            "${FLOORP_WEBEXT_IOS260_SIMULATOR_ID:-}"; do
+            [[ -n "$simulator_id" ]] || continue
+            xcrun simctl shutdown "$simulator_id" 2>/dev/null || true
+            xcrun simctl delete "$simulator_id" 2>/dev/null || true
+          done

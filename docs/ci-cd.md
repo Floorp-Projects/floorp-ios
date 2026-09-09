@@ -7,6 +7,7 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | Concern | System | Current state |
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
+| Native WebExtension minimum-OS acceptance | GitHub Actions | Separate iOS 18.4 / 26.0 job in `.github/workflows/ci.yml` |
 | Notes Sync production QA | GitHub Actions | Manual, protected workflow in `.github/workflows/floorp-notes-sync-production-qa.yml` |
 | Notes Sync public-beta QA | GitHub Actions | Separate manual, protected two-account workflow in `.github/workflows/floorp-notes-sync-public-beta-qa.yml` |
 | Signed public-beta delivery | Xcode Cloud | Source-bound `workflow_dispatch` bridge in `.github/workflows/floorp-xcode-cloud-testflight.yml` |
@@ -42,6 +43,37 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 7. Resolve only the Swift package versions in `Package.resolved`.
 8. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
 9. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
+
+A separate `Native WebExtensions iOS 18.4 and 26.0 acceptance` job runs on
+`macos-15` with Xcode 26.3 selected from `.xcode-version`. Hosted-image SDK
+listings do not guarantee that either required simulator runtime is installed,
+so the job obtains exact iOS 18.4 and iOS 26.0 runtimes on demand (`universal`
+on x86_64 and `arm64` on arm64). It first preserves any existing iOS 18.4
+runtime image and deletes only other runtime images that CoreSimulator
+marks as deletable. Unknown inventory data or a failed deletion stops the job;
+the job also refuses to start the iOS 18.4 phase if an iOS 26.0 runtime image
+remains in CoreSimulator storage. The post-cleanup free-space report is retained
+with the evidence. It then downloads iOS 18.4 when absent, requires exactly one
+compatible runtime, and builds the test products once with an iOS 18.4
+deployment target.
+
+The iOS 18.4 simulator verifies the production
+Main Menu-to-Dark Reader direct popup path, production-host theming, and the
+official Dark Reader acceptance. It also proves that uBlock Origin Lite is
+unavailable and its installation is rejected below its iOS 26.0 minimum. After
+those tests, the job deletes the iOS 18.4 simulator, uniquely re-resolves the
+deletable iOS 18.4 runtime UUID, deletes that runtime, and records the reclaimed
+space before obtaining iOS 26.0 with the same download mechanism. It again
+requires exactly one compatible runtime before creating the iOS 26.0 simulator.
+That simulator verifies the Dark Reader/uBlock Origin Lite action picker and
+popup, uBlock Origin Lite on a production host, and the opt-in official uBlock
+Origin Lite acceptance. The built products and Derived Data remain in place;
+the iOS 26.0 tests use `test-without-building` rather than rebuilding. Every
+selected test must report an XCTest pass, and both official acceptance tests
+must emit their release completion marker. The job always uploads its cleanup
+and download logs, free-space reports, runtime inventories, and `.xcresult`
+bundles for seven days, and fails if any log contains an unsafe WebKit
+lifecycle, host-routing, or `tabs.create` diagnostic.
 
 `FloorpCI.xctestplan` has 17 target entries: 14 currently reliable broad suites plus explicit allowlists from `AccountTests`, `ClientTests`, and `MozillaRustComponentsTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
@@ -85,6 +117,12 @@ Notes on the live contract:
   contract.
 - Required checks are the job names `Validate workflows` and
   `Build and unit test` from `.github/workflows/ci.yml`.
+- The Native WebExtension OS acceptance job is not yet part of the live
+  ruleset. Until it is promoted, any pull request that changes native
+  WebExtension runtime or release-acceptance behavior must have a successful
+  `Native WebExtensions iOS 18.4 and 26.0 acceptance` check at its exact
+  reviewed head as an additional manual merge condition. Promoting it to a
+  ruleset-required check remains a separate, coordinated governance change.
 - Force pushes and branch deletion are blocked. Only OrganizationAdmin may
   bypass pull-request rules (`pull_request` mode); there is no separate
   release-maintainer bypass group yet.

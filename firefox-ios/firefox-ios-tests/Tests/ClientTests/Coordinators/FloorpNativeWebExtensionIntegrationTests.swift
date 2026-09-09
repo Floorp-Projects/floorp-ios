@@ -5620,6 +5620,55 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
     }
 
+    func testBundledUBOLIsUnavailableAndInstallFailsBelowMinimumOS() async throws {
+        let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        if item.isAvailableOnCurrentOS {
+            throw XCTSkip("This fail-closed contract runs only below \(item.minimumOS.description)")
+        }
+
+        XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
+        XCTAssertFalse(item.isAvailableOnCurrentOS)
+        XCTAssertFalse(
+            FloorpNativeWebExtensionCatalog.items
+                .filter { $0.isAvailableOnCurrentOS }
+                .contains(item)
+        )
+
+        let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_minimum_os")
+        let profile = profileFixture.profile
+        defer { profileFixture.cleanup() }
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: profile,
+            host: host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let source = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/ubol-minimum-os")),
+            isPrivate: false
+        )
+        manager.selectedTab = source
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+
+        do {
+            try await host.installBundledExtension(identifier: item.identifier)
+            XCTFail("uBlock Origin Lite must not install below its minimum operating system")
+        } catch FloorpNativeWebExtensionError.unsupportedOperatingSystem(let required) {
+            XCTAssertEqual(required, FloorpOperatingSystemVersion(26, 0))
+            XCTAssertEqual(required, item.minimumOS)
+        } catch {
+            XCTFail("Expected unsupportedOperatingSystem, got \(error)")
+        }
+
+        XCTAssertNil(host.installedContext(identifier: item.identifier))
+        XCTAssertFalse(
+            host.actionItems(for: source).contains { $0.contextIdentifier == item.identifier }
+        )
+        await source.close()
+    }
+
     // swiftlint:disable:next function_body_length
     func testBundledUBOLCatalogPackageIsVerifiedLoadsAndDeclaresDNRAndUI() async throws {
         let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
@@ -8046,13 +8095,11 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     }
 
     // swiftlint:disable:next function_body_length
-    func testBundledDarkReaderActionPopupPresentsAndBecomesInteractiveThroughProductionHost() async throws {
+    func testMainMenuSelectsDarkReaderFromTwoActionPickerAndPresentsInteractivePopup() async throws {
         let item = FloorpNativeWebExtensionCatalog.darkReader
         let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_action_popup")
         let profile = profileFixture.profile
         let host = try FloorpNativeWebExtensionHost.install(for: profile)
-        try await host.installBundledExtension(identifier: item.identifier)
-        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
         let manager = FloorpUBOLRoutingTabManager(
             profile: profile,
             host: host,
@@ -8061,7 +8108,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         let dependencies = DependencyHelperMock()
         dependencies.bootstrapDependencies(
-            injectedProfile: profile,
             injectedTabManager: manager
         )
         defer { dependencies.reset() }
@@ -8073,7 +8119,353 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         manager.selectedTab = source
         host.register(tabManager: manager)
         defer { host.unregister(windowUUID: manager.windowUUID) }
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        manager.selectedTab = source
 
+        try await host.installBundledExtension(
+            identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+        )
+        let uBlockContext = try XCTUnwrap(
+            host.installedContext(
+                identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            )
+        )
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(uBlockContext) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(uBlockContext))
+        XCTAssertTrue(
+            uBlockContext.errors.isEmpty,
+            uBlockContext.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        manager.selectedTab = source
+
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+        let nativeWebExtensionsWereEnabled = FloorpFlags.isNativeWebExtensionsEnabled
+        FloorpFlags.setNativeWebExtensionsEnabled(true)
+        defer { FloorpFlags.setNativeWebExtensionsEnabled(nativeWebExtensionsWereEnabled) }
+
+        let navigationController = UINavigationController()
+        let router = DefaultRouter(navigationController: navigationController)
+        let browserCoordinator = BrowserCoordinator(
+            router: router,
+            screenshotService: ScreenshotService(),
+            tabManager: manager,
+            profile: profile,
+            glean: MockGleanWrapper(),
+            applicationHelper: MockApplicationHelper(),
+            worldCupStore: MockWorldCupStore()
+        )
+        router.setRootViewController(
+            browserCoordinator.browserViewController,
+            hideBar: true,
+            animated: false
+        )
+        let root = browserCoordinator.browserViewController
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = navigationController
+        root.loadViewIfNeeded()
+        source.webView?.frame = root.view.bounds
+        source.webView?.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        if let webView = source.webView {
+            root.view.addSubview(webView)
+        }
+        window.makeKeyAndVisible()
+        defer {
+            root.presentedViewController?.dismiss(animated: false)
+            navigationController.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        browserCoordinator.showMainMenu()
+        var presentedMainMenu: UIViewController?
+        for _ in 0..<40 {
+            presentedMainMenu = navigationController.presentedViewController
+            if presentedMainMenu?.viewIfLoaded?.window != nil { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let mainMenu = try XCTUnwrap(
+            presentedMainMenu,
+            "The production BrowserCoordinator did not present Main Menu"
+        )
+        XCTAssertNotNil(mainMenu.viewIfLoaded?.window)
+        let mainMenuCoordinator = try XCTUnwrap(
+            browserCoordinator.childCoordinators.compactMap { $0 as? MainMenuCoordinator }.first
+        )
+
+        mainMenuCoordinator.navigateTo(
+            MenuNavigationDestination(.webExtensionActions),
+            animated: false
+        )
+
+        var actionPicker: FloorpNativeWebExtensionActionPickerViewController?
+        for _ in 0..<80 {
+            actionPicker = root.presentedViewController
+                as? FloorpNativeWebExtensionActionPickerViewController
+            if actionPicker?.viewIfLoaded?.window != nil { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let picker = try XCTUnwrap(
+            actionPicker,
+            "Main Menu did not route to the production WebExtension action picker"
+        )
+        XCTAssertNil(mainMenu.viewIfLoaded?.window)
+        XCTAssertNil(mainMenu.presentingViewController)
+        XCTAssertEqual(picker.displayedChoiceTitles.count, 2)
+        XCTAssertEqual(
+            Set(picker.displayedChoiceTitles),
+            Set([
+                FloorpNativeWebExtensionCatalog.darkReader.name,
+                FloorpNativeWebExtensionCatalog.uBlockOriginLite.name,
+            ])
+        )
+        XCTAssertNotNil(picker.viewIfLoaded?.window)
+
+        picker.selectChoice(identifier: item.identifier)
+
+        let popupResult = await waitForPresentedActionPopup(presentingRoot: root)
+        let popup = try XCTUnwrap(
+            popupResult,
+            "Selecting Dark Reader from the production action picker did not present its popup"
+        )
+        XCTAssertNil(picker.viewIfLoaded?.window)
+        XCTAssertNil(picker.presentingViewController)
+        let popupComponents = try XCTUnwrap(
+            URLComponents(url: try XCTUnwrap(popup.webView.url), resolvingAgainstBaseURL: false)
+        )
+        XCTAssertEqual(popupComponents.scheme, item.baseURLScheme)
+        XCTAssertEqual(popupComponents.host, item.baseURLHost)
+        XCTAssertEqual(popupComponents.path, "/ui/popup/index.html")
+        XCTAssertTrue(popup.webView.configuration.websiteDataStore.isPersistent)
+        var didClosePopup = false
+        defer {
+            if !didClosePopup {
+                popup.viewController.closePopup(animated: false)
+            }
+        }
+
+        try await assertDarkReaderPopupIsInteractiveAndToggleChangesState(in: popup.webView)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        let didPrepareAndClosePopup = await popup.viewController.closePopupAfterPreparing(
+            animated: false
+        )
+        let didDismissPopup = await waitForDismissedPresentation(from: root)
+        didClosePopup = didDismissPopup
+        XCTAssertTrue(didPrepareAndClosePopup)
+        XCTAssertTrue(didDismissPopup)
+        XCTAssertNil(popup.viewController.presentedViewController)
+        XCTAssertNil(root.presentedViewController)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        XCTAssertTrue(
+            uBlockContext.errors.isEmpty,
+            uBlockContext.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        for tab in manager.tabs {
+            await tab.close()
+        }
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testMainMenuOpensOnlyAvailableDarkReaderActionDirectlyOnMinimumOS() async throws {
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_direct_action")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: profile,
+            host: host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
+        defer { profileFixture.cleanup() }
+        let source = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/darkreader-direct-popup")),
+            isPrivate: false
+        )
+        manager.selectedTab = source
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
+        manager.selectedTab = source
+
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+        let nativeWebExtensionsWereEnabled = FloorpFlags.isNativeWebExtensionsEnabled
+        FloorpFlags.setNativeWebExtensionsEnabled(true)
+        defer { FloorpFlags.setNativeWebExtensionsEnabled(nativeWebExtensionsWereEnabled) }
+
+        let navigationController = UINavigationController()
+        let router = DefaultRouter(navigationController: navigationController)
+        let browserCoordinator = BrowserCoordinator(
+            router: router,
+            screenshotService: ScreenshotService(),
+            tabManager: manager,
+            profile: profile,
+            glean: MockGleanWrapper(),
+            applicationHelper: MockApplicationHelper(),
+            worldCupStore: MockWorldCupStore()
+        )
+        router.setRootViewController(
+            browserCoordinator.browserViewController,
+            hideBar: true,
+            animated: false
+        )
+        let root = browserCoordinator.browserViewController
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = navigationController
+        root.loadViewIfNeeded()
+        source.webView?.frame = root.view.bounds
+        source.webView?.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        if let webView = source.webView {
+            root.view.addSubview(webView)
+        }
+        window.makeKeyAndVisible()
+        defer {
+            root.presentedViewController?.dismiss(animated: false)
+            navigationController.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        XCTAssertEqual(
+            host.actionItems(for: source).filter(\.isEnabled).map(\.contextIdentifier),
+            [item.identifier]
+        )
+        browserCoordinator.showMainMenu()
+        var presentedMainMenu: UIViewController?
+        for _ in 0..<40 {
+            presentedMainMenu = navigationController.presentedViewController
+            if presentedMainMenu?.viewIfLoaded?.window != nil { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let mainMenu = try XCTUnwrap(
+            presentedMainMenu,
+            "The production BrowserCoordinator did not present Main Menu"
+        )
+        XCTAssertNotNil(mainMenu.viewIfLoaded?.window)
+        let mainMenuCoordinator = try XCTUnwrap(
+            browserCoordinator.childCoordinators.compactMap { $0 as? MainMenuCoordinator }.first
+        )
+
+        mainMenuCoordinator.navigateTo(
+            MenuNavigationDestination(.webExtensionActions),
+            animated: false
+        )
+        XCTAssertFalse(
+            root.presentedViewController is FloorpNativeWebExtensionActionPickerViewController,
+            "A single available action must bypass the picker"
+        )
+
+        let popupResult = await waitForPresentedActionPopup(presentingRoot: root)
+        let popup = try XCTUnwrap(
+            popupResult,
+            "The single-action Main Menu route did not present Dark Reader directly"
+        )
+        XCTAssertNil(mainMenu.viewIfLoaded?.window)
+        XCTAssertNil(mainMenu.presentingViewController)
+        XCTAssertFalse(
+            root.presentedViewController is FloorpNativeWebExtensionActionPickerViewController
+        )
+        let popupComponents = try XCTUnwrap(
+            URLComponents(url: try XCTUnwrap(popup.webView.url), resolvingAgainstBaseURL: false)
+        )
+        XCTAssertEqual(popupComponents.scheme, item.baseURLScheme)
+        XCTAssertEqual(popupComponents.host, item.baseURLHost)
+        XCTAssertEqual(popupComponents.path, "/ui/popup/index.html")
+        XCTAssertTrue(popup.webView.configuration.websiteDataStore.isPersistent)
+        var didClosePopup = false
+        defer {
+            if !didClosePopup {
+                popup.viewController.closePopup(animated: false)
+            }
+        }
+
+        try await assertDarkReaderPopupIsInteractiveAndToggleChangesState(in: popup.webView)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        let didPrepareAndClosePopup = await popup.viewController.closePopupAfterPreparing(
+            animated: false
+        )
+        let didDismissPopup = await waitForDismissedPresentation(from: root)
+        didClosePopup = didDismissPopup
+        XCTAssertTrue(didPrepareAndClosePopup)
+        XCTAssertTrue(didDismissPopup)
+        XCTAssertNil(popup.viewController.presentedViewController)
+        XCTAssertNil(root.presentedViewController)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        for tab in manager.tabs {
+            await tab.close()
+        }
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testBundledDarkReaderActionPopupPresentsAndBecomesInteractiveThroughProductionHost() async throws {
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_close_race")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: profile,
+            host: host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(injectedTabManager: manager)
+        defer { dependencies.reset() }
+        defer { profileFixture.cleanup() }
+        let source = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/darkreader-close-race")),
+            isPrivate: false
+        )
+        manager.selectedTab = source
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
+        manager.selectedTab = source
+
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
         let root = UIViewController()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = root
@@ -8096,6 +8488,12 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             popupResult,
             "Dark Reader action popup was not presented by the production host"
         )
+        let popupComponents = try XCTUnwrap(
+            URLComponents(url: try XCTUnwrap(popup.webView.url), resolvingAgainstBaseURL: false)
+        )
+        XCTAssertEqual(popupComponents.scheme, item.baseURLScheme)
+        XCTAssertEqual(popupComponents.host, item.baseURLHost)
+        XCTAssertEqual(popupComponents.path, "/ui/popup/index.html")
         XCTAssertTrue(popup.webView.configuration.websiteDataStore.isPersistent)
         var didClosePopup = false
         defer {
@@ -8104,58 +8502,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             }
         }
 
-        var isInteractive = false
-        for _ in 0..<60 {
-            isInteractive = (try? await popup.webView.floorpCallAsyncJavaScript(
-                """
-                return document.readyState === 'complete' &&
-                    Boolean(document.querySelector('.app-switch__control')) &&
-                    Boolean(document.querySelector('.site-toggle'));
-                """,
-                contentWorld: .page,
-                timeoutNanoseconds: 3_000_000_000
-            ) as? Bool) == true
-            if isInteractive { break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
-        XCTAssertTrue(isInteractive)
-        let toggleResult = try await popup.webView.floorpCallAsyncJavaScript(
-            """
-            const options = Array.from(document.querySelectorAll(
-                '.app-switch__control .multi-switch__option'
-            ));
-            const selected = options.find((option) =>
-                option.classList.contains('multi-switch__option--selected')
-            );
-            const target = options.find((option) => option !== selected);
-            if (!selected || !target) {
-                throw new Error('Dark Reader app switch is not interactive');
-            }
-            const before = selected.textContent.trim();
-            const expected = target.textContent.trim();
-            target.click();
-            return { before, expected };
-            """,
-            contentWorld: .page,
-            timeoutNanoseconds: 3_000_000_000
-        ) as? [String: String]
-        let expectedToggleValue = try XCTUnwrap(toggleResult?["expected"])
-        XCTAssertNotEqual(toggleResult?["before"], expectedToggleValue)
-        var selectedToggleValue: String?
-        for _ in 0..<50 {
-            selectedToggleValue = try? await popup.webView.floorpCallAsyncJavaScript(
-                """
-                return document.querySelector(
-                    '.app-switch__control .multi-switch__option--selected'
-                )?.textContent.trim();
-                """,
-                contentWorld: .page,
-                timeoutNanoseconds: 3_000_000_000
-            ) as? String
-            if selectedToggleValue == expectedToggleValue { break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
-        XCTAssertEqual(selectedToggleValue, expectedToggleValue)
+        try await assertDarkReaderPopupIsInteractiveAndToggleChangesState(in: popup.webView)
         XCTAssertTrue(
             context.errors.isEmpty,
             context.errors.map(\.localizedDescription).joined(separator: "\n")
@@ -8170,6 +8517,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             routeAcknowledgementGate.mayFinish = true
             host.extensionTabCreationCompletionHookForTesting = nil
         }
+
         let clickedSettings = try await popup.webView.floorpCallAsyncJavaScript(
             """
             const button = document.querySelector('.settings-button-icon')?.closest('button');
@@ -8196,20 +8544,19 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
             "Native close must retain Dark Reader until its real tabs.create callback settles"
         )
+
         routeAcknowledgementGate.mayFinish = true
         host.extensionTabCreationCompletionHookForTesting = nil
-        let didDismissPopup = await waitForDismissedPresentation(from: root, attempts: 340)
+        let didDismissPopup = await waitForDismissedPresentation(from: root)
         for _ in 0..<120 where manager.extensionCreatedTabs.count == extensionTabCountBeforeSettings {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        if didDismissPopup,
-           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView) {
-            popup.webView.stopLoading()
-            await Task.yield()
-            await Task.yield()
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
         }
         didClosePopup = didDismissPopup
         XCTAssertTrue(didDismissPopup)
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
         XCTAssertNil(popup.viewController.presentedViewController)
         XCTAssertNil(root.presentedViewController)
         XCTAssertEqual(manager.extensionCreatedTabs.count, extensionTabCountBeforeSettings + 1)
@@ -8227,7 +8574,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             context.errors.isEmpty,
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
-        await source.close()
+        for tab in manager.tabs {
+            await tab.close()
+        }
     }
 
     func testManagedActionPopupReopenWindowCloseTabSwitchRemovalAndDisableCleanup() async throws {
@@ -9546,6 +9895,65 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return nil
+    }
+
+    private func assertDarkReaderPopupIsInteractiveAndToggleChangesState(
+        in webView: WKWebView
+    ) async throws {
+        var isInteractive = false
+        for _ in 0..<60 {
+            isInteractive = (try? await webView.floorpCallAsyncJavaScript(
+                """
+                return document.readyState === 'complete' &&
+                    Boolean(document.querySelector('.app-switch__control')) &&
+                    Boolean(document.querySelector('.site-toggle'));
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 3_000_000_000
+            ) as? Bool) == true
+            if isInteractive { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(isInteractive)
+
+        let toggleResult = try await webView.floorpCallAsyncJavaScript(
+            """
+            const options = Array.from(document.querySelectorAll(
+                '.app-switch__control .multi-switch__option'
+            ));
+            const selected = options.find((option) =>
+                option.classList.contains('multi-switch__option--selected')
+            );
+            const target = options.find((option) => option !== selected);
+            if (!selected || !target) {
+                throw new Error('Dark Reader app switch is not interactive');
+            }
+            const before = selected.textContent.trim();
+            const expected = target.textContent.trim();
+            target.click();
+            return { before, expected };
+            """,
+            contentWorld: .page,
+            timeoutNanoseconds: 3_000_000_000
+        ) as? [String: String]
+        let expectedToggleValue = try XCTUnwrap(toggleResult?["expected"])
+        XCTAssertNotEqual(toggleResult?["before"], expectedToggleValue)
+
+        var selectedToggleValue: String?
+        for _ in 0..<50 {
+            selectedToggleValue = try? await webView.floorpCallAsyncJavaScript(
+                """
+                return document.querySelector(
+                    '.app-switch__control .multi-switch__option--selected'
+                )?.textContent.trim();
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 3_000_000_000
+            ) as? String
+            if selectedToggleValue == expectedToggleValue { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(selectedToggleValue, expectedToggleValue)
     }
 
     private func waitForDismissedPresentation(
