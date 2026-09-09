@@ -73,6 +73,7 @@ class FloorpXcodeCloudTestFlightWorkflowTests(unittest.TestCase):
             'FLOORP_MARKETING_VERSION: "0.3.0"',
             'FLOORP_PLATFORM: "IOS"',
             'FLOORP_MIN_OS_VERSION: "18.4"',
+            'FLOORP_APP_STORE_CONNECT_TEAM_ID: "74c6a531-19e2-4ed5-a34b-915003cc10f9"',
         ):
             self.assertIn(declaration, self.text)
         trigger = self.text.split(
@@ -83,6 +84,7 @@ class FloorpXcodeCloudTestFlightWorkflowTests(unittest.TestCase):
             '--expected-marketing-version "$FLOORP_MARKETING_VERSION"',
             '--expected-platform "$FLOORP_PLATFORM"',
             '--expected-min-os-version "$FLOORP_MIN_OS_VERSION"',
+            '--team-id "$FLOORP_APP_STORE_CONNECT_TEAM_ID"',
             '--receipt-output "$receipt"',
         ):
             self.assertIn(argument, trigger)

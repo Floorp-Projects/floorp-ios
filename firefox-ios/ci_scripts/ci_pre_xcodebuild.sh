@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+readonly FLOORP_APP_STORE_CONNECT_TEAM_ID="74c6a531-19e2-4ed5-a34b-915003cc10f9"
+readonly FLOORP_SIGNING_TEAM_ID="DV2U35YBHT"
+
 if [[ "${CI_XCODE_SCHEME:-}" != "Floorp" || "${CI_XCODEBUILD_ACTION:-}" != "archive" ]]; then
     echo "Skipping Floorp source binding for ${CI_XCODE_SCHEME:-unknown} ${CI_XCODEBUILD_ACTION:-unknown}."
     exit 0
@@ -30,8 +33,8 @@ readonly SOURCE_REF="${CI_GIT_REF:?CI_GIT_REF is required for a Floorp archive}"
     || fail "CI_GIT_REF must be the canonical CI_TAG reference"
 [[ "${CI_BUNDLE_ID:-}" == "app.floorp.Floorp" ]] \
     || fail "CI_BUNDLE_ID is not the Floorp release bundle"
-[[ "${CI_TEAM_ID:-}" == "DV2U35YBHT" ]] \
-    || fail "CI_TEAM_ID is not the Floorp release team"
+[[ "${CI_TEAM_ID:-}" == "$FLOORP_APP_STORE_CONNECT_TEAM_ID" ]] \
+    || fail "CI_TEAM_ID is not the Floorp App Store Connect team"
 
 HEAD_SHA="$(/usr/bin/git -C "$REPOSITORY_PATH" rev-parse --verify 'HEAD^{commit}')" \
     || fail "could not resolve the checked-out Git commit"
@@ -40,7 +43,7 @@ readonly HEAD_SHA
     || fail "CI_COMMIT does not match the checked-out Git HEAD"
 
 readonly RELEASE_CONFIGURATION="${REPOSITORY_PATH}/firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
-/usr/bin/python3 - "$RELEASE_CONFIGURATION" "$SOURCE_SHA" <<'PYEOF'
+/usr/bin/python3 - "$RELEASE_CONFIGURATION" "$SOURCE_SHA" "$FLOORP_SIGNING_TEAM_ID" <<'PYEOF'
 import os
 import re
 import stat
@@ -51,6 +54,7 @@ from pathlib import Path
 
 configuration = Path(sys.argv[1])
 source_sha = sys.argv[2]
+signing_team_id = sys.argv[3]
 if (
     not configuration.is_file()
     or configuration.is_symlink()
@@ -62,6 +66,18 @@ try:
     original = configuration.read_text(encoding="utf-8")
 except (OSError, UnicodeError) as error:
     raise SystemExit(f"could not read release configuration: {error}") from error
+
+signing_team_assignments = list(
+    re.finditer(r"(?m)^FLOORP_DEVELOPMENT_TEAM[ \t]*=[ \t]*([^\r\n]*)$", original)
+)
+if (
+    len(signing_team_assignments) != 1
+    or signing_team_assignments[0].group(1).strip() != signing_team_id
+):
+    raise SystemExit(
+        "FloorpRelease.xcconfig must contain exactly one "
+        f"FLOORP_DEVELOPMENT_TEAM assignment for {signing_team_id}"
+    )
 
 assignments = list(
     re.finditer(r"(?m)^FLOORP_SOURCE_SHA[ \t]*=[ \t]*([^\r\n]*)$", original)

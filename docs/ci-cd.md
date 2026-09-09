@@ -204,7 +204,13 @@ archive only, the pre-build script requires the exact protected catalog tag in
 both `CI_TAG` and canonical `CI_GIT_REF`, requires `CI_COMMIT` to match the
 checked-out Git `HEAD`, and atomically injects that SHA into the single empty
 `FLOORP_SOURCE_SHA` release setting. Other schemes and non-archive actions do
-not mutate the setting. `.nvmrc` and `.xcode-version` are declarations for
+not mutate the setting. For the App Store Connect API-started release path,
+Xcode Cloud exposes `CI_TEAM_ID` as the App Store Connect team resource UUID
+`74c6a531-19e2-4ed5-a34b-915003cc10f9`; the pre-build script verifies that
+identity. This is distinct from the signing Developer Team ID `DV2U35YBHT`,
+which the script independently verifies in `FloorpRelease.xcconfig` and the
+release-evidence gate verifies again from the signed app and provisioning
+profile. `.nvmrc` and `.xcode-version` are declarations for
 developers and GitHub Actions, not settings that Xcode Cloud applies
 automatically.
 
