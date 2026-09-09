@@ -107,10 +107,12 @@ asc_get() {
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+RECEIPT_SNAPSHOT="$TMP_DIR/build-receipt.json"
+cp "$BUILD_RECEIPT" "$RECEIPT_SNAPSHOT"
 
 python3 "$REVIEW_NOTES_RENDERER" \
     --template "$REVIEW_NOTES_TEMPLATE" \
-    --receipt "$BUILD_RECEIPT" \
+    --receipt "$RECEIPT_SNAPSHOT" \
     --output "$TMP_DIR/expected-review-details.json"
 
 asc_get "/v1/betaAppReviewDetails?filter[app]=$APP_ID&limit=200" "$TMP_DIR/review-details-before.json"
@@ -123,7 +125,7 @@ asc_get "/v1/builds/$BUILD_ID?include=app,preReleaseVersion" "$TMP_DIR/build-bef
 asc_get "/v1/betaGroups/$GROUP_ID?include=app" "$TMP_DIR/group-before.json"
 
 python3 "$RECEIPT_VALIDATOR" verify-submission \
-    --receipt "$BUILD_RECEIPT" \
+    --receipt "$RECEIPT_SNAPSHOT" \
     --run "$TMP_DIR/xcode-cloud-run-before.json" \
     --linkage "$TMP_DIR/xcode-cloud-build-linkage-before.json" \
     --build "$TMP_DIR/build-before.json" \

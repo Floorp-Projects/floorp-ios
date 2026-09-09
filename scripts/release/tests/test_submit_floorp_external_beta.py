@@ -111,6 +111,13 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             state = json.load(open(state_path))
             path = sys.argv[2]
             if command == "get":
+                receipt_replacement = state.pop("receipt_replacement", None)
+                if receipt_replacement is not None:
+                    json.dump(
+                        receipt_replacement,
+                        open(os.environ["STUB_BUILD_RECEIPT"], "w"),
+                    )
+                    json.dump(state, open(state_path, "w"))
                 submissions = {"data": state["submissions"]}
                 if "submission_links" in state:
                     submissions["links"] = state["submission_links"]
@@ -301,6 +308,7 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             state_value.update(state_overrides)
         state.write_text(json.dumps(state_value))
         env = {
+            "STUB_BUILD_RECEIPT": str(receipt),
             "STUB_RECORD": str(record),
             "STUB_REVIEW_DETAILS": str(review),
             "STUB_STATE": str(state),
@@ -423,6 +431,39 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), receipt_value()
         )
         self.assertEqual(body["data"]["attributes"], expected)
+
+    def test_receipt_is_snapshotted_before_remote_preflight(self):
+        stale_receipt = receipt_value()
+        stale_sha = "b" * 40
+        stale_receipt["source"].update({
+            "name": f"floorp-catalog-{stale_sha}",
+            "commit_sha": stale_sha,
+        })
+        stale_receipt["build"].update({
+            "number": "999",
+            "marketing_version": "9.9.9",
+        })
+        stale_notes = review_notes_renderer.render(
+            REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), stale_receipt
+        )["notes"]
+
+        proc, record, _, _, _ = self.run_script(
+            "--authorize-mutation",
+            receipt_overrides={
+                "source": stale_receipt["source"],
+                "build": {
+                    "number": "999",
+                    "marketing_version": "9.9.9",
+                },
+            },
+            review_overrides={"notes": stale_notes},
+            state_overrides={"receipt_replacement": receipt_value()},
+        )
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("build receipt source tag is not commit-bound", proc.stderr)
+        calls = [json.loads(line) for line in record.read_text().splitlines()]
+        self.assertFalse(any(argv[0] in ("post", "patch") for argv in calls))
 
     def test_each_localization_uses_a_fresh_guard_snapshot(self):
         proc, record, _, _, _ = self.run_script("--authorize-mutation")
