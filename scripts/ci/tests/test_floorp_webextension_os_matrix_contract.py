@@ -6,6 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = ROOT / ".github/workflows/ci.yml"
 CI_DOCUMENTATION_PATH = ROOT / "docs/ci-cd.md"
+APP_COMMON_CONFIG_PATH = ROOT / "firefox-ios/Client/Configuration/Common.xcconfig"
 
 
 class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
@@ -13,6 +14,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = WORKFLOW_PATH.read_text()
         cls.documentation = CI_DOCUMENTATION_PATH.read_text()
+        cls.app_common_config = APP_COMMON_CONFIG_PATH.read_text()
         job_marker = "\n  webextension-os-matrix:\n"
         cls.job = cls.workflow.split(job_marker, 1)[1]
 
@@ -23,6 +25,13 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
 
     def test_job_pins_macos_xcode_and_runtime_versions(self):
         self.assertEqual((ROOT / ".xcode-version").read_text().strip(), "26.3")
+        deployment_target = re.search(
+            r"^IPHONEOS_DEPLOYMENT_TARGET\s*=\s*(\S+)\s*$",
+            self.app_common_config,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(deployment_target)
+        self.assertEqual(deployment_target.group(1), "18.4")
         for declaration in (
             'WEBEXTENSION_XCODE_VERSION: "26.3"',
             'WEBEXTENSION_XCODE_BUILD: "17C529"',
@@ -629,6 +638,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "exactly one total entry for its runtime",
             "list the exact created simulator UUID",
             "as an eligible destination",
+            "builds the test products once for the exact iOS 18.4 simulator",
             "does not override `IPHONEOS_DEPLOYMENT_TARGET` globally",
             "Swift package dependencies retain their own supported floors",
             "Main Menu-to-Dark Reader direct popup path",

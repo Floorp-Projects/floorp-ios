@@ -71,8 +71,8 @@ the job also refuses to start the iOS 18.4 phase if an iOS 26.0 runtime image
 remains in CoreSimulator storage. The post-cleanup free-space report is retained
 with the evidence. It then downloads iOS 18.4 when absent.
 It requires exactly one compatible exact-build entry and exactly one total entry for its runtime
-identifier, and builds the test products once with an iOS 18.4 deployment
-target. The same exact-build and identifier-uniqueness checks run before the
+identifier, and builds the test products once for the exact iOS 18.4 simulator
+destination. The same exact-build and identifier-uniqueness checks run before the
 iOS 26.0 simulator is created, preventing CoreSimulator from silently binding
 a test device to a different build with the same identifier. Before the build
 and before the iOS 26.0 tests, Xcode must list the exact created simulator UUID
