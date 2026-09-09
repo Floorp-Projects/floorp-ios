@@ -46,37 +46,50 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 
 A separate `Native WebExtensions iOS 18.4 and 26.0 acceptance` job runs on
 `macos-15` with Xcode 26.3 selected from `.xcode-version`. Hosted-image SDK
-listings do not guarantee that either required simulator runtime is installed,
+listings do not guarantee that either test simulator runtime is installed,
 so the job obtains exact iOS 18.4 and iOS 26.0 runtimes on demand. Runtime
 downloads use Xcode 16.3 for iOS 18.4 and Xcode 26.0.1 for iOS 26.0.
 The job verifies each provider's exact Xcode and Simulator SDK version before use.
-Xcode 26.3 remains selected for every build and test.
-Xcode 26.0.1 requests the universal archive on both
-x86_64 and arm64 runners. The job first preserves any existing iOS 18.4
-runtime image.
-It deletes only other runtime images that CoreSimulator marks as deletable.
+Runtime acceptance pins iOS 18.4 (22E238) and iOS 26.0 (23A343). Xcode 26.3
+ships a Simulator SDK at version 26.2 (23C57) and requires the separately
+versioned iOS 26.2 (23C54) runtime to expose older
+simulator destinations, so the job retains that exact build-support runtime
+through both test phases and obtains it with Xcode 26.3 when absent.
+Xcode 26.3 remains selected for every build and test, and its Simulator SDK must itself
+report version 26.2 and build 23C57. Both Xcode 26.3 and Xcode 26.0.1 request
+universal runtime archives on x86_64 and arm64 runners.
+
+The initial cleanup preserves only an existing exact iOS 18.4 (22E238) test
+runtime and the exact iOS 26.2 (23C54) build-support runtime.
+It deletes only other runtime images that CoreSimulator marks as deletable, including a
+different build that shares either protected runtime identifier.
 Unknown inventory data or a failed deletion stops the job;
 because a successful `simctl runtime delete` can precede secure-storage
 removal, the job waits within a fixed bound until every explicitly deleted
 runtime UUID is absent from repeatedly validated CoreSimulator inventories;
 the job also refuses to start the iOS 18.4 phase if an iOS 26.0 runtime image
 remains in CoreSimulator storage. The post-cleanup free-space report is retained
-with the evidence. It then downloads iOS 18.4 when absent, requires exactly one
-compatible runtime, and builds the test products once with an iOS 18.4
-deployment target.
+with the evidence. It then downloads iOS 18.4 when absent.
+It requires exactly one compatible exact-build entry and exactly one total entry for its runtime
+identifier, and builds the test products once with an iOS 18.4 deployment
+target. The same exact-build and identifier-uniqueness checks run before the
+iOS 26.0 simulator is created, preventing CoreSimulator from silently binding
+a test device to a different build with the same identifier. Before the build
+and before the iOS 26.0 tests, Xcode must list the exact created simulator UUID
+as an eligible destination.
 
 The iOS 18.4 simulator verifies the production
 Main Menu-to-Dark Reader direct popup path, production-host theming, and the
 official Dark Reader acceptance. It also proves that uBlock Origin Lite is
 unavailable and its installation is rejected below its iOS 26.0 minimum. After
 those tests, the job deletes the iOS 18.4 simulator, uniquely re-resolves the
-deletable iOS 18.4 runtime UUID, deletes that runtime, waits for that exact UUID
-to disappear from validated inventory, and records the reclaimed space before
-obtaining iOS 26.0 with the same download mechanism. It again
-requires exactly one compatible runtime before creating the iOS 26.0 simulator.
-That simulator verifies the Dark Reader/uBlock Origin Lite action picker and
-popup, uBlock Origin Lite on a production host, and the opt-in official uBlock
-Origin Lite acceptance. The built products and Derived Data remain in place;
+deletable iOS 18.4 (22E238) runtime UUID by identifier, version, and build,
+deletes that runtime, waits for that exact UUID to disappear from validated
+inventory, and records the reclaimed space before obtaining iOS 26.0 with the
+same download mechanism. The iOS 26.2 build-support runtime remains installed.
+The subsequently created iOS 26.0 simulator verifies the Dark Reader/uBlock
+Origin Lite action picker and popup, uBlock Origin Lite on a production host,
+and the opt-in official uBlock Origin Lite acceptance. The built products and Derived Data remain in place;
 the iOS 26.0 tests use `test-without-building` rather than rebuilding. Every
 selected test must report an XCTest pass, and both official acceptance tests
 must emit their release completion marker. The job always uploads its cleanup

@@ -24,10 +24,15 @@ env:
   SIMULATOR_OS: "26.2"
   WEBEXTENSION_XCODE_VERSION: "26.3"
   WEBEXTENSION_XCODE_BUILD: "17C529"
+  WEBEXTENSION_BUILD_RUNTIME_OS: "26.2"
+  WEBEXTENSION_BUILD_SDK_BUILD: "23C57"
+  WEBEXTENSION_BUILD_RUNTIME_BUILD: "23C54"
   WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION: "16.3"
   WEBEXTENSION_MINIMUM_RUNTIME_XCODE_BUILD: "16E140"
+  WEBEXTENSION_MINIMUM_RUNTIME_BUILD: "22E238"
   WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION: "26.0.1"
   WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD: "17A400"
+  WEBEXTENSION_MODERN_RUNTIME_BUILD: "23A343"
   WEBEXTENSION_MINIMUM_OS: "18.4"
   WEBEXTENSION_MODERN_OS: "26.0"
   WEBEXTENSION_SIMULATOR_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-16
@@ -452,12 +457,21 @@ jobs:
             exit 1
           fi
 
+          build_runtime_sdk_version="$(DEVELOPER_DIR="$developer_directory" xcrun --sdk iphonesimulator --show-sdk-version)"
+          build_runtime_sdk_build="$(DEVELOPER_DIR="$developer_directory" xcrun --sdk iphonesimulator --show-sdk-build-version)"
           minimum_runtime_sdk_version="$(DEVELOPER_DIR="$minimum_runtime_developer_directory" xcrun --sdk iphonesimulator --show-sdk-version)"
           modern_runtime_sdk_version="$(DEVELOPER_DIR="$modern_runtime_developer_directory" xcrun --sdk iphonesimulator --show-sdk-version)"
+          printf '%s %s\n' "$build_runtime_sdk_version" "$build_runtime_sdk_build" \
+            | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-build-sdk.log"
           printf '%s\n' "$minimum_runtime_sdk_version" \
             | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-18-4-sdk.log"
           printf '%s\n' "$modern_runtime_sdk_version" \
             | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-provider-ios-26-0-sdk.log"
+          if [[ "$build_runtime_sdk_version" != "$WEBEXTENSION_BUILD_RUNTIME_OS" \
+            || "$build_runtime_sdk_build" != "$WEBEXTENSION_BUILD_SDK_BUILD" ]]; then
+            echo "::error::Build-and-test Xcode Simulator SDK does not match $WEBEXTENSION_BUILD_RUNTIME_OS ($WEBEXTENSION_BUILD_SDK_BUILD)"
+            exit 1
+          fi
           if [[ "$minimum_runtime_sdk_version" != "$WEBEXTENSION_MINIMUM_OS" ]]; then
             echo "::error::Minimum-OS runtime provider SDK does not match $WEBEXTENSION_MINIMUM_OS"
             exit 1
@@ -467,6 +481,8 @@ jobs:
             exit 1
           fi
           {
+            printf 'FLOORP_WEBEXT_BUILD_RUNTIME_DEVELOPER_DIRECTORY=%s\n' \
+              "$developer_directory"
             printf 'FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY=%s\n' \
               "$minimum_runtime_developer_directory"
             printf 'FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY=%s\n' \
@@ -490,6 +506,7 @@ jobs:
 
           minimum_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MINIMUM_OS//./-}"
           modern_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MODERN_OS//./-}"
+          build_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_BUILD_RUNTIME_OS//./-}"
           runtime_storage_before="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-storage-before.json"
           runtime_delete_candidates="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-delete-candidates.json"
           runtime_delete_list="$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-delete-candidates.log"
@@ -503,6 +520,8 @@ jobs:
               and (.value | type == "object")
               and (.value.identifier == .key)
               and (.value.runtimeIdentifier | type == "string")
+              and (.value.version | type == "string")
+              and (.value.build | type == "string")
               and (.value.deletable | type == "boolean"))' \
             "$runtime_storage_before" >/dev/null; then
             echo "::error::CoreSimulator runtime storage inventory has an unknown schema"
@@ -511,36 +530,59 @@ jobs:
 
           if ! jq -e \
             --arg minimum_runtime "$minimum_runtime" \
+            --arg minimum_version "$WEBEXTENSION_MINIMUM_OS" \
+            --arg minimum_build "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" \
+            --arg build_runtime "$build_runtime" \
+            --arg build_version "$WEBEXTENSION_BUILD_RUNTIME_OS" \
+            --arg build_build "$WEBEXTENSION_BUILD_RUNTIME_BUILD" \
             '[to_entries[]
               | select(.value.deletable == true)
-              | select(.value.runtimeIdentifier != $minimum_runtime)
-              | {uuid: .key, runtimeIdentifier: .value.runtimeIdentifier}]
-              | sort_by([.runtimeIdentifier, .uuid])' \
+              | select(((.value.runtimeIdentifier == $minimum_runtime
+                  and .value.version == $minimum_version
+                  and .value.build == $minimum_build)
+                or (.value.runtimeIdentifier == $build_runtime
+                  and .value.version == $build_version
+                  and .value.build == $build_build)) | not)
+              | {uuid: .key,
+                  runtimeIdentifier: .value.runtimeIdentifier,
+                  version: .value.version,
+                  build: .value.build}]
+              | sort_by([.runtimeIdentifier, .version, .build, .uuid])' \
             "$runtime_storage_before" > "$runtime_delete_candidates"; then
             echo "::error::Could not enumerate deletable simulator runtimes"
             exit 1
           fi
           if ! jq -r \
-            '.[] | [.uuid, .runtimeIdentifier] | @tsv' \
+            '.[] | [.uuid, .runtimeIdentifier, .version, .build] | @tsv' \
             "$runtime_delete_candidates" > "$runtime_delete_list"; then
             echo "::error::Could not materialize the simulator runtime deletion list"
             exit 1
           fi
 
-          printf 'Protected runtime: %s\n' \
-            "$minimum_runtime" | tee "$runtime_cleanup_log"
-          while IFS=$'\t' read -r runtime_uuid runtime_identifier; do
+          printf 'Protected runtimes: %s %s / %s %s\n' \
+            "$minimum_runtime" "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" \
+            "$build_runtime" "$WEBEXTENSION_BUILD_RUNTIME_BUILD" \
+            | tee "$runtime_cleanup_log"
+          while IFS=$'\t' read -r runtime_uuid runtime_identifier runtime_version runtime_build; do
             if [[ ! "$runtime_uuid" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] \
-              || [[ -z "$runtime_identifier" ]]; then
+              || [[ -z "$runtime_identifier" ]] \
+              || [[ -z "$runtime_version" ]] \
+              || [[ -z "$runtime_build" ]]; then
               echo "::error::Invalid simulator runtime deletion candidate"
               exit 1
             fi
-            if [[ "$runtime_identifier" == "$minimum_runtime" ]]; then
-              echo "::error::Refusing to delete a protected simulator runtime: $runtime_identifier"
+            if [[ "$runtime_identifier" == "$minimum_runtime" \
+                && "$runtime_version" == "$WEBEXTENSION_MINIMUM_OS" \
+                && "$runtime_build" == "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" ]] \
+              || [[ "$runtime_identifier" == "$build_runtime" \
+                && "$runtime_version" == "$WEBEXTENSION_BUILD_RUNTIME_OS" \
+                && "$runtime_build" == "$WEBEXTENSION_BUILD_RUNTIME_BUILD" ]]; then
+              echo "::error::Refusing to delete a protected simulator runtime: $runtime_identifier $runtime_version $runtime_build"
               exit 1
             fi
-            printf 'Deleting runtime %s (%s)\n' \
-              "$runtime_identifier" "$runtime_uuid" | tee -a "$runtime_cleanup_log"
+            printf 'Deleting runtime %s %s %s (%s)\n' \
+              "$runtime_identifier" "$runtime_version" "$runtime_build" "$runtime_uuid" \
+              | tee -a "$runtime_cleanup_log"
             xcrun simctl runtime delete "$runtime_uuid" \
               2>&1 | tee -a "$runtime_cleanup_log"
           done < "$runtime_delete_list"
@@ -559,6 +601,8 @@ jobs:
                 and (.value | type == "object")
                 and (.value.identifier == .key)
                 and (.value.runtimeIdentifier | type == "string")
+                and (.value.version | type == "string")
+                and (.value.build | type == "string")
                 and (.value.deletable | type == "boolean"))' \
               "$runtime_storage_after_cleanup" >/dev/null; then
               echo "::error::Post-cleanup CoreSimulator runtime inventory has an unknown schema"
@@ -621,12 +665,60 @@ jobs:
             echo "::error::CoreSimulator runtime inventory has an unknown schema"
             exit 1
           fi
-          if ! minimum_runtime_count="$(jq -er \
-            --arg identifier "$minimum_runtime" \
+          if ! build_runtime_count="$(jq -er \
+            --arg identifier "$build_runtime" \
+            --arg version "$WEBEXTENSION_BUILD_RUNTIME_OS" \
+            --arg build "$WEBEXTENSION_BUILD_RUNTIME_BUILD" \
             --arg architecture "$simulator_arch" \
             --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
             '[.runtimes[]
               | select(.identifier == $identifier
+                and .version == $version
+                and .buildversion == $build
+                and .isAvailable == true
+                and (.supportedArchitectures | index($architecture) != null)
+                and (.supportedDeviceTypes | any(.identifier == $device_type)))]
+              | length' \
+            "$predownload_inventory")"; then
+            echo "::error::Could not inspect the build-support simulator runtime"
+            exit 1
+          fi
+          if ! build_runtime_identifier_count="$(jq -er \
+            --arg identifier "$build_runtime" \
+            '[.runtimes[] | select(.identifier == $identifier)] | length' \
+            "$predownload_inventory")"; then
+            echo "::error::Could not count build-support runtime identifiers"
+            exit 1
+          fi
+          case "$build_runtime_count:$build_runtime_identifier_count" in
+            0:0)
+              DEVELOPER_DIR="$FLOORP_WEBEXT_BUILD_RUNTIME_DEVELOPER_DIRECTORY" \
+                xcodebuild -downloadPlatform iOS \
+                -buildVersion "$WEBEXTENSION_BUILD_RUNTIME_BUILD" \
+                -architectureVariant "$runtime_architecture_variant" \
+                2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-26-2.log"
+              ;;
+            1:1)
+              printf 'Runtime %s %s is already available; download skipped.\n' \
+                "$build_runtime" "$WEBEXTENSION_BUILD_RUNTIME_BUILD" \
+                | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-26-2.log"
+              ;;
+            *)
+              echo "::error::Build-support runtime inventory is ambiguous: exact=$build_runtime_count identifier=$build_runtime_identifier_count"
+              exit 1
+              ;;
+          esac
+
+          if ! minimum_runtime_count="$(jq -er \
+            --arg identifier "$minimum_runtime" \
+            --arg version "$WEBEXTENSION_MINIMUM_OS" \
+            --arg build "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" \
+            --arg architecture "$simulator_arch" \
+            --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            '[.runtimes[]
+              | select(.identifier == $identifier
+                and .version == $version
+                and .buildversion == $build
                 and .isAvailable == true
                 and (.supportedArchitectures | index($architecture) != null)
                 and (.supportedDeviceTypes | any(.identifier == $device_type)))]
@@ -635,20 +727,28 @@ jobs:
             echo "::error::Could not inspect the minimum-OS simulator runtime"
             exit 1
           fi
+          if ! minimum_runtime_identifier_count="$(jq -er \
+            --arg identifier "$minimum_runtime" \
+            '[.runtimes[] | select(.identifier == $identifier)] | length' \
+            "$predownload_inventory")"; then
+            echo "::error::Could not count minimum-OS runtime identifiers"
+            exit 1
+          fi
 
-          case "$minimum_runtime_count" in
-            0)
+          case "$minimum_runtime_count:$minimum_runtime_identifier_count" in
+            0:0)
               DEVELOPER_DIR="$FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY" \
                 xcodebuild -downloadPlatform iOS \
+                -buildVersion "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" \
                 2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-18-4.log"
               ;;
-            1)
-              printf 'Runtime %s is already available; download skipped.\n' \
-                "$minimum_runtime" \
+            1:1)
+              printf 'Runtime %s %s is already available; download skipped.\n' \
+                "$minimum_runtime" "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" \
                 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-18-4.log"
               ;;
             *)
-              echo "::error::Minimum-OS runtime inventory is ambiguous: $minimum_runtime_count entries"
+              echo "::error::Minimum-OS runtime inventory is ambiguous: exact=$minimum_runtime_count identifier=$minimum_runtime_identifier_count"
               exit 1
               ;;
           esac
@@ -672,12 +772,46 @@ jobs:
           xcrun simctl list runtimes --json > "$runtime_inventory"
           xcrun simctl list runtimes \
             | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-18-4.log"
-          if ! minimum_runtime_count="$(jq -er \
-            --arg identifier "$minimum_runtime" \
+          if ! build_runtime_count="$(jq -er \
+            --arg identifier "$build_runtime" \
+            --arg version "$WEBEXTENSION_BUILD_RUNTIME_OS" \
+            --arg build "$WEBEXTENSION_BUILD_RUNTIME_BUILD" \
             --arg architecture "$simulator_arch" \
             --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
             '[.runtimes[]
               | select(.identifier == $identifier
+                and .version == $version
+                and .buildversion == $build
+                and .isAvailable == true
+                and (.supportedArchitectures | index($architecture) != null)
+                and (.supportedDeviceTypes | any(.identifier == $device_type)))]
+              | length' \
+            "$runtime_inventory")"; then
+            echo "::error::Could not verify the build-support simulator runtime"
+            exit 1
+          fi
+          if ! build_runtime_identifier_count="$(jq -er \
+            --arg identifier "$build_runtime" \
+            '[.runtimes[] | select(.identifier == $identifier)] | length' \
+            "$runtime_inventory")"; then
+            echo "::error::Could not verify build-support runtime identifier uniqueness"
+            exit 1
+          fi
+          if [[ "$build_runtime_count" != "1" \
+            || "$build_runtime_identifier_count" != "1" ]]; then
+            echo "::error::Expected one exact build-support runtime, found exact=$build_runtime_count identifier=$build_runtime_identifier_count"
+            exit 1
+          fi
+          if ! minimum_runtime_count="$(jq -er \
+            --arg identifier "$minimum_runtime" \
+            --arg version "$WEBEXTENSION_MINIMUM_OS" \
+            --arg build "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" \
+            --arg architecture "$simulator_arch" \
+            --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            '[.runtimes[]
+              | select(.identifier == $identifier
+                and .version == $version
+                and .buildversion == $build
                 and .isAvailable == true
                 and (.supportedArchitectures | index($architecture) != null)
                 and (.supportedDeviceTypes | any(.identifier == $device_type)))]
@@ -686,8 +820,16 @@ jobs:
             echo "::error::Could not verify the minimum-OS simulator runtime"
             exit 1
           fi
-          if [[ "$minimum_runtime_count" != "1" ]]; then
-            echo "::error::Expected one compatible minimum-OS runtime, found $minimum_runtime_count"
+          if ! minimum_runtime_identifier_count="$(jq -er \
+            --arg identifier "$minimum_runtime" \
+            '[.runtimes[] | select(.identifier == $identifier)] | length' \
+            "$runtime_inventory")"; then
+            echo "::error::Could not verify minimum-OS runtime identifier uniqueness"
+            exit 1
+          fi
+          if [[ "$minimum_runtime_count" != "1" \
+            || "$minimum_runtime_identifier_count" != "1" ]]; then
+            echo "::error::Expected one exact minimum-OS runtime, found exact=$minimum_runtime_count identifier=$minimum_runtime_identifier_count"
             exit 1
           fi
 
@@ -723,6 +865,26 @@ jobs:
             -scheme "$SCHEME" \
             -onlyUsePackageVersionsFromResolvedFile \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
+
+      - name: Verify minimum-OS build destination
+        run: |
+          set -euo pipefail
+          destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-destinations-ios-18-4.log"
+          eligible_destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-eligible-destinations-ios-18-4.log"
+          xcodebuild -showdestinations \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            2>&1 | tee "$destination_log"
+          awk '/Ineligible destinations for/{exit} {print}' \
+            "$destination_log" > "$eligible_destination_log"
+          if ! grep -Fq "id:$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" \
+            "$eligible_destination_log"; then
+            echo "::error::Xcode $WEBEXTENSION_XCODE_VERSION does not expose the exact iOS $WEBEXTENSION_MINIMUM_OS simulator as an eligible destination"
+            exit 1
+          fi
 
       - name: Build minimum-OS test products once
         run: |
@@ -820,6 +982,8 @@ jobs:
                 and (.value | type == "object")
                 and (.value.identifier == .key)
                 and (.value.runtimeIdentifier | type == "string")
+                and (.value.version | type == "string")
+                and (.value.build | type == "string")
                 and (.value.deletable | type == "boolean"))' \
               "$inventory" >/dev/null; then
               echo "::error::CoreSimulator runtime storage inventory has an unknown schema"
@@ -855,6 +1019,7 @@ jobs:
 
           minimum_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MINIMUM_OS//./-}"
           modern_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_MODERN_OS//./-}"
+          build_runtime="com.apple.CoreSimulator.SimRuntime.iOS-${WEBEXTENSION_BUILD_RUNTIME_OS//./-}"
           simulator_arch="$(uname -m)"
           if [[ "$simulator_arch" != "$FLOORP_WEBEXT_SIMULATOR_ARCH" ]]; then
             echo "::error::Runner architecture changed between WebExtension matrix steps"
@@ -886,6 +1051,8 @@ jobs:
               | select(.value.runtimeIdentifier == $runtime_identifier)
               | {uuid: .key,
                   runtimeIdentifier: .value.runtimeIdentifier,
+                  version: .value.version,
+                  build: .value.build,
                   deletable: .value.deletable}]
               | sort_by(.uuid)' \
             "$runtime_storage_before_reclaim" > "$minimum_runtime_match"; then
@@ -894,8 +1061,12 @@ jobs:
           fi
           if ! jq -e \
             --arg runtime_identifier "$minimum_runtime" \
+            --arg runtime_version "$WEBEXTENSION_MINIMUM_OS" \
+            --arg runtime_build "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" \
             'length == 1
               and .[0].runtimeIdentifier == $runtime_identifier
+              and .[0].version == $runtime_version
+              and .[0].build == $runtime_build
               and .[0].deletable == true' \
             "$minimum_runtime_match" >/dev/null; then
             echo "::error::Minimum-OS runtime image is not uniquely deletable"
@@ -903,14 +1074,19 @@ jobs:
           fi
           minimum_runtime_uuid="$(jq -er '.[0].uuid' "$minimum_runtime_match")"
           reclaim_runtime_identifier="$(jq -er '.[0].runtimeIdentifier' "$minimum_runtime_match")"
+          reclaim_runtime_version="$(jq -er '.[0].version' "$minimum_runtime_match")"
+          reclaim_runtime_build="$(jq -er '.[0].build' "$minimum_runtime_match")"
           if [[ ! "$minimum_runtime_uuid" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] \
             || [[ "$reclaim_runtime_identifier" != "$minimum_runtime" ]] \
+            || [[ "$reclaim_runtime_version" != "$WEBEXTENSION_MINIMUM_OS" ]] \
+            || [[ "$reclaim_runtime_build" != "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD" ]] \
             || [[ "$reclaim_runtime_identifier" == "$modern_runtime" ]]; then
             echo "::error::Refusing to reclaim any runtime other than the exact minimum-OS runtime"
             exit 1
           fi
-          printf 'Deleting exact runtime %s (%s)\n' \
-            "$reclaim_runtime_identifier" "$minimum_runtime_uuid" \
+          printf 'Deleting exact runtime %s %s %s (%s)\n' \
+            "$reclaim_runtime_identifier" "$reclaim_runtime_version" \
+            "$reclaim_runtime_build" "$minimum_runtime_uuid" \
             | tee "$minimum_runtime_reclaim_log"
           xcrun simctl runtime delete "$minimum_runtime_uuid" \
             2>&1 | tee -a "$minimum_runtime_reclaim_log"
@@ -974,10 +1150,14 @@ jobs:
           fi
           if ! modern_runtime_count="$(jq -er \
             --arg identifier "$modern_runtime" \
+            --arg version "$WEBEXTENSION_MODERN_OS" \
+            --arg build "$WEBEXTENSION_MODERN_RUNTIME_BUILD" \
             --arg architecture "$simulator_arch" \
             --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
             '[.runtimes[]
               | select(.identifier == $identifier
+                and .version == $version
+                and .buildversion == $build
                 and .isAvailable == true
                 and (.supportedArchitectures | index($architecture) != null)
                 and (.supportedDeviceTypes | any(.identifier == $device_type)))]
@@ -986,20 +1166,28 @@ jobs:
             echo "::error::Could not inspect the iOS 26.0 simulator runtime"
             exit 1
           fi
-          case "$modern_runtime_count" in
-            0)
+          if ! modern_runtime_identifier_count="$(jq -er \
+            --arg identifier "$modern_runtime" \
+            '[.runtimes[] | select(.identifier == $identifier)] | length' \
+            "$modern_predownload_inventory")"; then
+            echo "::error::Could not count iOS 26.0 runtime identifiers"
+            exit 1
+          fi
+          case "$modern_runtime_count:$modern_runtime_identifier_count" in
+            0:0)
               DEVELOPER_DIR="$FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY" \
                 xcodebuild -downloadPlatform iOS \
+                -buildVersion "$WEBEXTENSION_MODERN_RUNTIME_BUILD" \
                 -architectureVariant "$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT" \
                 2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-26-0.log"
               ;;
-            1)
-              printf 'Runtime %s is already available; download skipped.\n' \
-                "$modern_runtime" \
+            1:1)
+              printf 'Runtime %s %s is already available; download skipped.\n' \
+                "$modern_runtime" "$WEBEXTENSION_MODERN_RUNTIME_BUILD" \
                 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtime-download-ios-26-0.log"
               ;;
             *)
-              echo "::error::iOS 26.0 runtime inventory is ambiguous: $modern_runtime_count entries"
+              echo "::error::iOS 26.0 runtime inventory is ambiguous: exact=$modern_runtime_count identifier=$modern_runtime_identifier_count"
               exit 1
               ;;
           esac
@@ -1023,12 +1211,46 @@ jobs:
           xcrun simctl list runtimes --json > "$modern_runtime_inventory"
           xcrun simctl list runtimes \
             | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-runtimes-ios-26-0.log"
-          if ! modern_runtime_count="$(jq -er \
-            --arg identifier "$modern_runtime" \
+          if ! build_runtime_count="$(jq -er \
+            --arg identifier "$build_runtime" \
+            --arg version "$WEBEXTENSION_BUILD_RUNTIME_OS" \
+            --arg build "$WEBEXTENSION_BUILD_RUNTIME_BUILD" \
             --arg architecture "$simulator_arch" \
             --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
             '[.runtimes[]
               | select(.identifier == $identifier
+                and .version == $version
+                and .buildversion == $build
+                and .isAvailable == true
+                and (.supportedArchitectures | index($architecture) != null)
+                and (.supportedDeviceTypes | any(.identifier == $device_type)))]
+              | length' \
+            "$modern_runtime_inventory")"; then
+            echo "::error::Could not verify the retained build-support simulator runtime"
+            exit 1
+          fi
+          if ! build_runtime_identifier_count="$(jq -er \
+            --arg identifier "$build_runtime" \
+            '[.runtimes[] | select(.identifier == $identifier)] | length' \
+            "$modern_runtime_inventory")"; then
+            echo "::error::Could not verify retained build-support runtime identifier uniqueness"
+            exit 1
+          fi
+          if [[ "$build_runtime_count" != "1" \
+            || "$build_runtime_identifier_count" != "1" ]]; then
+            echo "::error::Expected one retained build-support runtime, found exact=$build_runtime_count identifier=$build_runtime_identifier_count"
+            exit 1
+          fi
+          if ! modern_runtime_count="$(jq -er \
+            --arg identifier "$modern_runtime" \
+            --arg version "$WEBEXTENSION_MODERN_OS" \
+            --arg build "$WEBEXTENSION_MODERN_RUNTIME_BUILD" \
+            --arg architecture "$simulator_arch" \
+            --arg device_type "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+            '[.runtimes[]
+              | select(.identifier == $identifier
+                and .version == $version
+                and .buildversion == $build
                 and .isAvailable == true
                 and (.supportedArchitectures | index($architecture) != null)
                 and (.supportedDeviceTypes | any(.identifier == $device_type)))]
@@ -1037,8 +1259,16 @@ jobs:
             echo "::error::Could not verify the iOS 26.0 simulator runtime"
             exit 1
           fi
-          if [[ "$modern_runtime_count" != "1" ]]; then
-            echo "::error::Expected one compatible iOS 26.0 runtime, found $modern_runtime_count"
+          if ! modern_runtime_identifier_count="$(jq -er \
+            --arg identifier "$modern_runtime" \
+            '[.runtimes[] | select(.identifier == $identifier)] | length' \
+            "$modern_runtime_inventory")"; then
+            echo "::error::Could not verify iOS 26.0 runtime identifier uniqueness"
+            exit 1
+          fi
+          if [[ "$modern_runtime_count" != "1" \
+            || "$modern_runtime_identifier_count" != "1" ]]; then
+            echo "::error::Expected one exact iOS 26.0 runtime, found exact=$modern_runtime_count identifier=$modern_runtime_identifier_count"
             exit 1
           fi
           df -h "$RUNNER_TEMP" \
@@ -1059,6 +1289,23 @@ jobs:
             printf 'FLOORP_WEBEXT_IOS260_DESTINATION=%s\n' \
               "$modern_destination"
           } >> "$GITHUB_ENV"
+
+          destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-destinations-ios-26-0.log"
+          eligible_destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-eligible-destinations-ios-26-0.log"
+          xcodebuild -showdestinations \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            2>&1 | tee "$destination_log"
+          awk '/Ineligible destinations for/{exit} {print}' \
+            "$destination_log" > "$eligible_destination_log"
+          if ! grep -Fq "id:$modern_simulator_id" \
+            "$eligible_destination_log"; then
+            echo "::error::Xcode $WEBEXTENSION_XCODE_VERSION does not expose the exact iOS $WEBEXTENSION_MODERN_OS simulator as an eligible destination"
+            exit 1
+          fi
 
           xcrun simctl bootstatus "$modern_simulator_id" -b
           run_test \

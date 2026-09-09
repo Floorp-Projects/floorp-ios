@@ -26,10 +26,15 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         for declaration in (
             'WEBEXTENSION_XCODE_VERSION: "26.3"',
             'WEBEXTENSION_XCODE_BUILD: "17C529"',
+            'WEBEXTENSION_BUILD_RUNTIME_OS: "26.2"',
+            'WEBEXTENSION_BUILD_SDK_BUILD: "23C57"',
+            'WEBEXTENSION_BUILD_RUNTIME_BUILD: "23C54"',
             'WEBEXTENSION_MINIMUM_RUNTIME_XCODE_VERSION: "16.3"',
             'WEBEXTENSION_MINIMUM_RUNTIME_XCODE_BUILD: "16E140"',
+            'WEBEXTENSION_MINIMUM_RUNTIME_BUILD: "22E238"',
             'WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION: "26.0.1"',
             'WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD: "17A400"',
+            'WEBEXTENSION_MODERN_RUNTIME_BUILD: "23A343"',
             'WEBEXTENSION_MINIMUM_OS: "18.4"',
             'WEBEXTENSION_MODERN_OS: "26.0"',
             (
@@ -70,22 +75,29 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             'grep -Fxq "Xcode $WEBEXTENSION_MODERN_RUNTIME_XCODE_VERSION"',
             'grep -Fxq "Build version $WEBEXTENSION_MODERN_RUNTIME_XCODE_BUILD"',
             'xcrun --sdk iphonesimulator --show-sdk-version',
+            'xcrun --sdk iphonesimulator --show-sdk-build-version',
+            '[[ "$build_runtime_sdk_version" != "$WEBEXTENSION_BUILD_RUNTIME_OS"',
+            '"$build_runtime_sdk_build" != "$WEBEXTENSION_BUILD_SDK_BUILD"',
             '[[ "$minimum_runtime_sdk_version" != "$WEBEXTENSION_MINIMUM_OS" ]]',
             '[[ "$modern_runtime_sdk_version" != "$WEBEXTENSION_MODERN_OS" ]]',
             "FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY",
             "FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY",
+            "FLOORP_WEBEXT_BUILD_RUNTIME_DEVELOPER_DIRECTORY",
         ):
             self.assertIn(provider_contract, select_xcode)
 
         minimum_runtime = self._step("Prepare iOS 18.4 simulator runtime")
         acceptance = self._step("Run focused WebExtension OS acceptance")
         self.assertIn("set -euo pipefail", minimum_runtime)
-        self.assertEqual(self.job.count("xcodebuild -downloadPlatform iOS"), 2)
+        self.assertEqual(self.job.count("xcodebuild -downloadPlatform iOS"), 3)
         self.assertEqual(
-            minimum_runtime.count("xcodebuild -downloadPlatform iOS"), 1
+            minimum_runtime.count("xcodebuild -downloadPlatform iOS"), 2
         )
         self.assertEqual(acceptance.count("xcodebuild -downloadPlatform iOS"), 1)
-        self.assertNotIn("-buildVersion", self.job)
+        self.assertIn(
+            'DEVELOPER_DIR="$FLOORP_WEBEXT_BUILD_RUNTIME_DEVELOPER_DIRECTORY"',
+            minimum_runtime,
+        )
         self.assertIn(
             'DEVELOPER_DIR="$FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY"',
             minimum_runtime,
@@ -94,13 +106,36 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             'DEVELOPER_DIR="$FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY"',
             acceptance,
         )
+        self.assertIn(
+            '-buildVersion "$WEBEXTENSION_BUILD_RUNTIME_BUILD"',
+            minimum_runtime,
+        )
+        self.assertIn(
+            '-buildVersion "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD"',
+            minimum_runtime,
+        )
+        self.assertIn(
+            '-buildVersion "$WEBEXTENSION_MODERN_RUNTIME_BUILD"', acceptance
+        )
         for architecture_branch in (
             "x86_64|arm64)",
             'runtime_architecture_variant="universal"',
             "Unsupported macos-15 runner architecture",
         ):
             self.assertIn(architecture_branch, minimum_runtime)
-        self.assertNotIn("-architectureVariant", minimum_runtime)
+        build_runtime_download = minimum_runtime.split(
+            'DEVELOPER_DIR="$FLOORP_WEBEXT_BUILD_RUNTIME_DEVELOPER_DIRECTORY"',
+            1,
+        )[1].split(";;", 1)[0]
+        minimum_download_command = minimum_runtime.split(
+            'DEVELOPER_DIR="$FLOORP_WEBEXT_MINIMUM_RUNTIME_DEVELOPER_DIRECTORY"',
+            1,
+        )[1].split(";;", 1)[0]
+        self.assertIn(
+            '-architectureVariant "$runtime_architecture_variant"',
+            build_runtime_download,
+        )
+        self.assertNotIn("-architectureVariant", minimum_download_command)
         self.assertIn(
             '-architectureVariant "$FLOORP_WEBEXT_RUNTIME_ARCHITECTURE_VARIANT"',
             acceptance,
@@ -124,13 +159,27 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             '${WEBEXTENSION_MINIMUM_OS//./-}"',
             minimum_runtime,
         )
+        self.assertIn(
+            'build_runtime="com.apple.CoreSimulator.SimRuntime.iOS-'
+            '${WEBEXTENSION_BUILD_RUNTIME_OS//./-}"',
+            minimum_runtime,
+        )
         for storage_cleanup_contract in (
             "xcrun simctl runtime list -j",
+            '(.value.version | type == "string")',
+            '(.value.build | type == "string")',
             '(.value.deletable | type == "boolean")',
             "select(.value.deletable == true)",
-            "select(.value.runtimeIdentifier != $minimum_runtime)",
-            "{uuid: .key, runtimeIdentifier: .value.runtimeIdentifier}",
-            '[[ "$runtime_identifier" == "$minimum_runtime"',
+            ".value.version == $minimum_version",
+            ".value.build == $minimum_build",
+            ".value.runtimeIdentifier == $build_runtime",
+            ".value.version == $build_version",
+            ".value.build == $build_build",
+            "runtimeIdentifier: .value.runtimeIdentifier",
+            "version: .value.version",
+            "build: .value.build",
+            '[[ "$runtime_identifier" == "$minimum_runtime" \\',
+            '[[ "$runtime_identifier" == "$build_runtime" \\',
             'xcrun simctl runtime delete "$runtime_uuid"',
             "runtime_cleanup_poll_max_attempts=180",
             "runtime_cleanup_poll_interval_seconds=2",
@@ -193,24 +242,37 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         self.assertLess(initial_absence_gate, minimum_download)
         for existing_minimum_contract in (
             'minimum_runtime_count="$(jq -er',
-            'case "$minimum_runtime_count" in',
-            "Runtime %s is already available; download skipped.",
+            'minimum_runtime_identifier_count="$(jq -er',
+            'case "$minimum_runtime_count:$minimum_runtime_identifier_count" in',
+            "Runtime %s %s is already available; download skipped.",
             "Minimum-OS runtime inventory is ambiguous",
         ):
             self.assertIn(existing_minimum_contract, minimum_runtime)
+        for build_support_contract in (
+            'build_runtime_count="$(jq -er',
+            'build_runtime_identifier_count="$(jq -er',
+            'case "$build_runtime_count:$build_runtime_identifier_count" in',
+            "Expected one exact build-support runtime",
+        ):
+            self.assertIn(build_support_contract, minimum_runtime)
         for fail_closed_check in (
             ".identifier == $identifier",
+            ".version == $version",
+            ".buildversion == $build",
             ".isAvailable == true",
             ".supportedArchitectures | index($architecture) != null",
             ".supportedDeviceTypes | any(.identifier == $device_type)",
-            '[[ "$minimum_runtime_count" != "1" ]]',
-            "Expected one compatible minimum-OS runtime",
+            '[[ "$minimum_runtime_count" != "1" \\',
+            '|| "$minimum_runtime_identifier_count" != "1"',
+            "Expected one exact minimum-OS runtime",
         ):
             self.assertIn(fail_closed_check, minimum_runtime)
+        self.assertEqual(minimum_runtime.count(".version == $version"), 4)
+        self.assertEqual(minimum_runtime.count(".buildversion == $build"), 4)
         self.assertNotIn("|| true", minimum_runtime)
 
         verification = minimum_runtime.index(
-            '[[ "$minimum_runtime_count" != "1" ]]'
+            '[[ "$minimum_runtime_count" != "1" \\'
         )
         creation = minimum_runtime.index(
             'minimum_simulator_id="$(xcrun simctl create'
@@ -220,6 +282,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
     def test_job_creates_exact_simulators_and_builds_once_for_minimum_os(self):
         minimum_runtime = self._step("Prepare iOS 18.4 simulator runtime")
         acceptance = self._step("Run focused WebExtension OS acceptance")
+        minimum_destination = self._step("Verify minimum-OS build destination")
         self.assertEqual(self.job.count("xcrun simctl create"), 2)
         self.assertEqual(minimum_runtime.count("xcrun simctl create"), 1)
         self.assertEqual(acceptance.count("xcrun simctl create"), 1)
@@ -227,6 +290,30 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         self.assertNotIn("FLOORP_WEBEXT_IOS260_DESTINATION", minimum_runtime)
         self.assertIn("FLOORP_WEBEXT_IOS260_DESTINATION", acceptance)
         self.assertIn('modern_destination="platform=iOS Simulator', acceptance)
+        self.assertEqual(self.job.count("xcodebuild -showdestinations"), 2)
+        self.assertIn("set -euo pipefail", minimum_destination)
+        self.assertIn("xcodebuild -showdestinations", minimum_destination)
+        self.assertIn(
+            'grep -Fq "id:$FLOORP_WEBEXT_IOS184_SIMULATOR_ID"',
+            minimum_destination,
+        )
+        self.assertIn(
+            "awk '/Ineligible destinations for/{exit} {print}'",
+            minimum_destination,
+        )
+        self.assertIn(
+            "floorp-webextension-os-matrix-eligible-destinations-ios-18-4.log",
+            minimum_destination,
+        )
+        self.assertIn("xcodebuild -showdestinations", acceptance)
+        self.assertIn('grep -Fq "id:$modern_simulator_id"', acceptance)
+        self.assertIn(
+            "awk '/Ineligible destinations for/{exit} {print}'", acceptance
+        )
+        self.assertIn(
+            "floorp-webextension-os-matrix-eligible-destinations-ios-26-0.log",
+            acceptance,
+        )
 
         build = self._step("Build minimum-OS test products once")
         self.assertEqual(self.job.count("xcodebuild build-for-testing"), 1)
@@ -237,6 +324,10 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         )
         self.assertIn('-derivedDataPath "$RUNNER_TEMP/WebExtensionDerivedData"', build)
         self.assertIn("-testPlan FloorpCI", build)
+        self.assertLess(
+            self.job.index("      - name: Verify minimum-OS build destination"),
+            self.job.index("      - name: Build minimum-OS test products once"),
+        )
 
         self.assertEqual(acceptance.count("xcodebuild test-without-building"), 1)
         self.assertNotIn("xcodebuild test ", acceptance)
@@ -279,6 +370,9 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         modern_create = acceptance.index(
             'modern_simulator_id="$(xcrun simctl create'
         )
+        modern_destination_gate = acceptance.index(
+            'grep -Fq "id:$modern_simulator_id"'
+        )
         modern_boot = acceptance.index(
             'xcrun simctl bootstatus "$modern_simulator_id" -b'
         )
@@ -297,6 +391,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
                 reclaimed_space,
                 modern_download,
                 modern_create,
+                modern_destination_gate,
                 modern_boot,
                 modern_test,
             ],
@@ -312,6 +407,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
                     reclaimed_space,
                     modern_download,
                     modern_create,
+                    modern_destination_gate,
                     modern_boot,
                     modern_test,
                 ]
@@ -320,9 +416,15 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
 
         for exact_reclaim_contract in (
             'select(.value.runtimeIdentifier == $runtime_identifier)',
+            "version: .value.version",
+            "build: .value.build",
             "length == 1",
+            ".[0].version == $runtime_version",
+            ".[0].build == $runtime_build",
             ".[0].deletable == true",
             'reclaim_runtime_identifier" != "$minimum_runtime"',
+            'reclaim_runtime_version" != "$WEBEXTENSION_MINIMUM_OS"',
+            'reclaim_runtime_build" != "$WEBEXTENSION_MINIMUM_RUNTIME_BUILD"',
             'reclaim_runtime_identifier" == "$modern_runtime"',
             'xcrun simctl runtime delete "$minimum_runtime_uuid"',
             "minimum_runtime_reclaim_poll_max_attempts=180",
@@ -364,8 +466,17 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "floorp-webextension-os-matrix-disk-after-ios-26-0-download.log",
             acceptance,
         )
-        self.assertIn('[[ "$modern_runtime_count" != "1" ]]', acceptance)
-        self.assertIn("Expected one compatible iOS 26.0 runtime", acceptance)
+        for modern_uniqueness_contract in (
+            'modern_runtime_identifier_count="$(jq -er',
+            'case "$modern_runtime_count:$modern_runtime_identifier_count" in',
+            '[[ "$modern_runtime_count" != "1" \\',
+            '|| "$modern_runtime_identifier_count" != "1"',
+            "Expected one exact iOS 26.0 runtime",
+            "Expected one retained build-support runtime",
+        ):
+            self.assertIn(modern_uniqueness_contract, acceptance)
+        self.assertEqual(acceptance.count(".version == $version"), 3)
+        self.assertEqual(acceptance.count(".buildversion == $build"), 3)
 
     def test_focused_acceptance_selects_the_supported_tests_on_each_os(self):
         acceptance = self._step("Run focused WebExtension OS acceptance")
@@ -492,15 +603,24 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             )
 
     def test_ci_documentation_records_the_os_gate_without_ruleset_drift(self):
+        normalized_documentation = " ".join(self.documentation.split())
         for documented_contract in (
             "Native WebExtensions iOS 18.4 and 26.0 acceptance",
             "`macos-15` with Xcode 26.3 selected from `.xcode-version`",
-            "either required simulator runtime is installed",
+            "either test simulator runtime is installed",
             "obtains exact iOS 18.4 and iOS 26.0 runtimes on demand",
             "Xcode 16.3 for iOS 18.4 and Xcode 26.0.1 for iOS 26.0",
             "verifies each provider's exact Xcode and Simulator SDK version",
+            "iOS 18.4 (22E238)",
+            "iOS 26.0 (23A343)",
+            "Simulator SDK at version 26.2 (23C57)",
+            "iOS 26.2 (23C54)",
+            "retains that exact build-support runtime",
+            "Simulator SDK must itself",
+            "report version 26.2 and build 23C57",
             "Xcode 26.3 remains selected for every build and test",
-            "preserves any existing iOS 18.4",
+            "preserves only an existing exact iOS 18.4",
+            "different build that shares either protected runtime identifier",
             "deletes only other runtime images that CoreSimulator",
             "Unknown inventory data or a failed deletion stops the job",
             "successful `simctl runtime delete` can precede secure-storage",
@@ -510,16 +630,21 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "if an iOS 26.0 runtime image",
             "remains in CoreSimulator storage",
             "post-cleanup free-space report",
-            "requires exactly one compatible runtime",
+            "requires exactly one compatible exact-build entry",
+            "exactly one total entry for its runtime",
+            "list the exact created simulator UUID",
+            "as an eligible destination",
             "Main Menu-to-Dark Reader direct popup path",
             "uBlock Origin Lite is",
             "below its iOS 26.0 minimum",
             "uniquely re-resolves the",
-            "deletable iOS 18.4 runtime UUID",
+            "deletable iOS 18.4 (22E238) runtime UUID",
+            "by identifier, version, and build",
             "waits for that exact UUID",
             "to disappear from validated inventory",
             "records the reclaimed space before",
             "obtaining iOS 26.0 with the same download mechanism",
+            "iOS 26.2 build-support runtime remains installed",
             "opt-in official uBlock",
             "Origin Lite acceptance.",
             "use `test-without-building` rather than rebuilding",
@@ -530,7 +655,9 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "at its exact",
             "reviewed head as an additional manual merge condition",
         ):
-            self.assertIn(documented_contract, self.documentation)
+            self.assertIn(
+                " ".join(documented_contract.split()), normalized_documentation
+            )
         self.assertNotIn("image-provided iOS 26.0", self.documentation)
         self.assertIn(
             '"required_status_checks": ["Validate workflows", '
