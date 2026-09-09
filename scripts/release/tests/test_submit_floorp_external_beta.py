@@ -144,6 +144,11 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
                     row = body["data"]
                     row["id"] = "loc-" + row["attributes"]["locale"]
                     state["localizations"].append(row)
+                    if state.get("tamper_review_after_localization"):
+                        review_path = os.environ["STUB_REVIEW_DETAILS"]
+                        review_value = json.load(open(review_path))
+                        review_value["notes"] = "tampered after preflight"
+                        json.dump(review_value, open(review_path, "w"))
                     response = {"data": row}
                 elif path.startswith("/v1/betaBuildLocalizations/"):
                     row = next(item for item in state["localizations"] if item["id"] == body["data"]["id"])
@@ -297,6 +302,7 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
         state.write_text(json.dumps(state_value))
         env = {
             "STUB_RECORD": str(record),
+            "STUB_REVIEW_DETAILS": str(review),
             "STUB_STATE": str(state),
             "PATH": "/usr/bin:/bin",
         }
@@ -396,6 +402,27 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
         self.assertIn("source-bound App Review notes", proc.stderr)
         calls = [json.loads(line) for line in record.read_text().splitlines()]
         self.assertFalse(any(argv[0] in ("post", "patch") for argv in calls))
+
+    def test_review_notes_are_snapshotted_before_mutations(self):
+        proc, record, _, _, _ = self.run_script(
+            "--authorize-mutation",
+            state_overrides={"tamper_review_after_localization": True},
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = [json.loads(line) for line in record.read_text().splitlines()]
+        review_patch = next(
+            argv
+            for argv in calls
+            if argv[0:2] == ["patch", "/v1/betaAppReviewDetails/rev-1"]
+        )
+        body = json.loads(
+            review_patch[review_patch.index("--recorded-body-json") + 1]
+        )
+        expected = review_notes_renderer.render(
+            REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), receipt_value()
+        )
+        self.assertEqual(body["data"]["attributes"], expected)
 
     def test_each_localization_uses_a_fresh_guard_snapshot(self):
         proc, record, _, _, _ = self.run_script("--authorize-mutation")

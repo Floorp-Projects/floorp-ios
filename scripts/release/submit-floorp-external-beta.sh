@@ -321,7 +321,10 @@ if not isinstance(notes, str) or not notes.strip():
     raise SystemExit("preflight failed: release review notes are missing")
 if len(notes.encode("utf-8")) > 4000:
     raise SystemExit("preflight failed: release review notes exceed 4,000 bytes")
-json.dump({"id": review_id, "demoAccountRequired": demo_required}, open(output_path, "w"))
+json.dump(
+    {"id": review_id, "demoAccountRequired": demo_required, "notes": notes},
+    open(output_path, "w"),
+)
 PYEOF
 
 cat > "$TMP_DIR/before.json" <<EOF
@@ -416,12 +419,11 @@ fi
 # 2. Review details (contact + notes for Beta App Review).
 python3 - \
     "$REVIEW_DETAILS_ID" \
-    "$TMP_DIR/review-details-before.json" \
-    "$REVIEW_DETAILS" > "$TMP_DIR/review-details-body.json" <<'PYEOF'
+    "$TMP_DIR/review-details-validated.json" > "$TMP_DIR/review-details-body.json" <<'PYEOF'
 import json, sys
-review_id, current_path, desired_path = sys.argv[1:]
-desired = json.load(open(desired_path))
-notes = desired.get("notes")
+review_id, validated_path = sys.argv[1:]
+validated = json.load(open(validated_path))
+notes = validated.get("notes")
 if not isinstance(notes, str) or not notes.strip():
     raise SystemExit("preflight failed: release review notes are missing")
 attrs = {"notes": notes}
@@ -518,7 +520,7 @@ if [[ -z "$DRY_RUN" ]]; then
         "$TMP_DIR/review-details-after.json" \
         "$TMP_DIR/localizations-after.json" \
         "$TMP_DIR/group-builds-after.json" \
-        "$REVIEW_DETAILS" \
+        "$TMP_DIR/review-details-validated.json" \
         "$EN_TEXT" \
         "$JA_TEXT" \
         "$BUILD_ID" <<'PYEOF'
