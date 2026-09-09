@@ -626,14 +626,12 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         defer { host.unregister(windowUUID: tabManager.windowUUID) }
 
         let optionsURL = try XCTUnwrap(context.optionsPageURL)
-        host.load(url: optionsURL, in: tab)
-        var extensionWebView = try XCTUnwrap(tab.webView)
-        for _ in 0..<80 where extensionWebView.url != optionsURL {
-            try await Task.sleep(nanoseconds: 50_000_000)
-            extensionWebView = try XCTUnwrap(tab.webView)
-        }
-        XCTAssertEqual(extensionWebView.url, optionsURL)
-        tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
+        var extensionWebView = try await loadCommittedExtensionSurface(
+            in: tab,
+            host: host,
+            optionsURL: optionsURL
+        )
+        XCTAssertTrue(tab.webView === extensionWebView)
         host.setNavigationReadinessVerifiedForTesting(
             identifier: item.identifier,
             isPrivate: false
@@ -644,17 +642,6 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
             return true
         }
         defer { host.extensionSurfaceClosePreparationHookForTesting = nil }
-        let restoreExtensionSurface: @MainActor () async throws -> TabWebView = {
-            host.load(url: optionsURL, in: tab)
-            for _ in 0..<80 where tab.webView?.url != optionsURL {
-                try await Task.sleep(nanoseconds: 50_000_000)
-            }
-            let restoredWebView = try XCTUnwrap(tab.webView)
-            XCTAssertEqual(restoredWebView.url, optionsURL)
-            tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
-            restoredWebView.navigationDelegate = nil
-            return restoredWebView
-        }
 
         // Drive the synthetic follow-up policy calls explicitly. This keeps
         // the test deterministic while still verifying that Option starts the
@@ -731,7 +718,11 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
 
             subject.clearPendingDownload(for: extensionWebView)
             extensionWebView.stopLoading()
-            extensionWebView = try await restoreExtensionSurface()
+            extensionWebView = try await loadCommittedExtensionSurface(
+                in: tab,
+                host: host,
+                optionsURL: optionsURL
+            )
 
             if targetURL == sameExtensionURL {
                 var unexpectedComponents = sameExtensionComponents
@@ -776,15 +767,12 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         tabManager.tabs = [tab, secondTab]
         tabManager.normalTabs = [tab, secondTab]
         host.announceTabIfNeeded(secondTab)
-        host.load(url: optionsURL, in: secondTab)
-        var secondWebView = try XCTUnwrap(secondTab.webView)
-        for _ in 0..<80 where secondWebView.url != optionsURL {
-            try await Task.sleep(nanoseconds: 50_000_000)
-            secondWebView = try XCTUnwrap(secondTab.webView)
-        }
-        XCTAssertEqual(secondWebView.url, optionsURL)
-        secondTab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
-        secondWebView.navigationDelegate = nil
+        let secondWebView = try await loadCommittedExtensionSurface(
+            in: secondTab,
+            host: host,
+            optionsURL: optionsURL
+        )
+        XCTAssertTrue(secondTab.webView === secondWebView)
 
         let backgroundShortcutURL = try XCTUnwrap(
             URL(string: "https://example.invalid/background-shortcut")
@@ -1005,6 +993,31 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         XCTAssertNil(subject.pendingDownloadState(for: extensionWebView))
 
         await tab.close()
+    }
+
+    @MainActor
+    private func loadCommittedExtensionSurface(
+        in tab: Tab,
+        host: FloorpNativeWebExtensionHost,
+        optionsURL: URL
+    ) async throws -> TabWebView {
+        let navigationWaiter = ExtensionSurfaceNavigationWaiter(
+            tab: tab,
+            expectedURL: optionsURL
+        )
+        tab.navigationDelegate = navigationWaiter
+        defer { tab.navigationDelegate = nil }
+
+        try await navigationWaiter.waitForNavigation {
+            host.load(url: optionsURL, in: tab)
+        }
+        let webView = try XCTUnwrap(tab.webView)
+        XCTAssertTrue(navigationWaiter.didCommit)
+        XCTAssertEqual(webView.url, optionsURL)
+        XCTAssertFalse(webView.isLoading)
+        tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
+        XCTAssertTrue(tab.floorpNativeHasCommittedDocument)
+        return webView
     }
 
     @MainActor
@@ -1904,6 +1917,95 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         subject.webView(tab.webView!, didFinish: nil)
 
         XCTAssertTrue(subject.googleLensSearches.isEmpty)
+    }
+}
+
+@MainActor
+private final class ExtensionSurfaceNavigationWaiter: NSObject, WKNavigationDelegate {
+    private weak var tab: Tab?
+    private let expectedURL: URL
+    private var continuation: CheckedContinuation<Void, any Error>?
+    private var loadToken: UUID?
+    private(set) var didCommit = false
+
+    init(tab: Tab, expectedURL: URL) {
+        self.tab = tab
+        self.expectedURL = expectedURL
+    }
+
+    func waitForNavigation(
+        timeoutNanoseconds: UInt64 = 10_000_000_000,
+        start: () -> Void
+    ) async throws {
+        let token = UUID()
+        loadToken = token
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            start()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                guard let self, self.loadToken == token else { return }
+                self.complete(.failure(NSError(
+                    domain: "ExtensionSurfaceNavigationWaiter",
+                    code: 2,
+                    userInfo: [NSURLErrorFailingURLErrorKey: self.expectedURL]
+                )))
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
+        guard isExpectedNavigation(in: webView) else { return }
+        didCommit = true
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        guard isExpectedNavigation(in: webView) else { return }
+        complete(.success(()))
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFail navigation: WKNavigation?,
+        withError error: any Error
+    ) {
+        guard shouldHandleFailure(error, in: webView) else { return }
+        complete(.failure(error))
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation?,
+        withError error: any Error
+    ) {
+        guard shouldHandleFailure(error, in: webView) else { return }
+        complete(.failure(error))
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === tab?.webView else { return }
+        complete(.failure(NSError(domain: "ExtensionSurfaceNavigationWaiter", code: 1)))
+    }
+
+    private func complete(_ result: Result<Void, any Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        loadToken = nil
+        continuation.resume(with: result)
+    }
+
+    private func isExpectedNavigation(in webView: WKWebView) -> Bool {
+        webView === tab?.webView && webView.url == expectedURL
+    }
+
+    private func shouldHandleFailure(_ error: any Error, in webView: WKWebView) -> Bool {
+        guard webView === tab?.webView else { return false }
+        let error = error as NSError
+        let failingURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL
+        if let failingURL {
+            return failingURL == expectedURL
+        }
+        return error.code != NSURLErrorCancelled && webView.url == expectedURL
     }
 }
 
