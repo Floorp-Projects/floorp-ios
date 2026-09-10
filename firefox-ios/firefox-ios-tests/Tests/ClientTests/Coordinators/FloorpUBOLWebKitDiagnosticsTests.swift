@@ -593,6 +593,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     private static let japaneseRuleset = "jpn-1"
     private static let coldBackgroundReadinessTimeoutNanoseconds: UInt64 = 240_000_000_000
     private static let warmBackgroundReadinessTimeoutNanoseconds: UInt64 = 90_000_000_000
+    private static let customCosmeticActivationTimeoutNanoseconds: UInt64 = 15_000_000_000
     private static let expectedDefaultRuleCount = 113_100
     private static let expectedJapaneseRuleCount = 1_906
     // Exercise a foreign dynamic rule in uBO Lite's preserved special-rule
@@ -688,6 +689,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let normalURL = URL(string: "http://localhost:\(server.port)/")!
         print("FLOORP_UBOL_RELEASE_GATE optimal-page")
         let optimal = try await loadAndInspect(normalURL, in: normalWebView)
+        print("FLOORP_UBOL_RELEASE_GATE cosmetic-live-cross-origin-replay")
+        try await verifyFreshAllFramesReplayIsolation(in: normalWebView)
+        print("FLOORP_UBOL_RELEASE_GATE cosmetic-page-tampering")
+        try await verifyCosmeticProtectionAfterPageTampering(in: normalWebView)
         let crossHostResult = try await inspectCrossHostCustomFilterIsolation(
             serverPort: server.port,
             in: normalWebView
@@ -1156,7 +1161,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             """,
             arguments: [
                 "requestedRulesets": Self.defaultRulesets,
-                "selectors": ["#floorp-custom-cosmetic", procedural]
+                "selectors": [
+                    "#floorp-custom-cosmetic, html body #floorp-custom-form-control",
+                    procedural
+                ]
             ],
             contentWorld: .page
         )
@@ -1295,6 +1303,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         _ url: URL,
         in webView: WKWebView,
         expectedCustomCosmeticFilters: Bool = true,
+        customCosmeticSettleTimeoutNanoseconds: UInt64 = 15_000_000_000,
         navigationTimeoutPolicy: FloorpUBOLNavigationTimeoutPolicy = .stopLoading
     ) async throws
         -> FloorpUBOLPageAcceptance {
@@ -1311,37 +1320,59 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             }
             throw error
         }
-        let requiredSamples = expectedCustomCosmeticFilters ? 1 : 8
+        let requiredSamples = 8
         var consecutiveExpectedSamples = 0
+        var observedUnexpectedState = false
         var lastStates = FloorpUBOLCustomCosmeticFilterStates(
             custom: false,
             procedural: false,
             originFallbackCustom: false,
             originFallbackProcedural: false,
+            crossOriginReady: false,
+            crossOriginCustom: false,
             originFallbackDiagnostic: "not sampled"
         )
-        for _ in 0..<20 {
+        let settleDeadline = Self.makeReadinessDeadline(
+            timeoutNanoseconds: customCosmeticSettleTimeoutNanoseconds
+        )
+        while true {
             let states = try await customCosmeticFilterStates(in: webView)
             lastStates = states
             if states.custom == expectedCustomCosmeticFilters,
                states.procedural == expectedCustomCosmeticFilters,
                states.originFallbackCustom == expectedCustomCosmeticFilters,
-               states.originFallbackProcedural == expectedCustomCosmeticFilters {
+               states.originFallbackProcedural == expectedCustomCosmeticFilters,
+               states.crossOriginReady,
+               !states.crossOriginCustom {
                 consecutiveExpectedSamples += 1
-                if consecutiveExpectedSamples >= requiredSamples {
+                if expectedCustomCosmeticFilters,
+                   consecutiveExpectedSamples >= requiredSamples {
                     break
                 }
             } else {
                 consecutiveExpectedSamples = 0
+                observedUnexpectedState = true
+                if !expectedCustomCosmeticFilters {
+                    break
+                }
             }
-            try await Task.sleep(nanoseconds: 250_000_000)
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < settleDeadline else { break }
+            try await Task.sleep(
+                nanoseconds: min(250_000_000, settleDeadline - now)
+            )
         }
-        guard consecutiveExpectedSamples >= requiredSamples else {
+        let reachedStableExpectedState = expectedCustomCosmeticFilters
+            ? consecutiveExpectedSamples >= requiredSamples
+            : !observedUnexpectedState && consecutiveExpectedSamples >= requiredSamples
+        guard reachedStableExpectedState else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
                 "custom cosmetic states at \(url.absoluteString) remained "
                     + "custom=\(lastStates.custom), procedural=\(lastStates.procedural), "
                     + "originFallbackCustom=\(lastStates.originFallbackCustom), "
                     + "originFallbackProcedural=\(lastStates.originFallbackProcedural), "
+                    + "crossOriginReady=\(lastStates.crossOriginReady), "
+                    + "crossOriginCustom=\(lastStates.crossOriginCustom), "
                     + "originFallbackDiagnostic=\(lastStates.originFallbackDiagnostic); "
                     + "expected both \(expectedCustomCosmeticFilters) for "
                     + "\(requiredSamples) samples"
@@ -1384,20 +1415,62 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             const originFallbackDocument = document.getElementById(
                 'floorp-origin-fallback-frame'
             )?.contentDocument;
-            const originFallbackProceduralElement = originFallbackDocument
-                ?.getElementById('floorp-procedural-cosmetic');
-            return {
-                custom: hidden(document, 'floorp-custom-cosmetic'),
+            const sampledState = {
+                custom: hidden(document, 'floorp-custom-cosmetic') &&
+                    hidden(document, 'floorp-custom-form-control'),
                 procedural: hidden(document, 'floorp-procedural-cosmetic'),
-                originFallbackCustom: hidden(
-                    originFallbackDocument,
-                    'floorp-custom-cosmetic'
-                ),
+                originFallbackCustom:
+                    hidden(originFallbackDocument, 'floorp-custom-cosmetic') &&
+                    hidden(originFallbackDocument, 'floorp-custom-form-control'),
                 originFallbackProcedural: hidden(
                     originFallbackDocument,
                     'floorp-procedural-cosmetic'
                 ),
+                mainAttributes:
+                    document.documentElement?.getAttributeNames() ?? [],
+                originFallbackAttributes:
+                    originFallbackDocument?.documentElement?.getAttributeNames() ?? []
+            };
+            const crossOriginState = await new Promise(resolve => {
+                const frame = document.getElementById('floorp-cross-origin-frame');
+                if (!frame?.contentWindow) {
+                    resolve({ ready: false, hidden: false });
+                    return;
+                }
+                const requestId = globalThis.crypto?.randomUUID?.() ||
+                    `${Date.now()}-${Math.random()}`;
+                let timeoutId;
+                const receive = event => {
+                    if (event.source !== frame.contentWindow ||
+                        event.data?.floorpProbe !== requestId) return;
+                    clearTimeout(timeoutId);
+                    removeEventListener('message', receive);
+                    resolve({ ready: true, hidden: event.data.hidden === true });
+                };
+                addEventListener('message', receive);
+                timeoutId = setTimeout(() => {
+                    removeEventListener('message', receive);
+                    resolve({ ready: false, hidden: false });
+                }, 500);
+                frame.contentWindow.postMessage({ floorpProbe: requestId }, '*');
+            });
+            const originFallbackProceduralElement = originFallbackDocument
+                ?.getElementById('floorp-procedural-cosmetic');
+            return {
+                custom: hidden(document, 'floorp-custom-cosmetic') &&
+                    hidden(document, 'floorp-custom-form-control'),
+                procedural: hidden(document, 'floorp-procedural-cosmetic'),
+                originFallbackCustom:
+                    hidden(originFallbackDocument, 'floorp-custom-cosmetic') &&
+                    hidden(originFallbackDocument, 'floorp-custom-form-control'),
+                originFallbackProcedural: hidden(
+                    originFallbackDocument,
+                    'floorp-procedural-cosmetic'
+                ),
+                crossOriginReady: crossOriginState.ready,
+                crossOriginCustom: crossOriginState.hidden,
                 originFallbackDiagnostic: JSON.stringify({
+                    sampledState,
                     readyState: originFallbackDocument?.readyState ?? 'missing',
                     attributes: originFallbackProceduralElement?.getAttributeNames() ?? [],
                     text: originFallbackProceduralElement?.textContent ?? 'missing',
@@ -1416,6 +1489,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
               let procedural = values["procedural"] as? Bool,
               let originFallbackCustom = values["originFallbackCustom"] as? Bool,
               let originFallbackProcedural = values["originFallbackProcedural"] as? Bool,
+              let crossOriginReady = values["crossOriginReady"] as? Bool,
+              let crossOriginCustom = values["crossOriginCustom"] as? Bool,
               let originFallbackDiagnostic = values["originFallbackDiagnostic"] as? String else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
                 "custom cosmetic probe returned \(String(describing: raw))"
@@ -1426,7 +1501,179 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             procedural: procedural,
             originFallbackCustom: originFallbackCustom,
             originFallbackProcedural: originFallbackProcedural,
+            crossOriginReady: crossOriginReady,
+            crossOriginCustom: crossOriginCustom,
             originFallbackDiagnostic: originFallbackDiagnostic
+        )
+    }
+
+    private func verifyFreshAllFramesReplayIsolation(in webView: WKWebView) async throws {
+        let raw = try await webView.floorpCallAsyncJavaScript(
+            """
+            const markerNames = scope => (scope?.documentElement?.getAttributeNames() ?? [])
+                .filter(name => name.startsWith('data-floorp-ubol-'))
+                .sort();
+            const hidden = (scope, id) => {
+                const element = scope?.getElementById(id);
+                if (!element) return false;
+                const style = scope.defaultView.getComputedStyle(element);
+                return style.display === 'none' || style.visibility === 'hidden' ||
+                    Number(style.opacity) === 0;
+            };
+            const crossOriginState = timeout => new Promise(resolve => {
+                const frame = document.getElementById('floorp-cross-origin-frame');
+                if (!frame?.contentWindow) {
+                    resolve({ ready: false, hidden: false });
+                    return;
+                }
+                const requestId = globalThis.crypto?.randomUUID?.() ||
+                    `${Date.now()}-${Math.random()}`;
+                let timeoutId;
+                const receive = event => {
+                    if (event.source !== frame.contentWindow ||
+                        event.data?.floorpProbe !== requestId) return;
+                    clearTimeout(timeoutId);
+                    removeEventListener('message', receive);
+                    resolve({ ready: true, hidden: event.data.hidden === true });
+                };
+                addEventListener('message', receive);
+                timeoutId = setTimeout(() => {
+                    removeEventListener('message', receive);
+                    resolve({ ready: false, hidden: false });
+                }, timeout);
+                frame.contentWindow.postMessage({ floorpProbe: requestId }, '*');
+            });
+
+            const liveCrossOrigin = await crossOriginState(2000);
+            const before = markerNames(document);
+            if (!liveCrossOrigin.ready || liveCrossOrigin.hidden || before.length === 0) {
+                return {
+                    ok: false,
+                    reason: 'cross-origin frame or initial scoped bundle was not ready',
+                    before,
+                    after: markerNames(document),
+                    crossOriginReady: liveCrossOrigin.ready,
+                    crossOriginHidden: liveCrossOrigin.hidden,
+                };
+            }
+
+            // The isolated css-api listens for pagereveal and force-installs a new
+            // physical allFrames sheet. Waiting for a new random scope marker proves
+            // that this insertion happened after the cross-origin frame was live.
+            globalThis.dispatchEvent(new Event('pagereveal'));
+            const deadline = performance.now() + 10000;
+            let after = markerNames(document);
+            while (performance.now() < deadline &&
+                (after.length === 0 || after.every(name => before.includes(name)))) {
+                await new Promise(resolve => setTimeout(resolve, 25));
+                after = markerNames(document);
+            }
+
+            const originFallbackDocument = document.getElementById(
+                'floorp-origin-fallback-frame'
+            )?.contentDocument;
+            const crossOriginAfterReplay = await crossOriginState(2000);
+            const markerChanged = after.some(name => !before.includes(name));
+            return {
+                ok: markerChanged &&
+                    hidden(document, 'floorp-custom-cosmetic') &&
+                    hidden(document, 'floorp-custom-form-control') &&
+                    hidden(originFallbackDocument, 'floorp-custom-cosmetic') &&
+                    hidden(originFallbackDocument, 'floorp-custom-form-control') &&
+                    crossOriginAfterReplay.ready &&
+                    !crossOriginAfterReplay.hidden,
+                reason: markerChanged ? '' : 'fresh scoped marker did not appear',
+                before,
+                after,
+                crossOriginReady: crossOriginAfterReplay.ready,
+                crossOriginHidden: crossOriginAfterReplay.hidden,
+            };
+            """,
+            arguments: [:],
+            contentWorld: .page,
+            timeoutNanoseconds: 15_000_000_000
+        )
+        guard let values = raw as? [String: Any], values["ok"] as? Bool == true else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "fresh allFrames replay isolation returned \(String(describing: raw))"
+            )
+        }
+    }
+
+    private func verifyCosmeticProtectionAfterPageTampering(
+        in webView: WKWebView
+    ) async throws {
+        let result = try await webView.floorpCallAsyncJavaScript(
+            """
+            document.adoptedStyleSheets = [];
+            const originalRoot = document.documentElement;
+            document.replaceChild(originalRoot.cloneNode(true), originalRoot);
+            const deadline = performance.now() + 4000;
+            let frameDocument;
+            try {
+                while (performance.now() < deadline) {
+                    frameDocument = document.getElementById(
+                        'floorp-origin-fallback-frame'
+                    )?.contentDocument;
+                    if (frameDocument?.documentElement) break;
+                    await new Promise(resolve => setTimeout(resolve, 25));
+                }
+                if (!frameDocument?.documentElement) return false;
+                frameDocument.adoptedStyleSheets = [];
+                const frameRoot = frameDocument.documentElement;
+                frameDocument.replaceChild(frameRoot.cloneNode(true), frameRoot);
+                return true;
+            } catch {
+                return false;
+            }
+            """,
+            arguments: [:],
+            contentWorld: .page,
+            timeoutNanoseconds: 5_000_000_000
+        )
+        guard result as? Bool == true else {
+            throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+                "could not replace the main and origin-fallback document roots"
+            )
+        }
+
+        let deadline = Self.makeReadinessDeadline(
+            timeoutNanoseconds: Self.customCosmeticActivationTimeoutNanoseconds
+        )
+        var stableSamples = 0
+        var lastStates = FloorpUBOLCustomCosmeticFilterStates(
+            custom: false,
+            procedural: false,
+            originFallbackCustom: false,
+            originFallbackProcedural: false,
+            crossOriginReady: false,
+            crossOriginCustom: false,
+            originFallbackDiagnostic: "not sampled"
+        )
+        while DispatchTime.now().uptimeNanoseconds < deadline {
+            let states = try await customCosmeticFilterStates(in: webView)
+            lastStates = states
+            if states.custom,
+               states.procedural,
+               states.originFallbackCustom,
+               states.originFallbackProcedural,
+               states.crossOriginReady,
+               !states.crossOriginCustom {
+                stableSamples += 1
+                if stableSamples >= 8 { return }
+            } else {
+                stableSamples = 0
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
+            "cosmetic protection did not recover after page tampering: "
+                + "custom=\(lastStates.custom), procedural=\(lastStates.procedural), "
+                + "originFallbackCustom=\(lastStates.originFallbackCustom), "
+                + "originFallbackProcedural=\(lastStates.originFallbackProcedural), "
+                + "crossOriginReady=\(lastStates.crossOriginReady), "
+                + "crossOriginCustom=\(lastStates.crossOriginCustom), "
+                + "originFallbackDiagnostic=\(lastStates.originFallbackDiagnostic)"
         )
     }
 
@@ -1708,6 +1955,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let result = try await loadAndInspect(
             coldDocumentURL,
             in: webView,
+            customCosmeticSettleTimeoutNanoseconds:
+                Self.customCosmeticActivationTimeoutNanoseconds,
             navigationTimeoutPolicy: .preserveWebViewForProcessLifetime
         )
         print("FLOORP_UBOL_RELEASE_GATE background-wake-document-start-complete")
@@ -1912,7 +2161,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             window.floorpDynamicBlockedScriptExecuted = false;
             window.floorpSessionBlockedScriptExecuted = false;
             </script>
-            <div id="floorp-custom-cosmetic" class="probe">custom</div>
+            <div id="floorp-custom-cosmetic" class="probe" style="display:block!important">custom</div>
+            <input id="floorp-custom-form-control" class="probe" style="display:block!important" value="custom input">
             <div id="floorp-procedural-cosmetic" class="probe">Sponsored by Floorp</div>
             <div id="Ad-Container" class="probe">generic</div>
             <div id="floorp-easylist-high-generic" class="probe" data-ad-name="floorp-ad">generic high</div>
@@ -1922,15 +2172,43 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                 <!doctype html>
                 <base href='https://spoofed-base.invalid/'>
                 <style>.probe { display: block; width: 20px; height: 20px; }</style>
-                <div id='floorp-custom-cosmetic' class='probe'>custom frame</div>
+                <div id='floorp-custom-cosmetic' class='probe' style='display:block!important'>custom frame</div>
+                <input id='floorp-custom-form-control' class='probe' style='display:block!important' value='custom input frame'>
                 <div id='floorp-procedural-cosmetic' class='probe'>
                     Sponsored by Floorp
                 </div>
             "></iframe>
+            <iframe id="floorp-cross-origin-frame"></iframe>
+            <script>
+            document.getElementById('floorp-cross-origin-frame').src =
+                `http://127.0.0.1:${location.port}/floorp-cross-origin-frame`;
+            </script>
             <script src="/floorp-control-acceptance.js"></script>
             <script src="/floorp-default-acceptance.ashx?adid=floorp"></script>
             <script src="/floorp-dynamic-acceptance.js"></script>
             <script src="/floorp-session-acceptance.js"></script>
+            """)
+        }
+        server.addHandler(
+            forMethod: "GET",
+            path: "/floorp-cross-origin-frame",
+            request: GCDWebServerRequest.self
+        ) { _ in
+            GCDWebServerDataResponse(html: """
+            <!doctype html>
+            <meta charset="utf-8">
+            <style>.probe { display: block; width: 20px; height: 20px; }</style>
+            <div id="floorp-custom-cosmetic" class="probe" style="display:block!important">cross origin</div>
+            <script>
+            addEventListener('message', event => {
+                if (typeof event.data?.floorpProbe !== 'string') return;
+                const element = document.getElementById('floorp-custom-cosmetic');
+                event.source?.postMessage({
+                    floorpProbe: event.data.floorpProbe,
+                    hidden: getComputedStyle(element).display === 'none',
+                }, '*');
+            });
+            </script>
             """)
         }
         let scripts: [(String, String)] = [
@@ -2842,6 +3120,8 @@ private struct FloorpUBOLCustomCosmeticFilterStates {
     let procedural: Bool
     let originFallbackCustom: Bool
     let originFallbackProcedural: Bool
+    let crossOriginReady: Bool
+    let crossOriginCustom: Bool
     let originFallbackDiagnostic: String
 }
 

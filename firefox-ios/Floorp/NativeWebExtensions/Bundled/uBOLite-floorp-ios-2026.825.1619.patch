@@ -318,7 +318,7 @@ index d08dc84..69258f0 100644
 -    setupJobsAlarm(jobs);
 +    await setupJobsAlarm(jobs);
 diff --git a/js/background.js b/js/background.js
-index 1916765..6886636 100644
+index 1916765..744ac41 100644
 --- a/js/background.js
 +++ b/js/background.js
 @@ -37,0 +38,7 @@ import {
@@ -870,7 +870,7 @@ index 1916765..6886636 100644
 +        }
 +        throw reason;
 +    }
-@@ -263,5 +716,143 @@ async function setDeveloperMode(state) {
+@@ -263,5 +716,368 @@ async function setDeveloperMode(state) {
 -    rulesetConfig.developerMode = state === true;
 -    toggleDeveloperMode(rulesetConfig.developerMode);
 -    broadcastMessage({ developerMode: rulesetConfig.developerMode });
@@ -924,6 +924,10 @@ index 1916765..6886636 100644
 +    return { tabId, documentIds: [ documentId ] };
 +}
 +
++function physicalCSSTarget(documentTarget) {
++    return { tabId: documentTarget.tabId, allFrames: true };
++}
++
 +function customFilterAck(requestId, details, reason) {
 +    const response = {
 +        ok: reason === undefined,
@@ -937,6 +941,227 @@ index 1916765..6886636 100644
 +    response.plainSelectors = details.plainSelectors;
 +    response.proceduralSelectors = details.proceduralSelectors;
 +    return response;
++}
++
++function cssInsertAck(
++    requestId,
++    documentTarget,
++    frameId,
++    reason = null,
++    ambiguous = false
++) {
++    const succeeded = reason === null;
++    const response = {
++        ok: succeeded,
++        schema: CUSTOM_FILTER_MESSAGE_SCHEMA,
++        requestId: typeof requestId === 'string' ? requestId : null,
++        documentId: documentTarget?.documentIds?.[0] ?? null,
++        frameId: Number.isInteger(frameId) ? frameId : null,
++    };
++    if ( succeeded === false ) {
++        response.error = `${reason}`;
++        if ( ambiguous ) { response.ambiguous = true; }
++    }
++    return response;
++}
++
++function validateFloorpCSSScopeRequest(request) {
++    const marker = /^data-floorp-ubol-([a-f0-9]{32})$/
++        .exec(request.scopeAttribute);
++    if ( marker === null ) {
++        throw new Error('Invalid CSS document scope marker');
++    }
++    const expectedCanary = `--floorp-ubol-canary-${marker[1]}`;
++    if (
++        request.scopeCanary !== expectedCanary ||
++        /^floorp-[a-f0-9]{32}$/.test(request.scopeCanaryValue) === false ||
++        request.scopeCanaryValue.slice('floorp-'.length) === marker[1]
++    ) {
++        throw new Error('Invalid CSS document scope canary');
++    }
++    const wrapper = `:where(:root[${request.scopeAttribute}])`;
++    const prefix = `${wrapper} {\n` +
++        `${request.scopeCanary}: ${request.scopeCanaryValue} !important;\n`;
++    if (
++        request.css.startsWith(prefix) === false ||
++        request.css.endsWith('\n}') === false
++    ) {
++        throw new Error('CSS payload does not match its document scope');
++    }
++    const body = request.css.slice(prefix.length, -2);
++
++    function skipTrivia(text, start) {
++        let cursor = start;
++        while ( cursor < text.length ) {
++            if ( /\s/.test(text[cursor]) ) {
++                cursor += 1;
++                continue;
++            }
++            if ( text[cursor] === '/' && text[cursor + 1] === '*' ) {
++                const end = text.indexOf('*/', cursor + 2);
++                if ( end === -1 ) {
++                    throw new Error('CSS payload has an unterminated comment');
++                }
++                cursor = end + 2;
++                continue;
++            }
++            break;
++        }
++        return cursor;
++    }
++
++    function splitSelectors(header) {
++        const selectors = [];
++        let start = 0;
++        let quote = '';
++        let brackets = 0;
++        let parentheses = 0;
++        for ( let i = 0; i < header.length; i += 1 ) {
++            const char = header[i];
++            if ( quote !== '' ) {
++                if ( char === '\\' ) { i += 1; }
++                else if ( char === quote ) { quote = ''; }
++                continue;
++            }
++            if ( char === '"' || char === "'" ) {
++                quote = char;
++                continue;
++            }
++            if ( char === '\\' ) { i += 1; continue; }
++            if ( char === '[' ) { brackets += 1; continue; }
++            if ( char === ']' ) { brackets -= 1; continue; }
++            if ( char === '(' ) { parentheses += 1; continue; }
++            if ( char === ')' ) { parentheses -= 1; continue; }
++            if ( char !== ',' || brackets !== 0 || parentheses !== 0 ) {
++                continue;
++            }
++            selectors.push(header.slice(start, i).trim());
++            start = i + 1;
++        }
++        selectors.push(header.slice(start).trim());
++        if (
++            quote !== '' || brackets !== 0 || parentheses !== 0 ||
++            selectors.some(selector => selector === '')
++        ) {
++            throw new Error('CSS payload has an invalid selector list');
++        }
++        return selectors;
++    }
++
++    function matchingBrace(text, opening) {
++        let depth = 1;
++        let quote = '';
++        let comment = false;
++        for ( let i = opening + 1; i < text.length; i += 1 ) {
++            const char = text[i];
++            const next = text[i + 1];
++            if ( comment ) {
++                if ( char === '*' && next === '/' ) {
++                    comment = false;
++                    i += 1;
++                }
++                continue;
++            }
++            if ( quote !== '' ) {
++                if ( char === '\\' ) { i += 1; }
++                else if ( char === quote ) { quote = ''; }
++                continue;
++            }
++            if ( char === '/' && next === '*' ) {
++                comment = true;
++                i += 1;
++                continue;
++            }
++            if ( char === '"' || char === "'" ) {
++                quote = char;
++                continue;
++            }
++            if ( char === '\\' ) { i += 1; continue; }
++            if ( char === '{' ) { depth += 1; continue; }
++            if ( char !== '}' ) { continue; }
++            depth -= 1;
++            if ( depth === 0 ) { return i; }
++        }
++        throw new Error('CSS payload has unbalanced rule blocks');
++    }
++
++    function validateRuleList(text) {
++        let cursor = 0;
++        while ( (cursor = skipTrivia(text, cursor)) < text.length ) {
++            let quote = '';
++            let comment = false;
++            let brackets = 0;
++            let parentheses = 0;
++            let opening = -1;
++            for ( let i = cursor; i < text.length; i += 1 ) {
++                const char = text[i];
++                const next = text[i + 1];
++                if ( comment ) {
++                    if ( char === '*' && next === '/' ) {
++                        comment = false;
++                        i += 1;
++                    }
++                    continue;
++                }
++                if ( quote !== '' ) {
++                    if ( char === '\\' ) { i += 1; }
++                    else if ( char === quote ) { quote = ''; }
++                    continue;
++                }
++                if ( char === '/' && next === '*' ) {
++                    comment = true;
++                    i += 1;
++                    continue;
++                }
++                if ( char === '"' || char === "'" ) {
++                    quote = char;
++                    continue;
++                }
++                if ( char === '\\' ) { i += 1; continue; }
++                if ( char === '[' ) { brackets += 1; continue; }
++                if ( char === ']' ) { brackets -= 1; continue; }
++                if ( char === '(' ) { parentheses += 1; continue; }
++                if ( char === ')' ) { parentheses -= 1; continue; }
++                if ( brackets !== 0 || parentheses !== 0 ) { continue; }
++                if ( char === ';' || char === '}' ) {
++                    throw new Error('CSS payload escapes its nested rule list');
++                }
++                if ( char === '{' ) {
++                    opening = i;
++                    break;
++                }
++            }
++            if ( opening === -1 ) {
++                throw new Error('CSS payload contains an incomplete rule');
++            }
++            const header = text.slice(cursor, opening).trim();
++            const closing = matchingBrace(text, opening);
++            if ( header.startsWith('@') ) {
++                const name = /^@([a-z-]+)(?:\s|\(|$)/i.exec(header)
++                    ?.[1]?.toLowerCase();
++                if (
++                    [ 'media', 'supports', 'container' ].includes(name) ===
++                        false
++                ) {
++                    throw new Error('CSS payload contains a global at-rule');
++                }
++                validateRuleList(text.slice(opening + 1, closing));
++            } else {
++                const selectors = splitSelectors(header);
++                if ( selectors.some(selector =>
++                    (
++                        selector.startsWith('& :is(') === false &&
++                        selector.startsWith('&:is(') === false
++                    ) || /:is\(\s*\)/.test(selector)
++                ) ) {
++                    throw new Error('CSS selector is outside its document scope');
++                }
++            }
++            cursor = closing + 1;
++        }
++    }
++
++    validateRuleList(body);
 +}
 +
 +function customFilterHostname(request, sender) {
@@ -1019,25 +1244,226 @@ index 1916765..6886636 100644
 +        };
 +    }
 +    return localState;
-@@ -275,0 +867 @@ async function onMessage(request, sender) {
+@@ -275,0 +1092 @@ async function onMessage(request, sender) {
 +    const documentTarget = documentTargetFromSender(sender);
-@@ -284,3 +876 @@ async function onMessage(request, sender) {
+@@ -283,9 +1100,120 @@ async function onMessage(request, sender) {
+-    case 'insertCSS':
 -        if ( frameId === false ) { return false; }
 -        // https://bugs.webkit.org/show_bug.cgi?id=262491
 -        if ( frameId !== 0 && webextFlavor === 'safari' ) { return; }
-+        if ( documentTarget === undefined ) { return false; }
-@@ -290 +880 @@ async function onMessage(request, sender) {
+-        return browser.scripting.insertCSS({
+-            css: request.css,
+-            origin: 'USER',
 -            target: { tabId, frameIds: [ frameId ] },
-+            target: documentTarget,
-@@ -296,3 +886 @@ async function onMessage(request, sender) {
+-        }).catch(reason => {
++    case 'floorpCSSDocumentIdentity': {
++        const requestId = request?.requestId;
++        try {
++            if ( documentTarget === undefined ) {
++                throw new Error('Missing sender document ID');
++            }
++            if ( request?.schema !== CUSTOM_FILTER_MESSAGE_SCHEMA ) {
++                throw new Error('Unsupported CSS document identity schema');
++            }
++            if (
++                typeof requestId !== 'string' ||
++                requestId === '' ||
++                requestId.length > 128
++            ) {
++                throw new Error('Invalid CSS document identity request ID');
++            }
++            return cssInsertAck(requestId, documentTarget, sender?.frameId);
++        } catch(reason) {
++            return cssInsertAck(
++                requestId,
++                documentTarget,
++                sender?.frameId,
++                reason ?? new Error('CSS document identity failed')
++            );
++        }
++    }
++
++    case 'insertCSS': {
++        const requestId = request?.requestId;
++        let inserted = false;
++        let cleanupAmbiguous = false;
++        let cssTarget;
++        try {
++            if ( documentTarget === undefined ) {
++                throw new Error('Missing sender document ID');
++            }
++            if (
++                request?.schema !== undefined &&
++                request.schema !== CUSTOM_FILTER_MESSAGE_SCHEMA
++            ) {
++                throw new Error('Unsupported CSS insertion message schema');
++            }
++            if (
++                requestId !== undefined &&
++                (
++                    typeof requestId !== 'string' ||
++                    requestId === '' ||
++                    requestId.length > 128
++                )
++            ) {
++                throw new Error('Invalid CSS insertion request ID');
++            }
++            if ( typeof request?.css !== 'string' || request.css === '' ) {
++                throw new Error('Invalid CSS insertion payload');
++            }
++            if (
++                request.schema === undefined &&
++                sender?.frameId !== 0
++            ) {
++                throw new Error('Legacy CSS insertion is main-frame only');
++            }
++            if ( request.schema === CUSTOM_FILTER_MESSAGE_SCHEMA ) {
++                validateFloorpCSSScopeRequest(request);
++                if (
++                    request.expectedDocumentId !==
++                        documentTarget.documentIds[0] ||
++                    request.expectedFrameId !== sender?.frameId
++                ) {
++                    throw new Error('CSS insertion sender identity changed');
++                }
++                cssTarget = physicalCSSTarget(documentTarget);
++                // removeCSS removes every exact matching dynamic sheet in
++                // WebKit. Starting each candidate with this idempotent cleanup
++                // makes the broker restart-safe and bounds a physical payload
++                // to one copy without retaining a Service Worker receipt.
++                await browser.scripting.removeCSS({
++                    css: request.css,
++                    origin: 'USER',
++                    target: cssTarget,
++                });
++            } else {
++                cssTarget = documentTarget;
++            }
++            await browser.scripting.insertCSS({
++                css: request.css,
++                origin: 'USER',
++                // WebKit frame targeting is inconsistent for origin-fallback
++                // documents. The private nesting marker makes this explicit
++                // all-frame distribution active only in the sender Document.
++                target: cssTarget,
++            });
++            inserted = true;
++            if ( request.schema === CUSTOM_FILTER_MESSAGE_SCHEMA ) {
++                const response = cssInsertAck(
++                    requestId,
++                    documentTarget,
++                    sender?.frameId
++                );
++                response.ensured = true;
++                return response;
++            }
++            return cssInsertAck(
++                requestId,
++                documentTarget,
++                sender?.frameId
++            );
++        } catch(reason) {
++            if (
++                inserted
++            ) {
++                try {
++                    await browser.scripting.removeCSS({
++                        css: request.css,
++                        origin: 'USER',
++                        target: cssTarget,
++                    });
++                } catch {
++                    cleanupAmbiguous = true;
++                }
++            }
+@@ -293 +1221,9 @@ async function onMessage(request, sender) {
+-        });
++            return cssInsertAck(
++                requestId,
++                documentTarget,
++                sender?.frameId,
++                reason ?? new Error('Native CSS insertion failed'),
++                cleanupAmbiguous
++            );
++        }
++    }
+@@ -295,9 +1231,56 @@ async function onMessage(request, sender) {
+-    case 'removeCSS':
 -        if ( frameId === false ) { return false; }
 -        // https://bugs.webkit.org/show_bug.cgi?id=262491
 -        if ( frameId !== 0 && webextFlavor === 'safari' ) { return; }
-+        if ( documentTarget === undefined ) { return false; }
-@@ -302 +890 @@ async function onMessage(request, sender) {
+-        return browser.scripting.removeCSS({
+-            css: request.css,
+-            origin: 'USER',
 -            target: { tabId, frameIds: [ frameId ] },
-+            target: documentTarget,
-@@ -307,8 +895,76 @@ async function onMessage(request, sender) {
+-        }).catch(reason => {
++    case 'removeCSS': {
++        const requestId = request?.requestId;
++        let cssTarget;
++        try {
++            if ( documentTarget === undefined ) {
++                throw new Error('Missing sender document ID');
++            }
++            if (
++                request?.schema !== undefined &&
++                request.schema !== CUSTOM_FILTER_MESSAGE_SCHEMA
++            ) {
++                throw new Error('Unsupported CSS removal message schema');
++            }
++            if (
++                requestId !== undefined &&
++                (
++                    typeof requestId !== 'string' ||
++                    requestId === '' ||
++                    requestId.length > 128
++                )
++            ) {
++                throw new Error('Invalid CSS removal request ID');
++            }
++            if ( typeof request?.css !== 'string' || request.css === '' ) {
++                throw new Error('Invalid CSS removal payload');
++            }
++            if (
++                request.schema === undefined &&
++                sender?.frameId !== 0
++            ) {
++                throw new Error('Legacy CSS removal is main-frame only');
++            }
++            if ( request.schema === CUSTOM_FILTER_MESSAGE_SCHEMA ) {
++                validateFloorpCSSScopeRequest(request);
++                if (
++                    request.expectedDocumentId !==
++                        documentTarget.documentIds[0] ||
++                    request.expectedFrameId !== sender?.frameId
++                ) {
++                    throw new Error('CSS removal sender identity changed');
++                }
++                cssTarget = physicalCSSTarget(documentTarget);
++            } else {
++                cssTarget = documentTarget;
++            }
++            await browser.scripting.removeCSS({
++                css: request.css,
++                origin: 'USER',
++                target: cssTarget,
++            });
++            return cssInsertAck(
++                requestId,
++                documentTarget,
++                sender?.frameId
++            );
++        } catch(reason) {
+@@ -305 +1288,8 @@ async function onMessage(request, sender) {
+-        });
++            return cssInsertAck(
++                requestId,
++                documentTarget,
++                sender?.frameId,
++                reason ?? new Error('Native CSS removal failed')
++            );
++        }
++    }
+@@ -307,8 +1297,76 @@ async function onMessage(request, sender) {
 -    case 'injectCSSProceduralAPI':
 -        return browser.scripting.executeScript({
 -            files: [ '/js/scripting/css-procedural-api.js' ],
@@ -1122,7 +1548,7 @@ index 1916765..6886636 100644
 +            return customFilterAck(requestId, undefined, reason);
 +        }
 +    }
-@@ -319,0 +976,148 @@ async function onMessage(request, sender) {
+@@ -319,0 +1378,148 @@ async function onMessage(request, sender) {
 +    if ( request.what === 'floorpAuthorizeForegroundReconciliation' ) {
 +        if ( sender?.id !== runtime.id ) { return false; }
 +        if ( sender?.origin?.toLowerCase() !== UBOL_ORIGIN ) { return false; }
@@ -1271,15 +1697,20 @@ index 1916765..6886636 100644
 +        return { ready: true, version: getCurrentVersion() };
 +    }
 +
-@@ -322 +1126 @@ async function onMessage(request, sender) {
+@@ -322 +1528 @@ async function onMessage(request, sender) {
 -    await isFullyInitialized;
 +    await ensureFullyInitialized();
-@@ -343,4 +1146,0 @@ async function onMessage(request, sender) {
+@@ -337 +1543 @@ async function onMessage(request, sender) {
+-        return startCustomFilters(tabId, frameId);
++        return startCustomFilters(tabId, frameId, sender?.documentId);
+@@ -341,5 +1547 @@ async function onMessage(request, sender) {
+-        return terminateCustomFilters(tabId, frameId);
+-
 -    case 'injectCustomFilters':
 -        if ( frameId === false ) { return; }
 -        return injectCustomFilters(tabId, frameId, request.hostname);
--
-@@ -360,0 +1161,15 @@ async function onMessage(request, sender) {
++        return terminateCustomFilters(tabId, frameId, sender?.documentId);
+@@ -360,0 +1563,15 @@ async function onMessage(request, sender) {
 +    case 'validateSettingsRestore':
 +        return validateSettingsRestore(request.targetConfig);
 +
@@ -1295,7 +1726,7 @@ index 1916765..6886636 100644
 +    case 'floorpReconcileDashboardState':
 +        return reconcileDashboardState();
 +
-@@ -368,0 +1184,11 @@ async function onMessage(request, sender) {
+@@ -368,0 +1586,11 @@ async function onMessage(request, sender) {
 +    case 'removeDisabledImportedLists': {
 +        const enabled = new Set(await getEnabledRulesets());
 +        const toRemove = (request.rulesetIds || []).filter(
@@ -1307,7 +1738,7 @@ index 1916765..6886636 100644
 +        return { ready: true };
 +    }
 +
-@@ -440,3 +1266,10 @@ async function onMessage(request, sender) {
+@@ -440,3 +1668,10 @@ async function onMessage(request, sender) {
 -    case 'setAutoReload':
 -        rulesetConfig.autoReload = request.state && true || false;
 -        await saveRulesetConfig();
@@ -1321,9 +1752,9 @@ index 1916765..6886636 100644
 +            await saveRulesetConfig().catch(( ) => undefined);
 +            throw reason;
 +        }
-@@ -444,0 +1278 @@ async function onMessage(request, sender) {
+@@ -444,0 +1680 @@ async function onMessage(request, sender) {
 +    }
-@@ -446,6 +1280,19 @@ async function onMessage(request, sender) {
+@@ -446,6 +1682,19 @@ async function onMessage(request, sender) {
 -    case 'setShowBlockedCount':
 -        rulesetConfig.showBlockedCount = request.state && true || false;
 -        if ( canShowBlockedCount ) {
@@ -1349,11 +1780,11 @@ index 1916765..6886636 100644
 +            }
 +            await saveRulesetConfig().catch(( ) => undefined);
 +            throw reason;
-@@ -453 +1299,0 @@ async function onMessage(request, sender) {
+@@ -453 +1701,0 @@ async function onMessage(request, sender) {
 -        await saveRulesetConfig();
-@@ -455,0 +1302 @@ async function onMessage(request, sender) {
+@@ -455,0 +1704 @@ async function onMessage(request, sender) {
 +    }
-@@ -457,2 +1304,14 @@ async function onMessage(request, sender) {
+@@ -457,2 +1706,14 @@ async function onMessage(request, sender) {
 -    case 'setStrictBlockMode':
 -        await setStrictBlockMode(request.state);
 +    case 'setStrictBlockMode': {
@@ -1370,9 +1801,9 @@ index 1916765..6886636 100644
 +            }
 +            throw reason;
 +        }
-@@ -460,0 +1320 @@ async function onMessage(request, sender) {
+@@ -460,0 +1722 @@ async function onMessage(request, sender) {
 +    }
-@@ -462,3 +1322,14 @@ async function onMessage(request, sender) {
+@@ -462,3 +1724,14 @@ async function onMessage(request, sender) {
 -    case 'setPopupBlockMode':
 -        await setPopupBlockMode(request.state);
 -        await registerContentScripts();
@@ -1390,9 +1821,9 @@ index 1916765..6886636 100644
 +            }
 +            throw reason;
 +        }
-@@ -466,0 +1338 @@ async function onMessage(request, sender) {
+@@ -466,0 +1740 @@ async function onMessage(request, sender) {
 +    }
-@@ -493,2 +1365,16 @@ async function onMessage(request, sender) {
+@@ -493,2 +1767,16 @@ async function onMessage(request, sender) {
 -    case 'gotoURL':
 -        return gotoURL(request.url, request.type);
 +    case 'gotoURL': {
@@ -1411,13 +1842,13 @@ index 1916765..6886636 100644
 +            return { opened: false, error };
 +        }
 +    }
-@@ -499,2 +1385,3 @@ async function onMessage(request, sender) {
+@@ -499,2 +1787,3 @@ async function onMessage(request, sender) {
 -        const afterLevel = await setFilteringMode(request.hostname, request.level);
 -        await Promise.all([ registerContentScripts(), registerUserScripts() ]);
 +        const afterLevel = await mutateFilteringModeAndScripts(( ) =>
 +            setFilteringMode(request.hostname, request.level, true)
 +        );
-@@ -514,4 +1401,4 @@ async function onMessage(request, sender) {
+@@ -514,4 +1803,4 @@ async function onMessage(request, sender) {
 -        const afterLevel = await setDefaultFilteringMode(request.level);
 -        if ( afterLevel !== beforeLevel ) {
 -            await Promise.all([ registerContentScripts(), registerUserScripts() ]);
@@ -1426,13 +1857,13 @@ index 1916765..6886636 100644
 +        const afterLevel = await mutateFilteringModeAndScripts(( ) =>
 +            setDefaultFilteringMode(request.level, true)
 +        );
-@@ -525,2 +1412,3 @@ async function onMessage(request, sender) {
+@@ -525,2 +1814,3 @@ async function onMessage(request, sender) {
 -        await setFilteringModeDetails(request.modes);
 -        await Promise.all([ registerContentScripts(), registerUserScripts() ]);
 +        await mutateFilteringModeAndScripts(( ) =>
 +            setFilteringModeDetails(request.modes, true)
 +        );
-@@ -539,5 +1427,12 @@ async function onMessage(request, sender) {
+@@ -539,5 +1829,12 @@ async function onMessage(request, sender) {
 -        browser.windows.create({
 -            type: 'popup',
 -            url: `/matched-rules.html?tab=${request.tabId}`,
@@ -1450,7 +1881,7 @@ index 1916765..6886636 100644
 +            ubolErr(`tabs.create/${error}`);
 +            return { opened: false, error };
 +        }
-@@ -555 +1450,39 @@ async function onMessage(request, sender) {
+@@ -555 +1852,39 @@ async function onMessage(request, sender) {
 -        return updateUserRules();
 +        return updateUserRules(true);
 +
@@ -1491,7 +1922,7 @@ index 1916765..6886636 100644
 +        }
 +        return { updated: true };
 +    }
-@@ -560,13 +1493,11 @@ async function onMessage(request, sender) {
+@@ -560,13 +1895,11 @@ async function onMessage(request, sender) {
 -    case 'addCustomFilters': {
 -        const modified = await addCustomFilters(request.hostname, request.selectors);
 -        if ( modified !== true ) { return; }
@@ -1516,7 +1947,7 @@ index 1916765..6886636 100644
 +            Array.isArray(after.selectors) === false
 +        ) {
 +            throw new Error('Invalid custom-filter replacement');
-@@ -574,2 +1505,5 @@ async function onMessage(request, sender) {
+@@ -574,2 +1907,5 @@ async function onMessage(request, sender) {
 -        await Promise.all(promises);
 -        return;
 +        return replaceCustomFiltersAtomically(
@@ -1524,7 +1955,7 @@ index 1916765..6886636 100644
 +            after,
 +            reconcileCustomFilterState
 +        );
-@@ -578,23 +1512,3 @@ async function onMessage(request, sender) {
+@@ -578,23 +1914,3 @@ async function onMessage(request, sender) {
 -    case 'addManyCustomFilters': {
 -        const promises = [];
 -        let hasScriptletFilters = false;
@@ -1551,7 +1982,7 @@ index 1916765..6886636 100644
 +    case 'replaceAllCustomFilters': {
 +        if ( Array.isArray(request.entries) === false ) {
 +            throw new Error('Invalid custom-filter replacement');
-@@ -602,2 +1516,25 @@ async function onMessage(request, sender) {
+@@ -602,2 +1918,25 @@ async function onMessage(request, sender) {
 -        await Promise.all(promises);
 -        return;
 +        return replaceAllCustomFiltersAtomically(
@@ -1579,7 +2010,7 @@ index 1916765..6886636 100644
 +            }
 +            return results.some(Boolean);
 +        }, reconcileCustomFilterState);
-@@ -607,16 +1544,4 @@ async function onMessage(request, sender) {
+@@ -607,16 +1946,4 @@ async function onMessage(request, sender) {
 -        const { selectors } = request;
 -        const modified = await removeCustomFilters(request.hostname, selectors);
 -        if ( modified !== true ) { return; }
@@ -1600,7 +2031,7 @@ index 1916765..6886636 100644
 +            ( ) => removeCustomFilters(request.hostname, request.selectors),
 +            reconcileCustomFilterState
 +        );
-@@ -626,7 +1551,4 @@ async function onMessage(request, sender) {
+@@ -626,7 +1953,4 @@ async function onMessage(request, sender) {
 -        const modified = await removeAllCustomFilters(request.hostname);
 -        if ( modified !== true ) { return; }
 -        await Promise.all([
@@ -1612,7 +2043,7 @@ index 1916765..6886636 100644
 +            ( ) => removeAllCustomFilters(request.hostname),
 +            reconcileCustomFilterState
 +        );
-@@ -639,4 +1561,19 @@ async function onMessage(request, sender) {
+@@ -639,4 +1963,19 @@ async function onMessage(request, sender) {
 -        await setSandboxFilters(request.text);
 -        await updateCompiledFilters();
 -        await Promise.all([ registerUserScripts(), updateUserRules() ]);
@@ -1636,16 +2067,18 @@ index 1916765..6886636 100644
 +            }
 +            throw reason;
 +        }
-@@ -671 +1608 @@ async function onMessage(request, sender) {
+@@ -671 +2010 @@ async function onMessage(request, sender) {
 -        await Promise.all([ registerUserScripts(), updateUserRules() ]);
 +        await Promise.all([ registerUserScripts(), updateUserRules(true) ]);
-@@ -720 +1657 @@ function onCommand(command, tab) {
+@@ -704,0 +2044 @@ function onCommand(command, tab) {
++                '/js/scripting/css-api.js',
+@@ -720 +2060 @@ function onCommand(command, tab) {
 -async function startSession() {
 +async function startSession(allowStaticMutation = true) {
-@@ -733 +1670 @@ async function startSession() {
+@@ -733 +2073 @@ async function startSession() {
 -        saveRulesetConfig();
 +        await saveRulesetConfig();
-@@ -740 +1677,11 @@ async function startSession() {
+@@ -740 +2080,11 @@ async function startSession() {
 -    } = await enableRulesets(rulesetConfig.enabledRulesets);
 +        error: enableRulesetsError,
 +        foregroundReconciliationRequired,
@@ -1658,10 +2091,10 @@ index 1916765..6886636 100644
 +        return { foregroundReconciliationRequired: true };
 +    }
 +    if ( enableRulesetsError ) { throw new Error(enableRulesetsError); }
-@@ -743 +1690 @@ async function startSession() {
+@@ -743 +2093 @@ async function startSession() {
 -        saveRulesetConfig();
 +        await saveRulesetConfig();
-@@ -750,4 +1697,10 @@ async function startSession() {
+@@ -750,4 +2100,10 @@ async function startSession() {
 -    if ( isNewVersion ) {
 -        updateDynamicAndSessionRules();
 -    } else {
@@ -1676,49 +2109,49 @@ index 1916765..6886636 100644
 +    } else if ( stockUpdated !== true ) {
 +        const result = await updateSessionRules();
 +        if ( result?.error ) { throw new Error(result.error); }
-@@ -757 +1710 @@ async function startSession() {
+@@ -757 +2113 @@ async function startSession() {
 -    const permissionsUpdated = await syncWithBrowserPermissions();
 +    const permissionsUpdated = await syncWithBrowserPermissions(true);
-@@ -764 +1717 @@ async function startSession() {
+@@ -764 +2120 @@ async function startSession() {
 -        saveRulesetConfig();
 +        await saveRulesetConfig();
-@@ -775 +1728 @@ async function startSession() {
+@@ -775 +2131 @@ async function startSession() {
 -        promises.push(registerContentScripts());
 +        promises.push(registerContentScripts(true));
-@@ -780 +1733 @@ async function startSession() {
+@@ -780 +2136 @@ async function startSession() {
 -                Promise.all([ registerUserScripts(), updateUserRules() ])
 +                Promise.all([ registerUserScripts(), updateUserRules(true) ])
-@@ -784 +1737 @@ async function startSession() {
+@@ -784 +2140 @@ async function startSession() {
 -        promises.push(registerUserScripts(), updateUserRules());
 +        promises.push(registerUserScripts(), updateUserRules(true));
-@@ -794 +1747 @@ async function startSession() {
+@@ -794 +2150 @@ async function startSession() {
 -    sessionAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
 +    await sessionAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
-@@ -799 +1752 @@ async function startSession() {
+@@ -799 +2155 @@ async function startSession() {
 -        dnr.setExtensionActionOptions({
 +        await dnr.setExtensionActionOptions({
-@@ -809 +1762 @@ async function startSession() {
+@@ -809 +2165 @@ async function startSession() {
 -            const afterLevel = await setDefaultFilteringMode(MODE_BASIC);
 +            const afterLevel = await setDefaultFilteringMode(MODE_BASIC, true);
-@@ -811 +1764 @@ async function startSession() {
+@@ -811 +2167 @@ async function startSession() {
 -                await registerContentScripts();
 +                await registerContentScripts(true);
-@@ -818,3 +1771,3 @@ async function startSession() {
+@@ -818,3 +2174,3 @@ async function startSession() {
 -    adminReadEx('disabledFeatures').then(items => {
 -        if ( Array.isArray(items) === false ) { return; }
 -        if ( items.includes('develop') ) {
 +    const disabledFeatures = await adminReadEx('disabledFeatures', true);
 +    if ( Array.isArray(disabledFeatures) ) {
 +        if ( disabledFeatures.includes('develop') ) {
-@@ -822 +1775 @@ async function startSession() {
+@@ -822 +2178 @@ async function startSession() {
 -                setDeveloperMode(false);
 +                await setDeveloperMode(false);
-@@ -825 +1778,3 @@ async function startSession() {
+@@ -825 +2181,3 @@ async function startSession() {
 -    });
 +    }
 +
 +    return { ready: true };
-@@ -830,2 +1785,21 @@ async function startSession() {
+@@ -830,2 +2188,21 @@ async function startSession() {
 -async function start() {
 -    await loadRulesetConfig();
 +async function recoverInterruptedSettingsRestoreAtStart() {
@@ -1742,13 +2175,13 @@ index 1916765..6886636 100644
 +        })
 +    );
 +}
-@@ -833,2 +1807,3 @@ async function start() {
+@@ -833,2 +2210,3 @@ async function start() {
 -    if ( process.wakeupRun === false ) {
 -        await startSession();
 +async function start() {
 +    if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
 +        await browser.userScripts.configureWorld({ messaging: true });
-@@ -836,4 +1811,3 @@ async function start() {
+@@ -836,4 +2214,3 @@ async function start() {
 -
 -    const scripts = await getRegisteredContentScripts();
 -    if ( scripts.length === 0 ) {
@@ -1756,7 +2189,7 @@ index 1916765..6886636 100644
 +    const rollbackResult = await recoverInterruptedSettingsRestoreAtStart();
 +    if ( rollbackResult?.foregroundReconciliationRequired ) {
 +        return;
-@@ -840,0 +1815,14 @@ async function start() {
+@@ -840,0 +2218,14 @@ async function start() {
 +    return withSettingsRestoreLock(( ) =>
 +        queueBackgroundMutation(async ( ) => {
 +            await recoverCustomFilterMutation();
@@ -1771,7 +2204,7 @@ index 1916765..6886636 100644
 +                    return;
 +                }
 +            }
-@@ -842 +1830,12 @@ async function start() {
+@@ -842 +2233,12 @@ async function start() {
 -    toggleDeveloperMode(rulesetConfig.developerMode);
 +            // A background process may be evicted at any await boundary of an
 +            // earlier mutation. Reconcile every protected surface from
@@ -1785,7 +2218,7 @@ index 1916765..6886636 100644
 +            toggleDeveloperMode(rulesetConfig.developerMode);
 +        })
 +    );
-@@ -850,10 +1849,7 @@ async function start() {
+@@ -850,10 +2252,7 @@ async function start() {
 -const isFullyInitialized = start().then(( ) => {
 -    localRemove('goodStart');
 -    return false;
@@ -1803,7 +2236,7 @@ index 1916765..6886636 100644
 +    ( ) => {
 +        if ( foregroundRulesetReconciliationRequired === false ) {
 +            releaseRealmRulesetStartupGate();
-@@ -861,5 +1857,50 @@ const isFullyInitialized = start().then(( ) => {
+@@ -861,5 +2260,50 @@ const isFullyInitialized = start().then(( ) => {
 -        return localWrite('goodStart', false).then(( ) => true);
 -    });
 -}).then(restart => {
@@ -1859,7 +2292,7 @@ index 1916765..6886636 100644
 +            return true;
 +        })
 +    );
-@@ -867,0 +1909,157 @@ const isFullyInitialized = start().then(( ) => {
+@@ -867,0 +2312,157 @@ const isFullyInitialized = start().then(( ) => {
 +const backgroundMutationMessages = new Set([
 +    'applyRulesets',
 +    'beginSettingsRestore',
@@ -2017,33 +2450,33 @@ index 1916765..6886636 100644
 +    return onMessage(request, sender);
 +}
 +
-@@ -870 +2068,5 @@ runtime.onMessage.addListener((request, sender, callback) => {
+@@ -870 +2471,5 @@ runtime.onMessage.addListener((request, sender, callback) => {
 -    onMessage(request, sender).then(callback);
 +    dispatchMessage(request, sender).then(callback, reason => {
 +        const error = `${reason}`;
 +        ubolErr(`onMessage/${request.what}/${error}`);
 +        callback({ error });
 +    });
-@@ -875 +2076,0 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
+@@ -875 +2479,0 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
 -    browser.userScripts.configureWorld({ messaging: true });
-@@ -877 +2078,5 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
+@@ -877 +2481,5 @@ if ( supportsUserScripts() && runtime.onUserScriptMessage ) {
 -        onMessage(request, sender).then(callback);
 +        dispatchMessage(request, sender).then(callback, reason => {
 +            const error = `${reason}`;
 +            ubolErr(`onUserScriptMessage/${request.what}/${error}`);
 +            callback({ error });
 +        });
-@@ -883,2 +2088,2 @@ browser.permissions.onRemoved.addListener((...args) => {
+@@ -883,2 +2491,2 @@ browser.permissions.onRemoved.addListener((...args) => {
 -    isFullyInitialized.then(( ) => {
 -        onPermissionsChanged('removed', ...args);
 +    onPermissionsChanged('removed', ...args).catch(reason => {
 +        ubolErr(`permissions.onRemoved/${reason}`);
-@@ -889,2 +2094,2 @@ browser.permissions.onAdded.addListener((...args) => {
+@@ -889,2 +2497,2 @@ browser.permissions.onAdded.addListener((...args) => {
 -    isFullyInitialized.then(( ) => {
 -        onPermissionsChanged('added', ...args);
 +    onPermissionsChanged('added', ...args).catch(reason => {
 +        ubolErr(`permissions.onAdded/${reason}`);
-@@ -895,3 +2100,11 @@ browser.commands.onCommand.addListener((...args) => {
+@@ -895,3 +2503,11 @@ browser.commands.onCommand.addListener((...args) => {
 -    isFullyInitialized.then(( ) => {
 -        onCommand(...args);
 -    });
@@ -2058,7 +2491,7 @@ index 1916765..6886636 100644
 +            })
 +        )
 +    ).catch(reason => ubolErr(`commands.onCommand/${reason}`));
-@@ -902,7 +2115,18 @@ browser.alarms.onAlarm.addListener(alarm => {
+@@ -902,7 +2518,18 @@ browser.alarms.onAlarm.addListener(alarm => {
 -    isFullyInitialized.then(( ) => {
 -        if ( process.wakeupRun === false && process.firstAlarm !== true ) {
 -            process.firstAlarm = true;
@@ -4827,7 +5260,7 @@ index e0eb861..5ffd165 100644
 +        rejectOperation(reason);
 +    }
 diff --git a/js/filter-manager.js b/js/filter-manager.js
-index 0eed1c2..c02353d 100644
+index 0eed1c2..261be77 100644
 --- a/js/filter-manager.js
 +++ b/js/filter-manager.js
 @@ -31 +30,0 @@ import {
@@ -5102,7 +5535,7 @@ index 0eed1c2..c02353d 100644
 +export async function customFiltersFromHostname(hostname) {
 +    const keys = customFilterStorageKeys(hostname);
 +    const promises = keys.map(key => readFromStorage(key));
-@@ -92,0 +328,43 @@ export async function customFiltersFromHostname(hostname) {
+@@ -92,0 +328,148 @@ export async function customFiltersFromHostname(hostname) {
 +export function customFiltersFromSnapshot(hostname, snapshot) {
 +    if (
 +        typeof snapshot !== 'object' ||
@@ -5129,7 +5562,11 @@ index 0eed1c2..c02353d 100644
 +
 +/******************************************************************************/
 +
-+export function assertSuccessfulScriptInjection(results, operation) {
++export function assertSuccessfulScriptInjection(
++    results,
++    operation,
++    expectedDocumentId
++) {
 +    if ( Array.isArray(results) === false || results.length === 0 ) {
 +        throw new Error(`${operation} returned no injection results`);
 +    }
@@ -5140,13 +5577,202 @@ index 0eed1c2..c02353d 100644
 +        if ( result.error !== undefined ) {
 +            throw new Error(`${operation}: ${result.error}`);
 +        }
++        if (
++            expectedDocumentId !== undefined &&
++            result.documentId !== expectedDocumentId
++        ) {
++            throw new Error(`${operation} returned the wrong document ID`);
++        }
++    }
++    return results;
++}
++
++export function assertCommittedCustomFilterInjection(
++    results,
++    operation,
++    expectedDocumentId
++) {
++    assertSuccessfulScriptInjection(results, operation, expectedDocumentId);
++    if ( results.length !== 1 ) {
++        throw new Error(`${operation} returned multiple probe results`);
++    }
++    for ( const injection of results ) {
++        const result = injection.result;
++        if (
++            typeof result !== 'object' ||
++            result === null ||
++            result.schema !== 1 ||
++            result.ok !== true ||
++            result.committed !== true ||
++            result.documentId !== expectedDocumentId
++        ) {
++            throw new Error(`${operation} did not commit custom filters`);
++        }
++    }
++    return results;
++}
++
++async function probeCommittedCustomFilters(expectedDocumentId) {
++    const execution = self.floorpCSSUserExecution;
++    if ( typeof execution?.then !== 'function' ) {
++        return {
++            ok: false,
++            schema: 1,
++            committed: false,
++            documentId: null,
++        };
++    }
++    await execution;
++    await Promise.resolve(self.cssUserPendingOp);
++    const activation = self.floorpCSSUserActivationState;
++    const committed =
++        activation?.committed === true &&
++        activation.documentId === expectedDocumentId &&
++        activation.generation === self.cssUserDocumentGeneration &&
++        self.cssAPI?.documentId === expectedDocumentId;
++    return {
++        ok: committed,
++        schema: 1,
++        committed,
++        documentId: self.cssAPI?.documentId ?? null,
++    };
++}
++
++async function probeTerminatedCustomFilters(expectedDocumentId) {
++    const termination = self.floorpCSSUserTerminationOp;
++    if ( typeof termination?.then !== 'function' ) {
++        return {
++            ok: false,
++            schema: 1,
++            terminated: false,
++            documentId: null,
++        };
++    }
++    const result = await termination;
++    const matchesDocument = result?.documentId === null ||
++        result?.documentId === expectedDocumentId;
++    return {
++        ok: result?.ok === true && matchesDocument,
++        schema: 1,
++        terminated: result?.ok === true && matchesDocument,
++        // This probe itself is executing in `expectedDocumentId`. A first-ever
++        // bootstrap can be cancelled before css-api binds its native ID, in
++        // which case the termination operation legitimately reports null.
++        documentId: expectedDocumentId,
++    };
++}
++
++function assertTerminatedCustomFilterInjection(
++    results,
++    operation,
++    expectedDocumentId
++) {
++    assertSuccessfulScriptInjection(results, operation, expectedDocumentId);
++    const result = results.length === 1 ? results[0].result : undefined;
++    if (
++        typeof result !== 'object' ||
++        result === null ||
++        result.schema !== 1 ||
++        result.ok !== true ||
++        result.terminated !== true ||
++        result.documentId !== expectedDocumentId
++    ) {
++        throw new Error(`${operation} did not terminate custom filters`);
 +    }
 +    return results;
 +}
 +
 +/******************************************************************************/
 +
-@@ -141,4 +419,4 @@ export function terminateCustomFilters(tabId, frameId) {
+@@ -119,6 +502,37 @@ export async function getAllCustomFilters() {
+-export function startCustomFilters(tabId, frameId) {
+-    return browser.scripting.executeScript({
+-        files: [ '/js/scripting/css-user.js' ],
+-        target: { tabId, frameIds: [ frameId ] },
+-        injectImmediately: true,
+-    }).catch(reason => {
++export async function startCustomFilters(tabId, frameId, documentId) {
++    void frameId;
++    if ( typeof documentId !== 'string' || documentId === '' ) {
++        throw new Error('startCustomFilters requires a document ID');
++    }
++    const target = { tabId, documentIds: [ documentId ] };
++    try {
++        const fileResults = await browser.scripting.executeScript({
++            // A picker can add the first filter for a hostname after
++            // document_idle, before updated registrations can affect the
++            // current document. Load both guarded APIs before css-user so
++            // plain and procedural filters commit in that existing frame.
++            files: [
++                '/js/scripting/css-api.js',
++                '/js/scripting/css-procedural-api.js',
++                '/js/scripting/css-user.js',
++            ],
++            target,
++            injectImmediately: true,
++        });
++        assertSuccessfulScriptInjection(
++            fileResults,
++            'startCustomFilters/files',
++            documentId
++        );
++        const probeResults = await browser.scripting.executeScript({
++            args: [ documentId ],
++            func: probeCommittedCustomFilters,
++            target,
++            injectImmediately: true,
++        });
++        return assertCommittedCustomFilterInjection(
++            probeResults,
++            'startCustomFilters/probe',
++            documentId
++        );
++    } catch(reason) {
+@@ -126 +540,2 @@ export function startCustomFilters(tabId, frameId) {
+-    })
++        throw reason;
++    }
+@@ -129,6 +544,29 @@ export function startCustomFilters(tabId, frameId) {
+-export function terminateCustomFilters(tabId, frameId) {
+-    return browser.scripting.executeScript({
+-        files: [ '/js/scripting/css-user-terminate.js' ],
+-        target: { tabId, frameIds: [ frameId ] },
+-        injectImmediately: true,
+-    }).catch(reason => {
++export async function terminateCustomFilters(tabId, frameId, documentId) {
++    void frameId;
++    if ( typeof documentId !== 'string' || documentId === '' ) {
++        throw new Error('terminateCustomFilters requires a document ID');
++    }
++    const target = { tabId, documentIds: [ documentId ] };
++    try {
++        const fileResults = await browser.scripting.executeScript({
++            files: [ '/js/scripting/css-user-terminate.js' ],
++            target,
++            injectImmediately: true,
++        });
++        assertSuccessfulScriptInjection(
++            fileResults,
++            'terminateCustomFilters/files',
++            documentId
++        );
++        const probeResults = await browser.scripting.executeScript({
++            args: [ documentId ],
++            func: probeTerminatedCustomFilters,
++            target,
++            injectImmediately: true,
++        });
++        return assertTerminatedCustomFilterInjection(
++            probeResults,
++            'terminateCustomFilters/probe',
++            documentId
++        );
++    } catch(reason) {
+@@ -136 +574,2 @@ export function terminateCustomFilters(tabId, frameId) {
+-    })
++        throw reason;
++    }
+@@ -141,4 +580,4 @@ export function terminateCustomFilters(tabId, frameId) {
 -export async function injectCustomFilters(tabId, frameId, hostname) {
 -    const selectors = await customFiltersFromHostname(hostname);
 -    if ( selectors.length === 0 ) { return; }
@@ -5155,7 +5781,8 @@ index 0eed1c2..c02353d 100644
 +    const selectors = storageSnapshot === undefined
 +        ? await customFiltersFromHostname(hostname)
 +        : customFiltersFromSnapshot(hostname, storageSnapshot);
-@@ -147,9 +425,5 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
+@@ -146,11 +585,4 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
+-    if ( plainSelectors.length !== 0 ) {
 -        promises.push(
 -            browser.scripting.insertCSS({
 -                css: `${plainSelectors.join(',\n')}{display:none!important;}`,
@@ -5165,12 +5792,12 @@ index 0eed1c2..c02353d 100644
 -                ubolErr(`injectCustomFilters/insertCSS/${reason}`);
 -            })
 -        );
-+        await browser.scripting.insertCSS({
-+            css: `${plainSelectors.join(',\n')}{display:none!important;}`,
-+            origin: 'USER',
-+            target,
-+        });
-@@ -158,15 +431,0 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
+-    }
++    // Return selector data only. css-user owns the exact-document native CSS
++    // acknowledgement and retry transaction; inserting here as well would
++    // duplicate the sheet and leave an unowned copy behind during termination.
++    void target;
+@@ -158,15 +589,0 @@ export async function injectCustomFilters(tabId, frameId, hostname) {
 -    if ( proceduralSelectors.length !== 0 ) {
 -        promises.push(
 -            browser.scripting.executeScript({
@@ -5186,7 +5813,7 @@ index 0eed1c2..c02353d 100644
 -        );
 -    }
 -    await Promise.all(promises);
-@@ -179 +438,27 @@ export async function registerCustomFilters(context) {
+@@ -179 +596,27 @@ export async function registerCustomFilters(context) {
 -    const customFilters = new Map(await getAllCustomFilters());
 +    let customFilters;
 +    if ( context.localStorageSnapshot === undefined ) {
@@ -5215,7 +5842,7 @@ index 0eed1c2..c02353d 100644
 +            }
 +        }
 +    }
-@@ -182,13 +467,4 @@ export async function registerCustomFilters(context) {
+@@ -182,13 +625,4 @@ export async function registerCustomFilters(context) {
 -    const { none } = context.filteringModeDetails;
 -    let hostnames = Array.from(customFilters.keys());
 -    let excludeHostnames = [];
@@ -5233,8 +5860,12 @@ index 0eed1c2..c02353d 100644
 +    // are read. This covers an enabled child inheriting a parent filter under a
 +    // default-none policy and is safe if Safari briefly retains a broader row.
 +    const hostnames = Array.from(customFilters.keys()).filter(a =>
-@@ -198,0 +475,21 @@ export async function registerCustomFilters(context) {
-+    const js = [ '/js/scripting/css-user.js' ];
+@@ -198,0 +633,23 @@ export async function registerCustomFilters(context) {
++    // css-user treats native CSS acknowledgement as part of its activation
++    // transaction, so preload css-api for plain-only as well as procedural
++    // filters. This also keeps slow document-idle fallback from becoming the
++    // first opportunity to create the API.
++    const js = [ '/js/scripting/css-api.js' ];
 +    const hasInheritedProceduralFilter = hostname => {
 +        let hn = hostname;
 +        while ( hn !== '' ) {
@@ -5249,24 +5880,20 @@ index 0eed1c2..c02353d 100644
 +        // WebKit does not apply matchOriginAsFallback when executeScript checks
 +        // access to about:blank/about:srcdoc. Preload the API in css-user's
 +        // registered isolated world, including filters inherited from a parent
-+        // hostname. css-user retains a lazy fallback for ordinary web frames.
-+        js.unshift(
-+            '/js/scripting/css-api.js',
-+            '/js/scripting/css-procedural-api.js'
-+        );
++        // hostname.
++        js.push('/js/scripting/css-procedural-api.js');
 +    }
-@@ -201 +498 @@ export async function registerCustomFilters(context) {
++    js.push('/js/scripting/css-user.js');
+@@ -201 +658 @@ export async function registerCustomFilters(context) {
 -        js: [ '/js/scripting/css-user.js' ],
 +        js,
-@@ -207,2 +504,3 @@ export async function registerCustomFilters(context) {
+@@ -207,5 +664,9 @@ export async function registerCustomFilters(context) {
 -    if ( excludeHostnames.length !== 0 ) {
 -        directive.excludeMatches = matchesFromHostnames(excludeHostnames);
-+    const idleJS = js.slice();
-+    if ( idleJS.includes('/js/scripting/css-api.js') === false ) {
-+        idleJS.unshift('/js/scripting/css-api.js');
-@@ -210,2 +508,8 @@ export async function registerCustomFilters(context) {
+-    }
 -
 -    context.toAdd.push(directive);
++    const idleJS = js.slice();
 +    idleJS.unshift('/js/scripting/css-user-idle-prelude.js');
 +    idleJS.splice(idleJS.length - 1, 0, '/js/scripting/css-user-idle.js');
 +    context.toAdd.push(directive, {
@@ -5275,22 +5902,27 @@ index 0eed1c2..c02353d 100644
 +        js: idleJS,
 +        runAt: 'document_idle',
 +    });
-@@ -227 +531 @@ export async function addCustomFilters(hostname, toAdd) {
+@@ -227 +688 @@ export async function addCustomFilters(hostname, toAdd) {
 -    writeToStorage(key, selectors);
 +    await writeToStorage(key, selectors);
-@@ -238 +542 @@ export async function removeAllCustomFilters(hostname) {
+@@ -238 +699 @@ export async function removeAllCustomFilters(hostname) {
 -            removeFromStorage(key);
 +            await removeFromStorage(key);
-@@ -244 +548 @@ export async function removeAllCustomFilters(hostname) {
+@@ -244 +705 @@ export async function removeAllCustomFilters(hostname) {
 -    removeFromStorage(key);
 +    await removeFromStorage(key);
-@@ -273 +577 @@ async function removeCustomFiltersByKey(key, toRemove) {
+@@ -273 +734 @@ async function removeCustomFiltersByKey(key, toRemove) {
 -        writeToStorage(key, selectors);
 +        await writeToStorage(key, selectors);
-@@ -275 +579 @@ async function removeCustomFiltersByKey(key, toRemove) {
+@@ -275 +736,25 @@ async function removeCustomFiltersByKey(key, toRemove) {
 -        removeFromStorage(key);
 +        await removeFromStorage(key);
-@@ -281,0 +586,175 @@ async function removeCustomFiltersByKey(key, toRemove) {
++    }
++    return true;
++}
++
++/******************************************************************************/
++
 +async function writeCustomFilterSnapshot(entries) {
 +    const desired = new Map(entries.map(([ hostname, selectors ]) => [
 +        hostname,
@@ -5309,7 +5941,7 @@ index 0eed1c2..c02353d 100644
 +        } else {
 +            await writeToStorage(key, selectors);
 +        }
-+    }
+@@ -276,0 +762,20 @@ async function removeCustomFiltersByKey(key, toRemove) {
 +}
 +
 +let pendingCustomFilterMutation = Promise.resolve();
@@ -5330,9 +5962,7 @@ index 0eed1c2..c02353d 100644
 +        Array.from(customFilterMapFromStorageSnapshot(beforeLocal))
 +    );
 +    await removeFromStorage(customFilterMutationJournalKey);
-+    return true;
-+}
-+
+@@ -279,0 +785,131 @@ async function removeCustomFiltersByKey(key, toRemove) {
 +export function recoverCustomFilterMutation() {
 +    return queueCustomFilterMutation(recoverCustomFilterMutationNow);
 +}
@@ -5463,8 +6093,6 @@ index 0eed1c2..c02353d 100644
 +        'Custom-filter replacement and rollback both failed'
 +    ));
 +}
-+
-+/******************************************************************************/
 +
 diff --git a/js/floorp-reconcile.js b/js/floorp-reconcile.js
 new file mode 100644
@@ -5737,7 +6365,7 @@ index 8a7831a..556e332 100644
 -            await writeFilteringModeDetails(filteringModes);
 +            await writeFilteringModeDetails(filteringModes, startupFresh);
 diff --git a/js/popup.js b/js/popup.js
-index 89cd69f..9c95e21 100644
+index 89cd69f..f54e24d 100644
 --- a/js/popup.js
 +++ b/js/popup.js
 @@ -22 +22,6 @@
@@ -6065,16 +6693,20 @@ index 89cd69f..9c95e21 100644
 @@ -270 +507 @@ dom.on('#gotoPicker', 'click', ( ) => {
 -    browser.scripting.executeScript({
 +    void queuePopupMutation(( ) => browser.scripting.executeScript({
-@@ -277 +514 @@ dom.on('#gotoPicker', 'click', ( ) => {
+@@ -271,0 +509 @@ dom.on('#gotoPicker', 'click', ( ) => {
++            '/js/scripting/css-api.js',
+@@ -277 +515 @@ dom.on('#gotoPicker', 'click', ( ) => {
 -    });
 +    }));
-@@ -285 +522 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
+@@ -285 +523 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
 -    browser.scripting.executeScript({
 +    void queuePopupMutation(( ) => browser.scripting.executeScript({
-@@ -292 +529 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
+@@ -286,0 +525 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
++            '/js/scripting/css-api.js',
+@@ -292 +531 @@ dom.on('#gotoUnpicker', 'click', ( ) => {
 -    });
 +    }));
-@@ -303 +540,10 @@ async function init() {
+@@ -303 +542,10 @@ async function init() {
 -    if ( tab instanceof Object === false ) { return true; }
 +    if ( tab instanceof Object === false ) {
 +        throw new Error('Active tab is unavailable');
@@ -6086,13 +6718,13 @@ index 89cd69f..9c95e21 100644
 +    ) {
 +        throw new Error('Active tab routing data is unavailable');
 +    }
-@@ -315 +561 @@ async function init() {
+@@ -315 +563 @@ async function init() {
 -        return false;
 +        throw new Error('Active tab URL is unavailable');
-@@ -319 +565 @@ async function init() {
+@@ -319 +567 @@ async function init() {
 -        const response = await sendMessage({
 +        const response = assertSuccessfulMessageResponse(await sendMessage({
-@@ -323,3 +569,20 @@ async function init() {
+@@ -323,3 +571,20 @@ async function init() {
 -        });
 -        if ( response instanceof Object ) {
 -            Object.assign(popupPanelData, response);
@@ -6116,12 +6748,12 @@ index 89cd69f..9c95e21 100644
 +            response.hasCustomFilters < 0
 +        ) {
 +            throw new Error('Invalid popup panel data');
-@@ -326,0 +590 @@ async function init() {
+@@ -326,0 +592 @@ async function init() {
 +        Object.assign(popupPanelData, response, { disabledFeatures });
-@@ -350 +614 @@ async function init() {
+@@ -350 +616 @@ async function init() {
 -async function tryInit() {
 +async function tryInit(attempt = 1) {
-@@ -352,5 +616,5 @@ async function tryInit() {
+@@ -352,5 +618,5 @@ async function tryInit() {
 -        await init();
 -    } catch {
 -        setTimeout(tryInit, 100);
@@ -6132,7 +6764,7 @@ index 89cd69f..9c95e21 100644
 +        if ( attempt >= 20 ) { throw reason; }
 +        await new Promise(resolve => self.setTimeout(resolve, 100));
 +        return tryInit(attempt + 1);
-@@ -360 +624,7 @@ async function tryInit() {
+@@ -360 +626,7 @@ async function tryInit() {
 -tryInit();
 +popupInitialization = tryInit().finally(( ) => {
 +    dom.cl.remove(dom.body, 'loading', 'busy');
@@ -6141,7 +6773,7 @@ index 89cd69f..9c95e21 100644
 +    popupMutationError ??= reason;
 +    showRuntimeError(reason);
 +});
-@@ -363 +632,0 @@ tryInit();
+@@ -363 +634,0 @@ tryInit();
 -
 diff --git a/js/ruleset-manager.js b/js/ruleset-manager.js
 index ea0db34..fb1461a 100644
@@ -7474,94 +8106,1991 @@ index e0b8aae..638a326 100644
 +        ubolErr(`registerContentScripts/${reason}`);
 +        if ( webextFlavor === 'safari' || throwOnError ) { throw reason; }
 diff --git a/js/scripting/css-api.js b/js/scripting/css-api.js
-index 88c7b27..b0b8d7b 100644
+index 88c7b27..0c96c18 100644
 --- a/js/scripting/css-api.js
 +++ b/js/scripting/css-api.js
-@@ -23 +23,13 @@
+@@ -23 +23,14 @@
 -    if ( typeof api === 'object' ) { return; }
-+    const floorpOriginFallbackReplay =
-+        self.floorpCSSUserAPIIdleReplay === true;
-+    const documentElement = document.documentElement;
++    const forcedReplay = self.floorpCSSUserForceAPIReplay !== undefined;
 +    const documentTimeOrigin = performance.timeOrigin;
 +    if (
-+        floorpOriginFallbackReplay === false &&
++        forcedReplay === false &&
 +        typeof api === 'object' &&
-+        api.documentElement === documentElement &&
-+        api.documentTimeOrigin === documentTimeOrigin
-+    ) { return; }
-+    if ( typeof api?.pageRevealHandler === 'function' ) {
-+        self.removeEventListener('pagereveal', api.pageRevealHandler);
++        api.documentTimeOrigin === documentTimeOrigin &&
++        api.disposed !== true
++    ) {
++        // Registered scripts can rerun in a retained isolated global. Hold
++        // following stock calls behind a fresh native Document identity check.
++        void api.refreshForScriptExecution?.();
++        return;
 +    }
-@@ -26,0 +39,8 @@
-+    const pageRevealHandler = ( ) => {
-+        chrome.runtime.sendMessage({
-+            what: 'insertCSS',
-+            css: Array.from(inserted).join('\n'),
-+        }).catch(( ) => {
-+        });
++    api?.dispose?.();
+@@ -25 +38,447 @@
+-    const inserted = new Set();
++    const messageSchema = 1;
++    const operationWindow = 15000;
++    const replySlice = 2000;
++    const retryDelays = [ 100, 250, 500, 1000, 2000 ];
++    const fallbackGeneration = {};
++    const defaultOwner = {};
++    const slots = new Map();
++    const state = {
++        documentId: undefined,
++        frameId: undefined,
++        verifiedRoot: undefined,
 +    };
++    let activeTransaction;
++    let currentAPI;
++    let disposed = false;
++    let globalQueue = Promise.resolve({ ok: true });
++    let identityBarrier = Promise.resolve({ ok: true });
++    let identityBarrierResolve;
++    let identityOperation;
++    let markerObserver;
++    let observedRoot;
++    let pageCacheArmed = false;
++    let pageCacheEpoch = 0;
++    let recoveredPageCacheEpoch = -1;
++    let scriptIdentityRefresh;
++    let sequence = 0;
++    let slotOrder = 0;
++    let suspendedBy = self.floorpCSSUserIdentityPendingRecord;
 +
-@@ -27,0 +48,3 @@
-+        documentElement,
++    const makeRequestId = ( ) => globalThis.crypto?.randomUUID?.() ||
++        `${Date.now()}-${Math.random()}`;
++    const now = ( ) => performance.now();
++    const timeout = delay => new Promise(resolve => setTimeout(resolve, delay));
++
++    async function waitForReply(operation, delay) {
++        let timeoutId;
++        try {
++            return await Promise.race([
++                operation.then(
++                    value => ({ status: 'resolved', value }),
++                    reason => ({ status: 'rejected', reason })
++                ),
++                new Promise(resolve => {
++                    timeoutId = setTimeout(
++                        () => resolve({ status: 'timeout' }),
++                        Math.max(0, delay)
++                    );
++                }),
++            ]);
++        } finally {
++            clearTimeout(timeoutId);
++        }
++    }
++
++    function failure(error, ambiguous = false) {
++        const result = {
++            ok: false,
++            schema: messageSchema,
++            requestId: null,
++            documentId: state.documentId ?? null,
++            error,
++        };
++        if ( ambiguous ) { result.ambiguous = true; }
++        return result;
++    }
++
++    function success(extra = {}) {
++        return {
++            ok: true,
++            schema: messageSchema,
++            requestId: null,
++            documentId: state.documentId ?? null,
++            ...extra,
++        };
++    }
++
++    function isCurrentAPI() {
++        return disposed === false &&
++            self.cssAPI === currentAPI &&
++            currentAPI.documentTimeOrigin === performance.timeOrigin;
++    }
++
++    function currentDocumentGeneration() {
++        return typeof self.cssUserDocumentGeneration === 'object' &&
++            self.cssUserDocumentGeneration !== null
++            ? self.cssUserDocumentGeneration
++            : fallbackGeneration;
++    }
++
++    function isCurrentGeneration(generation) {
++        return isCurrentAPI() && (
++            generation === fallbackGeneration ||
++            self.cssUserDocumentGeneration === generation
++        );
++    }
++
++    function beginIdentitySuspension(record) {
++        identityBarrierResolve?.({ ok: false, superseded: true });
++        const root = document.documentElement;
++        for ( const slot of slots.values() ) {
++            if ( state.verifiedRoot !== root ) {
++                removeMarker(slot.active, state.verifiedRoot);
++                removeMarker(slot.candidate, state.verifiedRoot);
++            }
++            removeMarker(slot.active, root);
++            removeMarker(slot.candidate, root);
++            if ( slot.hookActive ) {
++                try { slot.hook?.suspend?.(); } catch { }
++                slot.hookActive = false;
++            }
++        }
++        suspendedBy = record;
++        identityBarrier = new Promise(resolve => {
++            identityBarrierResolve = resolve;
++        });
++    }
++
++    function finishIdentitySuspension(result) {
++        const resolve = identityBarrierResolve;
++        identityBarrierResolve = undefined;
++        resolve?.(result);
++    }
++
++    function validIdentityAck(response, requestId) {
++        return typeof response === 'object' &&
++            response !== null &&
++            response.ok === true &&
++            response.schema === messageSchema &&
++            response.requestId === requestId &&
++            typeof response.documentId === 'string' &&
++            response.documentId !== '' &&
++            Number.isInteger(response.frameId) &&
++            response.frameId >= 0;
++    }
++
++    async function requestDocumentIdentity(deadline) {
++        let attempt = 0;
++        while ( isCurrentAPI() && now() < deadline ) {
++            const requestId = `${makeRequestId()}:identity:${attempt}`;
++            const requestRoot = document.documentElement;
++            const operation = Promise.resolve().then(( ) =>
++                chrome.runtime.sendMessage({
++                    what: 'floorpCSSDocumentIdentity',
++                    schema: messageSchema,
++                    requestId,
++                })
++            );
++            void operation.catch(( ) => undefined);
++            const outcome = await waitForReply(
++                operation,
++                Math.min(replySlice, deadline - now())
++            );
++            if (
++                outcome.status === 'resolved' &&
++                document.documentElement === requestRoot &&
++                validIdentityAck(outcome.value, requestId)
++            ) {
++                return { ...outcome.value, root: requestRoot };
++            }
++            const remaining = deadline - now();
++            if ( remaining <= 0 ) { break; }
++            await timeout(Math.min(
++                retryDelays[Math.min(attempt, retryDelays.length - 1)],
++                remaining
++            ));
++            attempt += 1;
++        }
++        return failure('CSS document identity deadline expired', true);
++    }
++
++    async function waitForIdentity(deadline) {
++        while ( suspendedBy !== undefined ) {
++            const remaining = deadline - now();
++            if ( remaining <= 0 ) {
++                return failure('CSS document identity deadline expired');
++            }
++            const barrier = identityBarrier;
++            const outcome = await waitForReply(barrier, remaining);
++            if ( outcome.status !== 'resolved' ) {
++                return failure('CSS document identity deadline expired');
++            }
++            if ( identityBarrier !== barrier ) { continue; }
++            if ( outcome.value?.ok !== true ) {
++                return outcome.value ??
++                    failure('CSS document identity was not verified', true);
++            }
++            if ( isCurrentAPI() === false ) {
++                return failure('CSS API was replaced', true);
++            }
++            if ( suspendedBy !== undefined ) {
++                return failure('CSS document identity remains suspended', true);
++            }
++        }
++        return success();
++    }
++
++    async function freshIdentity(deadline) {
++        const ready = await waitForIdentity(deadline);
++        if ( ready.ok !== true ) { return ready; }
++        const identity = await requestDocumentIdentity(deadline);
++        if ( identity?.ok !== true || isCurrentAPI() === false ) {
++            return identity?.ok === false
++                ? identity
++                : failure('CSS document identity changed', true);
++        }
++        if (
++            state.documentId !== undefined &&
++            (
++                state.documentId !== identity.documentId ||
++                state.frameId !== identity.frameId
++            )
++        ) {
++            return failure('CSS document identity changed', true);
++        }
++        const previousRoot = state.verifiedRoot;
++        if ( previousRoot !== undefined && previousRoot !== identity.root ) {
++            for ( const slot of slots.values() ) {
++                removeMarker(slot.active, previousRoot);
++                removeMarker(slot.candidate, previousRoot);
++            }
++        }
++        state.documentId = identity.documentId;
++        state.frameId = identity.frameId;
++        state.verifiedRoot = identity.root;
++        observeMarkers();
++        return identity;
++    }
++
++    function randomHex128() {
++        const values = new Uint32Array(4);
++        if ( typeof globalThis.crypto?.getRandomValues === 'function' ) {
++            globalThis.crypto.getRandomValues(values);
++            return Array.from(values, value =>
++                value.toString(16).padStart(8, '0')
++            ).join('');
++        }
++        const uuid = globalThis.crypto?.randomUUID?.()
++            ?.replace(/[^a-fA-F0-9]/g, '');
++        if ( typeof uuid === 'string' && uuid.length >= 32 ) {
++            return uuid.slice(0, 32).toLowerCase();
++        }
++        throw new Error('A cryptographically random CSS scope is unavailable');
++    }
++
++    function makeScopeAttribute() {
++        for ( let attempt = 0; attempt < 8; attempt += 1 ) {
++            const attribute = `data-floorp-ubol-${randomHex128()}`;
++            if ( document.documentElement?.hasAttribute(attribute) !== true ) {
++                return attribute;
++            }
++        }
++        throw new Error('Unable to allocate a private CSS document scope');
++    }
++
++    const allowedConditionalRules = new Set([
++        'media',
++        'supports',
++        'container',
++    ]);
++
++    function validateRawAtRules(css) {
++        let quote = '';
++        let comment = false;
++        let parentheses = 0;
++        let brackets = 0;
++        let braces = 0;
++        for ( let i = 0; i < css.length; i += 1 ) {
++            const char = css[i];
++            const next = css[i + 1];
++            if ( comment ) {
++                if ( char === '*' && next === '/' ) {
++                    comment = false;
++                    i += 1;
++                }
++                continue;
++            }
++            if ( quote !== '' ) {
++                if ( char === '\\' ) { i += 1; }
++                else if ( char === quote ) { quote = ''; }
++                continue;
++            }
++            if ( char === '/' && next === '*' ) {
++                comment = true;
++                i += 1;
++                continue;
++            }
++            if ( char === '"' || char === "'" ) {
++                quote = char;
++                continue;
++            }
++            if ( char === '\\' ) { i += 1; continue; }
++            if ( char === '(' ) { parentheses += 1; continue; }
++            if ( char === ')' ) { parentheses -= 1; continue; }
++            if ( char === '[' ) { brackets += 1; continue; }
++            if ( char === ']' ) { brackets -= 1; continue; }
++            if ( char === '{' ) { braces += 1; continue; }
++            if ( char === '}' ) {
++                braces -= 1;
++                if ( braces < 0 ) {
++                    throw new Error('CSS source has an unmatched closing block');
++                }
++                continue;
++            }
++            if ( char !== '@' || parentheses !== 0 || brackets !== 0 ) {
++                continue;
++            }
++            const atRule = /^@([a-z-]+)/i.exec(css.slice(i));
++            const name = atRule?.[1]?.toLowerCase();
++            if ( allowedConditionalRules.has(name) === false ) {
++                throw new Error(`CSS at-rule is not document-scoped: ${name}`);
++            }
++            let innerQuote = '';
++            let innerComment = false;
++            let innerParentheses = 0;
++            let innerBrackets = 0;
++            let foundBlock = false;
++            for ( let j = i + atRule[0].length; j < css.length; j += 1 ) {
++                const inner = css[j];
++                const following = css[j + 1];
++                if ( innerComment ) {
++                    if ( inner === '*' && following === '/' ) {
++                        innerComment = false;
++                        j += 1;
++                    }
++                    continue;
++                }
++                if ( innerQuote !== '' ) {
++                    if ( inner === '\\' ) { j += 1; }
++                    else if ( inner === innerQuote ) { innerQuote = ''; }
++                    continue;
++                }
++                if ( inner === '/' && following === '*' ) {
++                    innerComment = true;
++                    j += 1;
++                    continue;
++                }
++                if ( inner === '"' || inner === "'" ) {
++                    innerQuote = inner;
++                    continue;
++                }
++                if ( inner === '\\' ) { j += 1; continue; }
++                if ( inner === '(' ) { innerParentheses += 1; continue; }
++                if ( inner === ')' ) { innerParentheses -= 1; continue; }
++                if ( inner === '[' ) { innerBrackets += 1; continue; }
++                if ( inner === ']' ) { innerBrackets -= 1; continue; }
++                if ( innerParentheses !== 0 || innerBrackets !== 0 ) { continue; }
++                if ( inner === ';' ) {
++                    throw new Error('CSS conditional at-rule must have a block');
++                }
++                if ( inner === '{' ) {
++                    foundBlock = true;
++                    break;
++                }
++            }
++            if ( foundBlock === false ) {
++                throw new Error('CSS conditional at-rule has no block');
++            }
++        }
++        if (
++            quote !== '' || comment || parentheses !== 0 || brackets !== 0 ||
++            braces !== 0
++        ) {
++            throw new Error('CSS source is not balanced');
++        }
++    }
++
++    function firstOpeningBrace(text) {
++        let quote = '';
++        let comment = false;
++        for ( let i = 0; i < text.length; i += 1 ) {
++            const char = text[i];
++            const next = text[i + 1];
++            if ( comment ) {
++                if ( char === '*' && next === '/' ) {
++                    comment = false;
++                    i += 1;
++                }
++                continue;
++            }
++            if ( quote !== '' ) {
++                if ( char === '\\' ) { i += 1; }
++                else if ( char === quote ) { quote = ''; }
++                continue;
++            }
++            if ( char === '/' && next === '*' ) {
++                comment = true;
++                i += 1;
++                continue;
++            }
++            if ( char === '"' || char === "'" ) {
++                quote = char;
++                continue;
++            }
++            if ( char === '\\' ) {
++                i += 1;
++                continue;
++            }
++            if ( char === '{' ) { return i; }
++        }
++        return -1;
++    }
++
++    function splitSelectorList(selectorText) {
++        const selectors = [];
++        let start = 0;
++        let quote = '';
++        let brackets = 0;
++        let parentheses = 0;
++        for ( let i = 0; i < selectorText.length; i += 1 ) {
++            const char = selectorText[i];
++            if ( quote !== '' ) {
++                if ( char === '\\' ) { i += 1; }
++                else if ( char === quote ) { quote = ''; }
++                continue;
++            }
++            if ( char === '"' || char === "'" ) {
++                quote = char;
++                continue;
++            }
++            if ( char === '\\' ) {
++                i += 1;
++                continue;
++            }
++            if ( char === '[' ) { brackets += 1; continue; }
++            if ( char === ']' ) { brackets -= 1; continue; }
++            if ( char === '(' ) { parentheses += 1; continue; }
++            if ( char === ')' ) { parentheses -= 1; continue; }
++            if ( char !== ',' || brackets !== 0 || parentheses !== 0 ) {
++                continue;
++            }
++            const selector = selectorText.slice(start, i).trim();
++            if ( selector === '' ) {
++                throw new Error('CSS selector list contains an empty branch');
++            }
++            selectors.push(selector);
++            start = i + 1;
++        }
++        const selector = selectorText.slice(start).trim();
++        if (
++            selector === '' || quote !== '' ||
++            brackets !== 0 || parentheses !== 0
++        ) {
++            throw new Error('CSS selector list is not balanced');
++        }
++        selectors.push(selector);
++        return selectors;
++    }
+@@ -27,3 +486,432 @@
+-    self.cssAPI = {
+-        insert(css) {
+-            chrome.runtime.sendMessage({
++    function firstTopLevelPseudoElement(selector) {
++        let quote = '';
++        let brackets = 0;
++        let parentheses = 0;
++        for ( let i = 0; i < selector.length; i += 1 ) {
++            const char = selector[i];
++            if ( quote !== '' ) {
++                if ( char === '\\' ) { i += 1; }
++                else if ( char === quote ) { quote = ''; }
++                continue;
++            }
++            if ( char === '"' || char === "'" ) {
++                quote = char;
++                continue;
++            }
++            if ( char === '\\' ) { i += 1; continue; }
++            if ( char === '[' ) { brackets += 1; continue; }
++            if ( char === ']' ) { brackets -= 1; continue; }
++            if ( char === '(' ) { parentheses += 1; continue; }
++            if ( char === ')' ) { parentheses -= 1; continue; }
++            if ( char !== ':' || brackets !== 0 || parentheses !== 0 ) {
++                continue;
++            }
++            if ( selector[i + 1] === ':' ) { return i; }
++            const legacy = /^:(before|after|first-line|first-letter)(?=$|[.#:\[>+~\s])/i
++                .exec(selector.slice(i));
++            if ( legacy !== null ) { return i; }
++        }
++        return -1;
++    }
++
++    function nestedBranches(selector) {
++        const pseudoIndex = firstTopLevelPseudoElement(selector);
++        let base = pseudoIndex === -1
++            ? selector
++            : selector.slice(0, pseudoIndex);
++        const pseudo = pseudoIndex === -1 ? '' : selector.slice(pseudoIndex);
++        const descendantUniversal = /\s$/.test(base) ||
++            /(?:[>+~]|\|\|)\s*$/.test(base);
++        base = base.trim();
++        if ( base === '' ) { base = '*'; }
++        else if ( descendantUniversal ) { base += ' *'; }
++        return [
++            `& :is(${base})${pseudo}`,
++            `&:is(${base})${pseudo}`,
++        ];
++    }
++
++    function conditionalRule(rule, text) {
++        if ( text.startsWith('@') === false ) { return; }
++        const name = /^@([a-z-]+)/i.exec(text)?.[1]?.toLowerCase();
++        if (
++            allowedConditionalRules.has(name) === false ||
++            rule.cssRules === undefined
++        ) {
++            throw new Error(`CSS at-rule is not document-scoped: ${name}`);
++        }
++        return name;
++    }
++
++    function serializeCanonicalRules(rules) {
++        const out = [];
++        for ( const rule of Array.from(rules) ) {
++            const text = `${rule.cssText ?? ''}`.trim();
++            if ( text === '' ) {
++                throw new Error('CSS parser discarded a rule');
++            }
++            const conditional = conditionalRule(rule, text);
++            if ( conditional !== undefined ) {
++                const opening = firstOpeningBrace(text);
++                if ( opening === -1 ) {
++                    throw new Error('CSS conditional rule has no body');
++                }
++                const children = serializeCanonicalRules(rule.cssRules);
++                if ( children.length === 0 ) {
++                    throw new Error('CSS conditional rule has no scoped rules');
++                }
++                out.push(
++                    `${text.slice(0, opening).trim()} {\n` +
++                    `${children.join('\n')}\n}`
++                );
++                continue;
++            }
++            const selectorText = `${rule.selectorText ?? ''}`.trim();
++            if ( selectorText === '' ) {
++                throw new Error('CSS qualified rule has no selector');
++            }
++            splitSelectorList(selectorText);
++            if ( rule.cssRules !== undefined && rule.cssRules.length !== 0 ) {
++                throw new Error('Authored CSS nesting is not supported');
++            }
++            const declarations = `${rule.style?.cssText ?? ''}`.trim();
++            out.push(`${selectorText} { ${declarations} }`);
++        }
++        return out;
++    }
++
++    function serializeNestedRules(rules, expectedBranches) {
++        const out = [];
++        for ( const rule of Array.from(rules) ) {
++            const text = `${rule.cssText ?? ''}`.trim();
++            const conditional = conditionalRule(rule, text);
++            if ( conditional !== undefined ) {
++                const opening = firstOpeningBrace(text);
++                const children = serializeNestedRules(
++                    rule.cssRules,
++                    expectedBranches
++                );
++                out.push(
++                    `${text.slice(0, opening).trim()} {\n` +
++                    `${children.join('\n')}\n}`
++                );
++                continue;
++            }
++            const selectors = splitSelectorList(`${rule.selectorText ?? ''}`);
++            const branches = selectors.flatMap(nestedBranches);
++            expectedBranches.push(branches.length);
++            const declarations = `${rule.style?.cssText ?? ''}`.trim();
++            out.push(`${branches.join(',\n')} { ${declarations} }`);
++        }
++        return out;
++    }
++
++    function validateNestedRoundTrip(rules, expectedBranches, cursor) {
++        for ( const rule of Array.from(rules) ) {
++            const text = `${rule.cssText ?? ''}`.trim();
++            if ( text.startsWith('@') ) {
++                conditionalRule(rule, text);
++                validateNestedRoundTrip(rule.cssRules, expectedBranches, cursor);
++                continue;
++            }
++            const selectors = splitSelectorList(`${rule.selectorText ?? ''}`);
++            const expected = expectedBranches[cursor.index++];
++            if (
++                selectors.length !== expected ||
++                selectors.some(selector =>
++                    (
++                        selector.startsWith('& :is(') === false &&
++                        selector.startsWith('&:is(') === false
++                    ) || /:is\(\s*\)/.test(selector)
++                )
++            ) {
++                throw new Error('CSS nesting scope lost a selector branch');
++            }
++        }
++    }
++
++    function canonicalizeCSS(css) {
++        if ( typeof css !== 'string' || css.trim() === '' ) {
++            throw new Error('CSS insertion requires non-empty CSS');
++        }
++        if ( typeof CSSStyleSheet !== 'function' ) {
++            throw new Error('CSS parsing is unavailable');
++        }
++        // Constructable stylesheets silently discard some forbidden rules
++        // (notably @import) instead of throwing. Reject every raw at-keyword
++        // except the recursively scoped conditional groups before CSSOM can
++        // erase evidence of a global side effect.
++        validateRawAtRules(css);
++        const sheet = new CSSStyleSheet();
++        sheet.replaceSync(css);
++        const rules = serializeCanonicalRules(sheet.cssRules);
++        if ( rules.length === 0 ) {
++            throw new Error('CSS parser produced no rules');
++        }
++        return rules.join('\n');
++    }
++
++    function makeBundle(body, intent) {
++        const attr = makeScopeAttribute();
++        const token = attr.slice('data-floorp-ubol-'.length);
++        const canary = `--floorp-ubol-canary-${token}`;
++        const canaryValue = `floorp-${randomHex128()}`;
++        const source = new CSSStyleSheet();
++        source.replaceSync(body);
++        const expectedBranches = [];
++        const nested = serializeNestedRules(source.cssRules, expectedBranches);
++        const wrapper = `:where(:root[${attr}])`;
++        const exactCSS = `${wrapper} {\n` +
++            `${canary}: ${canaryValue} !important;\n` +
++            `${nested.join('\n')}\n}`;
++        const parsed = new CSSStyleSheet();
++        parsed.replaceSync(exactCSS);
++        const outer = parsed.cssRules[0];
++        if (
++            parsed.cssRules.length !== 1 ||
++            `${outer?.selectorText ?? ''}` !== wrapper ||
++            outer?.cssRules === undefined ||
++            outer.style?.getPropertyValue(canary)?.trim() !== canaryValue ||
++            outer.style?.getPropertyPriority?.(canary) !== 'important'
++        ) {
++            throw new Error('CSS nesting wrapper was not accepted');
++        }
++        const cursor = { index: 0 };
++        validateNestedRoundTrip(
++            outer.cssRules,
++            expectedBranches,
++            cursor
++        );
++        if ( cursor.index !== expectedBranches.length ) {
++            throw new Error('CSS nesting wrapper discarded scoped rules');
++        }
++        return {
++            attr,
++            canary,
++            canaryValue,
++            exactCSS,
++            fingerprint: body,
++            intent,
++        };
++    }
++
++    function laneRank(lane, generation) {
++        if ( lane === 'preview' ) { return 2; }
++        if ( lane === 'custom' || generation !== fallbackGeneration ) {
++            return 1;
++        }
++        return 0;
++    }
++
++    function slotFor(owner, generation, lane, create = true) {
++        let slot = slots.get(owner);
++        if ( slot !== undefined ) {
++            if ( slot.generation !== generation ) {
++                throw new Error('CSS owner generation changed');
++            }
++            return slot;
++        }
++        if ( create === false ) { return; }
++        slot = {
++            active: null,
++            activeIntent: -1,
++            candidate: null,
++            desired: new Map(),
++            dirty: new Set(),
++            generation,
++            hook: undefined,
++            hookActive: false,
++            intent: 0,
++            lane,
++            markerSuppressed: false,
++            order: slotOrder++,
++            owner,
++            rank: laneRank(lane, generation),
++            wantsActivation: false,
++        };
++        slots.set(owner, slot);
++        return slot;
++    }
++
++    function orderedSlots() {
++        return Array.from(slots.values()).sort((a, b) =>
++            a.rank - b.rank || a.order - b.order
++        );
++    }
++
++    function follows(candidate, changed) {
++        return candidate.rank > changed.rank ||
++            candidate.rank === changed.rank && candidate.order > changed.order;
++    }
++
++    function desiredBody(slot) {
++        return Array.from(slot.desired.values())
++            .sort((a, b) => a.sequence - b.sequence)
++            .map(entry => entry.css)
++            .join('\n');
++    }
++
++    function removeMarker(bundle, root = state.verifiedRoot) {
++        if ( bundle?.attr === undefined ) { return; }
++        if ( root?.hasAttribute?.(bundle.attr) ) {
++            root.removeAttribute(bundle.attr);
++        }
++    }
++
++    function repairSlotMarker(slot) {
++        if (
++            slot.markerSuppressed ||
++            slot.active?.attr === undefined ||
++            suspendedBy !== undefined ||
++            state.verifiedRoot !== document.documentElement ||
++            isCurrentAPI() === false
++        ) { return; }
++        const root = document.documentElement;
++        if ( root.hasAttribute(slot.active.attr) === false ) {
++            root.setAttribute(slot.active.attr, '');
++        }
++    }
++
++    function repairMarkers() {
++        if ( suspendedBy !== undefined || isCurrentAPI() === false ) { return; }
++        if (
++            state.documentId !== undefined &&
++            state.verifiedRoot !== document.documentElement
++        ) {
++            void currentAPI.refreshForScriptExecution();
++            return;
++        }
++        for ( const slot of slots.values() ) { repairSlotMarker(slot); }
++    }
++
++    function resumeActiveHooks() {
++        const resumedSlots = [];
++        for ( const slot of slots.values() ) {
++            if (
++                slot.active === null ||
++                slot.hook === undefined ||
++                slot.hookActive
++            ) { continue; }
++            try {
++                slot.hook.activatePrepared?.();
++                slot.hookActive = true;
++                resumedSlots.push(slot);
++            } catch {
++                try { slot.hook?.deactivate?.(); } catch { }
++                for ( const resumedSlot of resumedSlots.reverse() ) {
++                    try { resumedSlot.hook?.deactivate?.(); } catch { }
++                    resumedSlot.hookActive = false;
++                }
++                for ( const activeSlot of slots.values() ) {
++                    if ( activeSlot.active === null ) { continue; }
++                    activeSlot.markerSuppressed = true;
++                    activeSlot.hookActive = false;
++                    removeMarker(activeSlot.active, document.documentElement);
++                }
++                return false;
++            }
++        }
++        for ( const slot of slots.values() ) {
++            if ( slot.active !== null ) { slot.markerSuppressed = false; }
++        }
++        return true;
++    }
++
++    function candidateCanaryApplied(bundle, root) {
++        if ( typeof getComputedStyle !== 'function' ) { return false; }
++        try {
++            return getComputedStyle(root)
++                .getPropertyValue(bundle.canary)
++                .trim() === bundle.canaryValue;
++        } catch {
++            return false;
++        }
++    }
++
++    async function waitForCandidateCanary(
++        slot,
++        bundle,
++        identity,
++        generation,
++        intent,
++        deadline
++    ) {
++        const root = identity.root;
++        const settleDeadline = Math.min(deadline, now() + 500);
++        for (;;) {
++            if (
++                isCurrentAPI() === false ||
++                isCurrentGeneration(generation) === false ||
++                suspendedBy !== undefined ||
++                slot.candidate !== bundle ||
++                slot.intent !== intent ||
++                state.documentId !== identity.documentId ||
++                state.frameId !== identity.frameId ||
++                state.verifiedRoot !== root ||
++                document.documentElement !== root ||
++                now() >= deadline
++            ) {
++                return failure(
++                    'CSS candidate lost its Document authority',
++                    true
++                );
++            }
++            if ( root.hasAttribute(bundle.attr) === false ) {
++                root.setAttribute(bundle.attr, '');
++            }
++            if ( candidateCanaryApplied(bundle, root) ) { return success(); }
++            const remaining = settleDeadline - now();
++            if ( remaining <= 0 ) {
++                return failure('CSS candidate canary was not applied');
++            }
++            await timeout(Math.min(25, remaining));
++        }
++    }
++
++    function observeMarkers() {
++        if ( markerObserver === undefined ) { return; }
++        markerObserver.disconnect();
++        markerObserver.observe(document, { childList: true });
++        observedRoot = document.documentElement;
++        const attributes = orderedSlots()
++            .map(slot => slot.active?.attr)
++            .filter(Boolean);
++        if ( observedRoot !== null && attributes.length !== 0 ) {
++            markerObserver.observe(observedRoot, {
++                attributes: true,
++                attributeFilter: attributes,
++            });
++        }
++    }
++
++    function validNativeAck(response, requestId, ensured = false) {
++        return typeof response === 'object' &&
++            response !== null &&
++            response.ok === true &&
++            response.schema === messageSchema &&
++            response.requestId === requestId &&
++            response.documentId === state.documentId &&
++            response.frameId === state.frameId &&
++            (ensured === false || response.ensured === true);
++    }
++
++    async function sendNative(message, deadline) {
++        const remaining = deadline - now();
++        if ( remaining <= 0 ) {
++            return { outcome: { status: 'timeout' } };
++        }
++        const operation = Promise.resolve().then(( ) =>
++            chrome.runtime.sendMessage(message)
++        );
++        void operation.catch(( ) => undefined);
++        return {
++            operation,
++            outcome: await waitForReply(operation, remaining),
++        };
++    }
++
++    async function ensureBundle(bundle, deadline) {
++        let attempt = 0;
++        while ( isCurrentAPI() && now() < deadline ) {
++            const requestId = `${makeRequestId()}:ensure:${attempt}`;
++            const sent = await sendNative({
+@@ -31,2 +919,555 @@
+-                css,
+-            }).catch(( ) => {
++                schema: messageSchema,
++                requestId,
++                css: bundle.exactCSS,
++                scopeAttribute: bundle.attr,
++                scopeCanary: bundle.canary,
++                scopeCanaryValue: bundle.canaryValue,
++                expectedDocumentId: state.documentId,
++                expectedFrameId: state.frameId,
++            }, deadline);
++            const { outcome } = sent;
++            if (
++                outcome.status === 'resolved' &&
++                validNativeAck(outcome.value, requestId, true)
++            ) {
++                return outcome.value;
++            }
++            const requestBoundNegative =
++                outcome.status === 'resolved' &&
++                typeof outcome.value === 'object' &&
++                outcome.value !== null &&
++                outcome.value.schema === messageSchema &&
++                outcome.value.requestId === requestId &&
++                outcome.value.documentId === state.documentId &&
++                outcome.value.frameId === state.frameId &&
++                outcome.value.ok === false &&
++                outcome.value.ambiguous !== true;
++            if ( requestBoundNegative === false ) {
++                // Its private marker has never been published. Any late native
++                // success is inert and is retained only for best-effort GC.
++                bundle.pendingOperation = sent.operation;
++                return failure(
++                    outcome.status === 'rejected'
++                        ? `${outcome.reason}`
++                        : outcome.value?.error ||
++                            'CSS ensure acknowledgement is ambiguous',
++                    true
++                );
++            }
++            const remaining = deadline - now();
++            if ( remaining <= 0 ) { break; }
++            await timeout(Math.min(
++                retryDelays[Math.min(attempt, retryDelays.length - 1)],
++                remaining
++            ));
++            attempt += 1;
++        }
++        return failure('CSS ensure deadline expired');
++    }
++
++    async function removeBundle(bundle, deadline) {
++        if ( bundle?.exactCSS === undefined ) { return success(); }
++        const requestId = `${makeRequestId()}:remove`;
++        const { outcome } = await sendNative({
++            what: 'removeCSS',
++            schema: messageSchema,
++            requestId,
++            css: bundle.exactCSS,
++            scopeAttribute: bundle.attr,
++            scopeCanary: bundle.canary,
++            scopeCanaryValue: bundle.canaryValue,
++            expectedDocumentId: state.documentId,
++            expectedFrameId: state.frameId,
++        }, deadline);
++        if (
++            outcome.status === 'resolved' &&
++            validNativeAck(outcome.value, requestId)
++        ) {
++            return outcome.value;
++        }
++        return failure(
++            outcome.status === 'rejected'
++                ? `${outcome.reason}`
++                : outcome.value?.error ||
++                    'CSS removal acknowledgement is ambiguous',
++            outcome.status !== 'resolved' ||
++                outcome.value?.ambiguous === true
++        );
++    }
++
++    function deactivateSlot(slot) {
++        slot.intent += 1;
++        slot.markerSuppressed = true;
++        if ( state.verifiedRoot !== document.documentElement ) {
++            removeMarker(slot.candidate, state.verifiedRoot);
++            removeMarker(slot.active, state.verifiedRoot);
++        }
++        removeMarker(slot.candidate, document.documentElement);
++        removeMarker(slot.active, document.documentElement);
++        if ( slot.hookActive ) {
++            try { slot.hook?.deactivate?.(); } catch { }
++            slot.hookActive = false;
++        }
++    }
++
++    async function cleanupDirty(slot, deadline) {
++        for ( const bundle of Array.from(slot.dirty) ) {
++            if ( now() >= deadline ) { return; }
++            if ( bundle.pendingOperation !== undefined ) {
++                const pending = await waitForReply(
++                    bundle.pendingOperation,
++                    deadline - now()
++                );
++                if ( pending.status === 'timeout' ) { return; }
++                bundle.pendingOperation = undefined;
++            }
++            const removed = await removeBundle(bundle, deadline);
++            if ( removed?.ok === true ) { slot.dirty.delete(bundle); }
++        }
++    }
++
++    async function reconcileSlot(slot, deadline, force = false) {
++        while ( isCurrentAPI() && now() < deadline ) {
++            const generation = slot.generation;
++            if ( isCurrentGeneration(generation) === false ) {
++                return failure('CSS owner generation changed');
++            }
++            const intent = slot.intent;
++            const body = desiredBody(slot);
++            const needsActivation = slot.wantsActivation || body !== '';
++            if ( needsActivation === false ) {
++                const old = slot.active;
++                deactivateSlot(slot);
++                slot.active = null;
++                slot.candidate = null;
++                if ( old !== null ) { slot.dirty.add(old); }
++                await cleanupDirty(slot, deadline);
++                if ( slot.dirty.size !== 0 ) {
++                    return failure('CSS owner cleanup is incomplete', true);
++                }
++                if ( slot.desired.size === 0 && slot.wantsActivation === false ) {
++                    slots.delete(slot.owner);
++                }
++                return success();
++            }
++
++            const identity = await freshIdentity(deadline);
++            if ( identity?.ok !== true ) { return identity; }
++            const root = identity.root;
++            if (
++                force === false &&
++                slot.markerSuppressed === false &&
++                slot.activeIntent >= intent &&
++                slot.active?.fingerprint === (body || ':root{}') &&
++                root?.hasAttribute(slot.active.attr) &&
++                slot.hook?.needsActivation?.() !== true
++            ) {
++                return success({ fingerprint: body });
++            }
++
++            let candidate;
++            try {
++                candidate = makeBundle(body || ':root{}', intent);
++            } catch(reason) {
++                return failure(`${reason}`);
++            }
++            slot.candidate = candidate;
++            const ensured = await ensureBundle(candidate, deadline);
++            if ( ensured?.ok !== true ) {
++                slot.dirty.add(candidate);
++                slot.candidate = null;
++                void cleanupDirty(slot, deadline);
++                return ensured;
++            }
++            const confirmed = await requestDocumentIdentity(deadline);
++            if (
++                confirmed?.ok !== true ||
++                confirmed.documentId !== state.documentId ||
++                confirmed.frameId !== state.frameId ||
++                confirmed.root !== root ||
++                document.documentElement !== root ||
++                isCurrentAPI() === false ||
++                isCurrentGeneration(generation) === false ||
++                slot.intent !== intent ||
++                now() >= deadline
++            ) {
++                slot.dirty.add(candidate);
++                slot.candidate = null;
++                void cleanupDirty(slot, deadline);
++                if ( slot.intent !== intent && now() < deadline ) {
++                    force = true;
++                    continue;
++                }
++                return failure(
++                    confirmed?.error ||
++                        'CSS candidate lost its Document authority',
++                    true
++                );
++            }
++
++            const old = slot.active;
++            // Publish the private candidate marker only long enough to prove
++            // that WebKit applied this exact USER-origin sheet. Keep the old
++            // marker live until the canary and activation hook both succeed.
++            root.setAttribute(candidate.attr, '');
++            const canary = await waitForCandidateCanary(
++                slot,
++                candidate,
++                confirmed,
++                generation,
++                intent,
++                deadline
++            );
++            if ( canary?.ok !== true ) {
++                removeMarker(candidate, root);
++                slot.dirty.add(candidate);
++                slot.candidate = null;
++                void cleanupDirty(slot, deadline);
++                return canary;
++            }
++            if (
++                slot.hookActive === false ||
++                slot.hook?.needsActivation?.() === true
++            ) {
++                try {
++                    slot.hook?.activatePrepared?.();
++                    slot.hookActive = slot.hook !== undefined;
++                } catch(reason) {
++                    removeMarker(candidate, root);
++                    slot.dirty.add(candidate);
++                    slot.candidate = null;
++                    slot.markerSuppressed = old === null;
++                    try { slot.hook?.deactivate?.(); } catch { }
++                    slot.hookActive = false;
++                    void cleanupDirty(slot, deadline);
++                    return failure(`${reason}`);
++                }
++            }
++            removeMarker(old, root);
++            slot.active = candidate;
++            slot.activeIntent = intent;
++            slot.candidate = null;
++            slot.markerSuppressed = false;
++            observeMarkers();
++            repairSlotMarker(slot);
++            if ( old !== null ) { slot.dirty.add(old); }
++            // Old payloads are already inert because their marker was removed
++            // in the commit task. Cleanup is performance GC and must not turn a
++            // successfully published candidate into a deadline failure.
++            void cleanupDirty(slot, now() + operationWindow);
++            return success({ fingerprint: body });
++        }
++        return failure('CSS activation deadline expired');
++    }
++
++    async function reconcileWithFollowers(slot, deadline, force) {
++        const result = await reconcileSlot(slot, deadline, force);
++        if ( result?.ok !== true ) { return result; }
++        for ( const follower of orderedSlots() ) {
++            if (
++                follower === slot ||
++                follows(follower, slot) === false ||
++                follower.active === null
++            ) { continue; }
++            const replayed = await reconcileSlot(follower, deadline, true);
++            if ( replayed?.ok === true ) { continue; }
++            deactivateSlot(follower);
++            return replayed;
++        }
++        return result;
++    }
++
++    function scheduleSlot(slot, deadline, force = false) {
++        const requiredIntent = slot.intent;
++        const operation = globalQueue
++            .catch(( ) => success())
++            .then(async ( ) => {
++                if ( now() >= deadline ) {
++                    return failure('CSS caller deadline expired');
++                }
++                const result = await reconcileWithFollowers(
++                    slot,
++                    deadline,
++                    force
++                );
++                if ( result?.ok !== true ) { return result; }
++                if (
++                    slots.get(slot.owner) === slot &&
++                    slot.activeIntent < requiredIntent &&
++                    (slot.desired.size !== 0 || slot.wantsActivation)
++                ) {
++                    return failure('CSS caller mutation was not committed');
++                }
++                return result;
++            });
++        globalQueue = operation.catch(reason => failure(`${reason}`));
++        void operation.catch(( ) => undefined);
++        return operation;
++    }
++
++    function operationContext(options = {}) {
++        const transaction = activeTransaction;
++        const generation = typeof options.generation === 'object' &&
++            options.generation !== null
++            ? options.generation
++            : transaction?.generation ?? fallbackGeneration;
++        const owner = typeof options.owner === 'object' && options.owner !== null
++            ? options.owner
++            : transaction?.owner ?? defaultOwner;
++        const lane = typeof options.lane === 'string'
++            ? options.lane
++            : transaction?.lane ??
++                (generation === fallbackGeneration ? 'base' : 'custom');
++        const deadline = Number.isFinite(options.deadline)
++            ? options.deadline
++            : Number.isFinite(transaction?.deadline)
++                ? transaction.deadline
++                : now() + operationWindow;
++        return { deadline, generation, lane, owner, transaction };
++    }
++
++    function addDesiredCSS(slot, canonical, cssSequence) {
++        if ( slot.desired.has(canonical) ) { return false; }
++        slot.desired.set(canonical, { css: canonical, sequence: cssSequence });
++        slot.intent += 1;
++        return true;
++    }
++
++    function insert(css, options = {}) {
++        let canonical;
++        try {
++            canonical = canonicalizeCSS(css);
++        } catch(reason) {
++            return Promise.resolve(failure(`${reason}`));
++        }
++        const context = operationContext(options);
++        if ( isCurrentGeneration(context.generation) === false ) {
++            return Promise.resolve(failure('CSS owner generation changed'));
++        }
++        const cssSequence = sequence++;
++        if (
++            context.transaction !== undefined &&
++            context.transaction.owner === context.owner &&
++            context.transaction.generation === context.generation &&
++            context.transaction.closed === false
++        ) {
++            context.transaction.staged.push({
++                css: canonical,
++                sequence: cssSequence,
++            });
++            return Promise.resolve(success({ staged: true }));
++        }
++        let slot;
++        try {
++            slot = slotFor(
++                context.owner,
++                context.generation,
++                context.lane
++            );
++        } catch(reason) {
++            return Promise.resolve(failure(`${reason}`));
++        }
++        addDesiredCSS(slot, canonical, cssSequence);
++        return scheduleSlot(slot, context.deadline);
++    }
++
++    function suppressAllMarkers() {
++        const root = document.documentElement;
++        for ( const slot of slots.values() ) {
++            slot.markerSuppressed = true;
++            if ( state.verifiedRoot !== root ) {
++                removeMarker(slot.active, state.verifiedRoot);
++                removeMarker(slot.candidate, state.verifiedRoot);
++            }
++            removeMarker(slot.active, root);
++            removeMarker(slot.candidate, root);
++        }
++    }
++
++    function pageHideHandler(event) {
++        suppressAllMarkers();
++        if ( event?.persisted === true ) {
++            pageCacheArmed = true;
++            pageCacheEpoch += 1;
++            return;
++        }
++        const deadline = now() + operationWindow;
++        for ( const slot of slots.values() ) {
++            if ( slot.hookActive ) {
++                try { slot.hook?.deactivate?.(); } catch { }
++                slot.hookActive = false;
++            }
++            for ( const bundle of [ slot.candidate, slot.active, ...slot.dirty ]) {
++                if ( bundle === null || bundle === undefined ) { continue; }
++                void removeBundle(bundle, deadline);
++            }
++        }
++    }
++
++    function pageRevealHandler(event) {
++        const pageShow = event?.type === 'pageshow';
++        if (
++            event?.type !== 'pagereveal' &&
++            (pageShow === false || event?.persisted !== true)
++        ) { return; }
++        if ( pageCacheArmed ) {
++            pageCacheArmed = false;
++            recoveredPageCacheEpoch = pageCacheEpoch;
++        } else if (
++            pageShow ||
++            pageCacheEpoch !== 0 && recoveredPageCacheEpoch === pageCacheEpoch
++        ) {
++            return;
++        }
++        suppressAllMarkers();
++        const ordered = orderedSlots().filter(slot =>
++            slot.desired.size !== 0 || slot.wantsActivation
++        );
++        if ( ordered.length === 0 ) { return; }
++        void scheduleSlot(ordered[0], now() + operationWindow, true);
++    }
++
++    currentAPI = {
 +        documentTimeOrigin,
-+        pageRevealHandler,
-@@ -38,7 +61 @@
++        get disposed() { return disposed; },
++        get documentId() { return state.documentId; },
++        get frameId() { return state.frameId; },
++        currentDocumentGeneration,
++        bindDocumentId(documentId, frameId) {
++            if (
++                typeof documentId !== 'string' || documentId === '' ||
++                Number.isInteger(frameId) === false || frameId < 0
++            ) { return false; }
++            if (
++                state.documentId !== undefined &&
++                (state.documentId !== documentId || state.frameId !== frameId)
++            ) { return false; }
++            state.documentId = documentId;
++            state.frameId = frameId;
++            state.verifiedRoot = document.documentElement;
++            observeMarkers();
++            repairMarkers();
++            return true;
++        },
++        suspendForIdentity(record) {
++            beginIdentitySuspension(record);
++            markerObserver?.disconnect();
++            observedRoot = undefined;
++        },
++        cancelIdentity(record) {
++            if ( suspendedBy !== record ) { return; }
++            // An unverified or failed identity must never republish the active
++            // commit marker. A later script execution obtains a fresh native
++            // acknowledgement and resumes or replaces this API.
++            finishIdentitySuspension(failure('CSS identity was cancelled'));
++            suspendedBy = {};
++        },
++        resumeForIdentity(record, documentId, frameId) {
++            if (
++                suspendedBy !== record ||
++                self.floorpCSSUserIdentityPendingRecord !== record ||
++                this.bindDocumentId(documentId, frameId) === false
++            ) { return false; }
++            if ( resumeActiveHooks() === false ) {
++                const result = failure('CSS activation hook could not resume');
++                // Keep every operation behind the resolved failure barrier
++                // until a replacement API has been installed. Otherwise an
++                // overlapping stock/custom insertion could publish markers
++                // after a partially resumed procedural hook failed.
++                suspendedBy = { failedHookResume: true };
++                finishIdentitySuspension(result);
++                observeMarkers();
++                return false;
++            }
++            suspendedBy = undefined;
++            self.floorpCSSUserIdentityPendingRecord = undefined;
++            finishIdentitySuspension(success());
++            observeMarkers();
++            repairMarkers();
++            return true;
++        },
++        refreshDocumentIdentity(deadline = now() + operationWindow) {
++            return requestDocumentIdentity(deadline);
++        },
++        refreshForScriptExecution() {
++            const pendingRecord = self.floorpCSSUserIdentityPendingRecord;
++            if (
++                pendingRecord !== undefined &&
++                pendingRecord === self.floorpCSSUserLatestExecutionRecord &&
++                suspendedBy === pendingRecord
++            ) {
++                return identityBarrier;
++            }
++            if ( scriptIdentityRefresh !== undefined ) {
++                return scriptIdentityRefresh;
++            }
++            const record = { deadline: now() + operationWindow };
++            self.floorpCSSUserIdentityPendingRecord = record;
++            this.suspendForIdentity(record);
++            scriptIdentityRefresh = requestDocumentIdentity(record.deadline)
++                .then(async identity => {
++                    if (
++                        identity?.ok !== true ||
++                        self.cssAPI !== currentAPI ||
++                        self.floorpCSSUserIdentityPendingRecord !== record
++                    ) { return identity; }
++                    if ( this.resumeForIdentity(
++                        record,
++                        identity.documentId,
++                        identity.frameId
++                    ) ) { return identity; }
++                    self.floorpCSSUserIdentityPendingRecord = record;
++                    self.floorpCSSUserForceAPIReplay = record;
++                    const requestId = `${makeRequestId()}:refresh`;
++                    const operation = Promise.resolve().then(( ) =>
++                        chrome.runtime.sendMessage({
++                            what: 'injectCSSProceduralAPI',
++                            schema: messageSchema,
++                            requestId,
++                        })
++                    );
++                    void operation.catch(( ) => undefined);
++                    const outcome = await waitForReply(
++                        operation,
++                        record.deadline - now()
++                    );
++                    if (
++                        outcome.status !== 'resolved' ||
++                        outcome.value?.ok !== true ||
++                        outcome.value.schema !== messageSchema ||
++                        outcome.value.requestId !== requestId ||
++                        typeof self.cssAPI?.resumeForIdentity !== 'function' ||
++                        self.cssAPI.resumeForIdentity(
++                            record,
++                            identity.documentId,
++                            identity.frameId
++                        ) === false
++                    ) {
++                        return failure(
++                            outcome.value?.error ||
++                                'CSS API replacement failed',
++                            outcome.status !== 'resolved'
++                        );
++                    }
++                    return identity;
++                })
++                .finally(( ) => {
++                    if ( self.floorpCSSUserForceAPIReplay === record ) {
++                        self.floorpCSSUserForceAPIReplay = undefined;
++                    }
++                    if (
++                        self.floorpCSSUserIdentityPendingRecord === record &&
++                        self.cssAPI === currentAPI
++                    ) {
++                        self.floorpCSSUserIdentityPendingRecord = undefined;
++                        currentAPI.cancelIdentity(record);
++                    }
++                    scriptIdentityRefresh = undefined;
++                });
++            void scriptIdentityRefresh.catch(( ) => undefined);
++            return scriptIdentityRefresh;
++        },
++        ensureDocumentIdentity(deadline = now() + operationWindow) {
++            if ( identityOperation !== undefined ) { return identityOperation; }
++            identityOperation = freshIdentity(deadline).finally(( ) => {
++                identityOperation = undefined;
+@@ -34 +1475,246 @@
+-            inserted.add(css);
++            return identityOperation;
++        },
++        beginInsertionTransaction(
++            generation,
++            deadline,
++            owner = generation,
++            lane = generation === fallbackGeneration ? 'base' : 'custom'
++        ) {
++            if (
++                activeTransaction !== undefined ||
++                isCurrentGeneration(generation) === false ||
++                Number.isFinite(deadline) === false ||
++                typeof owner !== 'object' || owner === null
++            ) {
++                throw new Error('CSS insertion transaction cannot begin');
++            }
++            activeTransaction = {
++                closed: false,
++                deadline,
++                generation,
++                lane,
++                owner,
++                staged: [],
++            };
++            return activeTransaction;
++        },
++        finishInsertionTransaction(transaction) {
++            if ( activeTransaction !== transaction ) {
++                throw new Error('CSS insertion transaction does not match');
++            }
++            activeTransaction = undefined;
++            transaction.closed = true;
++            const slot = slotFor(
++                transaction.owner,
++                transaction.generation,
++                transaction.lane
++            );
++            for ( const entry of transaction.staged ) {
++                addDesiredCSS(slot, entry.css, entry.sequence);
++            }
++            transaction.staged.length = 0;
++            void scheduleSlot(slot, transaction.deadline);
++            return transaction;
++        },
++        rollbackInsertionTransaction(transaction) {
++            if ( activeTransaction === transaction ) {
++                activeTransaction = undefined;
++            }
++            transaction.closed = true;
++            transaction.staged.length = 0;
++            return success();
++        },
++        registerOwnerHook(
++            owner,
++            generation,
++            hook,
++            lane = generation === fallbackGeneration ? 'base' : 'custom'
++        ) {
++            const slot = slotFor(owner, generation, lane);
++            if ( slot.hook !== undefined && slot.hook !== hook ) {
++                throw new Error('CSS owner already has an activation hook');
++            }
++            slot.hook = hook;
++            return success();
++        },
++        unregisterOwnerHook(owner, generation, hook) {
++            const slot = slotFor(owner, generation, undefined, false);
++            if ( slot === undefined || slot.hook !== hook ) {
++                return success();
++            }
++            if ( slot.hookActive ) {
++                try { slot.hook.deactivate?.(); } catch { }
++                slot.hookActive = false;
++            }
++            slot.hook = undefined;
++            if (
++                slot.active === null &&
++                slot.candidate === null &&
++                slot.desired.size === 0 &&
++                slot.dirty.size === 0 &&
++                slot.wantsActivation === false
++            ) {
++                slots.delete(owner);
++            }
++            return success();
++        },
++        activateOwner(owner, generation, options = {}) {
++            const slot = slotFor(
++                owner,
++                generation,
++                options.lane ??
++                    (generation === fallbackGeneration ? 'base' : 'custom')
++            );
++            if ( slot.wantsActivation === false ) {
++                slot.wantsActivation = true;
++                slot.intent += 1;
++            }
++            if (
++                activeTransaction?.owner === owner &&
++                activeTransaction.generation === generation
++            ) { return Promise.resolve(success({ staged: true })); }
++            return scheduleSlot(
++                slot,
++                Number.isFinite(options.deadline)
++                    ? options.deadline
++                    : now() + operationWindow
++            );
++        },
++        insert,
++        async commit(
++            generation = currentDocumentGeneration(),
++            owner = generation,
++            deadline = now() + operationWindow
++        ) {
++            const slot = slotFor(owner, generation, undefined, false);
++            if ( slot === undefined ) {
++                return success({ committed: true });
++            }
++            const result = await scheduleSlot(slot, deadline);
++            if ( result?.ok !== true ) { return result; }
++            const body = desiredBody(slot);
++            const fingerprint = body || ':root{}';
++            const committed = slot.active?.fingerprint === fingerprint &&
++                slot.markerSuppressed === false &&
++                state.verifiedRoot === document.documentElement &&
++                state.verifiedRoot?.hasAttribute(slot.active.attr) === true &&
++                now() < deadline;
++            return committed
++                ? success({ committed: true, fingerprint: body })
++                : failure('CSS owner did not commit');
++        },
++        async forgetOwner(
++            owner,
++            generation = currentDocumentGeneration(),
++            deadline = now() + operationWindow
++        ) {
++            const slot = slotFor(owner, generation, undefined, false);
++            if ( slot === undefined ) {
++                const recovery = globalQueue
++                    .catch(( ) => success())
++                    .then(async ( ) => {
++                        for ( const staleSlot of Array.from(slots.values()) ) {
++                            if ( staleSlot.dirty.size === 0 ) { continue; }
++                            await cleanupDirty(staleSlot, deadline);
++                            if ( staleSlot.dirty.size !== 0 ) {
++                                return failure(
++                                    'Prior CSS cleanup did not complete',
++                                    true
++                                );
++                            }
++                            if (
++                                staleSlot.active === null &&
++                                staleSlot.candidate === null &&
++                                staleSlot.desired.size === 0 &&
++                                staleSlot.wantsActivation === false
++                            ) {
++                                slots.delete(staleSlot.owner);
++                            }
++                        }
++                        return success();
++                    });
++                globalQueue = recovery.catch(reason => failure(`${reason}`));
++                const queued = await waitForReply(recovery, deadline - now());
++                if ( queued.status !== 'resolved' ) {
++                    return failure('Prior CSS cleanup is still pending', true);
++                }
++                return queued.value?.ok === true
++                    ? success()
++                    : queued.value ??
++                        failure('Prior CSS cleanup did not complete', true);
++            }
++            deactivateSlot(slot);
++            slot.desired.clear();
++            slot.wantsActivation = false;
++            for ( const bundle of [ slot.candidate, slot.active ] ) {
++                if ( bundle !== null ) { slot.dirty.add(bundle); }
++            }
++            slot.candidate = null;
++            slot.active = null;
++            const cleanup = globalQueue
++                .catch(( ) => success())
++                .then(async ( ) => {
++                    await cleanupDirty(slot, deadline);
++                    if ( slot.dirty.size !== 0 ) {
++                        return failure(
++                            'CSS owner cleanup is incomplete',
++                            true
++                        );
++                    }
++                    if (
++                        slot.desired.size === 0 &&
++                        slot.wantsActivation === false
++                    ) {
++                        slots.delete(owner);
++                    }
++                    return success();
++                });
++            globalQueue = cleanup.catch(reason => failure(`${reason}`));
++            const result = await cleanup;
++            return result?.ok === true ? success() : result;
++        },
++        beginRecoveryWindow() {
++            return globalQueue;
++        },
++        async waitForRecovery() {
++            return globalQueue;
++        },
++        async replay(generation, options = {}) {
++            const deadline = Number.isFinite(options.deadline)
++                ? options.deadline
++                : now() + operationWindow;
++            const selected = orderedSlots().filter(slot =>
++                isCurrentGeneration(slot.generation) &&
++                (options.owner === undefined || slot.owner === options.owner) &&
++                (options.excludeOwner === undefined ||
++                    slot.owner !== options.excludeOwner)
++            );
++            let result = success();
++            for ( const slot of selected ) {
++                result = await scheduleSlot(
++                    slot,
++                    deadline,
++                    options.force === true
++                );
++                if ( result?.ok !== true ) { return result; }
++            }
++            return result;
++        },
++        dispose() {
++            if ( disposed ) { return; }
++            disposed = true;
++            self.removeEventListener('pagehide', pageHideHandler);
++            self.removeEventListener('pagereveal', pageRevealHandler);
++            self.removeEventListener('pageshow', pageRevealHandler);
++            markerObserver?.disconnect();
++            markerObserver = undefined;
++            suppressAllMarkers();
++            for ( const slot of slots.values() ) {
++                // A suspended procedural hook still owns selectors, node
++                // tokens and timers even though hookActive is false.
++                try { slot.hook?.deactivate?.(); } catch { }
++                slot.hookActive = false;
++                slot.intent += 1;
++            }
++            suspendedBy = {};
++            finishIdentitySuspension(failure('CSS API was replaced', true));
+@@ -38,5 +1724,8 @@
 -    self.addEventListener('pagereveal', ( ) => {
 -        chrome.runtime.sendMessage({
 -            what: 'insertCSS',
 -            css: Array.from(inserted).join('\n'),
 -        }).catch(( ) => {
--        });
++    self.cssAPI = currentAPI;
++    if ( typeof MutationObserver === 'function' ) {
++        markerObserver = new MutationObserver(( ) => {
++            if ( document.documentElement !== observedRoot ) {
++                void currentAPI.refreshForScriptExecution();
++                return;
++            }
++            repairMarkers();
+@@ -44 +1733,5 @@
 -    });
++        observeMarkers();
++    }
++    self.addEventListener('pagehide', pageHideHandler);
 +    self.addEventListener('pagereveal', pageRevealHandler);
++    self.addEventListener('pageshow', pageRevealHandler);
+@@ -46,0 +1740,2 @@
++
++void 0;
 diff --git a/js/scripting/css-procedural-api.js b/js/scripting/css-procedural-api.js
-index 45656d3..2deebb0 100644
+index 45656d3..dce3c7f 100644
 --- a/js/scripting/css-procedural-api.js
 +++ b/js/scripting/css-procedural-api.js
-@@ -26,3 +26,9 @@
+@@ -26,3 +26,7 @@
 -if ( self.ProceduralFiltererAPI !== undefined ) {
 -    if ( self.ProceduralFiltererAPI instanceof Promise === false ) { return; }
 -}
-+const proceduralDocumentElement = document.documentElement;
 +const proceduralDocumentTimeOrigin = performance.timeOrigin;
 +const existingProceduralAPI = self.ProceduralFiltererAPI;
 +if (
-+    self.floorpCSSUserAPIIdleReplay !== true &&
++    self.floorpCSSUserForceAPIReplay === undefined &&
 +    typeof existingProceduralAPI === 'function' &&
-+    existingProceduralAPI.documentElement === proceduralDocumentElement &&
 +    existingProceduralAPI.documentTimeOrigin === proceduralDocumentTimeOrigin
 +) { return; }
-@@ -597 +603,2 @@ class ProceduralFilterer {
+@@ -589 +593,4 @@ class ProceduralFilterer {
+-    constructor() {
++    constructor(cssOwner, cssGeneration, cssLane) {
++        this.cssOwner = cssOwner;
++        this.cssGeneration = cssGeneration;
++        this.cssLane = cssLane;
+@@ -592 +599,2 @@ class ProceduralFilterer {
+-        this.styledNodes = new Set();
++        this.styledNodes = new Map();
++        this.suspended = true;
+@@ -597 +605,3 @@ class ProceduralFilterer {
 -    async reset() {
 +    async reset(options = {}) {
-+        const removeCSS = options.removeCSS !== false;
-@@ -612,3 +619,5 @@ class ProceduralFilterer {
++        void options;
++        this.suspend();
+@@ -606,3 +616,2 @@ class ProceduralFilterer {
+-        const promises = [];
+-        for ( const [ style, token ] of this.styleTokenMap ) {
+-            for ( const elem of this.styledNodes ) {
++        for ( const [ token, nodes ] of this.styledNodes ) {
++            for ( const elem of nodes ) {
+@@ -611,4 +619,0 @@ class ProceduralFilterer {
+-            const css = `[${token}]\n{${style}}\n`;
 -            promises.push(
 -                chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
 -            );
-+            if ( removeCSS ) {
-+                promises.push(
-+                    chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
-+                );
+@@ -618 +623,14 @@ class ProceduralFilterer {
+-        return Promise.all(promises);
++        return [];
++    }
++
++    suspend() {
++        this.suspended = true;
++        if ( this.timer !== undefined ) {
++            self.cancelAnimationFrame(this.timer);
++            this.timer = undefined;
++        }
++    }
++
++    resume() {
++        this.suspended = false;
++        this.uBOL_commit();
+@@ -640,0 +659 @@ class ProceduralFilterer {
++        if ( this.suspended ) { return; }
+@@ -650 +669 @@ class ProceduralFilterer {
+-        this.styledNodes = new Set();
++        this.styledNodes = new Map();
+@@ -683 +702,5 @@ class ProceduralFilterer {
+-        self.cssAPI.insert(`[${styleToken}]\n{${style}}\n`);
++        self.cssAPI.insert(`[${styleToken}]\n{${style}}\n`, {
++            generation: this.cssGeneration,
++            lane: this.cssLane,
++            owner: this.cssOwner,
++        });
+@@ -696,0 +720,5 @@ class ProceduralFilterer {
++            let styledNodes = this.styledNodes.get(styleToken);
++            if ( styledNodes === undefined ) {
++                styledNodes = new Set();
++                this.styledNodes.set(styleToken, styledNodes);
 +            }
-@@ -764 +773,2 @@ self.ProceduralFiltererAPI = class {
+@@ -699 +727 @@ class ProceduralFilterer {
+-                this.styledNodes.add(node);
++                styledNodes.add(node);
+@@ -736,5 +764,5 @@ class ProceduralFilterer {
+-    unprocessNodes(nodes) {
+-        const tokens = Array.from(this.styleTokenMap.values());
+-        for ( const node of nodes ) {
+-            if ( this.styledNodes.has(node) ) { continue; }
+-            for ( const token of tokens ) {
++    unprocessNodes(styledNodes) {
++        for ( const [ token, nodes ] of styledNodes ) {
++            const currentNodes = this.styledNodes.get(token);
++            for ( const node of nodes ) {
++                if ( currentNodes?.has(node) ) { continue; }
+@@ -746,0 +775 @@ class ProceduralFilterer {
++        if ( this.suspended ) { return; }
+@@ -758 +787,14 @@ self.ProceduralFiltererAPI = class {
+-    constructor() {
++    constructor(options = {}) {
++        this.cssOwner = typeof options.cssOwner === 'object' &&
++            options.cssOwner !== null
++            ? options.cssOwner
++            : {};
++        this.cssGeneration = typeof options.cssGeneration === 'object' &&
++            options.cssGeneration !== null
++            ? options.cssGeneration
++            : self.cssAPI.currentDocumentGeneration();
++        this.cssLane = typeof options.cssLane === 'string'
++            ? options.cssLane
++            : options.cssOwner === self.cssUserDocumentGeneration
++                ? 'custom'
++                : 'base';
+@@ -759,0 +802 @@ self.ProceduralFiltererAPI = class {
++        this.proceduralSelectors = [];
+@@ -761,0 +805,41 @@ self.ProceduralFiltererAPI = class {
++        this.preparedRevision = 0;
++        this.activatedRevision = 0;
++        this.hookRegistered = false;
++        if ( typeof self.cssAPI?.registerOwnerHook !== 'function' ) {
++            throw new Error('Procedural CSS activation is unavailable');
++        }
++        this.ensureOwnerRegistration();
++    }
++
++    ensureOwnerRegistration() {
++        if ( this.hookRegistered ) { return; }
++        self.cssAPI.registerOwnerHook(
++            this.cssOwner,
++            this.cssGeneration,
++            this,
++            this.cssLane
++        );
++        this.hookRegistered = true;
++    }
++
++    activatePrepared() {
++        if (
++            this.proceduralFilterer === null &&
++            this.proceduralSelectors.length !== 0
++        ) {
++            this.proceduralFilterer = new ProceduralFilterer(
++                this.cssOwner,
++                this.cssGeneration,
++                this.cssLane
++            );
++            this.proceduralFilterer.addSelectors(this.proceduralSelectors);
++        }
++        if ( this.proceduralFilterer === null ) { return; }
++        if ( this.domObserver === null ) {
++            this.domObserver = new MutationObserver(mutations => {
++                this.onDOMChanged(mutations);
++            });
++            this.domObserver.observe(document, { childList: true, subtree: true });
++        }
++        this.proceduralFilterer.resume();
++        this.activatedRevision = this.preparedRevision;
+@@ -764 +848,7 @@ self.ProceduralFiltererAPI = class {
 -    async reset() {
-+    async reset(options = {}) {
-+        const removeCSS = options.removeCSS !== false;
-@@ -772 +782 @@ self.ProceduralFiltererAPI = class {
++    needsActivation() {
++        return this.proceduralFilterer === null &&
++                this.proceduralSelectors.length !== 0 ||
++            this.activatedRevision !== this.preparedRevision;
++    }
++
++    deactivate() {
+@@ -770 +859,0 @@ self.ProceduralFiltererAPI = class {
+-        const promises = [];
+@@ -772 +861 @@ self.ProceduralFiltererAPI = class {
 -            promises.push(this.proceduralFilterer.reset());
-+            promises.push(this.proceduralFilterer.reset(options));
-@@ -776,3 +786,5 @@ self.ProceduralFiltererAPI = class {
++            void this.proceduralFilterer.reset({ removeCSS: false });
+@@ -775,4 +864,7 @@ self.ProceduralFiltererAPI = class {
+-        for ( const css of this.cssSheets ) {
 -            promises.push(
 -                chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
 -            );
-+            if ( removeCSS ) {
-+                promises.push(
-+                    chrome.runtime.sendMessage({ what: 'removeCSS', css }).catch(( ) => { })
-+                );
++    }
++
++    suspend() {
++        if ( this.domObserver ) {
++            this.domObserver.takeRecords();
++            this.domObserver.disconnect();
++            this.domObserver = null;
+@@ -779,0 +872,11 @@ self.ProceduralFiltererAPI = class {
++        // Identity refresh within the same native Document must retain the
++        // parsed filterer, its style-token map, and token attributes already
++        // placed on matching nodes. activatePrepared() will reconnect the
++        // observer and run a fresh commit after authority is restored.
++        this.proceduralFilterer?.suspend();
++    }
++
++    async reset(options = {}) {
++        const removeCSS = options.removeCSS !== false;
++        this.deactivate();
++        const promises = [];
+@@ -781 +884,25 @@ self.ProceduralFiltererAPI = class {
+-        await Promise.all(promises);
++        this.proceduralSelectors.length = 0;
++        this.preparedRevision = 0;
++        this.activatedRevision = 0;
++        if ( removeCSS ) {
++            if ( typeof self.cssAPI?.forgetOwner !== 'function' ) {
++                throw new Error('Procedural CSS owner cleanup is unavailable');
 +            }
-@@ -861,0 +874,2 @@ self.ProceduralFiltererAPI = class {
-+self.ProceduralFiltererAPI.documentElement = proceduralDocumentElement;
++            promises.push(self.cssAPI.forgetOwner(
++                this.cssOwner,
++                this.cssGeneration
++            ));
++        } else {
++            self.cssAPI?.unregisterOwnerHook?.(
++                this.cssOwner,
++                this.cssGeneration,
++                this
++            );
++        }
++        this.hookRegistered = false;
++        const results = await Promise.all(promises);
++        const failure = results.find(result => result?.ok === false);
++        if ( failure !== undefined ) {
++            throw new Error(failure.error || 'Procedural CSS cleanup failed');
++        }
++        return { ok: true };
+@@ -784,0 +912 @@ self.ProceduralFiltererAPI = class {
++        this.ensureOwnerRegistration();
+@@ -822 +950,5 @@ self.ProceduralFiltererAPI = class {
+-        self.cssAPI.insert(cssSheet);
++        self.cssAPI.insert(cssSheet, {
++            generation: this.cssGeneration,
++            lane: this.cssLane,
++            owner: this.cssOwner,
++        });
+@@ -825,0 +958,3 @@ self.ProceduralFiltererAPI = class {
++        this.ensureOwnerRegistration();
++        this.proceduralSelectors.push(...selectors);
++        this.preparedRevision += 1;
+@@ -827,7 +962,5 @@ self.ProceduralFiltererAPI = class {
+-            this.proceduralFilterer = new ProceduralFilterer();
+-        }
+-        if ( this.domObserver === null ) {
+-            this.domObserver = new MutationObserver(mutations => {
+-                this.onDOMChanged(mutations);
+-            });
+-            this.domObserver.observe(document, { childList: true, subtree: true });
++            this.proceduralFilterer = new ProceduralFilterer(
++                this.cssOwner,
++                this.cssGeneration,
++                this.cssLane
++            );
+@@ -836 +969,6 @@ self.ProceduralFiltererAPI = class {
+-        this.proceduralFilterer.uBOL_commit();
++        const activation = self.cssAPI.activateOwner(
++            this.cssOwner,
++            this.cssGeneration,
++            { lane: this.cssLane }
++        );
++        void activation.catch(( ) => undefined);
+@@ -861,0 +1000 @@ self.ProceduralFiltererAPI = class {
 +self.ProceduralFiltererAPI.documentTimeOrigin = proceduralDocumentTimeOrigin;
 diff --git a/js/scripting/css-specific.js b/js/scripting/css-specific.js
 index c28930c..9e89e75 100644
@@ -7594,51 +10123,447 @@ index c28930c..9e89e75 100644
 +if ( isCurrentDocument() === false ) { return; }
 diff --git a/js/scripting/css-user-idle-prelude.js b/js/scripting/css-user-idle-prelude.js
 new file mode 100644
-index 0000000..e0690f9
+index 0000000..a2877f3
 --- /dev/null
 +++ b/js/scripting/css-user-idle-prelude.js
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,8 @@
 +'use strict';
 +
-+// Run before the API files in the document_idle registration. WebKit can
-+// preserve their isolated-world document identity across the transient
-+// about:blank -> final about:srcdoc commit, so origin-fallback documents must
-+// rebuild those APIs even when their normal identity guards still match.
-+self.floorpCSSUserAPIIdleReplay = document.location.hostname === '';
++// Do not infer Document identity from location, documentElement, or timeOrigin:
++// WebKit can preserve any of those across an origin-fallback commit, while
++// pushState and root replacement can change them within one Document. css-user
++// performs a request-bound sender.documentId handshake after the guarded API
++// files run and forces a rebuild only when that immutable ID changed.
++self.floorpCSSUserAPIIdleReplay = true;
 diff --git a/js/scripting/css-user-idle.js b/js/scripting/css-user-idle.js
 new file mode 100644
-index 0000000..955512f
+index 0000000..2a50324
 --- /dev/null
 +++ b/js/scripting/css-user-idle.js
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,6 @@
 +'use strict';
 +
 +// WebKit can run document_start in a transient about:blank wrapper before an
 +// iframe commits its final origin-fallback document. Mark the document_idle
 +// registration so css-user can replay only those hostname-less documents.
 +self.floorpCSSUserIdleReplay = true;
-+self.floorpCSSUserAPIIdleReplay = undefined;
+diff --git a/js/scripting/css-user-terminate.js b/js/scripting/css-user-terminate.js
+index 6e63eb9..1add718 100644
+--- a/js/scripting/css-user-terminate.js
++++ b/js/scripting/css-user-terminate.js
+@@ -22 +22 @@
+-(function uBOL_cssUserTerminate() {
++var floorpCSSUserTermination = (async function uBOL_cssUserTerminate() {
+@@ -25,0 +26,4 @@
++const generation = self.cssUserDocumentGeneration;
++const startHandler = self.cssUserStartHandler;
++const filterer = self.customProceduralFiltererAPI ??
++    self.floorpCSSUserActivationState?.proceduralFilterer;
+@@ -27,6 +31,5 @@ const plainSelectors = self.customFilters?.plainSelectors;
+-if ( plainSelectors ) {
+-    chrome.runtime.sendMessage({
+-        what: 'removeCSS',
+-        css: `${plainSelectors.join(',\n')}{display:none!important;}`,
+-    }).catch(( ) => {
+-    });
++const cssAPI = self.cssAPI;
++const latestExecution = self.floorpCSSUserLatestExecutionRecord;
++const pendingIdentity = self.floorpCSSUserIdentityPendingRecord;
++if ( typeof latestExecution === 'object' && latestExecution !== null ) {
++    latestExecution.cancelled = true;
+@@ -34,3 +37,3 @@ if ( plainSelectors ) {
+-
+-if ( self.customProceduralFiltererAPI instanceof Object ) {
+-    self.customProceduralFiltererAPI.reset();
++if ( typeof pendingIdentity === 'object' && pendingIdentity !== null ) {
++    pendingIdentity.cancelled = true;
++    cssAPI?.cancelIdentity?.(pendingIdentity);
+@@ -37,0 +41,2 @@ if ( self.customProceduralFiltererAPI instanceof Object ) {
++self.floorpCSSUserLatestExecutionRecord = { cancelled: true };
++self.floorpCSSUserIdentityPendingRecord = undefined;
+@@ -38,0 +44,20 @@ if ( self.customProceduralFiltererAPI instanceof Object ) {
++// forgetOwner synchronously removes this generation from remembered and
++// in-flight CSS before its first await. Invalidate the generation immediately
++// afterwards so pending css-user work cannot publish customFilters or commit a
++// reset filterer while termination is being acknowledged to the picker.
++const forgetOperation =
++    typeof generation === 'object' &&
++    generation !== null &&
++    typeof cssAPI?.forgetOwner === 'function'
++        ? cssAPI.forgetOwner(generation, generation)
++        : undefined;
++if ( typeof startHandler === 'function' ) {
++    self.removeEventListener('pagereveal', startHandler);
++    self.removeEventListener('pageshow', startHandler);
++}
++self.cssUserDocumentGeneration = {};
++self.floorpCSSUserActivationState = undefined;
++self.cssUserStartHandler = undefined;
++self.cssUserPendingOp = Promise.resolve();
++self.floorpCSSUserBootstrapState = undefined;
++self.floorpCSSUserExecution = undefined;
+@@ -39,0 +65,34 @@ self.customFilters = undefined;
++self.customProceduralFiltererAPI = undefined;
++
++const cleanup = [];
++if ( forgetOperation !== undefined ) {
++    cleanup.push(forgetOperation);
++} else if ( plainSelectors ) {
++    cleanup.push(Promise.reject(
++        new Error('Custom-filter CSS owner cleanup is unavailable')
++    ));
++}
++if ( typeof filterer?.reset === 'function' ) {
++    cleanup.push(Promise.resolve().then(( ) =>
++        filterer.reset({
++            // Owner-scoped cssAPI cleanup removes native CSS without touching
++            // stock sheets; reset still tears down observers and node tokens.
++            removeCSS: forgetOperation === undefined,
++        })
++    ));
++}
++const cleanupResults = await Promise.allSettled(cleanup);
++const rejectedCleanup = cleanupResults.find(result =>
++    result.status === 'rejected'
++);
++if ( rejectedCleanup !== undefined ) {
++    throw rejectedCleanup.reason;
++}
++const failedCleanup = cleanupResults.find(result =>
++    result.status === 'fulfilled' && result.value?.ok === false
++);
++if ( failedCleanup !== undefined ) {
++    throw new Error(
++        failedCleanup.value.error || 'Custom-filter termination failed'
++    );
++}
+@@ -42,0 +102,6 @@ self.customFilters = undefined;
++return {
++    ok: true,
++    schema: 1,
++    documentId: cssAPI?.documentId ?? null,
++};
++
+@@ -44,0 +110,2 @@ self.customFilters = undefined;
++self.floorpCSSUserTerminationOp = floorpCSSUserTermination;
++void floorpCSSUserTermination.catch(( ) => undefined);
 diff --git a/js/scripting/css-user.js b/js/scripting/css-user.js
-index ceb96e5..7440052 100644
+index ceb96e5..b073328 100644
 --- a/js/scripting/css-user.js
 +++ b/js/scripting/css-user.js
-@@ -26,2 +26,12 @@
--async function uBOL_cssUserActivate() {
--    if ( self.customFilters ) { return; }
+@@ -22 +22,2 @@
+-(async function uBOL_cssUser() {
++var floorpCSSUserExecutionRecord = {};
++var floorpCSSUserExecution = (async function uBOL_cssUser(executionRecord) {
+@@ -25,0 +27,830 @@
 +const floorpIdleReplay = self.floorpCSSUserIdleReplay === true;
 +self.floorpCSSUserIdleReplay = undefined;
++self.floorpCSSUserAPIIdleReplay = undefined;
 +const floorpOriginFallbackDocument = document.location.hostname === '';
-+const floorpOriginFallbackReplay =
-+    floorpIdleReplay && floorpOriginFallbackDocument;
-+// The document_start registration already covers ordinary HTTP(S) documents.
-+// WebKit can reuse the same Document wrapper and time origin when a transient
-+// about:blank frame commits its final about:srcdoc document, so identity-based
-+// de-duplication loses the final activation. Re-run every hostname-less final
-+// document instead; the idle marker is placed immediately before this file and
-+// is never set by live, programmatic custom-filter refreshes.
-+if ( floorpIdleReplay && floorpOriginFallbackReplay === false ) { return; }
-@@ -29 +39,25 @@ async function uBOL_cssUserActivate() {
--    const docURL = new URL(document.baseURI);
++const customFilterActivationTimeout = 15000;
++executionRecord.startedAt = performance.now();
++executionRecord.deadline =
++    executionRecord.startedAt + customFilterActivationTimeout;
++const customFilterMessageSchema = 1;
++const customFilterReplyTimeout = 2000;
++const customFilterRetryDelays = [ 100, 250, 500, 1000, 2000 ];
++const customFilterRequestId = globalThis.crypto?.randomUUID?.() ||
++    `${Date.now()}-${Math.random()}`;
++self.floorpCSSUserIdentityPendingRecord = executionRecord;
++if ( typeof self.cssAPI?.suspendForIdentity === 'function' ) {
++    self.cssAPI.suspendForIdentity(executionRecord);
++}
++self.floorpCSSUserLatestExecutionRecord = executionRecord;
++
++function failedExecution() {
++    return { ok: false, schema: customFilterMessageSchema, committed: false };
++}
++
++function isLatestExecution() {
++    return executionRecord.cancelled !== true &&
++        self.floorpCSSUserLatestExecutionRecord === executionRecord &&
++        performance.now() < executionRecord.deadline;
++}
++
++async function followLatestExecution() {
++    const latestOperation = self.floorpCSSUserLatestExecutionRecord?.operation;
++    if ( latestOperation instanceof Promise ) {
++        try {
++            return await latestOperation;
++        } catch {
++        }
++    }
++    return failedExecution();
++}
++
++function waitForBootstrapTimeout(delay) {
++    return new Promise(resolve => setTimeout(resolve, delay));
++}
++
++function validDocumentIdentity(response, requestId) {
++    return typeof response === 'object' &&
++        response !== null &&
++        response.ok === true &&
++        response.schema === customFilterMessageSchema &&
++        response.requestId === requestId &&
++        typeof response.documentId === 'string' &&
++        response.documentId !== '' &&
++        Number.isInteger(response.frameId) &&
++        response.frameId >= 0;
++}
++
++async function readDocumentIdentity() {
++    const deadline = executionRecord.deadline;
++    let attempt = 0;
++    while (
++        executionRecord.cancelled !== true &&
++        performance.now() < deadline
++    ) {
++        const requestId = `${customFilterRequestId}:document:${attempt}`;
++        const requestRoot = document.documentElement;
++        let timeoutId;
++        const operation = Promise.resolve().then(( ) =>
++            chrome.runtime.sendMessage({
++                what: 'floorpCSSDocumentIdentity',
++                schema: customFilterMessageSchema,
++                requestId,
++            })
++        );
++        void operation.catch(( ) => undefined);
++        let outcome;
++        try {
++            outcome = await Promise.race([
++                operation.then(
++                    value => ({ status: 'resolved', value }),
++                    reason => ({ status: 'rejected', reason })
++                ),
++                new Promise(resolve => {
++                    timeoutId = setTimeout(
++                        () => resolve({ status: 'timeout' }),
++                        Math.min(
++                            customFilterReplyTimeout,
++                            deadline - performance.now()
++                        )
++                    );
++                }),
++            ]);
++        } finally {
++            clearTimeout(timeoutId);
++        }
++        if (
++            outcome.status === 'resolved' &&
++            document.documentElement === requestRoot &&
++            validDocumentIdentity(outcome.value, requestId)
++        ) {
++            return outcome.value;
++        }
++        const remaining = deadline - performance.now();
++        if ( remaining <= 0 ) { break; }
++        const delay = customFilterRetryDelays[
++            Math.min(attempt, customFilterRetryDelays.length - 1)
++        ];
++        attempt += 1;
++        await waitForBootstrapTimeout(Math.min(delay, remaining));
++    }
++}
++
++const cssUserDocumentIdentity = await readDocumentIdentity();
++if ( cssUserDocumentIdentity === undefined ) {
++    return failedExecution();
++}
++if ( isLatestExecution() === false ) {
++    return followLatestExecution();
++}
++const cssUserNativeDocumentId = cssUserDocumentIdentity.documentId;
++const cssUserNativeFrameId = cssUserDocumentIdentity.frameId;
++let cssUserIdentityResumed = false;
++if ( typeof self.cssAPI?.resumeForIdentity === 'function' ) {
++    cssUserIdentityResumed = self.cssAPI.resumeForIdentity(
++        executionRecord,
++        cssUserNativeDocumentId,
++        cssUserNativeFrameId
++    );
++}
++
++async function bindCSSAPIToCurrentDocument() {
++    let cssAPI = self.cssAPI;
++    if ( cssUserIdentityResumed === true ) { return true; }
++
++    // The isolated global can survive an origin-fallback commit even when the
++    // native Document changed. Invalidate the old generation before yielding,
++    // then force guarded APIs into this exact sender.documentId.
++    const oldStartHandler = self.cssUserStartHandler;
++    if ( typeof oldStartHandler === 'function' ) {
++        self.removeEventListener('pagereveal', oldStartHandler);
++        self.removeEventListener('pageshow', oldStartHandler);
++    }
++    self.cssUserDocumentGeneration = {};
++    self.floorpCSSUserActivationState = undefined;
++    self.cssUserStartHandler = undefined;
++    self.cssUserPendingOp = Promise.resolve();
++    self.customFilters = undefined;
++    const forceToken = {};
++    self.floorpCSSUserIdentityPendingRecord = executionRecord;
++    if ( typeof cssAPI?.suspendForIdentity === 'function' ) {
++        cssAPI.suspendForIdentity(executionRecord);
++    }
++    self.floorpCSSUserForceAPIReplay = forceToken;
++    const requestId = `${customFilterRequestId}:api`;
++    try {
++        const operation = Promise.resolve().then(( ) =>
++            chrome.runtime.sendMessage({
++                what: 'injectCSSProceduralAPI',
++                schema: customFilterMessageSchema,
++                requestId,
++            })
++        );
++        void operation.catch(( ) => undefined);
++        const remaining = Math.max(
++            0,
++            executionRecord.deadline - performance.now()
++        );
++        if ( remaining === 0 ) { return false; }
++        let timeoutId;
++        let outcome;
++        try {
++            outcome = await Promise.race([
++                operation.then(
++                    value => ({ status: 'resolved', value }),
++                    reason => ({ status: 'rejected', reason })
++                ),
++                new Promise(resolve => {
++                    timeoutId = setTimeout(
++                        () => resolve({ status: 'timeout' }),
++                        remaining
++                    );
++                }),
++            ]);
++        } finally {
++            clearTimeout(timeoutId);
++        }
++        if (
++            outcome.status !== 'resolved' ||
++            isLatestExecution() === false
++        ) { return false; }
++        const response = outcome.value;
++        if (
++            typeof response !== 'object' ||
++            response === null ||
++            response.ok !== true ||
++            response.schema !== customFilterMessageSchema ||
++            response.requestId !== requestId
++        ) { return false; }
++    } catch {
++        return false;
++    } finally {
++        if ( self.floorpCSSUserForceAPIReplay === forceToken ) {
++            self.floorpCSSUserForceAPIReplay = undefined;
++        }
++    }
++    cssAPI = self.cssAPI;
++    self.floorpCSSUserIdentityPendingRecord = executionRecord;
++    if ( typeof cssAPI?.suspendForIdentity === 'function' ) {
++        cssAPI.suspendForIdentity(executionRecord);
++    }
++    cssUserIdentityResumed =
++        typeof cssAPI?.resumeForIdentity === 'function' &&
++        cssAPI.resumeForIdentity(
++            executionRecord,
++            cssUserNativeDocumentId,
++            cssUserNativeFrameId
++        );
++    return cssUserIdentityResumed;
++}
++
++if ( await bindCSSAPIToCurrentDocument() === false ) {
++    return isLatestExecution() ? failedExecution() : followLatestExecution();
++}
++if ( isLatestExecution() === false ) {
++    return followLatestExecution();
++}
++
++// Each executeScript(files:) evaluation receives an independent result in
++// Safari, and multiple picker starts can overlap. Use the native Document ID as
++// the key and share the first full activation Promise; URL, timeOrigin, and the
++// mutable documentElement are deliberately not document identities.
++const existingBootstrap = self.floorpCSSUserBootstrapState;
++if (
++    existingBootstrap?.documentId === cssUserNativeDocumentId &&
++    existingBootstrap.frameId === cssUserNativeFrameId &&
++    existingBootstrap.record !== executionRecord
++) {
++    try {
++        await existingBootstrap.operation;
++    } catch {
++    }
++    if ( isLatestExecution() === false ) {
++        return followLatestExecution();
++    }
++    const activation = self.floorpCSSUserActivationState;
++    if (
++        activation?.documentId === cssUserNativeDocumentId &&
++        activation.frameId === cssUserNativeFrameId &&
++        activation.generation === self.cssUserDocumentGeneration &&
++        typeof self.cssUserStartHandler === 'function'
++    ) {
++        if ( activation.committed !== true ) {
++            await self.cssUserStartHandler({
++                type: floorpIdleReplay
++                    ? 'floorp-document-idle'
++                    : 'floorp-dynamic-start',
++            });
++            if ( isLatestExecution() === false ) {
++                return followLatestExecution();
++            }
++        }
++        const committed = activation.committed === true &&
++            activation.generation === self.cssUserDocumentGeneration;
++        return {
++            ok: committed,
++            schema: customFilterMessageSchema,
++            committed,
++            documentId: cssUserNativeDocumentId,
++        };
++    }
++}
++if ( isLatestExecution() === false ) {
++    return followLatestExecution();
++}
++self.floorpCSSUserBootstrapState = {
++    documentId: cssUserNativeDocumentId,
++    frameId: cssUserNativeFrameId,
++    operation: executionRecord.operation,
++    record: executionRecord,
++};
++
++// A stable document_idle execution is idempotent. A true transient commit has
++// a different native Document ID and reached the fresh-generation path above.
++const sameDocumentActivation = self.floorpCSSUserActivationState;
++if (
++    sameDocumentActivation?.documentId === cssUserNativeDocumentId &&
++    sameDocumentActivation.frameId === cssUserNativeFrameId &&
++    sameDocumentActivation.generation === self.cssUserDocumentGeneration &&
++    typeof self.cssUserStartHandler === 'function'
++) {
++    if ( sameDocumentActivation.committed !== true ) {
++        await self.cssUserStartHandler({
++            type: floorpIdleReplay
++                ? 'floorp-document-idle'
++                : 'floorp-dynamic-start',
++        });
++        if ( isLatestExecution() === false ) {
++            return followLatestExecution();
++        }
++    }
++    const committed = sameDocumentActivation.committed === true;
++    return {
++        ok: committed,
++        schema: customFilterMessageSchema,
++        committed,
++        documentId: cssUserNativeDocumentId,
++    };
++}
++
 +// Safari can reuse an isolated-world global when the tab commits a new
 +// document. Keep the custom-filter guard and its serialized operation scoped
 +// to the document that created them, otherwise a later navigation can inherit
@@ -7646,38 +10571,54 @@ index ceb96e5..7440052 100644
 +// Use the content-script execution as the generation boundary because Safari
 +// can preserve the JavaScript `document` wrapper identity as well.
 +const cssUserDocumentGeneration = {};
++if ( isLatestExecution() === false ) {
++    return followLatestExecution();
++}
 +if ( typeof self.cssUserStartHandler === 'function' ) {
 +    self.removeEventListener('pagereveal', self.cssUserStartHandler);
++    self.removeEventListener('pageshow', self.cssUserStartHandler);
 +}
 +const previousProceduralFilterer = self.customProceduralFiltererAPI;
 +self.cssUserDocumentGeneration = cssUserDocumentGeneration;
 +self.customFilters = undefined;
 +self.customProceduralFiltererAPI = undefined;
++const cssUserActivationState = {
++    generation: cssUserDocumentGeneration,
++    documentId: cssUserNativeDocumentId,
++    frameId: cssUserNativeFrameId,
++    deadline: executionRecord.deadline,
++    committed: false,
++    details: undefined,
++    awaitingCSSAPI: false,
++    idleRecoveryUsed: false,
++    proceduralFilterer: undefined,
++};
++self.floorpCSSUserActivationState = cssUserActivationState;
 +// Do not chain this document behind the previous document's pending runtime
 +// message. Safari can orphan that promise during navigation; the generation
 +// checks below prevent a late old result from mutating this script's
 +// generation-scoped state or applying its returned selectors.
 +const cssUserCleanupOp = Promise.resolve()
-+    .then(( ) => previousProceduralFilterer instanceof Object
++    .then(( ) => typeof previousProceduralFilterer?.reset === 'function'
 +        ? previousProceduralFilterer.reset({ removeCSS: false })
 +        : undefined
 +    )
 +    .catch(( ) => undefined);
 +self.cssUserPendingOp = cssUserCleanupOp;
-@@ -31,7 +65,18 @@ async function uBOL_cssUserActivate() {
--    const details = await chrome.runtime.sendMessage({
--        what: 'injectCustomFilters',
--        hostname: docURL.hostname,
--    }).catch(( ) => {
--    });
--    self.customFilters = details;
--    if ( Boolean(details) === false ) { return; }
++
 +self.cssUserStartHandler = uBOL_cssUserStart;
 +const isCurrentDocument = ( ) =>
++    executionRecord.cancelled !== true &&
++    (
++        self.floorpCSSUserIdentityPendingRecord === undefined ||
++        self.floorpCSSUserIdentityPendingRecord === executionRecord
++    ) &&
 +    self.cssUserDocumentGeneration === cssUserDocumentGeneration &&
-+    self.cssUserStartHandler === uBOL_cssUserStart;
++    self.cssUserStartHandler === uBOL_cssUserStart &&
++    self.floorpCSSUserActivationState === cssUserActivationState &&
++    self.cssAPI?.documentId === cssUserNativeDocumentId &&
++    self.cssAPI?.frameId === cssUserNativeFrameId;
 +
-+const customFilterMessageSchema = 1;
 +const customFilterMutationJournalKey =
 +    'floorp.customFilterMutationJournal.v1';
 +const customFilterModeStorageKeys = [
@@ -7686,17 +10627,7 @@ index ceb96e5..7440052 100644
 +    'admin.noFiltering',
 +];
 +const settingsRestoreJournalKey = 'floorp.settingsRestoreJournal.v1';
-+const customFilterReplyTimeout = 2000;
-+const customFilterUndefinedRetryDelay = 100;
-+const customFilterRequestId = globalThis.crypto?.randomUUID?.() ||
-+    `${Date.now()}-${Math.random()}`;
-@@ -39,6 +84,7 @@ async function uBOL_cssUserActivate() {
--    if ( details?.proceduralSelectors?.length ) {
--        if ( self.ProceduralFiltererAPI === undefined ) {
--            self.ProceduralFiltererAPI = chrome.runtime.sendMessage({
--                what: 'injectCSSProceduralAPI'
--            }).catch(( ) => {
--            });
++
 +function hostnameFromURL(value) {
 +    if ( typeof value !== 'string' || value === '' ) { return ''; }
 +    try {
@@ -7704,13 +10635,7 @@ index ceb96e5..7440052 100644
 +        if ( url.hostname !== '' ) { return url.hostname; }
 +        if ( url.origin !== 'null' ) {
 +            return new URL(url.origin).hostname;
-@@ -46,6 +92,14 @@ async function uBOL_cssUserActivate() {
--        await self.ProceduralFiltererAPI;
--        self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
--        const selectors = details.proceduralSelectors.map(a => JSON.parse(a));
--        const declaratives = selectors.filter(a => a.cssable);
--        if ( declaratives.length !== 0 ) {
--            self.customProceduralFiltererAPI.addDeclaratives(declaratives);
++        }
 +    } catch {
 +    }
 +    return '';
@@ -7725,10 +10650,7 @@ index ceb96e5..7440052 100644
 +            url.hostname !== ''
 +        ) {
 +            return url.hostname.toLowerCase();
-@@ -53,3 +107,27 @@ async function uBOL_cssUserActivate() {
--        const procedurals = selectors.filter(a => !a.cssable);
--        if ( procedurals.length !== 0 ) {
--            self.customProceduralFiltererAPI.addProcedurals(procedurals);
++        }
 +    } catch {
 +    }
 +    return '';
@@ -7756,7 +10678,7 @@ index ceb96e5..7440052 100644
 +        if ( self.parent !== self ) {
 +            parentHostname = hostnameFromHTTPURL(self.parent.location.origin) ||
 +                hostnameFromHTTPURL(self.parent.location.href);
-@@ -56,0 +135,8 @@ async function uBOL_cssUserActivate() {
++        }
 +    } catch {
 +    }
 +    if (
@@ -7765,13 +10687,10 @@ index ceb96e5..7440052 100644
 +        ancestorHostname !== parentHostname
 +    ) {
 +        return '';
-@@ -57,0 +144,2 @@ async function uBOL_cssUserActivate() {
++    }
 +    return ancestorHostname || parentHostname;
 +}
-@@ -59,3 +147,8 @@ async function uBOL_cssUserActivate() {
--    if ( details?.plainSelectors?.length ) {
--        const selectors = details.plainSelectors;
--        self.cssAPI.insert(`${selectors.join(',\n')}{display:none!important;}`);
++
 +function customFilterStorageKeys(hostname) {
 +    const out = [];
 +    let hn = hostname;
@@ -7780,12 +10699,10 @@ index ceb96e5..7440052 100644
 +        const pos = hn.indexOf('.');
 +        if ( pos === -1 ) { break; }
 +        hn = hn.slice(pos + 1);
-@@ -62,0 +156 @@ async function uBOL_cssUserActivate() {
++    }
 +    return out;
-@@ -65,3 +159,428 @@ async function uBOL_cssUserActivate() {
--async function uBOL_cssUserStart() {
--    if ( self.cssUserPendingOp === undefined ) {
--        self.cssUserPendingOp = Promise.resolve();
++}
++
 +function committedJournalSnapshot(journal, label, phases) {
 +    if ( journal === undefined ) { return; }
 +    if (
@@ -8053,26 +10970,33 @@ index ceb96e5..7440052 100644
 +    requestId: customFilterRequestId,
 +    hostname: customFilterHostname,
 +};
-+const isMainFrame = (() => {
-+    try {
-+        return self.top === self;
-+    } catch {
-+        return false;
-+    }
-+})();
-+let customFilterRequestInFlight;
-+let customFilterRequestTimedOut = false;
-+let customFilterLateReplyHandlerAttached = false;
-+let customFilterUndefinedRetryUsed = false;
-+let proceduralAPIRequest;
 +
 +function waitForTimeout(delay) {
 +    return new Promise(resolve => setTimeout(resolve, delay));
 +}
 +
++function remainingActivationTime() {
++    return cssUserActivationState.deadline - performance.now();
++}
++
++function retryDelay(attempt) {
++    return customFilterRetryDelays[
++        Math.min(attempt, customFilterRetryDelays.length - 1)
++    ];
++}
++
++async function waitForRetry(attempt) {
++    const remaining = remainingActivationTime();
++    if ( remaining <= 0 ) { return false; }
++    await waitForTimeout(Math.min(retryDelay(attempt), remaining));
++    return isCurrentDocument() && remainingActivationTime() > 0;
++}
++
 +async function waitForMessageReply(operation) {
 +    let timeoutId;
 +    try {
++        const remaining = remainingActivationTime();
++        if ( remaining <= 0 ) { return { status: 'timeout' }; }
 +        return await Promise.race([
 +            operation.then(
 +                value => ({ status: 'resolved', value }),
@@ -8081,48 +11005,13 @@ index ceb96e5..7440052 100644
 +            new Promise(resolve => {
 +                timeoutId = setTimeout(
 +                    () => resolve({ status: 'timeout' }),
-+                    customFilterReplyTimeout
++                    Math.min(customFilterReplyTimeout, remaining)
 +                );
 +            }),
 +        ]);
 +    } finally {
 +        clearTimeout(timeoutId);
 +    }
-+}
-+
-+async function sendCustomFilterRequest() {
-+    if ( customFilterRequestInFlight === undefined ) {
-+        const operation = Promise.resolve().then(( ) =>
-+            chrome.runtime.sendMessage(customFilterRequest)
-+        );
-+        customFilterRequestInFlight = operation;
-+        customFilterLateReplyHandlerAttached = false;
-+    }
-+    const operation = customFilterRequestInFlight;
-+    const outcome = await waitForMessageReply(operation);
-+    if ( outcome.status === 'timeout' ) {
-+        customFilterRequestTimedOut = true;
-+        if ( customFilterLateReplyHandlerAttached === false ) {
-+            customFilterLateReplyHandlerAttached = true;
-+            operation.then(value => {
-+                if (
-+                    customFilterRequestInFlight === operation &&
-+                    customFilterRequestTimedOut &&
-+                    (
-+                        value === undefined ||
-+                        isValidCustomFilterAck(value, customFilterRequestId)
-+                    )
-+                ) {
-+                    void uBOL_cssUserStart();
-+                }
-+            }, ( ) => undefined);
-+        }
-+    } else if ( customFilterRequestInFlight === operation ) {
-+        customFilterRequestInFlight = undefined;
-+        customFilterRequestTimedOut = false;
-+        customFilterLateReplyHandlerAttached = false;
-+    }
-+    return outcome;
 +}
 +
 +function isValidCustomFilterAck(details, requestId) {
@@ -8138,42 +11027,38 @@ index ceb96e5..7440052 100644
 +}
 +
 +async function requestCustomFilters() {
-+    if ( floorpOriginFallbackDocument ) {
-+        // MessageSender.url/origin describe the child document and can expose
-+        // a blob's embedded origin rather than the parent URL WebKit matched.
-+        // Use the bounded storage read exclusively; unavailable or ambiguous
-+        // parent provenance fails closed instead of switching authority.
-+        return readOriginFallbackCustomFilters();
-+    }
-+    let outcome = await sendCustomFilterRequest();
-+    if ( isCurrentDocument() === false ) { return; }
-+    if (
-+        outcome.status === 'resolved' &&
-+        outcome.value === undefined &&
-+        isMainFrame &&
-+        customFilterUndefinedRetryUsed === false
-+    ) {
-+        customFilterUndefinedRetryUsed = true;
-+        await waitForTimeout(customFilterUndefinedRetryDelay);
++    let attempt = 0;
++    while ( isCurrentDocument() && remainingActivationTime() > 0 ) {
++        // MessageSender.url/origin describe an origin-fallback child document
++        // and can expose a blob's embedded origin rather than the immediate
++        // parent URL WebKit matched. Keep that authority on the direct storage
++        // path; retrying must never switch it to the background hostname path.
++        const operation = Promise.resolve().then(( ) =>
++            floorpOriginFallbackDocument
++                ? readOriginFallbackCustomFilters()
++                : chrome.runtime.sendMessage(customFilterRequest)
++        );
++        const outcome = await waitForMessageReply(operation);
 +        if ( isCurrentDocument() === false ) { return; }
-+        outcome = await sendCustomFilterRequest();
++        if (
++            outcome.status === 'resolved' &&
++            isValidCustomFilterAck(
++                outcome.value,
++                customFilterRequestId
++            )
++        ) {
++            return outcome.value;
++        }
++        if ( await waitForRetry(attempt) === false ) { return; }
++        attempt += 1;
 +    }
-+    if ( outcome.status !== 'resolved' ) { return; }
-+    if (
-+        isValidCustomFilterAck(
-+            outcome.value,
-+            customFilterRequestId
-+        ) === false
-+    ) {
-+        return;
-+    }
-+    return outcome.value;
 +}
 +
 +async function ensureProceduralAPI() {
 +    if ( typeof self.ProceduralFiltererAPI === 'function' ) { return true; }
-+    const requestId = `${customFilterRequestId}:procedural`;
-+    if ( proceduralAPIRequest === undefined ) {
++    let attempt = 0;
++    while ( isCurrentDocument() && remainingActivationTime() > 0 ) {
++        const requestId = `${customFilterRequestId}:procedural:${attempt}`;
 +        const operation = Promise.resolve().then(( ) =>
 +            chrome.runtime.sendMessage({
 +                what: 'injectCSSProceduralAPI',
@@ -8181,107 +11066,403 @@ index ceb96e5..7440052 100644
 +                requestId,
 +            })
 +        );
-+        proceduralAPIRequest = operation;
 +        self.ProceduralFiltererAPI = operation;
-+        operation.catch(( ) => undefined);
-+    }
-+    const operation = proceduralAPIRequest;
-+    const outcome = await waitForMessageReply(operation);
-+    if ( isCurrentDocument() === false ) { return false; }
-+    if ( outcome.status === 'timeout' ) { return false; }
-+    if (
-+        outcome.status !== 'resolved' ||
-+        isValidCustomFilterAck(outcome.value, requestId) === false ||
-+        typeof self.ProceduralFiltererAPI !== 'function'
-+    ) {
-+        if ( proceduralAPIRequest === operation ) {
-+            proceduralAPIRequest = undefined;
++        void operation.catch(( ) => undefined);
++        const outcome = await waitForMessageReply(operation);
++        if ( isCurrentDocument() === false ) { return false; }
++        if (
++            outcome.status === 'resolved' &&
++            isValidCustomFilterAck(outcome.value, requestId) &&
++            typeof self.ProceduralFiltererAPI === 'function'
++        ) {
++            return true;
 +        }
 +        if ( self.ProceduralFiltererAPI === operation ) {
 +            self.ProceduralFiltererAPI = undefined;
 +        }
-+        return false;
++        if ( await waitForRetry(attempt) === false ) { return false; }
++        attempt += 1;
 +    }
-+    return true;
++    return false;
 +}
 +
-+async function uBOL_cssUserActivate() {
+@@ -27 +858,2 @@ async function uBOL_cssUserActivate() {
+-    if ( self.customFilters ) { return; }
 +    if ( isCurrentDocument() === false ) { return; }
-+    if ( self.customFilters ) { return; }
-+
-+    let details;
-+    try {
-+        details = await requestCustomFilters();
-+    } catch {
++    if ( cssUserActivationState.committed ) { return; }
+@@ -29 +861,11 @@ async function uBOL_cssUserActivate() {
+-    const docURL = new URL(document.baseURI);
++    let details = cssUserActivationState.details;
++    if ( details === undefined ) {
++        try {
++            details = await requestCustomFilters();
++        } catch {
++            return;
++        }
++        if ( isCurrentDocument() === false ) { return; }
++        if ( Boolean(details) === false ) { return; }
++        cssUserActivationState.details = details;
++    }
+@@ -31,7 +873,16 @@ async function uBOL_cssUserActivate() {
+-    const details = await chrome.runtime.sendMessage({
+-        what: 'injectCustomFilters',
+-        hostname: docURL.hostname,
+-    }).catch(( ) => {
+-    });
+-    self.customFilters = details;
+-    if ( Boolean(details) === false ) { return; }
++    const hasCSS = details.plainSelectors.length !== 0 ||
++        details.proceduralSelectors.length !== 0;
++    const cssAPI = self.cssAPI;
++    if (
++        hasCSS && (
++            typeof cssAPI?.insert !== 'function' ||
++            typeof cssAPI?.commit !== 'function'
++        )
++    ) {
++        // css-api is normally preloaded before css-user, including plain-only
++        // registrations. Keep this explicit state for the one bounded idle
++        // recovery path if WebKit skipped or delayed that registered script.
++        cssUserActivationState.awaitingCSSAPI = true;
 +        return;
-@@ -69,2 +588,47 @@ async function uBOL_cssUserStart() {
--    self.cssUserPendingOp = self.cssUserPendingOp.then(uBOL_cssUserActivate);
--    await self.cssUserPendingOp;
-+    if ( isCurrentDocument() === false ) { return; }
-+    if ( Boolean(details) === false ) { return; }
-+    self.customFilters = details;
-+
-+    try {
-+        if ( details.proceduralSelectors.length ) {
-+            if ( await ensureProceduralAPI() === false ) {
-+                self.customFilters = undefined;
-+                return;
-+            }
-+            if ( isCurrentDocument() === false ) { return; }
-+            self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
++    }
++    cssUserActivationState.awaitingCSSAPI = false;
+@@ -39,5 +890,31 @@ async function uBOL_cssUserActivate() {
+-    if ( details?.proceduralSelectors?.length ) {
+-        if ( self.ProceduralFiltererAPI === undefined ) {
+-            self.ProceduralFiltererAPI = chrome.runtime.sendMessage({
+-                what: 'injectCSSProceduralAPI'
+-            }).catch(( ) => {
++    if (
++        details.proceduralSelectors.length &&
++        cssUserActivationState.proceduralFilterer === undefined
++    ) {
++        if ( await ensureProceduralAPI() === false ) { return; }
++        if ( isCurrentDocument() === false ) { return; }
++        if (
++            typeof cssAPI.beginInsertionTransaction !== 'function' ||
++            typeof cssAPI.finishInsertionTransaction !== 'function' ||
++            typeof cssAPI.rollbackInsertionTransaction !== 'function'
++        ) {
++            cssUserActivationState.awaitingCSSAPI = true;
++            return;
++        }
++        let filterer;
++        let transaction;
++        try {
++            // Parse the complete selector document before constructing anything.
++            // The transaction then stages all synchronous add* CSS calls without
++            // native side effects until every selector has been accepted.
 +            const selectors = details.proceduralSelectors.map(a => JSON.parse(a));
++            transaction = cssAPI.beginInsertionTransaction(
++                cssUserDocumentGeneration,
++                cssUserActivationState.deadline,
++                cssUserDocumentGeneration,
++                'custom'
++            );
++            filterer = new self.ProceduralFiltererAPI({
++                cssOwner: cssUserDocumentGeneration,
++                cssGeneration: cssUserDocumentGeneration,
++                cssLane: 'custom',
+@@ -44,0 +922,43 @@ async function uBOL_cssUserActivate() {
 +            const declaratives = selectors.filter(a => a.cssable);
 +            if ( declaratives.length !== 0 ) {
-+                self.customProceduralFiltererAPI.addDeclaratives(declaratives);
++                filterer.addDeclaratives(declaratives);
 +            }
 +            const procedurals = selectors.filter(a => !a.cssable);
 +            if ( procedurals.length !== 0 ) {
-+                self.customProceduralFiltererAPI.addProcedurals(procedurals);
++                filterer.addProcedurals(procedurals);
 +            }
-+        }
++            cssAPI.finishInsertionTransaction(transaction);
++            transaction = undefined;
++            if ( isCurrentDocument() === false ) {
++                await filterer.reset({ removeCSS: true });
++                return;
++            }
++            // Publish only a fully parsed and fully constructed filterer. Native
++            // insertion acknowledgement is still required by commit() below.
++            cssUserActivationState.proceduralFilterer = filterer;
++        } catch {
++            // A construction failure occurred while CSS was only staged, so a
++            // reset without native removal safely tears down observers, tokens,
++            // and node attributes while keeping insert/remove message counts at
++            // zero. Clear state before awaiting cleanup so replay cannot observe
++            // or commit the partial filterer.
++            if ( isCurrentDocument() ) {
++                cssUserActivationState.proceduralFilterer = undefined;
++                if ( self.customProceduralFiltererAPI === filterer ) {
++                    self.customProceduralFiltererAPI = undefined;
++                }
++                cssUserActivationState.details = undefined;
++            }
++            if ( transaction !== undefined ) {
++                try {
++                    cssAPI.rollbackInsertionTransaction(transaction);
++                } catch {
++                }
++            }
++            if ( typeof filterer?.reset === 'function' ) {
++                try {
++                    await filterer.reset({ removeCSS: false });
++                } catch {
++                }
++            }
++            return;
+@@ -46,6 +966,15 @@ async function uBOL_cssUserActivate() {
+-        await self.ProceduralFiltererAPI;
+-        self.customProceduralFiltererAPI = new self.ProceduralFiltererAPI();
+-        const selectors = details.proceduralSelectors.map(a => JSON.parse(a));
+-        const declaratives = selectors.filter(a => a.cssable);
+-        if ( declaratives.length !== 0 ) {
+-            self.customProceduralFiltererAPI.addDeclaratives(declaratives);
++    }
 +
-+        if (
-+            details.plainSelectors.length &&
-+            typeof self.cssAPI?.insert === 'function'
-+        ) {
++    try {
++        if ( details.plainSelectors.length ) {
 +            const selectors = details.plainSelectors;
-+            self.cssAPI.insert(
-+                `${selectors.join(',\n')}{display:none!important;}`
++            const insertion = await cssAPI.insert(
++                `${selectors.join(',\n')}{display:none!important;}`,
++                {
++                    deadline: cssUserActivationState.deadline,
++                    generation: cssUserDocumentGeneration,
++                    lane: 'custom',
++                    owner: cssUserDocumentGeneration,
++                }
++            );
++            if ( insertion?.ok !== true ) { return; }
+@@ -53,3 +982,8 @@ async function uBOL_cssUserActivate() {
+-        const procedurals = selectors.filter(a => !a.cssable);
+-        if ( procedurals.length !== 0 ) {
+-            self.customProceduralFiltererAPI.addProcedurals(procedurals);
++
++        if ( hasCSS ) {
++            const committed = await cssAPI.commit(
++                cssUserDocumentGeneration,
++                cssUserDocumentGeneration,
++                cssUserActivationState.deadline
++            );
++            if ( committed?.ok !== true ) { return; }
+@@ -56,0 +991,2 @@ async function uBOL_cssUserActivate() {
++    } catch {
++        return;
+@@ -57,0 +994,6 @@ async function uBOL_cssUserActivate() {
++    if ( isCurrentDocument() === false ) { return; }
++    self.customProceduralFiltererAPI =
++        cssUserActivationState.proceduralFilterer;
++    self.customFilters = details;
++    cssUserActivationState.committed = true;
++}
+@@ -59,3 +1001,26 @@ async function uBOL_cssUserActivate() {
+-    if ( details?.plainSelectors?.length ) {
+-        const selectors = details.plainSelectors;
+-        self.cssAPI.insert(`${selectors.join(',\n')}{display:none!important;}`);
++function beginLifecycleRecovery(event) {
++    const isPageReveal = event?.type === 'pagereveal' ||
++        event?.type === 'pageshow' && event?.persisted === true;
++    const isDynamicRecovery = event?.type === 'floorp-dynamic-start';
++    const isIdleRecovery =
++        event?.type === 'floorp-document-idle' &&
++        cssUserActivationState.awaitingCSSAPI === true &&
++        cssUserActivationState.idleRecoveryUsed !== true;
++    let recovery;
++    if (
++        (isPageReveal || isIdleRecovery || isDynamicRecovery) &&
++        cssUserActivationState.deadline <= performance.now()
++    ) {
++        cssUserActivationState.deadline =
++            performance.now() + customFilterActivationTimeout;
++        if ( isIdleRecovery ) {
++            cssUserActivationState.idleRecoveryUsed = true;
++        }
++        // Invoke this before yielding so css-api/css-user listener order cannot
++        // make one reveal use an expired window. css-api coalesces concurrent
++        // recovery and replay for this document generation.
++        if ( typeof self.cssAPI?.beginRecoveryWindow === 'function' ) {
++            recovery = self.cssAPI.beginRecoveryWindow(
++                cssUserDocumentGeneration
 +            );
 +        }
-+    } catch {
-+        if ( isCurrentDocument() ) {
-+            self.customFilters = undefined;
+@@ -62,0 +1028 @@ async function uBOL_cssUserActivate() {
++    return { event, recovery };
+@@ -65,3 +1031,29 @@ async function uBOL_cssUserActivate() {
+-async function uBOL_cssUserStart() {
+-    if ( self.cssUserPendingOp === undefined ) {
+-        self.cssUserPendingOp = Promise.resolve();
++async function prepareLifecycleRecovery(lifecycle) {
++    if ( lifecycle.recovery !== undefined ) {
++        try {
++            await lifecycle.recovery;
++        } catch {
++            return false;
 +        }
 +    }
++    if (
++        lifecycle.event?.type !== 'pagereveal' &&
++        lifecycle.event?.type !== 'pageshow' &&
++        lifecycle.event?.type !== 'floorp-document-idle'
++    ) {
++        return true;
++    }
++    const cssAPI = self.cssAPI;
++    if (
++        typeof cssAPI?.waitForRecovery === 'function' &&
++        typeof cssAPI?.replay === 'function'
++    ) {
++        const recovered = await cssAPI.waitForRecovery(
++            cssUserDocumentGeneration
++        );
++        if ( recovered?.ok !== true ) { return false; }
++        const replayed = await cssAPI.replay(cssUserDocumentGeneration, {
++            deadline: cssUserActivationState.deadline,
++            owner: cssUserDocumentGeneration,
++        });
++        if ( replayed?.ok !== true ) { return false; }
+@@ -69,3 +1061,21 @@ async function uBOL_cssUserStart() {
+-    self.cssUserPendingOp = self.cssUserPendingOp.then(uBOL_cssUserActivate);
+-    await self.cssUserPendingOp;
+-    if ( Boolean(self.customFilters) === false ) { return; }
++    return isCurrentDocument();
 +}
 +
-+async function uBOL_cssUserStart() {
++async function uBOL_cssUserStart(event) {
++    if ( event?.type === 'pageshow' && event?.persisted !== true ) { return; }
 +    if ( isCurrentDocument() === false ) { return; }
++    const lifecycle = beginLifecycleRecovery(event);
 +    const pendingOp = Promise.resolve(self.cssUserPendingOp)
 +        .catch(( ) => undefined)
-+        .then(uBOL_cssUserActivate);
++        .then(async ( ) => {
++            // document_idle can enqueue behind a still-pending document_start
++            // activation. If the earlier operation commits while queued, do
++            // not replay already-installed CSS before hitting activate's guard.
++            if ( cssUserActivationState.committed ) { return; }
++            if ( await prepareLifecycleRecovery(lifecycle) === false ) { return; }
++            return uBOL_cssUserActivate();
++        });
 +    self.cssUserPendingOp = pendingOp.catch(( ) => undefined);
 +    await pendingOp;
 +    if ( isCurrentDocument() === false ) { return; }
-@@ -76,0 +641 @@ await uBOL_cssUserStart();
-+if ( isCurrentDocument() === false ) { return; }
++    if ( cssUserActivationState.committed !== true ) { return; }
+@@ -72,0 +1083 @@ async function uBOL_cssUserStart() {
++    self.removeEventListener('pageshow', uBOL_cssUserStart);
+@@ -77,2 +1088,12 @@ await uBOL_cssUserStart();
+-if ( self.customFilters ) { return; }
+-self.addEventListener('pagereveal', uBOL_cssUserStart);
++const executionCommitted =
++    isCurrentDocument() && cssUserActivationState.committed === true;
++if ( executionCommitted === false && isCurrentDocument() ) {
++    self.addEventListener('pagereveal', uBOL_cssUserStart);
++    self.addEventListener('pageshow', uBOL_cssUserStart);
++}
++return {
++    ok: executionCommitted,
++    schema: customFilterMessageSchema,
++    committed: executionCommitted,
++    documentId: cssUserNativeDocumentId,
++};
+@@ -82 +1103,3 @@ self.addEventListener('pagereveal', uBOL_cssUserStart);
+-})();
++})(floorpCSSUserExecutionRecord);
++
++floorpCSSUserExecutionRecord.operation = floorpCSSUserExecution;
+@@ -83,0 +1107,2 @@ self.addEventListener('pagereveal', uBOL_cssUserStart);
++self.floorpCSSUserExecution = floorpCSSUserExecution;
++void floorpCSSUserExecution.catch(( ) => undefined);
 diff --git a/js/scripting/isolated-api.js b/js/scripting/isolated-api.js
-index 090ad41..92a7cfb 100644
+index 090ad41..a0ee1c4 100644
 --- a/js/scripting/isolated-api.js
 +++ b/js/scripting/isolated-api.js
-@@ -26 +26,7 @@
+@@ -26 +26,5 @@
 -    if ( typeof api === 'object' ) { return; }
-+    const documentElement = document.documentElement;
 +    const documentTimeOrigin = performance.timeOrigin;
 +    if (
 +        typeof api === 'object' &&
-+        api.documentElement === documentElement &&
 +        api.documentTimeOrigin === documentTimeOrigin
 +    ) { return; }
-@@ -28,0 +35,2 @@
-+    isolatedAPI.documentElement = documentElement;
+@@ -28,0 +33 @@
 +    isolatedAPI.documentTimeOrigin = documentTimeOrigin;
+diff --git a/js/scripting/picker.js b/js/scripting/picker.js
+index 5172d53..192c3e6 100644
+--- a/js/scripting/picker.js
++++ b/js/scripting/picker.js
+@@ -246,0 +247,3 @@ async function previewSelector(selector) {
++const previewCSSOwner = {};
++const previewCSSGeneration = self.cssAPI.currentDocumentGeneration();
++
+@@ -256 +259,7 @@ previewSelector.commit = async function(selector) {
+-            await ubolOverlay.sendMessage({ what: 'removeCSS', css: previewSelector.css });
++            const removed = await self.cssAPI.forgetOwner(
++                previewCSSOwner,
++                previewCSSGeneration
++            );
++            if ( removed?.ok !== true ) {
++                throw new Error(removed?.error || 'Preview CSS cleanup failed');
++            }
+@@ -265 +274,3 @@ previewSelector.commit = async function(selector) {
+-            self.pickerProceduralFilteringAPI = new self.ProceduralFiltererAPI();
++            self.pickerProceduralFilteringAPI = new self.ProceduralFiltererAPI({
++                cssLane: 'preview',
++            });
+@@ -276 +287,8 @@ previewSelector.commit = async function(selector) {
+-    await ubolOverlay.sendMessage({ what: 'insertCSS', css: previewSelector.css });
++    const inserted = await self.cssAPI.insert(previewSelector.css, {
++        generation: previewCSSGeneration,
++        lane: 'preview',
++        owner: previewCSSOwner,
++    });
++    if ( inserted?.ok !== true ) {
++        throw new Error(inserted?.error || 'Preview CSS insertion failed');
++    }
+@@ -285 +303,3 @@ previewSelector.css = '';
+-const previewProceduralFiltererAPI = new self.ProceduralFiltererAPI(); 
++const previewProceduralFiltererAPI = new self.ProceduralFiltererAPI({
++    cssLane: 'preview',
++});
+@@ -292,2 +312,4 @@ function onMessage(msg) {
+-        previewProceduralFiltererAPI.reset();
+-        break;
++        return Promise.all([
++            previewSelector(''),
++            previewProceduralFiltererAPI.reset(),
++        ]);
+diff --git a/js/scripting/tool-overlay.js b/js/scripting/tool-overlay.js
+index 39d14cc..0ead533 100644
+--- a/js/scripting/tool-overlay.js
++++ b/js/scripting/tool-overlay.js
+@@ -124,2 +124,3 @@ self.ubolOverlay = {
+-            return this.webext.runtime.sendMessage(msg).catch(( ) => { });
+-        } catch {
++            return this.webext.runtime.sendMessage(msg);
++        } catch(reason) {
++            return Promise.reject(reason);
+@@ -132,2 +133,2 @@ self.ubolOverlay = {
+-            const resolve = this.pendingMessages.get(wrapped.fromScriptId);
+-            if ( resolve ) {
++            const pending = this.pendingMessages.get(wrapped.fromScriptId);
++            if ( pending ) {
+@@ -135 +136,5 @@ self.ubolOverlay = {
+-                resolve(wrapped.msg);
++                if ( typeof wrapped.error === 'string' ) {
++                    pending.reject(new Error(wrapped.error));
++                } else {
++                    pending.resolve(wrapped.msg);
++                }
+@@ -172,0 +178,6 @@ self.ubolOverlay = {
++                }, reason => {
++                    if ( this.port === null ) { return; }
++                    this.port.postMessage({
++                        fromFrameId,
++                        error: `${reason}`,
++                    });
+@@ -185,2 +196,2 @@ self.ubolOverlay = {
+-        return new Promise(resolve => {
+-            this.pendingMessages.set(wrapped.fromScriptId, resolve);
++        return new Promise((resolve, reject) => {
++            this.pendingMessages.set(wrapped.fromScriptId, { resolve, reject });
+@@ -261 +272,3 @@ self.ubolOverlay = {
+-                this.proceduralFiltererAPI = new self.ProceduralFiltererAPI();
++                this.proceduralFiltererAPI = new self.ProceduralFiltererAPI({
++                    cssLane: 'preview',
++                });
 diff --git a/js/settings.js b/js/settings.js
 index a92e7d0..ef7f17a 100644
 --- a/js/settings.js
@@ -8513,6 +11694,34 @@ index a92e7d0..ef7f17a 100644
 @@ -352,0 +436,2 @@ sendMessage({
 +    showRuntimeError(reason);
 +    dom.cl.remove(dom.body, 'loading');
+diff --git a/js/tool-overlay-ui.js b/js/tool-overlay-ui.js
+index 3b2fea8..271a4f2 100644
+--- a/js/tool-overlay-ui.js
++++ b/js/tool-overlay-ui.js
+@@ -76,2 +76,2 @@ export const toolOverlay = {
+-            const resolve = this.pendingMessages.get(wrapped.fromFrameId);
+-            if ( resolve ) {
++            const pending = this.pendingMessages.get(wrapped.fromFrameId);
++            if ( pending ) {
+@@ -79 +79,5 @@ export const toolOverlay = {
+-                resolve(wrapped.msg);
++                if ( typeof wrapped.error === 'string' ) {
++                    pending.reject(new Error(wrapped.error));
++                } else {
++                    pending.resolve(wrapped.msg);
++                }
+@@ -106,0 +111,6 @@ export const toolOverlay = {
++                }, reason => {
++                    if ( this.port === null ) { return; }
++                    this.port.postMessage({
++                        fromScriptId,
++                        error: `${reason}`,
++                    });
+@@ -119,2 +129,2 @@ export const toolOverlay = {
+-        return new Promise(resolve => {
+-            this.pendingMessages.set(wrapped.fromFrameId, resolve);
++        return new Promise((resolve, reject) => {
++            this.pendingMessages.set(wrapped.fromFrameId, { resolve, reject });
 diff --git a/manifest.json b/manifest.json
 index 6274479..84af3f3 100644
 --- a/manifest.json

@@ -1013,7 +1013,120 @@ jobs:
             fi
           }
 
-          xcrun simctl bootstatus "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" -b
+          run_command_with_timeout() {
+            local artifact_stem="$1"
+            local timeout_seconds="$2"
+            shift 2
+            local log_path="$RUNNER_TEMP/${artifact_stem}.log"
+            local command_status
+            local tee_status
+            local -a pipeline_status
+
+            set +e
+            /usr/bin/python3 - \
+              "$timeout_seconds" \
+              "$@" <<'PY' 2>&1 | tee "$log_path"
+          import os
+          import signal
+          import subprocess
+          import sys
+
+
+          timeout_seconds = int(sys.argv[1])
+          post_kill_wait_seconds = 10
+          command = sys.argv[2:]
+          process = None
+
+
+          class ParentTermination(Exception):
+              def __init__(self, signum):
+                  self.signum = signum
+
+
+          def handle_parent_termination(signum, _frame):
+              raise ParentTermination(signum)
+
+
+          signal.signal(signal.SIGTERM, handle_parent_termination)
+          signal.signal(signal.SIGINT, handle_parent_termination)
+          try:
+              process = subprocess.Popen(
+                  command,
+                  start_new_session=True,
+              )
+              try:
+                  command_status = process.wait(timeout=timeout_seconds)
+              except subprocess.TimeoutExpired:
+                  print(
+                      f"Timed out after {timeout_seconds} seconds while waiting "
+                      f"for {' '.join(command)}.",
+                      flush=True,
+                  )
+                  try:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+                  try:
+                      process.wait(timeout=post_kill_wait_seconds)
+                      command_status = 124
+                  except subprocess.TimeoutExpired:
+                      print(
+                          "Command did not exit after SIGKILL within "
+                          f"{post_kill_wait_seconds} seconds.",
+                          flush=True,
+                      )
+                      command_status = 125
+          except ParentTermination as termination:
+              print(
+                  f"Received parent signal {termination.signum}; "
+                  "terminating the bounded command process group.",
+                  flush=True,
+              )
+              command_status = 128 + termination.signum
+          finally:
+              signal.signal(signal.SIGTERM, signal.SIG_IGN)
+              signal.signal(signal.SIGINT, signal.SIG_IGN)
+              if process is not None and process.poll() is None:
+                  try:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+                  try:
+                      process.wait(timeout=post_kill_wait_seconds)
+                  except subprocess.TimeoutExpired:
+                      command_status = 125
+          sys.exit(command_status)
+          PY
+            pipeline_status=("${PIPESTATUS[@]}")
+            set -e
+            command_status="${pipeline_status[0]}"
+            tee_status="${pipeline_status[1]}"
+            if [[ "$tee_status" -ne 0 ]]; then
+              echo "::error::Could not retain bounded command output in $log_path"
+              return "$tee_status"
+            fi
+            return "$command_status"
+          }
+
+          wait_for_simulator_boot() {
+            local simulator_id="$1"
+            local artifact_stem="$2"
+            run_command_with_timeout \
+              "$artifact_stem" \
+              720 \
+              xcrun \
+              simctl \
+              bootstatus \
+              "$simulator_id" \
+              -b
+          }
+
+          if ! wait_for_simulator_boot \
+            "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" \
+            "floorp-webextension-os-matrix-ios-18-4-boot-attempt-1"; then
+            echo "::error::The exact iOS 18.4 simulator did not boot within the fixed timeout"
+            exit 1
+          fi
           run_test \
             "$FLOORP_WEBEXT_IOS184_DESTINATION" \
             "ClientTests/FloorpNativeWebExtensionIntegrationTests/testMainMenuOpensOnlyAvailableDarkReaderActionDirectlyOnMinimumOS" \
@@ -1296,40 +1409,145 @@ jobs:
           df -h "$RUNNER_TEMP" \
             | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-disk-after-ios-26-0-download.log"
 
-          modern_simulator_id="$(xcrun simctl create \
-            "Floorp WebExtension iOS $WEBEXTENSION_MODERN_OS" \
-            "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
-            "$modern_runtime")"
-          if [[ ! "$modern_simulator_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
-            echo "::error::CoreSimulator did not return an exact iOS 26.0 simulator identifier"
-            exit 1
-          fi
-          modern_destination="platform=iOS Simulator,id=$modern_simulator_id,arch=$simulator_arch"
-          {
+          modern_simulator_name="Floorp WebExtension iOS $WEBEXTENSION_MODERN_OS run-$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT"
+
+          recover_modern_simulator_for_cleanup() {
+            local artifact_suffix="$1"
+            local inventory_stem
+            local inventory_log
+            local recovered_simulator_id
+            inventory_stem="floorp-webextension-os-matrix-ios-26-0-simulator-recovery${artifact_suffix}"
+            inventory_log="$RUNNER_TEMP/${inventory_stem}.log"
+            if ! run_command_with_timeout \
+              "$inventory_stem" \
+              60 \
+              xcrun simctl list devices -j; then
+              echo "::warning::Could not enumerate the simulator created by the failed command"
+              return
+            fi
+            if ! recovered_simulator_id="$(jq -er \
+              --arg runtime "$modern_runtime" \
+              --arg name "$modern_simulator_name" \
+              '[.devices[$runtime][]?
+                | select(.name == $name and .isAvailable == true)
+                | .udid]
+                | unique
+                | if length == 1 then .[0] else error("not exactly one simulator") end' \
+              "$inventory_log")"; then
+              echo "::warning::Could not uniquely recover the simulator created by the failed command"
+              return
+            fi
+            if [[ ! "$recovered_simulator_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+              echo "::warning::Recovered simulator identifier is malformed"
+              return
+            fi
+            modern_simulator_id="$recovered_simulator_id"
             printf 'FLOORP_WEBEXT_IOS260_SIMULATOR_ID=%s\n' \
-              "$modern_simulator_id"
-            printf 'FLOORP_WEBEXT_IOS260_DESTINATION=%s\n' \
-              "$modern_destination"
-          } >> "$GITHUB_ENV"
+              "$modern_simulator_id" >> "$GITHUB_ENV"
+            echo "::warning::Recovered $modern_simulator_id for the always-run cleanup step"
+          }
 
-          destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-destinations-ios-26-0.log"
-          eligible_destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-eligible-destinations-ios-26-0.log"
-          xcodebuild -showdestinations \
-            -project "$PROJECT_PATH" \
-            -scheme "$SCHEME" \
-            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
-            -disableAutomaticPackageResolution \
-            -onlyUsePackageVersionsFromResolvedFile \
-            2>&1 | tee "$destination_log"
-          awk '/Ineligible destinations for/{exit} {print}' \
-            "$destination_log" > "$eligible_destination_log"
-          if ! grep -Fq "id:$modern_simulator_id" \
-            "$eligible_destination_log"; then
-            echo "::error::Xcode $WEBEXTENSION_XCODE_VERSION does not expose the exact iOS $WEBEXTENSION_MODERN_OS simulator as an eligible destination"
-            exit 1
+          create_and_verify_modern_simulator() {
+            local artifact_suffix="$1"
+            local create_artifact_stem
+            local create_log
+            local destination_log
+            local eligible_destination_log
+            create_artifact_stem="floorp-webextension-os-matrix-ios-26-0-simulator-create${artifact_suffix}"
+            create_log="$RUNNER_TEMP/${create_artifact_stem}.log"
+            if ! run_command_with_timeout \
+              "$create_artifact_stem" \
+              120 \
+              xcrun simctl create \
+              "$modern_simulator_name" \
+              "$WEBEXTENSION_SIMULATOR_DEVICE_TYPE" \
+              "$modern_runtime"; then
+              recover_modern_simulator_for_cleanup "$artifact_suffix"
+              echo "::error::Could not create the exact iOS 26.0 simulator within the fixed timeout"
+              return 1
+            fi
+            if ! modern_simulator_id="$(grep -E \
+              '^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$' \
+              "$create_log")" \
+              || [[ ! "$modern_simulator_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+              recover_modern_simulator_for_cleanup "$artifact_suffix"
+              echo "::error::CoreSimulator did not return an exact iOS 26.0 simulator identifier"
+              return 1
+            fi
+            modern_destination="platform=iOS Simulator,id=$modern_simulator_id,arch=$simulator_arch"
+            {
+              printf 'FLOORP_WEBEXT_IOS260_SIMULATOR_ID=%s\n' \
+                "$modern_simulator_id"
+              printf 'FLOORP_WEBEXT_IOS260_DESTINATION=%s\n' \
+                "$modern_destination"
+            } >> "$GITHUB_ENV"
+
+            destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-destinations-ios-26-0${artifact_suffix}.log"
+            eligible_destination_log="$RUNNER_TEMP/floorp-webextension-os-matrix-eligible-destinations-ios-26-0${artifact_suffix}.log"
+            if ! run_command_with_timeout \
+              "floorp-webextension-os-matrix-destinations-ios-26-0${artifact_suffix}" \
+              300 \
+              xcodebuild -showdestinations \
+              -project "$PROJECT_PATH" \
+              -scheme "$SCHEME" \
+              -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+              -disableAutomaticPackageResolution \
+              -onlyUsePackageVersionsFromResolvedFile; then
+              echo "::error::Could not verify the exact iOS 26.0 simulator destination within the fixed timeout"
+              return 1
+            fi
+            awk '/Ineligible destinations for/{exit} {print}' \
+              "$destination_log" > "$eligible_destination_log"
+            if ! grep -Fq "id:$modern_simulator_id" \
+              "$eligible_destination_log"; then
+              echo "::error::Xcode $WEBEXTENSION_XCODE_VERSION does not expose the exact iOS $WEBEXTENSION_MODERN_OS simulator as an eligible destination"
+              return 1
+            fi
+          }
+
+          create_and_verify_modern_simulator ""
+          if ! wait_for_simulator_boot \
+            "$modern_simulator_id" \
+            "floorp-webextension-os-matrix-ios-26-0-boot-attempt-1"; then
+            if run_command_with_timeout \
+              "floorp-webextension-os-matrix-ios-26-0-boot-recovery-shutdown-attempt-1" \
+              120 \
+              xcrun \
+              simctl \
+              shutdown \
+              "$modern_simulator_id"; then
+              shutdown_status=0
+            else
+              shutdown_status=$?
+            fi
+            if run_command_with_timeout \
+              "floorp-webextension-os-matrix-ios-26-0-boot-recovery-delete-attempt-1" \
+              120 \
+              xcrun \
+              simctl \
+              delete \
+              "$modern_simulator_id"; then
+              delete_status=0
+            else
+              delete_status=$?
+            fi
+            if [[ "$delete_status" -ne 0 ]]; then
+              echo "::error::Could not delete the stalled exact iOS 26.0 simulator"
+              exit 1
+            fi
+            if [[ "$shutdown_status" -ne 0 ]]; then
+              echo "::warning::The stalled iOS 26.0 simulator rejected shutdown but was deleted successfully"
+            fi
+
+            create_and_verify_modern_simulator "-retry-2"
+            if ! wait_for_simulator_boot \
+              "$modern_simulator_id" \
+              "floorp-webextension-os-matrix-ios-26-0-boot-attempt-2"; then
+              echo "::error::The exact iOS 26.0 simulator did not boot after two bounded attempts"
+              exit 1
+            fi
           fi
 
-          xcrun simctl bootstatus "$modern_simulator_id" -b
           run_test \
             "$modern_destination" \
             "ClientTests/FloorpNativeWebExtensionIntegrationTests/testMainMenuSelectsDarkReaderFromTwoActionPickerAndPresentsInteractivePopup" \

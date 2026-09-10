@@ -141,7 +141,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertFalse(webExtension.requestedPermissions.contains(.nativeMessaging))
     }
 
-    func testActionPickerListsEveryActionAndDefersSelectionUntilDismissal() {
+    func testActionPickerWaitsForExplicitDismissalCompletionAndDeliversExactlyOnce() {
         let actions = [
             FloorpNativeWebExtensionActionItem(
                 contextIdentifier: "dark-reader",
@@ -160,11 +160,15 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         ]
         var selections = [String]()
         var dismissalCompletion: (() -> Void)?
+        var dismissalCount = 0
         let picker = FloorpNativeWebExtensionActionPickerViewController(
             actions: actions,
             windowUUID: UUID(),
             themeManager: MockThemeManager(),
-            dismissalHandler: { dismissalCompletion = $0 },
+            dismissalHandler: {
+                dismissalCount += 1
+                dismissalCompletion = $0
+            },
             onSelection: { selections.append($0.contextIdentifier) }
         )
 
@@ -173,12 +177,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(picker.displayedChoiceTitles, ["Dark Reader", "uBlock Origin Lite"])
         XCTAssertEqual(picker.view.accessibilityIdentifier, "Floorp.NativeWebExtensions.ActionPicker")
         picker.selectChoice(identifier: "ubol")
+        picker.selectChoice(identifier: "dark-reader")
         XCTAssertTrue(selections.isEmpty)
+        XCTAssertEqual(dismissalCount, 1)
 
         dismissalCompletion?()
         dismissalCompletion?()
+        picker.selectChoice(identifier: "dark-reader")
 
         XCTAssertEqual(selections, ["ubol"])
+        XCTAssertEqual(dismissalCount, 1)
     }
 
     func testActionPickerSelectionRunsAfterTheSheetLeavesItsPresentationHierarchy() async throws {
@@ -2049,6 +2057,24 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(
             FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
                 preTransactionHardeningRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preCSSInsertionAcknowledgementRecord = legacyRecord
+        preCSSInsertionAcknowledgementRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preCSSInsertionAcknowledgementUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preCSSInsertionAcknowledgementRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preDocumentScopedCSSRecord = legacyRecord
+        preDocumentScopedCSSRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preDocumentScopedCSSUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preDocumentScopedCSSRecord
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
@@ -4980,6 +5006,364 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 #endif
     }
 
+    // swiftlint:disable:next function_body_length
+    func testActionPopupRecoversTransientInitialLoadsWithFreshBoundedWebViews() async throws {
+#if DEBUG || TESTING
+        let dataStore = WKWebsiteDataStore.nonPersistent()
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = dataStore
+        let userContentController = configuration.userContentController
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: configuration,
+            openURLInBrowser: { _ in },
+            onClose: {}
+        )
+        // Keep each automatic load parked until this test explicitly starts
+        // it, so two independent process failures are deterministic.
+        popup.setInitialLoadRecoveryDelayForTesting(60)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            popup.presentedViewController?.dismiss(animated: false)
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        popup.loadViewIfNeeded()
+
+        let firstWebView = popup.webView
+        let nonTransientError = NSError(
+            domain: WKError.errorDomain,
+            code: WKError.Code.javaScriptExceptionOccurred.rawValue
+        )
+        popup.webView(
+            firstWebView,
+            didFailProvisionalNavigation: nil,
+            withError: nonTransientError
+        )
+        XCTAssertTrue(popup.webView === firstWebView)
+        XCTAssertEqual(popup.initialLoadRecoveryAttemptCountForTesting, 0)
+        XCTAssertNil(popup.presentedViewController)
+        XCTAssertNil(root.presentedViewController)
+
+        root.present(popup, animated: false)
+        for _ in 0..<40 where !(popup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let nonTransientAlert = try XCTUnwrap(popup.presentedViewController as? UIAlertController)
+        XCTAssertEqual(
+            nonTransientAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+        nonTransientAlert.dismiss(animated: false)
+        for _ in 0..<40 where popup.presentedViewController != nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        popup.closePopupImmediately(animated: false)
+        let didDismissFailedPopup = await waitForDismissedPresentation(from: root)
+        XCTAssertTrue(didDismissFailedPopup)
+
+        // Use a fresh popup for the transient recovery sequence. A permanent
+        // error must not silently consume the bounded automatic retry budget.
+        var pendingTransitionCancellationCount = 0
+        let recoveringPopup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: configuration,
+            openURLInBrowser: { _ in },
+            onClose: {},
+            onPendingTransitionCancellation: {
+                pendingTransitionCancellationCount += 1
+            }
+        )
+        recoveringPopup.setInitialLoadRecoveryDelayForTesting(60)
+        root.present(recoveringPopup, animated: false)
+        recoveringPopup.loadViewIfNeeded()
+        for _ in 0..<40 where root.presentedViewController !== recoveringPopup
+            || recoveringPopup.viewIfLoaded?.window == nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(root.presentedViewController === recoveringPopup)
+        XCTAssertNotNil(recoveringPopup.viewIfLoaded?.window)
+        defer {
+            recoveringPopup.presentedViewController?.dismiss(animated: false)
+            recoveringPopup.closePopupImmediately(animated: false)
+        }
+
+        let initialWebView = recoveringPopup.webView
+        let sharedDeadline = try XCTUnwrap(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting
+        )
+        recoveringPopup.webViewWebContentProcessDidTerminate(initialWebView)
+        let firstReplacement = recoveringPopup.webView
+        XCTAssertFalse(firstReplacement === initialWebView)
+        XCTAssertNil(initialWebView.superview)
+        XCTAssertNotNil(firstReplacement.window)
+        XCTAssertEqual(pendingTransitionCancellationCount, 1)
+        XCTAssertTrue(firstReplacement.configuration.websiteDataStore === dataStore)
+        XCTAssertTrue(firstReplacement.configuration.userContentController === userContentController)
+        XCTAssertEqual(recoveringPopup.initialLoadRecoveryAttemptCountForTesting, 1)
+        XCTAssertEqual(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting,
+            sharedDeadline
+        )
+        recoveringPopup.webViewWebContentProcessDidTerminate(initialWebView)
+        XCTAssertTrue(recoveringPopup.webView === firstReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 1)
+
+        recoveringPopup.startScheduledInitialLoadRecoveryForTesting()
+        let networkProcessFailure = NSError(
+            domain: "WebKitErrorDomain",
+            code: 300,
+            userInfo: [NSLocalizedDescriptionKey: "WebKit encountered an internal error"]
+        )
+        recoveringPopup.webView(
+            firstReplacement,
+            didFailProvisionalNavigation: nil,
+            withError: networkProcessFailure
+        )
+        let secondReplacement = recoveringPopup.webView
+        XCTAssertFalse(secondReplacement === firstReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 2)
+        XCTAssertEqual(
+            recoveringPopup.initialLoadRecoveryAttemptCountForTesting,
+            recoveringPopup.maximumInitialLoadRecoveryAttemptsForTesting
+        )
+        XCTAssertEqual(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting,
+            sharedDeadline
+        )
+
+        recoveringPopup.startScheduledInitialLoadRecoveryForTesting()
+        recoveringPopup.webViewWebContentProcessDidTerminate(secondReplacement)
+        XCTAssertTrue(recoveringPopup.webView === secondReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 2)
+        for _ in 0..<40 where !(recoveringPopup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let exhaustedAlert = try XCTUnwrap(
+            recoveringPopup.presentedViewController as? UIAlertController
+        )
+        XCTAssertEqual(exhaustedAlert.title, FloorpStrings.WebExtensions.actionOpenErrorTitle)
+        XCTAssertEqual(exhaustedAlert.message, FloorpStrings.WebExtensions.actionsUnavailableMessage)
+        XCTAssertEqual(
+            exhaustedAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+        XCTAssertNil(recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting)
+
+        recoveringPopup.webView(secondReplacement, didCommit: nil)
+        recoveringPopup.webView(secondReplacement, didFinish: nil)
+        XCTAssertFalse(
+            recoveringPopup.hasCommittedDocumentForTesting,
+            "a queued callback must not revive a terminally failed popup generation"
+        )
+        XCTAssertTrue(recoveringPopup.presentedViewController === exhaustedAlert)
+        XCTAssertNil(recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting)
+
+        recoveringPopup.webViewWebContentProcessDidTerminate(initialWebView)
+        XCTAssertTrue(recoveringPopup.webView === secondReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 2)
+
+        recoveringPopup.retryInitialLoadAfterFailureForTesting()
+        for _ in 0..<40 where recoveringPopup.webView === secondReplacement {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(recoveringPopup.webView === secondReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 3)
+        XCTAssertEqual(recoveringPopup.initialLoadRecoveryAttemptCountForTesting, 0)
+        XCTAssertNotEqual(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting,
+            sharedDeadline
+        )
+        XCTAssertNil(recoveringPopup.presentedViewController)
+#else
+        throw XCTSkip("The initial-load recovery test seam is available only in test builds")
+#endif
+    }
+
+    func testActionPopupInitialLoadFailureSupersedesCompetingCloseAlert() async throws {
+#if DEBUG || TESTING
+        var closePreparationCount = 0
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { _ in },
+            prepareToClose: { _ in
+                closePreparationCount += 1
+                return false
+            },
+            onClose: {}
+        )
+        popup.setInitialLoadRecoveryDelayForTesting(60)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            popup.presentedViewController?.dismiss(animated: false)
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        root.present(popup, animated: false)
+        popup.loadViewIfNeeded()
+        let initialWebView = popup.webView
+        popup.webViewWebContentProcessDidTerminate(initialWebView)
+        let parkedReplacement = popup.webView
+        XCTAssertFalse(parkedReplacement === initialWebView)
+        popup.webView(parkedReplacement, didCommit: nil)
+        XCTAssertTrue(popup.hasCommittedDocumentForTesting)
+
+        popup.requestCloseForTesting()
+        for _ in 0..<80 where !(popup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let closeAlert = try XCTUnwrap(popup.presentedViewController as? UIAlertController)
+        XCTAssertEqual(closeAlert.title, FloorpStrings.WebExtensions.optionsCloseFailureTitle)
+        XCTAssertEqual(closePreparationCount, 1)
+
+        popup.failInitialPopupLoadForTesting()
+        XCTAssertTrue(popup.presentedViewController === closeAlert)
+        XCTAssertFalse(popup.hasCommittedDocumentForTesting)
+        popup.keepOpenAfterPreparationFailureForTesting()
+        for _ in 0..<80 {
+            guard let alert = popup.presentedViewController as? UIAlertController,
+                  alert !== closeAlert,
+                  alert.title == FloorpStrings.WebExtensions.actionOpenErrorTitle else {
+                try await Task.sleep(nanoseconds: 25_000_000)
+                continue
+            }
+            break
+        }
+        let initialFailureAlert = try XCTUnwrap(
+            popup.presentedViewController as? UIAlertController
+        )
+        XCTAssertFalse(initialFailureAlert === closeAlert)
+        XCTAssertEqual(
+            initialFailureAlert.title,
+            FloorpStrings.WebExtensions.actionOpenErrorTitle
+        )
+        XCTAssertEqual(
+            initialFailureAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+#else
+        throw XCTSkip("The initial-load recovery test seam is available only in test builds")
+#endif
+    }
+
+    func testActionPopupNavigationRetryYieldsToPendingInitialLoadFailure() async throws {
+#if DEBUG || TESTING
+        let destination = try XCTUnwrap(URL(string: "https://example.com/pending-load"))
+        var preparationCount = 0
+        var openedURLCount = 0
+        var receivedPolicy: WKNavigationActionPolicy?
+        let policyResolved = expectation(description: "Navigation policy cancelled")
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { _ in openedURLCount += 1 },
+            prepareToClose: { _ in
+                preparationCount += 1
+                return false
+            },
+            onClose: {}
+        )
+        popup.setInitialLoadRecoveryDelayForTesting(60)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            popup.presentedViewController?.dismiss(animated: false)
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        root.present(popup, animated: false)
+        popup.loadViewIfNeeded()
+        let initialWebView = popup.webView
+        popup.webViewWebContentProcessDidTerminate(initialWebView)
+        let parkedReplacement = popup.webView
+        XCTAssertFalse(parkedReplacement === initialWebView)
+        popup.webView(parkedReplacement, didCommit: nil)
+        XCTAssertTrue(popup.hasCommittedDocumentForTesting)
+        XCTAssertNotNil(popup.initialLoadDeadlineUptimeNanosecondsForTesting)
+
+        popup.prepareNavigationForTesting(
+            MockNavigationAction(url: destination, type: .linkActivated)
+        ) { policy in
+            receivedPolicy = policy
+            policyResolved.fulfill()
+        }
+        for _ in 0..<80 where !(popup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let navigationAlert = try XCTUnwrap(
+            popup.presentedViewController as? UIAlertController
+        )
+        XCTAssertEqual(navigationAlert.title, FloorpStrings.WebExtensions.optionsCloseFailureTitle)
+        XCTAssertEqual(preparationCount, 1)
+        XCTAssertEqual(
+            navigationAlert.actions.compactMap(\.title),
+            [
+                FloorpStrings.WebExtensions.continueEditing,
+                FloorpStrings.WebExtensions.retry,
+                FloorpStrings.WebExtensions.closeAnyway
+            ]
+        )
+
+        popup.failInitialPopupLoadForTesting()
+        XCTAssertTrue(popup.presentedViewController === navigationAlert)
+        XCTAssertFalse(popup.hasCommittedDocumentForTesting)
+
+        popup.retryNavigationAfterPreparationFailureForTesting()
+        await fulfillment(of: [policyResolved], timeout: 2)
+        for _ in 0..<80 {
+            guard let alert = popup.presentedViewController as? UIAlertController,
+                  alert !== navigationAlert,
+                  alert.title == FloorpStrings.WebExtensions.actionOpenErrorTitle else {
+                try await Task.sleep(nanoseconds: 25_000_000)
+                continue
+            }
+            break
+        }
+        let initialLoadAlert = try XCTUnwrap(
+            popup.presentedViewController as? UIAlertController
+        )
+        XCTAssertFalse(initialLoadAlert === navigationAlert)
+        XCTAssertEqual(initialLoadAlert.title, FloorpStrings.WebExtensions.actionOpenErrorTitle)
+        XCTAssertEqual(
+            initialLoadAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(preparationCount, 1, "Navigation Retry must yield to the initial-load failure")
+        XCTAssertEqual(receivedPolicy, .cancel)
+        XCTAssertEqual(openedURLCount, 0)
+        XCTAssertTrue(root.presentedViewController === popup)
+#else
+        throw XCTSkip("The navigation-preparation test seam is available only in test builds")
+#endif
+    }
+
     func testActionPopupWaitsForClosePreparationBeforeDismissal() async throws {
 #if DEBUG || TESTING
         let preparationGate = FloorpClosePreparationTestGate()
@@ -5743,7 +6127,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573"
+            "18209d8cff2bc576867b03233062f65235e8aea1c3e00bded9e0d25fa0fc46b5"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
@@ -8347,7 +8731,10 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
         picker.selectChoice(identifier: item.identifier)
 
-        let popupResult = await waitForPresentedActionPopup(presentingRoot: root)
+        let popupResult = await waitForPresentedActionPopup(
+            presentingRoot: root,
+            attempts: 200
+        )
         let popup = try XCTUnwrap(
             popupResult,
             "Selecting Dark Reader from the production action picker did not present its popup"
@@ -9987,9 +10374,10 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
     private func waitForPresentedActionPopup(
         presentingRoot: UIViewController,
-        excluding excludedViewController: UIViewController? = nil
+        excluding excludedViewController: UIViewController? = nil,
+        attempts: Int = 80
     ) async -> (viewController: FloorpNativeWebExtensionActionPopupViewController, webView: WKWebView)? {
-        for _ in 0..<80 {
+        for _ in 0..<attempts {
             if let popupViewController = presentingRoot.presentedViewController
                 as? FloorpNativeWebExtensionActionPopupViewController,
                popupViewController !== excludedViewController {

@@ -93,6 +93,25 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unexpected SHA-256 for support file"):
             VERIFIER.verify_repository(self.root)
 
+    def test_rejects_patch_path_missing_from_provenance(self) -> None:
+        entry = copy.deepcopy(next(
+            candidate
+            for candidate in VERIFIER.EXPECTED
+            if candidate["display_name"] == "uBlock Origin Lite"
+        ))
+        provenance = entry["provenance"]
+        css_change = next(
+            change
+            for change in provenance["changes"]
+            if "js/scripting/picker.js" in change.get("paths", [])
+        )
+        css_change["paths"].remove("js/scripting/picker.js")
+        provenance_path = self.bundle_root / str(entry["provenance_file"])
+        provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+
+        with self.assertRaisesRegex(RuntimeError, "patch/provenance path set mismatch"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
     def test_rejects_missing_derived_build_script(self) -> None:
         self.dark_reader_build_script.unlink()
 
@@ -272,12 +291,243 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting/css-user.js",
-                "if ( floorpOriginFallbackDocument ) {",
-                "if ( false ) {",
+                "floorpOriginFallbackDocument\n"
+                "                ? readOriginFallbackCustomFilters()",
+                "false\n"
+                "                ? readOriginFallbackCustomFilters()",
             ),
         )
 
         with self.assertRaisesRegex(RuntimeError, "origin-fallback request dispatch"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_css_insert_ack_before_native_resolution(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "await browser.scripting.insertCSS({",
+                "browser.scripting.insertCSS({",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "background CSS acknowledgement|omits required compatibility code",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_css_ack_cross_document_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "response.documentId === state.documentId &&",
+                "true &&",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "native acknowledgement|omits required compatibility code",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_css_ack_retry_window_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "const operationWindow = 15000;",
+                "const operationWindow = 90000;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_css_failure_cache_identity_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "bundle.pendingOperation = sent.operation;",
+                "bundle.pendingOperation = undefined;",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "native acknowledgement|omits required compatibility code",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_css_commit_success_before_insert_ack(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "if ( insertion?.ok !== true ) { return; }",
+                "if ( false ) { return; }",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "custom-filter CSS commit|omits required"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_committed_document_idle_replay(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "if ( activation.committed !== true ) {",
+                "if ( true ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "native Document bootstrap replay|omits required",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_missing_css_api_fail_closed_guard(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "typeof cssAPI?.insert !== 'function' ||",
+                "false ||",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "CSS API operation|omits required"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_pagereveal_unbounded_failure_reuse(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "void scheduleSlot(ordered[0], now() + operationWindow, true);",
+                "// omitted page-reveal replay",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_script_execution_identity_lease_theft(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "pendingRecord === self.floorpCSSUserLatestExecutionRecord &&",
+                "false &&",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "script-execution identity lease"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_forced_replay_without_initial_identity_reclaim(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "const forceToken = {};\n"
+                "    self.floorpCSSUserIdentityPendingRecord = executionRecord;\n"
+                "    if ( typeof cssAPI?.suspendForIdentity === 'function' ) {\n"
+                "        cssAPI.suspendForIdentity(executionRecord);\n"
+                "    }\n"
+                "    self.floorpCSSUserForceAPIReplay = forceToken;",
+                "const forceToken = {};\n"
+                "    self.floorpCSSUserForceAPIReplay = forceToken;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "forced replay identity lease"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_forced_replay_without_final_identity_reclaim(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "cssAPI = self.cssAPI;\n"
+                "    self.floorpCSSUserIdentityPendingRecord = executionRecord;\n"
+                "    if ( typeof cssAPI?.suspendForIdentity === 'function' ) {\n"
+                "        cssAPI.suspendForIdentity(executionRecord);\n"
+                "    }\n"
+                "    cssUserIdentityResumed =",
+                "cssAPI = self.cssAPI;\n"
+                "    cssUserIdentityResumed =",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "forced replay identity lease"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_candidate_canary_without_suspension_guard(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "isCurrentGeneration(generation) === false ||\n"
+                "                suspendedBy !== undefined ||\n"
+                "                slot.candidate !== bundle ||",
+                "isCurrentGeneration(generation) === false ||\n"
+                "                slot.candidate !== bundle ||",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "candidate marker authority repair"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_candidate_marker_repair_before_authority_check(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "        for (;;) {\n"
+                "            if (",
+                "        for (;;) {\n"
+                "            root.setAttribute(bundle.attr, '');\n"
+                "            if (",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "candidate marker authority repair"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_promoted_marker_repair_before_observer_update(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "observeMarkers();\n"
+                "            repairSlotMarker(slot);",
+                "repairSlotMarker(slot);\n"
+                "            observeMarkers();\n"
+                "            repairSlotMarker(slot);",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "transactional physical CSS coordinator"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_plain_only_idle_css_api_preload_drift(self) -> None:
@@ -286,12 +536,12 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/filter-manager.js",
-                "if ( idleJS.includes('/js/scripting/css-api.js') === false ) {",
-                "if ( false ) {",
+                "idleJS.unshift('/js/scripting/css-user-idle-prelude.js');",
+                "idleJS.push('/js/scripting/css-user-idle-prelude.js');",
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "registered-script"):
+        with self.assertRaisesRegex(RuntimeError, "registered-script|omits required"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_truncated_restore_registration_union(self) -> None:
@@ -709,11 +959,11 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
                 files,
                 "js/scripting/css-user.js",
                 "const cssUserCleanupOp = Promise.resolve()\n"
-                "    .then(( ) => previousProceduralFilterer instanceof Object",
+                "    .then(( ) => typeof previousProceduralFilterer?.reset === 'function'",
                 "const previousPendingOp = self.cssUserPendingOp;\n"
                 "const cssUserCleanupOp = Promise.resolve()\n"
                 "    .then(( ) => Promise.resolve(previousPendingOp))\n"
-                "    .then(( ) => previousProceduralFilterer instanceof Object",
+                "    .then(( ) => typeof previousProceduralFilterer?.reset === 'function'",
             ),
         )
 
@@ -726,12 +976,15 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting/css-api.js",
-                "api.documentElement === documentElement &&",
-                "false &&",
+                "state.documentId !== identity.documentId ||",
+                "false ||",
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "native Document identity authority|omits required compatibility code",
+        ):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_cross_document_specific_filter_generation_drift(self) -> None:
@@ -776,36 +1029,35 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
-    def test_rejects_ubol_unguarded_style_token_css_reset(self) -> None:
+    def test_rejects_ubol_incomplete_style_token_css_reset(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting/css-procedural-api.js",
-                "            const css = `[${token}]\\n{${style}}\\n`;\n"
-                "            if ( removeCSS ) {",
-                "            const css = `[${token}]\\n{${style}}\\n`;\n"
-                "            if ( true ) {",
+                "                elem.removeAttribute(token);",
+                "                // retained stale style token",
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "scoped style-token.*reset guard"):
+        with self.assertRaisesRegex(RuntimeError, "style-token.*reset guard"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
-    def test_rejects_ubol_unguarded_stylesheet_css_reset(self) -> None:
+    def test_rejects_ubol_unguarded_stylesheet_owner_reset(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting/css-procedural-api.js",
-                "        for ( const css of this.cssSheets ) {\n"
-                "            if ( removeCSS ) {",
-                "        for ( const css of this.cssSheets ) {\n"
-                "            if ( true ) {",
+                "        if ( removeCSS ) {",
+                "        if ( true ) {",
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "scoped stylesheet.*reset guard"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "stylesheet owner.*reset guard|omits required",
+        ):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_cross_document_isolated_context_drift(self) -> None:

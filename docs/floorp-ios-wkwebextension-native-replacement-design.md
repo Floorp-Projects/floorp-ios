@@ -42,7 +42,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573`、
+派生 SHA-256 は `18209d8cff2bc576867b03233062f65235e8aea1c3e00bded9e0d25fa0fc46b5`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -54,17 +54,27 @@ Dashboard の各 route は close handshake の pending 集合へ登録して Web
 待ち、失敗なら popup 内にエラーを残す。
 host は popup が明示的に close されるまで選択・presentation を保留し、close 後に一度だけ確定する。
 CSS 挿入履歴／hostname cache と custom cosmetic／procedural filter の状態・直列化処理は
-document ごとに更新する。Safari が navigation で前 document の runtime message を未完了のまま
-破棄しても新 document はそれを待たない。旧 procedural filterer は runtime 経由の CSS 削除を
-送らず同期的に破棄し、遅延した削除が新 document の同一 CSS を消す競合も避ける。generation
-guard で遅れて返った selector が現行の script state を変更・適用することも防ぐ。
+native document ごとに更新する。現行 WebKit が `insertCSS`／`removeCSS` の `frameIds` と
+`documentIds` を無視するため、schema 付きの native CSS 操作は `{ tabId, allFrames: true }` で行う。
+ただし、各 isolated-world frame が独立した128-bit乱数の root marker を持ち、全 selector branch を
+WebKit で実動作する CSS nesting の内側へ変換するので、物理的に全 frame へ届いた sheet は認証済み
+document root 以外では inert のままである。`@scope` は form control に適用されない WebKit 不具合が
+あるため使用しない。独立乱数の canary が computed style に `!important` 付きで現れたことを確認して
+から marker を原子的に切り替える。重複して起動した登録 script は進行中の `css-user` document
+identity lease に合流し、所有権を横取りしない。候補 marker は document identity が保留中なら
+再公開せず、認証済みの canary 検証中と正式採用直後にページ側から削除されても復旧する。
+旧 schema の picker／tool overlay CSS は従来の exact target を保つ。
+Safari が navigation で前 document の runtime message を未完了のまま破棄しても新 document はそれを
+待たない。旧 procedural filterer は runtime 経由の CSS 削除を送らず同期的に破棄し、遅延した削除が
+新 document の同一 CSS を消す競合も避ける。generation guard で遅れて返った selector が現行の
+script state を変更・適用することも防ぐ。
 isolated-world global が navigation 間で再利用されても cross-host／通常／プライベート tab の
 再注入を省略せず、前 document の CSS を持ち越さない。
 `document_start` の `injectCustomFilters` は、nonpersistent background が cold wake した場合も
 `ensureFullyInitialized()` による DNR／登録 script の全体整合を待たず、直列化済みの永続
 custom-filter storage から応答する。background 経路は sender の非空 `documentId` と HTTP(S)
-URL の hostname を検証し、plain CSS 挿入と通常 web frame 向け procedural fallback を
-`{ tabId, documentIds: [documentId] }` へ限定する。procedural selector が直接または親 hostname から
+URL の hostname を検証し、plain CSS 挿入と通常 web frame 向け procedural fallback をその
+document identity に論理的に結び付ける。procedural selector が直接または親 hostname から
 継承される custom-filter 登録では、`css-api.js` と `css-procedural-api.js` を `css-user.js` より前に
 同じ registered isolated-world script として読み込む。WebKit は `executeScript` の権限判定で
 `matchOriginAsFallback` を適用しないため、`about:blank`／`about:srcdoc` の selector 応答を動的注入の
@@ -155,10 +165,15 @@ mutation revision が 0 の場合は空 DOM を選択として適用せず、nat
 `js/floorp-reconcile.js` を読み込み、durable target の static/derived DNR と script を exact
 readback まで収束させた後だけ background finalize と `{ ready: true }` を認める。
 同一拡張機能 origin からのみ応答する readiness handshake を context の初回 activation に使う。
+custom / procedural cosmetic CSS は、対象 document ID を含む native `insertCSS` の完了応答を
+受け取った後だけ適用済みとする。応答の欠落、拒否、negative、schema 不一致、timeout は同一
+document-generation の15秒上限内で再試行し、上限後は未適用のまま fail closed にする。
+後から発火する procedural selector と期限切れ後の BFCache `pagereveal` は、それぞれ独立した
+イベント単位の15秒上限で再試行する。
 `scripts/package-ubol-ios.sh` がこの監査済み差分を再現する。Floorp 派生 package の宣言どおり iOS 26.0
 未満では利用不可にする。
 
-2026-09-08 に、最終派生 ZIP
+2026-09-08 に、CSS 適用完了応答を追加する前の派生 ZIP
 `4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573` を含む同一の
 FloorpCI build を iPhone 17 / iOS 26.2 Simulator / WebKit bundle
 `8623.1.14.10.9` で固定し、`testOfficialUBOLReleaseAcceptanceGates` を独立 context で
@@ -169,6 +184,23 @@ XCTest case 実測 164.060秒、278.192秒、252.510秒で全回合格（failed 
 `testBundledUBOLBlocksProductionHostTabsAndRendersDashboard` も同じ build の製品 host 経路で
 234.598秒、0失敗で合格した。公式 Safari build が無効化している strict-block interstitial は
 既知の upstream WebKit 制約として検出し、通常の遮断機能とは別に扱う。
+
+2026-09-10 に、現行派生 ZIP
+`18209d8cff2bc576867b03233062f65235e8aea1c3e00bded9e0d25fa0fc46b5` を iPhone 17 / iOS 26.2
+Simulator / WebKit bundle `8623.1.14.10.9` で検証した。identity lease の重複取得と candidate
+marker の削除競合を決定的な Node 回帰試験で再現・修正した後、
+`testOfficialUBOLReleaseAcceptanceGates` は278.939秒／163.363秒の2回、0失敗で合格した。この run は main／srcdoc
+の plain・form-control・procedural cosmetic、cross-origin 非漏洩、root 交換後の復旧、cross-host
+往復、popup、dynamic／session DNR、日本語 ruleset、private browsing、35秒 idle 後の最初の
+document-start を含む。製品 host の uBOL blocking／dashboard は156.059秒、Dark Reader の公式
+popup は43.524秒、製品 host の通常／private theme は2.964秒、メニューからの Dark Reader
+直接表示と2拡張選択経路は2.404秒／27.488秒で合格し、該当ログの
+`GesturePhaseQueue InvalidTransition` は0件だった。iOS 18.4 で uBOL が unavailable のままになる
+条件は OS matrix CI の release gate として別途実行する。
+
+`0b39067e4db2c1435230fb65a8a6a967435de0ab3d56171a9f9494a9fcd1e8b1` は document-scoped
+CSS の最終 WebKit 修正より前の TestFlight package として移行専用 allowlist に残す。新規 install と
+release acceptance は上記の現行派生 SHA-256 だけを受け入れる。
 
 同じ build で Dark Reader の `testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup` を
 独立 context で2回連続実行し、初回 navigation のテーマ適用、Page Action popup の描画・操作、

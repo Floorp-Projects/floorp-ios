@@ -233,6 +233,8 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "try await Task.sleep(nanoseconds: 35_000_000_000)",
             'print("FLOORP_UBOL_RELEASE_GATE background-wake-document-start")',
             "let result = try await loadAndInspect(",
+            "customCosmeticSettleTimeoutNanoseconds:\n"
+            "                Self.customCosmeticActivationTimeoutNanoseconds",
             "navigationTimeoutPolicy: .preserveWebViewForProcessLifetime",
         )
         positions = [cold_document_start.index(token) for token in cold_tokens]
@@ -243,6 +245,39 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "waitUntilBackgroundIsReady(",
         ):
             self.assertNotIn(forbidden, cold_document_start)
+
+        load_and_inspect = session.split(
+            "    private func loadAndInspect(\n", 1
+        )[1].split("\n    private func inspectCrossHostCustomFilterIsolation", 1)[0]
+        self.assertIn(
+            "customCosmeticSettleTimeoutNanoseconds: UInt64 = 15_000_000_000",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "private static let customCosmeticActivationTimeoutNanoseconds: UInt64 "
+            "= 15_000_000_000",
+            session,
+        )
+        self.assertIn("let settleDeadline = Self.makeReadinessDeadline(", load_and_inspect)
+        self.assertIn("let requiredSamples = 8", load_and_inspect)
+        self.assertIn("var observedUnexpectedState = false", load_and_inspect)
+        self.assertIn(
+            "if !expectedCustomCosmeticFilters {\n"
+            "                    break\n"
+            "                }",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "!observedUnexpectedState && consecutiveExpectedSamples >= requiredSamples",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "if expectedCustomCosmeticFilters,\n"
+            "                   consecutiveExpectedSamples >= requiredSamples",
+            load_and_inspect,
+        )
+        self.assertIn("guard now < settleDeadline else { break }", load_and_inspect)
+        self.assertNotIn("for _ in 0..<20", load_and_inspect)
 
         self.assertIn("let coldDocumentStart: FloorpUBOLPageAcceptance", report)
         self.assertIn("coldDocumentStart.customCosmeticHidden", report)
@@ -264,8 +299,17 @@ class FloorpCIPythonContractTests(unittest.TestCase):
         )[1].split("\nprivate struct FloorpUBOLPopupAcceptance", 1)[0]
 
         self.assertIn('id="floorp-origin-fallback-frame" srcdoc=', session)
-        self.assertIn("originFallbackCustom: hidden(", session)
+        self.assertIn(
+            "originFallbackCustom:\n"
+            "                    hidden(originFallbackDocument, 'floorp-custom-cosmetic') &&\n"
+            "                    hidden(originFallbackDocument, 'floorp-custom-form-control')",
+            session,
+        )
         self.assertIn("originFallbackProcedural: hidden(", session)
+        self.assertIn('id="floorp-cross-origin-frame"', session)
+        self.assertIn("!states.crossOriginCustom", session)
+        self.assertIn("document.adoptedStyleSheets = [];", session)
+        self.assertIn("name.startsWith('data-floorp-ubol-')", session)
         self.assertIn("originFallbackCustomCosmeticHidden: hidden(", session)
         self.assertIn("originFallbackProceduralCosmeticHidden: hidden(", session)
         for page in ("optimal", "crossHostReturn", "privateBrowsing", "coldDocumentStart"):

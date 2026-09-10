@@ -1,5 +1,11 @@
 from pathlib import Path
+import os
 import re
+import signal
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
 
 
@@ -347,7 +353,8 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "awk '/Ineligible destinations for/{exit} {print}'", acceptance
         )
         self.assertIn(
-            "floorp-webextension-os-matrix-eligible-destinations-ios-26-0.log",
+            "floorp-webextension-os-matrix-eligible-destinations-ios-26-0"
+            "${artifact_suffix}.log",
             acceptance,
         )
 
@@ -399,7 +406,8 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         minimum_runtime = self._step("Prepare iOS 18.4 simulator runtime")
         acceptance = self._step("Run focused WebExtension OS acceptance")
         minimum_boot = acceptance.index(
-            'xcrun simctl bootstatus "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" -b'
+            'wait_for_simulator_boot \\\n'
+            '            "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID"'
         )
         minimum_test = acceptance.index(
             "testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup"
@@ -426,13 +434,14 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             'DEVELOPER_DIR="$FLOORP_WEBEXT_MODERN_RUNTIME_DEVELOPER_DIRECTORY"'
         )
         modern_create = acceptance.index(
-            'modern_simulator_id="$(xcrun simctl create'
+            "xcrun simctl create \\"
         )
         modern_destination_gate = acceptance.index(
             'grep -Fq "id:$modern_simulator_id"'
         )
         modern_boot = acceptance.index(
-            'xcrun simctl bootstatus "$modern_simulator_id" -b'
+            'if ! wait_for_simulator_boot \\\n'
+            '              "$modern_simulator_id"'
         )
         modern_test = acceptance.index(
             "testOfficialUBOLReleaseAcceptanceGates"
@@ -538,14 +547,20 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
 
     def test_focused_acceptance_selects_the_supported_tests_on_each_os(self):
         acceptance = self._step("Run focused WebExtension OS acceptance")
-        minimum = acceptance.split(
-            'xcrun simctl bootstatus "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" -b', 1
-        )[1].split(
-            'xcrun simctl shutdown "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID"', 1
-        )[0]
-        modern = acceptance.split(
-            'xcrun simctl bootstatus "$modern_simulator_id" -b', 1
-        )[1].split('exit "$overall_status"', 1)[0]
+        minimum_start = acceptance.index(
+            '          run_test \\\n'
+            '            "$FLOORP_WEBEXT_IOS184_DESTINATION"'
+        )
+        minimum_end = acceptance.index(
+            'xcrun simctl shutdown "$FLOORP_WEBEXT_IOS184_SIMULATOR_ID"'
+        )
+        modern_start = acceptance.index(
+            '          run_test \\\n'
+            '            "$modern_destination"'
+        )
+        modern_end = acceptance.index('exit "$overall_status"')
+        minimum = acceptance[minimum_start:minimum_end]
+        modern = acceptance[modern_start:modern_end]
 
         minimum_tests = (
             (
@@ -600,6 +615,197 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             1,
         )[1]
         self.assertIn('\n            "1" \\', ubol_acceptance_call)
+
+    def test_simulator_boot_waits_are_bounded_and_modern_boot_recreates_once(self):
+        acceptance = self._step("Run focused WebExtension OS acceptance")
+        timeout_helper = acceptance.split(
+            "          run_command_with_timeout() {", 1
+        )[1].split("\n          }", 1)[0]
+        boot_helper = acceptance.split(
+            "          wait_for_simulator_boot() {", 1
+        )[1].split("\n          }", 1)[0]
+
+        self.assertNotIn("xcrun simctl bootstatus", acceptance)
+        self.assertEqual(acceptance.count("bootstatus"), 1)
+        for bounded_command_contract in (
+            'local timeout_seconds="$2"',
+            "shift 2",
+            "post_kill_wait_seconds = 10",
+            "command = sys.argv[2:]",
+            "subprocess.Popen(",
+            "start_new_session=True",
+            "signal.signal(signal.SIGTERM, handle_parent_termination)",
+            "signal.signal(signal.SIGINT, handle_parent_termination)",
+            "except ParentTermination as termination:",
+            "if process is not None and process.poll() is None:",
+            "process.wait(timeout=timeout_seconds)",
+            "except subprocess.TimeoutExpired:",
+            "os.killpg(process.pid, signal.SIGKILL)",
+            "process.wait(timeout=post_kill_wait_seconds)",
+            "Command did not exit after SIGKILL within",
+            "command_status = 124",
+            "command_status = 125",
+            'pipeline_status=("${PIPESTATUS[@]}")',
+            'command_status="${pipeline_status[0]}"',
+            'tee_status="${pipeline_status[1]}"',
+            '[[ "$tee_status" -ne 0 ]]',
+            "Could not retain bounded command output",
+            'return "$tee_status"',
+            'return "$command_status"',
+        ):
+            self.assertIn(bounded_command_contract, timeout_helper)
+        for bounded_boot_contract in (
+            "run_command_with_timeout",
+            "720",
+            "xcrun",
+            "simctl",
+            "bootstatus",
+            '"$simulator_id"',
+            "-b",
+        ):
+            self.assertIn(bounded_boot_contract, boot_helper)
+
+        self.assertEqual(acceptance.count("wait_for_simulator_boot \\"), 3)
+        self.assertIn(
+            '"$FLOORP_WEBEXT_IOS184_SIMULATOR_ID" \\\n'
+            '            "floorp-webextension-os-matrix-ios-18-4-boot-attempt-1"',
+            acceptance,
+        )
+        for attempt in (1, 2):
+            self.assertIn(
+                f"floorp-webextension-os-matrix-ios-26-0-boot-attempt-{attempt}",
+                acceptance,
+            )
+        for exact_recreation_contract in (
+            "floorp-webextension-os-matrix-ios-26-0-boot-recovery-shutdown-attempt-1",
+            "floorp-webextension-os-matrix-ios-26-0-boot-recovery-delete-attempt-1",
+            "120",
+            "shutdown \\",
+            "delete \\",
+            '[[ "$delete_status" -ne 0 ]]',
+            'create_and_verify_modern_simulator "-retry-2"',
+            "did not boot after two bounded attempts",
+        ):
+            self.assertIn(exact_recreation_contract, acceptance)
+        self.assertNotIn(
+            'xcrun simctl shutdown "$modern_simulator_id"', acceptance
+        )
+        self.assertNotIn(
+            'xcrun simctl delete "$modern_simulator_id"', acceptance
+        )
+        self.assertEqual(
+            len(
+                re.findall(
+                    r'^\s+create_and_verify_modern_simulator "(?:|-retry-2)"$',
+                    acceptance,
+                    re.MULTILINE,
+                )
+            ),
+            2,
+        )
+
+        modern_setup = acceptance.split(
+            "          create_and_verify_modern_simulator() {", 1
+        )[1].split("\n          }", 1)[0]
+        recovery = acceptance.split(
+            "          recover_modern_simulator_for_cleanup() {", 1
+        )[1].split("\n          }", 1)[0]
+        self.assertIn(
+            'modern_simulator_name="Floorp WebExtension iOS '
+            '$WEBEXTENSION_MODERN_OS run-$GITHUB_RUN_ID-attempt-'
+            '$GITHUB_RUN_ATTEMPT"',
+            acceptance,
+        )
+        for recovery_contract in (
+            "run_command_with_timeout \\",
+            "60 \\\n              xcrun simctl list devices -j",
+            '--arg runtime "$modern_runtime"',
+            '--arg name "$modern_simulator_name"',
+            ".devices[$runtime][]?",
+            "if length == 1 then .[0]",
+            'FLOORP_WEBEXT_IOS260_SIMULATOR_ID=%s\\n',
+            "for the always-run cleanup step",
+        ):
+            self.assertIn(recovery_contract, recovery)
+        for bounded_setup_contract in (
+            "run_command_with_timeout \\",
+            'create_artifact_stem="floorp-webextension-os-matrix-ios-26-0-'
+            'simulator-create${artifact_suffix}"',
+            "120 \\\n              xcrun simctl create \\",
+            "Could not create the exact iOS 26.0 simulator within the fixed timeout",
+            '"floorp-webextension-os-matrix-destinations-ios-26-0'
+            '${artifact_suffix}"',
+            "300 \\\n              xcodebuild -showdestinations \\",
+            "Could not verify the exact iOS 26.0 simulator destination within the fixed timeout",
+            'grep -Fq "id:$modern_simulator_id"',
+            '"$modern_simulator_name" \\',
+        ):
+            self.assertIn(bounded_setup_contract, modern_setup)
+        self.assertEqual(modern_setup.count("run_command_with_timeout \\"), 2)
+        self.assertEqual(
+            modern_setup.count(
+                'recover_modern_simulator_for_cleanup "$artifact_suffix"'
+            ),
+            2,
+        )
+
+    def test_bounded_command_parent_signal_kills_the_child_process_group(self):
+        acceptance = self._step("Run focused WebExtension OS acceptance")
+        acceptance_lines = acceptance.splitlines()
+        helper_start = next(
+            index
+            for index, line in enumerate(acceptance_lines)
+            if "<<'PY'" in line
+        ) + 1
+        helper_end = next(
+            index
+            for index in range(helper_start, len(acceptance_lines))
+            if acceptance_lines[index].strip() == "PY"
+        )
+        helper = "\n".join(acceptance_lines[helper_start:helper_end])
+        helper = "\n".join(
+            line.removeprefix("          ") for line in helper.splitlines()
+        ).lstrip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            directory_path = Path(directory)
+            helper_path = directory_path / "bounded-command.py"
+            child_pid_path = directory_path / "child.pid"
+            helper_path.write_text(helper)
+            child_code = (
+                "from pathlib import Path; import os, time; "
+                f"Path({str(child_pid_path)!r}).write_text(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            parent = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(helper_path),
+                    "60",
+                    sys.executable,
+                    "-c",
+                    child_code,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.addCleanup(lambda: parent.poll() is None and parent.kill())
+            for _ in range(100):
+                if child_pid_path.exists():
+                    break
+                time.sleep(0.01)
+            if not child_pid_path.exists():
+                parent.kill()
+                output, _ = parent.communicate(timeout=10)
+                self.fail(f"bounded child did not start:\n{output}")
+            child_pid = int(child_pid_path.read_text())
+
+            parent.send_signal(signal.SIGTERM)
+            output, _ = parent.communicate(timeout=10)
+            self.assertEqual(parent.returncode, 128 + signal.SIGTERM, output)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child_pid, 0)
 
     def test_minimum_os_negative_test_bootstraps_dependencies_before_seeding_tab(self):
         marker = (
