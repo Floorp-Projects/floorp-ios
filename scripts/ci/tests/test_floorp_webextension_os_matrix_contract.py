@@ -7,6 +7,10 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = ROOT / ".github/workflows/ci.yml"
 CI_DOCUMENTATION_PATH = ROOT / "docs/ci-cd.md"
 APP_COMMON_CONFIG_PATH = ROOT / "firefox-ios/Client/Configuration/Common.xcconfig"
+BROWSERKIT_PACKAGE_PATH = ROOT / "BrowserKit/Package.swift"
+BROWSERKIT_WEBKIT_EXTENSIONS_PATH = (
+    ROOT / "BrowserKit/Sources/Shared/Extensions/WKWebViewExtensions.swift"
+)
 
 
 class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
@@ -15,6 +19,8 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         cls.workflow = WORKFLOW_PATH.read_text()
         cls.documentation = CI_DOCUMENTATION_PATH.read_text()
         cls.app_common_config = APP_COMMON_CONFIG_PATH.read_text()
+        cls.browserkit_package = BROWSERKIT_PACKAGE_PATH.read_text()
+        cls.browserkit_webkit_extensions = BROWSERKIT_WEBKIT_EXTENSIONS_PATH.read_text()
         job_marker = "\n  webextension-os-matrix:\n"
         cls.job = cls.workflow.split(job_marker, 1)[1]
 
@@ -32,6 +38,21 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         )
         self.assertIsNotNone(deployment_target)
         self.assertEqual(deployment_target.group(1), "18.4")
+        self.assertEqual(self.browserkit_package.count(".iOS(.v15)"), 1)
+        self.assertEqual(
+            self.browserkit_webkit_extensions.count("self.__evaluateJavaScript("),
+            3,
+        )
+        self.assertEqual(
+            self.browserkit_webkit_extensions.count("self.__callAsyncJavaScript("),
+            1,
+        )
+        self.assertNotIn(
+            "self.evaluateJavaScript(", self.browserkit_webkit_extensions
+        )
+        self.assertNotIn(
+            "self.callAsyncJavaScript(", self.browserkit_webkit_extensions
+        )
         for declaration in (
             'WEBEXTENSION_XCODE_VERSION: "26.3"',
             'WEBEXTENSION_XCODE_BUILD: "17C529"',
@@ -325,6 +346,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         )
 
         build = self._step("Build minimum-OS test products once")
+        linkage = self._step("Reject unavailable Swift WebKit runtime linkage")
         self.assertEqual(self.job.count("xcodebuild build-for-testing"), 1)
         self.assertIn("set -euo pipefail", build)
         self.assertIn('-destination "$FLOORP_WEBEXT_IOS184_DESTINATION"', build)
@@ -335,11 +357,37 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             self.job.index("      - name: Verify minimum-OS build destination"),
             self.job.index("      - name: Build minimum-OS test products once"),
         )
+        self.assertLess(
+            self.job.index("      - name: Build minimum-OS test products once"),
+            self.job.index(
+                "      - name: Reject unavailable Swift WebKit runtime linkage"
+            ),
+        )
+        self.assertLess(
+            self.job.index(
+                "      - name: Reject unavailable Swift WebKit runtime linkage"
+            ),
+            self.job.index("      - name: Run focused WebExtension OS acceptance"),
+        )
+        for linkage_contract in (
+            "set -euo pipefail",
+            "shopt -s nullglob",
+            "PackageFrameworks/Shared_*_PackageProduct.framework/Shared_*_PackageProduct",
+            '[[ "${#shared_products[@]}" -ne 1 ]]',
+            'otool -L "${shared_products[0]}"',
+            "/usr/lib/swift/libswiftWebKit.dylib",
+            "/System/Library/Frameworks/WebKit.framework/WebKit",
+            "floorp-webextension-os-matrix-shared-linkage.log",
+        ):
+            self.assertIn(linkage_contract, linkage)
+        self.assertNotIn("|| true", linkage)
 
         self.assertEqual(acceptance.count("xcodebuild test-without-building"), 1)
         self.assertNotIn("xcodebuild test ", acceptance)
         self.assertIn('-derivedDataPath "$RUNNER_TEMP/WebExtensionDerivedData"', acceptance)
         self.assertNotIn("IPHONEOS_DEPLOYMENT_TARGET=", acceptance)
+        self.assertIn("-default-test-execution-time-allowance 720", acceptance)
+        self.assertIn("-maximum-test-execution-time-allowance 720", acceptance)
 
     def test_runtime_use_is_sequential_and_minimum_runtime_reclaim_is_exact(self):
         minimum_runtime = self._step("Prepare iOS 18.4 simulator runtime")

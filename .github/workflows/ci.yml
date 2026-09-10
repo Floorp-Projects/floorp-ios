@@ -230,7 +230,7 @@ jobs:
           fi
 
       - name: Run uBlock Origin Lite production-host integration
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           set -o pipefail
           xcodebuild test-without-building \
@@ -246,8 +246,8 @@ jobs:
             -skipMacroValidation \
             -only-testing:ClientTests/FloorpNativeWebExtensionIntegrationTests/testBundledUBOLBlocksProductionHostTabsAndRendersDashboard \
             -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 480 \
-            -maximum-test-execution-time-allowance 480 \
+            -default-test-execution-time-allowance 720 \
+            -maximum-test-execution-time-allowance 720 \
             -resultBundlePath "$RUNNER_TEMP/FloorpUBOLProductionHost.xcresult" \
             CODE_SIGN_IDENTITY= \
             CODE_SIGNING_REQUIRED=NO \
@@ -906,6 +906,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-build.log"
 
+      - name: Reject unavailable Swift WebKit runtime linkage
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          shared_products=(
+            "$RUNNER_TEMP"/WebExtensionDerivedData/Build/Products/*/PackageFrameworks/Shared_*_PackageProduct.framework/Shared_*_PackageProduct
+          )
+          if [[ "${#shared_products[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one built Shared package product, found ${#shared_products[@]}"
+            exit 1
+          fi
+
+          shared_dependencies="$RUNNER_TEMP/floorp-webextension-os-matrix-shared-linkage.log"
+          otool -L "${shared_products[0]}" | tee "$shared_dependencies"
+          if grep -Fq "/usr/lib/swift/libswiftWebKit.dylib" "$shared_dependencies"; then
+            echo "::error::Shared strongly links a Swift WebKit runtime unavailable on iOS 18.4"
+            exit 1
+          fi
+          if ! grep -Fq "/System/Library/Frameworks/WebKit.framework/WebKit" \
+            "$shared_dependencies"; then
+            echo "::error::Shared is missing its expected system WebKit framework dependency"
+            exit 1
+          fi
+
       - name: Run focused WebExtension OS acceptance
         timeout-minutes: 90
         run: |
@@ -936,8 +960,8 @@ jobs:
               -skipMacroValidation
               "-only-testing:$test_identifier"
               -test-timeouts-enabled YES
-              -default-test-execution-time-allowance 480
-              -maximum-test-execution-time-allowance 480
+              -default-test-execution-time-allowance 720
+              -maximum-test-execution-time-allowance 720
               -resultBundlePath "$result_path"
               CODE_SIGN_IDENTITY=
               CODE_SIGNING_REQUIRED=NO

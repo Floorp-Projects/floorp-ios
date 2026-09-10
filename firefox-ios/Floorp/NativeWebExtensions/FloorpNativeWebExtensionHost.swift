@@ -909,6 +909,12 @@ final class FloorpNativeWebExtensionHost: NSObject {
         hasUnfinishedWebKitOperation(for: context)
     }
 
+    func shouldRetryBundledExtensionReadinessProbeForTesting(
+        after error: any Error
+    ) -> Bool {
+        shouldRetryBundledExtensionReadinessProbe(after: error)
+    }
+
     func isContextQuarantinedForTesting(identifier: String) -> Bool {
         quarantinedContextIdentifiers.contains(identifier)
     }
@@ -4582,7 +4588,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     identifier: identifier,
                     timeoutNanoseconds: min(
                         try remainingAttemptTimeout(),
-                        5_000_000_000
+                        15_000_000_000
                     )
                 )
                 if !didLoadBackgroundContent {
@@ -4707,6 +4713,29 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
         }
         let nsError = error as NSError
+        let provenance = [
+            String(reflecting: type(of: error)),
+            nsError.domain,
+        ].joined(separator: " ").lowercased()
+        let detail = [
+            String(describing: error),
+            String(reflecting: error),
+            nsError.localizedDescription,
+        ]
+        .joined(separator: " ")
+        .lowercased()
+        .filter { !$0.isWhitespace }
+        let isGesturesDeinitTransition = provenance.contains("gestures")
+            && provenance.contains("gesturephasequeue")
+            && provenance.contains("invalidtransition")
+            && detail.contains("phase:idle")
+            && detail.contains("targetphase:failed(deinit)")
+        if isGesturesDeinitTransition {
+            // iOS 26 can deliver this private WebKit/Gestures error after a
+            // completed cold extension-page navigation. The callback is no
+            // longer in flight, so the normal fresh-surface retry is safe.
+            return true
+        }
         guard nsError.domain == WKError.errorDomain else { return false }
         if let code = WKError.Code(rawValue: nsError.code) {
             switch code {
@@ -4723,8 +4752,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         // a generic JavaScript error. Keep a narrow compatibility fallback;
         // the code-based cases above remain the primary classifier.
         let message = nsError.localizedDescription.lowercased()
-        let transientFragments = ["jscontextref", "invalidtransition"]
-        return transientFragments.contains(where: message.contains)
+        return message.contains("jscontextref")
     }
 
     private func hasRetiredBackgroundReadinessSurface(

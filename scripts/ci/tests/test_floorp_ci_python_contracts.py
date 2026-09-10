@@ -55,6 +55,9 @@ class FloorpCIPythonContractTests(unittest.TestCase):
         self.assertIn(f"-skip-testing:{test_identifier}", unit_step)
         self.assertIn(f"-only-testing:{test_identifier}", isolated_step)
         self.assertIn("FloorpUBOLProductionHost.xcresult", isolated_step)
+        self.assertIn("timeout-minutes: 15", isolated_step)
+        self.assertIn("-default-test-execution-time-allowance 720", isolated_step)
+        self.assertIn("-maximum-test-execution-time-allowance 720", isolated_step)
         self.assertIn(
             "testBundledUBOLBlocksProductionHostTabsAndRendersDashboard]' passed",
             isolated_step,

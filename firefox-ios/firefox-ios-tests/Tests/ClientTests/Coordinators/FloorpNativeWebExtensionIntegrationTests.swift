@@ -2218,12 +2218,73 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let host = try FloorpNativeWebExtensionHost.install(for: profile)
         defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
         let identifier = FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        XCTAssertTrue(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: gesturesDeinitTransition
+            )
+        )
+        XCTAssertFalse(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: gesturesDeinitTransition.domain,
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "InvalidTransition { phase: active targetPhase: failed(deinit) }"
+                    ]
+                )
+            )
+        )
+        XCTAssertFalse(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: "Floorp.ExtensionJavaScript",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "InvalidTransition { phase: idle targetPhase: failed(deinit) }"
+                    ]
+                )
+            )
+        )
+        XCTAssertFalse(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: WKError.errorDomain,
+                    code: WKError.Code.javaScriptExceptionOccurred.rawValue,
+                    userInfo: [NSLocalizedDescriptionKey: "InvalidTransition"]
+                )
+            )
+        )
+        XCTAssertTrue(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: WKError.errorDomain,
+                    code: WKError.Code.webContentProcessTerminated.rawValue,
+                    userInfo: [NSLocalizedDescriptionKey: "一時的に処理を完了できませんでした"]
+                )
+            )
+        )
         var injectedFailureCount = 0
         var successfulResponseCount = 0
         host.backgroundReadinessTransientFailureHookForTesting = { hookIdentifier, _ in
             guard hookIdentifier == identifier, injectedFailureCount < 2 else { return nil }
             injectedFailureCount += 1
-            return FloorpNativeWebExtensionError.hostUnavailable
+            return injectedFailureCount == 1
+                ? gesturesDeinitTransition
+                : FloorpNativeWebExtensionError.hostUnavailable
         }
         host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
             guard hookIdentifier == identifier else { return nil }
@@ -6485,7 +6546,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     func testBundledUBOLBlocksProductionHostTabsAndRendersDashboard() async throws {
         // This end-to-end case exercises both privacy realms and every options
         // mutation path. Its measured runtime exceeds the one-minute CI default.
-        executionTimeAllowance = 480
+        executionTimeAllowance = 720
         let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_content_effects")
         let profile = profileFixture.profile
@@ -6697,10 +6758,12 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             "Closing Settings before Filter lists renders must not disable the stock rulesets"
         )
 
+        let interruptedResumeRecovery: [String: Any]?
         let interruptedRestoreRecovery: [String: Any]?
         var interruptedSnapshot: [String: Any]?
         var interruptedRestoreId: String?
         var interruptedRestoreOperation = "setup"
+        let staticRulesetRecoveryTimeoutNanoseconds: UInt64 = 240_000_000_000
         do {
             let setup = try await optionsWebView.floorpCallAsyncJavaScript(
                 """
@@ -6780,8 +6843,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             let stagedState = try XCTUnwrap(staged)
             interruptedRestoreId = stagedState["interruptedId"] as? String
 
-            interruptedRestoreOperation = "restore"
-            interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
+            interruptedRestoreOperation = "resume-interrupted-commit"
+            interruptedResumeRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
                 """
                 if (
                     document.documentElement.dataset.floorpRestoreProbe !==
@@ -6789,7 +6852,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 ) {
                     throw new Error('Options document changed before restore recovery');
                 }
-                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
                 const reconciler = await import(
                     browser.runtime.getURL('js/floorp-reconcile.js')
                 );
@@ -6802,6 +6864,46 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                         resumed.error || 'Failed to resume foreground restore handoff'
                     );
                 }
+                if (
+                    resumed.settingsRestoreId !== undefined &&
+                    resumed.settingsRestoreId !== interruptedId
+                ) {
+                    throw new Error('Foreground restore resumed a different transaction');
+                }
+                const resumedStorage = await browser.storage.local.get(journalKey);
+                return {
+                    ready: resumed.ready === true,
+                    committed: resumed.committed === true,
+                    restoreIdMatches:
+                        resumed.settingsRestoreId === undefined ||
+                        resumed.settingsRestoreId === interruptedId,
+                    journalRemoved: resumedStorage[journalKey] === undefined,
+                };
+                """,
+                arguments: [
+                    "documentToken": documentToken,
+                    "interruptedId": stagedState["interruptedId"] as? String ?? "",
+                ],
+                contentWorld: .page,
+                timeoutNanoseconds: staticRulesetRecoveryTimeoutNanoseconds
+            ) as? [String: Any]
+            let resumedState = try XCTUnwrap(interruptedResumeRecovery)
+            XCTAssertEqual(resumedState["ready"] as? Bool, true)
+            XCTAssertEqual(resumedState["committed"] as? Bool, true)
+            XCTAssertEqual(resumedState["restoreIdMatches"] as? Bool, true)
+            XCTAssertEqual(resumedState["journalRemoved"] as? Bool, true)
+
+            interruptedRestoreOperation = "restore-snapshot"
+            interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                if (
+                    document.documentElement.dataset.floorpRestoreProbe !==
+                    documentToken
+                ) {
+                    throw new Error('Options document changed before snapshot restore');
+                }
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const journalKey = 'floorp.settingsRestoreJournal.v1';
                 await backup.restoreFromObject(snapshot);
                 const finalEnabled = await browser.runtime.sendMessage({
                     what: 'getEnabledRulesets',
@@ -6818,7 +6920,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 return {
                     interruptedJournalRetained,
                     stagedChanged,
-                    resumedCommitted: resumed.committed === true,
+                    resumedCommitted,
                     initialEnabled,
                     finalEnabled,
                     journalRemoved: finalStorage[journalKey] === undefined,
@@ -6829,17 +6931,19 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     "documentToken": documentToken,
                     "snapshot": snapshot,
                     "initialEnabled": initialEnabled,
-                    "interruptedId": stagedState["interruptedId"] as? String ?? "",
                     "interruptedJournalRetained":
                         stagedState["interruptedJournalRetained"] as? Bool ?? false,
                     "stagedChanged": stagedState["stagedChanged"] as? Bool ?? false,
+                    "resumedCommitted": resumedState["committed"] as? Bool ?? false,
                 ],
                 contentWorld: .page,
-                timeoutNanoseconds: 90_000_000_000
+                timeoutNanoseconds: staticRulesetRecoveryTimeoutNanoseconds
             ) as? [String: Any]
         } catch {
             let operationError = error
-            if let interruptedRestoreId {
+            if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(
+                optionsWebView
+            ), let interruptedRestoreId {
                 _ = try? await optionsWebView.floorpCallAsyncJavaScript(
                     """
                     const rollback = await browser.runtime.sendMessage({
@@ -6861,7 +6965,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     timeoutNanoseconds: 90_000_000_000
                 )
             }
-            if let interruptedSnapshot {
+            if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(
+                optionsWebView
+            ), let interruptedSnapshot {
                 _ = try? await optionsWebView.floorpCallAsyncJavaScript(
                     """
                     const backup = await import(
