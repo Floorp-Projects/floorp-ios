@@ -207,6 +207,19 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
             in: browsingWebView,
             "return !document.documentElement.hasAttribute('data-darkreader-mode');"
         )
+        // The content script can remove the theme before the popup receives and
+        // renders the corresponding settings broadcast. Clicking "On" while the
+        // popup still renders it as selected is intentionally ignored by
+        // Dark Reader's MultiSwitch, which made this round trip timing-dependent
+        // on slower WebKit versions.
+        try await waitForJavaScriptCondition(
+            in: popupWebView,
+            """
+            const options = document.querySelectorAll('.app-switch__control .multi-switch__option');
+            return options.length === 3 &&
+                options[2].classList.contains('multi-switch__option--selected');
+            """
+        )
         try await performJavaScriptAction(
             in: popupWebView,
             """
@@ -219,6 +232,14 @@ final class FloorpDarkReaderWebKitAcceptanceTests: XCTestCase {
         try await waitForJavaScriptCondition(
             in: browsingWebView,
             "return document.documentElement.dataset.darkreaderMode === 'dynamic';"
+        )
+        try await waitForJavaScriptCondition(
+            in: popupWebView,
+            """
+            const options = document.querySelectorAll('.app-switch__control .multi-switch__option');
+            return options.length === 3 &&
+                options[0].classList.contains('multi-switch__option--selected');
+            """
         )
         XCTAssertTrue(
             context.errors.isEmpty,
