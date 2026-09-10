@@ -150,7 +150,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.ublock-origin-lite",
         resourceName: "uBOLite-floorp-ios-2026.825.1619",
         resourceExtension: "zip",
-        expectedSHA256: "18209d8cff2bc576867b03233062f65235e8aea1c3e00bded9e0d25fa0fc46b5",
+        expectedSHA256: "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359",
         expectedVersion: "2026.825.1619",
         contextIdentifier: "org.ublockorigin.lite.floorp-ios",
         baseURLScheme: "safari-web-extension",

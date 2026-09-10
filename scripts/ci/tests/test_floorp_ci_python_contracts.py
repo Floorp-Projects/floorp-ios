@@ -102,6 +102,11 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
             "FloorpUBOLWebKitDiagnosticsTests.swift"
         ).read_text()
+        host_source = (
+            ROOT
+            / "firefox-ios/Floorp/NativeWebExtensions/"
+            "FloorpNativeWebExtensionHost.swift"
+        ).read_text()
         session = source.split(
             "private final class FloorpUBOLReleaseAcceptanceSession {\n", 1
         )[1].split("\nprivate enum FloorpUBOLDNRDiagnosticError", 1)[0]
@@ -138,7 +143,17 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "Self.loadBackgroundContent(",
             "Self.waitUntilBackgroundIsReady(",
         )
-        for lifecycle in (initial_readiness, warm_readiness):
+        navigation_timeouts = (
+            (
+                initial_readiness,
+                "Self.coldExtensionPageNavigationTimeoutNanoseconds",
+            ),
+            (
+                warm_readiness,
+                "Self.warmExtensionPageNavigationTimeoutNanoseconds",
+            ),
+        )
+        for lifecycle, expected_navigation_timeout in navigation_timeouts:
             positions = [lifecycle.index(token) for token in lifecycle_tokens]
             self.assertEqual(positions, sorted(positions))
             self.assertIn("remainingReadinessTimeout(until: readinessDeadline)", lifecycle)
@@ -151,11 +166,53 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             navigation = lifecycle.split("readyPage.waiter.load(", 1)[1].split(
                 "timeoutPolicy: .preserveWebViewForProcessLifetime", 1
             )[0]
-            self.assertEqual(navigation.count("5_000_000_000"), 1)
+            self.assertEqual(navigation.count(expected_navigation_timeout), 1)
             self.assertIn(
                 "try Self.remainingReadinessTimeout(until: readinessDeadline)",
                 navigation,
             )
+
+        self.assertIn(
+            "private static let coldExtensionPageNavigationTimeoutNanoseconds: "
+            "UInt64 = 30_000_000_000",
+            session,
+        )
+        self.assertIn(
+            "private static let warmExtensionPageNavigationTimeoutNanoseconds: "
+            "UInt64 = 5_000_000_000",
+            session,
+        )
+        production_readiness = host_source.split(
+            "    private func waitForBundledExtensionInitialization(\n", 1
+        )[1].split("\n    private func", 1)[0]
+        self.assertIn(
+            "timeoutNanoseconds: min(\n"
+            "                        try remainingAttemptTimeout(),\n"
+            "                        Self.readinessPageNavigationTimeout(for: identifier)\n"
+            "                    )",
+            production_readiness,
+        )
+        self.assertEqual(
+            production_readiness.count(
+                "Self.readinessPageNavigationTimeout(for: identifier)"
+            ),
+            1,
+        )
+        semantic_probe = production_readiness.split(
+            "probe.callAsyncJavaScript(", 1
+        )[1].split(")\n                }()", 1)[0]
+        self.assertNotIn("readinessPageNavigationTimeout", semantic_probe)
+        production_navigation_timeout = host_source.split(
+            "    private static func readinessPageNavigationTimeout(for identifier: String) "
+            "-> UInt64 {\n",
+            1,
+        )[1].split("\n    private func", 1)[0]
+        self.assertIn(
+            "identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier",
+            production_navigation_timeout,
+        )
+        self.assertIn("? 30_000_000_000", production_navigation_timeout)
+        self.assertIn(": 15_000_000_000", production_navigation_timeout)
 
         preserve_timeout = navigation_waiter.split(
             "case .preserveWebViewForProcessLifetime:\n", 1

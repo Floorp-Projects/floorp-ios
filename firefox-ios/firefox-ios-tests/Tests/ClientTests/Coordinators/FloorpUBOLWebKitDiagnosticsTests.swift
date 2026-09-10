@@ -593,6 +593,12 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     private static let japaneseRuleset = "jpn-1"
     private static let coldBackgroundReadinessTimeoutNanoseconds: UInt64 = 240_000_000_000
     private static let warmBackgroundReadinessTimeoutNanoseconds: UInt64 = 90_000_000_000
+    // A pristine iOS 26 simulator can exceed the generic fifteen-second page
+    // budget while creating storage before its first extension-page commit.
+    // Keep the same owned WebView alive and bound that cold bootstrap separately
+    // from the much larger background/ruleset readiness allowance.
+    private static let coldExtensionPageNavigationTimeoutNanoseconds: UInt64 = 30_000_000_000
+    private static let warmExtensionPageNavigationTimeoutNanoseconds: UInt64 = 5_000_000_000
     private static let customCosmeticActivationTimeoutNanoseconds: UInt64 = 15_000_000_000
     private static let expectedDefaultRuleCount = 113_100
     private static let expectedJapaneseRuleCount = 1_906
@@ -806,7 +812,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             in: readyPage.webView,
             timeoutNanoseconds: min(
                 try Self.remainingReadinessTimeout(until: readinessDeadline),
-                5_000_000_000
+                Self.coldExtensionPageNavigationTimeoutNanoseconds
             ),
             timeoutPolicy: .preserveWebViewForProcessLifetime
         )
@@ -1983,7 +1989,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             in: readyPage.webView,
             timeoutNanoseconds: min(
                 try Self.remainingReadinessTimeout(until: readinessDeadline),
-                5_000_000_000
+                Self.warmExtensionPageNavigationTimeoutNanoseconds
             ),
             timeoutPolicy: .preserveWebViewForProcessLifetime
         )

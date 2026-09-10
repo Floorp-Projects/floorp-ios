@@ -1256,8 +1256,14 @@ const exactScopeCanary =
     '--floorp-ubol-canary-0123456789abcdef0123456789abcdef';
 const exactScopeCanaryValue =
     'floorp-fedcba9876543210fedcba9876543210';
+const exactScopeWrapper = `:where(:root[${exactScopeAttribute}])`;
 const exactScopedCSS = selector =>
-    `:where(:root[${exactScopeAttribute}]) {\n` +
+    `${exactScopeWrapper} {\n` +
+    `${exactScopeCanary}: ${exactScopeCanaryValue} !important;\n` +
+    `}\n${exactScopeWrapper} :is(${selector}),\n` +
+    `${exactScopeWrapper}:is(${selector}) { display: none !important; }`;
+const exactNestedScopedCSS = selector =>
+    `${exactScopeWrapper} {\n` +
     `${exactScopeCanary}: ${exactScopeCanaryValue} !important;\n` +
     `& :is(${selector}),\n&:is(${selector}) { display: none !important; }\n}`;
 const exactScopedInsert = exactScopedCSS('#insert');
@@ -1365,18 +1371,29 @@ assert.deepEqual(exactDocumentMessages.calls.executeScript[0].files, [
 ]);
 
 for ( const [ label, mutate ] of [
-    [ 'scope breakout', css => css.replace(
-        '\n}',
-        '\n}\n.global-leak { display:block!important; }\n}'
-    ) ],
+    [ 'scope breakout', css =>
+        `${css}\n.global-leak { display:block!important; }` ],
     [ 'empty forgiving selector', css => css.replace(
-        '& :is(#insert)',
-        '& :is()'
+        `${exactScopeWrapper} :is(#insert)`,
+        `${exactScopeWrapper} :is()`
     ) ],
     [ 'global at-rule', css => css.replace(
-        '& :is(#insert),',
-        '@font-face { font-family: leak; src: url(leak); }\n& :is(#insert),'
+        `${exactScopeWrapper} :is(#insert),`,
+        '@font-face { font-family: leak; src: url(leak); }\n' +
+            `${exactScopeWrapper} :is(#insert),`
     ) ],
+    [ 'legacy qualified-rule nesting', ( ) => exactNestedScopedCSS('#insert') ],
+    [ 'missing effect rules', ( ) =>
+        `${exactScopeWrapper} {\n` +
+        `${exactScopeCanary}: ${exactScopeCanaryValue} !important;\n}\n` ],
+    [ 'comment-only effect body', ( ) =>
+        `${exactScopeWrapper} {\n` +
+        `${exactScopeCanary}: ${exactScopeCanaryValue} !important;\n}\n` +
+        '/* no effect */' ],
+    [ 'empty conditional effect body', ( ) =>
+        `${exactScopeWrapper} {\n` +
+        `${exactScopeCanary}: ${exactScopeCanaryValue} !important;\n}\n` +
+        '@media (min-width: 1px) { /* no effect */ }' ],
 ] ) {
     const rejectedScope = loadBackground();
     const rejectedScopeReply = await rejectedScope.onMessage({
@@ -1394,6 +1411,37 @@ for ( const [ label, mutate ] of [
     assert.deepEqual(rejectedScope.calls.insertCSS, [], label);
     assert.deepEqual(rejectedScope.calls.removeCSS, [], label);
 }
+
+const flatConditionalCSS =
+    `${exactScopeWrapper} {\n` +
+    `${exactScopeCanary}: ${exactScopeCanaryValue} !important;\n}\n` +
+    `@media (min-width: 1px) {\n` +
+    `${exactScopeWrapper} :is(#media),\n` +
+    `${exactScopeWrapper}:is(:root) { color: red !important; }\n}\n` +
+    `@supports selector(:has(*)) {\n` +
+    `${exactScopeWrapper} :is(#supported) { visibility: hidden !important; }\n}\n` +
+    `@container sidebar (width > 1px) {\n` +
+    `${exactScopeWrapper} :is(#contained)::after { content: "ok" !important; }\n}`;
+const flatConditionalMessages = loadBackground();
+const flatConditionalReply = await flatConditionalMessages.onMessage({
+    what: 'insertCSS',
+    schema: 1,
+    requestId: 'flat-conditional-request',
+    css: flatConditionalCSS,
+    scopeAttribute: exactScopeAttribute,
+    scopeCanary: exactScopeCanary,
+    scopeCanaryValue: exactScopeCanaryValue,
+    expectedDocumentId: 'flat-conditional-document',
+    expectedFrameId: 4,
+}, sender(
+    'flat-conditional-document',
+    'https://example.test/frame',
+    4
+));
+assert.equal(flatConditionalReply.ok, true);
+assert.equal(flatConditionalReply.ensured, true);
+assert.equal(flatConditionalMessages.calls.insertCSS.length, 1);
+assert.equal(flatConditionalMessages.calls.insertCSS[0].css, flatConditionalCSS);
 
 const rejectedCSSInsertion = loadBackground({
     insertCSS: ( ) => Promise.reject(new Error('transient CSS failure')),
@@ -1626,6 +1674,28 @@ class MockCSSStyleSheet {
     }
 }
 
+// WKWebExtension insertCSS on iOS 26 can apply declarations from a top-level
+// qualified rule while leaving qualified rules nested inside it ineffective.
+// Recurse through supported conditional groups, but deliberately do not treat
+// a CSSStyleRule's nested cssRules as native effects. This keeps the canary and
+// the selector effects on opposite sides of the compatibility boundary which
+// caused the release-acceptance regression.
+function ios26TopLevelEffectRules(source) {
+    const out = [];
+    const visit = rules => {
+        for ( const rule of rules ) {
+            const text = `${rule.cssText ?? ''}`.trim();
+            if ( text.startsWith('@') ) {
+                visit(rule.cssRules ?? []);
+                continue;
+            }
+            out.push(rule);
+        }
+    };
+    visit(parsedCSSRules(source));
+    return out;
+}
+
 const mockMutationObservers = [];
 class MockMutationObserver {
     constructor(callback) {
@@ -1649,6 +1719,7 @@ function cssUserSandbox(responder, options = {}) {
     const storageGets = [];
     const identityMessages = [];
     let monotonicNow = 0;
+    const locationHostname = options.locationHostname ?? 'example.test';
     const sandbox = {
         URL,
         clearTimeout,
@@ -1658,9 +1729,12 @@ function cssUserSandbox(responder, options = {}) {
         document: {
             baseURI: options.baseURI,
             location: {
-                hostname: options.locationHostname ?? 'example.test',
-                origin: options.locationOrigin,
-                href: options.locationHref,
+                hostname: locationHostname,
+                origin: options.locationOrigin ??
+                    (locationHostname === '' ? 'null' : `https://${locationHostname}`),
+                href: options.locationHref ??
+                    (locationHostname === '' ? 'about:blank' :
+                        `https://${locationHostname}/`),
                 ancestorOrigins: options.ancestorOrigins,
             },
         },
@@ -2259,7 +2333,6 @@ assert.ok(subframeUndefined.messages.length < 20);
 assert.equal(subframeUndefined.listeners.has('pagereveal'), true);
 
 for ( const [ label, responder ] of [
-    [ 'rejection', ( ) => Promise.reject(new Error('rejected')) ],
     [ 'error response', ( ) => Promise.resolve({ error: 'failed' }) ],
     [ 'typed error', message => Promise.resolve({
         ok: false,
@@ -2279,41 +2352,91 @@ for ( const [ label, responder ] of [
     await waitUntil(( ) => failed.listeners.has('pagereveal'));
     assert.ok(failed.messages.length > 1, `${label} must retry`);
     assert.ok(failed.messages.length < 20, `${label} retries must be bounded`);
+    assert.equal(failed.storageGets.length, 0, `${label} must stay fail-closed`);
     assert.equal(failed.sandbox.customFilters, undefined);
     assert.equal(failed.listeners.has('pagereveal'), true);
 }
 
+const rejectedBackgroundFallback = cssUserSandbox(
+    ( ) => Promise.reject(new Error('background transport rejected')),
+    {
+        localState: {
+            filteringModeDetails: optimalModes,
+            'site.example.test': [ '#rejected-background-fallback' ],
+        },
+    }
+);
+await sleep(30);
+assert.equal(rejectedBackgroundFallback.messages.length, 1);
+assert.equal(rejectedBackgroundFallback.storageGets.length, 1);
+assert.deepEqual(rejectedBackgroundFallback.storageGets[0], [
+    'floorp.settingsRestoreJournal.v1',
+    'floorp.customFilterMutationJournal.v1',
+    'filteringModeDetails',
+    'admin.defaultFiltering',
+    'admin.noFiltering',
+    'site.example.test',
+    'site.test',
+]);
+assert.deepEqual(rejectedBackgroundFallback.insertions, [
+    '#rejected-background-fallback{display:none!important;}',
+]);
+assert.equal(rejectedBackgroundFallback.sandbox.customFilters.ok, true);
+
+const mismatchedDirectFallback = cssUserSandbox(
+    ( ) => Promise.reject(new Error('background transport rejected')),
+    {
+        locationHref: 'https://different.example/frame',
+        localState: {
+            filteringModeDetails: optimalModes,
+            'site.example.test': [ '#must-not-cross-document-authority' ],
+        },
+    }
+);
+await waitUntil(( ) => mismatchedDirectFallback.listeners.has('pagereveal'));
+assert.deepEqual(mismatchedDirectFallback.storageGets, []);
+assert.deepEqual(mismatchedDirectFallback.insertions, []);
+
 const never = new Promise(( ) => {});
 const timedOut = cssUserSandbox(
     ( ) => never,
-    { requestId: 'timeout-request' }
+    {
+        requestId: 'timeout-request',
+        storageError: new Error('direct storage unavailable'),
+    }
 );
 await waitUntil(( ) => timedOut.listeners.has('pagereveal'));
-assert.ok(timedOut.messages.length > 1);
-assert.ok(timedOut.messages.length < 20);
+assert.equal(timedOut.messages.length, 1);
+assert.ok(timedOut.storageGets.length > 1);
+assert.ok(timedOut.storageGets.length < 20);
 assert.equal(timedOut.listeners.has('pagereveal'), true);
-const timedOutMessageCount = timedOut.messages.length;
+const timedOutStorageCount = timedOut.storageGets.length;
 void timedOut.listeners.get('pagereveal')();
 void timedOut.listeners.get('pagereveal')();
 await sleep(20);
 assert.equal(
-    timedOut.messages.length,
-    timedOutMessageCount,
+    timedOut.storageGets.length,
+    timedOutStorageCount,
     'the 15-second document-generation deadline must bound later replays'
 );
 
-let timeoutThenSuccessAttempt = 0;
-const timeoutThenSuccess = cssUserSandbox(message => {
-    timeoutThenSuccessAttempt += 1;
-    if ( timeoutThenSuccessAttempt === 1 ) { return never; }
-    return Promise.resolve(successfulAck(message, [ '#timeout-retry' ]));
-}, { requestId: 'timeout-retry-request' });
+const timeoutThenSuccess = cssUserSandbox(
+    ( ) => never,
+    {
+        requestId: 'timeout-retry-request',
+        localState: {
+            filteringModeDetails: optimalModes,
+            'site.example.test': [ '#timeout-retry' ],
+        },
+    }
+);
 await sleep(30);
 assert.equal(
     timeoutThenSuccess.messages.length,
-    2,
-    'a timed-out cold-background request must be retried'
+    1,
+    'a timed-out cold-background request must switch to direct storage once'
 );
+assert.equal(timeoutThenSuccess.storageGets.length, 1);
 assert.equal(timeoutThenSuccess.sandbox.customFilters.ok, true);
 assert.deepEqual(timeoutThenSuccess.insertions, [
     '#timeout-retry{display:none!important;}',
@@ -2764,7 +2887,12 @@ function integratedCSSUserAPISandbox(options = {}) {
             now() { return monotonicNow; },
         },
         setTimeout(callback, delay) {
-            if ( options.realTime ) { return setTimeout(callback, delay); }
+            if ( options.realTime ) {
+                const adjusted = delay === 2000 && options.shortTimeout
+                    ? 10
+                    : delay;
+                return setTimeout(callback, adjusted);
+            }
             if ( options.scaledTime ) {
                 return setTimeout(( ) => {
                     monotonicNow += delay;
@@ -2860,7 +2988,12 @@ function integratedCSSUserAPISandbox(options = {}) {
         },
         storage: {
             local: {
-                get() { return Promise.resolve({}); },
+                get(keys) {
+                    if ( options.storageResponder ) {
+                        return options.storageResponder(keys, sandbox);
+                    }
+                    return Promise.resolve(structuredClone(options.localState ?? {}));
+                },
             },
         },
     };
@@ -2879,7 +3012,7 @@ function integratedCSSUserAPISandbox(options = {}) {
         idlePreludeScript.runInContext(context);
         runCSSAPI();
         idleMarkerScript.runInContext(context);
-        runCSSUser();
+        return runCSSUser();
     };
     const dispatch = async (type, event = { type }) => {
         const entries = Array.from(listeners.get(type) ?? []);
@@ -3151,6 +3284,121 @@ assert.equal(
     pendingIdle.messages.filter(message => message.what === 'insertCSS').length,
     1,
     'queued document_idle must not replay after document_start commits first'
+);
+
+class QueuedIdleProceduralFilterer {
+    addDeclaratives(selectors) { this.declaratives = selectors; }
+    addProcedurals(selectors) { this.procedurals = selectors; }
+    reset() { return Promise.resolve(); }
+}
+let expiredStartRequests = 0;
+const queuedIdleAfterExpiredStart = integratedCSSUserAPISandbox({
+    autoStart: false,
+    preloadCSSAPI: true,
+    scaledTime: true,
+    ProceduralFiltererAPI: QueuedIdleProceduralFilterer,
+    customFilterResponder() {
+        expiredStartRequests += 1;
+        return never;
+    },
+    storageResponder(keys, sandbox) {
+        if ( sandbox.floorpCSSUserActivationState?.idleRecoveryUsed !== true ) {
+            return Promise.reject(new Error('cold storage lane is still blocked'));
+        }
+        return Promise.resolve({
+            filteringModeDetails: optimalModes,
+            'site.integrated.example': [
+                '#queued-idle-recovery',
+                '{"cssable":false,"raw":"queued-idle-procedural"}',
+            ],
+        });
+    },
+});
+const expiredDocumentStart = queuedIdleAfterExpiredStart.runCSSUser();
+while ( expiredStartRequests === 0 ) { await sleep(1); }
+const queuedIdleGeneration =
+    queuedIdleAfterExpiredStart.sandbox.cssUserDocumentGeneration;
+const recoveredDocumentIdle = queuedIdleAfterExpiredStart.runIdle();
+const [ expiredStartResult, recoveredIdleResult ] = await Promise.race([
+    Promise.all([ expiredDocumentStart, recoveredDocumentIdle ]),
+    sleep(1000).then(( ) => { throw new Error('queued idle recovery deadlocked'); }),
+]);
+assert.equal(expiredStartResult.committed, false);
+assert.equal(recoveredIdleResult.committed, true);
+assert.equal(
+    queuedIdleAfterExpiredStart.sandbox.cssUserDocumentGeneration,
+    queuedIdleGeneration,
+    'document_idle must recover the existing owner generation without orphaning it'
+);
+assert.equal(
+    queuedIdleAfterExpiredStart.sandbox.floorpCSSUserActivationState.committed,
+    true,
+    'document_idle must receive a fresh bounded window after document_start expires'
+);
+assert.equal(expiredStartRequests, 2);
+assert.equal(
+    queuedIdleAfterExpiredStart.messages.filter(
+        message => message.what === 'insertCSS'
+    ).length,
+    1
+);
+assert.equal(
+    queuedIdleAfterExpiredStart.sandbox.document.documentElement
+        .attributeNames().filter(name => name.startsWith('data-floorp-ubol-')).length,
+    1
+);
+assert.equal(
+    queuedIdleAfterExpiredStart.sandbox.customProceduralFiltererAPI
+        .procedurals[0].raw,
+    'queued-idle-procedural'
+);
+
+let expiredDynamicRequests = 0;
+const queuedDynamicAfterExpiredStart = integratedCSSUserAPISandbox({
+    autoStart: false,
+    preloadCSSAPI: true,
+    scaledTime: true,
+    customFilterResponder() {
+        expiredDynamicRequests += 1;
+        return never;
+    },
+    storageResponder() {
+        if ( expiredDynamicRequests < 2 ) {
+            return Promise.reject(new Error('first dynamic storage lane is blocked'));
+        }
+        return Promise.resolve({
+            filteringModeDetails: optimalModes,
+            'site.integrated.example': [ '#queued-dynamic-recovery' ],
+        });
+    },
+});
+const expiredDynamicStart = queuedDynamicAfterExpiredStart.runCSSUser();
+while ( expiredDynamicRequests === 0 ) { await sleep(1); }
+const queuedDynamicGeneration =
+    queuedDynamicAfterExpiredStart.sandbox.cssUserDocumentGeneration;
+const recoveredDynamicStart = queuedDynamicAfterExpiredStart.runCSSUser();
+const [ firstDynamicResult, recoveredDynamicResult ] = await Promise.race([
+    Promise.all([ expiredDynamicStart, recoveredDynamicStart ]),
+    sleep(1000).then(( ) => { throw new Error('queued dynamic recovery deadlocked'); }),
+]);
+assert.equal(typeof firstDynamicResult.committed, 'boolean');
+assert.equal(recoveredDynamicResult.committed, true);
+assert.equal(expiredDynamicRequests, 2);
+assert.equal(
+    queuedDynamicAfterExpiredStart.sandbox.cssUserDocumentGeneration,
+    queuedDynamicGeneration,
+    'dynamic replay must recover the existing owner generation'
+);
+assert.equal(
+    queuedDynamicAfterExpiredStart.messages.filter(
+        message => message.what === 'insertCSS'
+    ).length,
+    1
+);
+assert.equal(
+    queuedDynamicAfterExpiredStart.sandbox.document.documentElement
+        .attributeNames().filter(name => name.startsWith('data-floorp-ubol-')).length,
+    1
 );
 
 let deferredCustomInsert;
@@ -4063,7 +4311,7 @@ assert.notEqual(
     'the native-effect canary value must be independent from its observable marker'
 );
 
-const nestedTransformCSS = cssAPIAckSandbox(message => Promise.resolve({
+const flatTransformCSS = cssAPIAckSandbox(message => Promise.resolve({
     ok: true,
     schema: 1,
     requestId: message.requestId,
@@ -4088,39 +4336,111 @@ li:nth-child(2n of .odd,.even),
 @container sidebar (width > 1px) {
     #contained::after { content:"a,b"!important; }
 }`;
-assert.equal((await nestedTransformCSS.sandbox.cssAPI.insert(
+assert.equal((await flatTransformCSS.sandbox.cssAPI.insert(
     complexScopedSource
 )).ok, true);
-const nestedPayload = cssProtocolMessages(nestedTransformCSS, 'insertCSS')[0].css;
+const flatTransformMessage = cssProtocolMessages(flatTransformCSS, 'insertCSS')[0];
+const flatPayload = flatTransformMessage.css;
+const flatWrapper =
+    `:where(:root[${flatTransformMessage.scopeAttribute}])`;
+assert.ok(flatPayload.startsWith(
+    `${flatWrapper} {\n` +
+    `${flatTransformMessage.scopeCanary}: ` +
+    `${flatTransformMessage.scopeCanaryValue} !important;\n}\n`
+));
+for ( const suffix of [
+    ' :is(html body #floorp-custom-form-control)',
+    ':is(html body #floorp-custom-form-control)',
+    ' :is(:root)',
+    ':is(:root)',
+    ' :is(:scope)',
+    ':is(:scope)',
+    ' :is(input:is([data-value="a,b"], #escaped\\,comma))',
+    ' :is(a:not(.one,.two))',
+    ' :is(section:has(> .child,.other))',
+    ' :is(li:nth-child(2n of .odd,.even))',
+    ' :is(.pseudo)::before',
+    ':is(.legacy):after',
+    ' :is(.columns || *)::first-line',
+] ) {
+    const fragment = `${flatWrapper}${suffix}`;
+    assert.match(
+        flatPayload,
+        new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+        `flat document scope must preserve ${fragment}`
+    );
+}
 for ( const fragment of [
-    '& :is(html body #floorp-custom-form-control)',
-    '&:is(html body #floorp-custom-form-control)',
-    '& :is(:root)',
-    '&:is(:root)',
-    '& :is(:scope)',
-    '&:is(:scope)',
-    '& :is(input:is([data-value="a,b"], #escaped\\,comma))',
-    '& :is(a:not(.one,.two))',
-    '& :is(section:has(> .child,.other))',
-    '& :is(li:nth-child(2n of .odd,.even))',
-    '& :is(.pseudo)::before',
-    '&:is(.legacy):after',
-    '& :is(.columns || *)::first-line',
     '@media (min-width: 1px)',
     '@supports selector(:has(*))',
     '@container sidebar (width > 1px)',
 ] ) {
     assert.match(
-        nestedPayload,
+        flatPayload,
         new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-        `nested document scope must preserve ${fragment}`
+        `flat document scope must preserve ${fragment}`
     );
 }
-assert.match(nestedPayload, /^:where\(:root\[data-floorp-ubol-[a-f0-9]{32}\]\) \{/);
 assert.equal(
-    nestedPayload.includes('@scope'),
+    flatPayload.includes('@scope'),
     false,
     'the form-control path must not depend on WebKit @scope behavior'
+);
+assert.equal(
+    flatPayload.includes('&'),
+    false,
+    'iOS 26 effect rules must not depend on qualified-rule nesting'
+);
+
+const ios26FlatEffects = ios26TopLevelEffectRules(flatPayload);
+assert.equal(ios26FlatEffects[0].selectorText, flatWrapper);
+assert.equal(
+    ios26FlatEffects[0].style.getPropertyValue(
+        flatTransformMessage.scopeCanary
+    ),
+    flatTransformMessage.scopeCanaryValue,
+    'the standalone native-effect canary must remain observable'
+);
+const ios26FlatSelectors = ios26FlatEffects
+    .slice(1)
+    .map(rule => rule.selectorText)
+    .join('\n');
+for ( const selector of [
+    `${flatWrapper} :is(html body #floorp-custom-form-control)`,
+    `${flatWrapper}:is(:root)`,
+    `${flatWrapper} :is(input)`,
+    `${flatWrapper} :is(#supported:not(.a,.b))`,
+    `${flatWrapper} :is(#contained)::after`,
+] ) {
+    assert.ok(
+        ios26FlatSelectors.includes(selector),
+        `iOS 26 top-level-only native effects must include ${selector}`
+    );
+}
+assert.equal(
+    ios26FlatEffects.every(rule => (rule.cssRules?.length ?? 0) === 0),
+    true,
+    'no native effect may be nested inside a qualified style rule'
+);
+
+const legacyNestedPayload = exactNestedScopedCSS('#ios26-nested-effect');
+const legacyNestedRoot = mockDocumentElement();
+legacyNestedRoot.setAttribute(exactScopeAttribute, '');
+const legacyNestedCanary = mockScopedComputedStyle([ {
+    what: 'insertCSS',
+    css: legacyNestedPayload,
+} ])(legacyNestedRoot).getPropertyValue(exactScopeCanary);
+assert.equal(
+    legacyNestedCanary,
+    exactScopeCanaryValue,
+    'the old nested payload demonstrates the iOS 26 canary false positive'
+);
+assert.equal(
+    ios26TopLevelEffectRules(legacyNestedPayload).some(rule =>
+        rule.selectorText?.includes('#ios26-nested-effect')
+    ),
+    false,
+    'iOS 26 must not count a nested qualified rule as an applied effect'
 );
 
 const candidateResolvers = [];

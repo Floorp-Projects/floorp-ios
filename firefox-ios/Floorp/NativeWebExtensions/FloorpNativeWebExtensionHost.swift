@@ -831,6 +831,12 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
     }
 
+    static func readinessPageNavigationTimeoutForTesting(
+        identifier: String
+    ) -> UInt64 {
+        readinessPageNavigationTimeout(for: identifier)
+    }
+
     func setNavigationReadinessVerifiedForTesting(
         identifier: String,
         isPrivate: Bool
@@ -1482,6 +1488,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
         FloorpNativeWebExtensionCatalog.item(identifier: identifier)?
             .navigationReadinessFailurePolicy == .failClosed
             ? 90_000_000_000
+            : 15_000_000_000
+    }
+
+    private static func readinessPageNavigationTimeout(for identifier: String) -> UInt64 {
+        // A pristine uBO Lite context can spend more than the generic 15-second
+        // page budget creating WebExtension storage and preparing its large DNR
+        // ruleset on iOS 26. Keep that one owned WebView alive for a bounded
+        // extension-specific window without weakening Dark Reader's timeout.
+        identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            ? 30_000_000_000
             : 15_000_000_000
     }
 
@@ -4588,7 +4604,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     identifier: identifier,
                     timeoutNanoseconds: min(
                         try remainingAttemptTimeout(),
-                        15_000_000_000
+                        Self.readinessPageNavigationTimeout(for: identifier)
                     )
                 )
                 if !didLoadBackgroundContent {

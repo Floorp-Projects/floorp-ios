@@ -87,6 +87,31 @@ private final class FloorpClosePreparationTestGate {
 
 @MainActor
 final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
+    func testReadinessPageNavigationBudgetIsExtendedOnlyForUBOL() throws {
+#if DEBUG || TESTING
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            ),
+            30_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier
+            ),
+            15_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: "unknown-extension"
+            ),
+            15_000_000_000
+        )
+#else
+        throw XCTSkip("The readiness timeout accessor is available only in test builds")
+#endif
+    }
+
     func testBundledDarkReaderZIPIsVerifiedAndLoadsWithNativeWebKit() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -6127,7 +6152,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "18209d8cff2bc576867b03233062f65235e8aea1c3e00bded9e0d25fa0fc46b5"
+            "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")

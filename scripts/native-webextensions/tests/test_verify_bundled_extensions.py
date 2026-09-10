@@ -291,14 +291,63 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting/css-user.js",
-                "floorpOriginFallbackDocument\n"
-                "                ? readOriginFallbackCustomFilters()",
-                "false\n"
-                "                ? readOriginFallbackCustomFilters()",
+                "const hostname = floorpOriginFallbackDocument\n"
+                "                    ? originFallbackHostname()",
+                "const hostname = false\n"
+                "                    ? originFallbackHostname()",
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "origin-fallback request dispatch"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "custom-filter request dispatch|omits required compatibility code",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_selector_transport_fallback_drift(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "useStoredSnapshot === false && outcome.status !== 'resolved'",
+                "false",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "custom-filter request dispatch|omits required compatibility code",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_execution_self_follow(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "if ( latestRecord === executionRecord ) { return failedExecution(); }",
+                "if ( false ) { return failedExecution(); }",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "execution handoff|omits required"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_bootstrap_wait_before_idle_recovery(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "const activation = self.floorpCSSUserActivationState;",
+                "await existingBootstrap.operation;\n"
+                "    const activation = self.floorpCSSUserActivationState;",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "document_idle consume"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_css_insert_ack_before_native_resolution(self) -> None:
@@ -395,6 +444,24 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             RuntimeError,
             "native Document bootstrap replay|omits required",
         ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
+    def test_rejects_ubol_idle_recovery_window_before_queue_settlement(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-user.js",
+                "if ( queuedRecovery ) {\n"
+                "                lifecycle = beginLifecycleRecovery(event);\n"
+                "            }",
+                "if ( false ) {\n"
+                "                lifecycle = beginLifecycleRecovery(event);\n"
+                "            }",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "dynamic custom-filter commit probe"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_missing_css_api_fail_closed_guard(self) -> None:
@@ -496,6 +563,25 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "candidate marker authority repair"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
+    def test_rejects_ubol_css_scope_without_effect_rule_count(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/background.js",
+                "    if ( validateRuleList(body) === 0 ) {\n"
+                "        throw new Error('CSS payload has no document-scoped effect rules');\n"
+                "    }",
+                "    validateRuleList(body);",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "background CSS document scope validation",
+        ):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
     def test_rejects_ubol_candidate_marker_repair_before_authority_check(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",
@@ -569,7 +655,7 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "bounded origin-fallback read"):
+        with self.assertRaisesRegex(RuntimeError, "bounded custom-filter storage read"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_unvalidated_settings_journal(self) -> None:
