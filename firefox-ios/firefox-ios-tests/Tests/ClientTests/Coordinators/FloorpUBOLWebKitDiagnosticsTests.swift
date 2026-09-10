@@ -2146,48 +2146,54 @@ private final class FloorpUBOLReleaseAcceptanceSession {
 
     nonisolated private static func makeServer() throws -> GCDWebServer {
         let server = GCDWebServer()
+        let rootHTML = """
+        <!doctype html>
+        <meta charset="utf-8">
+        <style>.probe { display: block; width: 20px; height: 20px; }</style>
+        <script>
+        window.floorpControlScriptExecuted = false;
+        window.floorpDefaultBlockedScriptExecuted = false;
+        window.floorpDynamicBlockedScriptExecuted = false;
+        window.floorpSessionBlockedScriptExecuted = false;
+        </script>
+        <div id="floorp-custom-cosmetic" class="probe" style="display:block!important">custom</div>
+        <input id="floorp-custom-form-control" class="probe" style="display:block!important" value="custom input">
+        <div id="floorp-procedural-cosmetic" class="probe">Sponsored by Floorp</div>
+        <div id="Ad-Container" class="probe">generic</div>
+        <div id="floorp-easylist-high-generic" class="probe" data-ad-name="floorp-ad">generic high</div>
+        <div id="floorp-japanese-generic" class="__isboostReturnAd probe">日本語広告</div>
+        <div id="JP_floorp" class="probe" style="display:block">日本語広告 high</div>
+        <iframe id="floorp-origin-fallback-frame" srcdoc="
+            <!doctype html>
+            <base href='https://spoofed-base.invalid/'>
+            <style>.probe { display: block; width: 20px; height: 20px; }</style>
+            <div id='floorp-custom-cosmetic' class='probe' style='display:block!important'>custom frame</div>
+            <input
+                id='floorp-custom-form-control'
+                class='probe'
+                style='display:block!important'
+                value='custom input frame'
+            >
+            <div id='floorp-procedural-cosmetic' class='probe'>
+                Sponsored by Floorp
+            </div>
+        "></iframe>
+        <iframe id="floorp-cross-origin-frame"></iframe>
+        <script>
+        document.getElementById('floorp-cross-origin-frame').src =
+            `http://127.0.0.1:${location.port}/floorp-cross-origin-frame`;
+        </script>
+        <script src="/floorp-control-acceptance.js"></script>
+        <script src="/floorp-default-acceptance.ashx?adid=floorp"></script>
+        <script src="/floorp-dynamic-acceptance.js"></script>
+        <script src="/floorp-session-acceptance.js"></script>
+        """
         server.addHandler(
             forMethod: "GET",
             path: "/",
             request: GCDWebServerRequest.self
         ) { _ in
-            GCDWebServerDataResponse(html: """
-            <!doctype html>
-            <meta charset="utf-8">
-            <style>.probe { display: block; width: 20px; height: 20px; }</style>
-            <script>
-            window.floorpControlScriptExecuted = false;
-            window.floorpDefaultBlockedScriptExecuted = false;
-            window.floorpDynamicBlockedScriptExecuted = false;
-            window.floorpSessionBlockedScriptExecuted = false;
-            </script>
-            <div id="floorp-custom-cosmetic" class="probe" style="display:block!important">custom</div>
-            <input id="floorp-custom-form-control" class="probe" style="display:block!important" value="custom input">
-            <div id="floorp-procedural-cosmetic" class="probe">Sponsored by Floorp</div>
-            <div id="Ad-Container" class="probe">generic</div>
-            <div id="floorp-easylist-high-generic" class="probe" data-ad-name="floorp-ad">generic high</div>
-            <div id="floorp-japanese-generic" class="__isboostReturnAd probe">日本語広告</div>
-            <div id="JP_floorp" class="probe" style="display:block">日本語広告 high</div>
-            <iframe id="floorp-origin-fallback-frame" srcdoc="
-                <!doctype html>
-                <base href='https://spoofed-base.invalid/'>
-                <style>.probe { display: block; width: 20px; height: 20px; }</style>
-                <div id='floorp-custom-cosmetic' class='probe' style='display:block!important'>custom frame</div>
-                <input id='floorp-custom-form-control' class='probe' style='display:block!important' value='custom input frame'>
-                <div id='floorp-procedural-cosmetic' class='probe'>
-                    Sponsored by Floorp
-                </div>
-            "></iframe>
-            <iframe id="floorp-cross-origin-frame"></iframe>
-            <script>
-            document.getElementById('floorp-cross-origin-frame').src =
-                `http://127.0.0.1:${location.port}/floorp-cross-origin-frame`;
-            </script>
-            <script src="/floorp-control-acceptance.js"></script>
-            <script src="/floorp-default-acceptance.ashx?adid=floorp"></script>
-            <script src="/floorp-dynamic-acceptance.js"></script>
-            <script src="/floorp-session-acceptance.js"></script>
-            """)
+            GCDWebServerDataResponse(html: rootHTML)
         }
         server.addHandler(
             forMethod: "GET",
