@@ -11,6 +11,11 @@ BROWSERKIT_PACKAGE_PATH = ROOT / "BrowserKit/Package.swift"
 BROWSERKIT_WEBKIT_EXTENSIONS_PATH = (
     ROOT / "BrowserKit/Sources/Shared/Extensions/WKWebViewExtensions.swift"
 )
+NATIVE_WEBEXTENSION_TESTS_PATH = (
+    ROOT
+    / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
+    "FloorpNativeWebExtensionIntegrationTests.swift"
+)
 
 
 class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
@@ -21,6 +26,7 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         cls.app_common_config = APP_COMMON_CONFIG_PATH.read_text()
         cls.browserkit_package = BROWSERKIT_PACKAGE_PATH.read_text()
         cls.browserkit_webkit_extensions = BROWSERKIT_WEBKIT_EXTENSIONS_PATH.read_text()
+        cls.native_webextension_tests = NATIVE_WEBEXTENSION_TESTS_PATH.read_text()
         job_marker = "\n  webextension-os-matrix:\n"
         cls.job = cls.workflow.split(job_marker, 1)[1]
 
@@ -594,6 +600,24 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             1,
         )[1]
         self.assertIn('\n            "1" \\', ubol_acceptance_call)
+
+    def test_minimum_os_negative_test_bootstraps_dependencies_before_seeding_tab(self):
+        marker = (
+            "    func testBundledUBOLIsUnavailableAndInstallFailsBelowMinimumOS() "
+            "async throws {"
+        )
+        body = self.native_webextension_tests.split(marker, 1)[1].split(
+            "\n    func ", 1
+        )[0]
+
+        self.assertIn("let dependencies = DependencyHelperMock()", body)
+        bootstrap = "dependencies.bootstrapDependencies("
+        seed_tab = "let source = manager.seedTab("
+        self.assertIn(bootstrap, body)
+        self.assertIn("injectedProfile: profile", body)
+        self.assertIn("injectedTabManager: manager", body)
+        self.assertIn("defer { dependencies.reset() }", body)
+        self.assertLess(body.index(bootstrap), body.index(seed_tab))
 
     def test_test_and_diagnostic_failures_are_not_masked(self):
         acceptance = self._step("Run focused WebExtension OS acceptance")

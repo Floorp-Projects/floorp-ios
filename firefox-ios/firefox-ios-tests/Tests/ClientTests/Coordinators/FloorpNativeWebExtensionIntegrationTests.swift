@@ -5705,6 +5705,12 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             windowUUID: .XCTestDefaultUUID,
             notifiesDelegatesOnAdd: false
         )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedProfile: profile,
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
         let source = manager.seedTab(
             url: try XCTUnwrap(URL(string: "https://example.com/ubol-minimum-os")),
             isPrivate: false
