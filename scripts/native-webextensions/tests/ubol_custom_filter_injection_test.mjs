@@ -3834,11 +3834,67 @@ assert.deepEqual(scopeAttributes(terminatedBootstrap), []);
 assert.equal((await terminatedBootstrap.runCSSUser()).committed, true);
 assert.equal(scopeAttributes(terminatedBootstrap).length, 1);
 
+let idleOwnedIdentityRequests = 0;
+const idleOwnedIdentity = integratedCSSUserAPISandbox({
+    autoStart: false,
+    preloadCSSAPI: true,
+    identityResponder(message, sandbox) {
+        idleOwnedIdentityRequests += 1;
+        return Promise.resolve({
+            ok: true,
+            schema: 1,
+            requestId: message.requestId,
+            documentId: sandbox.__documentId,
+            frameId: sandbox.__frameId,
+        });
+    },
+});
+assert.equal((await idleOwnedIdentity.runCSSUser()).committed, true);
+const idleOwnedAPI = idleOwnedIdentity.sandbox.cssAPI;
+const identityRequestsBeforeIdlePrelude = idleOwnedIdentityRequests;
+idlePreludeScript.runInContext(idleOwnedIdentity.context);
+idleOwnedIdentity.runCSSAPI();
+await sleep(5);
+assert.equal(
+    idleOwnedIdentityRequests,
+    identityRequestsBeforeIdlePrelude,
+    'idle css-api must leave the native identity lease to following css-user'
+);
+assert.equal(
+    idleOwnedIdentity.sandbox.cssAPI,
+    idleOwnedAPI,
+    'idle-owned identity must retain the current CSS API'
+);
+assert.equal(
+    scopeAttributes(idleOwnedIdentity).length,
+    1,
+    'idle-owned identity must not suspend the active document marker'
+);
+idleOwnedIdentity.sandbox.floorpCSSUserAPIIdleReplay = undefined;
+idleOwnedIdentity.runCSSAPI();
+await sleep(30);
+assert.equal(
+    idleOwnedIdentityRequests,
+    identityRequestsBeforeIdlePrelude + 1,
+    'a retained css-api execution without the idle prelude must self-check identity'
+);
+assert.equal(scopeAttributes(idleOwnedIdentity).length, 1);
+
 let retainedDocument;
 let retainedFilterFetches = 0;
 retainedDocument = integratedCSSUserAPISandbox({
     autoStart: false,
     preloadCSSAPI: true,
+    realTime: true,
+    identityResponder(message, sandbox) {
+        return new Promise(resolve => setTimeout(() => resolve({
+            ok: true,
+            schema: 1,
+            requestId: message.requestId,
+            documentId: sandbox.__documentId,
+            frameId: sandbox.__frameId,
+        }), 5));
+    },
     customFilterResponder(message) {
         retainedFilterFetches += 1;
         return Promise.resolve(successfulAck(message, [ '#retained-document' ]));
@@ -3859,7 +3915,7 @@ const firstRetainedRoot = retainedDocument.sandbox.document.documentElement;
 assert.equal(scopeAttributes(retainedDocument).length, 1);
 retainedDocument.sandbox.__documentId = 'integrated-document-b';
 retainedDocument.sandbox.document.documentElement = mockDocumentElement();
-assert.equal((await retainedDocument.runCSSUser()).committed, true);
+assert.equal((await retainedDocument.runIdle()).committed, true);
 assert.notEqual(retainedDocument.sandbox.cssAPI, firstRetainedAPI);
 assert.deepEqual(firstRetainedRoot.attributeNames(), []);
 assert.equal(scopeAttributes(retainedDocument).length, 1);

@@ -2074,7 +2074,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     }
 
     // swiftlint:disable:next function_body_length
-    func testColdRestoreMigratesTheInitialFloorpUBOLPackageToTheCurrentBuild() async throws {
+    func testColdRestoreMigratesPreviousFloorpUBOLPackagesToTheCurrentBuild() async throws {
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_migration")
         let profile = profileFixture.profile
         defer { profileFixture.cleanup() }
@@ -2085,6 +2085,10 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         var legacyRecord = makeUBOLRecord()
         legacyRecord.sha256 = FloorpNativeWebExtensionCatalog.initialFloorpUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(legacyRecord),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
         var upstreamRecord = legacyRecord
         upstreamRecord.packageReference = "uBOLite_2026.825.1619.safari.zip"
         upstreamRecord.sha256 = FloorpNativeWebExtensionCatalog.legacyUBlockOriginLiteSHA256
@@ -2245,6 +2249,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
+        var preIdleIdentityLeaseRecord = legacyRecord
+        preIdleIdentityLeaseRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preIdleIdentityLeaseUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preIdleIdentityLeaseRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        legacyRecord = preIdleIdentityLeaseRecord
         let originalContextIdentifier = legacyRecord.contextIdentifier
         let originalBaseURLHost = legacyRecord.baseURLHost
         try store.save(FloorpNativeWebExtensionRegistry(extensions: [legacyRecord]))
@@ -6513,7 +6527,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359"
+            "373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")

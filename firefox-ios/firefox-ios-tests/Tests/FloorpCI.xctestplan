@@ -752,7 +752,7 @@
         "FloorpNativeWebExtensionIntegrationTests/testColdDarkReaderRestoreDoesNotHoldHTTPNavigation()",
         "FloorpNativeWebExtensionIntegrationTests/testColdRestoreConsumesDeferredEnableFromPreviousProcess()",
         "FloorpNativeWebExtensionIntegrationTests/testColdRestoreMigratesThePreviousDarkReaderPackageWithoutLosingUserState()",
-        "FloorpNativeWebExtensionIntegrationTests/testColdRestoreMigratesTheInitialFloorpUBOLPackageToTheCurrentBuild()",
+        "FloorpNativeWebExtensionIntegrationTests/testColdRestoreMigratesPreviousFloorpUBOLPackagesToTheCurrentBuild()",
         "FloorpNativeWebExtensionIntegrationTests/testClosingUBOLOptionsInvalidatesSameRealmNavigationReadiness()",
         "FloorpNativeWebExtensionIntegrationTests/testDisablePersistenceFailureRollsBackBeforeRuntimeMutation()",
         "FloorpNativeWebExtensionIntegrationTests/testDisableRemainsDurableWhenFinalDiagnosticsWriteFails()",

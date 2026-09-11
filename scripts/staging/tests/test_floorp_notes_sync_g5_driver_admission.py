@@ -177,6 +177,24 @@ class FloorpNotesSyncG5DriverAdmissionTests(unittest.TestCase):
         self.assertEqual(decision["release_binding"], self.expected_release_binding())
         self.assertEqual(decision["driver_binary_sha256"], DRIVER_BINARY_DIGEST)
 
+    def test_public_fingerprint_does_not_trip_sensitive_value_screen(self) -> None:
+        module = self.load_module()
+        if module is None:
+            return
+        fingerprint = "SHA256://" + "A" * 41
+        self.assertIsNotNone(module.FINGERPRINT.fullmatch(fingerprint))
+        payload = self.payload(fingerprint)
+        module.reject_sensitive_values(payload)
+
+        payload["signer"]["key_fingerprint"] = "SHA256://invalid?"
+        with self.assertRaisesRegex(module.DriverAdmissionError, "dangerous value"):
+            module.reject_sensitive_values(payload)
+
+        payload = self.payload(fingerprint)
+        payload["driver"]["interface"] = "https://credential.example"
+        with self.assertRaisesRegex(module.DriverAdmissionError, "dangerous value"):
+            module.reject_sensitive_values(payload)
+
     def test_rejects_tampering_wrong_run_and_non_ephemeral_cleanup_less_records(self) -> None:
         module = self.load_module()
         if module is None:

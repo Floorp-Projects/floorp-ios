@@ -162,7 +162,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "ec1c2d0420290d87efcc3b4594c12c0cd58ab97da70f26ebffb22cc2d18426bf",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "69f543ab1478e803c4835b92269927cdca7f9d8270a3d123f670c19e1389a6d0",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -266,7 +266,7 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359",
+            "sha256": "373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
@@ -1995,9 +1995,12 @@ def verify_ubol_custom_filter_origin_fallback_path(
         "js/scripting/css-procedural-api.js"
     ).decode("utf-8")
     if (
+        "const cssUserOwnsIdleIdentity =" not in css_api or
+        "self.floorpCSSUserAPIIdleReplay === true;" not in css_api or
         "const forcedReplay = self.floorpCSSUserForceAPIReplay !== undefined;"
         not in css_api or
         "forcedReplay === false &&" not in css_api or
+        "if ( cssUserOwnsIdleIdentity === false ) {" not in css_api or
         "self.floorpCSSUserForceAPIReplay === undefined &&"
         not in procedural_api or
         "self.floorpCSSUserAPIIdleReplay = undefined;" not in css_user_source or

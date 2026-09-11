@@ -8122,8 +8122,10 @@ diff --git a/js/scripting/css-api.js b/js/scripting/css-api.js
 index 88c7b27..056bdc7 100644
 --- a/js/scripting/css-api.js
 +++ b/js/scripting/css-api.js
-@@ -23 +23,14 @@
+@@ -23 +23,18 @@
 -    if ( typeof api === 'object' ) { return; }
++    const cssUserOwnsIdleIdentity =
++        self.floorpCSSUserAPIIdleReplay === true;
 +    const forcedReplay = self.floorpCSSUserForceAPIReplay !== undefined;
 +    const documentTimeOrigin = performance.timeOrigin;
 +    if (
@@ -8132,9 +8134,11 @@ index 88c7b27..056bdc7 100644
 +        api.documentTimeOrigin === documentTimeOrigin &&
 +        api.disposed !== true
 +    ) {
-+        // Registered scripts can rerun in a retained isolated global. Hold
-+        // following stock calls behind a fresh native Document identity check.
-+        void api.refreshForScriptExecution?.();
++        // The immediately following idle css-user execution owns the native
++        // Document identity lease. Other retained executions still self-check.
++        if ( cssUserOwnsIdleIdentity === false ) {
++            void api.refreshForScriptExecution?.();
++        }
 +        return;
 +    }
 +    api?.dispose?.();

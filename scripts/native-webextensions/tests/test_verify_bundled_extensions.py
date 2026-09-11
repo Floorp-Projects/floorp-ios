@@ -506,6 +506,20 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "script-execution identity lease"):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
+    def test_rejects_ubol_idle_identity_lease_theft(self) -> None:
+        entry = self.rewrite_archive(
+            "uBlock Origin Lite",
+            lambda files: self.replace_archive_text(
+                files,
+                "js/scripting/css-api.js",
+                "if ( cssUserOwnsIdleIdentity === false ) {",
+                "if ( true ) {",
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "rebuild guarded CSS APIs"):
+            VERIFIER.verify_archive(entry, self.bundle_root, self.root)
+
     def test_rejects_ubol_forced_replay_without_initial_identity_reclaim(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",
