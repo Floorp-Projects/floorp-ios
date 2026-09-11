@@ -112,6 +112,122 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 #endif
     }
 
+    // swiftlint:disable:next function_body_length
+    func testDarkReaderGesturesRecoveryBudgetIsNarrowAndSingleUse() throws {
+#if DEBUG || TESTING
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let recoveryBudget = FloorpNativeWebExtensionHost
+            .supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+        )
+        XCTAssertEqual(recoveryBudget, 15_000_000_000)
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: false,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: true
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: true,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: true,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: NSError(
+                    domain: gesturesDeinitTransition.domain,
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "InvalidTransition { phase: active targetPhase: failed(deinit) }"
+                    ]
+                ),
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: true,
+                alreadyGranted: false
+            )
+        )
+#else
+        throw XCTSkip("The readiness recovery accessor is available only in test builds")
+#endif
+    }
+
     func testBundledDarkReaderZIPIsVerifiedAndLoadsWithNativeWebKit() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -2409,6 +2525,230 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(responseCount, 1)
 #else
         throw XCTSkip("The background readiness hook is available only in test builds")
+#endif
+    }
+
+    func testDarkReaderReadinessRecoversOnceFromDeliveredGesturesDeinitTransition() async throws {
+#if DEBUG || TESTING
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_gestures_recovery")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
+        defer { profileFixture.cleanup() }
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        var attemptedSurfaces = [Int]()
+        var attemptedWebViews = [WKWebView]()
+        var grantedSupplementalBudgets = [UInt64]()
+        var successfulResponseCount = 0
+        host.backgroundReadinessSurfaceCreatedHookForTesting = { hookIdentifier, _, webView in
+            guard hookIdentifier == item.identifier else { return }
+            // Retain both surfaces so allocator address reuse cannot make two
+            // distinct WebViews appear to have the same ObjectIdentifier.
+            attemptedWebViews.append(webView)
+        }
+        host.supplementalReadinessRetryGrantedHookForTesting = { hookIdentifier, _, budget in
+            guard hookIdentifier == item.identifier else { return }
+            grantedSupplementalBudgets.append(budget)
+        }
+        host.backgroundReadinessTransientFailureHookForTesting = { hookIdentifier, attempt in
+            guard hookIdentifier == item.identifier else { return nil }
+            attemptedSurfaces.append(attempt)
+            return attempt == 1 ? gesturesDeinitTransition : nil
+        }
+        host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == item.identifier else { return nil }
+            successfulResponseCount += 1
+            return [
+                "ready": true,
+                "version": item.expectedVersion
+            ]
+        }
+        defer {
+            host.backgroundReadinessSurfaceCreatedHookForTesting = nil
+            host.supplementalReadinessRetryGrantedHookForTesting = nil
+            host.backgroundReadinessTransientFailureHookForTesting = nil
+            host.backgroundReadinessResponseHookForTesting = nil
+        }
+
+        try await host.installBundledExtension(identifier: item.identifier)
+
+        XCTAssertEqual(attemptedSurfaces, [1, 2])
+        XCTAssertEqual(attemptedWebViews.count, 2)
+        let firstWebView = try XCTUnwrap(attemptedWebViews.first)
+        let secondWebView = try XCTUnwrap(attemptedWebViews.dropFirst().first)
+        XCTAssertFalse(firstWebView === secondWebView)
+        XCTAssertEqual(grantedSupplementalBudgets, [15_000_000_000])
+        XCTAssertEqual(successfulResponseCount, 1)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        host.backgroundReadinessSurfaceCreatedHookForTesting = nil
+        host.supplementalReadinessRetryGrantedHookForTesting = nil
+        host.backgroundReadinessTransientFailureHookForTesting = nil
+        host.backgroundReadinessResponseHookForTesting = nil
+        try await host.uninstall(identifier: item.identifier)
+        XCTAssertNil(host.installedContext(identifier: item.identifier))
+        XCTAssertFalse(context.isLoaded)
+#else
+        throw XCTSkip("The background readiness hooks are available only in test builds")
+#endif
+    }
+
+    func testDarkReaderReadinessFailsClosedAfterOneGesturesRecoveryAttempt() async throws {
+#if DEBUG || TESTING
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_gestures_fail_closed")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
+        defer { profileFixture.cleanup() }
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        var attemptedSurfaces = [Int]()
+        var unexpectedResponseCount = 0
+        host.backgroundReadinessTransientFailureHookForTesting = { hookIdentifier, attempt in
+            guard hookIdentifier == item.identifier else { return nil }
+            attemptedSurfaces.append(attempt)
+            return attempt <= 2 ? gesturesDeinitTransition : nil
+        }
+        host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == item.identifier else { return nil }
+            unexpectedResponseCount += 1
+            return [
+                "ready": true,
+                "version": item.expectedVersion
+            ]
+        }
+        defer {
+            host.backgroundReadinessTransientFailureHookForTesting = nil
+            host.backgroundReadinessResponseHookForTesting = nil
+        }
+
+        do {
+            try await host.installBundledExtension(identifier: item.identifier)
+            XCTFail("Dark Reader must fail closed after its one recovery surface also fails")
+        } catch {
+            XCTAssertEqual((error as NSError).domain, gesturesDeinitTransition.domain)
+        }
+
+        XCTAssertEqual(attemptedSurfaces, [1, 2])
+        XCTAssertEqual(unexpectedResponseCount, 0)
+        XCTAssertNil(host.installedContext(identifier: item.identifier))
+#else
+        throw XCTSkip("The background readiness hooks are available only in test builds")
+#endif
+    }
+
+    func testDarkReaderNavigationPreflightKeepsCallerBudgetOnGesturesRecovery() async throws {
+#if DEBUG || TESTING
+        let profileFixture = try makeIsolatedHostProfile(
+            prefix: "darkreader_navigation_gestures_budget"
+        )
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
+        defer { profileFixture.cleanup() }
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        try await host.installBundledExtension(identifier: item.identifier)
+
+        let manager = MockTabManager(windowUUID: WindowUUID())
+        let tab = makeHostTestTab(
+            profile: profile,
+            isPrivate: false,
+            windowUUID: manager.windowUUID
+        )
+        let url = try XCTUnwrap(
+            URL(string: "https://example.com/darkreader-navigation-gestures-budget")
+        )
+        tab.url = url
+        manager.tabs = [tab]
+        manager.normalTabs = [tab]
+        manager.selectedTab = tab
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+        host.focus(windowUUID: manager.windowUUID, isPrivate: false)
+
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        var attemptedSurfaces = [Int]()
+        var grantedSupplementalBudgets = [UInt64]()
+        var navigationTimeouts = [UInt64]()
+        host.backgroundReadinessTransientFailureHookForTesting = { identifier, attempt in
+            guard identifier == item.identifier else { return nil }
+            attemptedSurfaces.append(attempt)
+            return attempt == 1 ? gesturesDeinitTransition : nil
+        }
+        host.backgroundReadinessResponseHookForTesting = { identifier, _ in
+            guard identifier == item.identifier else { return nil }
+            return ["ready": true, "version": item.expectedVersion]
+        }
+        host.supplementalReadinessRetryGrantedHookForTesting = { identifier, _, budget in
+            guard identifier == item.identifier else { return }
+            grantedSupplementalBudgets.append(budget)
+        }
+        host.navigationReadinessTimeoutHookForTesting = { identifier, timeout in
+            guard identifier == item.identifier else { return }
+            navigationTimeouts.append(timeout)
+        }
+        defer {
+            host.backgroundReadinessTransientFailureHookForTesting = nil
+            host.backgroundReadinessResponseHookForTesting = nil
+            host.supplementalReadinessRetryGrantedHookForTesting = nil
+            host.navigationReadinessTimeoutHookForTesting = nil
+        }
+
+        XCTAssertTrue(host.needsBackgroundReadiness(beforeNavigating: tab, to: url))
+        let action = MockNavigationAction(url: url, type: .linkActivated)
+        let generation = host.beginNavigationPreparation(for: tab)
+        let didPrepare = await host.prepareBackgroundContent(
+            beforeNavigating: tab,
+            to: url,
+            navigationAction: action,
+            generation: generation
+        )
+
+        XCTAssertTrue(didPrepare)
+        XCTAssertTrue(host.consumePreparedNavigation(action))
+        XCTAssertNil(host.navigationProtectionFailure(for: tab, generation: generation))
+        XCTAssertEqual(attemptedSurfaces, [1, 2])
+        XCTAssertEqual(navigationTimeouts, [3_000_000_000])
+        XCTAssertTrue(grantedSupplementalBudgets.isEmpty)
+#else
+        throw XCTSkip("The background readiness hooks are available only in test builds")
 #endif
     }
 
