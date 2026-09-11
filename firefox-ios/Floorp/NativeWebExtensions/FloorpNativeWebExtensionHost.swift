@@ -4958,7 +4958,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         return message.contains("jscontextref")
     }
 
-    private static func isGesturesIdleDeinitTransition(_ error: any Error) -> Bool {
+    static func isGesturesIdleDeinitTransition(_ error: any Error) -> Bool {
         let nsError = error as NSError
         let provenance = [
             String(reflecting: type(of: error)),
