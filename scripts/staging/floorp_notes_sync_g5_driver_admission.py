@@ -63,6 +63,14 @@ SAFE_FIELD_PATHS = frozenset(
         ("signer", "key_fingerprint"),
     }
 )
+# Public fingerprints are high-entropy identifiers, so their Base64 text can
+# coincidentally spell a sensitive word. The strict fingerprint syntax and
+# owner-pinned trust match below remain authoritative for this exact path.
+SAFE_VALUE_PATHS = frozenset(
+    {
+        ("signer", "key_fingerprint"),
+    }
+)
 DANGEROUS_VALUE = re.compile(
     r"(?:[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|://|[?#]|\b(?:authorization|bearer|oauth|token|cookie|password|credential|secret)\b)",
     re.IGNORECASE,
@@ -114,7 +122,13 @@ def reject_sensitive_values(
             reject_sensitive_values(child, path=path, depth=depth + 1)
         return
     if type(value) is str:
-        require(not DANGEROUS_VALUE.search(value), "admission contains a dangerous value")
+        is_safe_public_value = (
+            path in SAFE_VALUE_PATHS and FINGERPRINT.fullmatch(value) is not None
+        )
+        require(
+            is_safe_public_value or not DANGEROUS_VALUE.search(value),
+            "admission contains a dangerous value",
+        )
 
 
 def validate_json_domain(value: Any, *, depth: int = 0) -> None:
