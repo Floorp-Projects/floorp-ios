@@ -261,6 +261,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             CheckedContinuation<BackgroundReadinessJavaScriptValue, any Error>?
         private var timeoutTask: Task<Void, Never>?
         private var operationToken: UUID?
+        private var expectedNavigation: WKNavigation?
         private(set) var requiresProcessLifetimeRetention = false
 
         func load(
@@ -281,7 +282,14 @@ final class FloorpNativeWebExtensionHost: NSObject {
                         identifier: identifier,
                         timeoutNanoseconds: timeoutNanoseconds
                     )
-                    webView.load(URLRequest(url: url))
+                    guard let navigation = webView.load(URLRequest(url: url)) else {
+                        completeNavigation(
+                            .failure(FloorpNativeWebExtensionError.hostUnavailable),
+                            token: token
+                        )
+                        return
+                    }
+                    expectedNavigation = navigation
                 }
             } onCancel: { [weak self] in
                 Task { @MainActor in
@@ -332,6 +340,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             timeoutTask?.cancel()
             timeoutTask = nil
             operationToken = nil
+            expectedNavigation = nil
             webView?.stopLoading()
             webView?.navigationDelegate = nil
             webView = nil
@@ -342,7 +351,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
-            guard webView === self.webView, let token = operationToken else { return }
+            guard webView === self.webView,
+                  let navigation,
+                  navigation === expectedNavigation,
+                  let token = operationToken else { return }
             completeNavigation(.success(()), token: token)
         }
 
@@ -351,7 +363,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
             didFail navigation: WKNavigation?,
             withError error: any Error
         ) {
-            guard webView === self.webView, let token = operationToken else { return }
+            guard webView === self.webView,
+                  let navigation,
+                  navigation === expectedNavigation,
+                  let token = operationToken else { return }
             completeNavigation(.failure(error), token: token)
         }
 
@@ -360,7 +375,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
             didFailProvisionalNavigation navigation: WKNavigation?,
             withError error: any Error
         ) {
-            guard webView === self.webView, let token = operationToken else { return }
+            guard webView === self.webView,
+                  let navigation,
+                  navigation === expectedNavigation,
+                  let token = operationToken else { return }
             completeNavigation(.failure(error), token: token)
         }
 
@@ -396,6 +414,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         ) {
             guard operationToken == token, let continuation = navigationContinuation else { return }
             operationToken = nil
+            expectedNavigation = nil
             navigationContinuation = nil
             timeoutTask?.cancel()
             timeoutTask = nil
@@ -819,6 +838,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
     var backgroundReadinessTransientFailureHookForTesting:
         ((String, Int) -> (any Error)?)?
     var backgroundReadinessSurfaceCreatedHookForTesting:
+        ((String, Int, WKWebView) -> Void)?
+    var backgroundLoadCompletedBeforeReadinessNavigationHookForTesting:
+        ((String, Int, WKWebView) -> Void)?
+    var backgroundReadinessSurfaceDeferredReleaseHookForTesting:
         ((String, Int, WKWebView) -> Void)?
     var supplementalReadinessRetryGrantedHookForTesting:
         ((String, Int, UInt64) -> Void)?
@@ -1592,7 +1615,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             return 240_000_000_000
         }
         if identifier == FloorpNativeWebExtensionCatalog.darkReader.identifier {
-            return 30_000_000_000
+            return 60_000_000_000
         }
         return backgroundReadinessTimeoutPolicy(for: identifier)
     }
@@ -4652,14 +4675,19 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 mode: mode
             )
             // uBO Lite can legitimately spend longer than 15 seconds compiling
-            // and enabling its DNR rulesets on a cold launch. A timed-out
-            // callAsyncJavaScript callback cannot be abandoned or retried
-            // safely, so give its fail-closed probe the full bounded deadline.
-            // Other attempts use the owned page's mode-specific limit.
-            let attemptBudget = identifier
-                == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
-                ? remainingBudget
-                : min(remainingBudget, pageNavigationBudget)
+            // and enabling its DNR rulesets on a cold launch. Dark Reader's
+            // serialized cold background wake also precedes its bounded page
+            // navigation. Give those attempts the full outer deadline while
+            // keeping the navigation itself capped below.
+            let attemptBudget: UInt64
+            if identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier {
+                attemptBudget = remainingBudget
+            } else if identifier == FloorpNativeWebExtensionCatalog.darkReader.identifier,
+                      case .coldLifecycle = mode {
+                attemptBudget = remainingBudget
+            } else {
+                attemptBudget = min(remainingBudget, pageNavigationBudget)
+            }
             let attemptAddition = attemptStart.addingReportingOverflow(attemptBudget)
             let attemptDeadline = attemptAddition.overflow
                 ? UInt64.max
@@ -4696,6 +4724,26 @@ final class FloorpNativeWebExtensionHost: NSObject {
             activeBackgroundReadinessOperations[readinessOperationID] = context
             let result: Any?
             do {
+                if identifier == FloorpNativeWebExtensionCatalog.darkReader.identifier,
+                   case .coldLifecycle = mode,
+                   !didLoadBackgroundContent {
+                    // Construct the extension page before waking the background
+                    // to preserve iOS 26's Gestures ordering, but let that wake
+                    // settle before starting a second WebKit navigation.
+                    try await loadBackgroundContent(
+                        in: context,
+                        identifier: identifier,
+                        timeoutNanoseconds: try remainingTimeout()
+                    )
+                    didLoadBackgroundContent = true
+#if DEBUG || TESTING
+                    backgroundLoadCompletedBeforeReadinessNavigationHookForTesting?(
+                        identifier,
+                        attempt,
+                        readinessSurface.webView
+                    )
+#endif
+                }
                 try await probe.load(
                     readinessURL,
                     in: readinessSurface.webView,
@@ -4757,9 +4805,19 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     retiredBackgroundReadinessSurfaces.append(readinessSurface)
                 } else {
                     // A delivered WebKit error has completed its callback. It
-                    // may be retryable, but retaining that completed attempt
-                    // would exhaust WebContent resources across later retries.
+                    // may be retryable, so use only the bounded teardown grace
+                    // rather than retaining every attempt until process exit.
                     probe.invalidate()
+                    FloorpNativeWebExtensionDeferredWebViewRelease.retain(
+                        readinessSurface.webView
+                    )
+#if DEBUG || TESTING
+                    backgroundReadinessSurfaceDeferredReleaseHookForTesting?(
+                        identifier,
+                        attempt,
+                        readinessSurface.webView
+                    )
+#endif
                 }
                 activeBackgroundReadinessOperations.removeValue(
                     forKey: readinessOperationID
@@ -4813,6 +4871,16 @@ final class FloorpNativeWebExtensionHost: NSObject {
             }
 
             probe.invalidate()
+            FloorpNativeWebExtensionDeferredWebViewRelease.retain(
+                readinessSurface.webView
+            )
+#if DEBUG || TESTING
+            backgroundReadinessSurfaceDeferredReleaseHookForTesting?(
+                identifier,
+                attempt,
+                readinessSurface.webView
+            )
+#endif
             activeBackgroundReadinessOperations.removeValue(forKey: readinessOperationID)
             await Task.yield()
             await Task.yield()

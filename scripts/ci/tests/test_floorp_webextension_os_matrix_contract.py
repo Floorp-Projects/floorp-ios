@@ -583,7 +583,15 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         modern_tests = (
             (
                 "ClientTests/FloorpNativeWebExtensionIntegrationTests/"
+                "testDarkReaderReadinessRecoversOnceFromDeliveredGesturesDeinitTransition"
+            ),
+            (
+                "ClientTests/FloorpNativeWebExtensionIntegrationTests/"
                 "testMainMenuSelectsDarkReaderFromTwoActionPickerAndPresentsInteractivePopup"
+            ),
+            (
+                "ClientTests/FloorpDarkReaderWebKitAcceptanceTests/"
+                "testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup"
             ),
             (
                 "ClientTests/FloorpNativeWebExtensionIntegrationTests/"
@@ -596,15 +604,17 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         )
 
         self.assertEqual(minimum.count("run_test \\\n"), 4)
-        self.assertEqual(modern.count("run_test \\\n"), 3)
+        self.assertEqual(modern.count("run_test \\\n"), 5)
         selected_pattern = r'"(ClientTests/[^"\n]+)"'
         self.assertEqual(set(re.findall(selected_pattern, minimum)), set(minimum_tests))
         self.assertEqual(set(re.findall(selected_pattern, modern)), set(modern_tests))
         self.assertEqual(minimum.count("UBOL"), 1)
         self.assertNotIn("FLOORP_UBOL_RELEASE_GATE", minimum)
-        self.assertIn(
-            "FLOORP_DARKREADER_RELEASE_GATE background-resume-popup", minimum
+        darkreader_release_marker = (
+            "FLOORP_DARKREADER_RELEASE_GATE background-resume-popup"
         )
+        self.assertEqual(minimum.count(darkreader_release_marker), 1)
+        self.assertEqual(modern.count(darkreader_release_marker), 1)
         self.assertIn("FLOORP_UBOL_RELEASE_GATE report", modern)
         self.assertIn(
             "TEST_RUNNER_FLOORP_RUN_UBOL_DNR_DIAGNOSTICS=1", acceptance
@@ -930,6 +940,8 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
             "records the reclaimed space before",
             "obtaining iOS 26.0 with the same download mechanism",
             "iOS 26.2 build-support runtime remains installed",
+            "Dark Reader cold-readiness ordering and recovery",
+            "official Dark Reader acceptance",
             "opt-in official uBlock",
             "Origin Lite acceptance.",
             "use `test-without-building` rather than rebuilding",
