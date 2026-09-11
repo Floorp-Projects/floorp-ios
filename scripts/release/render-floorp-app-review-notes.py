@@ -54,9 +54,9 @@ def render(template: str, receipt: dict) -> dict[str, str]:
     notes = (
         notes.replace("[VERSION]", version)
         .replace("[BUILD]", number)
-        .replace("[RELEASE_TAG_OR_FULL_COMMIT]", reference)
+        .replace("[RELEASE_TAG_OR_FULL_COMMIT]", commit)
     )
-    public_url = f"{REPOSITORY}/tree/{reference}"
+    public_url = f"{REPOSITORY}/tree/{commit}"
     if any(placeholder in notes for placeholder in PLACEHOLDERS):
         raise RenderError("rendered App Review notes contain placeholders")
     if public_url not in notes:

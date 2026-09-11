@@ -17,7 +17,7 @@
 #     --expected-min-os-version 18.4 \
 #     --external-group-id "$EXTERNAL_GROUP_ID" \
 #     --localization docs/app-store-connect-metadata.json \
-#     --review-details "$ATTEMPT_DIR/beta-review-details.json" \
+#     --review-details "$ATTEMPT_DIR/floorp-app-review-notes.json" \
 #     --before "$ATTEMPT_DIR/asc-before.json" \
 #     --after "$ATTEMPT_DIR/asc-after.json" \
 #     [--what-to-test-en firefox-ios/TestFlight/WhatToTest.en-US.txt] \
@@ -91,8 +91,12 @@ done
 CLIENT="$(cd "$(dirname "$CLIENT")" && pwd)/$(basename "$CLIENT")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECEIPT_VALIDATOR="$SCRIPT_DIR/floorp_xcode_cloud_build_receipt.py"
+REVIEW_NOTES_RENDERER="$SCRIPT_DIR/render-floorp-app-review-notes.py"
+REVIEW_NOTES_TEMPLATE="$SCRIPT_DIR/../../docs/app-review-notes-native-webextensions.md"
 test -f "$BUILD_RECEIPT"
 test -f "$RECEIPT_VALIDATOR"
+test -f "$REVIEW_NOTES_RENDERER"
+test -f "$REVIEW_NOTES_TEMPLATE"
 
 # Read-only preflight gate: capture every resource that identifies the run,
 # build, external group, review state, and localization state before any write.
@@ -103,6 +107,13 @@ asc_get() {
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+RECEIPT_SNAPSHOT="$TMP_DIR/build-receipt.json"
+cp "$BUILD_RECEIPT" "$RECEIPT_SNAPSHOT"
+
+python3 "$REVIEW_NOTES_RENDERER" \
+    --template "$REVIEW_NOTES_TEMPLATE" \
+    --receipt "$RECEIPT_SNAPSHOT" \
+    --output "$TMP_DIR/expected-review-details.json"
 
 asc_get "/v1/betaAppReviewDetails?filter[app]=$APP_ID&limit=200" "$TMP_DIR/review-details-before.json"
 asc_get "/v1/betaAppReviewSubmissions?filter[build]=$BUILD_ID&limit=200" "$TMP_DIR/submissions-before.json"
@@ -114,7 +125,7 @@ asc_get "/v1/builds/$BUILD_ID?include=app,preReleaseVersion" "$TMP_DIR/build-bef
 asc_get "/v1/betaGroups/$GROUP_ID?include=app" "$TMP_DIR/group-before.json"
 
 python3 "$RECEIPT_VALIDATOR" verify-submission \
-    --receipt "$BUILD_RECEIPT" \
+    --receipt "$RECEIPT_SNAPSHOT" \
     --run "$TMP_DIR/xcode-cloud-run-before.json" \
     --linkage "$TMP_DIR/xcode-cloud-build-linkage-before.json" \
     --build "$TMP_DIR/build-before.json" \
@@ -254,10 +265,11 @@ PYEOF
 python3 - \
     "$TMP_DIR/review-details-before.json" \
     "$REVIEW_DETAILS" \
+    "$TMP_DIR/expected-review-details.json" \
     "$TMP_DIR/review-details-validated.json" <<'PYEOF'
 import json, sys
 
-current_path, desired_path, output_path = sys.argv[1:]
+current_path, desired_path, expected_path, output_path = sys.argv[1:]
 payload = json.load(open(current_path))
 if not isinstance(payload, dict):
     raise SystemExit("preflight failed: betaAppReviewDetails payload is malformed")
@@ -301,12 +313,20 @@ if demo_required:
 desired = json.load(open(desired_path))
 if not isinstance(desired, dict) or set(desired) != {"notes"}:
     raise SystemExit("preflight failed: review details payload must contain only notes")
+expected = json.load(open(expected_path))
+if desired != expected:
+    raise SystemExit(
+        "preflight failed: review details do not match the source-bound App Review notes"
+    )
 notes = desired.get("notes")
 if not isinstance(notes, str) or not notes.strip():
     raise SystemExit("preflight failed: release review notes are missing")
 if len(notes.encode("utf-8")) > 4000:
     raise SystemExit("preflight failed: release review notes exceed 4,000 bytes")
-json.dump({"id": review_id, "demoAccountRequired": demo_required}, open(output_path, "w"))
+json.dump(
+    {"id": review_id, "demoAccountRequired": demo_required, "notes": notes},
+    open(output_path, "w"),
+)
 PYEOF
 
 cat > "$TMP_DIR/before.json" <<EOF
@@ -401,12 +421,11 @@ fi
 # 2. Review details (contact + notes for Beta App Review).
 python3 - \
     "$REVIEW_DETAILS_ID" \
-    "$TMP_DIR/review-details-before.json" \
-    "$REVIEW_DETAILS" > "$TMP_DIR/review-details-body.json" <<'PYEOF'
+    "$TMP_DIR/review-details-validated.json" > "$TMP_DIR/review-details-body.json" <<'PYEOF'
 import json, sys
-review_id, current_path, desired_path = sys.argv[1:]
-desired = json.load(open(desired_path))
-notes = desired.get("notes")
+review_id, validated_path = sys.argv[1:]
+validated = json.load(open(validated_path))
+notes = validated.get("notes")
 if not isinstance(notes, str) or not notes.strip():
     raise SystemExit("preflight failed: release review notes are missing")
 attrs = {"notes": notes}
@@ -503,7 +522,7 @@ if [[ -z "$DRY_RUN" ]]; then
         "$TMP_DIR/review-details-after.json" \
         "$TMP_DIR/localizations-after.json" \
         "$TMP_DIR/group-builds-after.json" \
-        "$REVIEW_DETAILS" \
+        "$TMP_DIR/review-details-validated.json" \
         "$EN_TEXT" \
         "$JA_TEXT" \
         "$BUILD_ID" <<'PYEOF'

@@ -1,5 +1,6 @@
 """Fixture tests for scripts/release/submit-floorp-external-beta.sh."""
 
+import importlib.util
 import json
 import subprocess
 import tempfile
@@ -10,6 +11,8 @@ from pathlib import Path
 
 RELEASE_DIR = Path(__file__).parent.parent
 SCRIPT = RELEASE_DIR / "submit-floorp-external-beta.sh"
+REVIEW_NOTES_RENDERER = RELEASE_DIR / "render-floorp-app-review-notes.py"
+REVIEW_NOTES_TEMPLATE = RELEASE_DIR.parents[1] / "docs/app-review-notes-native-webextensions.md"
 APP_ID = "6796708699"
 BUNDLE_ID = "app.floorp.Floorp"
 WORKFLOW_ID = "workflow-1"
@@ -17,6 +20,18 @@ RUN_ID = "run-1"
 BUILD_ID = "bld-1"
 BUILD_NUMBER = "96"
 SOURCE_SHA = "a" * 40
+
+
+def load_review_notes_renderer():
+    spec = importlib.util.spec_from_file_location(
+        "floorp_app_review_notes_renderer", REVIEW_NOTES_RENDERER
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+review_notes_renderer = load_review_notes_renderer()
 
 
 def receipt_value():
@@ -96,6 +111,13 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             state = json.load(open(state_path))
             path = sys.argv[2]
             if command == "get":
+                receipt_replacement = state.pop("receipt_replacement", None)
+                if receipt_replacement is not None:
+                    json.dump(
+                        receipt_replacement,
+                        open(os.environ["STUB_BUILD_RECEIPT"], "w"),
+                    )
+                    json.dump(state, open(state_path, "w"))
                 submissions = {"data": state["submissions"]}
                 if "submission_links" in state:
                     submissions["links"] = state["submission_links"]
@@ -129,6 +151,11 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
                     row = body["data"]
                     row["id"] = "loc-" + row["attributes"]["locale"]
                     state["localizations"].append(row)
+                    if state.get("tamper_review_after_localization"):
+                        review_path = os.environ["STUB_REVIEW_DETAILS"]
+                        review_value = json.load(open(review_path))
+                        review_value["notes"] = "tampered after preflight"
+                        json.dump(review_value, open(review_path, "w"))
                     response = {"data": row}
                 elif path.startswith("/v1/betaBuildLocalizations/"):
                     row = next(item for item in state["localizations"] if item["id"] == body["data"]["id"])
@@ -158,7 +185,13 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
         """))
         return stub
 
-    def run_script(self, *extra_args, state_overrides=None, receipt_overrides=None):
+    def run_script(
+        self,
+        *extra_args,
+        state_overrides=None,
+        receipt_overrides=None,
+        review_overrides=None,
+    ):
         record = self.root / "record.jsonl"
         record.write_text("")
         stub = self.stub_client()
@@ -169,9 +202,12 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             "export_compliance": {"uses_encryption": True},
         }))
         review = self.root / "review.json"
-        review.write_text(json.dumps({
-            "notes": "Internal 0.2.0 acceptance passed; external beta gated.",
-        }))
+        review_value = review_notes_renderer.render(
+            REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), receipt_value()
+        )
+        if review_overrides:
+            review_value.update(review_overrides)
+        review.write_text(json.dumps(review_value))
         wte = self.root / "WhatToTest.en-US.txt"
         wte.write_text("Test the 0.2.0 (4) candidate.")
         wtj = self.root / "WhatToTest.ja-JP.txt"
@@ -272,7 +308,9 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             state_value.update(state_overrides)
         state.write_text(json.dumps(state_value))
         env = {
+            "STUB_BUILD_RECEIPT": str(receipt),
             "STUB_RECORD": str(record),
+            "STUB_REVIEW_DETAILS": str(review),
             "STUB_STATE": str(state),
             "PATH": "/usr/bin:/bin",
         }
@@ -351,7 +389,9 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
         )
         self.assertEqual(
             body["data"]["attributes"],
-            {"notes": "Internal 0.2.0 acceptance passed; external beta gated."},
+            review_notes_renderer.render(
+                REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), receipt_value()
+            ),
         )
         body_text = json.dumps(body)
         for sensitive_field in (
@@ -359,6 +399,71 @@ class SubmitExternalBetaScriptTests(unittest.TestCase):
             "demoAccountName", "demoAccountPassword",
         ):
             self.assertNotIn(sensitive_field, body_text)
+
+    def test_review_notes_must_match_the_source_bound_receipt_before_writes(self):
+        proc, record, _, _, _ = self.run_script(
+            "--authorize-mutation",
+            review_overrides={"notes": "GPL disclosure omitted"},
+        )
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("source-bound App Review notes", proc.stderr)
+        calls = [json.loads(line) for line in record.read_text().splitlines()]
+        self.assertFalse(any(argv[0] in ("post", "patch") for argv in calls))
+
+    def test_review_notes_are_snapshotted_before_mutations(self):
+        proc, record, _, _, _ = self.run_script(
+            "--authorize-mutation",
+            state_overrides={"tamper_review_after_localization": True},
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = [json.loads(line) for line in record.read_text().splitlines()]
+        review_patch = next(
+            argv
+            for argv in calls
+            if argv[0:2] == ["patch", "/v1/betaAppReviewDetails/rev-1"]
+        )
+        body = json.loads(
+            review_patch[review_patch.index("--recorded-body-json") + 1]
+        )
+        expected = review_notes_renderer.render(
+            REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), receipt_value()
+        )
+        self.assertEqual(body["data"]["attributes"], expected)
+
+    def test_receipt_is_snapshotted_before_remote_preflight(self):
+        stale_receipt = receipt_value()
+        stale_sha = "b" * 40
+        stale_receipt["source"].update({
+            "name": f"floorp-catalog-{stale_sha}",
+            "commit_sha": stale_sha,
+        })
+        stale_receipt["build"].update({
+            "number": "999",
+            "marketing_version": "9.9.9",
+        })
+        stale_notes = review_notes_renderer.render(
+            REVIEW_NOTES_TEMPLATE.read_text(encoding="utf-8"), stale_receipt
+        )["notes"]
+
+        proc, record, _, _, _ = self.run_script(
+            "--authorize-mutation",
+            receipt_overrides={
+                "source": stale_receipt["source"],
+                "build": {
+                    "number": "999",
+                    "marketing_version": "9.9.9",
+                },
+            },
+            review_overrides={"notes": stale_notes},
+            state_overrides={"receipt_replacement": receipt_value()},
+        )
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("build receipt source tag is not commit-bound", proc.stderr)
+        calls = [json.loads(line) for line in record.read_text().splitlines()]
+        self.assertFalse(any(argv[0] in ("post", "patch") for argv in calls))
 
     def test_each_localization_uses_a_fresh_guard_snapshot(self):
         proc, record, _, _, _ = self.run_script("--authorize-mutation")

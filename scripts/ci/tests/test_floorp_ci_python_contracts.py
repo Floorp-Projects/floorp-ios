@@ -55,6 +55,9 @@ class FloorpCIPythonContractTests(unittest.TestCase):
         self.assertIn(f"-skip-testing:{test_identifier}", unit_step)
         self.assertIn(f"-only-testing:{test_identifier}", isolated_step)
         self.assertIn("FloorpUBOLProductionHost.xcresult", isolated_step)
+        self.assertIn("timeout-minutes: 15", isolated_step)
+        self.assertIn("-default-test-execution-time-allowance 720", isolated_step)
+        self.assertIn("-maximum-test-execution-time-allowance 720", isolated_step)
         self.assertIn(
             "testBundledUBOLBlocksProductionHostTabsAndRendersDashboard]' passed",
             isolated_step,
@@ -99,6 +102,11 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
             "FloorpUBOLWebKitDiagnosticsTests.swift"
         ).read_text()
+        host_source = (
+            ROOT
+            / "firefox-ios/Floorp/NativeWebExtensions/"
+            "FloorpNativeWebExtensionHost.swift"
+        ).read_text()
         session = source.split(
             "private final class FloorpUBOLReleaseAcceptanceSession {\n", 1
         )[1].split("\nprivate enum FloorpUBOLDNRDiagnosticError", 1)[0]
@@ -135,7 +143,17 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "Self.loadBackgroundContent(",
             "Self.waitUntilBackgroundIsReady(",
         )
-        for lifecycle in (initial_readiness, warm_readiness):
+        navigation_timeouts = (
+            (
+                initial_readiness,
+                "Self.coldExtensionPageNavigationTimeoutNanoseconds",
+            ),
+            (
+                warm_readiness,
+                "Self.warmExtensionPageNavigationTimeoutNanoseconds",
+            ),
+        )
+        for lifecycle, expected_navigation_timeout in navigation_timeouts:
             positions = [lifecycle.index(token) for token in lifecycle_tokens]
             self.assertEqual(positions, sorted(positions))
             self.assertIn("remainingReadinessTimeout(until: readinessDeadline)", lifecycle)
@@ -148,11 +166,53 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             navigation = lifecycle.split("readyPage.waiter.load(", 1)[1].split(
                 "timeoutPolicy: .preserveWebViewForProcessLifetime", 1
             )[0]
-            self.assertEqual(navigation.count("5_000_000_000"), 1)
+            self.assertEqual(navigation.count(expected_navigation_timeout), 1)
             self.assertIn(
                 "try Self.remainingReadinessTimeout(until: readinessDeadline)",
                 navigation,
             )
+
+        self.assertIn(
+            "private static let coldExtensionPageNavigationTimeoutNanoseconds: "
+            "UInt64 = 30_000_000_000",
+            session,
+        )
+        self.assertIn(
+            "private static let warmExtensionPageNavigationTimeoutNanoseconds: "
+            "UInt64 = 5_000_000_000",
+            session,
+        )
+        production_readiness = host_source.split(
+            "    private func waitForBundledExtensionInitialization(\n", 1
+        )[1].split("\n    private func", 1)[0]
+        self.assertIn(
+            "timeoutNanoseconds: min(\n"
+            "                        try remainingAttemptTimeout(),\n"
+            "                        Self.readinessPageNavigationTimeout(for: identifier)\n"
+            "                    )",
+            production_readiness,
+        )
+        self.assertEqual(
+            production_readiness.count(
+                "Self.readinessPageNavigationTimeout(for: identifier)"
+            ),
+            1,
+        )
+        semantic_probe = production_readiness.split(
+            "probe.callAsyncJavaScript(", 1
+        )[1].split(")\n                }()", 1)[0]
+        self.assertNotIn("readinessPageNavigationTimeout", semantic_probe)
+        production_navigation_timeout = host_source.split(
+            "    private static func readinessPageNavigationTimeout(for identifier: String) "
+            "-> UInt64 {\n",
+            1,
+        )[1].split("\n    private func", 1)[0]
+        self.assertIn(
+            "identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier",
+            production_navigation_timeout,
+        )
+        self.assertIn("? 30_000_000_000", production_navigation_timeout)
+        self.assertIn(": 15_000_000_000", production_navigation_timeout)
 
         preserve_timeout = navigation_waiter.split(
             "case .preserveWebViewForProcessLifetime:\n", 1
@@ -230,6 +290,8 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "try await Task.sleep(nanoseconds: 35_000_000_000)",
             'print("FLOORP_UBOL_RELEASE_GATE background-wake-document-start")',
             "let result = try await loadAndInspect(",
+            "customCosmeticSettleTimeoutNanoseconds:\n"
+            "                Self.customCosmeticActivationTimeoutNanoseconds",
             "navigationTimeoutPolicy: .preserveWebViewForProcessLifetime",
         )
         positions = [cold_document_start.index(token) for token in cold_tokens]
@@ -240,6 +302,39 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "waitUntilBackgroundIsReady(",
         ):
             self.assertNotIn(forbidden, cold_document_start)
+
+        load_and_inspect = session.split(
+            "    private func loadAndInspect(\n", 1
+        )[1].split("\n    private func inspectCrossHostCustomFilterIsolation", 1)[0]
+        self.assertIn(
+            "customCosmeticSettleTimeoutNanoseconds: UInt64 = 15_000_000_000",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "private static let customCosmeticActivationTimeoutNanoseconds: UInt64 "
+            "= 15_000_000_000",
+            session,
+        )
+        self.assertIn("let settleDeadline = Self.makeReadinessDeadline(", load_and_inspect)
+        self.assertIn("let requiredSamples = 8", load_and_inspect)
+        self.assertIn("var observedUnexpectedState = false", load_and_inspect)
+        self.assertIn(
+            "if !expectedCustomCosmeticFilters {\n"
+            "                    break\n"
+            "                }",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "!observedUnexpectedState && consecutiveExpectedSamples >= requiredSamples",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "if expectedCustomCosmeticFilters,\n"
+            "                   consecutiveExpectedSamples >= requiredSamples",
+            load_and_inspect,
+        )
+        self.assertIn("guard now < settleDeadline else { break }", load_and_inspect)
+        self.assertNotIn("for _ in 0..<20", load_and_inspect)
 
         self.assertIn("let coldDocumentStart: FloorpUBOLPageAcceptance", report)
         self.assertIn("coldDocumentStart.customCosmeticHidden", report)
@@ -261,8 +356,17 @@ class FloorpCIPythonContractTests(unittest.TestCase):
         )[1].split("\nprivate struct FloorpUBOLPopupAcceptance", 1)[0]
 
         self.assertIn('id="floorp-origin-fallback-frame" srcdoc=', session)
-        self.assertIn("originFallbackCustom: hidden(", session)
+        self.assertIn(
+            "originFallbackCustom:\n"
+            "                    hidden(originFallbackDocument, 'floorp-custom-cosmetic') &&\n"
+            "                    hidden(originFallbackDocument, 'floorp-custom-form-control')",
+            session,
+        )
         self.assertIn("originFallbackProcedural: hidden(", session)
+        self.assertIn('id="floorp-cross-origin-frame"', session)
+        self.assertIn("!states.crossOriginCustom", session)
+        self.assertIn("document.adoptedStyleSheets = [];", session)
+        self.assertIn("name.startsWith('data-floorp-ubol-')", session)
         self.assertIn("originFallbackCustomCosmeticHidden: hidden(", session)
         self.assertIn("originFallbackProceduralCosmeticHidden: hidden(", session)
         for page in ("optimal", "crossHostReturn", "privateBrowsing", "coldDocumentStart"):

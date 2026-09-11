@@ -40,9 +40,10 @@ class ReviewNotesRendererTests(unittest.TestCase):
         notes = value["notes"]
         self.assertTrue(notes.startswith("Floorp 0.3.0 (96)"))
         self.assertIn(
-            f"https://github.com/Floorp-Projects/floorp-ios/tree/floorp-catalog-{SOURCE_SHA}",
+            f"https://github.com/Floorp-Projects/floorp-ios/tree/{SOURCE_SHA}",
             notes,
         )
+        self.assertNotIn(f"tree/floorp-catalog-{SOURCE_SHA}", notes)
         self.assertIn("GNU GPL v3.0 or later", notes)
         self.assertNotIn("[VERSION]", notes)
         self.assertNotIn("[BUILD]", notes)

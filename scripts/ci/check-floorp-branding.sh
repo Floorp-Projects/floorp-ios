@@ -891,6 +891,8 @@ if require_file "$CI_PRE_XCODEBUILD"; then
     require_fixed "$CI_PRE_XCODEBUILD" 'CI_XCODEBUILD_ACTION:-}" != "archive"' "Source binding is limited to archive actions"
     require_fixed "$CI_PRE_XCODEBUILD" 'CI_GIT_REF must be the canonical CI_TAG reference' "Source binding requires the canonical tag ref"
     require_fixed "$CI_PRE_XCODEBUILD" 'CI_COMMIT does not match the checked-out Git HEAD' "Source binding checks the actual checkout"
+    require_fixed "$CI_PRE_XCODEBUILD" 'FLOORP_APP_STORE_CONNECT_TEAM_ID="74c6a531-19e2-4ed5-a34b-915003cc10f9"' "Source binding fixes the App Store Connect team"
+    require_fixed "$CI_PRE_XCODEBUILD" 'FLOORP_SIGNING_TEAM_ID="DV2U35YBHT"' "Source binding fixes the signing team"
 fi
 
 if require_file "$FLOORP_SCHEME_FILE"; then

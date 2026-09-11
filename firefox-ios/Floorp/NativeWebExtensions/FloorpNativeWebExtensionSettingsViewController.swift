@@ -514,12 +514,6 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
         sheetPresentationController?.prefersGrabberVisible = true
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        guard dismissalHandler == nil else { return }
-        deliverPendingChoice(deferred: true)
-    }
-
     func applyTheme() {
         let theme = themeManager.getCurrentTheme(for: windowUUID)
         view.backgroundColor = theme.colors.layer1
@@ -704,19 +698,16 @@ class FloorpNativeWebExtensionPromptViewController: UIViewController,
         if let dismissalHandler {
             dismissalHandler { [weak self] in self?.deliverPendingChoice() }
         } else {
-            dismiss(animated: true)
+            dismiss(animated: true) { [weak self] in
+                self?.deliverPendingChoice()
+            }
         }
     }
 
-    private func deliverPendingChoice(deferred: Bool = false) {
+    private func deliverPendingChoice() {
         guard let pendingChoice else { return }
         self.pendingChoice = nil
-        let delivery = { [onChoice] in onChoice(pendingChoice) }
-        if deferred {
-            DispatchQueue.main.async(execute: delivery)
-        } else {
-            delivery()
-        }
+        onChoice(pendingChoice)
     }
 
     private func finishWithCancel() {
@@ -2081,6 +2072,13 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
                                                                WKNavigationDelegate,
                                                                WKUIDelegate,
                                                                UIAdaptivePresentationControllerDelegate {
+    private static let maximumInitialLoadRecoveryAttempts = 2
+    private static let initialLoadRecoveryDelays: [TimeInterval] = [0.5, 2]
+    private static let initialLoadRecoveryWindow: TimeInterval = 15
+    private static let initialLoadRecoveryWindowNanoseconds: UInt64 = 15_000_000_000
+    private static let webKitInternalErrorDomain = "WebKitErrorDomain"
+    private static let webKitInternalErrorCode = 300
+
     enum CloseDisposition {
         case commitPendingTransition
         case cancelPendingTransition
@@ -2164,7 +2162,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         case closeAnyway
     }
 
-    let webView: WKWebView
+    private(set) var webView: WKWebView
 
     private let popupURL: URL
     private let configuration: WKWebViewConfiguration
@@ -2184,6 +2182,17 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     private var navigationPreparationTask: Task<Void, Never>?
     private var navigationRequest: NavigationRequest?
     private var hasCommittedDocument = false
+    private var hasFinishedInitialLoad = false
+    private var initialLoadRecoveryAttemptCount = 0
+    private var initialLoadRecoveryToken: UUID?
+    private var initialLoadGeneration: UUID?
+    private var initialLoadDeadlineUptimeNanoseconds: UInt64?
+    private var hasPendingInitialLoadFailure = false
+    private var hasCompletedInitialPresentation = false
+    private weak var initialLoadFailureAlert: UIAlertController?
+#if DEBUG || TESTING
+    private var initialLoadRecoveryDelayForTesting: TimeInterval?
+#endif
 
     init(
         url: URL,
@@ -2225,6 +2234,26 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         view.accessibilityLabel = FloorpStrings.WebExtensions.genericExtensionName
 
         closeBridge.install(in: configuration)
+        installWebView(webView)
+        beginInitialLoadGeneration(replacingCurrentWebView: false)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        hasCompletedInitialPresentation = true
+        isModalInPresentation = prepareToClose != nil
+        presentationController?.delegate = self
+        presentInitialLoadFailureIfPossible()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || navigationController?.isBeingDismissed == true {
+            invalidatePopup()
+        }
+    }
+
+    private func installWebView(_ webView: WKWebView) {
         closeBridge.attach(to: webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
@@ -2236,20 +2265,202 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
             webView.topAnchor.constraint(equalTo: view.topAnchor),
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    private func beginInitialLoadGeneration(replacingCurrentWebView: Bool) {
+        guard !didClose else { return }
+        initialLoadRecoveryToken = nil
+        initialLoadRecoveryAttemptCount = 0
+        hasCommittedDocument = false
+        hasFinishedInitialLoad = false
+        hasPendingInitialLoadFailure = false
+
+        if replacingCurrentWebView {
+            replaceWebView(webView)
+        }
+        let generation = UUID()
+        initialLoadGeneration = generation
+        let now = DispatchTime.now().uptimeNanoseconds
+        let (deadline, didOverflow) = now.addingReportingOverflow(
+            Self.initialLoadRecoveryWindowNanoseconds
+        )
+        initialLoadDeadlineUptimeNanoseconds = didOverflow ? UInt64.max : deadline
+        loadInitialPopup(in: webView)
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.initialLoadRecoveryWindow
+        ) { [weak self] in
+            guard let self,
+                  self.initialLoadGeneration == generation,
+                  !self.hasFinishedInitialLoad else { return }
+            self.failInitialPopupLoad()
+        }
+    }
+
+    private func loadInitialPopup(in webView: WKWebView) {
+        guard !didClose,
+              self.webView === webView,
+              initialLoadGeneration != nil,
+              let initialLoadDeadlineUptimeNanoseconds,
+              DispatchTime.now().uptimeNanoseconds < initialLoadDeadlineUptimeNanoseconds else {
+            failInitialPopupLoad()
+            return
+        }
+        initialLoadRecoveryToken = nil
         webView.load(URLRequest(url: popupURL))
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        isModalInPresentation = prepareToClose != nil
-        presentationController?.delegate = self
+    private func recoverInitialPopupLoadIfPossible(
+        failedWebView: WKWebView,
+        error: (any Error)?
+    ) {
+        guard !didClose,
+              failedWebView === webView,
+              !hasFinishedInitialLoad,
+              initialLoadGeneration != nil,
+              initialLoadRecoveryToken == nil,
+              closePreparationTask == nil,
+              failedCloseRequest == nil,
+              navigationPreparationTask == nil,
+              navigationRequest == nil else {
+            return
+        }
+        guard error.map(Self.isRecoverableInitialLoadError) != false else {
+            failInitialPopupLoad()
+            return
+        }
+        guard initialLoadRecoveryAttemptCount < Self.maximumInitialLoadRecoveryAttempts,
+              let initialLoadDeadlineUptimeNanoseconds,
+              DispatchTime.now().uptimeNanoseconds < initialLoadDeadlineUptimeNanoseconds else {
+            failInitialPopupLoad()
+            return
+        }
+
+        initialLoadRecoveryAttemptCount += 1
+        hasCommittedDocument = false
+        let delay = initialLoadRecoveryDelay(attempt: initialLoadRecoveryAttemptCount)
+        let replacement = replaceWebView(failedWebView)
+
+        let recoveryToken = UUID()
+        initialLoadRecoveryToken = recoveryToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak replacement] in
+            guard let self, let replacement,
+                  self.initialLoadRecoveryToken == recoveryToken,
+                  self.webView === replacement else { return }
+            self.loadInitialPopup(in: replacement)
+        }
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        if isBeingDismissed || navigationController?.isBeingDismissed == true {
-            invalidatePopup()
+    @discardableResult
+    private func replaceWebView(_ oldWebView: WKWebView) -> WKWebView {
+        // The failed document can have staged a browser-side transition before
+        // its process disappeared. It must not survive into a fresh document.
+        onPendingTransitionCancellation?()
+        let replacement = WKWebView(frame: .zero, configuration: configuration)
+        webView = replacement
+        installWebView(replacement)
+
+        let mustPreserve = FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(
+            oldWebView
+        )
+        if !mustPreserve {
+            oldWebView.stopLoading()
+            oldWebView.navigationDelegate = nil
+            oldWebView.uiDelegate = nil
         }
+        oldWebView.removeFromSuperview()
+        FloorpNativeWebExtensionDeferredWebViewRelease.retain(oldWebView)
+        return replacement
+    }
+
+    private func failInitialPopupLoad() {
+        guard !didClose, !hasFinishedInitialLoad else { return }
+        initialLoadGeneration = nil
+        initialLoadDeadlineUptimeNanoseconds = nil
+        initialLoadRecoveryToken = nil
+        hasCommittedDocument = false
+        hasPendingInitialLoadFailure = true
+        if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(webView) {
+            webView.stopLoading()
+        }
+        presentInitialLoadFailureIfPossible()
+    }
+
+    private func presentInitialLoadFailureIfPossible() {
+        guard hasPendingInitialLoadFailure,
+              hasCompletedInitialPresentation,
+              initialLoadFailureAlert == nil,
+              presentedViewController == nil,
+              viewIfLoaded?.window != nil else { return }
+        hasPendingInitialLoadFailure = false
+        let alert = UIAlertController(
+            title: FloorpStrings.WebExtensions.actionOpenErrorTitle,
+            message: FloorpStrings.WebExtensions.actionsUnavailableMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.retry,
+            style: .default
+        ) { [weak self, weak alert] _ in
+            self?.resolveInitialLoadFailure(alert: alert, shouldRetry: true)
+        })
+        alert.addAction(UIAlertAction(
+            title: FloorpStrings.WebExtensions.done,
+            style: .cancel
+        ) { [weak self, weak alert] _ in
+            self?.resolveInitialLoadFailure(alert: alert, shouldRetry: false)
+        })
+        initialLoadFailureAlert = alert
+        present(alert, animated: true)
+    }
+
+    private func resolveInitialLoadFailure(
+        alert: UIAlertController?,
+        shouldRetry: Bool
+    ) {
+        guard let alert, initialLoadFailureAlert === alert else { return }
+        initialLoadFailureAlert = nil
+        let resolution = { [weak self] in
+            guard let self else { return }
+            if shouldRetry {
+                self.beginInitialLoadGeneration(replacingCurrentWebView: true)
+            } else {
+                self.closePopupImmediately(animated: true)
+            }
+        }
+        guard alert.presentingViewController != nil else {
+            resolution()
+            return
+        }
+        alert.dismiss(animated: true, completion: resolution)
+    }
+
+    private func initialLoadRecoveryDelay(attempt: Int) -> TimeInterval {
+#if DEBUG || TESTING
+        if let initialLoadRecoveryDelayForTesting {
+            return initialLoadRecoveryDelayForTesting
+        }
+#endif
+        let index = min(
+            max(attempt - 1, 0),
+            Self.initialLoadRecoveryDelays.count - 1
+        )
+        return Self.initialLoadRecoveryDelays[index]
+    }
+
+    private static func isRecoverableInitialLoadError(_ error: any Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == WKError.errorDomain,
+           let code = WKError.Code(rawValue: nsError.code) {
+            return code == .webContentProcessTerminated || code == .webViewInvalidated
+        }
+        if nsError.domain == webKitInternalErrorDomain,
+           nsError.code == webKitInternalErrorCode {
+            // A crashed NetworkProcess reports this private WebKit internal
+            // error for every provisional main-frame load it owned.
+            return true
+        }
+        return nsError.domain == NSURLErrorDomain
+            && nsError.code == NSURLErrorNetworkConnectionLost
     }
 
     func closePopup(animated: Bool, completion: (() -> Void)? = nil) {
@@ -2403,6 +2614,62 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         hasCommittedDocument
     }
 
+    var initialLoadRecoveryAttemptCountForTesting: Int {
+        initialLoadRecoveryAttemptCount
+    }
+
+    var maximumInitialLoadRecoveryAttemptsForTesting: Int {
+        Self.maximumInitialLoadRecoveryAttempts
+    }
+
+    var initialLoadDeadlineUptimeNanosecondsForTesting: UInt64? {
+        initialLoadDeadlineUptimeNanoseconds
+    }
+
+    func setInitialLoadRecoveryDelayForTesting(_ delay: TimeInterval) {
+        initialLoadRecoveryDelayForTesting = delay
+    }
+
+    func startScheduledInitialLoadRecoveryForTesting() {
+        guard initialLoadRecoveryToken != nil else { return }
+        loadInitialPopup(in: webView)
+    }
+
+    func retryInitialLoadAfterFailureForTesting() {
+        resolveInitialLoadFailure(alert: initialLoadFailureAlert, shouldRetry: true)
+    }
+
+    func failInitialPopupLoadForTesting() {
+        failInitialPopupLoad()
+    }
+
+    func prepareNavigationForTesting(
+        _ navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let prepareToClose else {
+            decisionHandler(.cancel)
+            return
+        }
+        prepareNavigation(
+            navigationAction,
+            in: webView,
+            prepareToClose: prepareToClose,
+            decisionHandler: decisionHandler
+        )
+    }
+
+    func retryNavigationAfterPreparationFailureForTesting() {
+        guard let request = navigationRequest,
+              request.alert != nil,
+              let prepareToClose else { return }
+        retryNavigationPreparation(
+            request,
+            in: webView,
+            prepareToClose: prepareToClose
+        )
+    }
+
     func requestCloseForTesting(completion: (() -> Void)? = nil) {
         closePopupAfterScriptAcknowledgement(animated: false, completion: completion)
     }
@@ -2443,17 +2710,45 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     }
 
     func webViewDidClose(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
         closePopupAfterScriptAcknowledgement(animated: true)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
+        guard webView === self.webView else { return }
+        if !hasFinishedInitialLoad {
+            guard initialLoadGeneration != nil,
+                  let deadline = initialLoadDeadlineUptimeNanoseconds,
+                  DispatchTime.now().uptimeNanoseconds
+                    < deadline else {
+                failInitialPopupLoad()
+                return
+            }
+        }
         hasCommittedDocument = true
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
-        // WebKit can coalesce the didCommit callback for an extension URL.
-        // A finished popup must still flush its pending extension state.
-        hasCommittedDocument = true
+        guard webView === self.webView else { return }
+        if !hasFinishedInitialLoad {
+            guard initialLoadGeneration != nil,
+                  let deadline = initialLoadDeadlineUptimeNanoseconds,
+                  DispatchTime.now().uptimeNanoseconds
+                    < deadline else {
+                // A queued WebKit callback must not revive a terminally failed
+                // generation or accept an initial document after its deadline.
+                failInitialPopupLoad()
+                return
+            }
+            // WebKit can coalesce the didCommit callback for an extension URL.
+            // A finished popup must still flush its pending extension state.
+            hasCommittedDocument = true
+            hasFinishedInitialLoad = true
+            initialLoadGeneration = nil
+            initialLoadDeadlineUptimeNanoseconds = nil
+            initialLoadRecoveryToken = nil
+            hasPendingInitialLoadFailure = false
+        }
         webView.evaluateJavaScript(
             "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]"
         ) { [weak self] result, _ in
@@ -2469,10 +2764,30 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
 
     func webView(
         _ webView: WKWebView,
+        didFail navigation: WKNavigation?,
+        withError error: any Error
+    ) {
+        recoverInitialPopupLoadIfPossible(failedWebView: webView, error: error)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation?,
+        withError error: any Error
+    ) {
+        recoverInitialPopupLoadIfPossible(failedWebView: webView, error: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        recoverInitialPopupLoadIfPossible(failedWebView: webView, error: nil)
+    }
+
+    func webView(
+        _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
     ) {
-        guard !didClose else {
+        guard !didClose, webView === self.webView else {
             decisionHandler(.cancel)
             return
         }
@@ -2501,6 +2816,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
+        guard webView === self.webView else { return nil }
         // The navigation-policy callback owns any document-replacing request
         // once a live popup needs asynchronous close preparation.
         if prepareToClose != nil,
@@ -2574,6 +2890,10 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         prepareToClose: @escaping @MainActor (WKWebView) async -> Bool
     ) {
         guard navigationRequest === request, !didClose, self.webView === webView else {
+            cancelNavigationPreparation(dismissAlert: true)
+            return
+        }
+        guard !hasPendingInitialLoadFailure else {
             cancelNavigationPreparation(dismissAlert: true)
             return
         }
@@ -2715,25 +3035,18 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
             title: FloorpStrings.WebExtensions.continueEditing,
             style: .cancel
         ) { [weak self] _ in
-            self?.cancelNavigationPreparation(dismissAlert: false)
+            self?.cancelNavigationPreparation(dismissAlert: true)
         })
         alert.addAction(UIAlertAction(
             title: FloorpStrings.WebExtensions.retry,
             style: .default
         ) { [weak self, weak webView, request] _ in
             guard let self, let webView, self.navigationRequest === request else { return }
-            request.alert = nil
-            DispatchQueue.main.async { [weak self, weak webView, request] in
-                guard let self, let webView else {
-                    request.resolve(.cancel)
-                    return
-                }
-                self.runNavigationPreparation(
-                    request,
-                    in: webView,
-                    prepareToClose: prepareToClose
-                )
-            }
+            self.retryNavigationPreparation(
+                request,
+                in: webView,
+                prepareToClose: prepareToClose
+            )
         })
         alert.addAction(UIAlertAction(
             title: FloorpStrings.WebExtensions.closeAnyway,
@@ -2752,6 +3065,30 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         present(alert, animated: true)
     }
 
+    private func retryNavigationPreparation(
+        _ request: NavigationRequest,
+        in webView: WKWebView,
+        prepareToClose: @escaping @MainActor (WKWebView) async -> Bool
+    ) {
+        guard navigationRequest === request, self.webView === webView else { return }
+        if hasPendingInitialLoadFailure {
+            cancelNavigationPreparation(dismissAlert: true)
+            return
+        }
+        request.alert = nil
+        DispatchQueue.main.async { [weak self, weak webView, request] in
+            guard let self, let webView else {
+                request.resolve(.cancel)
+                return
+            }
+            self.runNavigationPreparation(
+                request,
+                in: webView,
+                prepareToClose: prepareToClose
+            )
+        }
+    }
+
     private func cancelNavigationPreparation(dismissAlert: Bool) {
         guard let request = navigationRequest else { return }
         navigationRequest = nil
@@ -2760,12 +3097,17 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         abandonClosePreparation?(webView, false)
         let alert = request.alert
         request.alert = nil
-        if dismissAlert,
-           alert?.presentingViewController != nil || alert?.viewIfLoaded?.window != nil {
-            alert?.dismiss(animated: false)
-        }
         view.isUserInteractionEnabled = true
         request.resolve(.cancel)
+        let presentPendingInitialFailure: () -> Void = { [weak self] in
+            self?.presentInitialLoadFailureIfPossible()
+        }
+        if dismissAlert,
+           alert?.presentingViewController != nil || alert?.viewIfLoaded?.window != nil {
+            alert?.dismiss(animated: false, completion: presentPendingInitialFailure)
+        } else {
+            DispatchQueue.main.async(execute: presentPendingInitialFailure)
+        }
     }
 
     private func invalidatePopup(
@@ -2779,6 +3121,11 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         cancelNavigationPreparation(dismissAlert: true)
         let abandonedRequest = activeCloseRequest ?? failedCloseRequest
         didClose = true
+        initialLoadRecoveryToken = nil
+        initialLoadGeneration = nil
+        initialLoadDeadlineUptimeNanoseconds = nil
+        hasPendingInitialLoadFailure = false
+        initialLoadFailureAlert = nil
         closePreparationTask?.cancel()
         closePreparationTask = nil
         activeCloseRequest = nil
@@ -2855,6 +3202,14 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         _ resolution: CloseFailureResolution,
         request: CloseRequest
     ) {
+        if hasPendingInitialLoadFailure, resolution != .closeAnyway {
+            abandonClosePreparation?(webView, false)
+            onPendingTransitionCancellation?()
+            request.outcomeCompletion?(false)
+            resolveCloseOutcomeObservers(false)
+            presentInitialLoadFailureIfPossible()
+            return
+        }
         switch resolution {
         case .keepOpen:
             abandonClosePreparation?(webView, false)

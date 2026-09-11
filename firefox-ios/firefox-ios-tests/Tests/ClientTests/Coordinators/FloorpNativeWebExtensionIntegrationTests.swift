@@ -87,6 +87,147 @@ private final class FloorpClosePreparationTestGate {
 
 @MainActor
 final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
+    func testReadinessPageNavigationBudgetIsExtendedOnlyForUBOL() throws {
+#if DEBUG || TESTING
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            ),
+            30_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier
+            ),
+            15_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: "unknown-extension"
+            ),
+            15_000_000_000
+        )
+#else
+        throw XCTSkip("The readiness timeout accessor is available only in test builds")
+#endif
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testDarkReaderGesturesRecoveryBudgetIsNarrowAndSingleUse() throws {
+#if DEBUG || TESTING
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        let identifier = FloorpNativeWebExtensionCatalog.darkReader.identifier
+        let recoveryBudget = FloorpNativeWebExtensionHost
+            .supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+        )
+        XCTAssertEqual(recoveryBudget, 15_000_000_000)
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: false,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: true
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: true,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: true,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: NSError(
+                    domain: gesturesDeinitTransition.domain,
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "InvalidTransition { phase: active targetPhase: failed(deinit) }"
+                    ]
+                ),
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: false,
+                alreadyGranted: false
+            )
+        )
+        XCTAssertNil(
+            FloorpNativeWebExtensionHost.supplementalReadinessRetryBudgetForTesting(
+                identifier: identifier,
+                after: gesturesDeinitTransition,
+                allowsSupplementalDarkReaderGesturesRecovery: true,
+                callbackRequiresRetention: false,
+                hasUnfinishedOperation: false,
+                isTaskCancelled: true,
+                alreadyGranted: false
+            )
+        )
+#else
+        throw XCTSkip("The readiness recovery accessor is available only in test builds")
+#endif
+    }
+
     func testBundledDarkReaderZIPIsVerifiedAndLoadsWithNativeWebKit() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -141,7 +282,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertFalse(webExtension.requestedPermissions.contains(.nativeMessaging))
     }
 
-    func testActionPickerListsEveryActionAndDefersSelectionUntilDismissal() {
+    func testActionPickerWaitsForExplicitDismissalCompletionAndDeliversExactlyOnce() {
         let actions = [
             FloorpNativeWebExtensionActionItem(
                 contextIdentifier: "dark-reader",
@@ -160,11 +301,15 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         ]
         var selections = [String]()
         var dismissalCompletion: (() -> Void)?
+        var dismissalCount = 0
         let picker = FloorpNativeWebExtensionActionPickerViewController(
             actions: actions,
             windowUUID: UUID(),
             themeManager: MockThemeManager(),
-            dismissalHandler: { dismissalCompletion = $0 },
+            dismissalHandler: {
+                dismissalCount += 1
+                dismissalCompletion = $0
+            },
             onSelection: { selections.append($0.contextIdentifier) }
         )
 
@@ -173,12 +318,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(picker.displayedChoiceTitles, ["Dark Reader", "uBlock Origin Lite"])
         XCTAssertEqual(picker.view.accessibilityIdentifier, "Floorp.NativeWebExtensions.ActionPicker")
         picker.selectChoice(identifier: "ubol")
+        picker.selectChoice(identifier: "dark-reader")
         XCTAssertTrue(selections.isEmpty)
+        XCTAssertEqual(dismissalCount, 1)
 
         dismissalCompletion?()
         dismissalCompletion?()
+        picker.selectChoice(identifier: "dark-reader")
 
         XCTAssertEqual(selections, ["ubol"])
+        XCTAssertEqual(dismissalCount, 1)
     }
 
     func testActionPickerSelectionRunsAfterTheSheetLeavesItsPresentationHierarchy() async throws {
@@ -2052,6 +2201,24 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
+        var preCSSInsertionAcknowledgementRecord = legacyRecord
+        preCSSInsertionAcknowledgementRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preCSSInsertionAcknowledgementUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preCSSInsertionAcknowledgementRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preDocumentScopedCSSRecord = legacyRecord
+        preDocumentScopedCSSRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preDocumentScopedCSSUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preDocumentScopedCSSRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
         let originalContextIdentifier = legacyRecord.contextIdentifier
         let originalBaseURLHost = legacyRecord.baseURLHost
         try store.save(FloorpNativeWebExtensionRegistry(extensions: [legacyRecord]))
@@ -2218,12 +2385,73 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         let host = try FloorpNativeWebExtensionHost.install(for: profile)
         defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
         let identifier = FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        XCTAssertTrue(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: gesturesDeinitTransition
+            )
+        )
+        XCTAssertFalse(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: gesturesDeinitTransition.domain,
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "InvalidTransition { phase: active targetPhase: failed(deinit) }"
+                    ]
+                )
+            )
+        )
+        XCTAssertFalse(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: "Floorp.ExtensionJavaScript",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "InvalidTransition { phase: idle targetPhase: failed(deinit) }"
+                    ]
+                )
+            )
+        )
+        XCTAssertFalse(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: WKError.errorDomain,
+                    code: WKError.Code.javaScriptExceptionOccurred.rawValue,
+                    userInfo: [NSLocalizedDescriptionKey: "InvalidTransition"]
+                )
+            )
+        )
+        XCTAssertTrue(
+            host.shouldRetryBundledExtensionReadinessProbeForTesting(
+                after: NSError(
+                    domain: WKError.errorDomain,
+                    code: WKError.Code.webContentProcessTerminated.rawValue,
+                    userInfo: [NSLocalizedDescriptionKey: "一時的に処理を完了できませんでした"]
+                )
+            )
+        )
         var injectedFailureCount = 0
         var successfulResponseCount = 0
         host.backgroundReadinessTransientFailureHookForTesting = { hookIdentifier, _ in
             guard hookIdentifier == identifier, injectedFailureCount < 2 else { return nil }
             injectedFailureCount += 1
-            return FloorpNativeWebExtensionError.hostUnavailable
+            return injectedFailureCount == 1
+                ? gesturesDeinitTransition
+                : FloorpNativeWebExtensionError.hostUnavailable
         }
         host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
             guard hookIdentifier == identifier else { return nil }
@@ -2297,6 +2525,230 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(responseCount, 1)
 #else
         throw XCTSkip("The background readiness hook is available only in test builds")
+#endif
+    }
+
+    func testDarkReaderReadinessRecoversOnceFromDeliveredGesturesDeinitTransition() async throws {
+#if DEBUG || TESTING
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_gestures_recovery")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
+        defer { profileFixture.cleanup() }
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        var attemptedSurfaces = [Int]()
+        var attemptedWebViews = [WKWebView]()
+        var grantedSupplementalBudgets = [UInt64]()
+        var successfulResponseCount = 0
+        host.backgroundReadinessSurfaceCreatedHookForTesting = { hookIdentifier, _, webView in
+            guard hookIdentifier == item.identifier else { return }
+            // Retain both surfaces so allocator address reuse cannot make two
+            // distinct WebViews appear to have the same ObjectIdentifier.
+            attemptedWebViews.append(webView)
+        }
+        host.supplementalReadinessRetryGrantedHookForTesting = { hookIdentifier, _, budget in
+            guard hookIdentifier == item.identifier else { return }
+            grantedSupplementalBudgets.append(budget)
+        }
+        host.backgroundReadinessTransientFailureHookForTesting = { hookIdentifier, attempt in
+            guard hookIdentifier == item.identifier else { return nil }
+            attemptedSurfaces.append(attempt)
+            return attempt == 1 ? gesturesDeinitTransition : nil
+        }
+        host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == item.identifier else { return nil }
+            successfulResponseCount += 1
+            return [
+                "ready": true,
+                "version": item.expectedVersion
+            ]
+        }
+        defer {
+            host.backgroundReadinessSurfaceCreatedHookForTesting = nil
+            host.supplementalReadinessRetryGrantedHookForTesting = nil
+            host.backgroundReadinessTransientFailureHookForTesting = nil
+            host.backgroundReadinessResponseHookForTesting = nil
+        }
+
+        try await host.installBundledExtension(identifier: item.identifier)
+
+        XCTAssertEqual(attemptedSurfaces, [1, 2])
+        XCTAssertEqual(attemptedWebViews.count, 2)
+        let firstWebView = try XCTUnwrap(attemptedWebViews.first)
+        let secondWebView = try XCTUnwrap(attemptedWebViews.dropFirst().first)
+        XCTAssertFalse(firstWebView === secondWebView)
+        XCTAssertEqual(grantedSupplementalBudgets, [15_000_000_000])
+        XCTAssertEqual(successfulResponseCount, 1)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        host.backgroundReadinessSurfaceCreatedHookForTesting = nil
+        host.supplementalReadinessRetryGrantedHookForTesting = nil
+        host.backgroundReadinessTransientFailureHookForTesting = nil
+        host.backgroundReadinessResponseHookForTesting = nil
+        try await host.uninstall(identifier: item.identifier)
+        XCTAssertNil(host.installedContext(identifier: item.identifier))
+        XCTAssertFalse(context.isLoaded)
+#else
+        throw XCTSkip("The background readiness hooks are available only in test builds")
+#endif
+    }
+
+    func testDarkReaderReadinessFailsClosedAfterOneGesturesRecoveryAttempt() async throws {
+#if DEBUG || TESTING
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_gestures_fail_closed")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
+        defer { profileFixture.cleanup() }
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        var attemptedSurfaces = [Int]()
+        var unexpectedResponseCount = 0
+        host.backgroundReadinessTransientFailureHookForTesting = { hookIdentifier, attempt in
+            guard hookIdentifier == item.identifier else { return nil }
+            attemptedSurfaces.append(attempt)
+            return attempt <= 2 ? gesturesDeinitTransition : nil
+        }
+        host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
+            guard hookIdentifier == item.identifier else { return nil }
+            unexpectedResponseCount += 1
+            return [
+                "ready": true,
+                "version": item.expectedVersion
+            ]
+        }
+        defer {
+            host.backgroundReadinessTransientFailureHookForTesting = nil
+            host.backgroundReadinessResponseHookForTesting = nil
+        }
+
+        do {
+            try await host.installBundledExtension(identifier: item.identifier)
+            XCTFail("Dark Reader must fail closed after its one recovery surface also fails")
+        } catch {
+            XCTAssertEqual((error as NSError).domain, gesturesDeinitTransition.domain)
+        }
+
+        XCTAssertEqual(attemptedSurfaces, [1, 2])
+        XCTAssertEqual(unexpectedResponseCount, 0)
+        XCTAssertNil(host.installedContext(identifier: item.identifier))
+#else
+        throw XCTSkip("The background readiness hooks are available only in test builds")
+#endif
+    }
+
+    func testDarkReaderNavigationPreflightKeepsCallerBudgetOnGesturesRecovery() async throws {
+#if DEBUG || TESTING
+        let profileFixture = try makeIsolatedHostProfile(
+            prefix: "darkreader_navigation_gestures_budget"
+        )
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        defer { FloorpNativeWebExtensionHost.remove(for: profile.localName()) }
+        defer { profileFixture.cleanup() }
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        try await host.installBundledExtension(identifier: item.identifier)
+
+        let manager = MockTabManager(windowUUID: WindowUUID())
+        let tab = makeHostTestTab(
+            profile: profile,
+            isPrivate: false,
+            windowUUID: manager.windowUUID
+        )
+        let url = try XCTUnwrap(
+            URL(string: "https://example.com/darkreader-navigation-gestures-budget")
+        )
+        tab.url = url
+        manager.tabs = [tab]
+        manager.normalTabs = [tab]
+        manager.selectedTab = tab
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+        host.focus(windowUUID: manager.windowUUID, isPrivate: false)
+
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        var attemptedSurfaces = [Int]()
+        var grantedSupplementalBudgets = [UInt64]()
+        var navigationTimeouts = [UInt64]()
+        host.backgroundReadinessTransientFailureHookForTesting = { identifier, attempt in
+            guard identifier == item.identifier else { return nil }
+            attemptedSurfaces.append(attempt)
+            return attempt == 1 ? gesturesDeinitTransition : nil
+        }
+        host.backgroundReadinessResponseHookForTesting = { identifier, _ in
+            guard identifier == item.identifier else { return nil }
+            return ["ready": true, "version": item.expectedVersion]
+        }
+        host.supplementalReadinessRetryGrantedHookForTesting = { identifier, _, budget in
+            guard identifier == item.identifier else { return }
+            grantedSupplementalBudgets.append(budget)
+        }
+        host.navigationReadinessTimeoutHookForTesting = { identifier, timeout in
+            guard identifier == item.identifier else { return }
+            navigationTimeouts.append(timeout)
+        }
+        defer {
+            host.backgroundReadinessTransientFailureHookForTesting = nil
+            host.backgroundReadinessResponseHookForTesting = nil
+            host.supplementalReadinessRetryGrantedHookForTesting = nil
+            host.navigationReadinessTimeoutHookForTesting = nil
+        }
+
+        XCTAssertTrue(host.needsBackgroundReadiness(beforeNavigating: tab, to: url))
+        let action = MockNavigationAction(url: url, type: .linkActivated)
+        let generation = host.beginNavigationPreparation(for: tab)
+        let didPrepare = await host.prepareBackgroundContent(
+            beforeNavigating: tab,
+            to: url,
+            navigationAction: action,
+            generation: generation
+        )
+
+        XCTAssertTrue(didPrepare)
+        XCTAssertTrue(host.consumePreparedNavigation(action))
+        XCTAssertNil(host.navigationProtectionFailure(for: tab, generation: generation))
+        XCTAssertEqual(attemptedSurfaces, [1, 2])
+        XCTAssertEqual(navigationTimeouts, [3_000_000_000])
+        XCTAssertTrue(grantedSupplementalBudgets.isEmpty)
+#else
+        throw XCTSkip("The background readiness hooks are available only in test builds")
 #endif
     }
 
@@ -4919,6 +5371,364 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 #endif
     }
 
+    // swiftlint:disable:next function_body_length
+    func testActionPopupRecoversTransientInitialLoadsWithFreshBoundedWebViews() async throws {
+#if DEBUG || TESTING
+        let dataStore = WKWebsiteDataStore.nonPersistent()
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = dataStore
+        let userContentController = configuration.userContentController
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: configuration,
+            openURLInBrowser: { _ in },
+            onClose: {}
+        )
+        // Keep each automatic load parked until this test explicitly starts
+        // it, so two independent process failures are deterministic.
+        popup.setInitialLoadRecoveryDelayForTesting(60)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            popup.presentedViewController?.dismiss(animated: false)
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        popup.loadViewIfNeeded()
+
+        let firstWebView = popup.webView
+        let nonTransientError = NSError(
+            domain: WKError.errorDomain,
+            code: WKError.Code.javaScriptExceptionOccurred.rawValue
+        )
+        popup.webView(
+            firstWebView,
+            didFailProvisionalNavigation: nil,
+            withError: nonTransientError
+        )
+        XCTAssertTrue(popup.webView === firstWebView)
+        XCTAssertEqual(popup.initialLoadRecoveryAttemptCountForTesting, 0)
+        XCTAssertNil(popup.presentedViewController)
+        XCTAssertNil(root.presentedViewController)
+
+        root.present(popup, animated: false)
+        for _ in 0..<40 where !(popup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let nonTransientAlert = try XCTUnwrap(popup.presentedViewController as? UIAlertController)
+        XCTAssertEqual(
+            nonTransientAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+        nonTransientAlert.dismiss(animated: false)
+        for _ in 0..<40 where popup.presentedViewController != nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        popup.closePopupImmediately(animated: false)
+        let didDismissFailedPopup = await waitForDismissedPresentation(from: root)
+        XCTAssertTrue(didDismissFailedPopup)
+
+        // Use a fresh popup for the transient recovery sequence. A permanent
+        // error must not silently consume the bounded automatic retry budget.
+        var pendingTransitionCancellationCount = 0
+        let recoveringPopup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: configuration,
+            openURLInBrowser: { _ in },
+            onClose: {},
+            onPendingTransitionCancellation: {
+                pendingTransitionCancellationCount += 1
+            }
+        )
+        recoveringPopup.setInitialLoadRecoveryDelayForTesting(60)
+        root.present(recoveringPopup, animated: false)
+        recoveringPopup.loadViewIfNeeded()
+        for _ in 0..<40 where root.presentedViewController !== recoveringPopup
+            || recoveringPopup.viewIfLoaded?.window == nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(root.presentedViewController === recoveringPopup)
+        XCTAssertNotNil(recoveringPopup.viewIfLoaded?.window)
+        defer {
+            recoveringPopup.presentedViewController?.dismiss(animated: false)
+            recoveringPopup.closePopupImmediately(animated: false)
+        }
+
+        let initialWebView = recoveringPopup.webView
+        let sharedDeadline = try XCTUnwrap(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting
+        )
+        recoveringPopup.webViewWebContentProcessDidTerminate(initialWebView)
+        let firstReplacement = recoveringPopup.webView
+        XCTAssertFalse(firstReplacement === initialWebView)
+        XCTAssertNil(initialWebView.superview)
+        XCTAssertNotNil(firstReplacement.window)
+        XCTAssertEqual(pendingTransitionCancellationCount, 1)
+        XCTAssertTrue(firstReplacement.configuration.websiteDataStore === dataStore)
+        XCTAssertTrue(firstReplacement.configuration.userContentController === userContentController)
+        XCTAssertEqual(recoveringPopup.initialLoadRecoveryAttemptCountForTesting, 1)
+        XCTAssertEqual(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting,
+            sharedDeadline
+        )
+        recoveringPopup.webViewWebContentProcessDidTerminate(initialWebView)
+        XCTAssertTrue(recoveringPopup.webView === firstReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 1)
+
+        recoveringPopup.startScheduledInitialLoadRecoveryForTesting()
+        let networkProcessFailure = NSError(
+            domain: "WebKitErrorDomain",
+            code: 300,
+            userInfo: [NSLocalizedDescriptionKey: "WebKit encountered an internal error"]
+        )
+        recoveringPopup.webView(
+            firstReplacement,
+            didFailProvisionalNavigation: nil,
+            withError: networkProcessFailure
+        )
+        let secondReplacement = recoveringPopup.webView
+        XCTAssertFalse(secondReplacement === firstReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 2)
+        XCTAssertEqual(
+            recoveringPopup.initialLoadRecoveryAttemptCountForTesting,
+            recoveringPopup.maximumInitialLoadRecoveryAttemptsForTesting
+        )
+        XCTAssertEqual(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting,
+            sharedDeadline
+        )
+
+        recoveringPopup.startScheduledInitialLoadRecoveryForTesting()
+        recoveringPopup.webViewWebContentProcessDidTerminate(secondReplacement)
+        XCTAssertTrue(recoveringPopup.webView === secondReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 2)
+        for _ in 0..<40 where !(recoveringPopup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let exhaustedAlert = try XCTUnwrap(
+            recoveringPopup.presentedViewController as? UIAlertController
+        )
+        XCTAssertEqual(exhaustedAlert.title, FloorpStrings.WebExtensions.actionOpenErrorTitle)
+        XCTAssertEqual(exhaustedAlert.message, FloorpStrings.WebExtensions.actionsUnavailableMessage)
+        XCTAssertEqual(
+            exhaustedAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+        XCTAssertNil(recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting)
+
+        recoveringPopup.webView(secondReplacement, didCommit: nil)
+        recoveringPopup.webView(secondReplacement, didFinish: nil)
+        XCTAssertFalse(
+            recoveringPopup.hasCommittedDocumentForTesting,
+            "a queued callback must not revive a terminally failed popup generation"
+        )
+        XCTAssertTrue(recoveringPopup.presentedViewController === exhaustedAlert)
+        XCTAssertNil(recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting)
+
+        recoveringPopup.webViewWebContentProcessDidTerminate(initialWebView)
+        XCTAssertTrue(recoveringPopup.webView === secondReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 2)
+
+        recoveringPopup.retryInitialLoadAfterFailureForTesting()
+        for _ in 0..<40 where recoveringPopup.webView === secondReplacement {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(recoveringPopup.webView === secondReplacement)
+        XCTAssertEqual(pendingTransitionCancellationCount, 3)
+        XCTAssertEqual(recoveringPopup.initialLoadRecoveryAttemptCountForTesting, 0)
+        XCTAssertNotEqual(
+            recoveringPopup.initialLoadDeadlineUptimeNanosecondsForTesting,
+            sharedDeadline
+        )
+        XCTAssertNil(recoveringPopup.presentedViewController)
+#else
+        throw XCTSkip("The initial-load recovery test seam is available only in test builds")
+#endif
+    }
+
+    func testActionPopupInitialLoadFailureSupersedesCompetingCloseAlert() async throws {
+#if DEBUG || TESTING
+        var closePreparationCount = 0
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { _ in },
+            prepareToClose: { _ in
+                closePreparationCount += 1
+                return false
+            },
+            onClose: {}
+        )
+        popup.setInitialLoadRecoveryDelayForTesting(60)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            popup.presentedViewController?.dismiss(animated: false)
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        root.present(popup, animated: false)
+        popup.loadViewIfNeeded()
+        let initialWebView = popup.webView
+        popup.webViewWebContentProcessDidTerminate(initialWebView)
+        let parkedReplacement = popup.webView
+        XCTAssertFalse(parkedReplacement === initialWebView)
+        popup.webView(parkedReplacement, didCommit: nil)
+        XCTAssertTrue(popup.hasCommittedDocumentForTesting)
+
+        popup.requestCloseForTesting()
+        for _ in 0..<80 where !(popup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let closeAlert = try XCTUnwrap(popup.presentedViewController as? UIAlertController)
+        XCTAssertEqual(closeAlert.title, FloorpStrings.WebExtensions.optionsCloseFailureTitle)
+        XCTAssertEqual(closePreparationCount, 1)
+
+        popup.failInitialPopupLoadForTesting()
+        XCTAssertTrue(popup.presentedViewController === closeAlert)
+        XCTAssertFalse(popup.hasCommittedDocumentForTesting)
+        popup.keepOpenAfterPreparationFailureForTesting()
+        for _ in 0..<80 {
+            guard let alert = popup.presentedViewController as? UIAlertController,
+                  alert !== closeAlert,
+                  alert.title == FloorpStrings.WebExtensions.actionOpenErrorTitle else {
+                try await Task.sleep(nanoseconds: 25_000_000)
+                continue
+            }
+            break
+        }
+        let initialFailureAlert = try XCTUnwrap(
+            popup.presentedViewController as? UIAlertController
+        )
+        XCTAssertFalse(initialFailureAlert === closeAlert)
+        XCTAssertEqual(
+            initialFailureAlert.title,
+            FloorpStrings.WebExtensions.actionOpenErrorTitle
+        )
+        XCTAssertEqual(
+            initialFailureAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+#else
+        throw XCTSkip("The initial-load recovery test seam is available only in test builds")
+#endif
+    }
+
+    func testActionPopupNavigationRetryYieldsToPendingInitialLoadFailure() async throws {
+#if DEBUG || TESTING
+        let destination = try XCTUnwrap(URL(string: "https://example.com/pending-load"))
+        var preparationCount = 0
+        var openedURLCount = 0
+        var receivedPolicy: WKNavigationActionPolicy?
+        let policyResolved = expectation(description: "Navigation policy cancelled")
+        let popup = FloorpNativeWebExtensionActionPopupViewController(
+            url: try XCTUnwrap(URL(string: "about:blank")),
+            configuration: WKWebViewConfiguration(),
+            openURLInBrowser: { _ in openedURLCount += 1 },
+            prepareToClose: { _ in
+                preparationCount += 1
+                return false
+            },
+            onClose: {}
+        )
+        popup.setInitialLoadRecoveryDelayForTesting(60)
+        let root = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            popup.presentedViewController?.dismiss(animated: false)
+            popup.closePopupImmediately(animated: false)
+            root.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        root.present(popup, animated: false)
+        popup.loadViewIfNeeded()
+        let initialWebView = popup.webView
+        popup.webViewWebContentProcessDidTerminate(initialWebView)
+        let parkedReplacement = popup.webView
+        XCTAssertFalse(parkedReplacement === initialWebView)
+        popup.webView(parkedReplacement, didCommit: nil)
+        XCTAssertTrue(popup.hasCommittedDocumentForTesting)
+        XCTAssertNotNil(popup.initialLoadDeadlineUptimeNanosecondsForTesting)
+
+        popup.prepareNavigationForTesting(
+            MockNavigationAction(url: destination, type: .linkActivated)
+        ) { policy in
+            receivedPolicy = policy
+            policyResolved.fulfill()
+        }
+        for _ in 0..<80 where !(popup.presentedViewController is UIAlertController) {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let navigationAlert = try XCTUnwrap(
+            popup.presentedViewController as? UIAlertController
+        )
+        XCTAssertEqual(navigationAlert.title, FloorpStrings.WebExtensions.optionsCloseFailureTitle)
+        XCTAssertEqual(preparationCount, 1)
+        XCTAssertEqual(
+            navigationAlert.actions.compactMap(\.title),
+            [
+                FloorpStrings.WebExtensions.continueEditing,
+                FloorpStrings.WebExtensions.retry,
+                FloorpStrings.WebExtensions.closeAnyway
+            ]
+        )
+
+        popup.failInitialPopupLoadForTesting()
+        XCTAssertTrue(popup.presentedViewController === navigationAlert)
+        XCTAssertFalse(popup.hasCommittedDocumentForTesting)
+
+        popup.retryNavigationAfterPreparationFailureForTesting()
+        await fulfillment(of: [policyResolved], timeout: 2)
+        for _ in 0..<80 {
+            guard let alert = popup.presentedViewController as? UIAlertController,
+                  alert !== navigationAlert,
+                  alert.title == FloorpStrings.WebExtensions.actionOpenErrorTitle else {
+                try await Task.sleep(nanoseconds: 25_000_000)
+                continue
+            }
+            break
+        }
+        let initialLoadAlert = try XCTUnwrap(
+            popup.presentedViewController as? UIAlertController
+        )
+        XCTAssertFalse(initialLoadAlert === navigationAlert)
+        XCTAssertEqual(initialLoadAlert.title, FloorpStrings.WebExtensions.actionOpenErrorTitle)
+        XCTAssertEqual(
+            initialLoadAlert.actions.compactMap(\.title),
+            [FloorpStrings.WebExtensions.retry, FloorpStrings.WebExtensions.done]
+        )
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(preparationCount, 1, "Navigation Retry must yield to the initial-load failure")
+        XCTAssertEqual(receivedPolicy, .cancel)
+        XCTAssertEqual(openedURLCount, 0)
+        XCTAssertTrue(root.presentedViewController === popup)
+#else
+        throw XCTSkip("The navigation-preparation test seam is available only in test builds")
+#endif
+    }
+
     func testActionPopupWaitsForClosePreparationBeforeDismissal() async throws {
 #if DEBUG || TESTING
         let preparationGate = FloorpClosePreparationTestGate()
@@ -5620,6 +6430,61 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
     }
 
+    func testBundledUBOLIsUnavailableAndInstallFailsBelowMinimumOS() async throws {
+        let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        if item.isAvailableOnCurrentOS {
+            throw XCTSkip("This fail-closed contract runs only below \(item.minimumOS.description)")
+        }
+
+        XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
+        XCTAssertFalse(item.isAvailableOnCurrentOS)
+        XCTAssertFalse(
+            FloorpNativeWebExtensionCatalog.items
+                .filter { $0.isAvailableOnCurrentOS }
+                .contains(item)
+        )
+
+        let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_minimum_os")
+        let profile = profileFixture.profile
+        defer { profileFixture.cleanup() }
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: profile,
+            host: host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedProfile: profile,
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
+        let source = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/ubol-minimum-os")),
+            isPrivate: false
+        )
+        manager.selectedTab = source
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+
+        do {
+            try await host.installBundledExtension(identifier: item.identifier)
+            XCTFail("uBlock Origin Lite must not install below its minimum operating system")
+        } catch FloorpNativeWebExtensionError.unsupportedOperatingSystem(let required) {
+            XCTAssertEqual(required, FloorpOperatingSystemVersion(26, 0))
+            XCTAssertEqual(required, item.minimumOS)
+        } catch {
+            XCTFail("Expected unsupportedOperatingSystem, got \(error)")
+        }
+
+        XCTAssertNil(host.installedContext(identifier: item.identifier))
+        XCTAssertFalse(
+            host.actionItems(for: source).contains { $0.contextIdentifier == item.identifier }
+        )
+        await source.close()
+    }
+
     // swiftlint:disable:next function_body_length
     func testBundledUBOLCatalogPackageIsVerifiedLoadsAndDeclaresDNRAndUI() async throws {
         let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
@@ -5627,7 +6492,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573"
+            "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
@@ -6436,7 +7301,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     func testBundledUBOLBlocksProductionHostTabsAndRendersDashboard() async throws {
         // This end-to-end case exercises both privacy realms and every options
         // mutation path. Its measured runtime exceeds the one-minute CI default.
-        executionTimeAllowance = 480
+        executionTimeAllowance = 720
         let item = FloorpNativeWebExtensionCatalog.uBlockOriginLite
         let profileFixture = try makeIsolatedHostProfile(prefix: "ubol_content_effects")
         let profile = profileFixture.profile
@@ -6648,10 +7513,12 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             "Closing Settings before Filter lists renders must not disable the stock rulesets"
         )
 
+        let interruptedResumeRecovery: [String: Any]?
         let interruptedRestoreRecovery: [String: Any]?
         var interruptedSnapshot: [String: Any]?
         var interruptedRestoreId: String?
         var interruptedRestoreOperation = "setup"
+        let staticRulesetRecoveryTimeoutNanoseconds: UInt64 = 240_000_000_000
         do {
             let setup = try await optionsWebView.floorpCallAsyncJavaScript(
                 """
@@ -6731,8 +7598,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             let stagedState = try XCTUnwrap(staged)
             interruptedRestoreId = stagedState["interruptedId"] as? String
 
-            interruptedRestoreOperation = "restore"
-            interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
+            interruptedRestoreOperation = "resume-interrupted-commit"
+            interruptedResumeRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
                 """
                 if (
                     document.documentElement.dataset.floorpRestoreProbe !==
@@ -6740,7 +7607,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 ) {
                     throw new Error('Options document changed before restore recovery');
                 }
-                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
                 const reconciler = await import(
                     browser.runtime.getURL('js/floorp-reconcile.js')
                 );
@@ -6753,6 +7619,46 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                         resumed.error || 'Failed to resume foreground restore handoff'
                     );
                 }
+                if (
+                    resumed.settingsRestoreId !== undefined &&
+                    resumed.settingsRestoreId !== interruptedId
+                ) {
+                    throw new Error('Foreground restore resumed a different transaction');
+                }
+                const resumedStorage = await browser.storage.local.get(journalKey);
+                return {
+                    ready: resumed.ready === true,
+                    committed: resumed.committed === true,
+                    restoreIdMatches:
+                        resumed.settingsRestoreId === undefined ||
+                        resumed.settingsRestoreId === interruptedId,
+                    journalRemoved: resumedStorage[journalKey] === undefined,
+                };
+                """,
+                arguments: [
+                    "documentToken": documentToken,
+                    "interruptedId": stagedState["interruptedId"] as? String ?? "",
+                ],
+                contentWorld: .page,
+                timeoutNanoseconds: staticRulesetRecoveryTimeoutNanoseconds
+            ) as? [String: Any]
+            let resumedState = try XCTUnwrap(interruptedResumeRecovery)
+            XCTAssertEqual(resumedState["ready"] as? Bool, true)
+            XCTAssertEqual(resumedState["committed"] as? Bool, true)
+            XCTAssertEqual(resumedState["restoreIdMatches"] as? Bool, true)
+            XCTAssertEqual(resumedState["journalRemoved"] as? Bool, true)
+
+            interruptedRestoreOperation = "restore-snapshot"
+            interruptedRestoreRecovery = try await optionsWebView.floorpCallAsyncJavaScript(
+                """
+                if (
+                    document.documentElement.dataset.floorpRestoreProbe !==
+                    documentToken
+                ) {
+                    throw new Error('Options document changed before snapshot restore');
+                }
+                const backup = await import(browser.runtime.getURL('js/backup-restore.js'));
+                const journalKey = 'floorp.settingsRestoreJournal.v1';
                 await backup.restoreFromObject(snapshot);
                 const finalEnabled = await browser.runtime.sendMessage({
                     what: 'getEnabledRulesets',
@@ -6769,7 +7675,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 return {
                     interruptedJournalRetained,
                     stagedChanged,
-                    resumedCommitted: resumed.committed === true,
+                    resumedCommitted,
                     initialEnabled,
                     finalEnabled,
                     journalRemoved: finalStorage[journalKey] === undefined,
@@ -6780,17 +7686,19 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     "documentToken": documentToken,
                     "snapshot": snapshot,
                     "initialEnabled": initialEnabled,
-                    "interruptedId": stagedState["interruptedId"] as? String ?? "",
                     "interruptedJournalRetained":
                         stagedState["interruptedJournalRetained"] as? Bool ?? false,
                     "stagedChanged": stagedState["stagedChanged"] as? Bool ?? false,
+                    "resumedCommitted": resumedState["committed"] as? Bool ?? false,
                 ],
                 contentWorld: .page,
-                timeoutNanoseconds: 90_000_000_000
+                timeoutNanoseconds: staticRulesetRecoveryTimeoutNanoseconds
             ) as? [String: Any]
         } catch {
             let operationError = error
-            if let interruptedRestoreId {
+            if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(
+                optionsWebView
+            ), let interruptedRestoreId {
                 _ = try? await optionsWebView.floorpCallAsyncJavaScript(
                     """
                     const rollback = await browser.runtime.sendMessage({
@@ -6812,7 +7720,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                     timeoutNanoseconds: 90_000_000_000
                 )
             }
-            if let interruptedSnapshot {
+            if !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(
+                optionsWebView
+            ), let interruptedSnapshot {
                 _ = try? await optionsWebView.floorpCallAsyncJavaScript(
                     """
                     const backup = await import(
@@ -8046,13 +8956,11 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     }
 
     // swiftlint:disable:next function_body_length
-    func testBundledDarkReaderActionPopupPresentsAndBecomesInteractiveThroughProductionHost() async throws {
+    func testMainMenuSelectsDarkReaderFromTwoActionPickerAndPresentsInteractivePopup() async throws {
         let item = FloorpNativeWebExtensionCatalog.darkReader
         let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_action_popup")
         let profile = profileFixture.profile
         let host = try FloorpNativeWebExtensionHost.install(for: profile)
-        try await host.installBundledExtension(identifier: item.identifier)
-        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
         let manager = FloorpUBOLRoutingTabManager(
             profile: profile,
             host: host,
@@ -8061,7 +8969,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         let dependencies = DependencyHelperMock()
         dependencies.bootstrapDependencies(
-            injectedProfile: profile,
             injectedTabManager: manager
         )
         defer { dependencies.reset() }
@@ -8073,7 +8980,356 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         manager.selectedTab = source
         host.register(tabManager: manager)
         defer { host.unregister(windowUUID: manager.windowUUID) }
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        manager.selectedTab = source
 
+        try await host.installBundledExtension(
+            identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+        )
+        let uBlockContext = try XCTUnwrap(
+            host.installedContext(
+                identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            )
+        )
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(uBlockContext) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(uBlockContext))
+        XCTAssertTrue(
+            uBlockContext.errors.isEmpty,
+            uBlockContext.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        manager.selectedTab = source
+
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+        let nativeWebExtensionsWereEnabled = FloorpFlags.isNativeWebExtensionsEnabled
+        FloorpFlags.setNativeWebExtensionsEnabled(true)
+        defer { FloorpFlags.setNativeWebExtensionsEnabled(nativeWebExtensionsWereEnabled) }
+
+        let navigationController = UINavigationController()
+        let router = DefaultRouter(navigationController: navigationController)
+        let browserCoordinator = BrowserCoordinator(
+            router: router,
+            screenshotService: ScreenshotService(),
+            tabManager: manager,
+            profile: profile,
+            glean: MockGleanWrapper(),
+            applicationHelper: MockApplicationHelper(),
+            worldCupStore: MockWorldCupStore()
+        )
+        router.setRootViewController(
+            browserCoordinator.browserViewController,
+            hideBar: true,
+            animated: false
+        )
+        let root = browserCoordinator.browserViewController
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = navigationController
+        root.loadViewIfNeeded()
+        source.webView?.frame = root.view.bounds
+        source.webView?.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        if let webView = source.webView {
+            root.view.addSubview(webView)
+        }
+        window.makeKeyAndVisible()
+        defer {
+            root.presentedViewController?.dismiss(animated: false)
+            navigationController.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        browserCoordinator.showMainMenu()
+        var presentedMainMenu: UIViewController?
+        for _ in 0..<40 {
+            presentedMainMenu = navigationController.presentedViewController
+            if presentedMainMenu?.viewIfLoaded?.window != nil { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let mainMenu = try XCTUnwrap(
+            presentedMainMenu,
+            "The production BrowserCoordinator did not present Main Menu"
+        )
+        XCTAssertNotNil(mainMenu.viewIfLoaded?.window)
+        let mainMenuCoordinator = try XCTUnwrap(
+            browserCoordinator.childCoordinators.compactMap { $0 as? MainMenuCoordinator }.first
+        )
+
+        mainMenuCoordinator.navigateTo(
+            MenuNavigationDestination(.webExtensionActions),
+            animated: false
+        )
+
+        var actionPicker: FloorpNativeWebExtensionActionPickerViewController?
+        for _ in 0..<80 {
+            actionPicker = root.presentedViewController
+                as? FloorpNativeWebExtensionActionPickerViewController
+            if actionPicker?.viewIfLoaded?.window != nil { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let picker = try XCTUnwrap(
+            actionPicker,
+            "Main Menu did not route to the production WebExtension action picker"
+        )
+        XCTAssertNil(mainMenu.viewIfLoaded?.window)
+        XCTAssertNil(mainMenu.presentingViewController)
+        XCTAssertEqual(picker.displayedChoiceTitles.count, 2)
+        XCTAssertEqual(
+            Set(picker.displayedChoiceTitles),
+            Set([
+                FloorpNativeWebExtensionCatalog.darkReader.name,
+                FloorpNativeWebExtensionCatalog.uBlockOriginLite.name,
+            ])
+        )
+        XCTAssertNotNil(picker.viewIfLoaded?.window)
+
+        picker.selectChoice(identifier: item.identifier)
+
+        let popupResult = await waitForPresentedActionPopup(
+            presentingRoot: root,
+            attempts: 200
+        )
+        let popup = try XCTUnwrap(
+            popupResult,
+            "Selecting Dark Reader from the production action picker did not present its popup"
+        )
+        XCTAssertNil(picker.viewIfLoaded?.window)
+        XCTAssertNil(picker.presentingViewController)
+        let popupComponents = try XCTUnwrap(
+            URLComponents(url: try XCTUnwrap(popup.webView.url), resolvingAgainstBaseURL: false)
+        )
+        XCTAssertEqual(popupComponents.scheme, item.baseURLScheme)
+        XCTAssertEqual(popupComponents.host, item.baseURLHost)
+        XCTAssertEqual(popupComponents.path, "/ui/popup/index.html")
+        XCTAssertTrue(popup.webView.configuration.websiteDataStore.isPersistent)
+        var didClosePopup = false
+        defer {
+            if !didClosePopup {
+                popup.viewController.closePopup(animated: false)
+            }
+        }
+
+        try await assertDarkReaderPopupIsInteractiveAndToggleChangesState(in: popup.webView)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        let didPrepareAndClosePopup = await popup.viewController.closePopupAfterPreparing(
+            animated: false
+        )
+        let didDismissPopup = await waitForDismissedPresentation(from: root)
+        didClosePopup = didDismissPopup
+        XCTAssertTrue(didPrepareAndClosePopup)
+        XCTAssertTrue(didDismissPopup)
+        XCTAssertNil(popup.viewController.presentedViewController)
+        XCTAssertNil(root.presentedViewController)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        XCTAssertTrue(
+            uBlockContext.errors.isEmpty,
+            uBlockContext.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        for tab in manager.tabs {
+            await tab.close()
+        }
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testMainMenuOpensOnlyAvailableDarkReaderActionDirectlyOnMinimumOS() async throws {
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_direct_action")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: profile,
+            host: host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(
+            injectedTabManager: manager
+        )
+        defer { dependencies.reset() }
+        defer { profileFixture.cleanup() }
+        let source = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/darkreader-direct-popup")),
+            isPrivate: false
+        )
+        manager.selectedTab = source
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
+        manager.selectedTab = source
+
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+        let nativeWebExtensionsWereEnabled = FloorpFlags.isNativeWebExtensionsEnabled
+        FloorpFlags.setNativeWebExtensionsEnabled(true)
+        defer { FloorpFlags.setNativeWebExtensionsEnabled(nativeWebExtensionsWereEnabled) }
+
+        let navigationController = UINavigationController()
+        let router = DefaultRouter(navigationController: navigationController)
+        let browserCoordinator = BrowserCoordinator(
+            router: router,
+            screenshotService: ScreenshotService(),
+            tabManager: manager,
+            profile: profile,
+            glean: MockGleanWrapper(),
+            applicationHelper: MockApplicationHelper(),
+            worldCupStore: MockWorldCupStore()
+        )
+        router.setRootViewController(
+            browserCoordinator.browserViewController,
+            hideBar: true,
+            animated: false
+        )
+        let root = browserCoordinator.browserViewController
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = navigationController
+        root.loadViewIfNeeded()
+        source.webView?.frame = root.view.bounds
+        source.webView?.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        if let webView = source.webView {
+            root.view.addSubview(webView)
+        }
+        window.makeKeyAndVisible()
+        defer {
+            root.presentedViewController?.dismiss(animated: false)
+            navigationController.presentedViewController?.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        XCTAssertEqual(
+            host.actionItems(for: source).filter(\.isEnabled).map(\.contextIdentifier),
+            [item.identifier]
+        )
+        browserCoordinator.showMainMenu()
+        var presentedMainMenu: UIViewController?
+        for _ in 0..<40 {
+            presentedMainMenu = navigationController.presentedViewController
+            if presentedMainMenu?.viewIfLoaded?.window != nil { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        let mainMenu = try XCTUnwrap(
+            presentedMainMenu,
+            "The production BrowserCoordinator did not present Main Menu"
+        )
+        XCTAssertNotNil(mainMenu.viewIfLoaded?.window)
+        let mainMenuCoordinator = try XCTUnwrap(
+            browserCoordinator.childCoordinators.compactMap { $0 as? MainMenuCoordinator }.first
+        )
+
+        mainMenuCoordinator.navigateTo(
+            MenuNavigationDestination(.webExtensionActions),
+            animated: false
+        )
+        XCTAssertFalse(
+            root.presentedViewController is FloorpNativeWebExtensionActionPickerViewController,
+            "A single available action must bypass the picker"
+        )
+
+        let popupResult = await waitForPresentedActionPopup(presentingRoot: root)
+        let popup = try XCTUnwrap(
+            popupResult,
+            "The single-action Main Menu route did not present Dark Reader directly"
+        )
+        XCTAssertNil(mainMenu.viewIfLoaded?.window)
+        XCTAssertNil(mainMenu.presentingViewController)
+        XCTAssertFalse(
+            root.presentedViewController is FloorpNativeWebExtensionActionPickerViewController
+        )
+        let popupComponents = try XCTUnwrap(
+            URLComponents(url: try XCTUnwrap(popup.webView.url), resolvingAgainstBaseURL: false)
+        )
+        XCTAssertEqual(popupComponents.scheme, item.baseURLScheme)
+        XCTAssertEqual(popupComponents.host, item.baseURLHost)
+        XCTAssertEqual(popupComponents.path, "/ui/popup/index.html")
+        XCTAssertTrue(popup.webView.configuration.websiteDataStore.isPersistent)
+        var didClosePopup = false
+        defer {
+            if !didClosePopup {
+                popup.viewController.closePopup(animated: false)
+            }
+        }
+
+        try await assertDarkReaderPopupIsInteractiveAndToggleChangesState(in: popup.webView)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        let didPrepareAndClosePopup = await popup.viewController.closePopupAfterPreparing(
+            animated: false
+        )
+        let didDismissPopup = await waitForDismissedPresentation(from: root)
+        didClosePopup = didDismissPopup
+        XCTAssertTrue(didPrepareAndClosePopup)
+        XCTAssertTrue(didDismissPopup)
+        XCTAssertNil(popup.viewController.presentedViewController)
+        XCTAssertNil(root.presentedViewController)
+        XCTAssertTrue(
+            context.errors.isEmpty,
+            context.errors.map(\.localizedDescription).joined(separator: "\n")
+        )
+        for tab in manager.tabs {
+            await tab.close()
+        }
+    }
+
+    // swiftlint:disable:next function_body_length
+    func testBundledDarkReaderActionPopupPresentsAndBecomesInteractiveThroughProductionHost() async throws {
+        let item = FloorpNativeWebExtensionCatalog.darkReader
+        let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_close_race")
+        let profile = profileFixture.profile
+        let host = try FloorpNativeWebExtensionHost.install(for: profile)
+        let manager = FloorpUBOLRoutingTabManager(
+            profile: profile,
+            host: host,
+            windowUUID: .XCTestDefaultUUID,
+            notifiesDelegatesOnAdd: false
+        )
+        let dependencies = DependencyHelperMock()
+        dependencies.bootstrapDependencies(injectedTabManager: manager)
+        defer { dependencies.reset() }
+        defer { profileFixture.cleanup() }
+        let source = manager.seedTab(
+            url: try XCTUnwrap(URL(string: "https://example.com/darkreader-close-race")),
+            isPrivate: false
+        )
+        manager.selectedTab = source
+        host.register(tabManager: manager)
+        defer { host.unregister(windowUUID: manager.windowUUID) }
+        try await host.installBundledExtension(identifier: item.identifier)
+        let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
+        manager.selectedTab = source
+
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
         let root = UIViewController()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = root
@@ -8096,6 +9352,12 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             popupResult,
             "Dark Reader action popup was not presented by the production host"
         )
+        let popupComponents = try XCTUnwrap(
+            URLComponents(url: try XCTUnwrap(popup.webView.url), resolvingAgainstBaseURL: false)
+        )
+        XCTAssertEqual(popupComponents.scheme, item.baseURLScheme)
+        XCTAssertEqual(popupComponents.host, item.baseURLHost)
+        XCTAssertEqual(popupComponents.path, "/ui/popup/index.html")
         XCTAssertTrue(popup.webView.configuration.websiteDataStore.isPersistent)
         var didClosePopup = false
         defer {
@@ -8104,58 +9366,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             }
         }
 
-        var isInteractive = false
-        for _ in 0..<60 {
-            isInteractive = (try? await popup.webView.floorpCallAsyncJavaScript(
-                """
-                return document.readyState === 'complete' &&
-                    Boolean(document.querySelector('.app-switch__control')) &&
-                    Boolean(document.querySelector('.site-toggle'));
-                """,
-                contentWorld: .page,
-                timeoutNanoseconds: 3_000_000_000
-            ) as? Bool) == true
-            if isInteractive { break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
-        XCTAssertTrue(isInteractive)
-        let toggleResult = try await popup.webView.floorpCallAsyncJavaScript(
-            """
-            const options = Array.from(document.querySelectorAll(
-                '.app-switch__control .multi-switch__option'
-            ));
-            const selected = options.find((option) =>
-                option.classList.contains('multi-switch__option--selected')
-            );
-            const target = options.find((option) => option !== selected);
-            if (!selected || !target) {
-                throw new Error('Dark Reader app switch is not interactive');
-            }
-            const before = selected.textContent.trim();
-            const expected = target.textContent.trim();
-            target.click();
-            return { before, expected };
-            """,
-            contentWorld: .page,
-            timeoutNanoseconds: 3_000_000_000
-        ) as? [String: String]
-        let expectedToggleValue = try XCTUnwrap(toggleResult?["expected"])
-        XCTAssertNotEqual(toggleResult?["before"], expectedToggleValue)
-        var selectedToggleValue: String?
-        for _ in 0..<50 {
-            selectedToggleValue = try? await popup.webView.floorpCallAsyncJavaScript(
-                """
-                return document.querySelector(
-                    '.app-switch__control .multi-switch__option--selected'
-                )?.textContent.trim();
-                """,
-                contentWorld: .page,
-                timeoutNanoseconds: 3_000_000_000
-            ) as? String
-            if selectedToggleValue == expectedToggleValue { break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
-        XCTAssertEqual(selectedToggleValue, expectedToggleValue)
+        try await assertDarkReaderPopupIsInteractiveAndToggleChangesState(in: popup.webView)
         XCTAssertTrue(
             context.errors.isEmpty,
             context.errors.map(\.localizedDescription).joined(separator: "\n")
@@ -8170,6 +9381,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             routeAcknowledgementGate.mayFinish = true
             host.extensionTabCreationCompletionHookForTesting = nil
         }
+
         let clickedSettings = try await popup.webView.floorpCallAsyncJavaScript(
             """
             const button = document.querySelector('.settings-button-icon')?.closest('button');
@@ -8196,20 +9408,19 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView),
             "Native close must retain Dark Reader until its real tabs.create callback settles"
         )
+
         routeAcknowledgementGate.mayFinish = true
         host.extensionTabCreationCompletionHookForTesting = nil
-        let didDismissPopup = await waitForDismissedPresentation(from: root, attempts: 340)
+        let didDismissPopup = await waitForDismissedPresentation(from: root)
         for _ in 0..<120 where manager.extensionCreatedTabs.count == extensionTabCountBeforeSettings {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        if didDismissPopup,
-           !FloorpNativeWebExtensionProcessLifetimeWebViewRegistry.mustPreserve(popup.webView) {
-            popup.webView.stopLoading()
-            await Task.yield()
-            await Task.yield()
+        for _ in 0..<120 where host.hasUnfinishedWebKitOperationForTesting(context) {
+            try await Task.sleep(nanoseconds: 50_000_000)
         }
         didClosePopup = didDismissPopup
         XCTAssertTrue(didDismissPopup)
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
         XCTAssertNil(popup.viewController.presentedViewController)
         XCTAssertNil(root.presentedViewController)
         XCTAssertEqual(manager.extensionCreatedTabs.count, extensionTabCountBeforeSettings + 1)
@@ -8227,7 +9438,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             context.errors.isEmpty,
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
-        await source.close()
+        for tab in manager.tabs {
+            await tab.close()
+        }
     }
 
     func testManagedActionPopupReopenWindowCloseTabSwitchRemovalAndDisableCleanup() async throws {
@@ -9526,9 +10739,10 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 
     private func waitForPresentedActionPopup(
         presentingRoot: UIViewController,
-        excluding excludedViewController: UIViewController? = nil
+        excluding excludedViewController: UIViewController? = nil,
+        attempts: Int = 80
     ) async -> (viewController: FloorpNativeWebExtensionActionPopupViewController, webView: WKWebView)? {
-        for _ in 0..<80 {
+        for _ in 0..<attempts {
             if let popupViewController = presentingRoot.presentedViewController
                 as? FloorpNativeWebExtensionActionPopupViewController,
                popupViewController !== excludedViewController {
@@ -9546,6 +10760,65 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return nil
+    }
+
+    private func assertDarkReaderPopupIsInteractiveAndToggleChangesState(
+        in webView: WKWebView
+    ) async throws {
+        var isInteractive = false
+        for _ in 0..<60 {
+            isInteractive = (try? await webView.floorpCallAsyncJavaScript(
+                """
+                return document.readyState === 'complete' &&
+                    Boolean(document.querySelector('.app-switch__control')) &&
+                    Boolean(document.querySelector('.site-toggle'));
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 3_000_000_000
+            ) as? Bool) == true
+            if isInteractive { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(isInteractive)
+
+        let toggleResult = try await webView.floorpCallAsyncJavaScript(
+            """
+            const options = Array.from(document.querySelectorAll(
+                '.app-switch__control .multi-switch__option'
+            ));
+            const selected = options.find((option) =>
+                option.classList.contains('multi-switch__option--selected')
+            );
+            const target = options.find((option) => option !== selected);
+            if (!selected || !target) {
+                throw new Error('Dark Reader app switch is not interactive');
+            }
+            const before = selected.textContent.trim();
+            const expected = target.textContent.trim();
+            target.click();
+            return { before, expected };
+            """,
+            contentWorld: .page,
+            timeoutNanoseconds: 3_000_000_000
+        ) as? [String: String]
+        let expectedToggleValue = try XCTUnwrap(toggleResult?["expected"])
+        XCTAssertNotEqual(toggleResult?["before"], expectedToggleValue)
+
+        var selectedToggleValue: String?
+        for _ in 0..<50 {
+            selectedToggleValue = try? await webView.floorpCallAsyncJavaScript(
+                """
+                return document.querySelector(
+                    '.app-switch__control .multi-switch__option--selected'
+                )?.textContent.trim();
+                """,
+                contentWorld: .page,
+                timeoutNanoseconds: 3_000_000_000
+            ) as? String
+            if selectedToggleValue == expectedToggleValue { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(selectedToggleValue, expectedToggleValue)
     }
 
     private func waitForDismissedPresentation(

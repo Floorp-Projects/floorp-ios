@@ -12,7 +12,12 @@ extension WKWebView {
     /// - Parameters:
     ///     - javascript: String representing javascript to be evaluated
     public func evaluateJavascriptInDefaultContentWorld(_ javascript: String) {
-        self.evaluateJavaScript(javascript, in: nil, in: .defaultClient, completionHandler: { _ in })
+        self.__evaluateJavaScript(
+            javascript,
+            inFrame: nil,
+            in: .defaultClient,
+            completionHandler: { _, _ in }
+        )
     }
 
     /// This evaluates the provided JS in the specified content world
@@ -20,7 +25,12 @@ extension WKWebView {
     ///     - javascript: String representing javascript to be evaluated
     ///     - contentWorld: The content world in which to evaluate the script
     public func evaluateJavascriptInCustomContentWorld(_ javascript: String, in contentWorld: WKContentWorld) {
-        self.evaluateJavaScript(javascript, in: nil, in: contentWorld, completionHandler: { _ in })
+        self.__evaluateJavaScript(
+            javascript,
+            inFrame: nil,
+            in: contentWorld,
+            completionHandler: { _, _ in }
+        )
     }
 
     /// This calls different WebKit evaluateJavaScript functions depending on iOS version with
@@ -35,14 +45,12 @@ extension WKWebView {
         _ frame: WKFrameInfo? = nil,
         _ completion: @MainActor @escaping (Any?, Error?) -> Void
     ) {
-        self.evaluateJavaScript(javascript, in: frame, in: .defaultClient) { result in
-            switch result {
-            case .success(let value):
-                completion(value, nil)
-            case .failure(let error):
-                completion(nil, error)
-            }
-        }
+        self.__evaluateJavaScript(
+            javascript,
+            inFrame: frame,
+            in: .defaultClient,
+            completionHandler: completion
+        )
     }
 
     /// Use JS to redirect the page without adding a history entry
@@ -59,15 +67,16 @@ extension WKWebView {
     public func callAsyncJavaScriptInDefaultContentWorld(_ script: String,
                                                          arguments: [String: Any],
                                                          completion: @escaping (Result<Any?, Error>) -> Void ) {
-        self.callAsyncJavaScript(script,
-                                 arguments: arguments,
-                                 in: nil,
-                                 in: .defaultClient) { result in
-            switch result {
-            case .success(let value):
-                completion(.success(value))
-            case .failure(let error):
+        self.__callAsyncJavaScript(
+            script,
+            arguments: arguments,
+            inFrame: nil,
+            in: .defaultClient
+        ) { value, error in
+            if let error {
                 completion(.failure(error))
+            } else {
+                completion(.success(value))
             }
         }
     }

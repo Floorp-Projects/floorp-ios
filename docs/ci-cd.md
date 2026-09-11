@@ -7,6 +7,7 @@ This document defines the delivery foundation for Floorp for iOS. The repository
 | Concern | System | Current state |
 | --- | --- | --- |
 | Pull-request build and unit tests | GitHub Actions | Implemented in `.github/workflows/ci.yml` |
+| Native WebExtension minimum-OS acceptance | GitHub Actions | Separate iOS 18.4 / 26.0 job in `.github/workflows/ci.yml` |
 | Notes Sync production QA | GitHub Actions | Manual, protected workflow in `.github/workflows/floorp-notes-sync-production-qa.yml` |
 | Notes Sync public-beta QA | GitHub Actions | Separate manual, protected two-account workflow in `.github/workflows/floorp-notes-sync-public-beta-qa.yml` |
 | Signed public-beta delivery | Xcode Cloud | Source-bound `workflow_dispatch` bridge in `.github/workflows/floorp-xcode-cloud-testflight.yml` |
@@ -42,6 +43,64 @@ The `Floorp iOS CI` workflow runs for pull requests and pushes to `main` and per
 7. Resolve only the Swift package versions in `Package.resolved`.
 8. Build `Fennec` with `Fennec_Testing` and the `FloorpCI` plan for an iOS Simulator with code signing disabled.
 9. Run the already-built `FloorpCI` plan and retain diagnostics for seven days only when the job fails.
+
+A separate `Native WebExtensions iOS 18.4 and 26.0 acceptance` job runs on
+`macos-15` with Xcode 26.3 selected from `.xcode-version`. Hosted-image SDK
+listings do not guarantee that either test simulator runtime is installed,
+so the job obtains exact iOS 18.4 and iOS 26.0 runtimes on demand. Runtime
+downloads use Xcode 16.3 for iOS 18.4 and Xcode 26.0.1 for iOS 26.0.
+The job verifies each provider's exact Xcode and Simulator SDK version before use.
+Runtime acceptance pins iOS 18.4 (22E238) and iOS 26.0 (23A343). Xcode 26.3
+ships a Simulator SDK at version 26.2 (23C57) and requires the separately
+versioned iOS 26.2 (23C54) runtime to expose older
+simulator destinations, so the job retains that exact build-support runtime
+through both test phases and obtains it with Xcode 26.3 when absent.
+Xcode 26.3 remains selected for every build and test, and its Simulator SDK must itself
+report version 26.2 and build 23C57. Both Xcode 26.3 and Xcode 26.0.1 request
+universal runtime archives on x86_64 and arm64 runners.
+
+The initial cleanup preserves only an existing exact iOS 18.4 (22E238) test
+runtime and the exact iOS 26.2 (23C54) build-support runtime.
+It deletes only other runtime images that CoreSimulator marks as deletable, including a
+different build that shares either protected runtime identifier.
+Unknown inventory data or a failed deletion stops the job;
+because a successful `simctl runtime delete` can precede secure-storage
+removal, the job waits within a fixed bound until every explicitly deleted
+runtime UUID is absent from repeatedly validated CoreSimulator inventories;
+the job also refuses to start the iOS 18.4 phase if an iOS 26.0 runtime image
+remains in CoreSimulator storage. The post-cleanup free-space report is retained
+with the evidence. It then downloads iOS 18.4 when absent.
+It requires exactly one compatible exact-build entry and exactly one total entry for its runtime
+identifier, and builds the test products once for the exact iOS 18.4 simulator
+destination. The same exact-build and identifier-uniqueness checks run before the
+iOS 26.0 simulator is created, preventing CoreSimulator from silently binding
+a test device to a different build with the same identifier. Before the build
+and before the iOS 26.0 tests, Xcode must list the exact created simulator UUID
+as an eligible destination.
+The build uses the deployment targets checked into the app, test, and package
+configurations. It deliberately does not override `IPHONEOS_DEPLOYMENT_TARGET`
+globally, so Swift package dependencies retain their own supported floors and
+package-specific build/link planning while the exact iOS 18.4 destination
+remains the minimum-OS gate.
+
+The iOS 18.4 simulator verifies the production
+Main Menu-to-Dark Reader direct popup path, production-host theming, and the
+official Dark Reader acceptance. It also proves that uBlock Origin Lite is
+unavailable and its installation is rejected below its iOS 26.0 minimum. After
+those tests, the job deletes the iOS 18.4 simulator, uniquely re-resolves the
+deletable iOS 18.4 (22E238) runtime UUID by identifier, version, and build,
+deletes that runtime, waits for that exact UUID to disappear from validated
+inventory, and records the reclaimed space before obtaining iOS 26.0 with the
+same download mechanism. The iOS 26.2 build-support runtime remains installed.
+The subsequently created iOS 26.0 simulator verifies the Dark Reader/uBlock
+Origin Lite action picker and popup, uBlock Origin Lite on a production host,
+and the opt-in official uBlock Origin Lite acceptance. The built products and Derived Data remain in place;
+the iOS 26.0 tests use `test-without-building` rather than rebuilding. Every
+selected test must report an XCTest pass, and both official acceptance tests
+must emit their release completion marker. The job always uploads its cleanup
+and download logs, free-space reports, runtime inventories, and `.xcresult`
+bundles for seven days, and fails if any log contains an unsafe WebKit
+lifecycle, host-routing, or `tabs.create` diagnostic.
 
 `FloorpCI.xctestplan` has 17 target entries: 14 currently reliable broad suites plus explicit allowlists from `AccountTests`, `ClientTests`, and `MozillaRustComponentsTests`. It pins the test language and region to `en-US` and `US` so localized system messages cannot make the result depend on the runner locale. The inherited `UnitTest` plan and the rest of `ClientTests` are intentionally not required checks yet because unqualified Client tests still hit Floorp telemetry/dependency-container failures. Selecting individual cases still compiles the whole `ClientTests` target, so additions must pass a clean `build-for-testing` before promotion. Validate the remaining suites independently and promote each passing suite into `FloorpCI`; never hide a regression by removing a previously passing suite.
 
@@ -85,6 +144,12 @@ Notes on the live contract:
   contract.
 - Required checks are the job names `Validate workflows` and
   `Build and unit test` from `.github/workflows/ci.yml`.
+- The Native WebExtension OS acceptance job is not yet part of the live
+  ruleset. Until it is promoted, any pull request that changes native
+  WebExtension runtime or release-acceptance behavior must have a successful
+  `Native WebExtensions iOS 18.4 and 26.0 acceptance` check at its exact
+  reviewed head as an additional manual merge condition. Promoting it to a
+  ruleset-required check remains a separate, coordinated governance change.
 - Force pushes and branch deletion are blocked. Only OrganizationAdmin may
   bypass pull-request rules (`pull_request` mode); there is no separate
   release-maintainer bypass group yet.
@@ -204,7 +269,18 @@ archive only, the pre-build script requires the exact protected catalog tag in
 both `CI_TAG` and canonical `CI_GIT_REF`, requires `CI_COMMIT` to match the
 checked-out Git `HEAD`, and atomically injects that SHA into the single empty
 `FLOORP_SOURCE_SHA` release setting. Other schemes and non-archive actions do
-not mutate the setting. `.nvmrc` and `.xcode-version` are declarations for
+not mutate the setting. For the App Store Connect API-started release path,
+Xcode Cloud exposes `CI_TEAM_ID` as the App Store Connect team resource UUID
+`74c6a531-19e2-4ed5-a34b-915003cc10f9`; the pre-build script verifies that
+identity. This is distinct from the signing Developer Team ID `DV2U35YBHT`,
+which the script independently verifies in `FloorpRelease.xcconfig` and the
+release-evidence gate verifies again from the signed app and provisioning
+profile. Xcode Cloud build `05907e2a-f90d-428f-81e5-8b234d527a18` exposed
+the UUID on September 9, 2026, even though Apple's general environment-variable
+reference describes `CI_TEAM_ID` as the Apple Development team ID. Keep this
+check fail-closed and revalidate the actual build environment if Apple changes
+the value rather than accepting both identifier forms. `.nvmrc` and
+`.xcode-version` are declarations for
 developers and GitHub Actions, not settings that Xcode Cloud applies
 automatically.
 
@@ -228,8 +304,8 @@ The shared `Floorp` scheme now archives with `FloorpRelease` in Xcode Cloud. The
 3. Keep `Floorp TestFlight Manual` manually started in Xcode Cloud, but start public-release candidates only through the GitHub Actions bridge. A direct App Store Connect start does not produce the source-bound release receipt and is not eligible for submission. Release builds use a protected immutable `floorp-catalog-<40-character merged SHA>` lightweight tag whose ref points directly at the exact reviewed `main` commit; annotated tags are rejected by the source-identity gate. Never delete or retarget a candidate tag after creating it, including when its build fails. Xcode Cloud supplies the tag/ref/commit values embedded by the pre-build script; the bridge and retained receipt remain responsible for resolving the live App Store Connect tag reference and proving that it points to that commit. A local `refs/tags/*` ref is not assumed in Xcode Cloud's detached checkout.
 4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml`. It verifies the immutable tag and exact-source CI acceptance, validates the workflow repository and product against App Store Connect app `6796708699` / bundle `app.floorp.Floorp`, snapshots the current maximum build number, and starts the tagged run through `POST /v1/ciBuildRuns`.
 5. The bridge always waits for `COMPLETE` / `SUCCEEDED`, rechecks the exact source commit and workflow, and requires exactly one nonpaginated run-to-build linkage. The linked build must be a new, larger build number for Floorp `0.3.0` on iOS, `VALID`, `APP_STORE_ELIGIBLE`, unexpired, non-exempt-encryption false, and minimum OS `18.4`.
-6. The bridge downloads the unique `ARCHIVE` and `ARCHIVE_EXPORT` resources from the same successful archive action through the authenticated App Store Connect API. It verifies the recorded resource IDs, types, sizes, and SHA-256 values, safely materializes the `.xcarchive` and `.ipa`, and emits `floorp-xcode-cloud-artifact-manifest.json`. Retain that manifest together with `floorp-xcode-cloud-build-receipt.json`. The workflow also materializes a notes-only App Review payload from the receipt; it rejects placeholders, a missing immutable public source URL or GPL disclosure, and content over 4,000 bytes.
-7. Before any external-beta write, `submit-floorp-external-beta.sh` re-reads the run, run-to-build linkage, build, and group. It requires the receipt and all expected source/build values, and requires the selected group to be external and belong to the same app. Contact fields must be complete; demo credentials are required only when App Store Connect reports `demoAccountRequired=true`. The client never creates groups or writes contact/demo credentials.
+6. The bridge downloads the unique `ARCHIVE` and `ARCHIVE_EXPORT` resources from the same successful archive action through the authenticated App Store Connect API. It verifies the recorded resource IDs, types, sizes, and SHA-256 values, safely materializes the `.xcarchive` and `.ipa`, and emits `floorp-xcode-cloud-artifact-manifest.json`. Retain that manifest together with `floorp-xcode-cloud-build-receipt.json`. The workflow also materializes a notes-only App Review payload from the receipt using the full 40-character commit URL rather than the tag name; it rejects placeholders, a missing immutable public source URL or GPL disclosure, and content over 4,000 bytes.
+7. Before any external-beta write, `submit-floorp-external-beta.sh` snapshots the receipt once, then re-reads the run, run-to-build linkage, build, and group. It uses that same private receipt snapshot for both reviewed-note generation and source/build validation, and requires the supplied notes-only payload to match it exactly. The selected group must be external and belong to the same app. Contact fields must be complete; demo credentials are required only when App Store Connect reports `demoAccountRequired=true`. The client never creates groups or writes contact/demo credentials.
 8. Let Xcode Cloud manage signing; verify the Client-only app is signed by the Floorp team and inspect its production entitlements. Confirm `firefox-ios/TestFlight/WhatToTest.en-US.txt`. The bridge retains the raw downloads, materialized archive/IPA, manifest, evidence, and dSYMs in one binary-evidence artifact and retains the deployment receipt in a separate receipt artifact; both use 90-day retention. Xcode Cloud itself retains artifacts for only 30 days.
 
 ## Later hardening

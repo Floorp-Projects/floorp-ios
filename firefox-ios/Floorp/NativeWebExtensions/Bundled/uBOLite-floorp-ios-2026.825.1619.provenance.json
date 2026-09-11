@@ -63,7 +63,7 @@
       ]
     },
     {
-      "description": "Scope the CSS API's inserted-state and page-reveal handler plus isolated hostname contexts to the current document; bind background-served custom-filter CSS and ordinary-frame procedural fallback injection to a non-empty WebKit document ID and an HTTP(S) sender hostname; for hostname-less about, data, blob, and srcdoc fallback frames derive authority only from the immediate WebKit fallback parent, require accessible-parent and ancestor-origin agreement when both are available, fail closed on ambiguity or missing parent authority, then read both recovery journals, user and administrator filtering modes, and only that hostname ancestry's site-filter keys in one bounded local snapshot; use last-committed user modes/selectors during settings apply or rollback while preserving live administrator policy; preload fresh CSS and procedural APIs in same-world document-start and document-idle registered scripts whenever direct or inherited procedural selectors exist, and apply committed hostname-less snapshots locally without depending on WebKit's unsupported dynamic script injection into about:blank/about:srcdoc; keep background replies schema- and request-bound and await required background CSS insertion before acknowledging success; reuse an in-flight request across timeout and permit one short retry only for an undefined main-frame reply; synchronously abandon replaced list/custom procedural filterers without sending stale-document CSS removals or awaiting an orphanable prior-document runtime message; serve custom-filter requests before full startup reconciliation when Safari wakes the nonpersistent background; and guard per-execution asynchronous cosmetic state so Safari isolated-world and document-wrapper reuse cannot let a late prior-document result mutate the current script state or skip custom/procedural reinjection after normal, cross-host, private, or origin-fallback navigation.",
+      "description": "Scope the CSS API's remembered sheets, owner lanes, physical operations, page-reveal replay, and isolated hostname contexts to the current native document; compensate for WebKit ignoring frame/document CSS targets by applying structured operations to all frames but activating each sheet only behind an unpredictable 128-bit root marker and an independently verified canary; coalesce repeated registered API execution into the active css-user document-identity lease, reclaim that lease around forced API replay, reject candidate publication while identity is suspended, and repair page-side candidate-marker deletion both during canary validation and immediately after promotion; transform canonical selector lists into top-level marker-prefixed selectors that work on iOS 26 WebKit, cover root-anchored form controls and pseudo-element tails, and avoid both CSS nesting and @scope; preserve legacy schema-less picker/tool CSS targets; bind custom-filter lookup and ordinary-frame procedural fallback to a non-empty WebKit document ID and an HTTP(S) sender hostname; for hostname-less about, data, blob, and srcdoc fallback frames derive authority only from the immediate WebKit fallback parent, require accessible-parent and ancestor-origin agreement when both are available, fail closed on ambiguity or missing parent authority, then read both recovery journals, user and administrator filtering modes, and only that hostname ancestry's site-filter keys in one bounded local snapshot; use last-committed user modes/selectors during settings apply or rollback while preserving live administrator policy; preload the CSS acknowledgement API for every plain/procedural document-start and document-idle registration and dynamically preload both guarded APIs before starting the first live filter, while serving selector data without a duplicate background CSS insertion; after an ordinary HTTP(S) selector-request transport timeout or rejection, fail over once to the same bounded local snapshot only when the live URL still proves the registered hostname; stage procedural CSS until every selector parses and builds successfully; keep custom-filter replies schema- and request-bound and native CSS insert/remove replies schema-, request-, and document-bound; maintain at most one physical insertion stream per API document, CSS, and replay epoch while giving each logical owner its own deadline and result; retry only request-bound ok:false acknowledgements with bounded backoff inside 15-second activation or operation windows, never resend missing, malformed, rejected, or unresolved raw insertion outcomes in the same API document, and continue observing an unresolved raw request after the two-second local wait; suspend and resume procedural hooks transactionally across identity refresh, roll back all hooks after partial activation, and clean style attributes per token; refresh expired uncommitted BFCache and grant one uncommitted document-idle recovery window only after its prior activation queue settles, while evaluating queued dynamic recovery against the then-current deadline and without coupling stock CSS to a custom deadline; replay remembered sheets without payload growth and clear prior-epoch confirmation before forced replay; terminate custom CSS by synchronously invalidating its generation, forgetting only that owner, awaiting procedural cleanup, isolating retiring physical streams, and serializing document-bound removals before same-CSS restart; propagate removal and script-injection failures through picker and tool-overlay surfaces so they remain open without saving after failed termination or closing after failed restart; serve custom-filter requests before full startup reconciliation when Safari wakes the nonpersistent background; and guard per-execution asynchronous cosmetic state so Safari isolated-world and document-wrapper reuse cannot let a late prior-document result mutate the current script state or skip custom/procedural reinjection after normal, cross-host, private, or origin-fallback navigation.",
       "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
       "paths": [
         "js/scripting/css-api.js",
@@ -71,12 +71,16 @@
         "js/scripting/css-specific.js",
         "js/scripting/css-user-idle-prelude.js",
         "js/scripting/css-user-idle.js",
+        "js/scripting/css-user-terminate.js",
         "js/scripting/css-user.js",
         "js/scripting/isolated-api.js",
+        "js/scripting/picker.js",
+        "js/scripting/tool-overlay.js",
         "js/background.js",
         "js/ext.js",
         "js/filter-manager.js",
-        "js/scripting-manager.js"
+        "js/scripting-manager.js",
+        "js/tool-overlay-ui.js"
       ]
     },
     {
@@ -99,7 +103,7 @@
   ],
   "license": "GPL-3.0-or-later",
   "release": "2026.825.1619",
-  "sha256": "4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573",
+  "sha256": "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359",
   "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
   "strictMinimumSafariVersion": "26.0",
   "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",

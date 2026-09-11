@@ -1,3 +1,7 @@
 # Don't include third party files in the Github language stats!
 ThirdParty/* linguist-vendored=true
 FxA/* linguist-vendored=true
+
+# Reproducible third-party patches must preserve whitespace from upstream
+# removal lines so that strict patch application remains byte-for-byte valid.
+firefox-ios/Floorp/NativeWebExtensions/Bundled/*.patch whitespace=-trailing-space

@@ -162,7 +162,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "a9f1c4b1dd97d072f5c4cb416f96aa5a49212d526ef048c9536dd9373a5348ae",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "ec1c2d0420290d87efcc3b4594c12c0cd58ab97da70f26ebffb22cc2d18426bf",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -226,7 +226,7 @@ EXPECTED = (
                     ],
                 },
                 {
-                    "description": "Scope the CSS API's inserted-state and page-reveal handler plus isolated hostname contexts to the current document; bind background-served custom-filter CSS and ordinary-frame procedural fallback injection to a non-empty WebKit document ID and an HTTP(S) sender hostname; for hostname-less about, data, blob, and srcdoc fallback frames derive authority only from the immediate WebKit fallback parent, require accessible-parent and ancestor-origin agreement when both are available, fail closed on ambiguity or missing parent authority, then read both recovery journals, user and administrator filtering modes, and only that hostname ancestry's site-filter keys in one bounded local snapshot; use last-committed user modes/selectors during settings apply or rollback while preserving live administrator policy; preload fresh CSS and procedural APIs in same-world document-start and document-idle registered scripts whenever direct or inherited procedural selectors exist, and apply committed hostname-less snapshots locally without depending on WebKit's unsupported dynamic script injection into about:blank/about:srcdoc; keep background replies schema- and request-bound and await required background CSS insertion before acknowledging success; reuse an in-flight request across timeout and permit one short retry only for an undefined main-frame reply; synchronously abandon replaced list/custom procedural filterers without sending stale-document CSS removals or awaiting an orphanable prior-document runtime message; serve custom-filter requests before full startup reconciliation when Safari wakes the nonpersistent background; and guard per-execution asynchronous cosmetic state so Safari isolated-world and document-wrapper reuse cannot let a late prior-document result mutate the current script state or skip custom/procedural reinjection after normal, cross-host, private, or origin-fallback navigation.",
+                    "description": "Scope the CSS API's remembered sheets, owner lanes, physical operations, page-reveal replay, and isolated hostname contexts to the current native document; compensate for WebKit ignoring frame/document CSS targets by applying structured operations to all frames but activating each sheet only behind an unpredictable 128-bit root marker and an independently verified canary; coalesce repeated registered API execution into the active css-user document-identity lease, reclaim that lease around forced API replay, reject candidate publication while identity is suspended, and repair page-side candidate-marker deletion both during canary validation and immediately after promotion; transform canonical selector lists into top-level marker-prefixed selectors that work on iOS 26 WebKit, cover root-anchored form controls and pseudo-element tails, and avoid both CSS nesting and @scope; preserve legacy schema-less picker/tool CSS targets; bind custom-filter lookup and ordinary-frame procedural fallback to a non-empty WebKit document ID and an HTTP(S) sender hostname; for hostname-less about, data, blob, and srcdoc fallback frames derive authority only from the immediate WebKit fallback parent, require accessible-parent and ancestor-origin agreement when both are available, fail closed on ambiguity or missing parent authority, then read both recovery journals, user and administrator filtering modes, and only that hostname ancestry's site-filter keys in one bounded local snapshot; use last-committed user modes/selectors during settings apply or rollback while preserving live administrator policy; preload the CSS acknowledgement API for every plain/procedural document-start and document-idle registration and dynamically preload both guarded APIs before starting the first live filter, while serving selector data without a duplicate background CSS insertion; after an ordinary HTTP(S) selector-request transport timeout or rejection, fail over once to the same bounded local snapshot only when the live URL still proves the registered hostname; stage procedural CSS until every selector parses and builds successfully; keep custom-filter replies schema- and request-bound and native CSS insert/remove replies schema-, request-, and document-bound; maintain at most one physical insertion stream per API document, CSS, and replay epoch while giving each logical owner its own deadline and result; retry only request-bound ok:false acknowledgements with bounded backoff inside 15-second activation or operation windows, never resend missing, malformed, rejected, or unresolved raw insertion outcomes in the same API document, and continue observing an unresolved raw request after the two-second local wait; suspend and resume procedural hooks transactionally across identity refresh, roll back all hooks after partial activation, and clean style attributes per token; refresh expired uncommitted BFCache and grant one uncommitted document-idle recovery window only after its prior activation queue settles, while evaluating queued dynamic recovery against the then-current deadline and without coupling stock CSS to a custom deadline; replay remembered sheets without payload growth and clear prior-epoch confirmation before forced replay; terminate custom CSS by synchronously invalidating its generation, forgetting only that owner, awaiting procedural cleanup, isolating retiring physical streams, and serializing document-bound removals before same-CSS restart; propagate removal and script-injection failures through picker and tool-overlay surfaces so they remain open without saving after failed termination or closing after failed restart; serve custom-filter requests before full startup reconciliation when Safari wakes the nonpersistent background; and guard per-execution asynchronous cosmetic state so Safari isolated-world and document-wrapper reuse cannot let a late prior-document result mutate the current script state or skip custom/procedural reinjection after normal, cross-host, private, or origin-fallback navigation.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/scripting/css-api.js",
@@ -234,12 +234,16 @@ EXPECTED = (
                         "js/scripting/css-specific.js",
                         "js/scripting/css-user-idle-prelude.js",
                         "js/scripting/css-user-idle.js",
+                        "js/scripting/css-user-terminate.js",
                         "js/scripting/css-user.js",
                         "js/scripting/isolated-api.js",
+                        "js/scripting/picker.js",
+                        "js/scripting/tool-overlay.js",
                         "js/background.js",
                         "js/ext.js",
                         "js/filter-manager.js",
                         "js/scripting-manager.js",
+                        "js/tool-overlay-ui.js",
                     ],
                 },
                 {
@@ -262,7 +266,7 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "4997701479637edae8edfbeb50a548f49d778c800b34b624fa6a86f11e2f2573",
+            "sha256": "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
@@ -794,14 +798,72 @@ EXPECTED = (
                 "if ( webextFlavor === 'safari' || throwOnError ) { throw reason; }",
             ),
             "js/scripting/css-api.js": (
-                "const documentElement = document.documentElement;",
+                "const forcedReplay = self.floorpCSSUserForceAPIReplay !== undefined;",
                 "const documentTimeOrigin = performance.timeOrigin;",
-                "api.documentElement === documentElement &&",
-                "api.documentTimeOrigin === documentTimeOrigin",
-                "self.removeEventListener('pagereveal', api.pageRevealHandler);",
-                "const inserted = new Set();",
-                "pageRevealHandler,",
+                "api?.dispose?.();",
+                "const messageSchema = 1;",
+                "const operationWindow = 15000;",
+                "const replySlice = 2000;",
+                "const retryDelays = [ 100, 250, 500, 1000, 2000 ];",
+                "const fallbackGeneration = {};",
+                "const defaultOwner = {};",
+                "const slots = new Map();",
+                "let suspendedBy = self.floorpCSSUserIdentityPendingRecord;",
+                "what: 'floorpCSSDocumentIdentity',",
+                "function randomHex128()",
+                "const values = new Uint32Array(4);",
+                "globalThis.crypto.getRandomValues(values);",
+                "const attribute = `data-floorp-ubol-${randomHex128()}`;",
+                "const allowedConditionalRules = new Set([",
+                "function validateRawAtRules(css)",
+                "CSS at-rule is not document-scoped",
+                "function splitSelectorList(selectorText)",
+                "function firstTopLevelPseudoElement(selector)",
+                "function scopedBranches(selector, wrapper)",
+                "`${wrapper} :is(${base})${pseudo}`",
+                "`${wrapper}:is(${base})${pseudo}`",
+                "Authored CSS nesting is not supported",
+                "function serializeScopedRules(rules, wrapper, expectedBranches)",
+                "CSS document scope lost a selector branch",
+                "const wrapper = `:where(:root[${attr}])`;",
+                "`${canary}: ${canaryValue} !important;",
+                "canaryRule.style?.getPropertyPriority?.(canary) !== 'important'",
+                "function candidateCanaryApplied(bundle, root)",
+                "const settleDeadline = Math.min(deadline, now() + 500);",
+                "await timeout(Math.min(25, remaining));",
+                "function validNativeAck(response, requestId, ensured = false)",
+                "what: 'removeCSS',",
+                "what: 'insertCSS',",
+                "schema: messageSchema,",
+                "requestId,",
+                "scopeAttribute: bundle.attr,",
+                "scopeCanary: bundle.canary,",
+                "scopeCanaryValue: bundle.canaryValue,",
+                "expectedDocumentId: state.documentId,",
+                "expectedFrameId: state.frameId,",
+                "function resumeActiveHooks()",
+                "slot.hook?.needsActivation?.() !== true",
+                "slot.hook?.activatePrepared?.();",
+                "for ( const resumedSlot of resumedSlots.reverse() )",
+                "function suppressAllMarkers()",
+                "function pageHideHandler(event)",
+                "function pageRevealHandler(event)",
+                "void scheduleSlot(ordered[0], now() + operationWindow, true);",
+                "refreshForScriptExecution()",
+                "self.floorpCSSUserForceAPIReplay = record;",
+                "what: 'injectCSSProceduralAPI',",
+                "beginInsertionTransaction(",
+                "rollbackInsertionTransaction(transaction)",
+                "registerOwnerHook(",
+                "unregisterOwnerHook(owner, generation, hook)",
+                "activateOwner(owner, generation, options = {})",
+                "async commit(",
+                "async forgetOwner(",
+                "async replay(generation, options = {})",
+                "dispose()",
+                "self.addEventListener('pagehide', pageHideHandler);",
                 "self.addEventListener('pagereveal', pageRevealHandler);",
+                "self.addEventListener('pageshow', pageRevealHandler);",
             ),
             "js/scripting/css-specific.js": (
                 "const cssSpecificDocumentGeneration = {};",
@@ -817,26 +879,75 @@ EXPECTED = (
                 "if ( isCurrentDocument() === false ) { return; }",
             ),
             "js/scripting/css-procedural-api.js": (
+                "this.styledNodes = new Map();",
+                "this.suspended = true;",
+                "this.suspend();",
+                "this.styleTokenMap.clear();",
+                "this.styledNodes.clear();",
+                "resume()",
+                "if ( this.suspended ) { return; }",
+                "const toUnstyle = this.styledNodes;",
+                "this.styledNodes = new Map();",
+                "let styledNodes = this.styledNodes.get(styleToken);",
+                "this.styledNodes.set(styleToken, styledNodes);",
+                "const currentNodes = this.styledNodes.get(token);",
+                "this.preparedRevision = 0;",
+                "this.activatedRevision = 0;",
+                "this.ensureOwnerRegistration();",
+                "ensureOwnerRegistration()",
+                "self.cssAPI.registerOwnerHook(",
+                "activatePrepared()",
+                "needsActivation()",
+                "this.activatedRevision !== this.preparedRevision",
                 "async reset(options = {})",
                 "const removeCSS = options.removeCSS !== false;",
+                "this.deactivate();",
+                "self.cssAPI.forgetOwner(",
+                "this.hookRegistered = false;",
                 "if ( removeCSS ) {",
-                "this.proceduralFilterer.reset(options)",
+                "addDeclaratives(selectors)",
+                "addProcedurals(selectors)",
+                "this.preparedRevision += 1;",
+                "self.cssAPI.activateOwner(",
             ),
             "js/scripting/css-user.js": (
+                "const floorpIdleReplay = self.floorpCSSUserIdleReplay === true;",
+                "var floorpCSSUserExecutionRecord = {};",
+                "var floorpCSSUserExecution = (async function uBOL_cssUser(executionRecord) {",
+                "executionRecord.startedAt = performance.now();",
+                "self.floorpCSSUserIdentityPendingRecord = executionRecord;",
+                "self.cssAPI.suspendForIdentity(executionRecord);",
+                "async function readDocumentIdentity()",
+                "what: 'floorpCSSDocumentIdentity',",
+                "const cssUserNativeDocumentId = cssUserDocumentIdentity.documentId;",
+                "const cssUserNativeFrameId = cssUserDocumentIdentity.frameId;",
+                "async function bindCSSAPIToCurrentDocument()",
+                "self.floorpCSSUserForceAPIReplay = forceToken;",
+                "what: 'injectCSSProceduralAPI',",
+                "cssAPI.resumeForIdentity(",
+                "existingBootstrap?.documentId === cssUserNativeDocumentId &&",
                 "const cssUserDocumentGeneration = {};",
                 "self.removeEventListener('pagereveal', self.cssUserStartHandler);",
+                "self.removeEventListener('pageshow', self.cssUserStartHandler);",
                 "self.cssUserDocumentGeneration = cssUserDocumentGeneration;",
                 "const previousProceduralFilterer = self.customProceduralFiltererAPI;",
                 "const cssUserCleanupOp = Promise.resolve()",
-                ".then(( ) => previousProceduralFilterer instanceof Object",
+                ".then(( ) => typeof previousProceduralFilterer?.reset === 'function'",
                 "? previousProceduralFilterer.reset({ removeCSS: false })",
                 "self.cssUserPendingOp = cssUserCleanupOp;",
                 "const pendingOp = Promise.resolve(self.cssUserPendingOp)",
                 "self.cssUserPendingOp = pendingOp.catch(( ) => undefined);",
                 "self.cssUserDocumentGeneration === cssUserDocumentGeneration &&",
-                "self.cssUserStartHandler === uBOL_cssUserStart;",
+                "self.cssUserStartHandler === uBOL_cssUserStart &&",
+                "self.floorpCSSUserActivationState === cssUserActivationState &&",
                 "if ( isCurrentDocument() === false ) { return; }",
                 "const customFilterMessageSchema = 1;",
+                "async function followLatestExecution()",
+                "if ( latestRecord === executionRecord ) { return failedExecution(); }",
+                "const customFilterActivationTimeout = 15000;",
+                "const customFilterRetryDelays = [ 100, 250, 500, 1000, 2000 ];",
+                "deadline: executionRecord.deadline,",
+                "committed: false,",
                 "const customFilterMutationJournalKey =",
                 "const customFilterModeStorageKeys = [",
                 "const settingsRestoreJournalKey = 'floorp.settingsRestoreJournal.v1';",
@@ -849,8 +960,7 @@ EXPECTED = (
                 "function committedJournalSnapshot(journal, label, phases)",
                 "function customFilteringEnabled(snapshot, hostname)",
                 "function selectorsFromStorageSnapshot(hostname, snapshot)",
-                "async function readOriginFallbackCustomFilters()",
-                "const hostname = originFallbackHostname();",
+                "async function readStoredCustomFilters(hostname)",
                 "localState = await chrome.storage.local.get(keys);",
                 "localState[settingsRestoreJournalKey]",
                 "localState[customFilterMutationJournalKey]",
@@ -859,37 +969,72 @@ EXPECTED = (
                 "const details = customFilteringEnabled(authoritativeState, hostname)",
                 "hostnameFromURL(document.location.origin)",
                 "hostname: customFilterHostname,",
-                "const customFilterUndefinedRetryDelay = 100;",
                 "requestId: customFilterRequestId,",
-                "let customFilterRequestInFlight;",
-                "customFilterRequestInFlight = operation;",
+                "while ( isCurrentDocument() && remainingActivationTime() > 0 ) {",
+                "let useStoredSnapshot = floorpOriginFallbackDocument;",
+                "? originFallbackHostname()",
+                ": hostnameFromHTTPURL(document.location.href);",
+                "return readStoredCustomFilters(hostname);",
+                "return chrome.runtime.sendMessage(customFilterRequest);",
                 "const outcome = await waitForMessageReply(operation);",
-                "outcome.status === 'timeout'",
-                "customFilterRequestInFlight === operation &&",
-                "isValidCustomFilterAck(value, customFilterRequestId)",
-                "outcome.value === undefined &&",
-                "isMainFrame &&",
-                "customFilterUndefinedRetryUsed === false",
+                "useStoredSnapshot === false && outcome.status !== 'resolved'",
+                "useStoredSnapshot = true;",
+                "isValidCustomFilterAck(",
+                "if ( await waitForRetry(attempt) === false ) { return; }",
                 "details.ok === true &&",
                 "details.requestId === requestId &&",
                 "Array.isArray(details.plainSelectors)",
                 "Array.isArray(details.proceduralSelectors)",
                 "if ( Boolean(details) === false ) { return; }",
+                "typeof cssAPI?.insert !== 'function' ||",
+                "typeof cssAPI?.commit !== 'function'",
+                "typeof cssAPI.beginInsertionTransaction !== 'function' ||",
+                "const selectors = details.proceduralSelectors.map(a => JSON.parse(a));",
+                "transaction = cssAPI.beginInsertionTransaction(",
+                "cssOwner: cssUserDocumentGeneration,",
+                "cssAPI.finishInsertionTransaction(transaction);",
+                "cssUserActivationState.proceduralFilterer = filterer;",
+                "cssAPI.rollbackInsertionTransaction(transaction);",
+                "await filterer.reset({ removeCSS: false });",
+                "const insertion = await cssAPI.insert(",
+                "if ( insertion?.ok !== true ) { return; }",
+                "const committed = await cssAPI.commit(",
+                "if ( committed?.ok !== true ) { return; }",
                 "self.customFilters = details;",
+                "cssUserActivationState.committed = true;",
+                "const executionCommitted =",
+                "ok: executionCommitted,",
+                "committed: executionCommitted,",
+                "floorpCSSUserExecution;",
+                "function beginLifecycleRecovery(event)",
+                "cssUserActivationState.idleRecoveryUsed !== true;",
+                "self.cssAPI.beginRecoveryWindow(",
+                "async function prepareLifecycleRecovery(lifecycle)",
+                "const replayed = await cssAPI.replay(cssUserDocumentGeneration, {",
+                "self.addEventListener('pageshow', uBOL_cssUserStart);",
+                "floorpCSSUserExecutionRecord.operation = floorpCSSUserExecution;",
+            ),
+            "js/scripting/css-user-terminate.js": (
+                "async function uBOL_cssUserTerminate()",
+                "const forgetOperation =",
+                "cssAPI.forgetOwner(generation, generation)",
+                "self.cssUserDocumentGeneration = {};",
+                "self.floorpCSSUserActivationState = undefined;",
+                "self.customFilters = undefined;",
+                "removeCSS: forgetOperation === undefined,",
+                "const cleanupResults = await Promise.allSettled(cleanup);",
+                "throw rejectedCleanup.reason;",
+                "failedCleanup.value.error || 'Custom-filter termination failed'",
             ),
             "js/scripting/css-user-idle-prelude.js": (
-                "self.floorpCSSUserAPIIdleReplay = document.location.hostname === '';",
+                "self.floorpCSSUserAPIIdleReplay = true;",
             ),
             "js/scripting/css-user-idle.js": (
                 "self.floorpCSSUserIdleReplay = true;",
-                "self.floorpCSSUserAPIIdleReplay = undefined;",
             ),
             "js/scripting/isolated-api.js": (
-                "const documentElement = document.documentElement;",
                 "const documentTimeOrigin = performance.timeOrigin;",
-                "api.documentElement === documentElement &&",
                 "api.documentTimeOrigin === documentTimeOrigin",
-                "isolatedAPI.documentElement = documentElement;",
                 "isolatedAPI.documentTimeOrigin = documentTimeOrigin;",
             ),
             "js/safari-registration-sentinel.js": (
@@ -930,7 +1075,13 @@ EXPECTED = (
                 "out.push(`site.${hn}`);",
                 "export function customFiltersFromSnapshot(hostname, snapshot)",
                 "throw new Error('Invalid custom-filter selector snapshot');",
-                "const js = [ '/js/scripting/css-user.js' ];",
+                "files: [\n                '/js/scripting/css-api.js',\n                '/js/scripting/css-procedural-api.js',\n                '/js/scripting/css-user.js',",
+                "'startCustomFilters/files',",
+                "'startCustomFilters/probe',",
+                "'terminateCustomFilters/files',",
+                "'terminateCustomFilters/probe',",
+                "throw reason;",
+                "const js = [ '/js/scripting/css-api.js' ];",
                 "const snapshots = [ context.localStorageSnapshot ];",
                 "[ settingsRestoreJournalKey, committedSettingsRestoreSnapshot ]",
                 "customFilterMutationJournalKey,",
@@ -938,18 +1089,26 @@ EXPECTED = (
                 "const hasInheritedProceduralFilter = hostname => {",
                 "customFilters.get(hn)?.some(isProcedural)",
                 "hostnames.some(hasInheritedProceduralFilter)",
-                "js.unshift(\n            '/js/scripting/css-api.js',\n            '/js/scripting/css-procedural-api.js'",
+                "js.push('/js/scripting/css-procedural-api.js');",
+                "js.push('/js/scripting/css-user.js');",
                 "const idleJS = js.slice();",
                 "idleJS.unshift('/js/scripting/css-user-idle-prelude.js');",
                 "idleJS.splice(idleJS.length - 1, 0, '/js/scripting/css-user-idle.js');",
                 "id: 'css-user-idle',",
                 "runAt: 'document_idle',",
-                "export function assertSuccessfulScriptInjection(results, operation)",
+                "export function assertSuccessfulScriptInjection(",
+                "expectedDocumentId",
                 "if ( result.error !== undefined )",
+                "export function assertCommittedCustomFilterInjection(",
+                "async function probeCommittedCustomFilters(expectedDocumentId)",
+                "async function probeTerminatedCustomFilters(expectedDocumentId)",
+                "result.schema !== 1 ||",
+                "result.committed !== true ||",
+                "result.documentId !== expectedDocumentId",
                 "export async function injectCustomFilters(target, hostname, storageSnapshot)",
                 "? await customFiltersFromHostname(hostname)",
                 ": customFiltersFromSnapshot(hostname, storageSnapshot);",
-                "await browser.scripting.insertCSS({",
+                "void target;",
                 "const proceduralSelectors = selectors.filter(a => isProcedural(a));",
                 "return { plainSelectors, proceduralSelectors };",
                 "export async function mutateCustomFiltersAtomically(",
@@ -1101,6 +1260,74 @@ def verify_support_files(entry: dict[str, object], repository_root: Path) -> Non
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if digest != expected_digest:
             fail(f"unexpected SHA-256 for support file {relative_path}: {digest}")
+
+
+def verify_patch_provenance(
+    entry: dict[str, object],
+    provenance: dict[str, object],
+    repository_root: Path,
+) -> None:
+    support_files = entry.get("support_files", {})
+    changes = provenance.get("changes", [])
+    assert isinstance(support_files, dict)
+    if not isinstance(changes, list):
+        fail("bundled-extension provenance changes must be an array")
+
+    support_patches: dict[str, Path] = {}
+    for relative_path in support_files:
+        path = checked_repository_path(str(relative_path), repository_root)
+        if path.suffix != ".patch":
+            continue
+        if path.name in support_patches:
+            fail(f"ambiguous bundled-extension patch name: {path.name}")
+        support_patches[path.name] = path
+
+    documented_by_patch: dict[str, set[str]] = {}
+    for change in changes:
+        if not isinstance(change, dict):
+            fail("bundled-extension provenance change must be an object")
+        patch_name = change.get("patch")
+        if not isinstance(patch_name, str) or patch_name == "":
+            fail("bundled-extension provenance change omits its patch")
+        documented = documented_by_patch.setdefault(patch_name, set())
+        path = change.get("path")
+        paths = change.get("paths", [])
+        if path is not None:
+            if not isinstance(path, str):
+                fail("bundled-extension provenance path must be a string")
+            documented.add(path)
+        if not isinstance(paths, list) or not all(isinstance(item, str) for item in paths):
+            fail("bundled-extension provenance paths must be a string array")
+        documented.update(paths)
+
+    if set(documented_by_patch) != set(support_patches):
+        fail("bundled-extension provenance patch set does not match support files")
+    for patch_name, documented in documented_by_patch.items():
+        try:
+            source = support_patches[patch_name].read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            fail(f"cannot read bundled-extension patch {patch_name}: {error}")
+        actual: set[str] = set()
+        for line in source.splitlines():
+            if not line.startswith("+++ "):
+                continue
+            candidate = line[4:].split("\t", 1)[0]
+            if candidate == "/dev/null":
+                continue
+            if not candidate.startswith("b/"):
+                fail(f"unexpected patched destination in {patch_name}: {candidate}")
+            relative_path = candidate[2:]
+            checked_repository_path(relative_path, Path("/provenance-root"))
+            actual.add(relative_path)
+        if not actual:
+            fail(f"bundled-extension patch has no changed paths: {patch_name}")
+        if actual != documented:
+            missing = sorted(actual - documented)
+            extra = sorted(documented - actual)
+            fail(
+                f"patch/provenance path set mismatch for {patch_name}: "
+                f"missing={missing}, extra={extra}"
+            )
 
 
 def javascript_without_comments(source: str) -> str:
@@ -1452,11 +1679,21 @@ def verify_ubol_custom_filter_origin_fallback_path(
             f"{archive_name} dynamically injects a script while preparing "
             "origin-fallback custom-filter selectors"
         )
-    if body.count("browser.scripting.insertCSS") != 1:
+    if body.count("browser.scripting.insertCSS") != 0:
         fail(
-            f"{archive_name} does not expose exactly one reviewed plain-CSS "
-            "custom-filter injection"
+            f"{archive_name} duplicates custom-filter CSS outside the "
+            "document-scoped acknowledgement path"
         )
+    require_ordered(
+        "selector-data response",
+        body,
+        (
+            "const plainSelectors = selectors.filter(a => isCSS(a));",
+            "void target;",
+            "const proceduralSelectors = selectors.filter(a => isProcedural(a));",
+            "return { plainSelectors, proceduralSelectors };",
+        ),
+    )
 
     registration = reviewed_section(
         source,
@@ -1473,16 +1710,16 @@ def verify_ubol_custom_filter_origin_fallback_path(
             "customFilterMutationJournalKey,",
             "committedCustomFilterMutationSnapshot,",
             "for ( const snapshot of snapshots ) {",
-            "const js = [ '/js/scripting/css-user.js' ];",
+            "const js = [ '/js/scripting/css-api.js' ];",
+            "const hasInheritedProceduralFilter = hostname => {",
             "hostnames.some(hasInheritedProceduralFilter)",
-            "js.unshift(\n            '/js/scripting/css-api.js',\n"
-            "            '/js/scripting/css-procedural-api.js'",
+            "js.push('/js/scripting/css-procedural-api.js');",
+            "js.push('/js/scripting/css-user.js');",
             "id: 'css-user',",
             "allFrames: true,",
             "matchOriginAsFallback: true,",
             "runAt: 'document_start',",
             "const idleJS = js.slice();",
-            "if ( idleJS.includes('/js/scripting/css-api.js') === false ) {",
             "idleJS.unshift('/js/scripting/css-user-idle-prelude.js');",
             "idleJS.splice(idleJS.length - 1, 0, '/js/scripting/css-user-idle.js');",
             "id: 'css-user-idle',",
@@ -1495,6 +1732,38 @@ def verify_ubol_custom_filter_origin_fallback_path(
             f"{archive_name} truncates the live/restore custom-filter "
             "registration union"
         )
+
+    live_start = reviewed_section(
+        source,
+        "export async function startCustomFilters(tabId, frameId, documentId) {",
+        "export async function injectCustomFilters(target, hostname, storageSnapshot) {",
+        "live start and termination",
+    )
+    require_ordered(
+        "live start and termination",
+        live_start,
+        (
+            "if ( typeof documentId !== 'string' || documentId === '' ) {",
+            "throw new Error('startCustomFilters requires a document ID');",
+            "const target = { tabId, documentIds: [ documentId ] };",
+            "files: [",
+            "'/js/scripting/css-api.js',",
+            "'/js/scripting/css-procedural-api.js',",
+            "'/js/scripting/css-user.js',",
+            "'startCustomFilters/files',",
+            "func: probeCommittedCustomFilters,",
+            "'startCustomFilters/probe',",
+            "throw reason;",
+            "export async function terminateCustomFilters(tabId, frameId, documentId) {",
+            "throw new Error('terminateCustomFilters requires a document ID');",
+            "const target = { tabId, documentIds: [ documentId ] };",
+            "'/js/scripting/css-user-terminate.js'",
+            "'terminateCustomFilters/files',",
+            "func: probeTerminatedCustomFilters,",
+            "'terminateCustomFilters/probe',",
+            "throw reason;",
+        ),
+    )
 
     css_user_source = package.read("js/scripting/css-user.js").decode("utf-8")
     css_user_code = javascript_without_comments(css_user_source)
@@ -1522,19 +1791,19 @@ def verify_ubol_custom_filter_origin_fallback_path(
     )
     direct_read = reviewed_section(
         css_user_source,
-        "async function readOriginFallbackCustomFilters() {",
+        "async function readStoredCustomFilters(hostname) {",
         "// matchOriginAsFallback runs this script",
         "bounded origin-fallback read",
     )
     if direct_read.count("chrome.storage.local.get(keys)") != 1:
         fail(
-            f"{archive_name} must perform exactly one bounded origin-fallback "
+            f"{archive_name} must perform exactly one bounded custom-filter "
             "local-storage read"
         )
     if re.search(r"chrome\.storage\.local\.get\s*\(\s*(?:\)|null\s*\))", direct_read):
-        fail(f"{archive_name} performs an unbounded origin-fallback storage read")
+        fail(f"{archive_name} performs an unbounded custom-filter storage read")
     require_ordered(
-        "bounded origin-fallback read",
+        "bounded custom-filter storage read",
         direct_read,
         (
             "settingsRestoreJournalKey,",
@@ -1556,19 +1825,122 @@ def verify_ubol_custom_filter_origin_fallback_path(
         css_user_source,
         "async function requestCustomFilters() {",
         "async function ensureProceduralAPI() {",
-        "origin-fallback request dispatch",
+        "custom-filter request dispatch",
     )
     require_ordered(
-        "origin-fallback request dispatch",
+        "custom-filter request dispatch",
         request_path,
         (
-            "if ( floorpOriginFallbackDocument ) {",
-            "return readOriginFallbackCustomFilters();",
-            "let outcome = await sendCustomFilterRequest();",
+            "let useStoredSnapshot = floorpOriginFallbackDocument;",
+            "while ( isCurrentDocument() && remainingActivationTime() > 0 ) {",
+            "const operation = Promise.resolve().then(( ) => {",
+            "const hostname = floorpOriginFallbackDocument",
+            "? originFallbackHostname()",
+            ": hostnameFromHTTPURL(document.location.href);",
+            "floorpOriginFallbackDocument === false &&",
+            "hostname !== customFilterHostname",
+            "return readStoredCustomFilters(hostname);",
+            "return chrome.runtime.sendMessage(customFilterRequest);",
+            "const outcome = await waitForMessageReply(operation);",
+            "isValidCustomFilterAck(",
+            "useStoredSnapshot === false && outcome.status !== 'resolved'",
+            "useStoredSnapshot = true;",
+            "if ( await waitForRetry(attempt) === false ) { return; }",
+        ),
+    )
+
+    execution_handoff = reviewed_section(
+        css_user_source,
+        "async function followLatestExecution() {",
+        "function waitForBootstrapTimeout(delay) {",
+        "custom-filter execution handoff",
+    )
+    require_ordered(
+        "custom-filter execution handoff",
+        execution_handoff,
+        (
+            "const latestRecord = self.floorpCSSUserLatestExecutionRecord;",
+            "if ( latestRecord === executionRecord ) { return failedExecution(); }",
+            "const latestOperation = latestRecord?.operation;",
+            "if ( latestOperation instanceof Promise ) {",
+            "return await latestOperation;",
+            "return failedExecution();",
         ),
     )
 
     background_source = package.read("js/background.js").decode("utf-8")
+    background_css_scope = reviewed_section(
+        background_source,
+        "function validateFloorpCSSScopeRequest(request) {",
+        "function customFilterHostname(request, sender) {",
+        "background CSS document scope validation",
+    )
+    require_ordered(
+        "background CSS document scope validation",
+        background_css_scope,
+        (
+            "const wrapper = `:where(:root[${request.scopeAttribute}])`;",
+            "const body = request.css.slice(prefix.length);",
+            "if ( body.trim() === '' ) {",
+            "let effectRuleCount = 0;",
+            "const nestedEffectRuleCount = validateRuleList(",
+            "if ( nestedEffectRuleCount === 0 ) {",
+            "effectRuleCount += nestedEffectRuleCount;",
+            "effectRuleCount += 1;",
+            "return effectRuleCount;",
+            "if ( validateRuleList(body) === 0 ) {",
+        ),
+    )
+    background_css_insert = reviewed_section(
+        background_source,
+        "    case 'insertCSS': {",
+        "    case 'removeCSS':",
+        "background CSS acknowledgement",
+    )
+    require_ordered(
+        "background CSS acknowledgement",
+        background_css_insert,
+        (
+            "if ( documentTarget === undefined ) {",
+            "request.schema !== CUSTOM_FILTER_MESSAGE_SCHEMA",
+            "requestId.length > 128",
+            "typeof request?.css !== 'string' || request.css === ''",
+            "validateFloorpCSSScopeRequest(request);",
+            "request.expectedDocumentId !==",
+            "cssTarget = physicalCSSTarget(documentTarget);",
+            "await browser.scripting.removeCSS({",
+            "target: cssTarget,",
+            "await browser.scripting.insertCSS({",
+            "target: cssTarget,",
+            "response.ensured = true;",
+            "return cssInsertAck(",
+            "reason ?? new Error('Native CSS insertion failed'),",
+        ),
+    )
+    background_css_remove = reviewed_section(
+        background_source,
+        "    case 'removeCSS': {",
+        "    case 'injectCSSProceduralAPI': {",
+        "background CSS removal acknowledgement",
+    )
+    require_ordered(
+        "background CSS removal acknowledgement",
+        background_css_remove,
+        (
+            "if ( documentTarget === undefined ) {",
+            "request?.schema !== undefined &&",
+            "request.schema !== CUSTOM_FILTER_MESSAGE_SCHEMA",
+            "requestId.length > 128",
+            "typeof request?.css !== 'string' || request.css === ''",
+            "validateFloorpCSSScopeRequest(request);",
+            "request.expectedDocumentId !==",
+            "cssTarget = physicalCSSTarget(documentTarget);",
+            "await browser.scripting.removeCSS({",
+            "target: cssTarget,",
+            "return cssInsertAck(",
+            "reason ?? new Error('Native CSS removal failed')",
+        ),
+    )
     background_hostname = reviewed_section(
         background_source,
         "function customFilterHostname(request, sender) {",
@@ -1606,12 +1978,10 @@ def verify_ubol_custom_filter_origin_fallback_path(
 
     marker_expectations = {
         "js/scripting/css-user-idle-prelude.js": (
-            "'use strict'; self.floorpCSSUserAPIIdleReplay = "
-            "document.location.hostname === '';"
+            "'use strict'; self.floorpCSSUserAPIIdleReplay = true;"
         ),
         "js/scripting/css-user-idle.js": (
-            "'use strict'; self.floorpCSSUserIdleReplay = true; "
-            "self.floorpCSSUserAPIIdleReplay = undefined;"
+            "'use strict'; self.floorpCSSUserIdleReplay = true;"
         ),
     }
     for member, expected_code in marker_expectations.items():
@@ -1625,13 +1995,381 @@ def verify_ubol_custom_filter_origin_fallback_path(
         "js/scripting/css-procedural-api.js"
     ).decode("utf-8")
     if (
-        "self.floorpCSSUserAPIIdleReplay === true" not in css_api or
-        "floorpOriginFallbackReplay === false &&" not in css_api or
-        "self.floorpCSSUserAPIIdleReplay !== true" not in procedural_api
+        "const forcedReplay = self.floorpCSSUserForceAPIReplay !== undefined;"
+        not in css_api or
+        "forcedReplay === false &&" not in css_api or
+        "self.floorpCSSUserForceAPIReplay === undefined &&"
+        not in procedural_api or
+        "self.floorpCSSUserAPIIdleReplay = undefined;" not in css_user_source or
+        "self.floorpCSSUserForceAPIReplay = forceToken;" not in css_user_source
     ):
         fail(
-            f"{archive_name} does not rebuild origin-fallback CSS APIs during "
-            "the document-idle replay"
+            f"{archive_name} does not rebuild guarded CSS APIs after the "
+            "native Document identity changes"
+        )
+
+    script_execution_identity_lease = reviewed_section(
+        css_api,
+        "        refreshForScriptExecution() {",
+        "        ensureDocumentIdentity(deadline = now() + operationWindow) {",
+        "script-execution identity lease",
+    )
+    require_ordered(
+        "script-execution identity lease",
+        script_execution_identity_lease,
+        (
+            "const pendingRecord = self.floorpCSSUserIdentityPendingRecord;",
+            "pendingRecord !== undefined &&",
+            "pendingRecord === self.floorpCSSUserLatestExecutionRecord &&",
+            "suspendedBy === pendingRecord",
+            "return identityBarrier;",
+            "if ( scriptIdentityRefresh !== undefined ) {",
+            "const record = { deadline: now() + operationWindow };",
+            "self.floorpCSSUserIdentityPendingRecord = record;",
+            "this.suspendForIdentity(record);",
+        ),
+    )
+
+    forced_replay_identity_lease = reviewed_section(
+        css_user_source,
+        "async function bindCSSAPIToCurrentDocument() {",
+        "if ( await bindCSSAPIToCurrentDocument() === false ) {",
+        "forced replay identity lease",
+    )
+    require_ordered(
+        "forced replay identity lease",
+        forced_replay_identity_lease,
+        (
+            "const forceToken = {};",
+            "self.floorpCSSUserIdentityPendingRecord = executionRecord;",
+            "if ( typeof cssAPI?.suspendForIdentity === 'function' ) {",
+            "cssAPI.suspendForIdentity(executionRecord);",
+            "self.floorpCSSUserForceAPIReplay = forceToken;",
+            "what: 'injectCSSProceduralAPI',",
+            "cssAPI = self.cssAPI;",
+            "self.floorpCSSUserIdentityPendingRecord = executionRecord;",
+            "if ( typeof cssAPI?.suspendForIdentity === 'function' ) {",
+            "cssAPI.suspendForIdentity(executionRecord);",
+            "cssAPI.resumeForIdentity(",
+        ),
+    )
+
+    identity_authority = reviewed_section(
+        css_api,
+        "    function beginIdentitySuspension(record) {",
+        "    function randomHex128() {",
+        "native Document identity authority",
+    )
+    require_ordered(
+        "native Document identity authority",
+        identity_authority,
+        (
+            "removeMarker(slot.active, root);",
+            "slot.hook?.suspend?.();",
+            "suspendedBy = record;",
+            "what: 'floorpCSSDocumentIdentity',",
+            "document.documentElement === requestRoot &&",
+            "validIdentityAck(outcome.value, requestId)",
+            "const identity = await requestDocumentIdentity(deadline);",
+            "state.documentId !== identity.documentId ||",
+            "state.frameId !== identity.frameId",
+            "state.verifiedRoot = identity.root;",
+            "observeMarkers();",
+        ),
+    )
+
+    scoped_payload = reviewed_section(
+        css_api,
+        "    function randomHex128() {",
+        "    function laneRank(lane, generation) {",
+        "document-scoped CSS serialization",
+    )
+    require_ordered(
+        "document-scoped CSS serialization",
+        scoped_payload,
+        (
+            "const values = new Uint32Array(4);",
+            "globalThis.crypto.getRandomValues(values);",
+            "const attribute = `data-floorp-ubol-${randomHex128()}`;",
+            "const allowedConditionalRules = new Set([",
+            "'media',",
+            "'supports',",
+            "'container',",
+            "throw new Error(`CSS at-rule is not document-scoped: ${name}`);",
+            "`${wrapper} :is(${base})${pseudo}`",
+            "`${wrapper}:is(${base})${pseudo}`",
+            "throw new Error('Authored CSS nesting is not supported');",
+            "function canonicalizeCSS(css) {",
+            "validateRawAtRules(css);",
+            "function makeBundle(body, intent) {",
+            "const wrapper = `:where(:root[${attr}])`;",
+            "`${canary}: ${canaryValue} !important;",
+            "validateScopedRoundTrip(",
+            "throw new Error('CSS document scope discarded scoped rules');",
+        ),
+    )
+    if "@scope" in javascript_without_comments(css_api):
+        fail(f"{archive_name} reintroduces unsupported WebKit @scope CSS")
+
+    candidate_marker_repair = reviewed_section(
+        css_api,
+        "    async function waitForCandidateCanary(",
+        "    function observeMarkers() {",
+        "candidate marker authority repair",
+    )
+    require_ordered(
+        "candidate marker authority repair",
+        candidate_marker_repair,
+        (
+            "const root = identity.root;",
+            "const settleDeadline = Math.min(deadline, now() + 500);",
+            "isCurrentAPI() === false ||",
+            "isCurrentGeneration(generation) === false ||",
+            "suspendedBy !== undefined ||",
+            "slot.candidate !== bundle ||",
+            "slot.intent !== intent ||",
+            "state.documentId !== identity.documentId ||",
+            "state.frameId !== identity.frameId ||",
+            "state.verifiedRoot !== root ||",
+            "document.documentElement !== root ||",
+            "now() >= deadline",
+            "if ( root.hasAttribute(bundle.attr) === false ) {",
+            "root.setAttribute(bundle.attr, '');",
+            "candidateCanaryApplied(bundle, root)",
+        ),
+    )
+    if candidate_marker_repair.count(
+        "root.setAttribute(bundle.attr, '');"
+    ) != 1:
+        fail(
+            f"{archive_name} duplicates the reviewed candidate marker "
+            "authority repair custom-filter path"
+        )
+
+    native_broker = reviewed_section(
+        css_api,
+        "    function candidateCanaryApplied(bundle, root) {",
+        "    function deactivateSlot(slot) {",
+        "document-scoped CSS native acknowledgement",
+    )
+    require_ordered(
+        "document-scoped CSS native acknowledgement",
+        native_broker,
+        (
+            "getComputedStyle(root)",
+            ".getPropertyValue(bundle.canary)",
+            "const settleDeadline = Math.min(deadline, now() + 500);",
+            "state.documentId !== identity.documentId ||",
+            "candidateCanaryApplied(bundle, root)",
+            "response.documentId === state.documentId &&",
+            "response.frameId === state.frameId &&",
+            "async function ensureBundle(bundle, deadline) {",
+            "what: 'insertCSS',",
+            "scopeAttribute: bundle.attr,",
+            "scopeCanary: bundle.canary,",
+            "scopeCanaryValue: bundle.canaryValue,",
+            "expectedDocumentId: state.documentId,",
+            "expectedFrameId: state.frameId,",
+            "validNativeAck(outcome.value, requestId, true)",
+            "bundle.pendingOperation = sent.operation;",
+            "async function removeBundle(bundle, deadline) {",
+            "what: 'removeCSS',",
+            "css: bundle.exactCSS,",
+            "validNativeAck(outcome.value, requestId)",
+        ),
+    )
+
+    physical_coordinator = reviewed_section(
+        css_api,
+        "    async function reconcileSlot(slot, deadline, force = false) {",
+        "    function operationContext(options = {}) {",
+        "transactional physical CSS coordinator",
+    )
+    require_ordered(
+        "transactional physical CSS coordinator",
+        physical_coordinator,
+        (
+            "const identity = await freshIdentity(deadline);",
+            "candidate = makeBundle(body || ':root{}', intent);",
+            "const ensured = await ensureBundle(candidate, deadline);",
+            "const confirmed = await requestDocumentIdentity(deadline);",
+            "root.setAttribute(candidate.attr, '');",
+            "const canary = await waitForCandidateCanary(",
+            "slot.hook?.activatePrepared?.();",
+            "removeMarker(candidate, root);",
+            "slot.hook?.deactivate?.();",
+            "removeMarker(old, root);",
+            "slot.active = candidate;",
+            "slot.markerSuppressed = false;",
+            "observeMarkers();",
+            "repairSlotMarker(slot);",
+            "void cleanupDirty(slot, now() + operationWindow);",
+            "async function reconcileWithFollowers(slot, deadline, force) {",
+            "const replayed = await reconcileSlot(follower, deadline, true);",
+            "function scheduleSlot(slot, deadline, force = false) {",
+            "const operation = globalQueue",
+            "globalQueue = operation.catch(reason => failure(`${reason}`));",
+        ),
+    )
+    if (
+        physical_coordinator.count("observeMarkers();") != 1 or
+        physical_coordinator.count("repairSlotMarker(slot);") != 1
+    ):
+        fail(
+            f"{archive_name} duplicates the reviewed transactional physical "
+            "CSS coordinator custom-filter path"
+        )
+
+    owner_retirement = reviewed_section(
+        css_api,
+        "        async forgetOwner(\n",
+        "        beginRecoveryWindow() {",
+        "owner-scoped CSS retirement",
+    )
+    require_ordered(
+        "owner-scoped CSS retirement",
+        owner_retirement,
+        (
+            "deactivateSlot(slot);",
+            "slot.desired.clear();",
+            "slot.wantsActivation = false;",
+            "slot.dirty.add(bundle);",
+            "slot.candidate = null;",
+            "slot.active = null;",
+            "await cleanupDirty(slot, deadline);",
+            "if ( slot.dirty.size !== 0 ) {",
+            "slots.delete(owner);",
+            "return result?.ok === true ? success() : result;",
+        ),
+    )
+    if css_user_source.count(
+        "typeof cssAPI?.insert !== 'function' ||"
+    ) != 1 or css_user_source.count(
+        "typeof cssAPI?.commit !== 'function'"
+    ) != 1:
+        fail(
+            f"{archive_name} does not fail closed when a custom-filter CSS "
+            "API operation is unavailable"
+        )
+
+    css_user_activation = reviewed_section(
+        css_user_source,
+        "async function uBOL_cssUserActivate() {",
+        "async function uBOL_cssUserStart(event) {",
+        "custom-filter CSS commit",
+    )
+    require_ordered(
+        "custom-filter CSS commit",
+        css_user_activation,
+        (
+            "const selectors = details.proceduralSelectors.map(a => JSON.parse(a));",
+            "transaction = cssAPI.beginInsertionTransaction(",
+            "filterer.addDeclaratives(declaratives);",
+            "filterer.addProcedurals(procedurals);",
+            "cssAPI.finishInsertionTransaction(transaction);",
+            "cssUserActivationState.proceduralFilterer = filterer;",
+            "cssAPI.rollbackInsertionTransaction(transaction);",
+            "await filterer.reset({ removeCSS: false });",
+            "const insertion = await cssAPI.insert(",
+            "if ( insertion?.ok !== true ) { return; }",
+            "const committed = await cssAPI.commit(",
+            "if ( committed?.ok !== true ) { return; }",
+            "self.customFilters = details;",
+            "cssUserActivationState.committed = true;",
+        ),
+    )
+    idle_replay = reviewed_section(
+        css_user_source,
+        "const existingBootstrap = self.floorpCSSUserBootstrapState;",
+        "const cssUserDocumentGeneration = {};",
+        "native Document bootstrap replay",
+    )
+    require_ordered(
+        "native Document bootstrap replay",
+        idle_replay,
+        (
+            "existingBootstrap?.documentId === cssUserNativeDocumentId &&",
+            "existingBootstrap.frameId === cssUserNativeFrameId &&",
+            "activation?.documentId === cssUserNativeDocumentId &&",
+            "activation.generation === self.cssUserDocumentGeneration &&",
+            "if ( activation.committed !== true ) {",
+            "await self.cssUserStartHandler({",
+            "? 'floorp-document-idle'",
+            "const committed = activation.committed === true &&",
+            "self.floorpCSSUserBootstrapState = {",
+            "sameDocumentActivation?.documentId === cssUserNativeDocumentId &&",
+            "if ( sameDocumentActivation.committed !== true ) {",
+            "const committed = sameDocumentActivation.committed === true;",
+        ),
+    )
+    if "await existingBootstrap.operation;" in idle_replay:
+        fail(
+            f"{archive_name} makes document_idle consume its recovery window "
+            "while awaiting the document_start bootstrap"
+        )
+
+    lifecycle_recovery = reviewed_section(
+        css_user_source,
+        "function beginLifecycleRecovery(event) {",
+        "async function prepareLifecycleRecovery(lifecycle) {",
+        "custom-filter lifecycle recovery",
+    )
+    require_ordered(
+        "custom-filter lifecycle recovery",
+        lifecycle_recovery,
+        (
+            "event?.type === 'floorp-document-idle' &&",
+            "cssUserActivationState.committed !== true &&",
+            "cssUserActivationState.idleRecoveryUsed !== true;",
+            "isIdleRecovery ||",
+            "cssUserActivationState.deadline =",
+            "performance.now() + customFilterActivationTimeout;",
+            "cssUserActivationState.idleRecoveryUsed = true;",
+            "self.cssAPI.beginRecoveryWindow(",
+        ),
+    )
+    execution_probe = reviewed_section(
+        css_user_source,
+        "async function uBOL_cssUserStart(event) {",
+        "\n})(floorpCSSUserExecutionRecord);",
+        "dynamic custom-filter commit probe",
+    )
+    require_ordered(
+        "dynamic custom-filter commit probe",
+        execution_probe,
+        (
+            "if ( event?.type === 'pageshow' && event?.persisted !== true ) { return; }",
+            "const queuedRecovery = event?.type === 'floorp-document-idle' ||",
+            "event?.type === 'floorp-dynamic-start';",
+            "let lifecycle = queuedRecovery",
+            "const pendingOp = Promise.resolve(self.cssUserPendingOp)",
+            "if ( cssUserActivationState.committed ) { return; }",
+            "if ( queuedRecovery ) {",
+            "lifecycle = beginLifecycleRecovery(event);",
+            "prepareLifecycleRecovery(lifecycle)",
+            "await pendingOp;",
+            "if ( cssUserActivationState.committed !== true ) { return; }",
+            "await uBOL_cssUserStart();",
+            "const executionCommitted =",
+            "isCurrentDocument() && cssUserActivationState.committed === true;",
+            "self.addEventListener('pagereveal', uBOL_cssUserStart);",
+            "self.addEventListener('pageshow', uBOL_cssUserStart);",
+            "ok: executionCommitted,",
+            "schema: customFilterMessageSchema,",
+            "committed: executionCommitted,",
+            "documentId: cssUserNativeDocumentId,",
+        ),
+    )
+    if (
+        "self.floorpCSSUserExecution = floorpCSSUserExecution;"
+        not in css_user_source or
+        "void floorpCSSUserExecution.catch(( ) => undefined);"
+        not in css_user_source or
+        css_user_source.rstrip().endswith("void 0;") is False
+    ):
+        fail(
+            f"{archive_name} does not expose the dynamic custom-filter "
+            "commit operation without leaking it from the files injection"
         )
 
 
@@ -2302,6 +3040,17 @@ def verify_ubol_procedural_reset_guards(
             fail(f"{archive_name} orders the reviewed {label} reset incorrectly")
         return source[start_index:end_index]
 
+    def require_ordered(label: str, body: str, values: tuple[str, ...]) -> None:
+        cursor = 0
+        for value in values:
+            position = body.find(value, cursor)
+            if position == -1:
+                fail(
+                    f"{archive_name} omits or reorders the reviewed {label} "
+                    "procedural reset guard"
+                )
+            cursor = position + len(value)
+
     inner_reset = unique_region(
         "class ProceduralFilterer {",
         "\n    addSelectors(selectors) {",
@@ -2312,30 +3061,59 @@ def verify_ubol_procedural_reset_guards(
         "\n    addDeclaratives(selectors) {",
         "stylesheet",
     )
-    guarded_removal = (
-        "            if ( removeCSS ) {\n"
-        "                promises.push(\n"
-        "                    chrome.runtime.sendMessage({ what: 'removeCSS', css })"
-        ".catch(( ) => { })\n"
-        "                );\n"
-        "            }"
+    require_ordered(
+        "style-token",
+        inner_reset,
+        (
+            "async reset(options = {}) {",
+            "void options;",
+            "this.suspend();",
+            "self.cancelAnimationFrame(this.timer);",
+            "pselector.destructor();",
+            "this.selectors.length = 0;",
+            "for ( const [ token, nodes ] of this.styledNodes ) {",
+            "elem.removeAttribute(token);",
+            "this.styleTokenMap.clear();",
+            "this.styledNodes.clear();",
+            "return [];",
+        ),
     )
-    for label, reset in (
-        ("style-token", inner_reset),
-        ("stylesheet", outer_reset),
+    if (
+        "chrome.runtime.sendMessage" in inner_reset or
+        "self.cssAPI.forgetOwner" in inner_reset
     ):
-        if (
-            reset.count("async reset(options = {})") != 1 or
-            reset.count("const removeCSS = options.removeCSS !== false;") != 1 or
-            reset.count(guarded_removal) != 1
-        ):
-            fail(
-                f"{archive_name} omits the scoped {label} procedural CSS reset guard"
-            )
-    if outer_reset.count("this.proceduralFilterer.reset(options)") != 1:
         fail(
-            f"{archive_name} does not propagate the procedural CSS reset policy "
-            "to its style-token inventory"
+            f"{archive_name} bypasses owner-scoped cleanup in the style-token "
+            "procedural reset guard"
+        )
+    require_ordered(
+        "stylesheet owner",
+        outer_reset,
+        (
+            "async reset(options = {}) {",
+            "const removeCSS = options.removeCSS !== false;",
+            "this.deactivate();",
+            "this.cssSheets.clear();",
+            "this.proceduralSelectors.length = 0;",
+            "this.preparedRevision = 0;",
+            "this.activatedRevision = 0;",
+            "if ( removeCSS ) {",
+            "typeof self.cssAPI?.forgetOwner !== 'function'",
+            "promises.push(self.cssAPI.forgetOwner(",
+            "this.cssOwner,",
+            "this.cssGeneration",
+            "self.cssAPI?.unregisterOwnerHook?.(",
+            "this.hookRegistered = false;",
+            "const results = await Promise.all(promises);",
+            "const failure = results.find(result => result?.ok === false);",
+            "throw new Error(failure.error || 'Procedural CSS cleanup failed');",
+            "return { ok: true };",
+        ),
+    )
+    if "chrome.runtime.sendMessage" in outer_reset:
+        fail(
+            f"{archive_name} bypasses the document-scoped owner broker in the "
+            "stylesheet procedural reset guard"
         )
 
 
@@ -2362,6 +3140,7 @@ def verify_archive(
     if provenance != expected_provenance:
         fail(f"provenance changed for {archive.name}")
     verify_support_files(entry, repository_root)
+    verify_patch_provenance(entry, provenance, repository_root)
 
     try:
         license_text = license_path.read_text(encoding="utf-8")

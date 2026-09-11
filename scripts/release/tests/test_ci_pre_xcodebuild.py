@@ -10,6 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "firefox-ios" / "ci_scripts" / "ci_pre_xcodebuild.sh"
 CONFIG_RELATIVE = Path("firefox-ios/Client/Configuration/FloorpRelease.xcconfig")
+APP_STORE_CONNECT_TEAM_ID = "74c6a531-19e2-4ed5-a34b-915003cc10f9"
+SIGNING_TEAM_ID = "DV2U35YBHT"
 
 
 class FloorpXcodeCloudSourceBindingTests(unittest.TestCase):
@@ -18,7 +20,9 @@ class FloorpXcodeCloudSourceBindingTests(unittest.TestCase):
         configuration = repository / CONFIG_RELATIVE
         configuration.parent.mkdir(parents=True)
         configuration.write_text(
-            "FLOORP_MARKETING_VERSION = 0.3.0\nFLOORP_SOURCE_SHA =\n",
+            f"FLOORP_DEVELOPMENT_TEAM = {SIGNING_TEAM_ID}\n"
+            "FLOORP_MARKETING_VERSION = 0.3.0\n"
+            "FLOORP_SOURCE_SHA =\n",
             encoding="utf-8",
         )
         subprocess.run(["/usr/bin/git", "init", "-q", repository], check=True)
@@ -76,7 +80,7 @@ class FloorpXcodeCloudSourceBindingTests(unittest.TestCase):
                 "CI_TAG": f"floorp-catalog-{commit}",
                 "CI_GIT_REF": f"refs/tags/floorp-catalog-{commit}",
                 "CI_BUNDLE_ID": "app.floorp.Floorp",
-                "CI_TEAM_ID": "DV2U35YBHT",
+                "CI_TEAM_ID": APP_STORE_CONNECT_TEAM_ID,
             }
         )
         return environment
@@ -149,6 +153,47 @@ class FloorpXcodeCloudSourceBindingTests(unittest.TestCase):
 
                 result = self.run_script(environment)
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_ci_team_must_match_the_app_store_connect_team(self):
+        for value in ("", SIGNING_TEAM_ID, "00000000-0000-0000-0000-000000000000"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                repository, commit = self.make_repository(Path(temporary))
+                environment = self.environment(repository, commit)
+                environment["CI_TEAM_ID"] = value
+                result = self.run_script(environment)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("App Store Connect team", result.stderr)
+                self.assertIn(
+                    "FLOORP_SOURCE_SHA =\n",
+                    (repository / CONFIG_RELATIVE).read_text(encoding="utf-8"),
+                )
+
+    def test_signing_team_setting_must_be_unique_and_exact(self):
+        replacements = (
+            "",
+            "FLOORP_DEVELOPMENT_TEAM = BADTEAM123",
+            f"FLOORP_DEVELOPMENT_TEAM = {SIGNING_TEAM_ID}\n"
+            f"FLOORP_DEVELOPMENT_TEAM = {SIGNING_TEAM_ID}",
+        )
+        for replacement in replacements:
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as temporary:
+                repository, commit = self.make_repository(Path(temporary))
+                configuration = repository / CONFIG_RELATIVE
+                configuration.write_text(
+                    configuration.read_text(encoding="utf-8").replace(
+                        f"FLOORP_DEVELOPMENT_TEAM = {SIGNING_TEAM_ID}", replacement
+                    ),
+                    encoding="utf-8",
+                )
+                result = self.run_script(self.environment(repository, commit))
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("FLOORP_DEVELOPMENT_TEAM", result.stderr)
+                self.assertIn(
+                    "FLOORP_SOURCE_SHA =\n",
+                    configuration.read_text(encoding="utf-8"),
+                )
 
     def test_source_setting_must_be_unique_and_empty(self):
         for replacement in (

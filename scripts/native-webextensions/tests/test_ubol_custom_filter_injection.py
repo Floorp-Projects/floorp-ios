@@ -18,11 +18,13 @@ NODE_TEST = Path(__file__).with_name("ubol_custom_filter_injection_test.mjs")
 RUNTIME_PATHS = (
     "js/background.js",
     "js/filter-manager.js",
+    "js/picker-ui.js",
     "js/scripting/css-user.js",
     "js/scripting/css-api.js",
     "js/scripting/css-procedural-api.js",
     "js/scripting/css-user-idle-prelude.js",
     "js/scripting/css-user-idle.js",
+    "js/scripting/css-user-terminate.js",
 )
 
 

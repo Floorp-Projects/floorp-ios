@@ -66,7 +66,11 @@ const sandbox = {
             return `css-user-request-${messages.length + 1}`;
         },
     },
-    document: { location: { hostname: 'old.example' } },
+    performance,
+    document: {
+        documentElement: {},
+        location: { hostname: 'old.example' },
+    },
     addEventListener(type, listener) {
         listeners.set(type, listener);
     },
@@ -82,6 +86,15 @@ sandbox.chrome = {
     runtime: {
         sendMessage(request) {
             messages.push(structuredClone(request));
+            if ( request.what === 'floorpCSSDocumentIdentity' ) {
+                return Promise.resolve({
+                    ok: true,
+                    schema: 1,
+                    requestId: request.requestId,
+                    documentId: `${sandbox.document.location.hostname}-document`,
+                    frameId: 0,
+                });
+            }
             if ( request.what !== 'injectCustomFilters' ) {
                 throw new Error(`unexpected runtime message: ${request.what}`);
             }
@@ -98,11 +111,33 @@ sandbox.chrome = {
         },
     },
 };
-sandbox.cssAPI = {
-    insert(css) {
-        insertions.push({ document: 'old', css });
+const makeCSSAPI = (label, documentId) => ({
+    documentId,
+    frameId: 0,
+    suspendForIdentity() {},
+    resumeForIdentity(record, receivedDocumentId, frameId) {
+        if ( receivedDocumentId !== documentId || frameId !== 0 ) {
+            return false;
+        }
+        if ( sandbox.floorpCSSUserIdentityPendingRecord === record ) {
+            sandbox.floorpCSSUserIdentityPendingRecord = undefined;
+        }
+        return true;
     },
-};
+    insert(css) {
+        insertions.push({ document: label, css });
+        return Promise.resolve({
+            ok: true,
+            schema: 1,
+            requestId: `${label}-css-insert`,
+            documentId,
+        });
+    },
+    commit() {
+        return Promise.resolve({ ok: true, committed: true });
+    },
+});
+sandbox.cssAPI = makeCSSAPI('old', 'old.example-document');
 
 const context = vm.createContext(sandbox);
 const script = new vm.Script(source, { filename: 'js/scripting/css-user.js' });
@@ -117,12 +152,11 @@ try {
     const firstPendingOp = sandbox.cssUserPendingOp;
     assert.equal(typeof firstPendingOp?.then, 'function');
 
-    sandbox.document = { location: { hostname: 'new.example' } };
-    sandbox.cssAPI = {
-        insert(css) {
-            insertions.push({ document: 'new', css });
-        },
+    sandbox.document = {
+        documentElement: {},
+        location: { hostname: 'new.example' },
     };
+    sandbox.cssAPI = makeCSSAPI('new', 'new.example-document');
     vm.runInContext(
         `self.customProceduralFiltererAPI = {
             reset(options) {
@@ -147,7 +181,9 @@ try {
     assert.equal(sandbox.previousFiltererResetCount, 1);
     assert.equal(sandbox.previousFiltererResetOptions.removeCSS, false);
     assert.deepEqual(
-        messages.map(message => message.hostname),
+        messages
+            .filter(message => message.what === 'injectCustomFilters')
+            .map(message => message.hostname),
         [ 'old.example', 'new.example' ]
     );
     assert.deepEqual(insertions, [ {
@@ -156,12 +192,11 @@ try {
     } ]);
     assert.notEqual(sandbox.cssUserPendingOp, firstPendingOp);
 
-    sandbox.document = { location: { hostname: 'third.example' } };
-    sandbox.cssAPI = {
-        insert(css) {
-            insertions.push({ document: 'third', css });
-        },
+    sandbox.document = {
+        documentElement: {},
+        location: { hostname: 'third.example' },
     };
+    sandbox.cssAPI = makeCSSAPI('third', 'third.example-document');
     vm.runInContext(
         `self.customProceduralFiltererAPI = {
             reset() {
@@ -182,7 +217,13 @@ try {
     assert.equal(sandbox.throwingFiltererResetCount, 1);
 
     const currentPendingOp = sandbox.cssUserPendingOp;
-    firstReply.resolve(ack(messages[0], oldDetails));
+    firstReply.resolve(ack(
+        messages.find(message =>
+            message.what === 'injectCustomFilters' &&
+            message.hostname === 'old.example'
+        ),
+        oldDetails
+    ));
     await firstPendingOp;
     await nextTask();
 
