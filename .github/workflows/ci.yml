@@ -1550,10 +1550,22 @@ jobs:
 
           run_test \
             "$modern_destination" \
+            "ClientTests/FloorpNativeWebExtensionIntegrationTests/testDarkReaderReadinessRecoversOnceFromDeliveredGesturesDeinitTransition" \
+            "floorp-webextension-os-matrix-ios-26-0-darkreader-readiness-recovery" \
+            "0" \
+            ""
+          run_test \
+            "$modern_destination" \
             "ClientTests/FloorpNativeWebExtensionIntegrationTests/testMainMenuSelectsDarkReaderFromTwoActionPickerAndPresentsInteractivePopup" \
             "floorp-webextension-os-matrix-ios-26-0-main-menu" \
             "0" \
             ""
+          run_test \
+            "$modern_destination" \
+            "ClientTests/FloorpDarkReaderWebKitAcceptanceTests/testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup" \
+            "floorp-webextension-os-matrix-ios-26-0-darkreader-acceptance" \
+            "0" \
+            "FLOORP_DARKREADER_RELEASE_GATE background-resume-popup"
           run_test \
             "$modern_destination" \
             "ClientTests/FloorpNativeWebExtensionIntegrationTests/testBundledUBOLBlocksProductionHostTabsAndRendersDashboard" \

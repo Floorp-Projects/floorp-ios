@@ -125,7 +125,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             FloorpNativeWebExtensionHost.coldBackgroundReadinessTimeoutForTesting(
                 identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier
             ),
-            30_000_000_000
+            60_000_000_000
         )
         XCTAssertEqual(
             FloorpNativeWebExtensionHost.coldBackgroundReadinessTimeoutForTesting(
@@ -2568,6 +2568,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 #endif
     }
 
+    // swiftlint:disable:next function_body_length
     func testDarkReaderReadinessRecoversOnceFromDeliveredGesturesDeinitTransition() async throws {
 #if DEBUG || TESTING
         let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_gestures_recovery")
@@ -2589,12 +2590,38 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ]
         )
         var attemptedSurfaces = [Int]()
-        var createdSurfaceCount = 0
+        var createdSurfaces = [Int: WKWebView]()
+        var lifecycleEvents = [String]()
+        var backgroundCompletionAttempts = [Int]()
+        var deferredReleaseAttempts = [Int]()
         var grantedSupplementalBudgets = [UInt64]()
         var successfulResponseCount = 0
-        host.backgroundReadinessSurfaceCreatedHookForTesting = { hookIdentifier, _, _ in
+        host.backgroundReadinessSurfaceCreatedHookForTesting = { hookIdentifier, attempt, webView in
             guard hookIdentifier == item.identifier else { return }
-            createdSurfaceCount += 1
+            XCTAssertNil(createdSurfaces[attempt])
+            XCTAssertNil(webView.url)
+            createdSurfaces[attempt] = webView
+            lifecycleEvents.append("surface-\(attempt)")
+        }
+        host.backgroundLoadCompletedBeforeReadinessNavigationHookForTesting = { hookIdentifier, attempt, webView in
+            guard hookIdentifier == item.identifier else { return }
+            XCTAssertTrue(webView === createdSurfaces[attempt])
+            XCTAssertNil(webView.url)
+            backgroundCompletionAttempts.append(attempt)
+            lifecycleEvents.append("background-\(attempt)")
+        }
+        host.backgroundReadinessSurfaceDeferredReleaseHookForTesting = { hookIdentifier, attempt, webView in
+            guard hookIdentifier == item.identifier else { return }
+            XCTAssertTrue(webView === createdSurfaces[attempt])
+            XCTAssertTrue(
+                FloorpNativeWebExtensionDeferredWebViewRelease.isRetainedForTesting(webView)
+            )
+            XCTAssertFalse(
+                FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+                    .isPermanentlyRetained(webView)
+            )
+            deferredReleaseAttempts.append(attempt)
+            lifecycleEvents.append("release-\(attempt)")
         }
         host.supplementalReadinessRetryGrantedHookForTesting = { hookIdentifier, _, budget in
             guard hookIdentifier == item.identifier else { return }
@@ -2602,7 +2629,9 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
         host.backgroundReadinessTransientFailureHookForTesting = { hookIdentifier, attempt in
             guard hookIdentifier == item.identifier else { return nil }
+            XCTAssertEqual(createdSurfaces[attempt]?.url?.path, "/floorp-readiness.html")
             attemptedSurfaces.append(attempt)
+            lifecycleEvents.append("readiness-\(attempt)")
             return attempt == 1 ? gesturesDeinitTransition : nil
         }
         host.backgroundReadinessResponseHookForTesting = { hookIdentifier, _ in
@@ -2615,6 +2644,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         }
         defer {
             host.backgroundReadinessSurfaceCreatedHookForTesting = nil
+            host.backgroundLoadCompletedBeforeReadinessNavigationHookForTesting = nil
+            host.backgroundReadinessSurfaceDeferredReleaseHookForTesting = nil
             host.supplementalReadinessRetryGrantedHookForTesting = nil
             host.backgroundReadinessTransientFailureHookForTesting = nil
             host.backgroundReadinessResponseHookForTesting = nil
@@ -2623,15 +2654,32 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         try await host.installBundledExtension(identifier: item.identifier)
 
         XCTAssertEqual(attemptedSurfaces, [1, 2])
-        XCTAssertEqual(createdSurfaceCount, 2)
+        XCTAssertEqual(createdSurfaces.keys.sorted(), [1, 2])
+        XCTAssertEqual(backgroundCompletionAttempts, [1])
+        XCTAssertEqual(deferredReleaseAttempts, [1, 2])
+        XCTAssertEqual(
+            lifecycleEvents,
+            [
+                "surface-1",
+                "background-1",
+                "readiness-1",
+                "release-1",
+                "surface-2",
+                "readiness-2",
+                "release-2"
+            ]
+        )
         XCTAssertEqual(grantedSupplementalBudgets, [15_000_000_000])
         XCTAssertEqual(successfulResponseCount, 1)
         let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
+        XCTAssertFalse(host.hasUnfinishedWebKitOperationForTesting(context))
         XCTAssertTrue(
             context.errors.isEmpty,
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
         host.backgroundReadinessSurfaceCreatedHookForTesting = nil
+        host.backgroundLoadCompletedBeforeReadinessNavigationHookForTesting = nil
+        host.backgroundReadinessSurfaceDeferredReleaseHookForTesting = nil
         host.supplementalReadinessRetryGrantedHookForTesting = nil
         host.backgroundReadinessTransientFailureHookForTesting = nil
         host.backgroundReadinessResponseHookForTesting = nil

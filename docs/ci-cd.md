@@ -92,10 +92,12 @@ deletable iOS 18.4 (22E238) runtime UUID by identifier, version, and build,
 deletes that runtime, waits for that exact UUID to disappear from validated
 inventory, and records the reclaimed space before obtaining iOS 26.0 with the
 same download mechanism. The iOS 26.2 build-support runtime remains installed.
-The subsequently created iOS 26.0 simulator verifies the Dark Reader/uBlock
-Origin Lite action picker and popup, uBlock Origin Lite on a production host,
-and the opt-in official uBlock Origin Lite acceptance. The built products and Derived Data remain in place;
-the iOS 26.0 tests use `test-without-building` rather than rebuilding. Every
+The subsequently created iOS 26.0 simulator verifies Dark Reader cold-readiness
+ordering and recovery, the Dark Reader/uBlock Origin Lite action picker and
+popup, official Dark Reader acceptance, uBlock Origin Lite on a production
+host, and the opt-in official uBlock Origin Lite acceptance. The built products
+and Derived Data remain in place; the iOS 26.0 tests use
+`test-without-building` rather than rebuilding. Every
 selected test must report an XCTest pass, and both official acceptance tests
 must emit their release completion marker. The job always uploads its cleanup
 and download logs, free-space reports, runtime inventories, and `.xcresult`
