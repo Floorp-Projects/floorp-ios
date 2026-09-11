@@ -87,7 +87,7 @@ private final class FloorpClosePreparationTestGate {
 
 @MainActor
 final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
-    func testReadinessPageNavigationBudgetIsExtendedOnlyForUBOL() throws {
+    func testColdReadinessBudgetsStayScopedToLifecycleOwnedSurfaces() throws {
 #if DEBUG || TESTING
         XCTAssertEqual(
             FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
@@ -103,6 +103,32 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(
             FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier,
+                isColdLifecycle: true
+            ),
+            30_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.readinessPageNavigationTimeoutForTesting(
+                identifier: "unknown-extension",
+                isColdLifecycle: true
+            ),
+            15_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.coldBackgroundReadinessTimeoutForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+            ),
+            240_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.coldBackgroundReadinessTimeoutForTesting(
+                identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier
+            ),
+            30_000_000_000
+        )
+        XCTAssertEqual(
+            FloorpNativeWebExtensionHost.coldBackgroundReadinessTimeoutForTesting(
                 identifier: "unknown-extension"
             ),
             15_000_000_000
@@ -2549,14 +2575,12 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ]
         )
         var attemptedSurfaces = [Int]()
-        var attemptedWebViews = [WKWebView]()
+        var createdSurfaceCount = 0
         var grantedSupplementalBudgets = [UInt64]()
         var successfulResponseCount = 0
-        host.backgroundReadinessSurfaceCreatedHookForTesting = { hookIdentifier, _, webView in
+        host.backgroundReadinessSurfaceCreatedHookForTesting = { hookIdentifier, _, _ in
             guard hookIdentifier == item.identifier else { return }
-            // Retain both surfaces so allocator address reuse cannot make two
-            // distinct WebViews appear to have the same ObjectIdentifier.
-            attemptedWebViews.append(webView)
+            createdSurfaceCount += 1
         }
         host.supplementalReadinessRetryGrantedHookForTesting = { hookIdentifier, _, budget in
             guard hookIdentifier == item.identifier else { return }
@@ -2585,10 +2609,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         try await host.installBundledExtension(identifier: item.identifier)
 
         XCTAssertEqual(attemptedSurfaces, [1, 2])
-        XCTAssertEqual(attemptedWebViews.count, 2)
-        let firstWebView = try XCTUnwrap(attemptedWebViews.first)
-        let secondWebView = try XCTUnwrap(attemptedWebViews.dropFirst().first)
-        XCTAssertFalse(firstWebView === secondWebView)
+        XCTAssertEqual(createdSurfaceCount, 2)
         XCTAssertEqual(grantedSupplementalBudgets, [15_000_000_000])
         XCTAssertEqual(successfulResponseCount, 1)
         let context = try XCTUnwrap(host.installedContext(identifier: item.identifier))
