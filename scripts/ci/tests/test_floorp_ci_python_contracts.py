@@ -186,33 +186,51 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "    private func waitForBundledExtensionInitialization(\n", 1
         )[1].split("\n    private func", 1)[0]
         self.assertIn(
+            "let pageNavigationBudget = Self.readinessPageNavigationTimeout(\n"
+            "                for: identifier,\n"
+            "                mode: mode\n"
+            "            )",
+            production_readiness,
+        )
+        self.assertIn(
             "timeoutNanoseconds: min(\n"
             "                        try remainingAttemptTimeout(),\n"
-            "                        Self.readinessPageNavigationTimeout(for: identifier)\n"
+            "                        pageNavigationBudget\n"
             "                    )",
             production_readiness,
         )
         self.assertEqual(
             production_readiness.count(
-                "Self.readinessPageNavigationTimeout(for: identifier)"
+                "Self.readinessPageNavigationTimeout("
             ),
             1,
         )
         semantic_probe = production_readiness.split(
             "probe.callAsyncJavaScript(", 1
         )[1].split(")\n                }()", 1)[0]
-        self.assertNotIn("readinessPageNavigationTimeout", semantic_probe)
+        self.assertNotIn("pageNavigationBudget", semantic_probe)
         production_navigation_timeout = host_source.split(
-            "    private static func readinessPageNavigationTimeout(for identifier: String) "
-            "-> UInt64 {\n",
+            "    private static func readinessPageNavigationTimeout(\n"
+            "        for identifier: String,\n"
+            "        mode: BackgroundReadinessMode\n"
+            "    ) -> UInt64 {\n",
             1,
         )[1].split("\n    private func", 1)[0]
         self.assertIn(
             "identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier",
             production_navigation_timeout,
         )
-        self.assertIn("? 30_000_000_000", production_navigation_timeout)
-        self.assertIn(": 15_000_000_000", production_navigation_timeout)
+        self.assertIn(
+            "identifier == FloorpNativeWebExtensionCatalog.darkReader.identifier",
+            production_navigation_timeout,
+        )
+        self.assertIn("case .coldLifecycle = mode", production_navigation_timeout)
+        self.assertEqual(
+            production_navigation_timeout.count("return 30_000_000_000"),
+            2,
+        )
+        self.assertIn("return 15_000_000_000", production_navigation_timeout)
+        self.assertEqual(host_source.count("mode: .coldLifecycle"), 4)
 
         preserve_timeout = navigation_waiter.split(
             "case .preserveWebViewForProcessLifetime:\n", 1

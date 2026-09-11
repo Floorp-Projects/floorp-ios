@@ -716,6 +716,7 @@
         "SettingsCoordinatorTests/testWebExtensionsSettingsDelegate_pushedExtensionsSettings()",
         "SettingsCoordinatorTests/testWebExtensionsSettingsRoute_showsExtensionsSettingsPage()",
         "MainMenuCoordinatorTests/testHandleNavigation_webExtensionActions_callsDelegate()",
+        "FloorpNativeWebExtensionIntegrationTests/testColdReadinessBudgetsStayScopedToLifecycleOwnedSurfaces()",
         "FloorpNativeWebExtensionIntegrationTests/testBundledDarkReaderZIPIsVerifiedAndLoadsWithNativeWebKit()",
         "FloorpNativeWebExtensionIntegrationTests/testMainMenuSelectsDarkReaderFromTwoActionPickerAndPresentsInteractivePopup()",
         "FloorpNativeWebExtensionIntegrationTests/testMainMenuOpensOnlyAvailableDarkReaderActionDirectlyOnMinimumOS()",

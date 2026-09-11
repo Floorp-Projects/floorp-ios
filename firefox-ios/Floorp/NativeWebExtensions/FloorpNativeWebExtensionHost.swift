@@ -120,6 +120,20 @@ final class FloorpNativeWebExtensionHost: NSObject {
         case failed(any Error)
     }
 
+    private enum BackgroundReadinessMode {
+        case interactive
+        case coldLifecycle
+
+        var allowsSupplementalDarkReaderGesturesRecovery: Bool {
+            switch self {
+            case .interactive:
+                return false
+            case .coldLifecycle:
+                return true
+            }
+        }
+    }
+
     @MainActor
     private final class BackgroundContentLoadGate {
         private var continuation: CheckedContinuation<Void, any Error>?
@@ -836,9 +850,19 @@ final class FloorpNativeWebExtensionHost: NSObject {
     }
 
     static func readinessPageNavigationTimeoutForTesting(
+        identifier: String,
+        isColdLifecycle: Bool = false
+    ) -> UInt64 {
+        readinessPageNavigationTimeout(
+            for: identifier,
+            mode: isColdLifecycle ? .coldLifecycle : .interactive
+        )
+    }
+
+    static func coldBackgroundReadinessTimeoutForTesting(
         identifier: String
     ) -> UInt64 {
-        readinessPageNavigationTimeout(for: identifier)
+        coldBackgroundReadinessTimeoutPolicy(for: identifier)
     }
 
     static func supplementalReadinessRetryBudgetForTesting(
@@ -1130,7 +1154,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                         timeoutNanoseconds: coldBackgroundReadinessTimeout(
                             for: record.id
                         ),
-                        allowsSupplementalDarkReaderGesturesRecovery: true
+                        mode: .coldLifecycle
                     )
                     try validateTransition(for: record.id, generation: generation)
                     setContextReady(true, identifier: record.id)
@@ -1511,20 +1535,36 @@ final class FloorpNativeWebExtensionHost: NSObject {
     }
 
     private func backgroundReadinessTimeout(for identifier: String) -> UInt64 {
+        Self.backgroundReadinessTimeoutPolicy(for: identifier)
+    }
+
+    private static func backgroundReadinessTimeoutPolicy(
+        for identifier: String
+    ) -> UInt64 {
         FloorpNativeWebExtensionCatalog.item(identifier: identifier)?
             .navigationReadinessFailurePolicy == .failClosed
             ? 90_000_000_000
             : 15_000_000_000
     }
 
-    private static func readinessPageNavigationTimeout(for identifier: String) -> UInt64 {
+    private static func readinessPageNavigationTimeout(
+        for identifier: String,
+        mode: BackgroundReadinessMode
+    ) -> UInt64 {
         // A pristine uBO Lite context can spend more than the generic 15-second
         // page budget creating WebExtension storage and preparing its large DNR
-        // ruleset on iOS 26. Keep that one owned WebView alive for a bounded
-        // extension-specific window without weakening Dark Reader's timeout.
-        identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
-            ? 30_000_000_000
-            : 15_000_000_000
+        // ruleset on iOS 26. Dark Reader can spend most of that same generic
+        // budget launching its first WebContent process. Only lifecycle-owned
+        // surfaces receive the longer bounded window; interactive probes keep
+        // their existing latency cap.
+        if identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier {
+            return 30_000_000_000
+        }
+        if identifier == FloorpNativeWebExtensionCatalog.darkReader.identifier,
+           case .coldLifecycle = mode {
+            return 30_000_000_000
+        }
+        return 15_000_000_000
     }
 
     private func extensionSurfaceCloseUIBudget() -> UInt64 {
@@ -1537,14 +1577,24 @@ final class FloorpNativeWebExtensionHost: NSObject {
     }
 
     private func coldBackgroundReadinessTimeout(for identifier: String) -> UInt64 {
+        Self.coldBackgroundReadinessTimeoutPolicy(for: identifier)
+    }
+
+    private static func coldBackgroundReadinessTimeoutPolicy(
+        for identifier: String
+    ) -> UInt64 {
         // On a fresh uBO context WebKit compiles more than 100,000 static
-        // rules and the dynamic regex realm before the first semantic probe
-        // can return. Keep navigation/action probes bounded at 90 seconds,
-        // while allowing cold install, restore, and re-enable enough time for
-        // that one-time native compilation to finish on slower devices.
-        identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
-            ? 240_000_000_000
-            : backgroundReadinessTimeout(for: identifier)
+        // rules and the dynamic regex realm before the first semantic probe can
+        // return. Dark Reader can also spend the generic 15-second budget just
+        // launching the first WebContent process on iOS 26. Keep interactive
+        // probes unchanged while giving owned cold lifecycle work enough time.
+        if identifier == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier {
+            return 240_000_000_000
+        }
+        if identifier == FloorpNativeWebExtensionCatalog.darkReader.identifier {
+            return 30_000_000_000
+        }
+        return backgroundReadinessTimeoutPolicy(for: identifier)
     }
 
     private func waitForStartupNavigationReadiness() async {
@@ -2260,7 +2310,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     in: newContext,
                     identifier: identifier,
                     timeoutNanoseconds: coldBackgroundReadinessTimeout(for: identifier),
-                    allowsSupplementalDarkReaderGesturesRecovery: true
+                    mode: .coldLifecycle
                 )
                 try validateTransition(for: identifier, generation: generation)
                 setContextReady(true, identifier: identifier)
@@ -2369,7 +2419,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                                 in: previousContext,
                                 identifier: identifier,
                                 timeoutNanoseconds: coldBackgroundReadinessTimeout(for: identifier),
-                                allowsSupplementalDarkReaderGesturesRecovery: true
+                                mode: .coldLifecycle
                             )
                             try validateTransition(
                                 for: identifier,
@@ -2654,7 +2704,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 in: context,
                 identifier: identifier,
                 timeoutNanoseconds: coldBackgroundReadinessTimeout(for: identifier),
-                allowsSupplementalDarkReaderGesturesRecovery: true
+                mode: .coldLifecycle
             )
             try validateTransition(for: identifier, generation: generation)
             setContextReady(true, identifier: identifier)
@@ -4359,7 +4409,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         in context: WKWebExtensionContext,
         identifier: String,
         timeoutNanoseconds: UInt64 = 15_000_000_000,
-        allowsSupplementalDarkReaderGesturesRecovery: Bool = false,
+        mode: BackgroundReadinessMode = .interactive,
         runsLifecycleStabilityHook: Bool = false
     ) async throws {
         guard context.isLoaded,
@@ -4372,8 +4422,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 in: context,
                 identifier: identifier,
                 timeoutNanoseconds: timeoutNanoseconds,
-                allowsSupplementalDarkReaderGesturesRecovery:
-                    allowsSupplementalDarkReaderGesturesRecovery,
+                mode: mode,
                 runsLifecycleStabilityHook: runsLifecycleStabilityHook
             )
             return
@@ -4439,7 +4488,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         in context: WKWebExtensionContext,
         identifier: String,
         timeoutNanoseconds: UInt64 = 90_000_000_000,
-        allowsSupplementalDarkReaderGesturesRecovery: Bool = false
+        mode: BackgroundReadinessMode = .interactive
     ) async throws {
         guard context.isLoaded,
               context.webExtension.hasBackgroundContent,
@@ -4463,8 +4512,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                 in: context,
                 identifier: identifier,
                 timeoutNanoseconds: try remainingTimeout(),
-                allowsSupplementalDarkReaderGesturesRecovery:
-                    allowsSupplementalDarkReaderGesturesRecovery,
+                mode: mode,
                 runsLifecycleStabilityHook: true
             )
             // uBO itself waits until realm-ruleset promise identity is stable.
@@ -4540,7 +4588,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         in context: WKWebExtensionContext,
         identifier: String,
         timeoutNanoseconds: UInt64,
-        allowsSupplementalDarkReaderGesturesRecovery: Bool,
+        mode: BackgroundReadinessMode,
         runsLifecycleStabilityHook: Bool
     ) async throws {
         let start = DispatchTime.now().uptimeNanoseconds
@@ -4599,15 +4647,19 @@ final class FloorpNativeWebExtensionHost: NSObject {
             attempt += 1
             let attemptStart = DispatchTime.now().uptimeNanoseconds
             let remainingBudget = try remainingTimeout()
+            let pageNavigationBudget = Self.readinessPageNavigationTimeout(
+                for: identifier,
+                mode: mode
+            )
             // uBO Lite can legitimately spend longer than 15 seconds compiling
             // and enabling its DNR rulesets on a cold launch. A timed-out
             // callAsyncJavaScript callback cannot be abandoned or retried
             // safely, so give its fail-closed probe the full bounded deadline.
-            // Delivered WebKit errors still retry below without extending it.
+            // Other attempts use the owned page's mode-specific limit.
             let attemptBudget = identifier
                 == FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
                 ? remainingBudget
-                : min(remainingBudget, 15_000_000_000)
+                : min(remainingBudget, pageNavigationBudget)
             let attemptAddition = attemptStart.addingReportingOverflow(attemptBudget)
             let attemptDeadline = attemptAddition.overflow
                 ? UInt64.max
@@ -4650,7 +4702,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     identifier: identifier,
                     timeoutNanoseconds: min(
                         try remainingAttemptTimeout(),
-                        Self.readinessPageNavigationTimeout(for: identifier)
+                        pageNavigationBudget
                     )
                 )
                 if !didLoadBackgroundContent {
@@ -4719,7 +4771,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     identifier: identifier,
                     after: error,
                     allowsSupplementalDarkReaderGesturesRecovery:
-                        allowsSupplementalDarkReaderGesturesRecovery,
+                        mode.allowsSupplementalDarkReaderGesturesRecovery,
                     callbackRequiresRetention: callbackRequiresRetention,
                     hasUnfinishedOperation: hasUnfinishedOperation,
                     isTaskCancelled: Task.isCancelled,
@@ -4878,10 +4930,9 @@ final class FloorpNativeWebExtensionHost: NSObject {
               isGesturesIdleDeinitTransition(error) else {
             return nil
         }
-        // Dark Reader's ordinary cold-readiness deadline remains 15 seconds.
-        // Only this delivered iOS 26 WebKit error receives one new bounded
+        // Only this delivered iOS 26 WebKit error receives one new 15-second
         // surface attempt; timeouts and unfinished native callbacks never do.
-        return readinessPageNavigationTimeout(for: identifier)
+        return readinessPageNavigationTimeout(for: identifier, mode: .interactive)
     }
 
     private func hasRetiredBackgroundReadinessSurface(
